@@ -563,6 +563,11 @@ covers).
 
 Each has a cheap experiment. None should be assumed.
 
+**Status after the 2026-11-12 experiments** (`RESEARCH-NOTES.md` section 14, one version, one machine):
+questions 2, 5 and 12 are answered; 3 is answered for headless workers only; 13 is answered for an idle
+headless receiver in `default` mode; 1 is answered for `SessionStart` and `UserPromptSubmit` only. Questions 8,
+9, 10, 14 and 17 remain open.
+
 1. **Does injection on `PostToolUse` keep working across releases?** Docs and observation
    disagree slightly. Experiment: a hook that prints a unique token; assert the model quotes it.
 2. **What does `PreToolUse` allow?** Can a hook see the command a Bash call will run and warn
@@ -1022,6 +1027,29 @@ are permissively licensed.
 - **Privileged roles (admin, reviewer, librarian) run in constrained modes with explicit deny rules, never in
   `bypassPermissions`.** Ordinary members run in a prompting mode. A declared mode is never a security control.
 
+**Revision (2026-11-12): tiered join, and minimally invasive.** The directive that klatch be minimally invasive
+to running agents and sessions, and the socket experiments in `RESEARCH-NOTES.md` section 14, amend the bullets
+above as follows. Hooks, MCP servers and channels only take effect when a session starts, so the hook path
+cannot be the only way in for a session that is already running.
+
+| Tier | What it needs | What it gives |
+|---|---|---|
+| 0, no install and no relaunch | The agent runs the `klatch` CLI through its normal Bash tool. Optionally, with consent at onboarding, the gateway posts a content-free nudge to the session's socket from outside. | Rooms, claims and reads on demand; an optional wake-up |
+| 1, hooks | Hooks present when the session starts (user or project settings, or `--settings`) | Pull-on-prompt delivery, `PreToolUse` enforcement, optional `asyncRewake` |
+| 2, channels | A session launched with `--channels`, only if channels leave preview | A sanctioned push path |
+| Native peer mode | Registering the gateway in Claude Code's session registry | Not available by simple forgery (experiment 14.3); not in v1 |
+
+Rules for the tiers:
+
+- **Never redirect, replace or proxy another session's inbox socket.** Anything that writes into Claude Code's
+  state or reads other sessions' key files is opt-in, off by default, explained at onboarding and
+  version-probed.
+- **An outside nudge is allowed only as Tier 0 with consent.** It was observed to reach an idle session
+  without any change to it, and it was observed to be accepted without a valid token, so it is an accelerator
+  only: no content, no authority, and nothing in klatch's security depends on it.
+- **The own-child watcher in the bullets above is now one option among two**, and is used where the hook tier
+  is present. The outside nudge is the option where it is not.
+
 ---
 
 ## 20. The harness abstraction: Claude Code first, Codex CLI next
@@ -1137,3 +1165,13 @@ permissions, hook trust); it can be re-run with `klatch init --reconfigure`; eve
 26. Address by a stable id and not a display name: a Codex issue thread and a Claude Code issue both report
     misrouting when sessions share a name or when the process id changes on resume. The gateway-issued member
     id in D6 is the intended answer; test it on resume and fork in both harnesses.
+27. Does a hand-built registry record ever become visible to `ListAgents` and `SendMessage` on some version or
+    platform, and what does Claude Code check beyond the file (process evidence, a handshake on the socket)?
+    Experiment 14.3 failed twice; native-peer mode is not planned for v1.
+28. Peer identity from the socket (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux): can a gateway-owned
+    socket identify which session connected, so identity does not rest on a self-declared name (R23)? The probe
+    showed the pid is obtainable; matching it to a session was not done.
+29. The inbound token was not enforced in one run (14.2). Re-test across versions, on a busy session, in the
+    interactive TUI and with a bypassing receiver, and record which gate actually applies.
+30. `PostToolUse` injection, warn-without-block in `PreToolUse`, hook output limits, and `asyncRewake` in the
+    interactive TUI and under long delays are still untested.
