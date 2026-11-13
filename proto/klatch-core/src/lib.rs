@@ -21,6 +21,7 @@ pub use board::{
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, current_offers, is_offer,
     render_board, render_who, statuses,
 };
+pub mod budget;
 pub use convention::{CONVENTION_MARKER, convention};
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};

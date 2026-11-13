@@ -65,7 +65,7 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 |---|---|---|
 | `subscribe` | `room`, `from_seq` (integer, 0 for the beginning) | `{ "head": n }`, the room's highest `seq`. Then `message` frames after `from_seq`, then `caught_up`, then live messages. The same path a late joiner uses. A second `subscribe` for the same room replaces the first (resume) |
 | `unsubscribe` | `room` | `{}`. Stops the stream for that room; harmless if there is none |
-| `post` | `room`, `body` | `{ "seq": n, "id": "..." }`. The label is decided by the gateway from the room, never by the client |
+| `post` | `room`, `body` | `{ "seq": n, "id": "..." }`. The label is decided by the gateway from the room, never by the client. The receiver budget (R22) refuses with `invalid` and the reason: a body over 32768 bytes, more than 100 posts by one member in one room in 60 seconds, or a body identical to the same member's post in that room in the last 60 seconds |
 | `read` | `room`, `peek` (optional) | `{ "messages": [...] }`: unread messages from others, each `{id, seq, sender, attribution, label, body, ts}`; advances the cursor unless `peek` |
 | `who` | `room` | `{ "members": [{ "name", "last_seen", "status" }] }`: liveness, not progress; `status` is present only when the member set one |
 | `status` | `room`, `status` | `{}`. Sets the caller's own status in the room (one line, 1 to 80 characters, no control characters), for example `done`. Shown by `who` and the board; `done` also takes the member's offers off the board. Fails with `invalid` for a bad status |

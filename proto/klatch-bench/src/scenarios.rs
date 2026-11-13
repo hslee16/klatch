@@ -187,6 +187,12 @@ pub fn all() -> Vec<Scenario> {
             run: garbage_database,
         },
         Scenario {
+            name: "the_receiver_budget_refuses_floods_and_clips_what_a_session_sees",
+            origin: "#22, R22",
+            layer: "fault",
+            run: receiver_budget,
+        },
+        Scenario {
             name: "a_hook_survives_hostile_standard_input",
             origin: "#262, #284",
             layer: "fault",
@@ -907,11 +913,16 @@ fn claim_contention(w: &World) -> Res {
 
 fn long_history(w: &World) -> Res {
     let total = 3000;
+    // a member may post 100 times a minute in one room (R22), so the load goes in batches a minute apart
+    w.set_clock(T0);
     for who in 0..3 {
-        let reqs: Vec<String> = (0..1000)
-            .map(|i| World::post_request(i, "r", &format!("message {who}-{i}")))
-            .collect();
-        all_ok(&w.serve(&format!("p{who}"), &reqs)?, 1000)?;
+        for batch in 0..10 {
+            let reqs: Vec<String> = (0..100)
+                .map(|i| World::post_request(i, "r", &format!("message {who}-{}", batch * 100 + i)))
+                .collect();
+            all_ok(&w.serve(&format!("p{who}"), &reqs)?, 100)?;
+            w.advance(61);
+        }
     }
     w.ok("reader", &["join", "r"])?;
     let t = Instant::now();
@@ -1133,6 +1144,46 @@ fn garbage_database(w: &World) -> Res {
         std::fs::read(&path).map_err(|e| e.to_string())? == junk,
         "klatch changed or removed a file that was not its database",
     )?;
+    Ok(vec![])
+}
+
+fn receiver_budget(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("reader", &["join", "r"])?;
+    let big = "x".repeat(33 * 1024);
+    has(
+        &w.refused("poster", &["post", "r", &big])?,
+        "too large",
+        "an oversize post is refused with its reason",
+    )?;
+    w.ok("poster", &["post", "r", "closed #1"])?;
+    has(
+        &w.refused("poster", &["post", "r", "closed #1"])?,
+        "same as your message",
+        "an identical repeat is refused",
+    )?;
+    for i in 0..100 {
+        w.ok("flood", &["post", "r", &format!("spam {i}")])?;
+    }
+    has(
+        &w.refused("flood", &["post", "r", "spam again"])?,
+        "too many posts",
+        "the 101st post in a minute is refused",
+    )?;
+    let long = "y".repeat(5000);
+    w.ok("poster", &["post", "r", &long])?;
+    let seen = w.ok("reader", &["hook", "--event", "UserPromptSubmit"])?;
+    check(
+        !seen.contains(&"y".repeat(1001)),
+        "a long message reached the session unclipped",
+    )?;
+    has(
+        &seen,
+        "more messages not shown",
+        "the digest counts what it left out",
+    )?;
+    w.advance(61);
+    w.ok("flood", &["post", "r", "after the window"])?;
     Ok(vec![])
 }
 
