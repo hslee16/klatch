@@ -824,3 +824,14 @@ Setup: two idle helpers (rho and sigma, same read-only `lib` package with `text.
 - **OBSERVED.** `klatch wait` fixed the lingering sessions of run four: alpha ended after 28 s and gamma after 30 s, both right after the answer. The helpers lingered only because their task told them to keep waiting.
 - **OBSERVED.** alpha's tests pass (5), gamma's README describes the real module, `lib/text.py` was not modified (hash), and nobody edited outside their own repository.
 - **NOT OBSERVED.** A tie within the same poll (200 ms); more than two helpers; a helper that is busy when the ask arrives; an ask no one can answer; whether agents would use `ask:<N>` without being told (#209). The `ask:<short name>` convention of runs three and four can miss a conflict when two helpers pick different names; the sequence number removes that, and is worth making the documented convention.
+
+## 24. Run six: wait v2 in the herd (2026-11-13)
+
+Setup: two idle helpers on the same `lib` package and two askers (alpha in `api`, gamma in `docs`) released together, as run five, on the binary with `klatch wait` v2 (PR #218). Helpers waited with `wait lobby --only seeking: --timeout 60`. alpha needed a `slugify` that transliterates accents (the existing one dropped them), so the owner had to change the package. Headless, throwaway `--settings`, hook log on every call.
+
+- **OBSERVED.** The filtered wait woke both helpers for the two asks. One helper (`lib-a1`) claimed `ask:1` and `ask:2` and posted both answers 16 to 18 seconds after the asks (seq 3 and 4); the other helper's claims were refused on both and it stayed out. The same pattern as run five: one winner, one refused loser, no duplicate answers.
+- **OBSERVED.** The winner changed the package to meet alpha's need: `text.py` now transliterates accents with NFKD, with tests; `uvx pytest -q` passes in `lib` (4) and `api` (4), and `cli.py "Café Crème"` prints `cafe-creme`. gamma's README mentions the accent handling, so it was written from the updated module.
+- **OBSERVED.** A room of two was created and used: the helper moved to `dm-api-30-lib-a1`, told alpha the import path and what changed; alpha confirmed in the same room.
+- **OBSERVED, a gap.** One helper waited on `lobby dm-api-30-lib-a1 --only seeking:`. The filter applies to every named room, so a reply in the room of two that does not start with `seeking:` would not have woken it. This run did not need it, but it is a trap (see the ticket).
+- **OBSERVED.** The helpers lingered (240 s and 289 s) only because my stop rule told them to wait for three timeouts; the askers ended in 48 s and 54 s.
+- **NOT OBSERVED.** A multi-step exchange in the room of two: alpha's ask already said accents should be transliterated, so the helper had nothing to ask back. The scenario did not force a question (#210 stays open). Two helpers racing within one poll; a third helper; whether agents would use any of this unprompted (#209).
