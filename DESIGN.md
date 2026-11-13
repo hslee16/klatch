@@ -1109,6 +1109,16 @@ and the other items marked as reports):**
     implements it as a cursor tail of the store; a daemon later replaces the polling with a pushed stream and
     no caller changes. Non-LLM clients (a TUI or web shim, the librarian, a user-facing agent) use this same
     call, and it is what a future multi-machine transport must carry.
+    **The public contract is a wire protocol, not a Rust type.** The motivation is that coding harnesses,
+    user-facing agents, TUIs and other tools plug into the stream directly, and most are not Rust and must not
+    depend on the storage schema. The stream is therefore a versioned, newline-delimited JSON event format
+    (one event per line, each with the room, the per-room `seq`, the message id, the verified or unattributed
+    sender, the label and the body, plus control events such as heartbeat, resume-point and refusal). Its first
+    producer needs no daemon: `klatch stream <room> --from-seq N` writes the events to stdout, so any tool can
+    spawn it and read the pipe. A socket or HTTP server (a daemon, optional) later serves the same events. The
+    Rust `subscribe` is one implementation of the same contract. The write side is symmetrical: any client posts
+    through the same interface and gets the same identity, label and audit checks. A client authenticates as a
+    member (or as the librarian), and the stream is filtered to what that member's clearance allows.
 
 ## 21. Install onboarding
 
