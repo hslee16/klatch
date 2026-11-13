@@ -245,7 +245,7 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The profile directory (target/debug or target/release) is the nearest ancestor with that name; the executable
     // can sit several levels below it, and where depends on the cargo version.
-    let dir = exe
+    let profile = exe
         .ancestors()
         .find(|d| {
             matches!(
@@ -255,20 +255,44 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
         })
         .ok_or("could not find the cargo profile directory above the running executable")?
         .to_path_buf();
-    let bin = dir.join(if cfg!(windows) {
-        "klatch.exe"
-    } else {
-        "klatch"
-    });
-    if !bin.exists() {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = std::process::Command::new(cargo)
-            .args(["build", "-q", "-p", "klatch-cli"])
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() || !bin.exists() {
-            return Err(format!("could not find or build {}", bin.display()));
-        }
+    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+    // The bench drives a test build (`--features test-clock`, which lets it set klatch's clock), built into its own
+    // target directory so it never replaces the normal debug binary.
+    let dir = target.join("bench-bin");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = std::process::Command::new(cargo)
+        .args([
+            "build",
+            "-q",
+            "-p",
+            "klatch-cli",
+            "--features",
+            "test-clock",
+            "--target-dir",
+        ])
+        .arg(&dir)
+        .status()
+        .map_err(|e| e.to_string())?;
+    let bin = dir
+        .join(profile.file_name().unwrap_or_default())
+        .join(if cfg!(windows) {
+            "klatch.exe"
+        } else {
+            "klatch"
+        });
+    if !status.success() || !bin.exists() {
+        return Err(format!("could not build {}", bin.display()));
+    }
+    let version = std::process::Command::new(&bin)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .map_err(|e| e.to_string())?;
+    if !version.contains("test-clock") {
+        return Err(format!(
+            "{} is not a test-clock build: {version}",
+            bin.display()
+        ));
     }
     Ok(bin)
 }

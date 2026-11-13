@@ -12,6 +12,7 @@ pub struct World {
     /// The store directory every command of this world uses (`KLATCH_HOME`).
     pub home: PathBuf,
     calls: Cell<u64>,
+    clock: Cell<Option<i64>>,
 }
 
 /// What one klatch command did.
@@ -33,7 +34,18 @@ impl World {
             bin: bin.to_path_buf(),
             home,
             calls: Cell::new(0),
+            clock: Cell::new(None),
         }
+    }
+
+    /// Fix klatch's clock for every later command of this world (unix seconds); needs the test-clock binary.
+    pub fn set_clock(&self, t: i64) {
+        self.clock.set(Some(t));
+    }
+
+    /// Move klatch's clock forward (or back, with a negative number) from where it is.
+    pub fn advance(&self, secs: i64) {
+        self.clock.set(Some(self.clock.get().unwrap_or(0) + secs));
     }
 
     /// How many klatch processes this world has started.
@@ -49,6 +61,9 @@ impl World {
             .env("KLATCH_NAME", who)
             .args(args)
             .stdin(Stdio::null());
+        if let Some(t) = self.clock.get() {
+            c.env("KLATCH_NOW", t.to_string());
+        }
         c
     }
 
