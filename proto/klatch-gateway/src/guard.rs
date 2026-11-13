@@ -50,6 +50,24 @@ pub enum Operation {
 }
 
 impl Operation {
+    pub fn read(room: &str, advance: bool) -> Self {
+        Operation::Read {
+            room: room.into(),
+            advance,
+        }
+    }
+
+    pub fn claims(room: &str) -> Self {
+        Operation::Claims { room: room.into() }
+    }
+
+    pub fn release(room: &str, path: &str) -> Self {
+        Operation::Release {
+            room: room.into(),
+            path: path.into(),
+        }
+    }
+
     /// The room the operation is about, if it is about one.
     pub fn room(&self) -> Option<&str> {
         match self {
