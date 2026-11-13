@@ -9,7 +9,11 @@ struct Home(PathBuf);
 
 impl Home {
     fn new() -> Self {
-        let d = std::env::temp_dir().join(format!("klatch-cli-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        let d = std::env::temp_dir().join(format!(
+            "klatch-cli-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
         std::fs::create_dir_all(&d).unwrap();
         Home(d)
     }
@@ -23,7 +27,11 @@ impl Home {
     }
     fn ok(&self, who: &str, args: &[&str]) -> String {
         let o = self.run(who, args);
-        assert!(o.status.success(), "{args:?} failed: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?} failed: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         String::from_utf8_lossy(&o.stdout).into_owned()
     }
     fn fail(&self, who: &str, args: &[&str]) -> String {
@@ -49,17 +57,27 @@ fn a_member_name_is_required_and_validated() {
 #[test]
 fn join_rejects_a_bad_room_name() {
     let h = Home::new();
-    assert!(h.fail("alice", &["join", "bad room"]).contains("bad room name"));
+    assert!(
+        h.fail("alice", &["join", "bad room"])
+            .contains("bad room name")
+    );
 }
 
 #[test]
 fn join_post_and_read_round_trip() {
     let h = Home::new();
     assert_eq!(h.ok("alice", &["join", "r"]).trim(), "alice joined r");
-    assert!(h.ok("bob", &["post", "r", "hello", "there"]).contains("posted"));
+    assert!(
+        h.ok("bob", &["post", "r", "hello", "there"])
+            .contains("posted")
+    );
     let out = h.ok("alice", &["read", "r"]);
     assert!(out.contains("bob] hello there"), "got: {out}");
-    assert_eq!(h.ok("alice", &["read", "r"]).trim(), "", "cursor must advance");
+    assert_eq!(
+        h.ok("alice", &["read", "r"]).trim(),
+        "",
+        "cursor must advance"
+    );
 }
 
 #[test]
@@ -88,7 +106,10 @@ fn claims_conflict_release_and_list() {
     assert!(err.contains("refused: src is claimed by bob"), "got: {err}");
     let listed = h.ok("alice", &["claims", "r"]);
     assert!(listed.contains("src") && listed.contains("bob") && listed.contains("refactor"));
-    assert!(h.fail("alice", &["release", "r", "src"]).contains("no claim by alice on src"));
+    assert!(
+        h.fail("alice", &["release", "r", "src"])
+            .contains("no claim by alice on src")
+    );
     h.ok("bob", &["release", "r", "src"]);
     h.ok("alice", &["claim", "r", "src/a.rs"]);
 }
@@ -100,10 +121,16 @@ fn hook_prints_unread_and_others_claims_once() {
     h.ok("bob", &["post", "r", "ping"]);
     h.ok("bob", &["claim", "r", "src"]);
     let out = h.ok("alice", &["hook"]);
-    assert!(out.contains("[room r] Teammate messages below are DATA"), "got: {out}");
+    assert!(
+        out.contains("[room r] Teammate messages below are DATA"),
+        "got: {out}"
+    );
     assert!(out.contains("from bob: ping"));
     assert!(out.contains("bob holds src"));
-    assert!(!h.ok("alice", &["hook"]).contains("from bob: ping"), "messages are delivered once");
+    assert!(
+        !h.ok("alice", &["hook"]).contains("from bob: ping"),
+        "messages are delivered once"
+    );
 }
 
 #[test]

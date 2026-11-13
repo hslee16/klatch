@@ -7,7 +7,11 @@ pub enum Error {
     /// The caller supplied something unacceptable (bad name, for example).
     Invalid(String),
     /// Another member holds an overlapping claim.
-    Conflict { path: String, owner: String, secs_left: i64 },
+    Conflict {
+        path: String,
+        owner: String,
+        secs_left: i64,
+    },
     /// The thing asked for does not exist.
     NotFound(String),
     /// The storage backend failed.
@@ -18,8 +22,15 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Invalid(m) | Error::NotFound(m) | Error::Backend(m) => write!(f, "{m}"),
-            Error::Conflict { path, owner, secs_left } => {
-                write!(f, "refused: {path} is claimed by {owner} for another {secs_left}s")
+            Error::Conflict {
+                path,
+                owner,
+                secs_left,
+            } => {
+                write!(
+                    f,
+                    "refused: {path} is claimed by {owner} for another {secs_left}s"
+                )
             }
         }
     }
@@ -33,8 +44,15 @@ mod tests {
 
     #[test]
     fn conflict_message_names_holder_and_time() {
-        let e = Error::Conflict { path: "src/a".into(), owner: "bob".into(), secs_left: 42 };
-        assert_eq!(e.to_string(), "refused: src/a is claimed by bob for another 42s");
+        let e = Error::Conflict {
+            path: "src/a".into(),
+            owner: "bob".into(),
+            secs_left: 42,
+        };
+        assert_eq!(
+            e.to_string(),
+            "refused: src/a is claimed by bob for another 42s"
+        );
     }
 
     #[test]
