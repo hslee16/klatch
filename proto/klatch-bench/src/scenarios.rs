@@ -1,7 +1,7 @@
 //! The scenarios, grouped by layer. Every one names its origin: a ticket (a bug that must not come back), a real-agent
 //! run it replays, or a DESIGN section. They drive the real binary through `World` and assert on its output.
 
-use crate::{Scenario, World};
+use crate::{FakeHarness, Scenario, World};
 
 type Metrics = Vec<(String, f64)>;
 type Res = Result<Metrics, String>;
@@ -79,6 +79,42 @@ pub fn all() -> Vec<Scenario> {
             origin: "#216, #237",
             layer: "functional",
             run: filtered_wait,
+        },
+        Scenario {
+            name: "a_child_session_ending_never_marks_its_parent",
+            origin: "#284, #285",
+            layer: "functional",
+            run: child_end_spares_parent,
+        },
+        Scenario {
+            name: "nested_sessions_get_their_own_members",
+            origin: "#284, #285",
+            layer: "functional",
+            run: nested_sessions,
+        },
+        Scenario {
+            name: "two_sessions_with_one_name_get_distinct_members",
+            origin: "#170, #285",
+            layer: "functional",
+            run: same_name_distinct,
+        },
+        Scenario {
+            name: "a_renamed_session_keeps_its_member",
+            origin: "#170, #285",
+            layer: "functional",
+            run: renamed_keeps_member,
+        },
+        Scenario {
+            name: "a_hook_with_no_session_id_still_uses_the_walk",
+            origin: "#284, #285",
+            layer: "functional",
+            run: no_session_id,
+        },
+        Scenario {
+            name: "session_end_with_no_record_and_no_memory_does_nothing",
+            origin: "#284, #285",
+            layer: "fault",
+            run: end_unknown,
         },
         Scenario {
             name: "hostile_text_cannot_forge_a_header",
@@ -421,5 +457,143 @@ fn old_databases(w: &World) -> Res {
             std::fs::remove_file(w.home.join(format!("rooms.db{ext}"))).ok();
         }
     }
+    Ok(vec![])
+}
+
+fn who_line(w: &World, member: &str) -> Result<String, String> {
+    let who = w.ok("observer", &["who", "lobby", "--all"])?;
+    who.lines()
+        .find(|l| l.starts_with(&format!("{member}\t")))
+        .map(String::from)
+        .ok_or_else(|| format!("{member} is not in the lobby:\n{who}"))
+}
+
+fn child_end_spares_parent(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let parent = h.start("parent-sid-0001", "par")?;
+    parent.hook("SessionStart")?;
+    let child = parent.spawn_child("child-sid-0002", "kid")?;
+    child.hook("SessionStart")?;
+    // The harness drops the child's record as it exits, then runs the SessionEnd hook: the walk up the process
+    // tree now reaches the parent's record.
+    child.drop_record();
+    child.hook("SessionEnd")?;
+    has(
+        &who_line(w, "kid")?,
+        "status: done",
+        "the child is marked done",
+    )?;
+    lacks(
+        &who_line(w, "par")?,
+        "status: done",
+        "the parent must not be marked done",
+    )?;
+    Ok(vec![])
+}
+
+fn nested_sessions(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let parent = h.start("parent-sid-0001", "par")?;
+    let child = parent.spawn_child("child-sid-0002", "kid")?;
+    has(
+        &parent.hook("SessionStart")?,
+        "joined lobby as par",
+        "the parent joins as itself",
+    )?;
+    has(
+        &child.hook("SessionStart")?,
+        "joined lobby as kid",
+        "the child joins as itself",
+    )?;
+    who_line(w, "par")?;
+    who_line(w, "kid")?;
+    let runs = w.ok("observer", &["hooks", "--of", "kid"])?;
+    has(
+        &runs,
+        "SessionStart",
+        "the child's own hook run is recorded",
+    )?;
+    Ok(vec![])
+}
+
+fn same_name_distinct(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let first = h.start("aaaa1111-first", "proj-20")?;
+    let second = h.start("bbbb2222-second", "proj-20")?;
+    has(
+        &first.hook("SessionStart")?,
+        "joined lobby as proj-20 ",
+        "the first keeps the name",
+    )?;
+    let out = second.hook("SessionStart")?;
+    lacks(
+        &out,
+        "joined lobby as proj-20 ",
+        "the second must not take the same member",
+    )?;
+    has(&out, "joined lobby as proj-20-", "it gets a suffix")?;
+    let who = w.ok("observer", &["who", "lobby", "--all"])?;
+    check(
+        who.lines().filter(|l| l.starts_with("proj-20")).count() == 2,
+        format!("expected two members:\n{who}"),
+    )?;
+    // Each keeps its member on later hooks.
+    lacks(
+        &first.hook("UserPromptSubmit")?,
+        "error",
+        "the first is stable",
+    )?;
+    check(
+        w.ok("observer", &["hooks", "--of", "proj-20"])?
+            .contains("UserPromptSubmit"),
+        "the first's hooks are recorded under its own name",
+    )?;
+    Ok(vec![])
+}
+
+fn renamed_keeps_member(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let s = h.start("cccc3333-session", "first-name")?;
+    s.hook("SessionStart")?;
+    s.rename("renamed-by-the-user")?;
+    // A resumed or restarted session runs SessionStart again under its new name: it must be the same member.
+    has(
+        &s.hook("SessionStart")?,
+        "back in lobby as first-name",
+        "the session is told it is back, under its first name",
+    )?;
+    let who = w.ok("observer", &["who", "lobby", "--all"])?;
+    lacks(
+        &who,
+        "renamed-by-the-user",
+        "a rename must not make a new member",
+    )?;
+    has(&who, "first-name", "the session keeps its first name")?;
+    Ok(vec![])
+}
+
+fn no_session_id(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let s = h.start("dddd4444-session", "solo")?;
+    has(
+        &s.hook_without_id("SessionStart")?,
+        "joined lobby as solo",
+        "the walk still finds the session",
+    )?;
+    Ok(vec![])
+}
+
+fn end_unknown(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let s = h.start("eeee5555-session", "ghost")?;
+    s.drop_record();
+    // No record and nothing remembered for this session id: the hook must do nothing, quietly.
+    let out = s.hook("SessionEnd")?;
+    check(
+        out.trim().is_empty(),
+        format!("a SessionEnd with nothing to go on printed: {out}"),
+    )?;
+    let who = w.ok("observer", &["who", "lobby", "--all"])?;
+    lacks(&who, "status: done", "no one was marked done")?;
     Ok(vec![])
 }
