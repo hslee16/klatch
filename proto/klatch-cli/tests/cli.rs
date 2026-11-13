@@ -627,3 +627,36 @@ fn message_ids_are_distinct_across_many_processes_posting_at_once() {
     }
     assert_eq!(ids.len(), 160);
 }
+
+#[test]
+fn the_as_member_flag_beats_the_environment_variable() {
+    let h = Home::new();
+    let out = h.ok("envname", &["--as-member", "flagname", "join", "r"]);
+    assert_eq!(out.trim(), "flagname joined r");
+}
+
+#[test]
+fn an_empty_environment_name_is_fine_when_the_flag_supplies_one() {
+    let h = Home::new();
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env("KLATCH_HOME", &h.0)
+        .env("KLATCH_NAME", "")
+        .args(["--as-member", "carol", "join", "r"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+#[test]
+fn the_caller_from_the_environment_is_never_verified_in_stored_messages() {
+    let h = Home::new();
+    h.ok("root", &["post", "r", "I am root"]);
+    let f = h.stream("alice", &["r"]);
+    let m = f
+        .iter()
+        .find(|x| matches!(x, ServerFrame::Message { .. }))
+        .unwrap();
+    assert!(
+        matches!(m, ServerFrame::Message { attribution: klatch_protocol::Attribution::Unattributed, sender, .. } if sender == "root")
+    );
+}

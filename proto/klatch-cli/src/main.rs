@@ -5,8 +5,10 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, flat, render_hook, valid_name};
-use klatch_gateway::{AllowAll, Direct, Gateway, SystemClock, Transport};
+use klatch_core::{Principal, flat, render_hook};
+use klatch_gateway::{
+    AllowAll, DeclaredName, Direct, Gateway, Identity, PeerEvidence, SystemClock, Transport,
+};
 use klatch_store::SqliteStore;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -91,17 +93,12 @@ fn db_path() -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let me = cli
-        .as_member
-        .or_else(|| std::env::var("KLATCH_NAME").ok())
-        .unwrap_or_default();
-    if !valid_name(&me) {
-        bail!("set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-]");
-    }
+    // The only thing the CLI knows about its caller is a typed name, which proves nothing.
+    let declared = cli.as_member.or_else(|| std::env::var("KLATCH_NAME").ok());
+    let principal = resolve_principal(&DeclaredName, declared)?;
+    let me = principal.member.clone();
     let store = SqliteStore::open(&db_path()?)?;
     let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
-    // The name comes from an environment variable, so it is not proven: the caller is unattributed.
-    let principal = Principal::unattributed(&me);
     if let Cmd::Serve { stdio } = cli.cmd {
         if !stdio {
             bail!("serve needs --stdio, the only transport so far");
@@ -201,4 +198,49 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The caller, decided by the identity from what the transport knows. The CLI knows only a typed name (a
+/// flag or the environment), which proves nothing, so with `DeclaredName` the caller is unattributed.
+fn resolve_principal(identity: &dyn Identity, declared: Option<String>) -> Result<Principal> {
+    let evidence = declared.map_or(PeerEvidence::None, PeerEvidence::DeclaredName);
+    Ok(identity.resolve(&evidence)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use klatch_core::Attribution;
+    use klatch_gateway::FixedIdentity;
+
+    #[test]
+    fn the_cli_depends_on_the_identity_trait_so_a_fake_identity_decides_the_caller() {
+        let fake = FixedIdentity(Principal::verified("carol"));
+        let p = resolve_principal(&fake, Some("whatever".into())).unwrap();
+        assert_eq!(
+            (p.member.as_str(), p.attribution),
+            ("carol", Attribution::Verified)
+        );
+        let p = resolve_principal(&fake, None).unwrap();
+        assert_eq!(p.member, "carol");
+    }
+
+    #[test]
+    fn with_the_declared_name_identity_a_typed_name_is_unattributed() {
+        let p = resolve_principal(&DeclaredName, Some("alice".into())).unwrap();
+        assert_eq!(
+            (p.member.as_str(), p.attribution),
+            ("alice", Attribution::Unattributed)
+        );
+    }
+
+    #[test]
+    fn a_missing_or_invalid_name_is_an_error_naming_the_variable() {
+        for declared in [None, Some(String::new()), Some("bad name".into())] {
+            let err = resolve_principal(&DeclaredName, declared)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("KLATCH_NAME"), "{err}");
+        }
+    }
 }
