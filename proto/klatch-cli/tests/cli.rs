@@ -548,17 +548,20 @@ fn stream_of_an_empty_room_is_hello_and_caught_up_at_zero() {
 #[test]
 fn stream_has_no_window_so_a_reader_that_never_acknowledges_gets_everything() {
     let h = Home::new();
-    let posts: Vec<String> = (0..300)
-        .map(|i| {
-            request(
-                &format!("p{i}"),
-                "post",
-                &format!(r#"{{"room":"r","body":"m{i}"}}"#),
-            )
-        })
-        .collect();
-    let refs: Vec<&str> = posts.iter().map(String::as_str).collect();
-    h.serve("bob", &refs);
+    // several posters, because one member is limited to a burst of 100 posts a minute per room
+    for who in 0..5 {
+        let posts: Vec<String> = (0..60)
+            .map(|i| {
+                request(
+                    &format!("p{i}"),
+                    "post",
+                    &format!(r#"{{"room":"r","body":"m{who}-{i}"}}"#),
+                )
+            })
+            .collect();
+        let refs: Vec<&str> = posts.iter().map(String::as_str).collect();
+        h.serve(&format!("bob{who}"), &refs);
+    }
     assert_eq!(seqs_of(&h.stream("alice", &["r"])).len(), 300);
 }
 
@@ -665,7 +668,11 @@ fn message_ids_are_distinct_across_many_processes_posting_at_once() {
                 writeln!(
                     stdin,
                     "{}",
-                    request(&format!("p{j}"), "post", r#"{"room":"r","body":"x"}"#)
+                    request(
+                        &format!("p{j}"),
+                        "post",
+                        &format!(r#"{{"room":"r","body":"x{j}"}}"#)
+                    )
                 )
                 .unwrap();
             }

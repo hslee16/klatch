@@ -87,6 +87,7 @@ impl<S: Store> Gateway<S> {
                 body: body.into(),
             },
         )?;
+        self.check_budget(who, room, body)?;
         self.store.post_as(
             room,
             &who.member,
@@ -95,6 +96,50 @@ impl<S: Store> Gateway<S> {
             body,
             self.now(),
         )
+    }
+
+    /// The receiver budget (R22): a size cap, a burst limit and a refusal of an identical repeat, each with a stated
+    /// reason. Looks only at the room's recent messages.
+    fn check_budget(&self, who: &Principal, room: &str, body: &str) -> Result<()> {
+        use klatch_core::budget::*;
+        if body.len() > MAX_POST_BYTES {
+            return Err(Error::Invalid(format!(
+                "message too large: {} bytes, at most {MAX_POST_BYTES}; put the detail in a file and post where it is",
+                body.len()
+            )));
+        }
+        let now = self.now();
+        let head = self.store.head(room)?;
+        let recent = self.store.tail(
+            room,
+            (head - RECENT_LOOKBACK).max(0),
+            RECENT_LOOKBACK as usize,
+        )?;
+        let mine = recent.iter().filter(|m| {
+            m.sender == who.member && now - m.ts < BURST_WINDOW_SECS.max(DUPLICATE_WINDOW_SECS)
+        });
+        let mut in_window = 0;
+        let mut oldest_in_window = now;
+        for m in mine.clone() {
+            if now - m.ts < DUPLICATE_WINDOW_SECS && m.body.trim() == body.trim() {
+                return Err(Error::Invalid(format!(
+                    "same as your message #{} posted {}s ago; say something new or do not repeat it",
+                    m.seq,
+                    klatch_core::secs_between(now, m.ts)
+                )));
+            }
+            if now - m.ts < BURST_WINDOW_SECS {
+                in_window += 1;
+                oldest_in_window = oldest_in_window.min(m.ts);
+            }
+        }
+        if in_window >= MAX_POSTS_PER_WINDOW {
+            return Err(Error::Invalid(format!(
+                "too many posts: at most {MAX_POSTS_PER_WINDOW} posts in {BURST_WINDOW_SECS} seconds in one room; wait {}s",
+                (BURST_WINDOW_SECS - (now - oldest_in_window)).max(1)
+            )));
+        }
+        Ok(())
     }
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
@@ -693,6 +738,71 @@ mod tests {
             kinds,
             vec!["join", "post", "read", "who", "claim", "claims", "release"]
         );
+    }
+
+    struct TestClock(Rc<std::cell::Cell<i64>>);
+    impl Clock for TestClock {
+        fn now(&self) -> i64 {
+            self.0.get()
+        }
+    }
+
+    fn timed() -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
+        let t = Rc::new(std::cell::Cell::new(1_000));
+        (
+            Gateway::new(SpyStore::new(), TestClock(t.clone()), AllowAll),
+            t,
+        )
+    }
+
+    #[test]
+    fn a_post_over_the_size_cap_is_refused_with_the_reason_and_stores_nothing() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        let at_cap = "a".repeat(klatch_core::budget::MAX_POST_BYTES);
+        g.post(&alice(), "r", &at_cap).unwrap();
+        let err = g
+            .post(&alice(), "r", &format!("{at_cap}a"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("too large") && err.contains("32768"), "{err}");
+        assert_eq!(g.store.head("r").unwrap(), 1);
+    }
+
+    #[test]
+    fn an_identical_repeat_within_a_minute_is_refused_naming_the_original() {
+        let (g, clock) = timed();
+        let first = g.post(&alice(), "r", "closed #3").unwrap();
+        clock.set(1_010);
+        let err = g.post(&alice(), "r", "closed #3").unwrap_err().to_string();
+        assert!(
+            err.contains(&format!("same as your message #{}", first.seq))
+                && err.contains("10s ago"),
+            "{err}"
+        );
+        g.post(&bob(), "r", "closed #3").unwrap();
+        g.post(&alice(), "other", "closed #3").unwrap();
+        g.post(&alice(), "r", "closed #4").unwrap();
+        clock.set(1_061);
+        g.post(&alice(), "r", "closed #3").unwrap();
+    }
+
+    #[test]
+    fn a_burst_of_posts_is_refused_with_how_long_to_wait_and_clears_with_time() {
+        let (g, clock) = timed();
+        for i in 0..klatch_core::budget::MAX_POSTS_PER_WINDOW {
+            g.post(&alice(), "r", &format!("m{i}")).unwrap();
+        }
+        let err = g
+            .post(&alice(), "r", "one too many")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("at most 100 posts in 60 seconds") && err.contains("wait"),
+            "{err}"
+        );
+        g.post(&bob(), "r", "someone else is not limited").unwrap();
+        clock.set(1_061);
+        g.post(&alice(), "r", "after the window").unwrap();
     }
 
     #[test]

@@ -136,7 +136,10 @@ mod tests {
         Gateway::new(SpyStore::new(), FixedClock(10), AllowAll)
     }
     fn fill(g: &Gateway<SpyStore>, n: usize) {
-        for i in 0..n {
+        // every body is different: an identical repeat is refused (R22)
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..n {
+            let i = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             g.post(&bob(), "r", &format!("m{i}")).unwrap();
         }
     }
