@@ -404,7 +404,10 @@ mod tests {
         }
     }
 
+    // Not run by `cargo test` (so not in CI): the bench is a local tool. Run it with `cargo run -p klatch-bench` or
+    // `cargo test -p klatch-bench -- --ignored`.
     #[test]
+    #[ignore = "the bench runs locally, not in CI"]
     fn the_whole_bench_passes_against_the_real_binary() {
         let bin = find_binary().expect("the klatch binary");
         let out = run_scenarios(&all(), &bin);
