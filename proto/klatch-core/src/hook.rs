@@ -104,7 +104,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
 }
 
 /// Ask text as one bounded line: a hook must not let an ask forge lines or grow without limit.
-fn clip(text: &str) -> String {
+pub(crate) fn clip(text: &str) -> String {
     let one = flat(text);
     if one.chars().count() > 160 {
         let cut: String = one.chars().take(160).collect();

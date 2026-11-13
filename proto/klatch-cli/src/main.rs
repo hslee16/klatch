@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, flat, hook_context_json, render_hook};
+use klatch_core::{Principal, flat, hook_context_json, render_board, render_hook};
 use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
@@ -73,6 +73,8 @@ enum Cmd {
     },
     /// Release a claim you hold
     Release { room: String, path: String },
+    /// Show a room's board: open asks, current offers and members with their status
+    Board { room: String },
     /// List the asks in a room nobody has answered or closed
     Asks { room: String },
     /// List active claims in a room
@@ -258,6 +260,9 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Release { room, path } => {
             t.release(&room, &path)?;
             println!("released {path}");
+        }
+        Cmd::Board { room } => {
+            print!("{}", render_board(&t.board(&room)?, now));
         }
         Cmd::Asks { room } => {
             for a in t.open_asks(&room)? {

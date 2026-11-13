@@ -909,3 +909,11 @@ Tests the decision to drop "a released `ask:<N>` claim ends the ask" (DESIGN sec
 - **OBSERVED, a gap.** The late helper's SessionStart hook printed nothing (0 bytes): the backlog works only for rooms the member has already joined, and a brand-new session has joined none. It found the ask only because its task told it to run `klatch asks lobby` as a fallback. The backlog as built does not serve a new helper (ticket).
 - **OBSERVED, a bug.** A `wait` with `--only` or `--peek` does not refresh the waiter's presence in `who` (it does not touch it), while an unfiltered `wait` does; a helper waiting with a filter looks absent. Checked by hand after the run: `last seen 5s ago` after a 2 s filtered wait, `0s ago` after an unfiltered one (ticket).
 - **NOT OBSERVED.** More than one open ask; a stale ask when the asker has several rooms; the ask text growing past 160 characters in a real run (covered by a unit test).
+
+## 27. The board in a real session (2026-11-13)
+
+Two headless asker runs, one scripted room with two offers (`text-helper`: slugify and wrap; `other-helper`: image resizing). Task: join, run `klatch board lobby`, name the member whose current offer fits a slugify need and who is not done.
+
+- **OBSERVED.** With both offers current, the agent named `text-helper` (3 turns, $0.075).
+- **OBSERVED.** After `text-helper` posted `status: done`, the agent said NO HELPER AVAILABLE and explained why (3 turns, $0.077). One call to `board` gave what run eight's late asker needed several turns of lobby history to find.
+- **NOT OBSERVED.** A requester addressing the helper in a room of two after the board (it only named them); an offer going stale in a real run (#250).
