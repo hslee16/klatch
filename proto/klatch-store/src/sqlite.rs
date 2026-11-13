@@ -32,9 +32,9 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
-const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
+const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
@@ -142,6 +142,12 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 6 to 7: the status a member sets for itself in a room (`done`, `busy`, ...), shown by `who` and the board.
+fn migrate_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE members ADD COLUMN status TEXT;")
+        .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -239,7 +245,10 @@ impl SqliteStore {
                     if version < 5 {
                         migrate_v4(&conn)?;
                     }
-                    migrate_v5(&conn)?;
+                    if version < 6 {
+                        migrate_v5(&conn)?;
+                    }
+                    migrate_v6(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -351,6 +360,19 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
+    fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
+        self.immediate(|| {
+            self.touch(room, member, now)?;
+            self.conn
+                .execute(
+                    "UPDATE members SET status=?3 WHERE room=?1 AND name=?2",
+                    params![room, member, status],
+                )
+                .map_err(be)?;
+            Ok(())
+        })
+    }
+
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
         // A waiting member is present: every poll refreshes presence, as a read does (#237).
         self.touch(room, member, now)?;
@@ -445,12 +467,13 @@ impl Store for SqliteStore {
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         let mut st = self
             .conn
-            .prepare("SELECT name,last_seen FROM members WHERE room=?1 ORDER BY name")
+            .prepare("SELECT name,last_seen,status FROM members WHERE room=?1 ORDER BY name")
             .map_err(be)?;
         st.query_map(params![room], |r| {
             Ok(MemberInfo {
                 name: r.get(0)?,
                 last_seen: r.get(1)?,
+                status: r.get(2)?,
             })
         })
         .map_err(be)?
@@ -662,7 +685,8 @@ mod tests {
             m,
             vec![MemberInfo {
                 name: "alice".into(),
-                last_seen: 20
+                last_seen: 20,
+                status: None
             }]
         );
         assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);
@@ -879,6 +903,44 @@ mod tests {
         s.post("r", "bob", &format!("answer to #{b}: ok"), 12)
             .unwrap();
         assert!(s.stale_asks("r", "alice", 100, 60).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_status_is_stored_per_member_and_room_and_replaced_by_the_next() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.join("r2", "alice", 1).unwrap();
+        s.set_status("r", "alice", "busy", 2).unwrap();
+        assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
+        assert_eq!(s.members("r2").unwrap()[0].status, None);
+        s.set_status("r", "alice", "done leaving", 3).unwrap();
+        assert_eq!(
+            s.members("r").unwrap()[0].status.as_deref(),
+            Some("done leaving")
+        );
+    }
+
+    #[test]
+    fn setting_a_status_joins_a_member_who_was_not_there() {
+        let s = store();
+        s.set_status("r", "bob", "done", 5).unwrap();
+        let m = s.members("r").unwrap();
+        assert_eq!(
+            (m[0].name.as_str(), m[0].status.as_deref()),
+            ("bob", Some("done"))
+        );
+    }
+
+    #[test]
+    fn a_status_survives_reopening_the_database() {
+        let path = temp_db("status-persist");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            s.join("r", "alice", 1).unwrap();
+            s.set_status("r", "alice", "busy", 2).unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
     }
 
     #[test]
@@ -1653,12 +1715,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_6() {
-        assert_eq!(version(&store()), 6);
+    fn a_fresh_database_is_at_schema_version_7() {
+        assert_eq!(version(&store()), 7);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_6_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_7_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1674,7 +1736,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 6);
+        assert_eq!(version(&s), 7);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1695,14 +1757,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            6,
+            7,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_6() {
+    fn a_version_0_database_now_migrates_all_the_way_to_7() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1715,7 +1777,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 6);
+        assert_eq!(version(&s), 7);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1734,11 +1796,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_six_with_everything_intact() {
+    fn a_version_two_database_migrates_to_seven_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 6);
+        assert_eq!(version(&s), 7);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1756,7 +1818,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 6);
+        assert_eq!(version(&s), 7);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

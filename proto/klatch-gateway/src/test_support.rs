@@ -105,6 +105,10 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.open_asks(room, now)
     }
+    fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.set_status(room, member, status, now)
+    }
     fn claim_changes(
         &self,
         room: &str,
@@ -162,6 +166,7 @@ fn room_of(op: &Operation) -> &str {
         | Operation::Claim { room, .. }
         | Operation::Release { room, .. }
         | Operation::Claims { room }
+        | Operation::Status { room, .. }
         | Operation::Subscribe { room }
         | Operation::Ack { room } => room,
     }

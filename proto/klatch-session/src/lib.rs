@@ -450,6 +450,11 @@ struct ClaimParams {
     reason: String,
 }
 #[derive(Deserialize)]
+struct StatusParams {
+    room: String,
+    status: String,
+}
+#[derive(Deserialize)]
 struct PathParams {
     room: String,
     path: String,
@@ -516,9 +521,19 @@ fn handle<S: Store>(
             let p = parse!(RoomParams);
             answer!(g.who(who, &p.room), |ms: Vec<MemberInfo>| json!({
                 "members": ms.iter()
-                    .map(|m| json!({"name": m.name, "last_seen": m.last_seen}))
+                    .map(|m| {
+                        let mut v = json!({"name": m.name, "last_seen": m.last_seen});
+                        if let Some(status) = &m.status {
+                            v["status"] = json!(status);
+                        }
+                        v
+                    })
                     .collect::<Vec<_>>()
             }))
+        }
+        "status" => {
+            let p = parse!(StatusParams);
+            answer!(g.set_status(who, &p.room, &p.status), |()| json!({}))
         }
         "claim" => {
             let p = parse!(ClaimParams);

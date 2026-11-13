@@ -24,6 +24,8 @@ pub struct Posted {
 pub struct MemberInfo {
     pub name: String,
     pub last_seen: i64,
+    /// The status the member set with the `status` operation (for example `done`), if any.
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -67,7 +67,8 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 | `unsubscribe` | `room` | `{}`. Stops the stream for that room; harmless if there is none |
 | `post` | `room`, `body` | `{ "seq": n, "id": "..." }`. The label is decided by the gateway from the room, never by the client |
 | `read` | `room`, `peek` (optional) | `{ "messages": [...] }`: unread messages from others, each `{id, seq, sender, attribution, label, body, ts}`; advances the cursor unless `peek` |
-| `who` | `room` | `{ "members": [{ "name", "last_seen" }] }`: liveness, not progress |
+| `who` | `room` | `{ "members": [{ "name", "last_seen", "status" }] }`: liveness, not progress; `status` is present only when the member set one |
+| `status` | `room`, `status` | `{}`. Sets the caller's own status in the room (one line, 1 to 80 characters, no control characters), for example `done`. Shown by `who` and the board; `done` also takes the member's offers off the board. Fails with `invalid` for a bad status |
 | `claim` | `room`, `path`, `ttl` (seconds, optional, default 600), `reason` (optional) | `{}`, or fails with code `conflict` |
 | `release` | `room`, `path` | `{}`, or fails with `not_found` if you hold no claim on that path |
 | `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires" }] }`: unexpired claims in the room |

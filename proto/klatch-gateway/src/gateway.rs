@@ -135,6 +135,26 @@ impl<S: Store> Gateway<S> {
         self.store.wait_seen(room, &who.member, seq, self.now())
     }
 
+    /// Set the caller's own status in a room (for example `done`). Short, one line, no control characters.
+    pub fn set_status(&self, who: &Principal, room: &str, status: &str) -> Result<()> {
+        check_member(who)?;
+        check_room(room)?;
+        if status.trim().is_empty() || status.chars().count() > 80 || has_control(status) {
+            return Err(Error::Invalid(
+                "bad status: one line of 1 to 80 characters, no control characters".into(),
+            ));
+        }
+        self.guard.check(
+            who,
+            &Operation::Status {
+                room: room.into(),
+                status: status.into(),
+            },
+        )?;
+        self.store
+            .set_status(room, &who.member, status.trim(), self.now())
+    }
+
     /// The room's board: open asks, current offers and members with their last announced status.
     pub fn board(&self, who: &Principal, room: &str) -> Result<klatch_core::Board> {
         self.admit(
@@ -148,18 +168,24 @@ impl<S: Store> Gateway<S> {
         let now = self.now();
         let messages = self.store.tail(room, 0, 5000)?;
         let statuses = klatch_core::statuses(&messages);
-        let (recent, gone): (Vec<_>, Vec<_>) = self
-            .store
-            .members(room)?
+        let all = self.store.members(room)?;
+        let done: Vec<String> = all
+            .iter()
+            .filter(|m| m.status.as_deref().is_some_and(|s| s.starts_with("done")))
+            .map(|m| m.name.clone())
+            .collect();
+        let (recent, gone): (Vec<_>, Vec<_>) = all
             .into_iter()
             .partition(|m| now - m.last_seen <= klatch_core::MEMBER_ACTIVE_SECS);
         let members = recent
             .into_iter()
             .map(|m| klatch_core::BoardMember {
-                status: statuses
-                    .iter()
-                    .find(|s| s.member == m.name)
-                    .map(|s| s.status.clone()),
+                status: m.status.clone().or_else(|| {
+                    statuses
+                        .iter()
+                        .find(|s| s.member == m.name)
+                        .map(|s| s.status.clone())
+                }),
                 name: m.name,
                 last_seen: m.last_seen,
             })
@@ -167,7 +193,10 @@ impl<S: Store> Gateway<S> {
         Ok(klatch_core::Board {
             room: room.into(),
             asks: self.store.open_asks(room, now)?,
-            offers: klatch_core::current_offers(&messages, now, klatch_core::OFFER_TTL_SECS),
+            offers: klatch_core::current_offers(&messages, now, klatch_core::OFFER_TTL_SECS)
+                .into_iter()
+                .filter(|o| !done.contains(&o.sender))
+                .collect(),
             members,
             stale_members: gone.len(),
         })
@@ -527,6 +556,7 @@ mod tests {
                 Operation::Claims { .. } => "claims",
                 Operation::Release { .. } => "release",
                 Operation::Subscribe { .. } => "subscribe",
+                Operation::Status { .. } => "status",
                 Operation::Ack { .. } => "ack",
             })
             .collect();
@@ -855,6 +885,55 @@ mod tests {
             .map(|m| m.name)
             .collect();
         assert!(!names.contains(&"alice".to_string()), "{names:?}");
+    }
+
+    #[test]
+    fn a_status_goes_through_the_guard_and_shows_in_who() {
+        let g = Gateway::new(
+            SpyStore::new(),
+            FixedClock(5),
+            Rc::new(SpyGuard::allowing()),
+        );
+        g.join(&alice(), "r").unwrap();
+        g.set_status(&alice(), "r", "done leaving").unwrap();
+        let m = g.who(&alice(), "r").unwrap();
+        assert_eq!(m[0].status.as_deref(), Some("done leaving"));
+    }
+
+    #[test]
+    fn a_status_in_a_refused_room_never_reaches_the_store() {
+        let g = Gateway::new(
+            SpyStore::new(),
+            FixedClock(1),
+            Rc::new(SpyGuard::denying(&["locked"])),
+        );
+        assert!(g.set_status(&alice(), "locked", "done").is_err());
+        assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn a_bad_status_is_rejected_before_the_store() {
+        let g = open();
+        for bad in ["", "   ", "a\nb", "x\u{7}y", &"z".repeat(81)] {
+            let err = g.set_status(&alice(), "r", bad).unwrap_err();
+            assert!(matches!(err, Error::Invalid(_)), "{bad:?}: {err}");
+        }
+        assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn the_board_prefers_the_status_fact_and_drops_the_offers_of_a_member_who_is_done() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "bob", "offering: helpers", 90).unwrap();
+        g.set_status(&bob(), "r", "done leaving").unwrap();
+        let b = g.board(&alice(), "r").unwrap();
+        let bob = b.members.iter().find(|m| m.name == "bob").unwrap();
+        assert_eq!(bob.status.as_deref(), Some("done leaving"));
+        assert!(
+            b.offers.is_empty(),
+            "a done member's offer stayed on the board"
+        );
     }
 
     #[test]
