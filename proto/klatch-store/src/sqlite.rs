@@ -1239,4 +1239,85 @@ mod tests {
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
+
+    /// A database written by the original single-file prototype (commit 46e4e08, schema version 0):
+    /// room `core` with bob's messages alpha, beta, gamma and alice's cursor after beta; room `side` with
+    /// carol's `other`; and bob's claim on `src/a.rs`. Regenerate only by building that commit.
+    const PROTOTYPE_V0: &[u8] = include_bytes!("../fixtures/prototype-v0.db");
+
+    #[test]
+    fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
+        let path = temp_db("real-v0");
+        std::fs::write(&path, PROTOTYPE_V0).unwrap();
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(version(&s), 2);
+        // messages: per-room seq backfilled in the original order, ids assigned and distinct
+        let core = s.tail("core", 0, 10).unwrap();
+        assert_eq!(
+            core.iter()
+                .map(|m| (m.seq, m.sender.as_str(), m.body.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "bob", "alpha"), (2, "bob", "beta"), (3, "bob", "gamma")]
+        );
+        let side = s.tail("side", 0, 10).unwrap();
+        assert_eq!((side[0].seq, side[0].body.as_str()), (1, "other"));
+        let ids: std::collections::HashSet<_> = core
+            .iter()
+            .chain(side.iter())
+            .map(|m| m.id.clone())
+            .collect();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.iter().all(|id| id.len() == 26));
+        assert!(
+            core.iter()
+                .chain(side.iter())
+                .all(|m| m.attribution == Attribution::Unattributed && m.label == "public")
+        );
+        // alice had read through beta in the prototype, so only gamma is unread
+        let unread = s.read("core", "alice", false, 1).unwrap();
+        assert_eq!(
+            unread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            vec!["gamma"],
+            "the cursor survived"
+        );
+        // members, and the claim with its expiry
+        let members: Vec<String> = s
+            .members("core")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(members, vec!["alice", "bob"]);
+        assert_eq!(s.members("side").unwrap()[0].name, "carol");
+        let expires: i64 = s
+            .conn
+            .query_row("SELECT expires FROM claims", [], |r| r.get(0))
+            .unwrap();
+        let claims = s.claims("core", expires - 100).unwrap();
+        assert_eq!(
+            (
+                claims[0].owner.as_str(),
+                claims[0].path.as_str(),
+                claims[0].reason.as_str()
+            ),
+            ("bob", "src/a.rs", "prototype claim")
+        );
+        // the migrated database keeps working
+        assert_eq!(
+            s.post("core", "dave", "after the migration", 5)
+                .unwrap()
+                .seq,
+            4
+        );
+        let tenants: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE tenant='local' AND member=sender",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tenants, 5);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
 }
