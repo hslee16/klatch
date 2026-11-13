@@ -8,5 +8,7 @@ mod text;
 
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, render_hook};
-pub use model::{Attribution, Claim, MemberInfo, Message, Posted, Principal};
+pub use model::{
+    Attribution, Claim, ClaimChanges, MemberInfo, Message, Posted, Principal, ReleasedClaim,
+};
 pub use text::{flat, norm, overlaps, valid_name};

@@ -35,6 +35,21 @@ pub struct Claim {
     pub expires: i64,
 }
 
+/// A claim a member was shown earlier that is no longer held (released, or lapsed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleasedClaim {
+    pub owner: String,
+    pub path: String,
+}
+
+/// What changed in other members' claims since a member was last shown them: claims it has not seen (or
+/// that were renewed with a new expiry) and claims it saw that are gone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClaimChanges {
+    pub added: Vec<Claim>,
+    pub released: Vec<ReleasedClaim>,
+}
+
 /// Whether the gateway could prove who is calling. An unattributed caller must be shown as such (R23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attribution {

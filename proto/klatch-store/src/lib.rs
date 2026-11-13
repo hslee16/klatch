@@ -6,7 +6,7 @@ mod sqlite;
 
 pub use sqlite::SqliteStore;
 
-use klatch_core::{Attribution, Claim, MemberInfo, Message, Posted, Result};
+use klatch_core::{Attribution, Claim, ClaimChanges, MemberInfo, Message, Posted, Result};
 
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
@@ -46,6 +46,20 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
+    /// Other members' claims in a room that `member` has not been shown yet, and claims it was shown that are
+    /// gone; remembers what it returned so the next call reports only what changed. A claim renewed with a new
+    /// expiry counts as changed; the passing of time alone does not. The default remembers nothing and reports
+    /// every other member's claim each time.
+    fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
+        Ok(ClaimChanges {
+            added: self
+                .claims(room, now)?
+                .into_iter()
+                .filter(|c| c.owner != member)
+                .collect(),
+            released: Vec::new(),
+        })
+    }
     /// Rooms a member has joined, ordered by name.
     fn rooms_of(&self, member: &str) -> Result<Vec<String>>;
     /// Messages with `seq` greater than `after_seq`, oldest first, at most `limit`, from every sender
