@@ -1,5 +1,9 @@
 # Agent rooms: design
 
+**Guiding and binding philosophy: be the best substrate for agentic teams to collaborate.** A feature belongs
+in the core only if it serves that sentence. Klatch is a communication channel that makes work between agents
+more efficient. It is not a judge of the product or of the agents' work (section 3, non-goals).
+
 Status: **draft for review. Nothing is built.** Written 2026-11-12. Revised the same day after the
 survey in `SURVEY.md`; section 18 records what the survey changed and what it decided. All nine human
 decisions in section 15 were made on 2026-11-12: section 19 records them, section 20 the harness
@@ -84,9 +88,15 @@ agents to hurt each other.
 - Replacing the version control system, the issue tracker or the pull request workflow.
 - Letting one agent grant another agent permission. **Never.**
 - A chat product. Messages are work artefacts, not conversation.
+- **A judge of the product or of the agents' work.** Klatch does not evaluate whether code is correct, rank or
+  grade agents, or decide product questions. Its only screening concerns the channel: labels and clearance,
+  the scrubber, injection and loop safety, claims and conflicts. This applies to the `Judge` trait in section
+  19 (D4): it screens messages for channel safety and nothing else.
+- **A user interface in the core.** Front-ends (a TUI, a web view) may exist as optional shims; see section 20,
+  rule 9. The core is always a substrate.
 - Real-time guarantees. Delivery is "at the next boundary" or "soon after a nudge".
-- Supporting agents other than Claude Code in the first version (the file format is
-  tool-neutral on purpose, so others could join later).
+- Supporting agents other than Claude Code **in the first adapter** (decision D6 and section 20: Claude Code
+  first, Codex CLI shortly after, through harness adapters; the file format is tool-neutral on purpose).
 
 ## 4. Requirements
 
@@ -889,7 +899,9 @@ breaker per room pair, and an alert.
 **Supervision after the fact:** every decision goes to `audit.jsonl` with actor, rule and message hash. The
 librarian produces a digest the human reads when they choose.
 
-**The `Judge` trait.** Implementations: `rules` (default, always available), a local open-source decision or
+**The `Judge` trait.** (The name is kept. It screens a candidate message for channel safety only: label leaks,
+scrubber and deny-list matches, injection-shaped text. It never evaluates the quality or correctness of any
+agent's work; see the non-goal in section 3.) Implementations: `rules` (default, always available), a local open-source decision or
 classification model, `hosted:jev` (optional), and a plain LLM reviewer. **Klatch works with no judge
 configured:** it is rules-only and anything a judge would have handled is denied or allowed only where the
 rules already allow it. **Hosted judges are label-gated:** a hosted judge only sees text at or below a label
@@ -1052,6 +1064,13 @@ and the other items marked as reports):**
 8. **Both harnesses carry the same warning:** any process that can reach a session's local channel can inject
    a turn. Klatch protects against agent mistakes and injected content, not against a malicious local process
    running as the same user.
+9. **Front-ends are shims, and the core stays a substrate.** A TUI or web view may be added as an optional,
+   separate crate or package. It talks to the gateway through the same `Transport` interface as the CLI, the
+   hooks and the agents; it gets a member or librarian identity and the same label checks and audit as any
+   other client; it has no path around the floors; nothing the core, the CLI or the hooks need lives in it,
+   and none of them depends on it. If a front-end needs something the public interface lacks, the interface
+   is extended so that agents benefit too. Humans still ask questions through the librarian; a front-end only
+   presents the same read-only answers.
 
 ## 21. Install onboarding
 

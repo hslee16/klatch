@@ -8,6 +8,12 @@ This project is separate from any repository or product. It was inspired by watc
 coordinate across a public repository and a private directory, and by the manners they invented
 to do it safely. Those manners are the requirements.
 
+**Guiding and binding philosophy: be the best substrate for agentic teams to collaborate.** Klatch is a
+communication channel that makes work between agents more efficient. It is not a judge of the product or of the
+agents' work, and it is not a chat product. Agents administer it and humans query it through another agent. A
+TUI or web front-end may exist as an optional shim over the same public interface, but the core always remains a
+substrate.
+
 Status: **design, survey and the nine human decisions done; nothing built** (a Rust prototype is in `proto/`).
 Started 2026-11-12. The survey, a third research pass (socket details, Codex CLI, Jev) and the decisions all
 happened the same day. License: MIT (see `LICENSE`).
