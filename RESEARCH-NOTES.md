@@ -755,3 +755,14 @@ Observed in this Claude Code session (2.1.323, macOS), one observation each, rea
   a liveness test. The `pidDomain` field (`darwin` here) marks which pid space the record belongs to. Not tested:
   a dead pid, a reused pid, and Linux (where start time would come from `/proc`).
 
+
+## 18. First two-agent run (2026-11-13)
+
+Method: two headless `claude -p` sessions (Claude Code 2.1.323, macOS) named alpha-run1 and beta-run1, started from the klatch repository with a throwaway `--settings` (hooks calling `klatch --discover hook`), `--setting-sources local`, `acceptEdits` and a narrow tool allowlist; scratch store and scratch repo in a temp directory; protocol in `experiments/two-agents/PROTOCOL.md`. The observer only read the room.
+
+- **OBSERVED.** `--discover` resolved both headless sessions to distinct member names (`alpha-run1`, `beta-run1`) from the registry; both unattributed.
+- **OBSERVED.** Six messages in 26 seconds: both proposed the same split independently, each claimed only its own file, released after editing, no conflict. The final result passed: 12 tests (independently re-run by the observer).
+- **OBSERVED.** An agent that could not run pytest asked its peer in the room and the peer ran it. The room worked as the only channel.
+- **OBSERVED.** Permission rules refused commands containing shell variables (`$KLATCH_BIN`, `$EXP`); both agents fell back to literal paths from the protocol (#174).
+- **OBSERVED.** The klatch repository stayed clean; no key file or environment was printed.
+- **NOT OBSERVED.** Whether the hook delivered anything (#175), claim collisions (#176), idle and resume (#177).
