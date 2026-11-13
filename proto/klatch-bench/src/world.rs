@@ -83,6 +83,41 @@ impl World {
         }
     }
 
+    /// Run `klatch admin <args>` the way a person would at a terminal (the test binary stands in for the terminal),
+    /// typing `typed` when it asks for confirmation.
+    pub fn admin(&self, args: &[&str], typed: &str) -> Run {
+        use std::io::Write;
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        let mut c = self.command("admin", &full);
+        c.env("KLATCH_ADMIN_TEST_TERMINAL", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let Ok(mut child) = c.spawn() else {
+            return Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: "could not start klatch".into(),
+            };
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{typed}");
+        }
+        match child.wait_with_output() {
+            Ok(o) => Run {
+                ok: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: e.to_string(),
+            },
+        }
+    }
+
     /// Run a command that must succeed; its output, or an error naming the command and what it said.
     pub fn ok(&self, who: &str, args: &[&str]) -> Result<String, String> {
         let r = self.run(who, args);

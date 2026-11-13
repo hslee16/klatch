@@ -1,8 +1,8 @@
 use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
-    AskRoom, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted,
-    ReleaseNote, ReleasedClaim, Result, overlaps, scopes_collide,
+    AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
+    Posted, ReleaseNote, ReleasedClaim, Result, overlaps, scopes_collide,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -48,7 +48,10 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE ask_leases(room TEXT NOT NULL, seq INTEGER NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,seq));
  CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));
- CREATE TABLE claim_notes(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, note TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,path));";
+ CREATE TABLE claim_notes(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, note TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,path));
+ CREATE TABLE room_state(room TEXT PRIMARY KEY, state TEXT NOT NULL, ts INTEGER NOT NULL);
+ CREATE TABLE member_blocks(room TEXT NOT NULL, member TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member));
+ CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -222,6 +225,15 @@ fn migrate_v13(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+fn migrate_v14(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE room_state(room TEXT PRIMARY KEY, state TEXT NOT NULL, ts INTEGER NOT NULL);
+         CREATE TABLE member_blocks(room TEXT NOT NULL, member TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member));
+         CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -351,7 +363,10 @@ impl SqliteStore {
                     if version < 13 {
                         migrate_v12(&conn)?;
                     }
-                    migrate_v13(&conn)?;
+                    if version < 14 {
+                        migrate_v13(&conn)?;
+                    }
+                    migrate_v14(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -1029,6 +1044,114 @@ impl Store for SqliteStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(be(e)),
         }
+    }
+
+    fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
+        match state {
+            Some(st) => self.conn.execute(
+                "INSERT INTO room_state(room,state,ts) VALUES(?1,?2,?3)
+                 ON CONFLICT(room) DO UPDATE SET state=?2, ts=?3",
+                params![room, st, now],
+            ),
+            None => self
+                .conn
+                .execute("DELETE FROM room_state WHERE room=?1", params![room]),
+        }
+        .map(|_| ())
+        .map_err(be)
+    }
+
+    fn room_state(&self, room: &str) -> Result<Option<String>> {
+        match self.conn.query_row(
+            "SELECT state FROM room_state WHERE room=?1",
+            params![room],
+            |r| r.get(0),
+        ) {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(be(e)),
+        }
+    }
+
+    fn block_member(&self, room: &str, member: &str, now: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO member_blocks(room,member,ts) VALUES(?1,?2,?3)",
+                params![room, member, now],
+            )
+            .map(|_| ())
+            .map_err(be)
+    }
+
+    fn unblock_member(&self, room: &str, member: &str) -> Result<bool> {
+        let n = self
+            .conn
+            .execute(
+                "DELETE FROM member_blocks WHERE room=?1 AND member=?2",
+                params![room, member],
+            )
+            .map_err(be)?;
+        Ok(n > 0)
+    }
+
+    fn is_blocked(&self, room: &str, member: &str) -> Result<bool> {
+        let n: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM member_blocks WHERE member=?2 AND (room=?1 OR room='*')",
+                params![room, member],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        Ok(n > 0)
+    }
+
+    fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
+        self.immediate(|| {
+            let released: usize = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM claims WHERE room=?1 AND owner=?2 AND expires>?3",
+                    params![room, member, now],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map_err(be)? as usize;
+            for sql in [
+                "DELETE FROM claims WHERE room=?1 AND owner=?2",
+                "DELETE FROM members WHERE room=?1 AND name=?2",
+            ] {
+                self.conn.execute(sql, params![room, member]).map_err(be)?;
+            }
+            Ok(released)
+        })
+    }
+
+    fn record_audit(&self, action: &str, target: &str, detail: &str, now: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)",
+                params![now, action, target, detail],
+            )
+            .map(|_| ())
+            .map_err(be)
+    }
+
+    fn audit_log(&self, limit: usize) -> Result<Vec<AuditRecord>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT ts,action,target,detail FROM admin_audit ORDER BY id DESC LIMIT ?1")
+            .map_err(be)?;
+        st.query_map(params![limit as i64], |r| {
+            Ok(AuditRecord {
+                ts: r.get(0)?,
+                action: r.get(1)?,
+                target: r.get(2)?,
+                detail: r.get(3)?,
+            })
+        })
+        .map_err(be)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(be)
     }
 
     fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
@@ -1903,6 +2026,61 @@ mod tests {
     }
 
     #[test]
+    fn room_state_pause_and_blocks_are_remembered_and_audited() {
+        let s = store();
+        assert_eq!(s.room_state("r").unwrap(), None);
+        s.set_room_state("r", Some("closed"), 5).unwrap();
+        assert_eq!(s.room_state("r").unwrap().as_deref(), Some("closed"));
+        assert_eq!(s.room_state("other").unwrap(), None);
+        s.set_room_state("r", None, 6).unwrap();
+        assert_eq!(s.room_state("r").unwrap(), None);
+        s.set_room_state("*", Some("paused"), 7).unwrap();
+        assert_eq!(s.room_state("*").unwrap().as_deref(), Some("paused"));
+        // a block is per room unless it is for every room
+        s.block_member("r", "mallory", 8).unwrap();
+        assert!(s.is_blocked("r", "mallory").unwrap());
+        assert!(!s.is_blocked("other", "mallory").unwrap());
+        assert!(!s.is_blocked("r", "alice").unwrap());
+        s.block_member("*", "eve", 9).unwrap();
+        assert!(s.is_blocked("anywhere", "eve").unwrap());
+        assert!(s.unblock_member("r", "mallory").unwrap());
+        assert!(
+            !s.unblock_member("r", "mallory").unwrap(),
+            "nothing left to allow"
+        );
+        assert!(!s.is_blocked("r", "mallory").unwrap());
+        s.record_audit("pause", "*", "", 7).unwrap();
+        s.record_audit("remove", "r/mallory", "claims released: 2", 8)
+            .unwrap();
+        let log = s.audit_log(10).unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(
+            (log[0].action.as_str(), log[0].ts),
+            ("remove", 8),
+            "newest first"
+        );
+        assert_eq!(log[1].target, "*");
+    }
+
+    #[test]
+    fn removing_a_member_takes_it_out_of_the_room_and_releases_its_claims_there() {
+        let s = store();
+        s.join("r", "mallory", 1).unwrap();
+        s.join("side", "mallory", 1).unwrap();
+        s.claim("r", "mallory", "a.rs", 600, "", 2).unwrap();
+        s.claim("side", "mallory", "b.rs", 600, "", 2).unwrap();
+        assert_eq!(s.remove_member("r", "mallory", 3).unwrap(), 1);
+        assert!(s.members("r").unwrap().iter().all(|m| m.name != "mallory"));
+        assert!(s.claims("r", 4).unwrap().is_empty());
+        assert_eq!(
+            s.claims("side", 4).unwrap().len(),
+            1,
+            "the other room is untouched"
+        );
+        assert_eq!(s.rooms_of("mallory").unwrap(), vec!["side".to_string()]);
+    }
+
+    #[test]
     fn releasing_a_members_claims_frees_every_room_and_tells_the_asker() {
         let s = store();
         let a = s.post("lobby", "asker", "seeking: x", 1).unwrap().seq;
@@ -2751,12 +2929,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_14() {
-        assert_eq!(version(&store()), 14);
+    fn a_fresh_database_is_at_schema_version_15() {
+        assert_eq!(version(&store()), 15);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_14_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_15_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -2772,7 +2950,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 14);
+        assert_eq!(version(&s), 15);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -2793,14 +2971,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            14,
+            15,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_14() {
+    fn a_version_0_database_now_migrates_all_the_way_to_15() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -2813,7 +2991,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 14);
+        assert_eq!(version(&s), 15);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -2832,11 +3010,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_fourteen_with_everything_intact() {
+    fn a_version_two_database_migrates_to_fifteen_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 14);
+        assert_eq!(version(&s), 15);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -2854,7 +3032,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 14);
+        assert_eq!(version(&s), 15);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

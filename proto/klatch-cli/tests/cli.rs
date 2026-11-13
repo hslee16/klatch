@@ -1620,6 +1620,30 @@ fn a_release_note_reaches_a_member_who_saw_the_claim_and_the_next_claimant() {
     assert!(!plain.contains("last released"), "{plain}");
 }
 
+#[test]
+fn admin_commands_refuse_without_a_real_terminal_and_change_nothing() {
+    let h = Home::new();
+    h.ok("alice", &["post", "lobby", "hello"]);
+    for args in [
+        vec!["admin", "pause"],
+        vec!["admin", "close", "lobby"],
+        vec!["admin", "remove", "alice", "--room", "lobby"],
+        vec!["admin", "resume"],
+    ] {
+        let err = h.fail("alice", &args);
+        // run by an agent (as here) it is refused for the session above it; run by a script, for having no terminal
+        assert!(
+            err.contains("real terminal") || err.contains("coding-agent session"),
+            "{args:?}: {err}"
+        );
+    }
+    h.ok("alice", &["post", "lobby", "still works"]);
+    assert!(
+        h.fail("alice", &["admin", "remove", "alice"])
+            .contains("--room")
+    );
+}
+
 // ---- the SessionEnd hook (#258) ----
 
 #[test]

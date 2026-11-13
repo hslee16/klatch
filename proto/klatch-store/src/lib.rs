@@ -7,8 +7,8 @@ mod sqlite;
 pub use sqlite::SqliteStore;
 
 use klatch_core::{
-    AskRoom, Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk, Posted,
-    ReleaseNote, Result, open_asks,
+    AskRoom, Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk,
+    Posted, ReleaseNote, Result, open_asks,
 };
 
 pub trait Store {
@@ -109,6 +109,37 @@ pub trait Store {
     /// The latest release of `path` that carried a note, if any. The default knows none.
     fn last_release(&self, _room: &str, _path: &str) -> Result<Option<ReleaseNote>> {
         Ok(None)
+    }
+    /// Set or clear (`None`) a room's administrative state, `closed`; the room `*` carries `paused` for every room
+    /// (`klatch admin`, R11). The default remembers nothing.
+    fn set_room_state(&self, _room: &str, _state: Option<&str>, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    fn room_state(&self, _room: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// Refuse every operation of `member` in `room` (or in every room for `*`) until it is allowed again.
+    fn block_member(&self, _room: &str, _member: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// Lift a block; whether there was one.
+    fn unblock_member(&self, _room: &str, _member: &str) -> Result<bool> {
+        Ok(false)
+    }
+    /// Whether `member` is blocked in `room`, by a block on that room or on every room.
+    fn is_blocked(&self, _room: &str, _member: &str) -> Result<bool> {
+        Ok(false)
+    }
+    /// Take `member` out of `room` and release its claims there; returns how many claims were released.
+    fn remove_member(&self, _room: &str, _member: &str, _now: i64) -> Result<usize> {
+        Ok(0)
+    }
+    /// Keep a record of an administrative act, and read the latest ones, newest first.
+    fn record_audit(&self, _action: &str, _target: &str, _detail: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    fn audit_log(&self, _limit: usize) -> Result<Vec<AuditRecord>> {
+        Ok(Vec::new())
     }
     /// Release every claim `member` holds in every room, as when its session ends (#277): a member that has ended
     /// cannot be working. An `ask:<N>` claim ends as a lapse, so the asker is told that the helper's claim ended

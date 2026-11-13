@@ -104,6 +104,8 @@ A `refusal` frame's `rule` names what refused. Rules the session itself emits:
 - `protocol.decode`: a line could not be read (not JSON, wrong shape, or longer than `MAX_LINE_BYTES`). `request` is absent; the session carries on with the next line.
 - `protocol.version`: the frame has no `"v"` or a different major version. `request` is absent; the session carries on.
 
+Administrative rules (`klatch admin`, DESIGN section 28 item 10) refuse any room operation: `admin-pause` (every room is paused), `admin-close` (a post, claim or status in a closed room) and `admin-block` (the member was removed from the room). Their reasons are safe to show. The administrative acts themselves are not wire methods: a client cannot pause, close or remove.
+
 Policy rules (labels, the scrubber, and so on) use their own names, for example `label.room_below_message`, and
 carry the `request` id they refused.
 

@@ -26,8 +26,8 @@ pub use convention::{CONVENTION_MARKER, convention};
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
 pub use model::{
-    Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal, ReleaseNote,
-    ReleasedClaim,
+    Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
+    ReleaseNote, ReleasedClaim,
 };
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{flat, norm, overlaps, secs_between, valid_name};

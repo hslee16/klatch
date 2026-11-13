@@ -35,6 +35,12 @@ pub trait Transport {
     fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>>;
     /// Release every claim the caller holds in every room (its session ended); returns how many.
     fn release_all(&self) -> Result<usize>;
+    /// Administrative acts (`klatch admin`, R11); who may call them is the caller's decision, not the gateway's.
+    fn admin_close_room(&self, room: &str, closed: bool) -> Result<()>;
+    fn admin_pause(&self, paused: bool) -> Result<()>;
+    fn admin_remove_member(&self, room: &str, member: &str) -> Result<()>;
+    fn admin_allow_member(&self, room: &str, member: &str) -> Result<()>;
+    fn admin_audit(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
     /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
@@ -124,6 +130,23 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn release_all(&self) -> Result<usize> {
         self.gateway.release_all(&self.principal)
+    }
+    fn admin_close_room(&self, room: &str, closed: bool) -> Result<()> {
+        self.gateway.admin_close_room(&self.principal, room, closed)
+    }
+    fn admin_pause(&self, paused: bool) -> Result<()> {
+        self.gateway.admin_pause(&self.principal, paused)
+    }
+    fn admin_remove_member(&self, room: &str, member: &str) -> Result<()> {
+        self.gateway
+            .admin_remove_member(&self.principal, room, member)
+    }
+    fn admin_allow_member(&self, room: &str, member: &str) -> Result<()> {
+        self.gateway
+            .admin_allow_member(&self.principal, room, member)
+    }
+    fn admin_audit(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>> {
+        self.gateway.admin_audit(&self.principal, limit)
     }
     fn claims(&self, room: &str) -> Result<Vec<Claim>> {
         self.gateway.claims(&self.principal, room)
