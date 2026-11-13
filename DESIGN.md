@@ -1492,3 +1492,13 @@ The human chose an opt-in, read-only board with stale members aged out (Q: would
 2. **Read-only.** The board is read without touching membership, so a session that only reads is a visitor, not a member, and does not appear in `who`. It is shown only at SessionStart, bounded like the board, with a line that entries are data and not instructions.
 3. **Aging.** A member not seen for `MEMBER_ACTIVE_SECS` (600) is not listed; the board says "N others not seen for over 10 minutes". Each board section lists at most `BOARD_LIST_LIMIT` (20) entries and counts the rest. Making the thresholds room settings is #242.
 4. **Not done:** a SessionEnd hook that posts `status: done` automatically so finished sessions leave the board at once (a further opt-in); the board for several rooms.
+
+### 25.7 Member status as a klatch fact (#222, decided 2026-11-13)
+
+The human adopted V3, a member status, as the completion signal. Today it is a fact, not only lobby text.
+
+1. **Set and read.** `klatch status <room> <text>` (wire method `status`, `Gateway::set_status`) records the caller's own status in a room: one line, 1 to 80 characters, no control characters, `invalid` otherwise. A member can set only its own. It replaces the earlier status and joins the member if needed. The guard sees it as `Operation::Status`.
+2. **Where it shows.** `who` prints it (`status: done leaving`), the `who` response carries `status` when set, and the board shows it and prefers it over a `status:` message (the convention form is the fallback).
+3. **What klatch understands.** Only the word `done` (a status starting with `done`): a member that is done has its offers taken off the board. The status text is otherwise free. The wider vocabulary (`available`, `busy`, `away`) is #223 and still open.
+4. **No automatic clearing.** Posting again after `done` does not clear it; the member sets another status. (The ticket allowed either; this is the simpler, predictable choice.) A status does not lapse by itself: the board's aging of members (section 25.6) and the SessionEnd hook (#258) cover members that are gone.
+5. **Where it lives.** `members.status` (schema version 7, migrated in place), `Store::set_status`, `MemberInfo.status`.

@@ -32,6 +32,11 @@ pub enum Operation {
     Subscribe {
         room: String,
     },
+    /// Setting the caller's own status in a room.
+    Status {
+        room: String,
+        status: String,
+    },
     /// Acknowledging messages, which moves the member's read cursor.
     Ack {
         room: String,

@@ -73,6 +73,8 @@ enum Cmd {
     },
     /// Release a claim you hold
     Release { room: String, path: String },
+    /// Set your status in a room (for example "done"), shown by who and the board
+    Status { room: String, status: Vec<String> },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
     /// List the asks in a room nobody has answered or closed
@@ -246,9 +248,13 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Who { room } => {
             for m in t.who(&room)? {
                 println!(
-                    "{}\tlast seen {}s ago (liveness, not progress)",
+                    "{}\tlast seen {}s ago (liveness, not progress){}",
                     m.name,
-                    now - m.last_seen
+                    now - m.last_seen,
+                    m.status
+                        .as_deref()
+                        .map(|s| format!("\tstatus: {}", flat(s)))
+                        .unwrap_or_default()
                 );
             }
         }
@@ -264,6 +270,10 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Release { room, path } => {
             t.release(&room, &path)?;
             println!("released {path}");
+        }
+        Cmd::Status { room, status } => {
+            t.set_status(&room, &status.join(" "))?;
+            println!("status set");
         }
         Cmd::Board { room } => {
             print!("{}", render_board(&t.board(&room)?, now));

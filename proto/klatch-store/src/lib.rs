@@ -33,6 +33,11 @@ pub trait Store {
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
+    /// Record the member's status in a room (replacing any earlier one); joins the member if needed. The default
+    /// stores nothing.
+    fn set_status(&self, _room: &str, _member: &str, _status: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
     /// Take an advisory claim; refuse with `Error::Conflict` if another member holds an overlapping one.
     /// Expired claims are purged first. Re-claiming your own path replaces it.
     fn claim(

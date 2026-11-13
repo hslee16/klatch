@@ -1109,3 +1109,24 @@ fn the_session_start_board_is_shown_only_when_asked_for_and_does_not_join() {
         "board outside session start: {later}"
     );
 }
+
+#[test]
+fn status_is_set_shown_by_who_and_the_board_and_clears_the_members_offers() {
+    let h = Home::new();
+    h.ok("lib", &["join", "lobby"]);
+    h.ok("lib", &["post", "lobby", "offering: text helpers"]);
+    h.ok("api", &["join", "lobby"]);
+    assert!(h.ok("api", &["board", "lobby"]).contains("lib offers"));
+    h.ok("lib", &["status", "lobby", "done", "leaving"]);
+    let who = h.ok("api", &["who", "lobby"]);
+    let line = who.lines().find(|l| l.starts_with("lib")).unwrap();
+    assert!(line.contains("status: done leaving"), "got: {who}");
+    let board = h.ok("api", &["board", "lobby"]);
+    assert!(
+        board.contains("lib last seen") && board.contains("status: done leaving"),
+        "got: {board}"
+    );
+    assert!(board.contains("no current offers"), "offer stayed: {board}");
+    let err = h.fail("api", &["status", "lobby", ""]);
+    assert!(err.to_lowercase().contains("status"), "got: {err}");
+}

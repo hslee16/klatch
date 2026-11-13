@@ -1149,3 +1149,43 @@ fn an_empty_post_body_is_an_invalid_request_over_the_wire() {
     );
     assert_eq!(response(&f, "p").2.unwrap().0, "invalid");
 }
+
+#[test]
+fn status_is_set_by_the_caller_and_shown_by_who() {
+    let g = gateway();
+    run(
+        &g,
+        &alice(),
+        &[req("j", "post", json!({"room":"r","body":"hi"}))],
+    );
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req("s", "status", json!({"room":"r","status":"done leaving"})),
+            req("w", "who", json!({"room":"r"})),
+        ],
+    );
+    assert!(response(&f, "s").0, "status failed");
+    let members = response(&f, "w").1.unwrap()["members"].clone();
+    let a = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "alice")
+        .unwrap();
+    assert_eq!(a["status"], "done leaving");
+}
+
+#[test]
+fn a_bad_status_is_an_invalid_error() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &alice(),
+        &[req("s", "status", json!({"room":"r","status":""}))],
+    );
+    let (ok, _, err) = response(&f, "s");
+    assert!(!ok);
+    assert_eq!(err.unwrap().0, "invalid");
+}
