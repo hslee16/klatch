@@ -435,6 +435,33 @@ mod tests {
     }
 
     #[test]
+    fn the_written_spec_documents_streaming_as_implemented() {
+        for name in [
+            "klatch stream",
+            "--follow",
+            "--from-seq",
+            "stream.backend",
+            "head",
+            "window",
+            "256",
+            "heartbeat",
+            "caught_up",
+            "acknowledge",
+            "Busy",
+        ] {
+            assert!(SPEC.contains(name), "PROTOCOL.md does not mention {name}");
+        }
+        assert!(
+            !SPEC.contains("Not implemented yet"),
+            "PROTOCOL.md still calls subscribe unimplemented"
+        );
+        assert!(
+            !SPEC.contains("`not_implemented`, and"),
+            "the status line is stale"
+        );
+    }
+
+    #[test]
     fn the_written_spec_documents_every_frame_type_and_error_rule() {
         for name in [
             "hello",

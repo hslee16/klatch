@@ -74,6 +74,18 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.rooms_of(member)
     }
+    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
+        self.gate()?;
+        self.inner.tail(room, after_seq, limit)
+    }
+    fn head(&self, room: &str) -> Result<i64> {
+        self.gate()?;
+        self.inner.head(room)
+    }
+    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.advance_cursor(room, member, seq, now)
+    }
 }
 
 /// Records every operation it is asked about; denies rooms listed in `deny_rooms`.
@@ -105,7 +117,9 @@ fn room_of(op: &Operation) -> &str {
         | Operation::Who { room }
         | Operation::Claim { room, .. }
         | Operation::Release { room, .. }
-        | Operation::Claims { room } => room,
+        | Operation::Claims { room }
+        | Operation::Subscribe { room }
+        | Operation::Ack { room } => room,
     }
 }
 
@@ -120,5 +134,14 @@ impl Guard for std::rc::Rc<SpyGuard> {
         } else {
             Ok(())
         }
+    }
+}
+
+impl crate::gateway::AsSpy for SpyStore {
+    fn spy_calls(&self) -> usize {
+        self.calls.get()
+    }
+    fn spy_fail(&self, fail: bool) {
+        self.fail.set(fail);
     }
 }

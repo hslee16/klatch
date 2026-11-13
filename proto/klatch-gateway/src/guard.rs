@@ -3,13 +3,39 @@ use klatch_core::{Principal, Result};
 /// What a caller is trying to do, as seen by the guard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
-    Join { room: String },
-    Post { room: String, body: String },
-    Read { room: String, advance: bool },
-    Who { room: String },
-    Claim { room: String, path: String },
-    Release { room: String, path: String },
-    Claims { room: String },
+    Join {
+        room: String,
+    },
+    Post {
+        room: String,
+        body: String,
+    },
+    Read {
+        room: String,
+        advance: bool,
+    },
+    Who {
+        room: String,
+    },
+    Claim {
+        room: String,
+        path: String,
+    },
+    Release {
+        room: String,
+        path: String,
+    },
+    Claims {
+        room: String,
+    },
+    /// Reading a room as a stream: `tail` and `head`.
+    Subscribe {
+        room: String,
+    },
+    /// Acknowledging messages, which moves the member's read cursor.
+    Ack {
+        room: String,
+    },
 }
 
 /// The one hook point for policy. The gateway calls it once per operation, before the store is touched.

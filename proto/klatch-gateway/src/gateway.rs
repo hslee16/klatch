@@ -22,6 +22,12 @@ pub struct Refused {
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;
 
+#[cfg(test)]
+pub(crate) trait AsSpy {
+    fn spy_calls(&self) -> usize;
+    fn spy_fail(&self, fail: bool);
+}
+
 pub struct Gateway<S: Store> {
     store: S,
     clock: Box<dyn Clock>,
@@ -39,6 +45,22 @@ impl<S: Store> Gateway<S> {
 
     pub fn now(&self) -> i64 {
         self.clock.now()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn store_calls(&self) -> usize
+    where
+        S: AsSpy,
+    {
+        self.store.spy_calls()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_store_failing(&self, fail: bool)
+    where
+        S: AsSpy,
+    {
+        self.store.spy_fail(fail)
     }
 
     pub fn join(&self, who: &Principal, room: &str) -> Result<()> {
@@ -118,6 +140,44 @@ impl<S: Store> Gateway<S> {
     pub fn claims(&self, who: &Principal, room: &str) -> Result<Vec<Claim>> {
         self.admit(who, room, Operation::Claims { room: room.into() })?;
         self.store.claims(room, self.now())
+    }
+
+    /// Messages after `after_seq`, oldest first, at most `limit`, from every sender including the caller.
+    /// No cursor or presence side effects; the guard sees a `Subscribe` operation.
+    pub fn tail(
+        &self,
+        who: &Principal,
+        room: &str,
+        after_seq: i64,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        check_member(who)?;
+        check_room(room)?;
+        if after_seq < 0 || limit == 0 {
+            return Err(Error::Invalid("bad tail range".into()));
+        }
+        self.guard
+            .check(who, &Operation::Subscribe { room: room.into() })?;
+        self.store.tail(room, after_seq, limit)
+    }
+
+    /// The room's highest `seq`, 0 when empty; the guard sees a `Subscribe` operation.
+    pub fn head(&self, who: &Principal, room: &str) -> Result<i64> {
+        self.admit(who, room, Operation::Subscribe { room: room.into() })?;
+        self.store.head(room)
+    }
+
+    /// Acknowledge messages up to `seq`: moves the caller's read cursor forward, never past the head.
+    pub fn ack(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
+        check_member(who)?;
+        check_room(room)?;
+        if seq < 0 {
+            return Err(Error::Invalid("bad acknowledgement".into()));
+        }
+        self.guard
+            .check(who, &Operation::Ack { room: room.into() })?;
+        self.store
+            .advance_cursor(room, &who.member, seq, self.now())
     }
 
     /// Unread messages and others' claims for every room the caller has joined. A room the guard refuses
@@ -357,6 +417,8 @@ mod tests {
                 Operation::Claim { .. } => "claim",
                 Operation::Claims { .. } => "claims",
                 Operation::Release { .. } => "release",
+                Operation::Subscribe { .. } => "subscribe",
+                Operation::Ack { .. } => "ack",
             })
             .collect();
         assert_eq!(
@@ -411,6 +473,76 @@ mod tests {
         ));
         assert!(matches!(g.claims(&who, "r"), Err(Error::Backend(_))));
         assert!(matches!(g.digest(&who), Err(Error::Backend(_))));
+    }
+
+    #[test]
+    fn tail_head_and_ack_validate_before_the_store_and_go_through_the_guard() {
+        let guard = Rc::new(SpyGuard::allowing());
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
+        let who = alice();
+        for room in ["bad room", "a\nb", ""] {
+            assert!(matches!(g.tail(&who, room, 0, 10), Err(Error::Invalid(_))));
+            assert!(matches!(g.head(&who, room), Err(Error::Invalid(_))));
+            assert!(matches!(g.ack(&who, room, 1), Err(Error::Invalid(_))));
+        }
+        assert!(matches!(g.tail(&who, "r", -1, 10), Err(Error::Invalid(_))));
+        assert!(matches!(g.tail(&who, "r", 0, 0), Err(Error::Invalid(_))));
+        assert!(matches!(g.ack(&who, "r", -1), Err(Error::Invalid(_))));
+        assert_eq!(g.store.calls.get(), 0);
+        assert!(
+            guard.seen.borrow().is_empty(),
+            "invalid requests never reach the guard"
+        );
+        g.tail(&who, "r", 0, 10).unwrap();
+        g.head(&who, "r").unwrap();
+        g.ack(&who, "r", 0).unwrap();
+        assert_eq!(
+            *guard.seen.borrow(),
+            vec![
+                Operation::Subscribe { room: "r".into() },
+                Operation::Subscribe { room: "r".into() },
+                Operation::Ack { room: "r".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn tail_includes_everyones_messages_and_head_reports_the_top_seq() {
+        let g = open();
+        g.post(&alice(), "r", "one").unwrap();
+        g.post(&bob(), "r", "two").unwrap();
+        assert_eq!(g.tail(&alice(), "r", 0, 10).unwrap().len(), 2);
+        assert_eq!(g.head(&alice(), "r").unwrap(), 2);
+    }
+
+    #[test]
+    fn an_ack_moves_the_read_cursor_so_the_hook_path_does_not_redeliver() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        for i in 0..3 {
+            g.post(&bob(), "r", &format!("m{i}")).unwrap();
+        }
+        g.ack(&alice(), "r", 2).unwrap();
+        let unread = g.read(&alice(), "r", false).unwrap();
+        assert_eq!(unread.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[test]
+    fn a_denied_tail_never_reaches_the_store() {
+        let g = Gateway::new(
+            SpyStore::new(),
+            FixedClock(1),
+            Rc::new(SpyGuard::denying(&["locked"])),
+        );
+        assert!(matches!(
+            g.tail(&alice(), "locked", 0, 10),
+            Err(Error::Refused { .. })
+        ));
+        assert!(matches!(
+            g.ack(&alice(), "locked", 1),
+            Err(Error::Refused { .. })
+        ));
+        assert_eq!(g.store.calls.get(), 0);
     }
 
     #[test]
