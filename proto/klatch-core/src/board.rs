@@ -1,6 +1,7 @@
 //! Offers and member status, derived from the message log like asks (DESIGN section 25.5). An offer is a
 //! message starting `offering:`; it stays current until its sender withdraws it (`withdrawn:`), says
-//! `status: done`, or it is older than the offer lifetime.
+//! `status: done`, or it is older than the backstop lifetime. The gateway also drops an offer whose sender has
+//! not been seen for a while (DESIGN section 25.8).
 
 use crate::hook::clip;
 use crate::{Message, OpenAsk, flat};
@@ -15,8 +16,9 @@ pub const STATUS_PREFIX: &str = "status:";
 pub const MEMBER_ACTIVE_SECS: i64 = 600;
 /// The most entries the board lists per section; the rest are counted.
 pub const BOARD_LIST_LIMIT: usize = 20;
-/// How long an offer stays on the board without being renewed (provisional; the lifecycle is #250).
-pub const OFFER_TTL_SECS: i64 = 3600;
+/// The longest an offer stays on the board whatever its sender does: a backstop. An offer normally follows its
+/// sender's presence (section 25.8), so a member that stays present need not renew it.
+pub const OFFER_TTL_SECS: i64 = 86_400;
 
 /// What a member currently offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
