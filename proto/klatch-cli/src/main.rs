@@ -3,6 +3,7 @@
 //! Identity is the KLATCH_NAME env var, which is FORGEABLE (prototype only; see DESIGN.md 8.4).
 //! All state goes through the `Store` trait; this file only parses arguments and prints.
 
+mod init;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use klatch_core::{Principal, flat, hook_context_json, render_board, render_hook};
@@ -75,6 +76,18 @@ enum Cmd {
     Release { room: String, path: String },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
+    /// Install klatch's hooks into Claude Code settings, after showing a diff and getting a yes per scope
+    Init {
+        /// Where to write: project (.claude/settings.local.json here), user (~/.claude/settings.json) or both
+        #[arg(long, value_enum)]
+        scope: Option<init::Scope>,
+        /// Show this room's board at session start, without joining it (the consent to read a room first)
+        #[arg(long)]
+        board: Option<String>,
+        /// Ask nothing: the flags are the consent. Needs --scope; never turns the board on by itself
+        #[arg(long)]
+        yes: bool,
+    },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
     /// List the asks in a room nobody has answered or closed
@@ -131,6 +144,22 @@ fn db_path() -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Cmd::Init { scope, board, yes } = &cli.cmd {
+        return init::run(
+            &init::Options {
+                scope: *scope,
+                board: board.clone(),
+                yes: *yes,
+            },
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &std::env::current_dir()?,
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .as_deref(),
+            &std::env::current_exe()?,
+        );
+    }
     // The only thing the CLI knows about its caller is a typed name, which proves nothing.
     let declared = cli.as_member.or_else(|| std::env::var("KLATCH_NAME").ok());
     let discover = cli.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1");
@@ -304,6 +333,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 );
             }
         }
+        Cmd::Init { .. } => unreachable!("init is handled before dispatch"),
         Cmd::Serve { .. } | Cmd::Stream { .. } => {
             unreachable!("serve and stream are handled before dispatch")
         }

@@ -1517,3 +1517,13 @@ The human adopted V3, a member status, as the completion signal. Today it is a f
 3. **Two causes, two outcomes (the human's question).** A `busy` decline means a capable member is occupied: wait or retry; the ask stays open and no escalation is said. When `NO_CAPABLE_AFTER` (2) distinct helpers declined `cannot` and none declined `busy` or failed, klatch tells the asker once, in its hook, "your ask #N: nobody here may be able to do this (2 helpers declined as not able)", so it can rephrase, widen the ask or go to the human instead of waiting. The count is provisional and becomes a room setting later (#242).
 4. **Where.** `OpenAsk.outcomes`, `OpenAsk::distinct`, `no_capable_member`, `Store::escalated_asks` (remembers what it reported, in `asks_escalated`, schema version 8), `RoomDigest.escalated`.
 5. **Not covered:** a helper that claims and then goes silent (#233), the asker reopening after an insufficient answer (#232), a clarification question (#231).
+
+### 21.1 `klatch init`, as built (#65, #255; 2026-11-13)
+
+The first version writes only Claude Code hook entries (the human chose hooks only; the convention text for agents stays #209).
+
+1. `klatch init [--scope project|user|both] [--board <room>] [--yes]`. Project is `.claude/settings.local.json` in the current directory, user is `~/.claude/settings.json`; each scope is shown as a diff and consented to separately. Without `--yes` it asks (scope, board, then a yes per file); with `--yes` it asks nothing, needs `--scope`, and turns the board on only with `--board`.
+2. The hook entries (SessionStart, UserPromptSubmit, PostToolUse) call this binary by absolute path with `--discover hook --event <Event>`; SessionStart also gets `--board <room>` only when asked. A path with a shell variable, quote, backslash or control character is refused; a path with spaces is single-quoted. No command it writes contains a shell variable.
+3. Safe to re-run: klatch's own entries are updated in place (a different answer replaces the earlier one, never duplicates it), everything else in the file, including other hooks and key order, is left alone, and an up-to-date file is not rewritten. An unreadable or wrongly shaped settings file stops the run before any scope is written. Writes are a temporary file renamed into place.
+4. `--discover` is part of every command written: it is what lets the hook know the session, by reading the harness registry's `.json` files only (never the `.key` files), so the diff the user confirms shows it.
+5. Not built: the other questions of this section (presets, data location, clearance cap, scrubber, judges), `klatch doctor` (#66), the later switch (#256), the SessionEnd hook (#258).

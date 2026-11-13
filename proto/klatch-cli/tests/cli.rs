@@ -1155,3 +1155,209 @@ fn declines_show_on_asks_and_the_asker_is_told_once_when_nobody_can() {
         "told twice"
     );
 }
+
+// ---- klatch init (#65) ----
+
+struct Setup {
+    root: PathBuf,
+}
+
+impl Setup {
+    fn new() -> Self {
+        let d = std::env::temp_dir().join(format!(
+            "klatch-init-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(d.join("project")).unwrap();
+        std::fs::create_dir_all(d.join("home")).unwrap();
+        Setup { root: d }
+    }
+    fn project(&self) -> PathBuf {
+        self.root.join("project")
+    }
+    fn home(&self) -> PathBuf {
+        self.root.join("home")
+    }
+    fn project_settings(&self) -> PathBuf {
+        self.project().join(".claude/settings.local.json")
+    }
+    fn user_settings(&self) -> PathBuf {
+        self.home().join(".claude/settings.json")
+    }
+    fn init(&self, args: &[&str], stdin: &str) -> std::process::Output {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .current_dir(self.project())
+            .env_clear()
+            .env("HOME", self.home())
+            .arg("init")
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+    fn read(path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+}
+
+impl Drop for Setup {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.root).ok();
+    }
+}
+
+fn out(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+fn hook_cmds(v: &serde_json::Value, event: &str) -> Vec<String> {
+    v["hooks"][event]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|m| m["hooks"].as_array().unwrap().clone())
+        .map(|h| h["command"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn init_project_yes_writes_the_hooks_with_the_absolute_binary_path_and_nothing_else() {
+    let s = Setup::new();
+    let o = s.init(&["--scope", "project", "--yes"], "");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v = Setup::read(&s.project_settings());
+    let bin = env!("CARGO_BIN_EXE_klatch");
+    for e in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
+        let c = hook_cmds(&v, e);
+        assert_eq!(c.len(), 1, "{e}");
+        assert!(
+            c[0].contains(bin) && c[0].contains("--discover hook --event"),
+            "{}",
+            c[0]
+        );
+        assert!(!c[0].contains('$'), "a shell variable in {}", c[0]);
+    }
+    assert!(!hook_cmds(&v, "SessionStart")[0].contains("--board"));
+    assert!(
+        !s.user_settings().exists(),
+        "user scope written without being asked"
+    );
+}
+
+#[test]
+fn init_is_safe_to_run_again() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    let before = std::fs::read(s.project_settings()).unwrap();
+    let o = s.init(&["--scope", "project", "--yes"], "");
+    assert!(out(&o).contains("already up to date"), "got: {}", out(&o));
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), before);
+}
+
+#[test]
+fn init_user_and_both_write_the_scopes_asked_for() {
+    let s = Setup::new();
+    s.init(&["--scope", "user", "--yes"], "");
+    assert!(s.user_settings().exists() && !s.project_settings().exists());
+    let b = Setup::new();
+    b.init(&["--scope", "both", "--yes"], "");
+    assert!(b.user_settings().exists() && b.project_settings().exists());
+}
+
+#[test]
+fn init_yes_without_a_scope_refuses_and_writes_nothing() {
+    let s = Setup::new();
+    let o = s.init(&["--yes"], "");
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("--scope"));
+    assert!(!s.project_settings().exists() && !s.user_settings().exists());
+}
+
+#[test]
+fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
+    let s = Setup::new();
+    let o = s.init(&["--scope", "project"], "n\nn\n");
+    assert!(o.status.success());
+    assert!(
+        out(&o).contains("+ ") && out(&o).contains("--discover hook --event"),
+        "no diff: {}",
+        out(&o)
+    );
+    assert!(!s.project_settings().exists(), "wrote without a yes");
+    let y = s.init(&["--scope", "project"], "n\ny\n");
+    assert!(y.status.success());
+    assert!(s.project_settings().exists());
+}
+
+#[test]
+fn init_both_consents_to_each_scope_separately() {
+    let s = Setup::new();
+    s.init(&["--scope", "both"], "n\ny\nn\n");
+    assert!(s.project_settings().exists(), "project was said yes");
+    assert!(!s.user_settings().exists(), "user was said no");
+}
+
+#[test]
+fn the_board_is_off_unless_asked_for_and_only_on_session_start() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    assert!(!hook_cmds(&Setup::read(&s.project_settings()), "SessionStart")[0].contains("--board"));
+    let b = Setup::new();
+    b.init(&["--scope", "project", "--yes", "--board", "lobby"], "");
+    let v = Setup::read(&b.project_settings());
+    assert!(hook_cmds(&v, "SessionStart")[0].ends_with("--board lobby"));
+    assert!(!hook_cmds(&v, "PostToolUse")[0].contains("--board"));
+    let i = Setup::new();
+    i.init(&["--scope", "project"], "y\ny\n");
+    assert!(
+        hook_cmds(&Setup::read(&i.project_settings()), "SessionStart")[0].contains("--board lobby")
+    );
+}
+
+#[test]
+fn init_keeps_existing_settings_and_their_order() {
+    let s = Setup::new();
+    std::fs::create_dir_all(s.project().join(".claude")).unwrap();
+    std::fs::write(
+        s.project_settings(),
+        r#"{"zeta":1,"permissions":{"allow":["Bash(ls)"]},"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/audit"}]}]}}"#,
+    )
+    .unwrap();
+    s.init(&["--scope", "project", "--yes"], "");
+    let text = std::fs::read_to_string(s.project_settings()).unwrap();
+    assert!(
+        text.find("zeta").unwrap() < text.find("permissions").unwrap(),
+        "keys were reordered"
+    );
+    let v = Setup::read(&s.project_settings());
+    assert_eq!(v["permissions"]["allow"][0], "Bash(ls)");
+    assert!(hook_cmds(&v, "PostToolUse").contains(&"/usr/bin/audit".to_string()));
+}
+
+#[test]
+fn init_refuses_an_unreadable_settings_file_and_writes_no_scope_at_all() {
+    let s = Setup::new();
+    std::fs::create_dir_all(s.home().join(".claude")).unwrap();
+    std::fs::write(s.user_settings(), "{ not json").unwrap();
+    let o = s.init(&["--scope", "both", "--yes"], "");
+    assert!(!o.status.success());
+    assert_eq!(
+        std::fs::read_to_string(s.user_settings()).unwrap(),
+        "{ not json"
+    );
+    assert!(
+        !s.project_settings().exists(),
+        "wrote one scope although the other was unreadable"
+    );
+}
