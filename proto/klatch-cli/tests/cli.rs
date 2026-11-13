@@ -971,3 +971,53 @@ fn wait_peek_returns_the_message_without_marking_it_read() {
     );
     assert!(h.ok("alice", &["read", "r"]).contains("keep me"));
 }
+
+#[test]
+fn asks_lists_open_asks_with_their_state_and_a_release_does_not_end_one() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("alice", &["post", "r", "seeking: a lib"]);
+    h.ok("alice", &["post", "r", "chatter"]);
+    let out = h.ok("bob", &["asks", "r"]);
+    assert!(
+        out.contains("#1") && out.contains("alice") && out.contains("unclaimed"),
+        "got: {out}"
+    );
+    assert!(out.contains("seeking: a lib") && !out.contains("chatter"));
+    h.ok("bob", &["claim", "r", "ask:1"]);
+    let claimed = h.ok("bob", &["asks", "r"]);
+    assert!(
+        claimed.contains(" claimed ") && !claimed.contains("unclaimed"),
+        "claimed state not shown: {claimed}"
+    );
+    h.ok("bob", &["release", "r", "ask:1"]);
+    let after = h.ok("bob", &["asks", "r"]);
+    assert!(
+        after.contains("#1") && after.contains("unclaimed"),
+        "a release ended the ask: {after}"
+    );
+    h.ok("bob", &["post", "r", "answer to #1: here"]);
+    assert!(
+        !h.ok("bob", &["asks", "r"]).contains("#1"),
+        "an answered ask is still open"
+    );
+}
+
+#[test]
+fn the_session_start_hook_lists_the_backlog_but_other_events_do_not() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("alice", &["post", "lobby", "seeking: the api"]);
+    h.ok("helper", &["join", "lobby"]);
+    h.ok("helper", &["read", "lobby"]);
+    let other = h.ok("helper", &["hook", "--event", "UserPromptSubmit"]);
+    assert!(
+        !other.contains("open ask"),
+        "backlog outside session start: {other}"
+    );
+    let start = h.ok("helper", &["hook", "--event", "SessionStart"]);
+    assert!(
+        start.contains("open ask #1 from alice (no claim)"),
+        "got: {start}"
+    );
+}

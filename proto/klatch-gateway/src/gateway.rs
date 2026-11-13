@@ -1,6 +1,7 @@
 use crate::{Clock, Guard, Operation};
 use klatch_core::{
-    Claim, Error, MemberInfo, Message, Posted, Principal, Result, RoomDigest, valid_name,
+    Claim, Error, MemberInfo, Message, Posted, Principal, Result, RoomDigest, STALE_AFTER_SECS,
+    valid_name,
 };
 use klatch_store::Store;
 
@@ -134,6 +135,19 @@ impl<S: Store> Gateway<S> {
         self.store.wait_seen(room, &who.member, seq, self.now())
     }
 
+    /// Asks in a room nobody has answered or closed.
+    pub fn open_asks(&self, who: &Principal, room: &str) -> Result<Vec<klatch_core::OpenAsk>> {
+        self.admit(
+            who,
+            room,
+            Operation::Read {
+                room: room.into(),
+                advance: false,
+            },
+        )?;
+        self.store.open_asks(room, self.now())
+    }
+
     pub fn who(&self, who: &Principal, room: &str) -> Result<Vec<MemberInfo>> {
         self.admit(who, room, Operation::Who { room: room.into() })?;
         self.store.members(room)
@@ -225,6 +239,11 @@ impl<S: Store> Gateway<S> {
     /// Unread messages and others' claims for every room the caller has joined. A room the guard refuses
     /// is reported in `refused`, never dropped silently; store failures are errors.
     pub fn digest(&self, who: &Principal) -> Result<Digest> {
+        self.digest_with(who, false)
+    }
+
+    /// `digest`, optionally with the backlog of open unclaimed asks from others (for a session start).
+    pub fn digest_with(&self, who: &Principal, backlog: bool) -> Result<Digest> {
         check_member(who)?;
         let now = self.now();
         let mut rooms = Vec::new();
@@ -243,11 +262,25 @@ impl<S: Store> Gateway<S> {
             }
             let messages = self.store.hook_read(&room, &who.member, now)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
+            let stale = self
+                .store
+                .stale_asks(&room, &who.member, now, STALE_AFTER_SECS)?;
+            let backlog = if backlog {
+                self.store
+                    .open_asks(&room, now)?
+                    .into_iter()
+                    .filter(|a| a.sender != who.member && !a.claimed)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             rooms.push(RoomDigest {
                 room,
                 messages,
                 claims: changes.added,
                 released: changes.released,
+                stale,
+                backlog,
             });
         }
         Ok(Digest {
@@ -663,6 +696,65 @@ mod tests {
         g.wait_seen(&alice(), "r", 1).unwrap();
         assert!(g.wait_poll(&alice(), "r").unwrap().is_empty());
         assert_eq!(g.read(&alice(), "r", false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn open_asks_go_through_the_gateway() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.post(&bob(), "r", "seeking: slugify").unwrap();
+        let o = g.open_asks(&alice(), "r").unwrap();
+        assert_eq!((o.len(), o[0].sender.as_str()), (1, "bob"));
+    }
+
+    #[test]
+    fn a_digest_tells_the_asker_once_that_its_ask_has_no_claim() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "alice", "seeking: a lib", 10).unwrap();
+        let d = g.digest(&alice()).unwrap();
+        assert_eq!(d.rooms[0].stale.len(), 1);
+        assert!(
+            g.digest(&alice()).unwrap().rooms[0].stale.is_empty(),
+            "reported once"
+        );
+    }
+
+    #[test]
+    fn a_young_or_claimed_ask_is_not_stale() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "alice", "seeking: young", 90).unwrap();
+        let old = g
+            .store
+            .post("r", "alice", "seeking: claimed", 10)
+            .unwrap()
+            .seq;
+        g.claim(&bob(), "r", &format!("ask:{old}"), 500, "")
+            .unwrap();
+        assert!(g.digest(&alice()).unwrap().rooms[0].stale.is_empty());
+    }
+
+    #[test]
+    fn the_backlog_lists_others_open_unclaimed_asks_only_when_asked_for() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "bob", "seeking: open", 10).unwrap();
+        let claimed = g.store.post("r", "bob", "seeking: taken", 10).unwrap().seq;
+        g.store.post("r", "alice", "seeking: mine", 10).unwrap();
+        g.claim(&bob(), "r", &format!("ask:{claimed}"), 500, "")
+            .unwrap();
+        assert!(
+            g.digest(&alice())
+                .unwrap()
+                .rooms
+                .iter()
+                .all(|r| r.backlog.is_empty())
+        );
+        let d = g.digest_with(&alice(), true).unwrap();
+        let b = &d.rooms[0].backlog;
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].text, "seeking: open");
     }
 
     #[test]

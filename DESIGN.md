@@ -1467,3 +1467,10 @@ Decided after runs one to five (`RESEARCH-NOTES.md` sections 18 to 23) and the h
 - A harness-native push for interactive sessions (#214).
 - Whether wake rules should include "addressed to me" once direct messages exist (Q40).
 - How claims on asks should be named: `ask:<seq>` removes a miss when two helpers word an ask differently (#212).
+
+### 25.4 Open asks (#225, decided 2026-11-13)
+
+1. **What an ask is.** A message whose body starts with `seeking:` (case-sensitive). No protocol change; structured fields wait for Q43 and #234.
+2. **When an ask ends.** It is open until someone other than the asker posts `answer to #<N>:` (N is the ask's `seq`), or the asker posts `closed #<N>`. The human first chose to also end it on a released `ask:<N>` claim; after the analysis of failure paths (#230) that was dropped the same day, because a helper that gives up also releases, which would hide the ask. A release only means the ask is unclaimed again, so it stays open. Ending an ask without an answer is the decline convention (#230).
+3. **Who is told.** klatch itself reports, with no model involved: the asker's own open ask that has had no claim for 60 seconds (`STALE_AFTER_SECS`) is shown once in its next hook output; a session-start hook lists open asks from others that nobody has claimed (the backlog), so a new or restarted helper picks up what it missed. Both lines are one bounded line each (ask text cut at 160 characters, control characters flattened). The 60 seconds is a default; making it a room setting is a later ticket.
+4. **Where it lives.** Pure logic in `klatch-core` (`open_asks`), `Store::open_asks` and `stale_asks` (the latter remembers what it reported, in `asks_reported`, schema version 6), `Gateway::open_asks` and `digest_with`, `klatch asks <room>`, and `klatch hook --event SessionStart`.

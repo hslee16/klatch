@@ -73,6 +73,8 @@ enum Cmd {
     },
     /// Release a claim you hold
     Release { room: String, path: String },
+    /// List the asks in a room nobody has answered or closed
+    Asks { room: String },
     /// List active claims in a room
     Claims { room: String },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
@@ -257,6 +259,18 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             t.release(&room, &path)?;
             println!("released {path}");
         }
+        Cmd::Asks { room } => {
+            for a in t.open_asks(&room)? {
+                println!(
+                    "#{} {} {} {}s: {}",
+                    a.seq,
+                    a.sender,
+                    if a.claimed { "claimed" } else { "unclaimed" },
+                    now - a.ts,
+                    flat(&a.text)
+                );
+            }
+        }
         Cmd::Claims { room } => {
             for c in t.claims(&room)? {
                 println!(
@@ -272,7 +286,9 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             unreachable!("serve and stream are handled before dispatch")
         }
         Cmd::Hook { event } => {
-            let d = t.digest()?;
+            // A session start also lists open asks nobody has claimed, so a new or restarted helper picks up
+            // what it missed.
+            let d = t.digest_with(event.as_deref() == Some("SessionStart"))?;
             let mut text = String::new();
             for r in &d.refused {
                 text.push_str(&format!(

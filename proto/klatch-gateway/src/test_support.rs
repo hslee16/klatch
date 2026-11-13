@@ -91,6 +91,20 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_seen(room, member, seq, now)
     }
+    fn stale_asks(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+        after: i64,
+    ) -> Result<Vec<klatch_core::OpenAsk>> {
+        self.gate()?;
+        self.inner.stale_asks(room, member, now, after)
+    }
+    fn open_asks(&self, room: &str, now: i64) -> Result<Vec<klatch_core::OpenAsk>> {
+        self.gate()?;
+        self.inner.open_asks(room, now)
+    }
     fn claim_changes(
         &self,
         room: &str,
