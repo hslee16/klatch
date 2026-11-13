@@ -467,6 +467,18 @@ impl Store for SqliteStore {
         })
     }
 
+    fn session_of_member(&self, member: &str) -> Result<Option<String>> {
+        match self.conn.query_row(
+            "SELECT session_id FROM sessions WHERE member=?1 ORDER BY ts DESC LIMIT 1",
+            params![member],
+            |r| r.get(0),
+        ) {
+            Ok(m) => Ok(Some(m)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(be(e)),
+        }
+    }
+
     fn member_of_session(&self, session_id: &str) -> Result<Option<String>> {
         match self.conn.query_row(
             "SELECT member FROM sessions WHERE session_id=?1",
@@ -1436,6 +1448,20 @@ mod tests {
             "an old session is pruned"
         );
         assert_eq!(s.member_of_session("new").unwrap().as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn the_session_that_holds_a_member_name_can_be_looked_up() {
+        let s = store();
+        assert_eq!(s.session_of_member("alice").unwrap(), None);
+        s.note_session("sess-1", "alice", 10).unwrap();
+        s.note_session("sess-2", "alice", 20).unwrap();
+        assert_eq!(
+            s.session_of_member("alice").unwrap().as_deref(),
+            Some("sess-2"),
+            "the most recent holder"
+        );
+        assert_eq!(s.session_of_member("bob").unwrap(), None);
     }
 
     #[test]

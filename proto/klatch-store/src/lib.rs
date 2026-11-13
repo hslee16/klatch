@@ -39,6 +39,10 @@ pub trait Store {
     fn note_session(&self, _session_id: &str, _member: &str, _now: i64) -> Result<()> {
         Ok(())
     }
+    /// The harness session that holds a member name, if any: the most recent one noted for it.
+    fn session_of_member(&self, _member: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// The member remembered for a harness session, if any.
     fn member_of_session(&self, _session_id: &str) -> Result<Option<String>> {
         Ok(None)

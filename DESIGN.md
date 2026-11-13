@@ -1589,3 +1589,9 @@ A headless run started from an interactive session marked the interactive sessio
 2. **Remembered sessions.** Every hook run notes session id to member name in the store (`sessions`, schema version 11, a session id and a member name only, pruned with old members). A SessionEnd that finds no record of its own session uses the remembered member.
 3. **Never act as anyone else.** A SessionEnd hook that cannot tell which session it ends does nothing and exits quietly: it must never fail a session's exit. Other hooks with no identity behave as before (a typed name, or a refusal that says how to give one).
 4. **Not solved here:** two sessions that get the same member name (the name comes from the session name; #170). The session id is unique, the name is not.
+
+### 25.17 Stable, unique member names (#170, 2026-11-13)
+
+1. **One name for a session's life.** The first member name a harness session gets is remembered (`sessions`, section 25.16) and used from then on: a rename in the harness no longer makes a new member.
+2. **No two sessions share a name.** When a session's name is already held by a different session, a few characters of its session id are added (`proj-20-3fa9`, four characters, more if that also collides, always within 40). Names stay short and readable except on a real collision, so agents can still type them.
+3. **Unique id versus name.** The session id is the unique internal id; the display name is what people and agents see. Making the name only an attribute of a stable member id, with the repository and directory, is the larger model of section 24 (#181) and is not done here.
