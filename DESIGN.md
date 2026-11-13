@@ -1629,6 +1629,7 @@ Behaviour that depends on time (leases, aging, pruning, the deadlock window, sta
 2. **The bench builds its own.** `find_binary` builds a `test-clock` binary into `target/bench-bin` (so it never replaces the normal debug binary) and refuses a binary that does not say `test-clock`. A `World` can `set_clock` and `advance` (or go back), and every later command of that world carries `KLATCH_NOW`.
 3. **Scenarios now on a controlled clock (36 in all):** a lease lapses at its TTL and the ask is unclaimed again; a stale ask is reported after a minute and only once; members age out of `who` after ten minutes and are pruned after a day; offers follow presence; the deadlock wait window closes after two minutes; a clock set back is survived without a panic. The dead holder scenario no longer sleeps. Setting a break on purpose (the stale threshold from 60 to 600 seconds) made the stale ask scenario fail.
 4. **Observed:** with the clock set back, ages print as negative (`last seen -500s ago`); harmless but untidy (ticket).
+5. **Decided later (#295, #291).** Ages and times left are never printed negative: they are clamped at 0 (`secs_between`), while decisions keep the raw difference (a negative age already counted as recent). A hook on a read-only store fails open: it prints one line (`klatch: the store is read-only, so the lobby is unavailable`) as hook context, exits 0 and changes nothing; SessionEnd prints nothing; every other command still fails clearly.
 
 ## 27. Scopes and members from anywhere (#179, #297; decided 2026-11-13)
 

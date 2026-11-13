@@ -71,7 +71,7 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
         out.push_str(&format!(
             "{}\tlast seen {}s ago (liveness, not progress)",
             flat(&m.name),
-            now - m.last_seen
+            crate::secs_between(now, m.last_seen)
         ));
         if let Some(status) = &m.status {
             out.push_str(&format!("\tstatus: {}", flat(status)));
@@ -102,7 +102,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
             a.seq,
             flat(&a.sender),
             if a.claimed { "claimed" } else { "unclaimed" },
-            now - a.ts,
+            crate::secs_between(now, a.ts),
             if summary.is_empty() { "" } else { " " },
             summary,
             clip(&a.text)
@@ -117,7 +117,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
         out.push_str(&format!(
             "  {} offers ({}s ago): {}\n",
             flat(&o.sender),
-            now - o.ts,
+            crate::secs_between(now, o.ts),
             clip(&o.text)
         ));
     }
@@ -127,7 +127,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
         out.push_str(&format!(
             "  {} last seen {}s ago",
             flat(&m.name),
-            now - m.last_seen
+            crate::secs_between(now, m.last_seen)
         ));
         if let Some(status) = &m.status {
             out.push_str(&format!(", status: {}", clip(status)));
@@ -504,6 +504,44 @@ mod tests {
         assert!(!out.contains("old-1") && !out.contains("old-2"), "{out}");
         assert!(
             out.contains("2 others not seen for over 10 minutes (who --all lists them)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn no_age_is_printed_negative_when_the_reader_clock_is_behind() {
+        let m = [member("alice", 1500, Some("busy"))];
+        let who = render_who(&m, 1000, false);
+        assert!(
+            who.contains("last seen 0s ago") && !who.contains("-"),
+            "{who}"
+        );
+        let board = Board {
+            room: "lobby".into(),
+            asks: vec![OpenAsk {
+                seq: 1,
+                sender: "bob".into(),
+                text: "seeking: x".into(),
+                ts: 1500,
+                ..Default::default()
+            }],
+            offers: vec![Offer {
+                sender: "carol".into(),
+                seq: 2,
+                text: "offering: y".into(),
+                ts: 1400,
+            }],
+            members: vec![BoardMember {
+                name: "alice".into(),
+                last_seen: 1500,
+                status: Some("busy".into()),
+            }],
+            ..Default::default()
+        };
+        let out = render_board(&board, 1000);
+        assert!(!out.contains("-"), "a negative age was printed: {out}");
+        assert!(
+            out.contains("unclaimed 0s") && out.contains("(0s ago)"),
             "{out}"
         );
     }

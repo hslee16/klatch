@@ -6,6 +6,12 @@ pub fn valid_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
+/// Seconds from `earlier` to `later`, never negative: a clock set back, or a time written by a machine whose clock
+/// is ahead, must not print as a negative age (#295). Decisions that compare times keep the raw difference.
+pub fn secs_between(later: i64, earlier: i64) -> i64 {
+    (later - earlier).max(0)
+}
+
 /// Collapse line breaks so one message stays on one line.
 pub fn flat(s: &str) -> String {
     s.replace(['\r', '\n'], " ")
