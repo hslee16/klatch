@@ -17,7 +17,15 @@ pub trait Store {
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
     /// Take an advisory claim; refuse with `Error::Conflict` if another member holds an overlapping one.
     /// Expired claims are purged first. Re-claiming your own path replaces it.
-    fn claim(&self, room: &str, owner: &str, path: &str, ttl: i64, reason: &str, now: i64) -> Result<()>;
+    fn claim(
+        &self,
+        room: &str,
+        owner: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        now: i64,
+    ) -> Result<()>;
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.

@@ -2,7 +2,8 @@
 pub fn valid_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 40
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 /// Collapse line breaks so one message stays on one line.
@@ -13,7 +14,11 @@ pub fn flat(s: &str) -> String {
 /// Strip trailing slashes; the empty path becomes "/".
 pub fn norm(p: &str) -> String {
     let t = p.trim_end_matches('/');
-    if t.is_empty() { "/".into() } else { t.to_string() }
+    if t.is_empty() {
+        "/".into()
+    } else {
+        t.to_string()
+    }
 }
 
 /// a overlaps b if either is a path-component prefix of the other.

@@ -7,6 +7,6 @@ mod model;
 mod text;
 
 pub use error::{Error, Result};
-pub use hook::{render_hook, RoomDigest};
+pub use hook::{RoomDigest, render_hook};
 pub use model::{Claim, MemberInfo, Message};
 pub use text::{flat, norm, overlaps, valid_name};
