@@ -76,8 +76,10 @@ enum Cmd {
     Claim {
         room: String,
         path: String,
-        #[arg(long, default_value_t = 600)]
-        ttl: i64,
+        /// Seconds the claim lasts (default 600; an `ask:<N>` claim defaults to 90 and is capped at 300, so a helper
+        /// that fails frees the ask in about a minute: renew by claiming again)
+        #[arg(long)]
+        ttl: Option<i64>,
         #[arg(long, default_value = "")]
         reason: String,
         /// Conflict with every scope, not only your own (an `ask:<N>` claim always does)
@@ -396,6 +398,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
             reason,
             shared,
         } => {
+            let ttl = klatch_core::claim_ttl(&path, ttl);
             t.claim_with(&room, &path, ttl, &reason, shared)?;
             println!("claimed {path} for {ttl}s (advisory)");
         }
@@ -438,7 +441,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
         }
         Cmd::Asks { room } => {
             for a in t.open_asks(&room)? {
-                let summary = a.outcome_summary();
+                let summary = a.summary(now);
                 println!(
                     "#{} {} {} {}s{}{}: {}",
                     a.seq,

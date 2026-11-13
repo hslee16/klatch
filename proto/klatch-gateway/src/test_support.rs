@@ -155,6 +155,19 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.set_member_scope(member, scope, now)
     }
+    fn lapsed_asks(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<(klatch_core::OpenAsk, String)>> {
+        self.gate()?;
+        self.inner.lapsed_asks(room, member, now)
+    }
+    fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<klatch_core::AskRoom>> {
+        self.gate()?;
+        self.inner.rooms_with_prefix(prefix)
+    }
     fn claim_changes(
         &self,
         room: &str,

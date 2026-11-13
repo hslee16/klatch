@@ -241,6 +241,30 @@ pub fn all() -> Vec<Scenario> {
             run: bot_scope,
         },
         Scenario {
+            name: "a_short_ask_lease_lapses_and_the_asker_is_told",
+            origin: "#233",
+            layer: "functional",
+            run: lease_lapse_told,
+        },
+        Scenario {
+            name: "a_question_waiting_on_the_asker_pauses_the_stale_report",
+            origin: "#231",
+            layer: "functional",
+            run: need_info_pauses_stale,
+        },
+        Scenario {
+            name: "a_working_room_shows_on_the_ask_and_keeps_it_from_going_stale",
+            origin: "#231",
+            layer: "functional",
+            run: working_room,
+        },
+        Scenario {
+            name: "partial_work_is_handed_to_the_next_helper",
+            origin: "#233",
+            layer: "functional",
+            run: partial_handoff,
+        },
+        Scenario {
             name: "hostile_text_cannot_forge_a_header",
             origin: "#138",
             layer: "fault",
@@ -919,8 +943,8 @@ fn no_panic(text: &str, what: &str) -> Result<(), String> {
 fn dead_holder(w: &World) -> Res {
     // The holder's process is gone (each CLI call exits), but its claim persists until its lease runs out.
     w.set_clock(T0);
-    w.ok("holder", &["claim", "r", "ask:1", "--ttl", "600"])?;
-    w.advance(599);
+    w.ok("holder", &["claim", "r", "ask:1", "--ttl", "300"])?;
+    w.advance(299);
     has(
         &w.refused("other", &["claim", "r", "ask:1"])?,
         "holder",
@@ -1402,6 +1426,121 @@ fn bot_scope(w: &World) -> Res {
         &w.ok("observer", &["asks", "lobby"])?,
         "#1",
         "a non-coding member asks and is answered like any other",
+    )?;
+    Ok(vec![])
+}
+
+fn lease_lapse_told(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("asker", &["join", "lobby"])?;
+    w.ok("asker", &["post", "lobby", "seeking: a thing"])?;
+    has(
+        &w.ok("helper", &["claim", "lobby", "ask:1"])?,
+        "for 90s",
+        "an ask claim defaults to a 90 second lease",
+    )?;
+    w.advance(80);
+    w.ok("helper", &["claim", "lobby", "ask:1"])?; // renewed while working
+    w.advance(40);
+    has(
+        &w.ok("viewer", &["asks", "lobby"])?,
+        " claimed ",
+        "a renewed lease is still held",
+    )?;
+    lacks(&w.ok("asker", &["hook"])?, "lapsed", "nothing lapsed yet")?;
+    w.advance(60);
+    let told = w.ok("asker", &["hook"])?;
+    has(
+        &told,
+        "helper's claim lapsed without an answer; the ask is open again",
+        "the lapse is told to the asker",
+    )?;
+    w.advance(1);
+    lacks(&w.ok("asker", &["hook"])?, "lapsed", "once")?;
+    Ok(vec![])
+}
+
+fn need_info_pauses_stale(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("asker", &["join", "lobby"])?;
+    w.ok("asker", &["post", "lobby", "seeking: a thing"])?;
+    w.ok("helper", &["post", "lobby", "need-info #1: which format?"])?;
+    w.advance(70);
+    let waiting = w.ok("asker", &["hook"])?;
+    lacks(
+        &waiting,
+        "has had no claim",
+        "an ask waiting on its asker is not stale",
+    )?;
+    has(
+        &w.ok("viewer", &["asks", "lobby"])?,
+        "needs info",
+        "and says it waits on the asker",
+    )?;
+    w.ok("asker", &["post", "lobby", "info #1: json"])?;
+    w.advance(10);
+    has(
+        &w.ok("asker", &["hook"])?,
+        "has had no claim",
+        "once answered, the stale clock counts again",
+    )?;
+    Ok(vec![])
+}
+
+fn working_room(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("asker", &["join", "lobby"])?;
+    w.ok("asker", &["post", "lobby", "seeking: a thing"])?;
+    w.advance(30);
+    w.ok("asker", &["join", "ask-1"])?;
+    w.ok("helper", &["join", "ask-1"])?;
+    w.ok("helper", &["post", "ask-1", "looking at it"])?;
+    w.advance(40);
+    lacks(
+        &w.ok("asker", &["hook"])?,
+        "has had no claim",
+        "an ask with a busy working room is not stale",
+    )?;
+    let asks = w.ok("viewer", &["asks", "lobby"])?;
+    has(
+        &asks,
+        "room ask-1 2 members",
+        "the ask shows its working room",
+    )?;
+    w.advance(200);
+    has(
+        &w.ok("asker", &["hook"])?,
+        "has had no claim",
+        "a quiet room no longer counts",
+    )?;
+    Ok(vec![])
+}
+
+fn partial_handoff(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("asker", &["join", "lobby"])?;
+    w.ok("asker", &["post", "lobby", "seeking: a thing"])?;
+    w.ok("helper", &["claim", "lobby", "ask:1"])?;
+    w.ok(
+        "helper",
+        &[
+            "post",
+            "lobby",
+            "partial #1: parsed the file; tests not written",
+        ],
+    )?;
+    w.ok("helper", &["release", "lobby", "ask:1"])?;
+    w.advance(5);
+    let start = w.ok("next", &["hook", "--event", "SessionStart"])?;
+    has(
+        &start,
+        "partial by helper: parsed the file; tests not written",
+        "the next helper is handed the partial work",
+    )?;
+    has(
+        &w.ok("viewer", &["asks", "lobby"])?,
+        "partial 1",
+        "and the ask shows it",
     )?;
     Ok(vec![])
 }

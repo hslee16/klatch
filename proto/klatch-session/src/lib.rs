@@ -15,9 +15,6 @@ use std::io::{self, BufRead, Write};
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-/// Time to live of a claim when the request does not give one, in seconds.
-const DEFAULT_TTL: i64 = 600;
-
 /// Until the label model exists every caller has the lowest clearance; this is the safe direction.
 const DEFAULT_CLEARANCE: &str = "public";
 
@@ -544,7 +541,7 @@ fn handle<S: Store>(
         }
         "claim" => {
             let p = parse!(ClaimParams);
-            let ttl = p.ttl.unwrap_or(DEFAULT_TTL);
+            let ttl = klatch_core::claim_ttl(&p.path, p.ttl);
             answer!(
                 g.claim_with(who, &p.room, &p.path, ttl, &p.reason, p.shared),
                 |()| json!({})

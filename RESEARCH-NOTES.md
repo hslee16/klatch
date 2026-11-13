@@ -994,3 +994,7 @@ A scratch project with `klatch init --scope project --yes`, then one headless Cl
 - **OBSERVED, a bug (#284).** A headless child started from an interactive session marked its parent done. The first SessionEnd test (a scratch project, only klatch's hooks) passed three times out of three because the hook won a race against the harness removing its registry record; with the user's real settings and plugins the record was gone first, the walk reached the parent's record, and the parent was marked done (and the child was not).
 - **OBSERVED, fixed.** With the session id from standard input and a remembered session map, the same headless child run (real settings, started from this interactive session) recorded all four events for the child, marked the child done, and left the parent active.
 - **Lesson.** The test that passed was too kind: it had no ancestor session to fall through to. The bench needs a fake harness with a nested parent and child (ticket).
+
+## 35. A real-agent run of leases and clarification (2026-11-13, Claude Code 2.1.323)
+
+One helper (owns a package with two slug variants) and one asker (needs the ASCII variant, told to say so only if asked). Both finished, 7 and 9 turns. The helper volunteered both variants in its offer, so the asker never needed `need-info`: the clarification words were not exercised by a real agent in this run. The ask, answer, closed and status path worked. Clarification and lapse behaviour are covered by the bench scenarios (scripted); a real-agent run that forces `need-info` stays open on #235.

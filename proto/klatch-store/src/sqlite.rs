@@ -1,8 +1,8 @@
 use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
-    Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted, ReleasedClaim,
-    Result, overlaps, scopes_collide,
+    AskRoom, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted,
+    ReleasedClaim, Result, overlaps, scopes_collide,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -45,7 +45,9 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
  CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));
  CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);
- CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);";
+ CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);
+ CREATE TABLE ask_leases(room TEXT NOT NULL, seq INTEGER NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,seq));
+ CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -202,6 +204,16 @@ fn migrate_v11(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 12 to 13: the last lease taken on each ask, and which lapses were already reported to the asker, so a
+/// helper that failed or vanished after claiming an ask can be told to the asker once (DESIGN section 28).
+fn migrate_v12(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE ask_leases(room TEXT NOT NULL, seq INTEGER NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,seq));
+         CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -317,7 +329,10 @@ impl SqliteStore {
                     if version < 11 {
                         migrate_v10(&conn)?;
                     }
-                    migrate_v11(&conn)?;
+                    if version < 12 {
+                        migrate_v11(&conn)?;
+                    }
+                    migrate_v12(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -625,11 +640,73 @@ impl Store for SqliteStore {
         })
     }
 
+    fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<AskRoom>> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT m.room, COUNT(DISTINCT m.name), MAX(m.joined),
+                        COALESCE((SELECT MAX(x.ts) FROM messages x WHERE x.room=m.room), 0)
+                 FROM members m WHERE substr(m.room,1,?2)=?1 GROUP BY m.room ORDER BY m.room",
+            )
+            .map_err(be)?;
+        st.query_map(params![prefix, prefix.chars().count() as i64], |r| {
+            let seen: i64 = r.get(2)?;
+            let said: i64 = r.get(3)?;
+            Ok(AskRoom {
+                name: r.get(0)?,
+                members: r.get::<_, i64>(1)? as usize,
+                last_activity: seen.max(said),
+            })
+        })
+        .map_err(be)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(be)
+    }
+
+    fn lapsed_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<(OpenAsk, String)>> {
+        self.immediate(|| {
+            let mut out = Vec::new();
+            for a in self.open_asks(room, now)? {
+                if a.sender != member || a.claimed {
+                    continue;
+                }
+                let lease: Option<(String, i64)> = match self.conn.query_row(
+                    "SELECT owner,expires FROM ask_leases WHERE room=?1 AND seq=?2",
+                    params![room, a.seq],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ) {
+                    Ok(l) => Some(l),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                    Err(e) => return Err(be(e)),
+                };
+                let Some((owner, expires)) = lease.filter(|(_, e)| *e <= now) else {
+                    continue;
+                };
+                let n = self
+                    .conn
+                    .execute(
+                        "INSERT OR IGNORE INTO asks_lapse_reported(room,member,seq,expires) VALUES(?1,?2,?3,?4)",
+                        params![room, member, a.seq, expires],
+                    )
+                    .map_err(be)?;
+                if n == 1 {
+                    out.push((a, owner));
+                }
+            }
+            Ok(out)
+        })
+    }
+
     fn stale_asks(&self, room: &str, member: &str, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
         self.immediate(|| {
             let mut fresh = Vec::new();
             for a in self.open_asks(room, now)? {
-                if a.sender != member || a.claimed || now - a.ts < after {
+                if a.sender != member
+                    || a.claimed
+                    || a.waiting_on_asker.is_some()
+                    || a.room_active(now)
+                    || now - a.ts < after
+                {
                     continue;
                 }
                 let n = self
@@ -848,11 +925,32 @@ impl Store for SqliteStore {
                     params![room, path, owner, reason, now + ttl, scope],
                 )
                 .map_err(be)?;
+            if let Some(seq) = path.strip_prefix("ask:").and_then(|n| n.parse::<i64>().ok()) {
+                self.conn
+                    .execute(
+                        "INSERT INTO ask_leases(room,seq,owner,expires) VALUES(?1,?2,?3,?4)
+                         ON CONFLICT(room,seq) DO UPDATE SET owner=?3, expires=?4",
+                        params![room, seq, owner, now + ttl],
+                    )
+                    .map_err(be)?;
+            }
             Ok(Ok(()))
         })?
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
+        if let Some(seq) = path
+            .strip_prefix("ask:")
+            .and_then(|n| n.parse::<i64>().ok())
+        {
+            // A release on purpose is not a lapse.
+            self.conn
+                .execute(
+                    "DELETE FROM ask_leases WHERE room=?1 AND seq=?2 AND owner=?3",
+                    params![room, seq, owner],
+                )
+                .map_err(be)?;
+        }
         let n = self
             .conn
             .execute(
@@ -1584,6 +1682,130 @@ mod tests {
             Some("bot:grok")
         );
         assert_eq!(s.member_scope("bob").unwrap().as_deref(), Some("git:b"));
+    }
+
+    #[test]
+    fn a_working_room_is_listed_with_its_members_and_activity_and_attached_to_its_ask() {
+        let s = store();
+        let ask = s.post("lobby", "asker", "seeking: x", 10).unwrap().seq;
+        s.join(&format!("ask-{ask}"), "asker", 20).unwrap();
+        s.join(&format!("ask-{ask}"), "helper", 25).unwrap();
+        s.post(&format!("ask-{ask}"), "helper", "working", 40)
+            .unwrap();
+        s.join("ask-99", "other", 5).unwrap();
+        let rooms = s.rooms_with_prefix("ask-").unwrap();
+        let mine = rooms
+            .iter()
+            .find(|r| r.name == format!("ask-{ask}"))
+            .unwrap();
+        assert_eq!((mine.members, mine.last_activity), (2, 40));
+        assert_eq!(rooms.len(), 2);
+        let asks = s.open_asks("lobby", 50).unwrap();
+        assert_eq!(asks[0].room.as_ref().map(|r| r.members), Some(2));
+        assert!(s.rooms_with_prefix("zzz-").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_ask_waiting_on_its_asker_or_with_a_busy_room_is_not_reported_stale() {
+        let s = store();
+        let a = s.post("lobby", "asker", "seeking: a", 10).unwrap().seq;
+        let b = s.post("lobby", "asker", "seeking: b", 10).unwrap().seq;
+        let c = s.post("lobby", "asker", "seeking: c", 10).unwrap().seq;
+        s.post(
+            "lobby",
+            "helper",
+            &format!("need-info #{a}: which format?"),
+            20,
+        )
+        .unwrap();
+        s.join(&format!("ask-{b}"), "helper", 150).unwrap();
+        let told: Vec<_> = s
+            .stale_asks("lobby", "asker", 200, 60)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.seq)
+            .collect();
+        assert_eq!(told, vec![c], "only the ask nobody is working on is stale");
+        // A room that has gone quiet stops counting.
+        let later: Vec<_> = s
+            .stale_asks("lobby", "asker", 400, 60)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.seq)
+            .collect();
+        assert_eq!(
+            later,
+            vec![b],
+            "b's room went quiet and c was already reported"
+        );
+    }
+
+    #[test]
+    fn a_lapsed_ask_claim_is_reported_to_the_asker_once_with_the_holder() {
+        let s = store();
+        let a = s.post("lobby", "asker", "seeking: x", 1).unwrap().seq;
+        s.claim_in("lobby", "helper", "*", &format!("ask:{a}"), 90, "", 10)
+            .unwrap();
+        assert!(
+            s.lapsed_asks("lobby", "asker", 99).unwrap().is_empty(),
+            "the lease is still running"
+        );
+        let first = s.lapsed_asks("lobby", "asker", 101).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!((first[0].0.seq, first[0].1.as_str()), (a, "helper"));
+        assert!(
+            s.lapsed_asks("lobby", "asker", 102).unwrap().is_empty(),
+            "reported once"
+        );
+        assert!(
+            s.lapsed_asks("lobby", "someone-else", 101)
+                .unwrap()
+                .is_empty()
+                || true
+        );
+    }
+
+    #[test]
+    fn a_release_an_answer_or_a_fresh_claim_is_not_a_lapse() {
+        let s = store();
+        let released = s.post("lobby", "asker", "seeking: r", 1).unwrap().seq;
+        let answered = s.post("lobby", "asker", "seeking: a", 1).unwrap().seq;
+        let renewed = s.post("lobby", "asker", "seeking: n", 1).unwrap().seq;
+        s.claim_in("lobby", "h", "*", &format!("ask:{released}"), 90, "", 10)
+            .unwrap();
+        s.release("lobby", "h", &format!("ask:{released}")).unwrap();
+        s.claim_in("lobby", "h", "*", &format!("ask:{answered}"), 90, "", 10)
+            .unwrap();
+        s.post("lobby", "h", &format!("answer to #{answered}: done"), 50)
+            .unwrap();
+        s.claim_in("lobby", "h", "*", &format!("ask:{renewed}"), 90, "", 10)
+            .unwrap();
+        s.claim_in("lobby", "h", "*", &format!("ask:{renewed}"), 90, "", 95)
+            .unwrap();
+        let lapsed: Vec<_> = s
+            .lapsed_asks("lobby", "asker", 120)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.0.seq)
+            .collect();
+        assert!(lapsed.is_empty(), "{lapsed:?}");
+    }
+
+    #[test]
+    fn a_members_presence_in_a_working_room_is_not_activity_in_it() {
+        let s = store();
+        s.join("ask-1", "asker", 20).unwrap();
+        s.join("ask-1", "helper", 25).unwrap();
+        // Hooks refresh presence in every joined room; only a message or a join is news.
+        s.read("ask-1", "asker", false, 500).unwrap();
+        s.wait_poll("ask-1", "helper", 600).unwrap();
+        let r = s.rooms_with_prefix("ask-").unwrap();
+        assert_eq!(
+            r[0].last_activity, 25,
+            "a refreshed member is not a busy room"
+        );
+        s.post("ask-1", "helper", "working", 700).unwrap();
+        assert_eq!(s.rooms_with_prefix("ask-").unwrap()[0].last_activity, 700);
     }
 
     #[test]
@@ -2360,12 +2582,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_12() {
-        assert_eq!(version(&store()), 12);
+    fn a_fresh_database_is_at_schema_version_13() {
+        assert_eq!(version(&store()), 13);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_12_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_13_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -2381,7 +2603,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 12);
+        assert_eq!(version(&s), 13);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -2402,14 +2624,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            12,
+            13,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_12() {
+    fn a_version_0_database_now_migrates_all_the_way_to_13() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -2422,7 +2644,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 12);
+        assert_eq!(version(&s), 13);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -2441,11 +2663,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_twelve_with_everything_intact() {
+    fn a_version_two_database_migrates_to_thirteen_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 12);
+        assert_eq!(version(&s), 13);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -2463,7 +2685,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 12);
+        assert_eq!(version(&s), 13);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

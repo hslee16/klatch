@@ -96,7 +96,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
         out.push_str("  no open asks\n");
     }
     for a in board.asks.iter().take(BOARD_LIST_LIMIT) {
-        let summary = a.outcome_summary();
+        let summary = a.summary(now);
         out.push_str(&format!(
             "  #{} {} {} {}s{}{}: {}\n",
             a.seq,

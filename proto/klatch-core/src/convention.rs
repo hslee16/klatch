@@ -17,7 +17,9 @@ pub fn convention(bin: &str) -> String {
       {bin} --discover wait lobby --timeout 60\n\
       {bin} --discover status lobby done\n\
   - Ask: post \"seeking: <what you need>\". When the answer helped, post \"closed #N\".\n\
-  - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. Then post \"answer to #N: <answer>\" and release the claim.\n\
+  - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. An ask claim lasts 90 seconds, so while you work renew it by claiming again every minute or so; if you stop, release it. Then post \"answer to #N: <answer>\" and release the claim.\n\
+  - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". For a longer or multi-party exchange use the working room ask-<N>: join it, tell the lobby, bring in others who can help.\n\
+  - Stopping part way: post \"partial #N: <what is done>\" so the next helper starts from it, then release the claim.\n\
   - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
   - Claim: claim what you will change (a file, a document, a ticket) before you start. Claims live in your scope, so another scope's claim of the same name does not conflict; add --shared to a claim on something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
@@ -48,7 +50,7 @@ mod tests {
     #[test]
     fn the_text_is_short_and_safe_to_put_in_a_hook() {
         let t = convention(BIN);
-        assert!(t.len() < 1800, "{} bytes", t.len());
+        assert!(t.len() < 2600, "{} bytes", t.len());
         assert!(!t.contains('\u{2014}'), "an em dash");
         assert!(
             !t.contains('$'),
@@ -135,5 +137,28 @@ mod tests {
             "the convention must not assume code: {t}"
         );
         assert!(t.contains("scope") && t.contains("--shared"), "{t}");
+    }
+
+    #[test]
+    fn the_text_teaches_the_clarification_words_the_working_room_the_lease_and_partial_work() {
+        let t = convention(BIN);
+        for word in [
+            "need-info #N:",
+            "info #N:",
+            "partial #N:",
+            "ask-<N>",
+            "renew",
+        ] {
+            assert!(
+                t.contains(word),
+                "the convention does not teach {word}\n{t}"
+            );
+        }
+        assert!(
+            crate::parse_clarification("need-info #3: q").is_some()
+                && crate::parse_clarification("info #3: x").is_some()
+                && crate::parse_outcome("partial #3: x").is_some(),
+            "the words it teaches must be the ones the code parses"
+        );
     }
 }
