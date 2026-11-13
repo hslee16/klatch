@@ -135,6 +135,40 @@ impl<S: Store> Gateway<S> {
         self.store.wait_seen(room, &who.member, seq, self.now())
     }
 
+    /// The room's board: open asks, current offers and members with their last announced status.
+    pub fn board(&self, who: &Principal, room: &str) -> Result<klatch_core::Board> {
+        self.admit(
+            who,
+            room,
+            Operation::Read {
+                room: room.into(),
+                advance: false,
+            },
+        )?;
+        let now = self.now();
+        let messages = self.store.tail(room, 0, 5000)?;
+        let statuses = klatch_core::statuses(&messages);
+        let members = self
+            .store
+            .members(room)?
+            .into_iter()
+            .map(|m| klatch_core::BoardMember {
+                status: statuses
+                    .iter()
+                    .find(|s| s.member == m.name)
+                    .map(|s| s.status.clone()),
+                name: m.name,
+                last_seen: m.last_seen,
+            })
+            .collect();
+        Ok(klatch_core::Board {
+            room: room.into(),
+            asks: self.store.open_asks(room, now)?,
+            offers: klatch_core::current_offers(&messages, now, klatch_core::OFFER_TTL_SECS),
+            members,
+        })
+    }
+
     /// Asks in a room nobody has answered or closed.
     pub fn open_asks(&self, who: &Principal, room: &str) -> Result<Vec<klatch_core::OpenAsk>> {
         self.admit(
@@ -755,6 +789,35 @@ mod tests {
         let b = &d.rooms[0].backlog;
         assert_eq!(b.len(), 1);
         assert_eq!(b[0].text, "seeking: open");
+    }
+
+    #[test]
+    fn the_board_combines_asks_offers_members_and_status() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "bob", "seeking: slugify", 90).unwrap();
+        g.store.post("r", "alice", "offering: helpers", 95).unwrap();
+        g.store.post("r", "bob", "status: busy", 96).unwrap();
+        let b = g.board(&alice(), "r").unwrap();
+        assert_eq!(b.room, "r");
+        assert_eq!(b.asks.len(), 1);
+        assert_eq!(b.offers.len(), 1);
+        assert_eq!(b.offers[0].sender, "alice");
+        let bob = b.members.iter().find(|m| m.name == "bob").unwrap();
+        assert_eq!(bob.status.as_deref(), Some("busy"));
+        let alice = b.members.iter().find(|m| m.name == "alice").unwrap();
+        assert_eq!(alice.status, None);
+    }
+
+    #[test]
+    fn a_board_is_refused_where_a_read_is_and_never_reaches_the_store() {
+        let g = Gateway::new(
+            SpyStore::new(),
+            FixedClock(1),
+            Rc::new(SpyGuard::denying(&["locked"])),
+        );
+        assert!(g.board(&alice(), "locked").is_err());
+        assert_eq!(g.store.calls.get(), 0);
     }
 
     #[test]

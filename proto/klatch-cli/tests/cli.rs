@@ -1051,3 +1051,27 @@ fn a_filtered_or_peeking_wait_keeps_the_waiter_present_in_who() {
         "a peeking wait left the waiter looking absent: {line}"
     );
 }
+
+#[test]
+fn board_shows_open_asks_offers_and_member_status() {
+    let h = Home::new();
+    h.ok("lib", &["join", "lobby"]);
+    h.ok("lib", &["post", "lobby", "offering: text helpers"]);
+    h.ok("api", &["post", "lobby", "seeking: slugify"]);
+    h.ok("api", &["post", "lobby", "status: busy"]);
+    let out = h.ok("lib", &["board", "lobby"]);
+    assert!(out.starts_with("[board lobby]"), "got: {out}");
+    assert!(
+        out.contains("api unclaimed") && out.contains("seeking: slugify"),
+        "got: {out}"
+    );
+    assert!(out.contains("lib offers") && out.contains("offering: text helpers"));
+    assert!(out.contains("api last seen") && out.contains("status: busy"));
+    h.ok("lib", &["post", "lobby", "withdrawn: no longer"]);
+    assert!(
+        h.ok("api", &["board", "lobby"])
+            .contains("no current offers")
+    );
+    h.ok("lib", &["post", "lobby", "answer to #2: here"]);
+    assert!(h.ok("api", &["board", "lobby"]).contains("no open asks"));
+}
