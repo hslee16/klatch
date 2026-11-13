@@ -980,3 +980,10 @@ Same scenario, binary with detection (DESIGN section 25.12) and the convention l
 - **OBSERVED.** Fewer turns and less cost, but longer wall time (beta held its first claim and waited about a minute on purpose, because its task said the two changes must land together; it did not follow the convention line about releasing before waiting). One run each: the turn and cost drop could include variance; the absence of negotiation messages is a direct effect.
 - **OBSERVED, still true.** Both files end up `from alpha`: the second agent's edits replaced the first's. Detection resolves the wait, not the semantic conflict.
 - **NOT OBSERVED.** Three or more members; a cycle through asks; a crashed holder.
+
+## 33. The SessionEnd hook in a real session (2026-11-13, Claude Code 2.1.323)
+
+A scratch project with `klatch init --scope project --yes`, then one headless Claude Code session in it ("reply ok") that ended normally.
+
+- **OBSERVED.** The session joined the lobby at start by itself (SessionStart) and, after it ended, `who lobby` showed it as `status: done session ended`, written by the SessionEnd hook using the session's discovered identity (so the registry record is still readable when the hook runs).
+- **NOT OBSERVED.** An interactive session closed with `/exit` or Ctrl-D; a crash or `kill -9` (no hook runs, the aging backstop applies); a session that ends while it holds claims (the hook does not release claims; they lapse by their TTL, #59).

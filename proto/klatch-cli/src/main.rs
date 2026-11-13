@@ -96,6 +96,9 @@ enum Cmd {
         /// Do not join new sessions to the default lobby at session start (the default is to join)
         #[arg(long)]
         no_lobby: bool,
+        /// Do not install the SessionEnd hook that marks a finished session done (the default is to install it)
+        #[arg(long)]
+        no_session_end: bool,
     },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
@@ -161,6 +164,7 @@ fn main() -> Result<()> {
         board,
         yes,
         no_lobby,
+        no_session_end,
     } = &cli.cmd
     {
         return init::run(
@@ -169,6 +173,7 @@ fn main() -> Result<()> {
                 board: board.clone(),
                 yes: *yes,
                 no_lobby: *no_lobby,
+                no_session_end: *no_session_end,
             },
             &mut std::io::stdin().lock(),
             &mut std::io::stdout().lock(),
@@ -377,6 +382,21 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             board,
             no_join,
         } => {
+            // A session that ends is marked done in every room it joined, so it leaves the board at once instead
+            // of aging out (DESIGN section 25.13). It prints nothing: the session is over.
+            if event.as_deref() == Some("SessionEnd") {
+                let d = t.digest_with(false)?;
+                for room in d
+                    .rooms
+                    .iter()
+                    .map(|r| &r.room)
+                    .chain(d.refused.iter().map(|r| &r.room))
+                {
+                    let _ = t.set_status(room, "done session ended");
+                }
+                let _ = t.record_hook_run("SessionEnd", 0);
+                return Ok(());
+            }
             let starting = event.as_deref() == Some("SessionStart");
             // A session start joins the default lobby, so nobody has to tell a new session to (installing the
             // hooks is the consent). A member that was not there starts at the end of the history, so it is not
