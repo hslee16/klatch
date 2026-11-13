@@ -1189,3 +1189,70 @@ fn a_bad_status_is_an_invalid_error() {
     assert!(!ok);
     assert_eq!(err.unwrap().0, "invalid");
 }
+
+#[test]
+fn scopes_let_two_members_claim_the_same_path_and_a_shared_claim_reaches_every_scope() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req("s", "scope", json!({"scope":"git:a"})),
+            req("c", "claim", json!({"room":"r","path":"src/lib.rs"})),
+        ],
+    );
+    assert!(response(&f, "s").0 && response(&f, "c").0);
+    let f = run(
+        &g,
+        &bob(),
+        &[
+            req("s", "scope", json!({"scope":"git:b"})),
+            req("c", "claim", json!({"room":"r","path":"src/lib.rs"})),
+            req(
+                "d",
+                "claim",
+                json!({"room":"r","path":"docs","shared":true}),
+            ),
+            req("l", "claims", json!({"room":"r"})),
+        ],
+    );
+    assert!(
+        response(&f, "c").0,
+        "a different scope may claim the same path"
+    );
+    assert!(response(&f, "d").0);
+    let claims = response(&f, "l").1.unwrap()["claims"].clone();
+    let scopes: Vec<_> = claims
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["scope"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        scopes.contains(&"git:a".to_string())
+            && scopes.contains(&"git:b".to_string())
+            && scopes.contains(&"*".to_string()),
+        "{scopes:?}"
+    );
+    let f = run(
+        &g,
+        &alice(),
+        &[req("x", "claim", json!({"room":"r","path":"docs/api.md"}))],
+    );
+    let (ok, _, err) = response(&f, "x");
+    assert!(!ok);
+    assert_eq!(err.unwrap().0, "conflict");
+}
+
+#[test]
+fn a_bad_scope_is_an_invalid_error_over_the_wire() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &alice(),
+        &[req("s", "scope", json!({"scope":"has space"}))],
+    );
+    let (ok, _, err) = response(&f, "s");
+    assert!(!ok);
+    assert_eq!(err.unwrap().0, "invalid");
+}

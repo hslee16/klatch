@@ -32,6 +32,7 @@ pub struct Session<'a> {
     pub pid: u32,
     pub session_id: String,
     pub name: String,
+    cwd: PathBuf,
     seq: std::cell::Cell<u64>,
 }
 
@@ -130,11 +131,11 @@ done"#,
             .stderr(Stdio::null());
     }
 
-    fn register(&self, pid: u32, session_id: &str, name: &str) -> Result<(), String> {
+    fn register(&self, pid: u32, session_id: &str, name: &str, cwd: &Path) -> Result<(), String> {
         let start =
             ps(pid, "lstart=").ok_or("could not read the start time of the fake session")?;
         let record = serde_json::json!({
-            "pid": pid, "sessionId": session_id, "cwd": self.root.to_string_lossy(),
+            "pid": pid, "sessionId": session_id, "cwd": cwd.to_string_lossy(),
             "name": name, "procStart": start, "pidDomain": domain(),
         });
         std::fs::write(
@@ -146,18 +147,35 @@ done"#,
 
     /// Start a top-level session (like an interactive Claude Code), with its registry record written.
     pub fn start(&self, session_id: &str, name: &str) -> Result<Session<'_>, String> {
+        self.start_in(session_id, name, &self.root.clone())
+    }
+
+    /// `start`, with a working directory (the directory the registry record names, which klatch derives a
+    /// coding session's scope from).
+    pub fn start_in(
+        &self,
+        session_id: &str,
+        name: &str,
+        cwd: &Path,
+    ) -> Result<Session<'_>, String> {
         let id = NEXT.fetch_add(1, Ordering::SeqCst);
         let mut c = Command::new(&self.fake_claude);
-        c.arg("-c").arg(self.loop_script(id));
+        c.arg("-c").arg(self.loop_script(id)).current_dir(cwd);
         self.env(&mut c);
         let child = c
             .spawn()
             .map_err(|e| format!("start a fake session: {e}"))?;
         self.roots.borrow_mut().push(child);
-        self.attach(id, session_id, name)
+        self.attach(id, session_id, name, cwd)
     }
 
-    fn attach(&self, id: u64, session_id: &str, name: &str) -> Result<Session<'_>, String> {
+    fn attach(
+        &self,
+        id: u64,
+        session_id: &str,
+        name: &str,
+        cwd: &Path,
+    ) -> Result<Session<'_>, String> {
         let pidfile = self.root.join("run").join(format!("pid-{id}"));
         wait_for(&pidfile, "the fake session to start")?;
         let pid: u32 = std::fs::read_to_string(&pidfile)
@@ -165,7 +183,7 @@ done"#,
             .trim()
             .parse()
             .map_err(|_| "bad pid file")?;
-        self.register(pid, session_id, name)?;
+        self.register(pid, session_id, name, cwd)?;
         self.sessions.borrow_mut().push(pid);
         Ok(Session {
             harness: self,
@@ -173,6 +191,7 @@ done"#,
             pid,
             session_id: session_id.into(),
             name: name.into(),
+            cwd: cwd.to_path_buf(),
             seq: std::cell::Cell::new(0),
         })
     }
@@ -226,12 +245,46 @@ impl Session<'_> {
         std::fs::read_to_string(&out).map_err(|e| e.to_string())
     }
 
+    /// Run `klatch --discover <args>` inside this session's shell, as the session itself would (its own process
+    /// tree, its own registry record). Returns whether it succeeded and what it printed (output and errors).
+    pub fn klatch(&self, args: &[&str]) -> Result<(bool, String), String> {
+        let n = self.seq.get();
+        let out = self
+            .harness
+            .root
+            .join("run")
+            .join(format!("kout-{}-{n}", self.id));
+        let code = self
+            .harness
+            .root
+            .join("run")
+            .join(format!("kcode-{}-{n}", self.id));
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "'\\''")))
+            .collect();
+        self.run(&format!(
+            "\"$KLATCH\" --discover {} < /dev/null > '{}' 2>&1; echo $? > '{}'",
+            quoted.join(" "),
+            out.display(),
+            code.display()
+        ))?;
+        let ok = std::fs::read_to_string(&code)
+            .map_err(|e| e.to_string())?
+            .trim()
+            == "0";
+        Ok((
+            ok,
+            std::fs::read_to_string(&out).map_err(|e| e.to_string())?,
+        ))
+    }
+
     /// Start a child session from this session's shell (like a headless run started from an interactive one).
     pub fn spawn_child(&self, session_id: &str, name: &str) -> Result<Session<'_>, String> {
         let id = NEXT.fetch_add(1, Ordering::SeqCst);
         let script = self.harness.loop_script(id).replace('\'', "'\\''");
         self.run(&format!("\"$FAKE_CLAUDE\" -c '{script}' &"))?;
-        self.harness.attach(id, session_id, name)
+        self.harness.attach(id, session_id, name, &self.cwd)
     }
 
     /// The harness removing this session's registry record (what happens as a real session exits).
@@ -241,7 +294,8 @@ impl Session<'_> {
 
     /// The harness giving this session a new name in its record.
     pub fn rename(&self, name: &str) -> Result<(), String> {
-        self.harness.register(self.pid, &self.session_id, name)
+        self.harness
+            .register(self.pid, &self.session_id, name, &self.cwd)
     }
 }
 

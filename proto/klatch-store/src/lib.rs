@@ -69,6 +69,29 @@ pub trait Store {
         reason: &str,
         now: i64,
     ) -> Result<()>;
+    /// `claim` inside a scope (DESIGN section 27): a claim conflicts only with overlapping claims in the same scope
+    /// or in the shared scope `*`, and a shared claim conflicts with every scope. The default ignores the scope.
+    #[allow(clippy::too_many_arguments)]
+    fn claim_in(
+        &self,
+        room: &str,
+        owner: &str,
+        _scope: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.claim(room, owner, path, ttl, reason, now)
+    }
+    /// The scope a member declared or was given, if any. The default knows none.
+    fn member_scope(&self, _member: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// Remember a member's scope (replacing an earlier one). The default stores nothing.
+    fn set_member_scope(&self, _member: &str, _scope: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.

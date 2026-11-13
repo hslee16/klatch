@@ -189,6 +189,7 @@ mod tests {
             owner: "helper".into(),
             reason: String::new(),
             expires: 1000,
+            scope: String::new(),
         }
     }
 

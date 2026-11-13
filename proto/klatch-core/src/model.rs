@@ -35,6 +35,9 @@ pub struct Claim {
     pub reason: String,
     /// Unix seconds at which the claim lapses.
     pub expires: i64,
+    /// The scope the claim lives in: empty for a member with none, `*` for a shared or room-wide claim, otherwise
+    /// the claimer's scope (DESIGN section 27).
+    pub scope: String,
 }
 
 /// A claim a member was shown earlier that is no longer held (released, or lapsed).

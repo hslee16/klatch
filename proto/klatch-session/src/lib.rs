@@ -448,6 +448,13 @@ struct ClaimParams {
     ttl: Option<i64>,
     #[serde(default)]
     reason: String,
+    /// A shared claim conflicts with every scope.
+    #[serde(default)]
+    shared: bool,
+}
+#[derive(Deserialize)]
+struct ScopeParams {
+    scope: String,
 }
 #[derive(Deserialize)]
 struct StatusParams {
@@ -538,9 +545,14 @@ fn handle<S: Store>(
         "claim" => {
             let p = parse!(ClaimParams);
             let ttl = p.ttl.unwrap_or(DEFAULT_TTL);
-            answer!(g.claim(who, &p.room, &p.path, ttl, &p.reason), |()| json!(
-                {}
-            ))
+            answer!(
+                g.claim_with(who, &p.room, &p.path, ttl, &p.reason, p.shared),
+                |()| json!({})
+            )
+        }
+        "scope" => {
+            let p = parse!(ScopeParams);
+            answer!(g.set_scope(who, &p.scope), |()| json!({}))
         }
         "release" => {
             let p = parse!(PathParams);
@@ -550,9 +562,15 @@ fn handle<S: Store>(
             let p = parse!(RoomParams);
             answer!(g.claims(who, &p.room), |cs: Vec<Claim>| json!({
                 "claims": cs.iter()
-                    .map(|c| json!({
-                        "path": c.path, "owner": c.owner, "reason": c.reason, "expires": c.expires
-                    }))
+                    .map(|c| {
+                        let mut v = json!({
+                            "path": c.path, "owner": c.owner, "reason": c.reason, "expires": c.expires
+                        });
+                        if !c.scope.is_empty() {
+                            v["scope"] = json!(c.scope);
+                        }
+                        v
+                    })
                     .collect::<Vec<_>>()
             }))
         }
