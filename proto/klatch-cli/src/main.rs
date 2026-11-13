@@ -9,9 +9,7 @@ use clap::{Parser, Subcommand};
 use klatch_core::{
     Principal, convention, flat, hook_output_json, render_board, render_hook, render_who,
 };
-use klatch_gateway::{
-    AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
-};
+use klatch_gateway::{AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport};
 use klatch_harness::{Found, FsRegistry, Miss, PsTable, find_session};
 use klatch_store::{SqliteStore, Store};
 use std::path::PathBuf;
@@ -19,7 +17,7 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(name = "klatch", about = "Local agent rooms prototype")]
+#[command(name = "klatch", about = "Local agent rooms prototype", version = VERSION)]
 struct Cli {
     /// Member name (default: $KLATCH_NAME)
     #[arg(long, global = true)]
@@ -148,12 +146,38 @@ enum Cmd {
     },
 }
 
+/// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when
+/// that is set, so time-dependent behaviour can be tested end to end; a real build has no such seam and ignores
+/// the variable (DESIGN section 26.5).
 fn now() -> i64 {
+    #[cfg(feature = "test-clock")]
+    if let Some(t) = std::env::var("KLATCH_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return t;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64
 }
+
+/// The clock the gateway uses: the same time as `now()`.
+struct CliClock;
+
+impl klatch_gateway::Clock for CliClock {
+    fn now(&self) -> i64 {
+        now()
+    }
+}
+
+/// The version text; a test build says so, which is how the bench knows it has the right binary.
+const VERSION: &str = if cfg!(feature = "test-clock") {
+    concat!(env!("CARGO_PKG_VERSION"), " (test-clock)")
+} else {
+    env!("CARGO_PKG_VERSION")
+};
 
 fn db_path() -> Result<PathBuf> {
     let base = match std::env::var("KLATCH_HOME") {
@@ -229,7 +253,7 @@ fn main() -> Result<()> {
     };
     let principal = resolve_principal(&LocalIdentity, &evidence)?;
     let me = principal.member.clone();
-    let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
+    let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
     if let Cmd::Serve { stdio } = cli.cmd {
         if !stdio {
             bail!("serve needs --stdio, the only transport so far");

@@ -4,6 +4,9 @@
 use crate::{FakeHarness, Scenario, World};
 use std::time::Instant;
 
+/// The time every clock scenario starts at (unix seconds).
+const T0: i64 = 1_800_000_000;
+
 type Metrics = Vec<(String, f64)>;
 type Res = Result<Metrics, String>;
 
@@ -182,6 +185,42 @@ pub fn all() -> Vec<Scenario> {
             origin: "#262, #284",
             layer: "fault",
             run: hostile_stdin,
+        },
+        Scenario {
+            name: "an_ask_claim_lapses_and_the_ask_is_unclaimed_again",
+            origin: "#233, #292",
+            layer: "fault",
+            run: claim_lapse_unclaims,
+        },
+        Scenario {
+            name: "a_stale_ask_is_reported_to_its_asker_after_a_minute",
+            origin: "#225, #292",
+            layer: "functional",
+            run: stale_ask_by_clock,
+        },
+        Scenario {
+            name: "members_age_out_of_who_and_are_pruned_after_a_day",
+            origin: "#282, #292",
+            layer: "functional",
+            run: aging_and_prune,
+        },
+        Scenario {
+            name: "offers_follow_their_senders_presence",
+            origin: "#250, #292",
+            layer: "functional",
+            run: offers_presence,
+        },
+        Scenario {
+            name: "the_deadlock_wait_window_closes",
+            origin: "#246, #292",
+            layer: "fault",
+            run: deadlock_window,
+        },
+        Scenario {
+            name: "a_clock_set_back_is_survived",
+            origin: "#292",
+            layer: "fault",
+            run: clock_back,
         },
         Scenario {
             name: "hostile_text_cannot_forge_a_header",
@@ -861,10 +900,15 @@ fn no_panic(text: &str, what: &str) -> Result<(), String> {
 
 fn dead_holder(w: &World) -> Res {
     // The holder's process is gone (each CLI call exits), but its claim persists until its lease runs out.
-    w.ok("holder", &["claim", "r", "ask:1", "--ttl", "2"])?;
-    let refused = w.refused("other", &["claim", "r", "ask:1"])?;
-    has(&refused, "holder", "the lease is honoured while it lasts")?;
-    std::thread::sleep(std::time::Duration::from_millis(2300));
+    w.set_clock(T0);
+    w.ok("holder", &["claim", "r", "ask:1", "--ttl", "600"])?;
+    w.advance(599);
+    has(
+        &w.refused("other", &["claim", "r", "ask:1"])?,
+        "holder",
+        "the lease is honoured while it lasts",
+    )?;
+    w.advance(2);
     w.ok("other", &["claim", "r", "ask:1"])?;
     Ok(vec![])
 }
@@ -1052,6 +1096,152 @@ fn hostile_stdin(w: &World) -> Res {
         check(
             start.elapsed().as_secs() < 10,
             format!("a hook given {what} took {:?}", start.elapsed()),
+        )?;
+    }
+    Ok(vec![])
+}
+
+fn claim_lapse_unclaims(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("alice", &["post", "lobby", "seeking: a thing"])?;
+    w.ok("bob", &["claim", "lobby", "ask:1", "--ttl", "60"])?;
+    w.advance(30);
+    has(
+        &w.ok("carol", &["asks", "lobby"])?,
+        " claimed ",
+        "claimed while the lease lasts",
+    )?;
+    w.advance(31);
+    let asks = w.ok("carol", &["asks", "lobby"])?;
+    has(&asks, "unclaimed", "unclaimed again once the lease lapses")?;
+    Ok(vec![])
+}
+
+fn stale_ask_by_clock(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("alice", &["post", "lobby", "seeking: a rare thing"])?;
+    w.advance(30);
+    lacks(
+        &w.ok("alice", &["hook"])?,
+        "has had no claim",
+        "not stale after 30 s",
+    )?;
+    w.advance(31);
+    let told = w.ok("alice", &["hook"])?;
+    has(
+        &told,
+        "your ask #1 has had no claim for 61s",
+        "told after a minute",
+    )?;
+    w.advance(1);
+    lacks(&w.ok("alice", &["hook"])?, "has had no claim", "told once")?;
+    Ok(vec![])
+}
+
+fn aging_and_prune(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.advance(601);
+    let who = w.ok("bob", &["who", "lobby"])?;
+    lacks(
+        &who,
+        "alice\t",
+        "a member unseen for over ten minutes is hidden",
+    )?;
+    has(&who, "not seen for over 10 minutes", "and counted")?;
+    has(
+        &w.ok("bob", &["who", "lobby", "--all"])?,
+        "alice",
+        "who --all still lists it",
+    )?;
+    w.advance(86_400);
+    w.ok("carol", &["hook", "--event", "SessionStart", "--no-join"])?;
+    lacks(
+        &w.ok("bob", &["who", "lobby", "--all"])?,
+        "alice",
+        "a session start prunes members unseen for a day",
+    )?;
+    Ok(vec![])
+}
+
+fn offers_presence(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("alice", &["post", "lobby", "offering: text helpers"])?;
+    w.advance(100);
+    has(
+        &w.ok("bob", &["board", "lobby"])?,
+        "alice offers",
+        "the offer stands while alice is present",
+    )?;
+    w.advance(600);
+    has(
+        &w.ok("bob", &["board", "lobby"])?,
+        "no current offers",
+        "it goes when alice has not been seen for ten minutes",
+    )?;
+    Ok(vec![])
+}
+
+fn deadlock_window(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("a", &["claim", "r", "X"])?;
+    w.ok("b", &["claim", "r", "Y"])?;
+    lacks(
+        &w.refused("a", &["claim", "r", "Y"])?,
+        "deadlock",
+        "no cycle yet",
+    )?;
+    w.advance(60);
+    has(
+        &w.refused("b", &["claim", "r", "X"])?,
+        "deadlock",
+        "inside the window the closing attempt is a deadlock",
+    )?;
+    // A wait older than two minutes is no longer a wait.
+    w.ok("c", &["claim", "r2", "X"])?;
+    w.ok("d", &["claim", "r2", "Y"])?;
+    lacks(
+        &w.refused("c", &["claim", "r2", "Y"])?,
+        "deadlock",
+        "no cycle yet in r2",
+    )?;
+    w.advance(121);
+    lacks(
+        &w.refused("d", &["claim", "r2", "X"])?,
+        "deadlock",
+        "the first wait has expired",
+    )?;
+    Ok(vec![])
+}
+
+fn clock_back(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("alice", &["post", "lobby", "seeking: a thing"])?;
+    w.ok("alice", &["claim", "lobby", "ask:1", "--ttl", "600"])?;
+    w.advance(-500);
+    for args in [
+        vec!["who", "lobby", "--all"],
+        vec!["board", "lobby"],
+        vec!["hook"],
+        vec!["asks", "lobby"],
+        vec!["claims", "lobby"],
+        vec!["read", "lobby", "--peek"],
+    ] {
+        let r = w.run("bob", &args);
+        no_panic(
+            &format!("{}{}", r.stdout, r.stderr),
+            &format!("klatch {args:?} with the clock set back"),
+        )?;
+        check(
+            r.ok,
+            format!(
+                "klatch {args:?} failed with the clock set back: {}",
+                r.stderr.trim()
+            ),
         )?;
     }
     Ok(vec![])

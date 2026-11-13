@@ -9,6 +9,11 @@ license.workspace = true
 name = "klatch"
 path = "src/main.rs"
 
+[features]
+# A test build only: lets KLATCH_NOW set the clock so time-dependent behaviour can be tested end to end. The
+# shipped binary is built without it and has no way to move its clock (DESIGN section 26.5).
+test-clock = []
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

@@ -1621,3 +1621,12 @@ Six more `fault` scenarios drive failures against the real binary; none found a 
 
 Observed, not changed: on a read-only store `read` and `hook` also fail, because they refresh presence (a write); the hook then exits non-zero with `attempt to write a readonly database`, which Claude Code shows. Whether the hook should fail open (print nothing, exit 0) is a decision (ticket). Clock jumps are not covered: the binary reads the system clock directly and has no seam to move it.
 
+### 26.5 The clock seam (#292, decided 2026-11-13)
+
+Behaviour that depends on time (leases, aging, pruning, the deadlock window, stale asks, offers following presence) could only be tested by sleeping. The binary now has a clock seam, but only in a test build.
+
+1. **Compile-time, absent from real builds (the human's choice).** `klatch-cli` has a cargo feature `test-clock`. Only a binary built with it reads `KLATCH_NOW` (unix seconds) as the current time; it also says so in `klatch --version` (`0.1.0 (test-clock)`). The shipped binary and the one `klatch init` writes into hooks are built without the feature and ignore the variable, so nobody can move klatch's clock from outside. Two tests, one per build, assert both halves.
+2. **The bench builds its own.** `find_binary` builds a `test-clock` binary into `target/bench-bin` (so it never replaces the normal debug binary) and refuses a binary that does not say `test-clock`. A `World` can `set_clock` and `advance` (or go back), and every later command of that world carries `KLATCH_NOW`.
+3. **Scenarios now on a controlled clock (36 in all):** a lease lapses at its TTL and the ask is unclaimed again; a stale ask is reported after a minute and only once; members age out of `who` after ten minutes and are pruned after a day; offers follow presence; the deadlock wait window closes after two minutes; a clock set back is survived without a panic. The dead holder scenario no longer sleeps. Setting a break on purpose (the stale threshold from 60 to 600 seconds) made the stale ask scenario fail.
+4. **Observed:** with the clock set back, ages print as negative (`last seen -500s ago`); harmless but untidy (ticket).
+
