@@ -1988,3 +1988,48 @@ fn asks_show_a_question_waiting_on_the_asker_and_the_working_room() {
             .contains("room ask-1 3 members")
     );
 }
+
+fn read_only(home: &Home, on: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, file) = if on { (0o555, 0o444) } else { (0o755, 0o644) };
+    for e in std::fs::read_dir(&home.0).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_file() {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(file)).unwrap();
+        }
+    }
+    std::fs::set_permissions(&home.0, std::fs::Permissions::from_mode(dir)).unwrap();
+}
+
+#[test]
+fn a_hook_on_a_read_only_store_fails_open_with_one_visible_line() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("bob", &["post", "lobby", "hello"]);
+    read_only(&h, true);
+    let o = h.run("alice", &["hook", "--event", "UserPromptSubmit"]);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let end = h.run("alice", &["hook", "--event", "SessionEnd"]);
+    read_only(&h, false);
+    assert!(o.status.success(), "the hook must exit 0: {err}");
+    assert!(
+        out.contains("the store is read-only, so the lobby is unavailable"),
+        "stdout: {out} stderr: {err}"
+    );
+    assert_eq!(out.lines().count(), 1, "one line only: {out}");
+    assert!(end.status.success(), "SessionEnd must not fail either");
+    assert!(end.stdout.is_empty(), "SessionEnd prints nothing");
+    // nothing was changed, and a command that is not a hook still fails clearly
+    assert!(h.ok("bob", &["read", "lobby", "--peek"]).is_empty());
+}
+
+#[test]
+fn a_command_that_is_not_a_hook_still_fails_on_a_read_only_store() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    read_only(&h, true);
+    let o = h.run("alice", &["post", "lobby", "x"]);
+    read_only(&h, false);
+    assert!(!o.status.success());
+}

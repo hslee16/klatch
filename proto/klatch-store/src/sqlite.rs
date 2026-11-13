@@ -890,7 +890,7 @@ impl Store for SqliteStore {
                     return Ok(Err(Error::Conflict {
                         path: p.clone(),
                         owner: o.clone(),
-                        secs_left: e - now,
+                        secs_left: klatch_core::secs_between(*e, now),
                         deadlock,
                     }));
                 }

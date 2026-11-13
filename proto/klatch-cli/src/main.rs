@@ -199,8 +199,43 @@ fn db_path() -> Result<PathBuf> {
     Ok(base.join("rooms.db"))
 }
 
+/// A hook that cannot write the store (it is read-only) must not fail every turn of a session: it says so in one
+/// line and exits 0, changing nothing. Any other failure stays loud (ticket #291, DESIGN section 26.4).
+const READ_ONLY_NOTICE: &str = "klatch: the store is read-only, so the lobby is unavailable";
+
+fn is_read_only(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        let m = c.to_string().to_lowercase();
+        m.contains("readonly database") || m.contains("read-only")
+    })
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let hook_event = match &cli.cmd {
+        Cmd::Hook { event, .. } => Some(event.clone().unwrap_or_default()),
+        _ => None,
+    };
+    match run_cli(cli) {
+        Err(e) if hook_event.is_some() && is_read_only(&e) => {
+            // the session is over at SessionEnd: nothing to tell it
+            if hook_event.as_deref() != Some("SessionEnd") {
+                print!(
+                    "{}",
+                    klatch_core::hook_output_json(
+                        hook_event.as_deref().unwrap_or(""),
+                        READ_ONLY_NOTICE,
+                        None
+                    )
+                );
+            }
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+fn run_cli(cli: Cli) -> Result<()> {
     if let Cmd::Init {
         scope,
         board,
@@ -426,7 +461,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
                 println!(
                     "{}\tlast ran {}s ago\truns {}\tprinted {} bytes",
                     r.event,
-                    now - r.last_ts,
+                    klatch_core::secs_between(now, r.last_ts),
                     r.runs,
                     r.last_bytes
                 );
@@ -447,7 +482,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
                     a.seq,
                     a.sender,
                     if a.claimed { "claimed" } else { "unclaimed" },
-                    now - a.ts,
+                    klatch_core::secs_between(now, a.ts),
                     if summary.is_empty() { "" } else { " " },
                     summary,
                     flat(&a.text)
@@ -460,7 +495,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
                     "{}\t{}\t{}s left\t{}{}",
                     c.path,
                     c.owner,
-                    c.expires - now,
+                    klatch_core::secs_between(c.expires, now),
                     flat(&c.reason),
                     if c.scope.is_empty() {
                         String::new()

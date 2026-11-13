@@ -1062,6 +1062,25 @@ fn read_only_store(w: &World) -> Res {
             set(0o755, 0o644)?;
             return Err(e);
         }
+        if args[0] == "hook" {
+            let failed = if !r.ok {
+                Some("the hook failed on a read-only store".to_string())
+            } else if !r
+                .stdout
+                .contains("the store is read-only, so the lobby is unavailable")
+            {
+                Some(format!(
+                    "the hook did not say the store is read-only: {}",
+                    r.stdout
+                ))
+            } else {
+                None
+            };
+            if let Some(e) = failed {
+                set(0o755, 0o644)?;
+                return Err(e);
+            }
+        }
     }
     set(0o755, 0o644)?;
     // Another member reads: a member never reads its own messages back.
@@ -1284,6 +1303,14 @@ fn clock_back(w: &World) -> Res {
                 "klatch {args:?} failed with the clock set back: {}",
                 r.stderr.trim()
             ),
+        )?;
+        let text = format!("{}{}", r.stdout, r.stderr);
+        let negative = text.as_bytes().windows(3).any(|w| {
+            w[0] == b'-' && w[1].is_ascii_digit() && (w[2].is_ascii_digit() || w[2] == b's')
+        });
+        check(
+            !negative,
+            format!("klatch {args:?} printed a negative age with the clock set back: {text}"),
         )?;
     }
     Ok(vec![])

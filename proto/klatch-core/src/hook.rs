@@ -99,7 +99,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
                 "  claim: {} holds {} for {}s more; avoid editing it\n",
                 c.owner,
                 c.path,
-                c.expires - now
+                crate::secs_between(c.expires, now)
             ));
         }
         for r in &d.released {
@@ -113,7 +113,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
             out.push_str(&format!(
                 "  your ask #{} has had no claim for {}s: {}\n",
                 a.seq,
-                now - a.ts,
+                crate::secs_between(now, a.ts),
                 clip(&a.text)
             ));
         }
@@ -231,6 +231,26 @@ mod tests {
             claimed: false,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn no_age_or_time_left_is_printed_negative() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            claims: vec![Claim {
+                owner: "bob".into(),
+                path: "src/a.rs".into(),
+                reason: String::new(),
+                expires: 95,
+                scope: String::new(),
+            }],
+            stale: vec![ask(3, "me", "seeking: a lib", 150)],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(out.contains("for 0s more"), "got: {out}");
+        assert!(out.contains("no claim for 0s"), "got: {out}");
+        assert!(!out.contains("-"), "a negative number was printed: {out}");
     }
 
     #[test]
