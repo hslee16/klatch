@@ -188,7 +188,10 @@ dependencies = [
  "clap",
  "klatch-core",
  "klatch-gateway",
+ "klatch-protocol",
+ "klatch-session",
  "klatch-store",
+ "serde_json",
 ]
 
 [[package]]
@@ -207,6 +210,18 @@ dependencies = [
 name = "klatch-protocol"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "klatch-session"
+version = "0.1.0"
+dependencies = [
+ "klatch-core",
+ "klatch-gateway",
+ "klatch-protocol",
+ "klatch-store",
  "serde",
  "serde_json",
 ]

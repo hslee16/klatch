@@ -388,7 +388,10 @@ mod tests {
         );
         let who = alice();
         let err = g.post(&who, "locked", "x").unwrap_err();
-        assert!(err.to_string().contains("refused by policy"), "{err}");
+        assert!(
+            matches!(err, Error::Refused { ref rule, .. } if rule == "test.deny_room"),
+            "{err}"
+        );
         assert!(g.read(&who, "locked", true).is_err());
         assert!(g.claim(&who, "locked", "p", 10, "").is_err());
         assert_eq!(g.store.calls.get(), 0);
@@ -448,6 +451,6 @@ mod tests {
         assert_eq!(d.rooms[0].room, "open");
         assert_eq!(d.refused.len(), 1);
         assert_eq!(d.refused[0].room, "secretroom");
-        assert!(d.refused[0].reason.contains("refused by policy"));
+        assert!(d.refused[0].reason.contains("test.deny_room"));
     }
 }

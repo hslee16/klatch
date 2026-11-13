@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["klatch-core", "klatch-store", "klatch-cli", "klatch-protocol", "klatch-gateway"]
+members = ["klatch-core", "klatch-store", "klatch-cli", "klatch-protocol", "klatch-gateway", "klatch-session"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,5 +14,7 @@ rusqlite = { version = "0.42.0", features = ["bundled"] }
 klatch-core = { path = "klatch-core" }
 klatch-store = { path = "klatch-store" }
 klatch-gateway = { path = "klatch-gateway" }
+klatch-protocol = { path = "klatch-protocol" }
+klatch-session = { path = "klatch-session" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

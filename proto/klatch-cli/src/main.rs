@@ -52,6 +52,12 @@ enum Cmd {
     Claims { room: String },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
     Hook,
+    /// Speak the wire protocol (PROTOCOL.md) on standard input and output, as the member from the environment
+    Serve {
+        /// Use standard input and output (the only transport so far)
+        #[arg(long)]
+        stdio: bool,
+    },
 }
 
 fn now() -> i64 {
@@ -82,7 +88,20 @@ fn main() -> Result<()> {
     let store = SqliteStore::open(&db_path()?)?;
     let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
     // The name comes from an environment variable, so it is not proven: the caller is unattributed.
-    let transport = Direct::new(gateway, Principal::unattributed(&me));
+    let principal = Principal::unattributed(&me);
+    if let Cmd::Serve { stdio } = cli.cmd {
+        if !stdio {
+            bail!("serve needs --stdio, the only transport so far");
+        }
+        // stdout carries protocol frames only; nothing else may print there
+        return Ok(klatch_session::serve(
+            &gateway,
+            &principal,
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+        )?);
+    }
+    let transport = Direct::new(gateway, principal);
     run(&transport, &me, cli.cmd, now())
 }
 
@@ -135,6 +154,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 );
             }
         }
+        Cmd::Serve { .. } => unreachable!("serve is handled before dispatch"),
         Cmd::Hook => {
             let d = t.digest()?;
             for r in &d.refused {

@@ -12,6 +12,9 @@ pub enum Error {
         owner: String,
         secs_left: i64,
     },
+    /// A policy refused the operation. `rule` names the rule that did (for the audit record); `reason` is
+    /// safe to show and never contains the content that triggered it.
+    Refused { rule: String, reason: String },
     /// The thing asked for does not exist.
     NotFound(String),
     /// The storage backend failed.
@@ -26,6 +29,7 @@ impl fmt::Display for Error {
             Error::Invalid(m) | Error::NotFound(m) | Error::Backend(m) | Error::Busy(m) => {
                 write!(f, "{m}")
             }
+            Error::Refused { rule, reason } => write!(f, "refused ({rule}): {reason}"),
             Error::Conflict {
                 path,
                 owner,
@@ -56,6 +60,18 @@ mod tests {
         assert_eq!(
             e.to_string(),
             "refused: src/a is claimed by bob for another 42s"
+        );
+    }
+
+    #[test]
+    fn a_policy_refusal_names_its_rule_and_reason() {
+        let e = Error::Refused {
+            rule: "label.room_below_message".into(),
+            reason: "label too high".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "refused (label.room_below_message): label too high"
         );
     }
 
