@@ -84,7 +84,8 @@ agents to hurt each other.
 ### Non-goals
 
 - Cross-machine rooms or cloud rooms (the docs describe cross-machine messaging through Anthropic
-  servers; this design is local, and a later version may layer on it).
+  servers; this design is local, and a later version may layer on it). **Superseded for later stages by D6 and section 20 rule 11:**
+  one machine for v1, then SSH and network transports.
 - Replacing the version control system, the issue tracker or the pull request workflow.
 - Letting one agent grant another agent permission. **Never.**
 - A chat product. Messages are work artefacts, not conversation.
@@ -92,6 +93,9 @@ agents to hurt each other.
   grade agents, or decide product questions. Its only screening concerns the channel: labels and clearance,
   the scrubber, injection and loop safety, claims and conflicts. This applies to the `Judge` trait in section
   19 (D4): it screens messages for channel safety and nothing else.
+- **An orchestrator, scheduler, workflow engine or merge gate.** Klatch does not plan work, dispatch it, verify
+  it or decide what merges; a software factory or agent orchestrator does that (section 20 rule 14). Klatch is
+  the substrate beneath it: rooms, claims, identity, labels, delivery and the record.
 - **A user interface in the core.** Front-ends (a TUI, a web view) may exist as optional shims; see section 20,
   rule 9. The core is always a substrate.
 - Real-time guarantees. Delivery is "at the next boundary" or "soon after a nudge".
@@ -1152,6 +1156,18 @@ and the other items marked as reports):**
     stream whose support in harnesses is unconfirmed. An MCP server serving the same events is an optional
     later connector. Editors (ACP) and independent agents (A2A) are other later bridges; see `RESEARCH-NOTES.md`
     section 15.
+14. **Software factories and orchestrators sit on top of klatch (2026-11-12).** A software factory is an intake
+    queue, isolated workspaces, a shared tool layer, automated verification and a merge gate around many coding
+    agents (`RESEARCH-NOTES.md` section 16). Klatch supports it without becoming one:
+    - **The boundary.** The factory plans, dispatches, verifies and gates. Klatch supplies rooms, claims
+      anchored to the factory's work items, identity, labels, delivery, the audit record and a stream a
+      dashboard can read. Nothing in the core schedules, assigns or judges work.
+    - **A factory launches its own workers**, so it can configure hooks, MCP servers and a member token at spawn.
+      That path gets stronger identity than an interactive session and does not need join-without-relaunch.
+    - **Support is a library, recipes and additive protocol fields**, not core features: client libraries over the
+      wire protocol, short-lived worker members with a parent link, run-scoped namespaces with teardown, optional
+      typed handoff payloads that klatch stores, labels and delivers but never interprets, and an anchor adapter
+      for a factory's own work-order ids.
 
 ## 21. Install onboarding
 
