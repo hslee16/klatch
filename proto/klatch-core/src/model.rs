@@ -30,3 +30,49 @@ pub struct Claim {
     /// Unix seconds at which the claim lapses.
     pub expires: i64,
 }
+
+/// Whether the gateway could prove who is calling. An unattributed caller must be shown as such (R23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attribution {
+    Verified,
+    Unattributed,
+}
+
+/// The caller of a gateway operation. Produced at the transport edge from evidence about the peer; the
+/// gateway never trusts a name carried inside a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Principal {
+    pub member: String,
+    pub attribution: Attribution,
+}
+
+impl Principal {
+    pub fn verified(member: &str) -> Self {
+        Self {
+            member: member.into(),
+            attribution: Attribution::Verified,
+        }
+    }
+
+    pub fn unattributed(member: &str) -> Self {
+        Self {
+            member: member.into(),
+            attribution: Attribution::Unattributed,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principals_carry_their_attribution() {
+        assert_eq!(Principal::verified("a").attribution, Attribution::Verified);
+        assert_eq!(
+            Principal::unattributed("a").attribution,
+            Attribution::Unattributed
+        );
+        assert_eq!(Principal::verified("a").member, "a");
+    }
+}

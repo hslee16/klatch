@@ -187,12 +187,21 @@ dependencies = [
  "anyhow",
  "clap",
  "klatch-core",
+ "klatch-gateway",
  "klatch-store",
 ]
 
 [[package]]
 name = "klatch-core"
 version = "0.1.0"
+
+[[package]]
+name = "klatch-gateway"
+version = "0.1.0"
+dependencies = [
+ "klatch-core",
+ "klatch-store",
+]
 
 [[package]]
 name = "klatch-protocol"

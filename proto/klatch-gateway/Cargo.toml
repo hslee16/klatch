@@ -1,0 +1,10 @@
+[package]
+name = "klatch-gateway"
+description = "The gateway: the single place every klatch operation goes through"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+klatch-core.workspace = true
+klatch-store.workspace = true

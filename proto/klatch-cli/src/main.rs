@@ -5,9 +5,11 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{RoomDigest, flat, render_hook, valid_name};
-use klatch_store::{SqliteStore, Store};
+use klatch_core::{Principal, flat, render_hook, valid_name};
+use klatch_gateway::{AllowAll, Direct, Gateway, SystemClock, Transport};
+use klatch_store::SqliteStore;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
@@ -78,30 +80,30 @@ fn main() -> Result<()> {
         bail!("set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-]");
     }
     let store = SqliteStore::open(&db_path()?)?;
-    run(&store, &me, cli.cmd, now())
+    let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
+    // The name comes from an environment variable, so it is not proven: the caller is unattributed.
+    let transport = Direct::new(gateway, Principal::unattributed(&me));
+    run(&transport, &me, cli.cmd, now())
 }
 
-/// Dispatch one command against any store. Separate from `main` so it can be tested without a process.
-fn run(store: &dyn Store, me: &str, cmd: Cmd, now: i64) -> Result<()> {
+/// Dispatch one command through any transport. `now` is the client clock, used only for display.
+fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
     match cmd {
         Cmd::Join { room } => {
-            if !valid_name(&room) {
-                bail!("bad room name");
-            }
-            store.join(&room, me, now)?;
+            t.join(&room)?;
             println!("{me} joined {room}");
         }
         Cmd::Post { room, body } => {
-            store.post(&room, me, &body.join(" "), now)?;
+            t.post(&room, &body.join(" "))?;
             println!("posted (queued; not proof of read)");
         }
         Cmd::Read { room, peek } => {
-            for m in store.read(&room, me, !peek, now)? {
+            for m in t.read(&room, !peek)? {
                 println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
             }
         }
         Cmd::Who { room } => {
-            for m in store.members(&room)? {
+            for m in t.who(&room)? {
                 println!(
                     "{}\tlast seen {}s ago (liveness, not progress)",
                     m.name,
@@ -115,15 +117,15 @@ fn run(store: &dyn Store, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             ttl,
             reason,
         } => {
-            store.claim(&room, me, &path, ttl, &reason, now)?;
+            t.claim(&room, &path, ttl, &reason)?;
             println!("claimed {path} for {ttl}s (advisory)");
         }
         Cmd::Release { room, path } => {
-            store.release(&room, me, &path)?;
+            t.release(&room, &path)?;
             println!("released {path}");
         }
         Cmd::Claims { room } => {
-            for c in store.claims(&room, now)? {
+            for c in t.claims(&room)? {
                 println!(
                     "{}\t{}\t{}s left\t{}",
                     c.path,
@@ -134,21 +136,11 @@ fn run(store: &dyn Store, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             }
         }
         Cmd::Hook => {
-            let mut digests = Vec::new();
-            for room in store.rooms_of(me)? {
-                let messages = store.read(&room, me, true, now)?;
-                let claims = store
-                    .claims(&room, now)?
-                    .into_iter()
-                    .filter(|c| c.owner != me)
-                    .collect();
-                digests.push(RoomDigest {
-                    room,
-                    messages,
-                    claims,
-                });
+            let d = t.digest()?;
+            for r in &d.refused {
+                println!("[klatch] room {} not shown: {}", r.room, flat(&r.reason));
             }
-            print!("{}", render_hook(&digests, now));
+            print!("{}", render_hook(&d.rooms, d.now));
         }
     }
     Ok(())
