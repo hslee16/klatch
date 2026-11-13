@@ -30,6 +30,26 @@ pub fn hook_context_json(event: &str, text: &str) -> String {
     )
 }
 
+/// `hook_context_json` with a notice for the human: Claude Code shows `systemMessage` to the user, while
+/// `additionalContext` goes to the model. Either may be empty; both empty prints nothing.
+pub fn hook_output_json(event: &str, text: &str, notice: Option<&str>) -> String {
+    let mut fields = Vec::new();
+    if let Some(n) = notice {
+        fields.push(format!("\"systemMessage\":\"{}\"", json_escape(n)));
+    }
+    if !text.is_empty() {
+        fields.push(format!(
+            "\"hookSpecificOutput\":{{\"hookEventName\":\"{}\",\"additionalContext\":\"{}\"}}",
+            json_escape(event),
+            json_escape(text)
+        ));
+    }
+    if fields.is_empty() {
+        return String::new();
+    }
+    format!("{{{}}}\n", fields.join(","))
+}
+
 fn json_escape(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
@@ -261,6 +281,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_notice_goes_in_system_message_and_the_context_stays_for_the_model() {
+        let j = hook_output_json("SessionStart", "board text", Some("klatch: joined lobby"));
+        let v: serde_json::Value = serde_json::from_str(j.trim()).unwrap();
+        assert_eq!(v["systemMessage"], "klatch: joined lobby");
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+        assert_eq!(v["hookSpecificOutput"]["additionalContext"], "board text");
+        assert_eq!(j.matches('\n').count(), 1, "one line");
+    }
+
+    #[test]
+    fn without_a_notice_the_output_is_the_context_only_form() {
+        assert_eq!(
+            hook_output_json("PostToolUse", "hello", None),
+            hook_context_json("PostToolUse", "hello")
+        );
+        assert_eq!(hook_output_json("PostToolUse", "", None), "");
+    }
+
+    #[test]
+    fn a_notice_alone_prints_only_the_system_message_and_is_escaped() {
+        let j = hook_output_json("SessionStart", "", Some("a \"b\"\nc"));
+        let v: serde_json::Value = serde_json::from_str(j.trim()).unwrap();
+        assert_eq!(v["systemMessage"], "a \"b\"\nc");
+        assert!(v.get("hookSpecificOutput").is_none());
+    }
     #[test]
     fn empty_rooms_print_nothing() {
         let d = RoomDigest {

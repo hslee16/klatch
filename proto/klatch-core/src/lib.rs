@@ -20,7 +20,7 @@ pub use board::{
 };
 pub use convention::{CONVENTION_MARKER, convention};
 pub use error::{Error, Result};
-pub use hook::{RoomDigest, hook_context_json, render_hook};
+pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
 pub use model::{
     Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
     ReleasedClaim,

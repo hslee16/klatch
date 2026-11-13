@@ -1561,6 +1561,9 @@ Run fourteen showed a real hold-and-wait deadlock (two members editing two files
 2. **Install.** `klatch init` writes the SessionEnd entry by default, and asks "Mark a session done when it ends, so it leaves the lobby board at once?" (default yes, per scope, shown in the diff); `--no-session-end` leaves it out, and running `init` again with that flag removes only klatch's own SessionEnd entry, never another tool's. It only changes klatch's own store, so the consent is the same install that already writes the other hooks.
 3. **Backstop.** An unclean exit (a crash, `kill -9`) runs no hook, so the aging of members (section 25.6) and offers following presence (section 25.8) still apply.
 
+### 25.14 A visible notice when a session joins (2026-11-13)
+
+The session-start hook's output goes to the model, not to the person at the terminal, so a session could join the lobby with no sign of it. The SessionStart hook now also prints `systemMessage`, which Claude Code shows to the user: `klatch: joined lobby as <name> (<N> members, <M> open asks)`, or `back in lobby as <name> ...` for a session that was already a member. The board and the convention stay in `additionalContext` for the model. Other events and `--no-join` print no notice, so the screen stays quiet after the first line.
 ## 26. The bench (#262; first stage 2026-11-13)
 
 The blast radius grew, so scripted scenarios against the real binary now run beside the unit tests. The human's choices (2026-11-13): a Rust crate for the scripted layers, scripts for the agent runs, agent runs on demand only, and performance budgets informational first (block only on a large regression).
