@@ -8,7 +8,7 @@ pub use sqlite::SqliteStore;
 
 use klatch_core::{
     AskRoom, Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk, Posted,
-    Result, open_asks,
+    ReleaseNote, Result, open_asks,
 };
 
 pub trait Store {
@@ -94,6 +94,22 @@ pub trait Store {
     }
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
+    /// `release` with a note on what the holder changed (#272), kept for those who saw the claim and for the next
+    /// claimant of the path; an empty note clears an older one. The default drops the note.
+    fn release_with(
+        &self,
+        room: &str,
+        owner: &str,
+        path: &str,
+        _note: &str,
+        _now: i64,
+    ) -> Result<()> {
+        self.release(room, owner, path)
+    }
+    /// The latest release of `path` that carried a note, if any. The default knows none.
+    fn last_release(&self, _room: &str, _path: &str) -> Result<Option<ReleaseNote>> {
+        Ok(None)
+    }
     /// Release every claim `member` holds in every room, as when its session ends (#277): a member that has ended
     /// cannot be working. An `ask:<N>` claim ends as a lapse, so the asker is told that the helper's claim ended
     /// without an answer. Returns how many unexpired claims were released. The default releases nothing.

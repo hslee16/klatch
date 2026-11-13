@@ -337,6 +337,47 @@ impl<S: Store> Gateway<S> {
         self.store.release(room, &who.member, path)
     }
 
+    /// `release` with a note on what the caller changed (#272): shown to members who saw the claim and returned to
+    /// the next claimant. A note is one line of at most 300 characters.
+    pub fn release_with_note(
+        &self,
+        who: &Principal,
+        room: &str,
+        path: &str,
+        note: &str,
+    ) -> Result<()> {
+        check_member(who)?;
+        check_room(room)?;
+        check_path(path)?;
+        let note = klatch_core::flat(note);
+        if note.chars().count() > 300 {
+            return Err(Error::Invalid(
+                "a release note is at most 300 characters".into(),
+            ));
+        }
+        self.guard.check(
+            who,
+            &Operation::Release {
+                room: room.into(),
+                path: path.into(),
+            },
+        )?;
+        self.store
+            .release_with(room, &who.member, path, note.trim(), self.now())
+    }
+
+    /// The latest release of a path that carried a note.
+    pub fn last_release(
+        &self,
+        who: &Principal,
+        room: &str,
+        path: &str,
+    ) -> Result<Option<klatch_core::ReleaseNote>> {
+        self.admit(who, room, Operation::Claims { room: room.into() })?;
+        check_path(path)?;
+        self.store.last_release(room, path)
+    }
+
     /// Release every claim the caller holds, in every room (its session ended, #277). Only ever the caller's own.
     pub fn release_all(&self, who: &Principal) -> Result<usize> {
         check_member(who)?;

@@ -89,7 +89,13 @@ enum Cmd {
     /// Show the scope you work in, or set it
     Scope { scope: Option<String> },
     /// Release a claim you hold
-    Release { room: String, path: String },
+    Release {
+        room: String,
+        path: String,
+        /// What you changed, for the next member to claim it (re-read before editing)
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
     /// Show when each hook event last ran for you (or for another member with --of), without any content
@@ -434,8 +440,18 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
             shared,
         } => {
             let ttl = klatch_core::claim_ttl(&path, ttl);
+            // what the last holder said it changed, read before this claim so it is the earlier holder's
+            let earlier = t.last_release(&room, &path).ok().flatten();
             t.claim_with(&room, &path, ttl, &reason, shared)?;
             println!("claimed {path} for {ttl}s (advisory)");
+            if let Some(n) = earlier.filter(|n| n.owner != *me) {
+                println!(
+                    "last released by {} {}s ago: {} (re-read it before you edit)",
+                    flat(&n.owner),
+                    klatch_core::secs_between(now, n.ts),
+                    flat(&n.note)
+                );
+            }
         }
         Cmd::Scope { scope } => match scope {
             Some(s) => {
@@ -447,8 +463,11 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
                 None => println!("no scope (set one with `klatch scope <name>`)"),
             },
         },
-        Cmd::Release { room, path } => {
-            t.release(&room, &path)?;
+        Cmd::Release { room, path, note } => {
+            match note {
+                Some(n) => t.release_with_note(&room, &path, &n)?,
+                None => t.release(&room, &path)?,
+            }
             println!("released {path}");
         }
         Cmd::Hooks { of } => {

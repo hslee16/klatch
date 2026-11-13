@@ -75,6 +75,21 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release(room, owner, path)
     }
+    fn release_with(
+        &self,
+        room: &str,
+        owner: &str,
+        path: &str,
+        note: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.gate()?;
+        self.inner.release_with(room, owner, path, note, now)
+    }
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>> {
+        self.gate()?;
+        self.inner.last_release(room, path)
+    }
     fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
         self.gate()?;
         self.inner.release_member_claims(member, now)

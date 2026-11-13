@@ -459,9 +459,11 @@ struct StatusParams {
     status: String,
 }
 #[derive(Deserialize)]
-struct PathParams {
+struct ReleaseParams {
     room: String,
     path: String,
+    #[serde(default)]
+    note: Option<String>,
 }
 
 fn params<T: DeserializeOwned>(id: &str, value: Value) -> Result<T, Vec<ServerFrame>> {
@@ -552,8 +554,14 @@ fn handle<S: Store>(
             answer!(g.set_scope(who, &p.scope), |()| json!({}))
         }
         "release" => {
-            let p = parse!(PathParams);
-            answer!(g.release(who, &p.room, &p.path), |()| json!({}))
+            let p = parse!(ReleaseParams);
+            match p.note.as_deref() {
+                Some(n) => answer!(
+                    g.release_with_note(who, &p.room, &p.path, n),
+                    |()| json!({})
+                ),
+                None => answer!(g.release(who, &p.room, &p.path), |()| json!({})),
+            }
         }
         "claims" => {
             let p = parse!(RoomParams);

@@ -45,6 +45,16 @@ pub struct Claim {
 pub struct ReleasedClaim {
     pub owner: String,
     pub path: String,
+    /// What the holder said it changed when it released (#272), if anything.
+    pub note: Option<String>,
+}
+
+/// The latest release of a path that carried a note: who released it, what they said, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseNote {
+    pub owner: String,
+    pub note: String,
+    pub ts: i64,
 }
 
 /// What changed in other members' claims since a member was last shown them: claims it has not seen (or
