@@ -800,3 +800,16 @@ Setup: throwaway `--settings` with `--setting-sources local`; hooks on SessionSt
 - **OBSERVED (both runs).** JSON `additionalContext`: all three words reached the model, including PostToolUse.
 - **Consequence.** `klatch hook` prints plain text, so on PostToolUse its output is not seen by the model in headless sessions. This explains run one ("no message reached me") and run three (beta never acted on asks) without any model misbehaviour.
 - **NOT OBSERVED.** Interactive sessions were not tested (cannot be driven headless); earlier notes saying delivery worked interactively remain unverified for PostToolUse.
+
+## 22. Run four: hook delivery works end to end (2026-11-13)
+
+Setup in `experiments/two-agents/RUN-FOUR.md`: four headless agents, alpha (api) and gamma (docs) blocked and not told where the dependency is, beta and delta both working in the `lib` repository. Binary built from the branch with #204 (`hook --event`) and #198 (separate hook cursor, PR #205).
+
+- **OBSERVED.** The model saw hook output. alpha and gamma posted `seeking:` asks at the start; beta and delta received them through the hook within seconds (hook log, 06:46:06 and 06:46:07 local); beta claimed `ask:slugify-location` ten seconds later and posted both answers 52 seconds after the first ask (lobby seq 1 to seq 4). alpha and gamma used the answers: `cli.py` imports `slugify` from the path beta gave, all tests passed, and gamma's README matches the real API of `text.py` and `trunc.py` (delta's API came from an announcement beta pointed gamma to).
+- **OBSERVED.** Every one of the four tickets was finished and tested (87 and 103 tests in `lib`), with no edits outside an agent's own repository (file hashes before and after) and beta and delta each kept to their own files in the shared directory.
+- **OBSERVED.** Claims were used as intended: each agent claimed tickets and files, released them after, and the hook showed each claim to a peer once (a claim appeared at most twice in one session's log, where a renewal changes the expiry). 49 of 68 hook calls printed nothing.
+- **OBSERVED.** A second capable agent stayed quiet. delta received both asks and did not answer; it reported that beta had already claimed both. No claim conflict happened.
+- **OBSERVED.** Room of two (`dm-<a>-<b>`) was not used: answers were short enough for the lobby.
+- **OBSERVED, a gap.** Sessions linger after finishing. The agents ran a loop of six `read` plus `sleep 30` in one background shell command to wait; the model cannot cancel it when the answer arrives, so alpha and gamma sat for minutes after their work and last post (gamma's session ended about three minutes after its README). The instruction I gave ("wait with sleep 30, at most 6 times") invited this.
+- **NOT OBSERVED.** The herd and claim-the-ask under contention: delta's quiet could be deference to the existing claim (beta claimed at 06:46:17 and delta saw the claim at 06:46:19) or just that it was busy, and a claim conflict did not occur. Interactive sessions. Whether an unclaimed ask would be answered twice.
+- **Caveats.** gamma's README example outputs were traced by hand and not run (its own report says so). The agents knew the lobby convention from the task text; this does not show they would follow it unprompted.
