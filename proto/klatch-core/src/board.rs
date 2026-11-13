@@ -11,6 +11,10 @@ pub const OFFER_PREFIX: &str = "offering:";
 pub const WITHDRAW_PREFIX: &str = "withdrawn:";
 /// A message starting with this text sets its sender's status.
 pub const STATUS_PREFIX: &str = "status:";
+/// A member not seen for this long is counted on the board, not listed.
+pub const MEMBER_ACTIVE_SECS: i64 = 600;
+/// The most entries the board lists per section; the rest are counted.
+pub const BOARD_LIST_LIMIT: usize = 20;
 /// How long an offer stays on the board without being renewed (provisional; the lifecycle is #250).
 pub const OFFER_TTL_SECS: i64 = 3600;
 
@@ -46,6 +50,8 @@ pub struct Board {
     pub asks: Vec<OpenAsk>,
     pub offers: Vec<Offer>,
     pub members: Vec<BoardMember>,
+    /// Members not seen for over `MEMBER_ACTIVE_SECS`, counted instead of listed.
+    pub stale_members: usize,
 }
 
 /// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
@@ -55,7 +61,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
     if board.asks.is_empty() {
         out.push_str("  no open asks\n");
     }
-    for a in &board.asks {
+    for a in board.asks.iter().take(BOARD_LIST_LIMIT) {
         out.push_str(&format!(
             "  #{} {} {} {}s: {}\n",
             a.seq,
@@ -65,11 +71,12 @@ pub fn render_board(board: &Board, now: i64) -> String {
             clip(&a.text)
         ));
     }
+    more(&mut out, board.asks.len(), "asks");
     out.push_str("offers:\n");
     if board.offers.is_empty() {
         out.push_str("  no current offers\n");
     }
-    for o in &board.offers {
+    for o in board.offers.iter().take(BOARD_LIST_LIMIT) {
         out.push_str(&format!(
             "  {} offers ({}s ago): {}\n",
             flat(&o.sender),
@@ -77,8 +84,9 @@ pub fn render_board(board: &Board, now: i64) -> String {
             clip(&o.text)
         ));
     }
+    more(&mut out, board.offers.len(), "offers");
     out.push_str("members:\n");
-    for m in &board.members {
+    for m in board.members.iter().take(BOARD_LIST_LIMIT) {
         out.push_str(&format!(
             "  {} last seen {}s ago",
             flat(&m.name),
@@ -89,7 +97,20 @@ pub fn render_board(board: &Board, now: i64) -> String {
         }
         out.push('\n');
     }
+    more(&mut out, board.members.len(), "members");
+    match board.stale_members {
+        0 => {}
+        1 => out.push_str("  1 other not seen for over 10 minutes\n"),
+        n => out.push_str(&format!("  {n} others not seen for over 10 minutes\n")),
+    }
     out
+}
+
+/// A line saying how many entries of a section were not listed.
+fn more(out: &mut String, total: usize, what: &str) {
+    if total > BOARD_LIST_LIMIT {
+        out.push_str(&format!("  and {} more {what}\n", total - BOARD_LIST_LIMIT));
+    }
 }
 
 pub fn is_offer(body: &str) -> bool {
@@ -310,6 +331,7 @@ mod tests {
                     status: Some("done leaving".into()),
                 },
             ],
+            stale_members: 0,
         }
     }
 
@@ -357,5 +379,36 @@ mod tests {
             out.lines().all(|l| l.chars().count() < 260),
             "unbounded: {out}"
         );
+    }
+
+    #[test]
+    fn members_not_seen_for_a_while_are_counted_not_listed() {
+        let mut b = sample();
+        b.stale_members = 3;
+        let out = render_board(&b, 100);
+        assert!(
+            out.contains("3 others not seen for over 10 minutes"),
+            "got: {out}"
+        );
+        b.stale_members = 1;
+        assert!(render_board(&b, 100).contains("1 other not seen for over 10 minutes"));
+        b.stale_members = 0;
+        assert!(!render_board(&b, 100).contains("not seen for over"));
+    }
+
+    #[test]
+    fn long_sections_are_cut_and_the_rest_counted() {
+        let mut b = sample();
+        b.asks = (1..=25)
+            .map(|i| ask(i, "a", "seeking: x", 90, false))
+            .collect();
+        let out = render_board(&b, 100);
+        assert_eq!(
+            out.lines()
+                .filter(|l| l.trim_start().starts_with('#'))
+                .count(),
+            20
+        );
+        assert!(out.contains("and 5 more asks"), "got: {out}");
     }
 }
