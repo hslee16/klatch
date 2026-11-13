@@ -807,9 +807,11 @@ fn wait_returns_at_once_when_something_is_unread_and_marks_it_read() {
     h.ok("alice", &["join", "r"]);
     h.ok("bob", &["post", "r", "the answer"]);
     let start = std::time::Instant::now();
-    let out = h.ok("alice", &["wait", "r", "--timeout", "30"]);
+    // A long timeout and a generous bound: the point is that it did not wait for the timeout, and a loaded CI
+    // runner can be slow.
+    let out = h.ok("alice", &["wait", "r", "--timeout", "120"]);
     assert!(
-        start.elapsed().as_secs() < 5,
+        start.elapsed().as_secs() < 60,
         "waited although a message was unread"
     );
     assert!(out.contains("the answer"), "got: {out}");
@@ -827,7 +829,7 @@ fn wait_times_out_and_says_so() {
     let out = h.ok("alice", &["wait", "r", "--timeout", "1"]);
     let took = start.elapsed();
     assert!(took.as_millis() >= 900, "returned early: {took:?}");
-    assert!(took.as_secs() < 10, "overran: {took:?}");
+    assert!(took.as_secs() < 30, "overran: {took:?}");
     assert!(
         out.contains("[klatch wait: timeout room=r after=1s]"),
         "got: {out}"
@@ -856,7 +858,7 @@ fn wait_wakes_when_another_member_posts() {
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_NAME", "alice")
-        .args(["wait", "r", "--timeout", "30"])
+        .args(["wait", "r", "--timeout", "120"])
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
@@ -864,7 +866,7 @@ fn wait_wakes_when_another_member_posts() {
     std::thread::sleep(std::time::Duration::from_millis(700));
     h.ok("bob", &["post", "r", "wake up"]);
     let out = child.wait_with_output().unwrap();
-    assert!(start.elapsed().as_secs() < 10, "did not wake promptly");
+    assert!(start.elapsed().as_secs() < 60, "did not wake promptly");
     assert!(String::from_utf8_lossy(&out.stdout).contains("wake up"));
 }
 
@@ -1024,32 +1026,36 @@ fn the_session_start_hook_lists_the_backlog_but_other_events_do_not() {
 
 #[test]
 fn a_filtered_or_peeking_wait_keeps_the_waiter_present_in_who() {
+    // Compare readings of "last seen" before and after the wait, never an absolute number of seconds: on a loaded
+    // CI runner a command can take longer than any fixed bound (the first version failed there).
+    fn seen_ago(h: &Home) -> i64 {
+        let who = h.ok("bob", &["who", "r"]);
+        let line = who.lines().find(|l| l.starts_with("alice")).unwrap();
+        line.split("last seen ")
+            .nth(1)
+            .and_then(|r| r.split('s').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("no last seen in: {line}"))
+    }
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
-    std::thread::sleep(std::time::Duration::from_millis(2200));
-    h.ok("alice", &["wait", "r", "--timeout", "0", "--only", "zzz"]);
-    let who = h.ok("bob", &["who", "r"]);
-    let line = who
-        .lines()
-        .find(|l| l.starts_with("alice"))
-        .unwrap()
-        .to_string();
-    assert!(
-        line.contains("last seen 0s ago") || line.contains("last seen 1s ago"),
-        "a filtered wait left the waiter looking absent: {line}"
-    );
-    std::thread::sleep(std::time::Duration::from_millis(2200));
-    h.ok("alice", &["wait", "r", "--timeout", "0", "--peek"]);
-    let who = h.ok("bob", &["who", "r"]);
-    let line = who
-        .lines()
-        .find(|l| l.starts_with("alice"))
-        .unwrap()
-        .to_string();
-    assert!(
-        line.contains("last seen 0s ago") || line.contains("last seen 1s ago"),
-        "a peeking wait left the waiter looking absent: {line}"
-    );
+    for args in [
+        &["wait", "r", "--timeout", "0", "--only", "zzz"][..],
+        &["wait", "r", "--timeout", "0", "--peek"][..],
+    ] {
+        std::thread::sleep(std::time::Duration::from_millis(3200));
+        let before = seen_ago(&h);
+        assert!(
+            before >= 3,
+            "the waiter should look idle before the wait: {before}s"
+        );
+        h.ok("alice", args);
+        let after = seen_ago(&h);
+        assert!(
+            after < before,
+            "{args:?} left the waiter looking absent: {before}s before, {after}s after"
+        );
+    }
 }
 
 #[test]
