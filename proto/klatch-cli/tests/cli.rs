@@ -769,3 +769,24 @@ fn a_typed_name_beats_discovery() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(home.ok("alice", &["who", "r"]).contains("alice"));
 }
+
+#[test]
+fn hook_with_event_prints_json_additional_context() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "ping \"quoted\""]);
+    let out = h.ok("alice", &["hook", "--event", "PostToolUse"]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect("one JSON object");
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let ctx = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(ctx.contains("from bob: ping \"quoted\""), "got: {ctx}");
+}
+
+#[test]
+fn hook_with_event_prints_nothing_when_there_is_nothing() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    assert_eq!(h.ok("alice", &["hook", "--event", "PostToolUse"]), "");
+}

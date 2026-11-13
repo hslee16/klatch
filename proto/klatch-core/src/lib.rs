@@ -7,7 +7,7 @@ mod model;
 mod text;
 
 pub use error::{Error, Result};
-pub use hook::{RoomDigest, render_hook};
+pub use hook::{RoomDigest, hook_context_json, render_hook};
 pub use model::{
     Attribution, Claim, ClaimChanges, MemberInfo, Message, Posted, Principal, ReleasedClaim,
 };

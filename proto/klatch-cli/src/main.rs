@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, flat, render_hook};
+use klatch_core::{Principal, flat, hook_context_json, render_hook};
 use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
@@ -58,7 +58,12 @@ enum Cmd {
     /// List active claims in a room
     Claims { room: String },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
-    Hook,
+    Hook {
+        /// Print JSON additional context for this Claude Code hook event (needed for PostToolUse, whose plain
+        /// stdout does not reach the model). Without it, plain text.
+        #[arg(long)]
+        event: Option<String>,
+    },
     /// Write the event stream of a room to standard output as newline-delimited JSON (PROTOCOL.md)
     Stream {
         room: String,
@@ -199,12 +204,21 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Serve { .. } | Cmd::Stream { .. } => {
             unreachable!("serve and stream are handled before dispatch")
         }
-        Cmd::Hook => {
+        Cmd::Hook { event } => {
             let d = t.digest()?;
+            let mut text = String::new();
             for r in &d.refused {
-                println!("[klatch] room {} not shown: {}", r.room, flat(&r.reason));
+                text.push_str(&format!(
+                    "[klatch] room {} not shown: {}\n",
+                    r.room,
+                    flat(&r.reason)
+                ));
             }
-            print!("{}", render_hook(&d.rooms, d.now));
+            text.push_str(&render_hook(&d.rooms, d.now));
+            match event {
+                Some(e) => print!("{}", hook_context_json(&e, &text)),
+                None => print!("{text}"),
+            }
         }
     }
     Ok(())
