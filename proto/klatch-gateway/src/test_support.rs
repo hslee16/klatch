@@ -117,6 +117,10 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.hook_runs(member)
     }
+    fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
+        self.gate()?;
+        self.inner.prune_members(older_than, now)
+    }
     fn claim_changes(
         &self,
         room: &str,

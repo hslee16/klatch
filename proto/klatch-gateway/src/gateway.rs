@@ -175,6 +175,12 @@ impl<S: Store> Gateway<S> {
         self.store.hook_runs(member)
     }
 
+    /// Housekeeping at session start: remove members not seen for `older_than` seconds. Returns how many.
+    pub fn prune_members(&self, who: &Principal, older_than: i64) -> Result<usize> {
+        check_member(who)?;
+        self.store.prune_members(older_than, self.now())
+    }
+
     /// The room's board: open asks, current offers and members with their last announced status.
     pub fn board(&self, who: &Principal, room: &str) -> Result<klatch_core::Board> {
         self.admit(
@@ -1020,6 +1026,15 @@ mod tests {
             Err(Error::Invalid(_))
         ));
         assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn pruning_goes_through_the_gateway_with_its_clock() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(10_000), AllowAll);
+        g.store.join("r", "old", 1).unwrap();
+        g.store.join("r", "fresh", 9_900).unwrap();
+        assert_eq!(g.prune_members(&alice(), 5_000).unwrap(), 1);
+        assert_eq!(g.who(&alice(), "r").unwrap().len(), 1);
     }
 
     #[test]

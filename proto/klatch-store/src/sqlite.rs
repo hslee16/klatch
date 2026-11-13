@@ -441,6 +441,48 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
+    fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
+        self.immediate(|| {
+            let cutoff = now - older_than;
+            let mut st = self
+                .conn
+                .prepare("SELECT DISTINCT name FROM members WHERE last_seen<?1")
+                .map_err(be)?;
+            let names: Vec<String> = st
+                .query_map(params![cutoff], |r| r.get(0))
+                .map_err(be)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(be)?;
+            let removed = self
+                .conn
+                .execute("DELETE FROM members WHERE last_seen<?1", params![cutoff])
+                .map_err(be)?;
+            for name in names {
+                let still: i64 = self
+                    .conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM members WHERE name=?1",
+                        params![name],
+                        |r| r.get(0),
+                    )
+                    .map_err(be)?;
+                if still > 0 {
+                    continue;
+                }
+                for sql in [
+                    "DELETE FROM claims_seen WHERE member=?1",
+                    "DELETE FROM asks_reported WHERE member=?1",
+                    "DELETE FROM asks_escalated WHERE member=?1",
+                    "DELETE FROM hook_runs WHERE member=?1",
+                    "DELETE FROM claim_waits WHERE member=?1",
+                ] {
+                    self.conn.execute(sql, params![name]).map_err(be)?;
+                }
+            }
+            Ok(removed)
+        })
+    }
+
     fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
         self.immediate(|| {
             self.touch(room, member, now)?;
@@ -1275,6 +1317,40 @@ mod tests {
         assert_eq!(
             deadlocked(s.claim("r1", "bob", "X", 1000, "", 6)),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn pruning_removes_long_gone_members_and_their_bookkeeping_but_keeps_messages_and_recent_members()
+     {
+        let s = store();
+        s.join("r", "old", 10).unwrap();
+        s.join("r2", "old", 10).unwrap();
+        s.join("r", "fresh", 9_000).unwrap();
+        s.post("r", "old", "my message stays", 11).unwrap();
+        s.record_hook_run("old", "SessionStart", 10, 0).unwrap();
+        s.record_hook_run("fresh", "SessionStart", 9_000, 0)
+            .unwrap();
+        let n = s.prune_members(86_400 / 10, 9_001).unwrap();
+        assert_eq!(n, 2, "old in two rooms");
+        let names: Vec<_> = s
+            .members("r")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(names, ["fresh"]);
+        assert!(s.members("r2").unwrap().is_empty());
+        assert_eq!(s.tail("r", 0, 10).unwrap().len(), 1, "messages stay");
+        assert!(
+            s.hook_runs("old").unwrap().is_empty(),
+            "bookkeeping goes with the member"
+        );
+        assert_eq!(s.hook_runs("fresh").unwrap().len(), 1);
+        assert_eq!(
+            s.prune_members(86_400 / 10, 9_002).unwrap(),
+            0,
+            "nothing more to prune"
         );
     }
 

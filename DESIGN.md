@@ -1564,6 +1564,14 @@ Run fourteen showed a real hold-and-wait deadlock (two members editing two files
 ### 25.14 A visible notice when a session joins (2026-11-13)
 
 The session-start hook's output goes to the model, not to the person at the terminal, so a session could join the lobby with no sign of it. The SessionStart hook now also prints `systemMessage`, which Claude Code shows to the user: `klatch: joined lobby as <name> (<N> members, <M> open asks)`, or `back in lobby as <name> ...` for a session that was already a member. The board and the convention stay in `additionalContext` for the model. Other events and `--no-join` print no notice, so the screen stays quiet after the first line.
+
+### 25.15 Old members (decided 2026-11-13)
+
+Members that stopped long ago (sessions that ended before the SessionEnd hook existed, or crashed) used to stay in `who` forever.
+
+1. **`who` ages members like the board.** `klatch who <room>` lists members seen in the last 10 minutes (`MEMBER_ACTIVE_SECS`) and counts the rest ("3 others not seen for over 10 minutes (who --all lists them)"); `who --all` lists everyone. The wire `who` method is unchanged and still returns every member.
+2. **Prune after a day.** A SessionStart removes members of every room not seen for 24 hours (`MEMBER_RETENTION_SECS`), together with their per-member bookkeeping (claims seen, reported asks, escalations, claim waits, hook runs), when no other room has seen them. Messages and claims stay. A failure to prune never stops a session starting. Session names are unique, so no one comes back under the same name; their unread cursors go with them.
+3. **Why this is enough.** A session that ends normally marks itself done (section 25.13), so only crashed sessions and the ones from before that hook ever age out.
 ## 26. The bench (#262; first stage 2026-11-13)
 
 The blast radius grew, so scripted scenarios against the real binary now run beside the unit tests. The human's choices (2026-11-13): a Rust crate for the scripted layers, scripts for the agent runs, agent runs on demand only, and performance budgets informational first (block only on a large regression).

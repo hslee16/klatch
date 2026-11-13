@@ -34,6 +34,12 @@ pub trait Store {
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
+    /// Remove members of every room not seen for `older_than` seconds, with their per-member bookkeeping (claims
+    /// seen, reported asks, hook runs). Messages and claims stay. Returns how many members were removed. The default
+    /// removes nothing.
+    fn prune_members(&self, _older_than: i64, _now: i64) -> Result<usize> {
+        Ok(0)
+    }
     /// Record the member's status in a room (replacing any earlier one); joins the member if needed. The default
     /// stores nothing.
     fn set_status(&self, _room: &str, _member: &str, _status: &str, _now: i64) -> Result<()> {
