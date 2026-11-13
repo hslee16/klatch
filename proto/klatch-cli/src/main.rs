@@ -214,6 +214,19 @@ fn main() -> Result<()> {
     if let Some(n) = notice {
         eprintln!("klatch: {n}");
     }
+    // A session keeps one member name for its life and never shares it with another session (ticket #170).
+    let evidence = match evidence {
+        PeerEvidence::Session { session_id, name } => PeerEvidence::Session {
+            name: Some(ensure_session_member(
+                &store,
+                &session_id,
+                name.as_deref(),
+                now(),
+            )?),
+            session_id,
+        },
+        other => other,
+    };
     let principal = resolve_principal(&LocalIdentity, &evidence)?;
     let me = principal.member.clone();
     let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
@@ -561,6 +574,48 @@ fn hook_evidence(
     }
 }
 
+/// The member a harness session is. The first name a session gets is kept for its whole life (a rename in the
+/// harness does not make a new member), and two different sessions never share a member name: when the name is
+/// already held by another session, a few characters of the session id are added (ticket #170).
+fn ensure_session_member(
+    store: &dyn Store,
+    session_id: &str,
+    name: Option<&str>,
+    now: i64,
+) -> Result<String> {
+    if let Some(member) = store.member_of_session(session_id)? {
+        return Ok(member);
+    }
+    let evidence = PeerEvidence::Session {
+        session_id: session_id.into(),
+        name: name.map(String::from),
+    };
+    let base = LocalIdentity.resolve(&evidence)?.member;
+    let held_by_another = |m: &str| -> Result<bool> {
+        Ok(store
+            .session_of_member(m)?
+            .is_some_and(|other| other != session_id))
+    };
+    let mut member = base.clone();
+    if held_by_another(&member)? {
+        let id: String = session_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        let stem: String = base.chars().take(35).collect();
+        member = format!("{stem}-{}", id.chars().take(4).collect::<String>());
+        let mut more = 4;
+        while held_by_another(&member)? && more < id.len() {
+            more += 1;
+            let stem: String = base.chars().take(40 - 1 - more).collect();
+            member = format!("{stem}-{}", id.chars().take(more).collect::<String>());
+        }
+    }
+    store.note_session(session_id, &member, now)?;
+    Ok(member)
+}
+
 /// The session id Claude Code puts on a hook's standard input. Reads nothing when standard input is a terminal.
 fn stdin_session_id() -> Option<String> {
     use std::io::{IsTerminal, Read};
@@ -794,6 +849,85 @@ mod hook_identity_tests {
         let (e, _) = hook_evidence(None, found("parent", "klatch-1b"), &mapped);
         assert!(
             matches!(e, PeerEvidence::Session { ref session_id, .. } if session_id == "parent")
+        );
+    }
+}
+
+#[cfg(test)]
+mod member_name_tests {
+    use super::*;
+
+    fn store() -> SqliteStore {
+        let dir = std::env::temp_dir().join(format!(
+            "klatch-names-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(format!(
+            "{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        SqliteStore::open(&p).unwrap()
+    }
+
+    #[test]
+    fn a_new_session_with_a_free_name_keeps_the_name_and_is_remembered() {
+        let s = store();
+        assert_eq!(
+            ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap(),
+            "proj-20"
+        );
+        assert_eq!(
+            s.member_of_session("sid-aaaa1111").unwrap().as_deref(),
+            Some("proj-20")
+        );
+    }
+
+    #[test]
+    fn a_renamed_session_keeps_its_first_name() {
+        let s = store();
+        ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
+        assert_eq!(
+            ensure_session_member(&s, "sid-aaaa1111", Some("renamed-by-user"), 2).unwrap(),
+            "proj-20"
+        );
+    }
+
+    #[test]
+    fn a_second_session_with_the_same_name_gets_a_suffix_from_its_session_id_and_keeps_it() {
+        let s = store();
+        ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
+        let second = ensure_session_member(&s, "sid-bbbb2222", Some("proj-20"), 2).unwrap();
+        assert_ne!(second, "proj-20");
+        assert!(
+            second.starts_with("proj-20-") && second.len() <= 40,
+            "{second}"
+        );
+        assert_eq!(
+            ensure_session_member(&s, "sid-bbbb2222", Some("proj-20"), 3).unwrap(),
+            second
+        );
+        assert_eq!(
+            ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 4).unwrap(),
+            "proj-20",
+            "the first is untouched"
+        );
+    }
+
+    #[test]
+    fn a_long_name_still_fits_with_a_suffix_and_a_session_with_no_name_is_named_from_its_id() {
+        let s = store();
+        let long = "n".repeat(40);
+        ensure_session_member(&s, "sid-aaaa1111", Some(&long), 1).unwrap();
+        let second = ensure_session_member(&s, "sid-bbbb2222", Some(&long), 2).unwrap();
+        assert!(second.len() <= 40 && second != long, "{second}");
+        assert_eq!(
+            ensure_session_member(&s, "0123456789abcdef", None, 3).unwrap(),
+            "session-01234567"
         );
     }
 }

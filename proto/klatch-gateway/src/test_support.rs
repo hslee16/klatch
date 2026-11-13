@@ -125,6 +125,10 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.note_session(session_id, member, now)
     }
+    fn session_of_member(&self, member: &str) -> Result<Option<String>> {
+        self.gate()?;
+        self.inner.session_of_member(member)
+    }
     fn member_of_session(&self, session_id: &str) -> Result<Option<String>> {
         self.gate()?;
         self.inner.member_of_session(session_id)
