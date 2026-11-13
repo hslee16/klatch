@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -40,7 +40,8 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
  CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
- CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));";
+ CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
+ CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -148,6 +149,14 @@ fn migrate_v6(conn: &Connection) -> Result<()> {
         .map_err(be)
 }
 
+/// Version 7 to 8: which asks were already reported to their asker as undoable by anyone here, so each is told once.
+fn migrate_v7(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -248,7 +257,10 @@ impl SqliteStore {
                     if version < 6 {
                         migrate_v5(&conn)?;
                     }
-                    migrate_v6(&conn)?;
+                    if version < 7 {
+                        migrate_v6(&conn)?;
+                    }
+                    migrate_v7(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -420,6 +432,28 @@ impl Store for SqliteStore {
                     .conn
                     .execute(
                         "INSERT OR IGNORE INTO asks_reported(room,member,seq) VALUES(?1,?2,?3)",
+                        params![room, member, a.seq],
+                    )
+                    .map_err(be)?;
+                if n == 1 {
+                    fresh.push(a);
+                }
+            }
+            Ok(fresh)
+        })
+    }
+
+    fn escalated_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<OpenAsk>> {
+        self.immediate(|| {
+            let mut fresh = Vec::new();
+            for a in self.open_asks(room, now)? {
+                if a.sender != member || !a.no_capable_member() {
+                    continue;
+                }
+                let n = self
+                    .conn
+                    .execute(
+                        "INSERT OR IGNORE INTO asks_escalated(room,member,seq) VALUES(?1,?2,?3)",
                         params![room, member, a.seq],
                     )
                     .map_err(be)?;
@@ -941,6 +975,44 @@ mod tests {
         }
         let s = SqliteStore::open(&path).unwrap();
         assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
+    }
+
+    #[test]
+    fn an_asker_is_told_once_that_nobody_here_can_do_its_ask() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: x", 1).unwrap().seq;
+        s.post("r", "h1", &format!("declined #{a} cannot: not mine"), 2)
+            .unwrap();
+        assert!(
+            s.escalated_asks("r", "alice", 3).unwrap().is_empty(),
+            "one cannot is not enough"
+        );
+        s.post("r", "h2", &format!("declined #{a} cannot: no"), 4)
+            .unwrap();
+        assert!(
+            s.escalated_asks("r", "bob", 5).unwrap().is_empty(),
+            "only the asker is told"
+        );
+        let first = s.escalated_asks("r", "alice", 5).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].seq, a);
+        assert!(
+            s.escalated_asks("r", "alice", 6).unwrap().is_empty(),
+            "told once"
+        );
+    }
+
+    #[test]
+    fn a_busy_helper_means_someone_capable_exists_so_no_escalation() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: x", 1).unwrap().seq;
+        s.post("r", "h1", &format!("declined #{a} cannot: no"), 2)
+            .unwrap();
+        s.post("r", "h2", &format!("declined #{a} cannot: no"), 2)
+            .unwrap();
+        s.post("r", "h3", &format!("declined #{a} busy: later"), 2)
+            .unwrap();
+        assert!(s.escalated_asks("r", "alice", 3).unwrap().is_empty());
     }
 
     #[test]
@@ -1715,12 +1787,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_7() {
-        assert_eq!(version(&store()), 7);
+    fn a_fresh_database_is_at_schema_version_8() {
+        assert_eq!(version(&store()), 8);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_7_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_8_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1736,7 +1808,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 7);
+        assert_eq!(version(&s), 8);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1757,14 +1829,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            7,
+            8,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_7() {
+    fn a_version_0_database_now_migrates_all_the_way_to_8() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1777,7 +1849,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 7);
+        assert_eq!(version(&s), 8);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1796,11 +1868,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_seven_with_everything_intact() {
+    fn a_version_two_database_migrates_to_eight_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 7);
+        assert_eq!(version(&s), 8);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1818,7 +1890,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 7);
+        assert_eq!(version(&s), 8);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

@@ -64,12 +64,15 @@ pub fn render_board(board: &Board, now: i64) -> String {
         out.push_str("  no open asks\n");
     }
     for a in board.asks.iter().take(BOARD_LIST_LIMIT) {
+        let summary = a.outcome_summary();
         out.push_str(&format!(
-            "  #{} {} {} {}s: {}\n",
+            "  #{} {} {} {}s{}{}: {}\n",
             a.seq,
             flat(&a.sender),
             if a.claimed { "claimed" } else { "unclaimed" },
             now - a.ts,
+            if summary.is_empty() { "" } else { " " },
+            summary,
             clip(&a.text)
         ));
     }
@@ -305,6 +308,7 @@ mod tests {
             text: text.into(),
             ts,
             claimed,
+            ..Default::default()
         }
     }
 
@@ -412,5 +416,36 @@ mod tests {
             20
         );
         assert!(out.contains("and 5 more asks"), "got: {out}");
+    }
+
+    #[test]
+    fn an_ask_shows_how_helpers_answered_it_without_taking_it() {
+        let mut b = sample();
+        b.asks[0].outcomes = vec![
+            crate::Outcome {
+                kind: crate::OutcomeKind::Busy,
+                by: "h1".into(),
+                reason: "x".into(),
+            },
+            crate::Outcome {
+                kind: crate::OutcomeKind::Cannot,
+                by: "h2".into(),
+                reason: "y".into(),
+            },
+            crate::Outcome {
+                kind: crate::OutcomeKind::Cannot,
+                by: "h3".into(),
+                reason: "y".into(),
+            },
+        ];
+        let out = render_board(&b, 100);
+        assert!(
+            out.contains("#1 api-1 unclaimed 10s [busy 1, cannot 2]: seeking: slugify"),
+            "got: {out}"
+        );
+        assert!(
+            out.contains("#2 docs-1 claimed 20s: seeking: the api"),
+            "an ask with no outcomes keeps its short form"
+        );
     }
 }

@@ -280,12 +280,15 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         }
         Cmd::Asks { room } => {
             for a in t.open_asks(&room)? {
+                let summary = a.outcome_summary();
                 println!(
-                    "#{} {} {} {}s: {}",
+                    "#{} {} {} {}s{}{}: {}",
                     a.seq,
                     a.sender,
                     if a.claimed { "claimed" } else { "unclaimed" },
                     now - a.ts,
+                    if summary.is_empty() { "" } else { " " },
+                    summary,
                     flat(&a.text)
                 );
             }

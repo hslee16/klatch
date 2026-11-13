@@ -13,6 +13,8 @@ pub struct RoomDigest {
     pub stale: Vec<OpenAsk>,
     /// Open asks from others that nobody has claimed (shown at session start).
     pub backlog: Vec<OpenAsk>,
+    /// The member's own open asks that enough helpers declined as not able (reported once).
+    pub escalated: Vec<OpenAsk>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -53,6 +55,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
             && d.released.is_empty()
             && d.stale.is_empty()
             && d.backlog.is_empty()
+            && d.escalated.is_empty()
         {
             continue;
         }
@@ -88,6 +91,14 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
                 "  your ask #{} has had no claim for {}s: {}\n",
                 a.seq,
                 now - a.ts,
+                clip(&a.text)
+            ));
+        }
+        for a in &d.escalated {
+            out.push_str(&format!(
+                "  your ask #{}: nobody here may be able to do this ({} helpers declined as not able): {}\n",
+                a.seq,
+                a.distinct(crate::OutcomeKind::Cannot),
                 clip(&a.text)
             ));
         }
@@ -168,6 +179,7 @@ mod tests {
             text: text.into(),
             ts,
             claimed: false,
+            ..Default::default()
         }
     }
 
@@ -219,6 +231,33 @@ mod tests {
         assert!(
             out.lines().all(|l| l.chars().count() < 260),
             "unbounded line: {out}"
+        );
+    }
+
+    #[test]
+    fn an_escalated_ask_tells_the_asker_nobody_here_may_be_able() {
+        let mut a = ask(7, "me", "seeking: a rare thing", 10);
+        a.outcomes = vec![
+            crate::Outcome {
+                kind: crate::OutcomeKind::Cannot,
+                by: "h1".into(),
+                reason: "no".into(),
+            },
+            crate::Outcome {
+                kind: crate::OutcomeKind::Cannot,
+                by: "h2".into(),
+                reason: "no".into(),
+            },
+        ];
+        let d = RoomDigest {
+            room: "lobby".into(),
+            escalated: vec![a],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            out.contains("your ask #7: nobody here may be able to do this (2 helpers declined as not able): seeking: a rare thing"),
+            "got: {out}"
         );
     }
 

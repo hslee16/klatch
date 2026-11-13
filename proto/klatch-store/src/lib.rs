@@ -78,6 +78,15 @@ pub trait Store {
     fn wait_seen(&self, _room: &str, _member: &str, _seq: i64, _now: i64) -> Result<()> {
         Ok(())
     }
+    /// `member`'s own open asks that enough helpers declined as `cannot` (none busy or failed), not reported to it
+    /// before; remembers what it returned. The default remembers nothing and reports them every time.
+    fn escalated_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<OpenAsk>> {
+        Ok(self
+            .open_asks(room, now)?
+            .into_iter()
+            .filter(|a| a.sender == member && a.no_capable_member())
+            .collect())
+    }
     /// Messages from others that a hook has not shown yet, for the member's hook only. Remembers what it
     /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a
     /// message a hook showed can still be read once with `read` (#198). The default advances the read cursor.
