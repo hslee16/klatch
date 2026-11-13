@@ -523,3 +523,22 @@ the sources recommend.
 6. Whether any other tool already has labels or clearance. None of the ones read does; a tool not
    surveyed could.
 7. Anything from forums and social sites, since none returned usable results.
+
+Item 1 above is partly answered in section 11 below.
+
+## 11. Added 2026-11-12 (third pass, SNIPPET unless stated)
+
+Tools and primitives found while researching Codex CLI and the socket; none was read in full except where noted.
+
+| Item | What it is | Why it matters here | Evidence |
+|---|---|---|---|
+| `codex queue` (Codex CLI v0.149.0) | A built-in way to append a message to a running Codex session, waking an idle one | A native, outside-callable nudge for Codex, unlike Claude Code's own-child rule. Same warning: anything that can reach the socket can inject a turn | REPORT (one article read) |
+| openai/codex issue 16447 | A proposal for local cross-session messaging over a Unix socket, with a request for stable ids and acknowledgements | The same two gaps (addressing and acks) show up in both ecosystems | read; open when read |
+| `agmsg` | Shared SQLite message store across several vendors' CLIs | Close to the storage choice in `DESIGN.md` D2; no labels reported | SNIPPET |
+| `repowire` | Local daemon with `list_peers` and `notify_peer` | Same shape as a gateway; its author reports id-versus-name routing problems | SNIPPET (via an issue comment) |
+| `agent-talk` | Session-to-session messaging over a web relay, across devices and users | The multi-machine end of the range; sends a message, not history or files | SNIPPET |
+| Jev, Kev | A hosted typed decision model and an open-source relative | Optional judge slot (`DESIGN.md` D4); privacy and prompt-injection caveats in `RESEARCH-NOTES.md` 13.3 | REPORT and SNIPPET |
+
+**Still true after this pass:** none of these is reported to have sensitivity labels, clearance or a scrubber.
+Before relying on any row, read the project. They are leads for the M0.5 idea harvest and for the harness
+abstraction (`DESIGN.md` section 20), not findings.

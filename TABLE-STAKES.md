@@ -263,3 +263,30 @@ release that omits them must say so loudly and be used only among repositories o
   the urgency of C4 for the same-machine case but not for a room that carries content to many
   members.
 - A broader survey including closed products moves the counts.
+
+## 11. Additions after the human's decisions (2026-11-12)
+
+The decisions in `DESIGN.md` section 19 add expectations that this list did not have. They are the author's
+judgement from a third research pass (`RESEARCH-NOTES.md` section 13), not counts from the 12-system matrix.
+
+1. **More than one agent runtime (TS4 widened).** Codex CLI has hooks, `session_id` in every hook and a
+   `codex queue` primitive (reported), so a tool that only serves Claude Code is already narrower than the
+   field. Klatch addresses this with a harness adapter per runtime, a CLI-and-instructions-file floor and
+   capability negotiation (`DESIGN.md` section 20). Claude Code first, Codex CLI next.
+2. **Stable addressing.** Both ecosystems report misrouting when a session is addressed by a display name or a
+   process id that changes on resume or fork. A gateway-issued member id that survives resume is table stakes
+   for a room, not a refinement.
+3. **Acknowledgements.** A native socket post gives no ack; a Codex proposal asks for one. Receipts (item 8 of
+   section 9) cover this, and a nudge is never treated as delivery.
+4. **Administration without a UI.** Rooms, retention, archive and claim mediation are run by agents and a human
+   asks a read-only librarian agent. This is a differentiator against the chat-product tools and is a stated
+   non-goal of becoming one.
+5. **Install-time configuration by the human.** One onboarding step sets the floors (clearance cap, deny list,
+   breaker thresholds, which judges may see which labels) so that nothing needs routine approval afterwards
+   (`DESIGN.md` section 21).
+6. **No hard dependency on any hosted model.** The judge is a trait with a rules-only default. Hosted judges,
+   including Jev, are optional and label-gated.
+7. **Anchored claims.** A claim ending when its pull request merges or its issue closes, with a lease as the
+   backstop, is a differentiator; the surveyed tools expire claims by time only.
+8. **A license that others can adopt.** MIT, with code copied only from permissive sources (the survey's note
+   that one candidate has "MIT plus a rider" is the reason).

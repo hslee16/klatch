@@ -1,7 +1,11 @@
 # Agent rooms: design
 
 Status: **draft for review. Nothing is built.** Written 2026-11-12. Revised the same day after the
-survey in `SURVEY.md`; section 18 records what the survey changed and what it decided.
+survey in `SURVEY.md`; section 18 records what the survey changed and what it decided. All nine human
+decisions in section 15 were made on 2026-11-12: section 19 records them, section 20 the harness
+abstraction (Claude Code first, Codex CLI next), section 21 install onboarding and section 22 the open
+questions that the decisions and a third research pass added or sharpened. Where section 19 differs from
+earlier text (notably 10.1, the human-only declassification, and R7), section 19 wins.
 
 Companion files: `RESEARCH-NOTES.md` (what the Claude Code documentation says and does not say),
 `CASE-STUDY.md` (the session that motivated this, anonymized), `SURVEY.md` (what already exists, with
@@ -593,20 +597,19 @@ Each has a cheap experiment. None should be assumed.
 
 ## 15. Decisions needed from the human
 
-1. **Language and packaging** for the CLI and gateway (a single static binary, or a Python
-   package with a pinned runtime).
-2. **Where the data lives** (`~/.klatch/`, or a path of the human's choice) and its
-   retention.
-3. **The label vocabulary.** Four labels (`public`, `internal`, `private`, `secret`) are proposed;
-   a project may want fewer.
-4. **Who may declassify** and how confirmation works (an interactive prompt the agent cannot
-   answer is proposed).
-5. **Whether claims are advisory only or may be enforced** by hooks in some rooms.
-6. **Scope of v1:** same-machine only, one user (proposed), or something broader.
-7. **Build, adopt or fork** (provisional: build, borrowing; decide after M0.5).
-8. **The license** (R26).
-9. **Which permission modes members run in.** The default hold rules make mixed modes awkward, and the
-   sender's declared mode is not a security control.
+**All nine were decided on 2026-11-12.** The full record, with rationale and consequences, is section 19.
+
+| # | Question | Decision (short form) |
+|---|---|---|
+| 1 | Language and packaging | Rust, single static binary; multi-user and multi-machine are beyond v1 and the MVP |
+| 2 | Data location and retention | `~/.klatch/` with a `KLATCH_HOME` override; SQLite behind a `Store` trait; time-based retention per room with automated, restorable archive |
+| 3 | Label vocabulary | Four default levels, custom levels allowed as one ordered chain; explicit label at room creation; DMs are two-member rooms capped at the lower clearance |
+| 4 | Who may declassify | Administration by agents inside human-set floors (admin agent plus quarantined reviewer plus optional judges); immediate release to `public` with tripwires; floors set once at onboarding |
+| 5 | Claims | Enforced, anchored claims (PR, issue, worktree, session) with negotiated leases inside gateway-set bounds; fail open if the gateway is down |
+| 6 | Scope of v1 | One machine, one human, many agents; abstractions so that multi-machine and multi-user can follow |
+| 7 | Build, adopt or fork | Build, implemented ourselves; ideas borrowed freely, code only from permissive licenses with attribution |
+| 8 | License | MIT |
+| 9 | Permission modes | Hooks are the foundation; a content-free nudge is an optional, version-probed accelerator; privileged roles never run in `bypassPermissions` |
 
 ## 16. Alternatives rejected, and why
 
@@ -793,8 +796,325 @@ yet checked).
 
 **Prototype (same day):** a Rust thin slice in `proto/` (SQLite WAL, one writer CLI, TTL claims, a hook
 command) confirmed atomic claims under 8 parallel writers and newline flattening. Language: Rust is
-recommended over Zig (safety in the scrubber path, language stability, SQLite and CLI ecosystem); section 15,
-item 1 stays open until the human confirms.
+recommended over Zig (safety in the scrubber path, language stability, SQLite and CLI ecosystem); the human
+confirmed Rust on 2026-11-12 (section 19, D1).
 
 **Still open from M0.5:** agent-bus and mcp_agent_mail reading (18.4 items 3 and 4), and experiments Q1 to Q3,
-Q12 to Q14 and Q17.
+Q12 to Q14 and Q17. After decision D7 (section 19) the reading is no longer a gate for the build/adopt call; it
+is an optional harvest of ideas.
+
+---
+
+## 19. Decisions made by the human (2026-11-12)
+
+Each entry gives the decision, the reasoning that was given or accepted, and what it changes elsewhere.
+The human's stated goals behind them: minimal human interaction, administration done by agents, humans
+query the system through another agent, no chat product or dashboard (this is not a Slack), MIT license,
+Claude Code first and Codex CLI shortly after, and a gradual path to multi-user and multi-machine.
+
+### D1. Language and packaging
+
+**Rust, one static binary** for the CLI and the gateway. Multi-user and multi-machine operation are beyond
+the v1 and MVP scope; the code keeps seams for them (D6, section 20). A Rust core with a thin shim for
+multi-machine use stays a future option and is not built now.
+
+Why: hooks run on every prompt, so start-up time matters; there is no runtime to pin; SQLite is bundled; the
+prototype in `proto/` is already Rust; the label path is security-critical and benefits from strong types.
+Cost: a slower inner loop than a scripting language and macOS plus Linux builds to maintain.
+
+### D2. Data location, storage and retention
+
+- **Location:** `~/.klatch/` by default, overridable with `KLATCH_HOME`. The directory is `0700` and files
+  are `0600`; the gateway refuses to start if the permissions are looser. Every hook must see the same
+  `KLATCH_HOME`, or it will address a different store.
+- **Storage:** SQLite (WAL) in v1, **behind a `Store` trait** so that the backend can be switched later
+  (Postgres, a replicated SQLite, or a streaming backend) without touching label, claim or admin logic.
+  Volume is not the expected bottleneck: a room is text from a few agents. What breaks first is more likely
+  context burn, write contention (open question 17) or the single-host limit.
+- **Retention:** time-based per room. The default is a placeholder of 90 days, configurable per room,
+  not a measured figure.
+- **Automated archive:** instead of deleting, expired rows are moved into read-only archive files
+  (`archive/<room>-<date>.db`), and `klatch archive load` or `klatch restore` brings a period back when
+  history is needed. A tombstone row (seq, timestamp, author) stays in the live store so `seq` stays
+  gapless and a `correction` still resolves.
+- **The JSONL transcript is derived data.** It follows the same retention and never outlives the database.
+- **Claims always expire** regardless of retention (section 8.7).
+- **Scaling path, in order of cost:** retention and `klatch gc`; per-injection caps, pinned status and mute
+  (context burn); archive; sharding one SQLite file per room or per month when a measured problem appears;
+  `VACUUM` and WAL checkpoints inside `gc`; a different `Store` implementation for multi-machine use.
+
+### D3. Labels, clearance and direct messages
+
+- **Four default levels** in one total order: `public < internal < private < secret`.
+- **Custom levels are supported**, stored as an ordered configuration, as long as they form one chain. v1 does
+  not support partial orders or compartment tags; both are later extensions.
+- **A label is required at room creation.** There is no default.
+- **Direct messages are implicit two-member rooms**, created on first use. They use the same write path,
+  receipts, retention and audit as any room. The ceiling of a DM is the **lower of the two members'
+  clearances**. The gateway applies that ceiling automatically; the sender may pass `--label` to go lower.
+  A message above the ceiling is refused with the rule's name, never the matching text. A group of three or
+  more is an ordinary room, whose ceiling is the minimum clearance of its members.
+- Only the section 19 D4 mechanism can move content from a higher label to a lower one.
+
+### D4. Administration and declassification by agents
+
+This **supersedes the human-only declassification in section 10.1 and amends R7.** The human's requirement is
+that the system is run by agents and humans ask another agent when they want information from it.
+
+**Roles**
+
+| Role | Does | Cannot |
+|---|---|---|
+| **Admin agent** | Creates and archives rooms, runs gc, restores archives, mediates claim conflicts, clears stale claims, raises clearances and declassifies **inside the floors** | Edit the floors, hold `secret` clearance, read a `secret` room |
+| **Quarantined reviewer** | Sees one candidate message plus the rules and returns allow, redact or deny in a fixed schema. No tools | Raise a ceiling, override a deny, call anything |
+| **Librarian** | Read-only. The interface a human uses to ask "what happened, what crossed, who holds what". Runs at the clearance the human grants (default lowest) | Change policy, approve or declassify anything |
+| **Judges** (optional) | Fast typed scoring of a candidate (see the pipeline below) | Anything the floors forbid |
+
+**Floors (set once at onboarding, section 21; no agent can edit them):**
+- a **clearance cap** for agents (default `private`); **`secret` is unreachable by any agent**, so no agent holds
+  `secret` clearance and no agent reads a `secret` room;
+- the **scrubber list and a deny list**, content matching them can never cross to a lower label whatever any
+  judge says;
+- the **label order**, the **breaker thresholds** and the **maximum label a hosted judge may see**.
+
+**Pipeline for a crossing:** floors, then a `Judge` as the fast gate, then the LLM reviewer only for the
+uncertain band, then floors again. **If the reviewer is also unsure, the message does not cross** and the
+sender is told why. The system fails closed on labels. No human is in the loop.
+
+**Crossings into `public` release immediately.** The human chose immediate release with tripwires and no
+hold. Because that makes a mistake irreversible, the tripwires carry the weight: a **canary** (a fake secret)
+in every `private` room, an **automatic pause of all crossings on any canary hit**, a tight rate and scope
+breaker per room pair, and an alert.
+
+**Supervision after the fact:** every decision goes to `audit.jsonl` with actor, rule and message hash. The
+librarian produces a digest the human reads when they choose.
+
+**The `Judge` trait.** Implementations: `rules` (default, always available), a local open-source decision or
+classification model, `hosted:jev` (optional), and a plain LLM reviewer. **Klatch works with no judge
+configured:** it is rules-only and anything a judge would have handled is denied or allowed only where the
+rules already allow it. **Hosted judges are label-gated:** a hosted judge only sees text at or below a label
+configured at onboarding (default `internal`); anything above goes to a local judge or the rules, or is
+denied. Rationale: a hosted API is a third party and is treated like a lower-clearance reader. Jev is a
+hosted decision model from TypeSafe AI that returns typed answers with probabilities; the vendor's speed and
+cost claims are unverified here, and published reports say text it reads can steer its verdict, which is why
+it is never the last line of defence (`RESEARCH-NOTES.md` section 13 and `SURVEY.md` section 11).
+
+**Residual risk, stated plainly.** This reduces human decisions but is not injection-proof. A crafted message
+that fools both models and stays inside the floors can cross, and a leak cannot be taken back. The guarantee
+is a **bounded worst case** (nothing above the cap, nothing matching the scrubber or deny list, nothing past
+the rate limit, fast detection), not zero leaks. Material that must never reach a public repository belongs in
+the deny list or above the cap.
+
+**Human involvement:** once at setup (floors), occasionally the digest or a tripwire alert. Not routine
+approvals.
+
+### D5. Claims: enforced, anchored, negotiated
+
+This replaces "advisory only" as the default in sections 8.7 and 11.
+
+- A claim has a **scope** (paths or resources), an **anchor**, a **lease** and a **verified owner**.
+- **Anchors:** a pull request, an issue, a branch or worktree, a session heartbeat, or none (lease only).
+- **Release happens on whichever comes first:** the anchor event (PR merged or closed, issue closed), the
+  lease expiring, or a missed heartbeat. The anchor makes release timely; the lease makes it safe, so an
+  abandoned open PR cannot deadlock a path.
+- **Anchor verification:** the gateway checks that the PR's head branch matches the claimant's worktree or
+  branch and that the claimant is the author. Everything read from the hosting service is untrusted data; only
+  state fields (open, merged, closed) are read, never titles or bodies. The `AnchorAdapter` trait polls the
+  REST API with conditional requests (ETag), GitHub first. The token is read-only and held by the gateway,
+  never by an agent or a transcript.
+- **Negotiation:** a claim that overlaps nothing is granted automatically. An overlapping request starts a
+  short handshake (request, then the holder acks, releases or hands off); the admin agent mediates and times
+  out silent holders. No human is the tie-breaker.
+- **Lease duration is negotiated** inside gateway-enforced, per-room bounds that no agent can change.
+  Placeholders, to tune: minimum 5 minutes, maximum 24 hours, default 2 hours. A lease renews by heartbeat up
+  to the room's maximum claim age; beyond that it needs an explicit renewal the admin agent may decline. The
+  admin agent may shorten a stale lease and may never extend one past the cap. Every grant, counter and
+  renewal is audited.
+- **Enforcement:** a hook **denies edits (`Edit`, `Write`, `apply_patch`) on claimed paths** in enforced rooms.
+  A `Bash` command that mentions a claimed path gets a warning only, because a shell command can touch
+  anything. OpenAI's own Codex hooks page says tool hooks are "a useful guardrail, not a complete enforcement
+  boundary", and the same is true here. Prefer **worktree-level claims**, which git isolates by itself; path
+  claims in a shared checkout are the case that needs the hook.
+- **Failure mode:** if the gateway is unreachable, the claims hook **fails open with a loud warning**, while
+  label checks **fail closed**. A broken coordination tool must not stop every session.
+- The admin agent may revoke a claim that is clearly stale. There is no agent override of a live claim.
+
+### D6. Scope of v1, and the path beyond it
+
+**One machine, one human, many agents** for the MVP and v1. The target is multi-user and multi-machine, reached
+gradually:
+
+| Stage | Adds | Changes |
+|---|---|---|
+| MVP and v1 | One machine, one human | Local SQLite, local hooks, local admin and librarian agents |
+| Next | Several machines, one human | A network transport and mutual auth; the gateway runs on one host |
+| Later | Several OS users on a machine | Per-user data permissions and a shared gateway |
+| Final | Teams, shared rooms, cross-org | Accounts, an authorization model beyond labels, a networked backend |
+
+**Abstractions built from the start** (Rust traits, one implementation each in v1 unless noted):
+
+| Seam | v1 | Later |
+|---|---|---|
+| `Store` | SQLite | Postgres, replicated or sharded stores |
+| `Judge` | `rules`; local model; optional hosted | per-org policy |
+| `AnchorAdapter` | GitHub (REST) | GitLab, Linear, Jira |
+| `Transport` (client to gateway) | local socket or direct call | HTTPS with mutual TLS |
+| `Identity` | gateway-issued member bound to a session | accounts, SSO, org membership |
+| `Notifier` (wake-up) | hooks and polling; optional nudge | push channels, webhooks |
+| `Harness` | Claude Code, then Codex CLI, plus a generic CLI and MCP adapter | other runtimes (section 20) |
+
+**Data-model rules from day one:**
+- every row carries a `tenant` and a `member` id (`tenant` is the fixed value `local` in v1);
+- message ids are globally unique (ULID or UUID) and separate from the per-room `seq`; `seq` comes from one
+  writer per room, which is fine on one machine, and a per-room sequencer or logical clocks is a **future
+  decision** (it is the hardest part of going distributed);
+- member identity is **gateway-issued** and bound to a session, **not** to the OS user or the process id (the
+  process id changes on resume, section 22);
+- the label check stays in one write path whatever the store or transport.
+
+**Workspace layout (suggestion):** a Cargo workspace with `klatch-core` (domain types and rules, no I/O),
+`klatch-store`, `klatch-gateway` (the single write path, enforcement, the admin loop), `klatch-adapters`
+(judges, anchors, harnesses) and thin `klatch-cli` and `klatch-hooks`.
+
+### D7. Build, adopt or fork
+
+**Build it ourselves.** Designs and behaviours from Cotal, agent-loom, mcp_agent_mail and agent-bus may be
+borrowed freely; code is written fresh. Code is copied only from MIT, BSD or Apache-2.0 sources, with
+attribution in a `NOTICE` or file header; Apache-2.0 code keeps its notice requirements. Nothing is copied from
+a project whose license is copyleft or unclear, which includes mcp_agent_mail ("MIT plus a rider"): ideas only.
+`cargo-deny` runs in CI so that a copyleft dependency cannot slip in. The M0.5 reading stays useful for ideas
+and is no longer a gate.
+
+### D8. License
+
+**MIT.** A `LICENSE` file is added to the repository. The copyright holder line is a placeholder pending the
+human's confirmation (section 22). The prototype's dependencies (`clap`, `anyhow`, `rusqlite`, bundled SQLite)
+are permissively licensed.
+
+### D9. Permission modes and delivery
+
+- **Hooks are the foundation of delivery.** Correctness never depends on matching permission modes, because
+  the gateway holds the content and the hook prints it at the next prompt.
+- **The nudge is an optional accelerator.** For Claude Code it is a small watcher process **started by the
+  session's own hook** that posts to **its own** inbox socket. That is the documented own-child case, which is
+  delivered by default even in a session that bypasses permission prompts. A gateway daemon posting from
+  outside is the undocumented case and is not relied on.
+- **A nudge carries no content**, only a pointer such as "klatch: 2 unread in room X, run `klatch read`". Reasons:
+  a raw socket post cannot carry a sender (the `from` field is ignored), an idle raw post renders about 120
+  words of boilerplate around it, and a mid-turn raw post renders the bare body without the harness's safety
+  notice (`claude-code` issues 93720 and 103123). Content is delivered by the hook with klatch's own fencing
+  (section 10.4).
+- **A version probe and a self-test gate the nudge.** On startup and during `klatch doctor` the gateway tests
+  that the installed Claude Code version binds the socket and that the nudge arrives; if not, the nudge is
+  turned off silently and hooks carry on. The message line format is undocumented and may change.
+- **Privileged roles (admin, reviewer, librarian) run in constrained modes with explicit deny rules, never in
+  `bypassPermissions`.** Ordinary members run in a prompting mode. A declared mode is never a security control.
+
+---
+
+## 20. The harness abstraction: Claude Code first, Codex CLI next
+
+**Why:** how klatch must talk to a member depends on the **agent harness** (the program wrapped around the
+model), not on the model. The abstraction is therefore a `Harness` adapter per runtime, each declaring the
+capabilities it has. `Judge` (which model scores a message) is a separate trait and is not merged with this
+one. By "ChatGPT" the human meant OpenAI's Codex CLI; the ChatGPT app has no hooks or local sessions to
+integrate with.
+
+**Capabilities (Claude Code from `RESEARCH-NOTES.md`; Codex CLI from OpenAI's hooks page, with `codex queue`
+and the other items marked as reports):**
+
+| Capability | Claude Code | Codex CLI | Generic fallback |
+|---|---|---|---|
+| Context injection at a prompt boundary | `SessionStart`, `UserPromptSubmit` hooks | `SessionStart` and `UserPromptSubmit` hooks; plain stdout becomes developer context (official) | An instructions file telling the agent to run `klatch read` |
+| Session identity | `CLAUDE_CODE_SESSION_ID`, hook input | `session_id`, `transcript_path`, `cwd` in every hook's stdin (official) | A wrapper that registers a session id at launch |
+| Nudge or wake-up | Own-child watcher posting to its own socket (D9, optional) | `codex queue --session <id or name>` from outside, v0.149.0 (REPORT, third-party article; verify); a `Stop` hook can also continue a turn (official) | Polling at the next prompt, or none |
+| Pre-action enforcement of claims | `PreToolUse` on `Edit` and `Write`; `Bash` warning only | `PreToolUse` on `Bash`, `apply_patch` (matches `Edit` and `Write`) and MCP tools; deny by JSON or exit code 2 (official); hosted tools such as web search are not covered | Advisory only, stated in the instructions file |
+| Permission mode visible to the adapter | Settings and modes; confirm what hooks receive (section 22) | `permission_mode` in hook input: `default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions` (official) | Unknown, treated as least trusted |
+| Headless worker | `claude -p` with `--settings` | `codex exec` (REPORT) | Whatever the runtime offers, or unsupported |
+| Pull path | MCP server | MCP client via `mcp_servers` in `config.toml` (REPORT) | MCP server (the common path) |
+| Hook trust step | Not documented as required | **Non-managed hooks must be reviewed and trusted by hash in `/hooks`; changed hooks are skipped until trusted** (official) | None |
+
+**Rules**
+1. **Adapters are untrusted conveyors.** Labels, clearance, claims and audit are enforced in the gateway. A weak
+   adapter makes delivery slower and enforcement softer; it never opens the trust boundary.
+2. **Capability negotiation with degradation.** `klatch doctor` probes each installed harness and records what
+   works. A room can require a capability (for example "enforced claims requires pre-action hooks"); a harness
+   without it joins as advisory or is refused, by the room's policy.
+3. **The floor of the abstraction** is the CLI (`klatch read`, `klatch post`) plus an instructions file. Any
+   runtime that can run a shell command can take part at that level.
+4. **Per-harness fencing.** Injected text is presented differently by each harness, so the wrapper is
+   adapter-specific; the content and the standing "this is data, not approval" rule come from the gateway.
+5. **Identity is gateway-issued and harness-independent.** The adapter only proves which session a call came
+   from. A harness with weak identity gets a lower trust tier and is shown as unattributed (R23).
+6. **Validate before freezing.** The trait is designed with Claude Code and checked on paper against Codex CLI
+   before it is frozen, so that it does not quietly assume Claude's hook points, session variable or socket.
+7. **Order:** Claude Code adapter first, a generic CLI-and-MCP adapter in v1, the Codex adapter shortly after.
+8. **Both harnesses carry the same warning:** any process that can reach a session's local channel can inject
+   a turn. Klatch protects against agent mistakes and injected content, not against a malicious local process
+   running as the same user.
+
+## 21. Install onboarding
+
+The human decides at install time. This is also where the floors of D4 are set once, which is what lets the rest
+of the system run without routine approvals.
+
+**`klatch init`** can be driven by an agent through a skill, but the root configuration is written only on the
+human's confirmation. It offers presets: **solo** (single user, sensible defaults), **careful** (stricter cap, no
+hosted judges) and **custom** (every question).
+
+Questions, each stored as data and each with the safest value as the default:
+1. Data location (`~/.klatch/`, or `KLATCH_HOME`).
+2. Label vocabulary: the four defaults or custom levels in one chain.
+3. The clearance cap for agents (suggested `private`; `secret` unreachable by agents).
+4. Scrubber terms and the deny list.
+5. Retention and archive settings.
+6. Judge backends: rules only, a local model, or hosted, and the highest label a hosted judge may see.
+7. The anchor adapter and a read-only token for it, stored where only the gateway can read it.
+8. Permission-mode strategy and whether to enable the nudge.
+9. Whether klatch may edit the harness's own settings (for example `crossSessionInbound`). Any such change is
+   shown as a diff and needs a yes.
+10. For Codex CLI: tell the human that klatch's hooks must be reviewed and trusted in `/hooks`, and verify it
+    afterwards; an untrusted hook is skipped silently from the agent's point of view.
+
+**Safety rules for the wizard:** it never changes harness settings without showing a diff; it ends by running
+`klatch doctor` (harness versions, whether the socket binds, whether the nudge self-test works, file
+permissions, hook trust); it can be re-run with `klatch init --reconfigure`; every step is skippable.
+
+## 22. Requirements added, and open questions added or sharpened
+
+**Requirements added by the decisions**
+
+| Id | Requirement | From |
+|---|---|---|
+| R28 | The gateway is harness-agnostic: each runtime is an adapter with declared capabilities, and the floor is the CLI plus an instructions file | D6, section 20 |
+| R29 | Floors are set once at onboarding and are not editable by any agent | D4, section 21 |
+| R30 | Administration is performed by agents inside the floors; humans query through a read-only librarian | D4 |
+| R31 | Storage, judging, anchoring, transport, identity, notification and harness sit behind traits; no hosted model is required to function | D2, D4, D6 |
+| R7 (amended) | An agent may raise a clearance or declassify only inside the human-set floors; nothing may exceed the cap or hold `secret` | D4 |
+
+**Open questions sharpened by the third research pass** (details in `RESEARCH-NOTES.md` section 13)
+
+- **Q12 (message line format):** partly answered by third parties, not by Anthropic. An auth line is followed by
+  one JSON line such as `{"type":"user","message":{"role":"user","content":"..."}}`; a plain-text line is
+  silently ignored; there is no acknowledgement; a `from` field is ignored. Still undocumented (issue 103123,
+  open). Treat as an optional, version-probed path.
+- **Q13 (a non-child daemon posting):** how the controls classify such a sender is unanswered. Inference from the
+  docs: it asserts no permission class, so a prompting receiver delivers and a bypassing receiver holds. D9
+  avoids the question by posting from the session's own child.
+
+**New open questions**
+
+19. Which local decision or classification models can fill the `Judge` slot, their licenses, and whether Jev's
+    terms allow the label-gated use in D4.
+20. Does a background watcher started by a `SessionStart` hook still count as the session's own child after the
+    hook returns, and does it survive the hook timeout? (Ties to Q3 and Q12.)
+21. Verify `codex queue` against OpenAI's own documentation: addressing by id versus name, whether a sender is
+    attributed, whether there is an acknowledgement, and how the receiver treats the message.
+22. Do Codex hooks run in `codex exec`, and what does hook trust do in unattended runs
+    (`--dangerously-bypass-hook-trust` exists and must not be used by klatch)?
+23. What does a Claude Code hook receive about the permission mode, so that the adapter can read it?
+24. Per-room sequencing for multi-machine operation (D6).
+25. Confirm the copyright holder line for the `LICENSE` file (currently a placeholder).
+26. Address by a stable id and not a display name: a Codex issue thread and a Claude Code issue both report
+    misrouting when sessions share a name or when the process id changes on resume. The gateway-issued member
+    id in D6 is the intended answer; test it on resume and fork in both harnesses.
