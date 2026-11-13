@@ -46,6 +46,16 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
+    /// Messages from others past both the read cursor and the member's wait position, with no state change.
+    /// The default is `read` without advancing, which has no wait position.
+    fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.read(room, member, false, now)
+    }
+    /// Remember that a wait has looked at the room up to `seq` (forward only), so the next wait does not wake for
+    /// the same messages. The read cursor is untouched: the messages stay unread. The default remembers nothing.
+    fn wait_seen(&self, _room: &str, _member: &str, _seq: i64, _now: i64) -> Result<()> {
+        Ok(())
+    }
     /// Messages from others that a hook has not shown yet, for the member's hook only. Remembers what it
     /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a
     /// message a hook showed can still be read once with `read` (#198). The default advances the read cursor.

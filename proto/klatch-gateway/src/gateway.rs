@@ -108,6 +108,32 @@ impl<S: Store> Gateway<S> {
         self.store.read(room, &who.member, advance, self.now())
     }
 
+    /// What a `wait` should consider: unread messages it has not yet looked at. Changes nothing.
+    pub fn wait_poll(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
+        self.admit(
+            who,
+            room,
+            Operation::Read {
+                room: room.into(),
+                advance: false,
+            },
+        )?;
+        self.store.wait_poll(room, &who.member, self.now())
+    }
+
+    /// Record that a `wait` looked at the room up to `seq`; the messages stay unread.
+    pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
+        self.admit(
+            who,
+            room,
+            Operation::Read {
+                room: room.into(),
+                advance: false,
+            },
+        )?;
+        self.store.wait_seen(room, &who.member, seq, self.now())
+    }
+
     pub fn who(&self, who: &Principal, room: &str) -> Result<Vec<MemberInfo>> {
         self.admit(who, room, Operation::Who { room: room.into() })?;
         self.store.members(room)
@@ -626,6 +652,17 @@ mod tests {
         assert!(g.digest(&alice()).unwrap().rooms[0].messages.is_empty());
         assert_eq!(g.read(&alice(), "r", true).unwrap().len(), 1);
         assert!(g.read(&alice(), "r", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_message_a_wait_has_seen_is_still_unread_and_the_wait_does_not_wake_again() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.post(&bob(), "r", "ask").unwrap();
+        assert_eq!(g.wait_poll(&alice(), "r").unwrap().len(), 1);
+        g.wait_seen(&alice(), "r", 1).unwrap();
+        assert!(g.wait_poll(&alice(), "r").unwrap().is_empty());
+        assert_eq!(g.read(&alice(), "r", false).unwrap().len(), 1);
     }
 
     #[test]

@@ -44,10 +44,21 @@ enum Cmd {
     },
     /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
     Wait {
-        room: String,
-        /// Seconds to wait; 0 checks once
+        /// Rooms to wait on; wakes on the first with a matching message
+        #[arg(required = true)]
+        rooms: Vec<String>,
+        /// Seconds to wait (default 60, at most 300); 0 checks once
         #[arg(long, default_value_t = 60)]
         timeout: u64,
+        /// Only wake for messages whose body starts with this text; others stay unread
+        #[arg(long)]
+        only: Option<String>,
+        /// Only wake for messages from this member; others stay unread
+        #[arg(long)]
+        from: Option<String>,
+        /// Return the messages without marking them read
+        #[arg(long)]
+        peek: bool,
     },
     /// List members of a room with last activity
     Who { room: String },
@@ -175,18 +186,50 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
             }
         }
-        Cmd::Wait { room, timeout } => {
+        Cmd::Wait {
+            rooms,
+            timeout,
+            only,
+            from,
+            peek,
+        } => {
+            let (timeout, clamped) = effective_timeout(timeout);
+            if clamped {
+                eprintln!(
+                    "klatch wait: timeout clamped to {timeout}s (the most one call may wait)"
+                );
+            }
+            // Without a filter or --peek a wait consumes what it returns, like a blocking read. With either,
+            // it leaves messages unread (a later read or the hook still shows them) and remembers what it has
+            // looked at so it does not wake for the same message twice.
+            let consume = only.is_none() && from.is_none() && !peek;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
-            loop {
-                let msgs = t.read(&room, true)?;
-                if !msgs.is_empty() {
-                    for m in msgs {
-                        println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+            'wait: loop {
+                for room in &rooms {
+                    let found: Vec<_> = if consume {
+                        t.read(room, true)?
+                    } else {
+                        let seen = t.wait_poll(room)?;
+                        if let Some(last) = seen.iter().map(|m| m.seq).max() {
+                            t.wait_seen(room, last)?;
+                        }
+                        seen.into_iter()
+                            .filter(|m| only.as_deref().is_none_or(|p| m.body.starts_with(p)))
+                            .filter(|m| from.as_deref().is_none_or(|f| m.sender == f))
+                            .collect()
+                    };
+                    if !found.is_empty() {
+                        for m in found {
+                            println!("[{room} {} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+                        }
+                        break 'wait;
                     }
-                    break;
                 }
                 if std::time::Instant::now() >= deadline {
-                    println!("no new messages in {room} after {timeout}s");
+                    println!(
+                        "[klatch wait: timeout room={} after={timeout}s]",
+                        rooms.join(",")
+                    );
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -408,5 +451,31 @@ mod tests {
                 .to_string();
             assert!(err.contains("KLATCH_NAME"), "{err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use super::*;
+
+    #[test]
+    fn the_timeout_is_capped_at_300_seconds_and_says_when_it_was_clamped() {
+        assert_eq!(effective_timeout(60), (60, false));
+        assert_eq!(effective_timeout(300), (300, false));
+        assert_eq!(effective_timeout(301), (300, true));
+        assert_eq!(effective_timeout(u64::MAX), (300, true));
+        assert_eq!(effective_timeout(0), (0, false));
+    }
+}
+
+/// The longest one `wait` may block, so an agent looks at its own state at least this often.
+const MAX_WAIT_SECONDS: u64 = 300;
+
+/// The timeout to use and whether the request had to be clamped.
+fn effective_timeout(requested: u64) -> (u64, bool) {
+    if requested > MAX_WAIT_SECONDS {
+        (MAX_WAIT_SECONDS, true)
+    } else {
+        (requested, false)
     }
 }
