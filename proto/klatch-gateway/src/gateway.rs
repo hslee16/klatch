@@ -216,16 +216,12 @@ impl<S: Store> Gateway<S> {
                 continue;
             }
             let messages = self.store.read(&room, &who.member, true, now)?;
-            let claims = self
-                .store
-                .claims(&room, now)?
-                .into_iter()
-                .filter(|c| c.owner != who.member)
-                .collect();
+            let changes = self.store.claim_changes(&room, &who.member, now)?;
             rooms.push(RoomDigest {
                 room,
                 messages,
-                claims,
+                claims: changes.added,
+                released: changes.released,
             });
         }
         Ok(Digest {
@@ -619,6 +615,45 @@ mod tests {
             vec!["bob"]
         );
         assert!(g.digest(&alice()).unwrap().rooms[0].messages.is_empty());
+    }
+
+    #[test]
+    fn a_digest_shows_a_claim_once_not_on_every_call() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.claim(&bob(), "r", "src", 50, "").unwrap();
+        assert_eq!(g.digest(&alice()).unwrap().rooms[0].claims.len(), 1);
+        for _ in 0..3 {
+            let d = g.digest(&alice()).unwrap();
+            assert!(d.rooms[0].claims.is_empty(), "unchanged claim repeated");
+            assert!(d.rooms[0].released.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_digest_reports_a_release_once() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.claim(&bob(), "r", "src", 50, "").unwrap();
+        g.digest(&alice()).unwrap();
+        g.release(&bob(), "r", "src").unwrap();
+        let d = g.digest(&alice()).unwrap();
+        assert_eq!(d.rooms[0].released.len(), 1);
+        assert_eq!(d.rooms[0].released[0].owner, "bob");
+        assert_eq!(d.rooms[0].released[0].path, "src");
+        assert!(g.digest(&alice()).unwrap().rooms[0].released.is_empty());
+    }
+
+    #[test]
+    fn a_digest_still_delivers_messages_when_claims_are_unchanged() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.claim(&bob(), "r", "src", 50, "").unwrap();
+        g.digest(&alice()).unwrap();
+        g.post(&bob(), "r", "later").unwrap();
+        let d = g.digest(&alice()).unwrap();
+        assert_eq!(d.rooms[0].messages.len(), 1);
+        assert!(d.rooms[0].claims.is_empty());
     }
 
     #[test]

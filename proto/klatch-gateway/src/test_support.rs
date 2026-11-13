@@ -79,6 +79,15 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claims(room, now)
     }
+    fn claim_changes(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<klatch_core::ClaimChanges> {
+        self.gate()?;
+        self.inner.claim_changes(room, member, now)
+    }
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.gate()?;
         self.inner.rooms_of(member)

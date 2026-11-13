@@ -1,6 +1,8 @@
 use crate::Store;
 use crate::ids::new_id;
-use klatch_core::{Claim, Error, MemberInfo, Message, Posted, Result, overlaps};
+use klatch_core::{
+    Claim, ClaimChanges, Error, MemberInfo, Message, Posted, ReleasedClaim, Result, overlaps,
+};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::time::Duration;
@@ -29,13 +31,14 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
- CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);";
+ CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
+ CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -102,6 +105,15 @@ fn migrate_v1(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "ALTER TABLE messages ADD COLUMN attribution TEXT NOT NULL DEFAULT 'unattributed';
          ALTER TABLE messages ADD COLUMN label TEXT NOT NULL DEFAULT 'public';",
+    )
+    .map_err(be)
+}
+
+/// Version 2 to 3: what each member has been shown of other members' claims, so a hook reports only what
+/// changed. Nothing to backfill: a member that has seen nothing is shown every claim once.
+fn migrate_v2(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));",
     )
     .map_err(be)
 }
@@ -191,7 +203,10 @@ impl SqliteStore {
                     if version == 0 {
                         migrate_v0(&conn)?;
                     }
-                    migrate_v1(&conn)?;
+                    if version < 2 {
+                        migrate_v1(&conn)?;
+                    }
+                    migrate_v2(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -404,6 +419,55 @@ impl Store for SqliteStore {
         .map_err(be)
     }
 
+    fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
+        self.immediate(|| {
+            let current: Vec<Claim> = self
+                .claims(room, now)?
+                .into_iter()
+                .filter(|c| c.owner != member)
+                .collect();
+            let mut st = self
+                .conn
+                .prepare("SELECT owner,path,expires FROM claims_seen WHERE room=?1 AND member=?2")
+                .map_err(be)?;
+            let seen: Vec<(String, String, i64)> = st
+                .query_map(params![room, member], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })
+                .map_err(be)?
+                .collect::<std::result::Result<_, _>>()
+                .map_err(be)?;
+            let added: Vec<Claim> = current
+                .iter()
+                .filter(|c| !seen.iter().any(|(o, p, e)| *o == c.owner && *p == c.path && *e == c.expires))
+                .cloned()
+                .collect();
+            let released: Vec<ReleasedClaim> = seen
+                .iter()
+                .filter(|(o, p, _)| !current.iter().any(|c| c.owner == *o && c.path == *p))
+                .map(|(o, p, _)| ReleasedClaim { owner: o.clone(), path: p.clone() })
+                .collect();
+            if added.is_empty() && released.is_empty() {
+                return Ok(ClaimChanges::default());
+            }
+            self.conn
+                .execute(
+                    "DELETE FROM claims_seen WHERE room=?1 AND member=?2",
+                    params![room, member],
+                )
+                .map_err(be)?;
+            for c in &current {
+                self.conn
+                    .execute(
+                        "INSERT INTO claims_seen(room,member,owner,path,expires) VALUES(?1,?2,?3,?4,?5)",
+                        params![room, member, c.owner, c.path, c.expires],
+                    )
+                    .map_err(be)?;
+            }
+            Ok(ClaimChanges { added, released })
+        })
+    }
+
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         let mut st = self
             .conn
@@ -605,6 +669,126 @@ mod tests {
             .map(|c| c.path)
             .collect();
         assert_eq!(paths, vec!["a", "z"]);
+    }
+
+    type Pairs = Vec<(String, String)>;
+
+    fn changes(s: &SqliteStore, room: &str, member: &str, now: i64) -> (Pairs, Pairs) {
+        let c = s.claim_changes(room, member, now).unwrap();
+        (
+            c.added.into_iter().map(|c| (c.owner, c.path)).collect(),
+            c.released.into_iter().map(|c| (c.owner, c.path)).collect(),
+        )
+    }
+
+    fn pair(o: &str, p: &str) -> (String, String) {
+        (o.to_string(), p.to_string())
+    }
+
+    #[test]
+    fn claim_changes_first_call_shows_others_claims_then_nothing() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        s.claim("r", "alice", "mine", 100, "", 0).unwrap();
+        assert_eq!(
+            changes(&s, "r", "alice", 1),
+            (vec![pair("bob", "a")], vec![])
+        );
+        assert_eq!(changes(&s, "r", "alice", 2), (vec![], vec![]));
+    }
+
+    #[test]
+    fn claim_changes_ignores_the_passing_of_time() {
+        let s = store();
+        s.claim("r", "bob", "a", 1000, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        for now in [10, 100, 500] {
+            assert_eq!(changes(&s, "r", "alice", now), (vec![], vec![]), "at {now}");
+        }
+    }
+
+    #[test]
+    fn claim_changes_reports_only_the_new_claim() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        s.claim("r", "bob", "b", 100, "", 2).unwrap();
+        assert_eq!(
+            changes(&s, "r", "alice", 3),
+            (vec![pair("bob", "b")], vec![])
+        );
+    }
+
+    #[test]
+    fn claim_changes_reports_a_renewed_claim_again() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        s.claim("r", "bob", "a", 500, "", 50).unwrap();
+        assert_eq!(
+            changes(&s, "r", "alice", 51),
+            (vec![pair("bob", "a")], vec![])
+        );
+        assert_eq!(changes(&s, "r", "alice", 52), (vec![], vec![]));
+    }
+
+    #[test]
+    fn claim_changes_reports_a_release_once() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        s.release("r", "bob", "a").unwrap();
+        assert_eq!(
+            changes(&s, "r", "alice", 2),
+            (vec![], vec![pair("bob", "a")])
+        );
+        assert_eq!(changes(&s, "r", "alice", 3), (vec![], vec![]));
+    }
+
+    #[test]
+    fn claim_changes_reports_a_lapsed_claim_as_released_once() {
+        let s = store();
+        s.claim("r", "bob", "a", 10, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        assert_eq!(
+            changes(&s, "r", "alice", 20),
+            (vec![], vec![pair("bob", "a")])
+        );
+        assert_eq!(changes(&s, "r", "alice", 21), (vec![], vec![]));
+    }
+
+    #[test]
+    fn claim_changes_never_reports_a_claim_that_lapsed_before_it_was_seen() {
+        let s = store();
+        s.claim("r", "bob", "a", 10, "", 0).unwrap();
+        assert_eq!(changes(&s, "r", "alice", 20), (vec![], vec![]));
+    }
+
+    #[test]
+    fn claim_changes_are_remembered_per_member_and_per_room() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        s.claim("other", "bob", "z", 100, "", 0).unwrap();
+        assert_eq!(changes(&s, "r", "alice", 1).0.len(), 1);
+        assert_eq!(
+            changes(&s, "r", "carol", 1).0.len(),
+            1,
+            "carol has her own view"
+        );
+        assert_eq!(
+            changes(&s, "other", "alice", 1).0.len(),
+            1,
+            "another room has its own view"
+        );
+        assert_eq!(changes(&s, "r", "alice", 2).0.len(), 0);
+    }
+
+    #[test]
+    fn claim_changes_does_not_hold_the_writer_lock_after_it_returns() {
+        let s = store();
+        s.claim("r", "bob", "a", 100, "", 0).unwrap();
+        changes(&s, "r", "alice", 1);
+        s.claim("r", "bob", "b", 100, "", 2).unwrap();
     }
 
     #[test]
@@ -1169,12 +1353,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_2() {
-        assert_eq!(version(&store()), 2);
+    fn a_fresh_database_is_at_schema_version_3() {
+        assert_eq!(version(&store()), 3);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_2_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_3_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1190,7 +1374,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 2);
+        assert_eq!(version(&s), 3);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1211,14 +1395,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            2,
+            3,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_2() {
+    fn a_version_0_database_now_migrates_all_the_way_to_3() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1231,7 +1415,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 2);
+        assert_eq!(version(&s), 3);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1245,12 +1429,34 @@ mod tests {
     /// carol's `other`; and bob's claim on `src/a.rs`. Regenerate only by building that commit.
     const PROTOTYPE_V0: &[u8] = include_bytes!("../fixtures/prototype-v0.db");
 
+    /// A database written by the binary at schema version 2 (after PR #151): room `core`, alice's message
+    /// `hello from v2` and bob's claim on `src/lib.rs`. Regenerate only by building that release.
+    const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
+
+    #[test]
+    fn a_version_two_database_migrates_to_three_with_everything_intact() {
+        let path = temp_db("real-v2");
+        std::fs::write(&path, RELEASE_V2).unwrap();
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(version(&s), 3);
+        let core = s.tail("core", 0, 10).unwrap();
+        assert_eq!(core.len(), 1);
+        assert_eq!(core[0].body, "hello from v2");
+        assert_eq!(s.claims("core", 1).unwrap().len(), 1);
+        // the new table works on the migrated database
+        let (added, released) = changes(&s, "core", "alice", 1);
+        assert_eq!(added, vec![pair("bob", "src/lib.rs")]);
+        assert!(released.is_empty());
+        assert_eq!(changes(&s, "core", "alice", 2), (vec![], vec![]));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
     #[test]
     fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 2);
+        assert_eq!(version(&s), 3);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

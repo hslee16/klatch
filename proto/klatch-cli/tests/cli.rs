@@ -145,6 +145,46 @@ fn hook_prints_unread_and_others_claims_once() {
 }
 
 #[test]
+fn hook_shows_an_unchanged_claim_once_not_on_every_call() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["claim", "r", "src"]);
+    assert!(h.ok("alice", &["hook"]).contains("bob holds src"));
+    for _ in 0..3 {
+        assert_eq!(
+            h.ok("alice", &["hook"]),
+            "",
+            "an unchanged claim was repeated"
+        );
+    }
+}
+
+#[test]
+fn hook_reports_a_release_once() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["claim", "r", "src"]);
+    h.ok("alice", &["hook"]);
+    h.ok("bob", &["release", "r", "src"]);
+    let out = h.ok("alice", &["hook"]);
+    assert!(
+        out.contains("claim released: bob no longer holds src"),
+        "{out}"
+    );
+    assert_eq!(h.ok("alice", &["hook"]), "");
+}
+
+#[test]
+fn claims_command_still_lists_every_claim_every_time() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["claim", "r", "src"]);
+    h.ok("alice", &["hook"]);
+    assert!(h.ok("alice", &["claims", "r"]).contains("src"));
+    assert!(h.ok("alice", &["claims", "r"]).contains("src"));
+}
+
+#[test]
 fn hook_is_silent_when_there_is_nothing_new() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
