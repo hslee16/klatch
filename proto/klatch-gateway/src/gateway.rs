@@ -215,7 +215,7 @@ impl<S: Store> Gateway<S> {
                 });
                 continue;
             }
-            let messages = self.store.read(&room, &who.member, true, now)?;
+            let messages = self.store.hook_read(&room, &who.member, now)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             rooms.push(RoomDigest {
                 room,
@@ -615,6 +615,17 @@ mod tests {
             vec!["bob"]
         );
         assert!(g.digest(&alice()).unwrap().rooms[0].messages.is_empty());
+    }
+
+    #[test]
+    fn a_message_a_digest_showed_can_still_be_read_once() {
+        let g = open();
+        g.join(&alice(), "r").unwrap();
+        g.post(&bob(), "r", "ask").unwrap();
+        assert_eq!(g.digest(&alice()).unwrap().rooms[0].messages.len(), 1);
+        assert!(g.digest(&alice()).unwrap().rooms[0].messages.is_empty());
+        assert_eq!(g.read(&alice(), "r", true).unwrap().len(), 1);
+        assert!(g.read(&alice(), "r", true).unwrap().is_empty());
     }
 
     #[test]

@@ -79,6 +79,10 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claims(room, now)
     }
+    fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<klatch_core::Message>> {
+        self.gate()?;
+        self.inner.hook_read(room, member, now)
+    }
     fn claim_changes(
         &self,
         room: &str,
