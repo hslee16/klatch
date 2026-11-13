@@ -80,7 +80,7 @@ impl<S: Store> Gateway<S> {
                 "empty message: there is nothing to post".into(),
             ));
         }
-        self.guard.check(
+        self.authorize(
             who,
             &Operation::Post {
                 room: room.into(),
@@ -189,7 +189,7 @@ impl<S: Store> Gateway<S> {
                 "bad status: one line of 1 to 80 characters, no control characters".into(),
             ));
         }
-        self.guard.check(
+        self.authorize(
             who,
             &Operation::Status {
                 room: room.into(),
@@ -354,7 +354,7 @@ impl<S: Store> Gateway<S> {
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
-        self.guard.check(
+        self.authorize(
             who,
             &Operation::Claim {
                 room: room.into(),
@@ -372,7 +372,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
-        self.guard.check(
+        self.authorize(
             who,
             &Operation::Release {
                 room: room.into(),
@@ -400,7 +400,7 @@ impl<S: Store> Gateway<S> {
                 "a release note is at most 300 characters".into(),
             ));
         }
-        self.guard.check(
+        self.authorize(
             who,
             &Operation::Release {
                 room: room.into(),
@@ -489,7 +489,7 @@ impl<S: Store> Gateway<S> {
                 room: room.clone(),
                 advance: true,
             };
-            if let Err(e) = self.guard.check(who, &op) {
+            if let Err(e) = self.authorize(who, &op) {
                 refused.push(Refused {
                     room,
                     reason: e.to_string(),
@@ -530,11 +530,152 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// The administrative rules (`klatch admin`, R11) and then the guard, before the store is touched: a member
+    /// removed from a room, a paused gateway and a closed room each refuse with the rule that did.
+    fn authorize(&self, who: &Principal, op: &Operation) -> Result<()> {
+        if let Some(room) = op.room() {
+            if self.store.is_blocked(room, &who.member)? {
+                return Err(Error::Refused {
+                    rule: "admin-block".into(),
+                    reason: format!("you were removed from room {room} by the admin"),
+                });
+            }
+            if self.store.room_state("*")?.as_deref() == Some("paused") {
+                return Err(Error::Refused {
+                    rule: "admin-pause".into(),
+                    reason: "rooms are paused by the admin".into(),
+                });
+            }
+            if op.changes_a_closed_room()
+                && self.store.room_state(room)?.as_deref() == Some("closed")
+            {
+                return Err(Error::Refused {
+                    rule: "admin-close".into(),
+                    reason: format!("room {room} is closed by the admin; it is read-only"),
+                });
+            }
+        }
+        self.guard.check(who, op)
+    }
+
+    /// One administrative act: ask the guard, do it, and keep a record. Who may administer is decided by the
+    /// caller (the CLI today: a real terminal with no agent session above it) and later by a guard and roles.
+    fn administer(
+        &self,
+        who: &Principal,
+        action: &str,
+        target: &str,
+        detail: &str,
+        act: impl FnOnce(i64) -> Result<String>,
+    ) -> Result<()> {
+        check_member(who)?;
+        self.guard.check(
+            who,
+            &Operation::Admin {
+                action: action.into(),
+                target: target.into(),
+            },
+        )?;
+        let now = self.now();
+        let outcome = act(now)?;
+        let note = [detail, outcome.as_str()]
+            .iter()
+            .filter(|p| !p.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("; ");
+        self.store.record_audit(action, target, &note, now)
+    }
+
+    /// Make a room read-only, or open it again.
+    pub fn admin_close_room(&self, who: &Principal, room: &str, closed: bool) -> Result<()> {
+        check_room(room)?;
+        let action = if closed { "close" } else { "reopen" };
+        self.administer(who, action, room, "", |now| {
+            self.store
+                .set_room_state(room, closed.then_some("closed"), now)?;
+            Ok(String::new())
+        })
+    }
+
+    /// Stop every room, or start them again.
+    pub fn admin_pause(&self, who: &Principal, paused: bool) -> Result<()> {
+        let action = if paused { "pause" } else { "resume" };
+        self.administer(who, action, "*", "", |now| {
+            self.store
+                .set_room_state("*", paused.then_some("paused"), now)?;
+            Ok(String::new())
+        })
+    }
+
+    /// Take a member out of a room (`*` for every room it is in), release its claims there and refuse it there
+    /// until it is allowed again.
+    pub fn admin_remove_member(&self, who: &Principal, room: &str, member: &str) -> Result<()> {
+        if room != "*" {
+            check_room(room)?;
+        }
+        if !valid_name(member) {
+            return Err(Error::Invalid(format!("bad member name: {member}")));
+        }
+        self.administer(who, "remove", &format!("{room}/{member}"), "", |now| {
+            let rooms = if room == "*" {
+                self.store.rooms_of(member)?
+            } else {
+                vec![room.to_string()]
+            };
+            let mut released = 0;
+            for r in &rooms {
+                released += self.store.remove_member(r, member, now)?;
+            }
+            self.store.block_member(room, member, now)?;
+            Ok(format!(
+                "removed from {} room(s), {released} claim(s) released",
+                rooms.len()
+            ))
+        })
+    }
+
+    /// Lift a removal.
+    pub fn admin_allow_member(&self, who: &Principal, room: &str, member: &str) -> Result<()> {
+        if room != "*" {
+            check_room(room)?;
+        }
+        if !valid_name(member) {
+            return Err(Error::Invalid(format!("bad member name: {member}")));
+        }
+        self.administer(who, "allow", &format!("{room}/{member}"), "", |_| {
+            if self.store.unblock_member(room, member)? {
+                Ok(String::new())
+            } else {
+                Err(Error::NotFound(format!(
+                    "{member} is not removed from {room}"
+                )))
+            }
+        })
+    }
+
+    /// The latest administrative acts, newest first.
+    pub fn admin_audit(
+        &self,
+        who: &Principal,
+        limit: usize,
+    ) -> Result<Vec<klatch_core::AuditRecord>> {
+        check_member(who)?;
+        self.guard.check(
+            who,
+            &Operation::Admin {
+                action: "audit".into(),
+                target: String::new(),
+            },
+        )?;
+        self.store.audit_log(limit)
+    }
+
     /// Validate the caller and the room, then ask the guard. Runs before the store is touched.
     fn admit(&self, who: &Principal, room: &str, op: Operation) -> Result<()> {
         check_member(who)?;
         check_room(room)?;
-        self.guard.check(who, &op)
+        self.authorize(who, &op)
     }
 }
 
@@ -732,6 +873,7 @@ mod tests {
                 Operation::Subscribe { .. } => "subscribe",
                 Operation::Status { .. } => "status",
                 Operation::Ack { .. } => "ack",
+                Operation::Admin { .. } => "admin",
             })
             .collect();
         assert_eq!(
@@ -803,6 +945,136 @@ mod tests {
         g.post(&bob(), "r", "someone else is not limited").unwrap();
         clock.set(1_061);
         g.post(&alice(), "r", "after the window").unwrap();
+    }
+
+    fn admin() -> Principal {
+        Principal::unattributed("admin")
+    }
+
+    fn rule_of(e: klatch_core::Error) -> String {
+        match e {
+            Error::Refused { rule, .. } => rule,
+            other => panic!("not a refusal: {other}"),
+        }
+    }
+
+    #[test]
+    fn a_paused_gateway_refuses_every_room_operation_and_resumes() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        g.join(&alice(), "r").unwrap();
+        g.admin_pause(&admin(), true).unwrap();
+        assert_eq!(
+            rule_of(g.post(&alice(), "r", "x").unwrap_err()),
+            "admin-pause"
+        );
+        assert_eq!(rule_of(g.join(&bob(), "r").unwrap_err()), "admin-pause");
+        assert_eq!(
+            rule_of(g.claim(&alice(), "r", "a", 60, "").unwrap_err()),
+            "admin-pause"
+        );
+        assert_eq!(
+            rule_of(g.read(&alice(), "r", false).unwrap_err()),
+            "admin-pause"
+        );
+        let d = g.digest(&alice()).unwrap();
+        assert!(d.rooms.is_empty() && d.refused.len() == 1, "{d:?}");
+        assert!(d.refused[0].reason.contains("paused by the admin"));
+        g.admin_pause(&admin(), false).unwrap();
+        g.post(&alice(), "r", "x").unwrap();
+    }
+
+    #[test]
+    fn a_closed_room_stays_readable_but_takes_no_posts_claims_or_statuses() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        g.post(&alice(), "r", "history").unwrap();
+        g.claim(&alice(), "r", "a", 60, "").unwrap();
+        g.admin_close_room(&admin(), "r", true).unwrap();
+        assert_eq!(
+            rule_of(g.post(&bob(), "r", "x").unwrap_err()),
+            "admin-close"
+        );
+        assert_eq!(
+            rule_of(g.claim(&bob(), "r", "b", 60, "").unwrap_err()),
+            "admin-close"
+        );
+        assert_eq!(
+            rule_of(g.set_status(&bob(), "r", "done").unwrap_err()),
+            "admin-close"
+        );
+        assert_eq!(g.read(&bob(), "r", false).unwrap()[0].body, "history");
+        assert_eq!(g.claims(&bob(), "r").unwrap().len(), 1);
+        g.release(&alice(), "r", "a").unwrap();
+        g.post(&bob(), "other", "elsewhere is fine").unwrap();
+        g.admin_close_room(&admin(), "r", false).unwrap();
+        g.post(&bob(), "r", "open again").unwrap();
+    }
+
+    #[test]
+    fn a_removed_member_is_refused_in_that_room_only_until_allowed() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        g.join(&bob(), "r").unwrap();
+        g.join(&bob(), "side").unwrap();
+        g.claim(&bob(), "r", "a", 60, "").unwrap();
+        g.admin_remove_member(&admin(), "r", "bob").unwrap();
+        assert_eq!(
+            rule_of(g.post(&bob(), "r", "x").unwrap_err()),
+            "admin-block"
+        );
+        assert_eq!(rule_of(g.join(&bob(), "r").unwrap_err()), "admin-block");
+        assert!(
+            g.claims(&alice(), "r").unwrap().is_empty(),
+            "its claims were released"
+        );
+        g.post(&bob(), "side", "still fine in another room")
+            .unwrap();
+        g.post(&alice(), "r", "others are fine").unwrap();
+        g.admin_allow_member(&admin(), "r", "bob").unwrap();
+        g.post(&bob(), "r", "back").unwrap();
+        assert!(matches!(
+            g.admin_allow_member(&admin(), "r", "bob"),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn removing_a_member_from_every_room_blocks_it_everywhere() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        g.join(&bob(), "r").unwrap();
+        g.join(&bob(), "side").unwrap();
+        g.admin_remove_member(&admin(), "*", "bob").unwrap();
+        for room in ["r", "side", "never-joined"] {
+            assert_eq!(
+                rule_of(g.post(&bob(), room, "x").unwrap_err()),
+                "admin-block"
+            );
+        }
+        g.admin_allow_member(&admin(), "*", "bob").unwrap();
+        g.post(&bob(), "side", "x").unwrap();
+    }
+
+    #[test]
+    fn every_administrative_act_is_audited_newest_first_and_a_failed_one_is_not() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
+        g.admin_close_room(&admin(), "r", true).unwrap();
+        g.admin_pause(&admin(), true).unwrap();
+        let _ = g.admin_allow_member(&admin(), "r", "nobody");
+        let log = g.admin_audit(&admin(), 10).unwrap();
+        let acts: Vec<(&str, &str)> = log
+            .iter()
+            .map(|a| (a.action.as_str(), a.target.as_str()))
+            .collect();
+        assert_eq!(acts, vec![("pause", "*"), ("close", "r")]);
+    }
+
+    #[test]
+    fn the_guard_sees_an_admin_act_before_it_happens() {
+        let guard = Rc::new(SpyGuard::denying(&["admin"]));
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
+        let _ = g.admin_pause(&admin(), true);
+        assert!(matches!(
+            guard.seen.borrow()[0],
+            Operation::Admin { ref action, .. } if action == "pause"
+        ));
     }
 
     #[test]

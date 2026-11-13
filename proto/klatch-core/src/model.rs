@@ -49,6 +49,15 @@ pub struct ReleasedClaim {
     pub note: Option<String>,
 }
 
+/// One administrative act (`klatch admin ...`), kept so the human can see what was done and when (R11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditRecord {
+    pub ts: i64,
+    pub action: String,
+    pub target: String,
+    pub detail: String,
+}
+
 /// The latest release of a path that carried a note: who released it, what they said, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseNote {

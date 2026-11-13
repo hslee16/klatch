@@ -41,6 +41,39 @@ pub enum Operation {
     Ack {
         room: String,
     },
+    /// An administrative act (`klatch admin`): close or reopen a room, pause or resume all, remove or allow a
+    /// member. `action` names it; `target` is the room or member it is about.
+    Admin {
+        action: String,
+        target: String,
+    },
+}
+
+impl Operation {
+    /// The room the operation is about, if it is about one.
+    pub fn room(&self) -> Option<&str> {
+        match self {
+            Operation::Join { room }
+            | Operation::Post { room, .. }
+            | Operation::Read { room, .. }
+            | Operation::Who { room }
+            | Operation::Claim { room, .. }
+            | Operation::Release { room, .. }
+            | Operation::Claims { room }
+            | Operation::Subscribe { room }
+            | Operation::Status { room, .. }
+            | Operation::Ack { room } => Some(room),
+            Operation::Admin { .. } => None,
+        }
+    }
+
+    /// Whether a closed room refuses it: posting, claiming and setting a status. A closed room stays readable.
+    pub fn changes_a_closed_room(&self) -> bool {
+        matches!(
+            self,
+            Operation::Post { .. } | Operation::Claim { .. } | Operation::Status { .. }
+        )
+    }
 }
 
 /// The one hook point for policy. The gateway calls it once per operation, before the store is touched.

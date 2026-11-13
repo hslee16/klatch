@@ -193,6 +193,12 @@ pub fn all() -> Vec<Scenario> {
             run: receiver_budget,
         },
         Scenario {
+            name: "admin_controls_pause_close_remove_and_audit",
+            origin: "#23, R11",
+            layer: "fault",
+            run: admin_controls,
+        },
+        Scenario {
             name: "a_hook_survives_hostile_standard_input",
             origin: "#262, #284",
             layer: "fault",
@@ -1184,6 +1190,79 @@ fn receiver_budget(w: &World) -> Res {
     )?;
     w.advance(61);
     w.ok("flood", &["post", "r", "after the window"])?;
+    Ok(vec![])
+}
+
+fn admin_controls(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "r"])?;
+    w.ok("mallory", &["join", "r"])?;
+    w.ok("mallory", &["join", "side"])?;
+    w.ok("mallory", &["claim", "r", "a.rs"])?;
+    // a wrong confirmation changes nothing
+    let r = w.admin(&["pause"], "nope");
+    check(!r.ok, "pause went ahead without the confirmation")?;
+    w.ok("alice", &["post", "r", "still open"])?;
+    // pause: nothing is posted, and a hook says why
+    let r = w.admin(&["pause"], "pause");
+    check(r.ok, format!("pause failed: {}", r.stderr.trim()))?;
+    has(
+        &w.refused("alice", &["post", "r", "while paused"])?,
+        "paused by the admin",
+        "a paused room refuses posts with its reason",
+    )?;
+    has(
+        &w.ok("alice", &["hook", "--event", "UserPromptSubmit"])?,
+        "paused by the admin",
+        "a hook says why nothing arrives",
+    )?;
+    check(w.admin(&["resume"], "").ok, "resume failed")?;
+    w.ok("alice", &["post", "r", "after resume"])?;
+    // close: read-only
+    check(w.admin(&["close", "r"], "r").ok, "close failed")?;
+    has(
+        &w.refused("alice", &["post", "r", "to a closed room"])?,
+        "closed by the admin",
+        "a closed room refuses posts",
+    )?;
+    has(
+        &w.ok("mallory", &["read", "r", "--peek"])?,
+        "after resume",
+        "a closed room stays readable",
+    )?;
+    check(w.admin(&["reopen", "r"], "").ok, "reopen failed")?;
+    // remove one member from one room: its claims go, it is refused there and nowhere else
+    check(
+        w.admin(&["remove", "mallory", "--room", "r"], "mallory").ok,
+        "remove failed",
+    )?;
+    has(
+        &w.refused("mallory", &["post", "r", "x"])?,
+        "removed from room r",
+        "a removed member is refused in that room",
+    )?;
+    w.ok("mallory", &["post", "side", "other rooms are fine"])?;
+    check(
+        w.ok("alice", &["claims", "r"])?.trim().is_empty(),
+        "the removed member still holds a claim",
+    )?;
+    check(
+        w.admin(&["allow", "mallory", "--room", "r"], "").ok,
+        "allow failed",
+    )?;
+    w.ok("mallory", &["post", "r", "back"])?;
+    // the audit shows each act, newest first
+    let log = w.admin(&["audit"], "");
+    check(log.ok, "audit failed")?;
+    let acts: Vec<&str> = log
+        .stdout
+        .lines()
+        .filter_map(|l| l.split('\t').nth(1))
+        .collect();
+    check(
+        acts == ["allow", "remove", "reopen", "close", "resume", "pause"],
+        format!("audit order: {acts:?}"),
+    )?;
     Ok(vec![])
 }
 

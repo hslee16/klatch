@@ -75,6 +75,30 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release(room, owner, path)
     }
+    fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
+        self.inner.set_room_state(room, state, now)
+    }
+    fn room_state(&self, room: &str) -> Result<Option<String>> {
+        self.inner.room_state(room)
+    }
+    fn block_member(&self, room: &str, member: &str, now: i64) -> Result<()> {
+        self.inner.block_member(room, member, now)
+    }
+    fn unblock_member(&self, room: &str, member: &str) -> Result<bool> {
+        self.inner.unblock_member(room, member)
+    }
+    fn is_blocked(&self, room: &str, member: &str) -> Result<bool> {
+        self.inner.is_blocked(room, member)
+    }
+    fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
+        self.inner.remove_member(room, member, now)
+    }
+    fn record_audit(&self, action: &str, target: &str, detail: &str, now: i64) -> Result<()> {
+        self.inner.record_audit(action, target, detail, now)
+    }
+    fn audit_log(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>> {
+        self.inner.audit_log(limit)
+    }
     fn release_with(
         &self,
         room: &str,
@@ -236,18 +260,7 @@ impl SpyGuard {
 }
 
 fn room_of(op: &Operation) -> &str {
-    match op {
-        Operation::Join { room }
-        | Operation::Post { room, .. }
-        | Operation::Read { room, .. }
-        | Operation::Who { room }
-        | Operation::Claim { room, .. }
-        | Operation::Release { room, .. }
-        | Operation::Claims { room }
-        | Operation::Status { room, .. }
-        | Operation::Subscribe { room }
-        | Operation::Ack { room } => room,
-    }
+    op.room().unwrap_or("")
 }
 
 impl Guard for std::rc::Rc<SpyGuard> {

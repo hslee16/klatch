@@ -86,6 +86,11 @@ enum Cmd {
         #[arg(long)]
         shared: bool,
     },
+    /// Controls for the person running klatch: pause, close, remove a member, audit (needs a real terminal)
+    Admin {
+        #[command(subcommand)]
+        cmd: admin::AdminCmd,
+    },
     /// Show the scope you work in, or set it
     Scope { scope: Option<String> },
     /// Release a claim you hold
@@ -209,6 +214,8 @@ fn db_path() -> Result<PathBuf> {
 /// line and exits 0, changing nothing. Any other failure stays loud (ticket #291, DESIGN section 26.4).
 const READ_ONLY_NOTICE: &str = "klatch: the store is read-only, so the lobby is unavailable";
 
+mod admin;
+
 fn is_read_only(e: &anyhow::Error) -> bool {
     e.chain().any(|c| {
         let m = c.to_string().to_lowercase();
@@ -266,6 +273,12 @@ fn run_cli(cli: Cli) -> Result<()> {
                 .as_deref(),
             &std::env::current_exe()?,
         );
+    }
+    if matches!(cli.cmd, Cmd::Admin { .. }) {
+        let Cmd::Admin { cmd } = cli.cmd else {
+            unreachable!()
+        };
+        return admin::run(cmd);
     }
     // The only thing the CLI knows about its caller is a typed name, which proves nothing.
     let declared = cli.as_member.or_else(|| std::env::var("KLATCH_NAME").ok());
@@ -525,6 +538,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
             }
         }
         Cmd::Init { .. } => unreachable!("init is handled before dispatch"),
+        Cmd::Admin { .. } => unreachable!("admin is handled before dispatch"),
         Cmd::Serve { .. } | Cmd::Stream { .. } => {
             unreachable!("serve and stream are handled before dispatch")
         }
