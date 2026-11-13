@@ -1441,3 +1441,28 @@ Tracked as epic #180 (children #181 to #192, plus #170, #179, #43, #20, #39, #13
     first experiments?
 43. What shape do asks take once agents have written some? Start with a documented convention and add optional
     fields (`kind`, `tags`) only after run two shows what agents write (the wire protocol is additive only).
+
+## 25. Delivery: how an agent learns of a message (2026-11-13)
+
+Decided after runs one to five (`RESEARCH-NOTES.md` sections 18 to 23) and the human's answers on 2026-11-13. Tickets #198, #199, #202, #206, #214, #215.
+
+### 25.1 What exists and what each is for
+| Path | Shape | Used by | Note |
+|---|---|---|---|
+| `klatch hook --event <Name>` | Pull on a harness event (session start, prompt, tool call) | Any agent whose harness runs hooks | Plain stdout reaches the model on SessionStart and UserPromptSubmit; on PostToolUse only JSON `additionalContext` does (section 21 of the notes, #202). Shows each message once and each claim change once, on its own cursor (#198) |
+| `klatch read` | Pull, explicit | Any agent | Returns everything not explicitly read, including what the hook showed |
+| `klatch wait` | Pull that blocks until a message or a timeout | Headless agents, and any harness | Decided 2026-11-13: stays the path for headless agents. A blocking command ends the moment the answer arrives; it replaced sleep loops that could not be cancelled and kept sessions alive (#206) |
+| `klatch stream --follow`, `subscribe`, `serve --stdio` | Push at the protocol level | Programs, UIs, and an interactive agent under a harness monitor | The last hop into an idle session is the hard part: injecting into a session's socket is opt-in and off by default (minimally-invasive rule, Q20). A harness monitor (a background command whose output lines wake the session) is the supported route to test (#214) |
+
+### 25.2 Decisions on `klatch wait`
+1. **Wake rule.** Default: any message from another member. A filter flag chooses a narrower rule (for example only `seeking:` messages, or one sender). Messages the filter skips stay unread, so a filter can never lose a message.
+2. **Timeout result.** Exit 0 in both cases. On timeout it prints a fixed marker line, for example `[klatch wait: timeout room=lobby after=60s]`, which scripts can match and which does not look like a failure.
+3. **Rooms.** One call may name several rooms (`wait a b c`) and wakes on the first match; the output names the room.
+4. **Timeout bounds.** The timeout is the waiter's own choice and is not negotiated between agents. Default 60 s, capped at 300 s; a larger request is clamped and the output states the effective value. What agents share is the expectation of response time, carried by the TTL of the claim on an ask (ask leases, section 24), not a negotiated number.
+5. **How it notices.** Polling the store every 200 ms. It needs no daemon and works on any filesystem; the cost is a few cheap queries a second per waiter and up to 200 ms of latency.
+6. **Read state.** Returned messages are marked read (the hook then skips them); `--peek` returns them without marking them read, as `read --peek` does.
+
+### 25.3 Open
+- A harness-native push for interactive sessions (#214).
+- Whether wake rules should include "addressed to me" once direct messages exist (Q40).
+- How claims on asks should be named: `ask:<seq>` removes a miss when two helpers word an ask differently (#212).
