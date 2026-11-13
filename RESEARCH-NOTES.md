@@ -524,3 +524,92 @@ added a documented mechanism not in that table: a hook or background process **t
 post to **its own** inbox socket (section 11.4), which Claude Code delivers between tool calls or as a new
 turn when idle, subject to the inbound rules in section 11.3. Its line format is not documented, so it is a
 candidate, not a supported pattern. See `DESIGN.md` section 9.
+
+---
+
+## 13. Third pass (2026-11-12): the inbox socket in practice, Codex CLI, and Jev
+
+Tags as before, plus **REPORT** (a third-party write-up, not verified against a primary source) and
+**SNIPPET** (seen only in a search-result summary, not read in full). Facts here are as of 2026-11-12.
+
+### 13.1 Claude Code inbox socket, re-read in full
+
+- **DOCUMENTED** (re-read on the primary page): the socket is restricted to the OS user; the fallback directory
+  is `/tmp/cc-socks-<uid>`; `CLAUDE_CODE_MESSAGING_SOCKET` is exported before any hook runs, including
+  `SessionStart`; an own-child message is delivered by default when no `crossSessionInbound` value applies;
+  Linux verifies a child by process evidence even after it exits, macOS only while it is still running, and a
+  container where Claude Code is process 1 and native Windows need the token in the auth line; an unverifiable
+  message counts as asserting no permission class, which a bypassing session holds.
+- **DOCUMENTED:** limits are plain text, about one million characters on the same machine, a sender-side
+  refusal on a rapid burst, and receiver-side rate limits, drop of identical repeats and a queue of 50.
+  Versions: 2.1.224 (macOS, Linux, WSL 2), 2.1.234 (native Windows), 2.1.232 for the `/config` row and `@`
+  mentions, 2.1.248 for same-machine messaging on third-party providers or with feature-flag fetching off.
+- **NOT FOUND (still):** the format of the message line after the auth line, any acknowledgement, and whether a
+  same-user process that is not a child is a supported sender. Anthropic issue 103123 asks for exactly this; it
+  was open when read, labelled docs and enhancement, with no maintainer reply in what was retrieved.
+- **OBSERVED by others (issues 103123 and 93720, open when read):** on 2.1.302 (macOS) a plain-text line is
+  silently ignored; the working example is `{"type":"user","message":{"role":"user","content":"..."}}` after the
+  auth line; a `from` field is ignored.
+- **OBSERVED by others, correcting section 11 and an earlier summary:** a raw post renders **differently by
+  timing**. To an idle session it renders as a full user turn with the header "Another Claude session sent a
+  message:", the body and a roughly 120-word permission-laundering paragraph, with no collapsed preview. Posted
+  mid-turn it renders the body alone, without the envelope. A real `SendMessage` renders as
+  `› Message from @name: ... (ctrl+o to expand)`. (Earlier text said a raw post is always bare text; that was
+  true only mid-turn.) Reproduced on 2.1.268 and 2.1.270.
+- **SNIPPET (not read in full):** the socket path is listed in `~/.claude/sessions/<pid>.json` and a token file
+  sits beside it with 0600 permissions; every resume or restart changes the process id and invalidates peer
+  names and reply addresses (issue 89338); some sessions register but never bind the socket until restarted
+  (issue 85497); messaging works per Unix account only (a third-party issue); a gist reports a 16 KiB limit,
+  which conflicts with the documented million characters and is treated as unknown.
+- **INFERENCE:** a daemon that is not the session's child is the case the docs do not describe. By the default
+  rule it asserts no class, so a prompting receiver would deliver it and a bypassing receiver would hold it.
+  Untested. The design avoids it (`DESIGN.md` D9).
+
+### 13.2 Codex CLI (OpenAI), for the harness abstraction
+
+- **DOCUMENTED** (OpenAI hooks page, read in full): Codex has command hooks. Events include `SessionStart` (source
+  `startup`, `resume`, `clear`, `compact` or `fork`), `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+  `PermissionRequest`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact` and `SessionEnd`.
+  Plain stdout from `SessionStart` and `UserPromptSubmit` is added as developer context.
+- **DOCUMENTED:** `PreToolUse` can intercept shell commands, `apply_patch` file edits (matchers `apply_patch`,
+  `Edit` or `Write`), MCP tool calls and other local function tools. It denies by a JSON decision or exit code 2
+  and may add context or rewrite input. Hosted tools such as web search are not covered. The page itself says
+  to treat tool hooks as "a useful guardrail, not a complete enforcement boundary".
+- **DOCUMENTED:** every hook receives `session_id`, `transcript_path`, `cwd`, `hook_event_name` and `model` on
+  stdin; most events also receive `permission_mode` (`default`, `acceptEdits`, `plan`, `dontAsk`,
+  `bypassPermissions`). The transcript format is not a stable interface. A `Stop` hook returning
+  `decision: "block"` makes Codex continue with the reason as a new prompt.
+- **DOCUMENTED:** a non-managed hook must be reviewed and trusted by hash (`/hooks`); a new or changed hook is
+  skipped until trusted. Managed hooks come from `requirements.toml`, MDM or cloud sources and are trusted by
+  policy. `--dangerously-bypass-hook-trust` exists.
+- **REPORT** (third-party guide; check OpenAI's docs): Codex CLI v0.149.0 added `codex queue --session <id or
+  name> "text"`, which appends to a running session's input queue, wakes an idle session and holds the
+  message until the turn ends if the session is busy; the queued message inherits the session's permission
+  profile; any process able to reach the local socket or the remote WebSocket can inject a user turn.
+- **SNIPPET and REPORT:** a proposal for local cross-session messaging over a Unix socket (openai/codex issue
+  16447) was open when read, with comments recommending a stable id instead of a display name and an explicit
+  acknowledgement. Whether `codex queue` supersedes it was not checked. Other tools reported: `agmsg` (a shared
+  SQLite database across several vendors' CLIs), `repowire` (a local daemon with `list_peers` and
+  `notify_peer`) and `agent-talk` (a web relay).
+- **REPORT:** Codex acts as an MCP client (`mcp_servers` in `~/.codex/config.toml`); it reads `AGENTS.md` files
+  from the project root down to the working directory, up to 32 KiB; `codex exec` runs headless, with a read-only
+  sandbox and no approval prompts by default; sandbox mode and approval policy are separate settings. Sources
+  disagree on defaults and some are out of date.
+
+### 13.3 Jev (TypeSafe AI), for the optional judge
+
+- **REPORT:** Jev is a hosted decision model, released 2026-09-15 by TypeSafe AI, that takes a state and typed
+  questions and returns typed answers with probabilities rather than text. The vendor claims large speed and
+  cost advantages over LLMs on classification; these are vendor figures. It is used as a gate in front of agent
+  actions, with a stronger model for low-confidence cases. A paper reports a cascade with fewer strong-model
+  calls and other evaluations report limited advantage over a cheap cascade.
+- **REPORT:** it cannot explain its answers and cannot verify what is not in its input, and an industry article
+  warns that the text it reads can influence its verdict. It is a hosted API, so text sent to it leaves the
+  machine (`DESIGN.md` D4: hosted judges are label-gated and optional). An open-source Jev-like model, Kev, was
+  named in a gate paper; its license and local use were not checked (`DESIGN.md` question 19).
+
+### 13.4 Sources
+
+Anthropic: the cross-session messaging page; issues 103123 and 93720 (read); issues 85497 and 89338 (snippets).
+OpenAI: the Codex hooks page (read); issue 16447 and a `codex queue` article (read). Jev: LangChain, AWS builder,
+Harness and VentureBeat write-ups and an arXiv gate paper (snippets only).
