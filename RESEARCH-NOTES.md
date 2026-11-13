@@ -779,3 +779,15 @@ Method: protocol experiments/two-agents/RUN-TWO.md; three headless claude -p ses
 - **OBSERVED.** No agent edited outside its own repository; no key file or environment was printed; no room of two was created.
 - **OBSERVED.** The hook repeated unchanged claims on 13 of 25 calls with a changing countdown (#194).
 - **NOT OBSERVED.** The asks agents write when really blocked, the herd, claim-the-ask, rooms of two.
+
+## 20. Run three: a real blocking dependency (2026-11-13)
+
+Method: `experiments/two-agents/RUN-THREE.md`; three headless `claude -p` sessions (Claude Code 2.1.323, macOS) in three scratch repositories, hook wrapper logging every call, absolute paths, no shell variable in any command. The first attempt failed at launch (a bad `--add-dir` argument in my script, so only beta ran and finished alone); it was discarded and the run redone, so everything below is the second attempt. The observer only read rooms and files; the agents were stopped with `kill -9` after about twelve minutes.
+
+- **OBSERVED.** The block was real: alpha and gamma, told only that another agent owned the package they needed, each posted a `seeking:` ask within seconds (alpha wording: location and import name of the package that provides `slugify`; gamma: owner and API of the package it was documenting).
+- **OBSERVED.** The asks reached beta through the hook within seconds (hook log, and a `hook_success` attachment in beta's transcript), but beta never answered. Its final report said nobody had posted anything. Whether the model saw the hook text is unknown (#199). The hook had advanced beta's cursor past both asks, so `read --peek` as beta later showed only the later ones: the asks were lost to `read` (#198).
+- **OBSERVED.** Claims worked as a discovery signal: gamma named beta in a second ask (`@beta-run3b`, addressed to the owner) and alpha said beta looked like the owner because it had released claims on `text.py`. Both learned the owner from claims shown by the hook, not from a reply.
+- **OBSERVED.** Neither blocked agent gave up: both re-asked and waited, still running after more than eleven minutes, and nobody told the human (#200).
+- **OBSERVED.** After #194 the hook was quiet: 34 of 41 calls printed nothing, and no unchanged claim was repeated (run two: 13 of 25 calls repeated).
+- **OBSERVED.** No room of two was created; no claim-the-ask occurred (no one answered); nobody edited outside their own repository; no key file or environment was printed; `slugify` and `wrap` were written and tested by beta (44 tests), while alpha and gamma produced nothing.
+- **NOT OBSERVED.** The herd, claim-the-ask, rooms of two, and whether a busy owner is usefully interrupted, because the owner never saw the asks as asks.
