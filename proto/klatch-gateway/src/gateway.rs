@@ -337,6 +337,12 @@ impl<S: Store> Gateway<S> {
         self.store.release(room, &who.member, path)
     }
 
+    /// Release every claim the caller holds, in every room (its session ended, #277). Only ever the caller's own.
+    pub fn release_all(&self, who: &Principal) -> Result<usize> {
+        check_member(who)?;
+        self.store.release_member_claims(&who.member, self.now())
+    }
+
     pub fn claims(&self, who: &Principal, room: &str) -> Result<Vec<Claim>> {
         self.admit(who, room, Operation::Claims { room: room.into() })?;
         self.store.claims(room, self.now())

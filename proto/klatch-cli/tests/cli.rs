@@ -1561,6 +1561,28 @@ fn the_claim_that_closes_a_cycle_is_refused_as_a_deadlock_naming_who_yields() {
 // ---- the SessionEnd hook (#258) ----
 
 #[test]
+fn a_member_that_ends_does_not_keep_its_claims_and_the_asker_is_told() {
+    let h = Home::new();
+    h.ok("asker", &["join", "lobby"]);
+    h.ok("asker", &["post", "lobby", "seeking: a thing"]);
+    h.ok("helper", &["join", "lobby"]);
+    h.ok("helper", &["claim", "lobby", "ask:1"]);
+    h.ok("helper", &["claim", "lobby", "src/a.rs"]);
+    h.fail("rival", &["claim", "lobby", "src/a.rs"]);
+    h.ok("helper", &["hook", "--event", "SessionEnd"]);
+    assert!(
+        h.ok("rival", &["claims", "lobby"]).trim().is_empty(),
+        "the ended member still holds claims"
+    );
+    h.ok("rival", &["claim", "lobby", "src/a.rs"]);
+    let told = h.ok("asker", &["hook", "--event", "UserPromptSubmit"]);
+    assert!(
+        told.contains("your ask #1: helper's claim lapsed without an answer"),
+        "{told}"
+    );
+}
+
+#[test]
 fn session_end_marks_the_member_done_in_every_room_it_joined_and_prints_nothing() {
     let h = Home::new();
     h.ok("alice", &["join", "lobby"]);

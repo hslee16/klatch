@@ -1653,6 +1653,7 @@ A helper that failed or vanished held an ask for ten minutes before anyone could
 4. **`need-info #N: <question>` and `info #N: <details>`.** The ask shows `needs info` and the question, and the stale-ask report is paused while the asker owes an answer.
 5. **A working room `ask-<N>`.** For a longer or multi-party exchange any member may join it and bring in others. The ask shows `room ask-<N>` with its member count, and a room with a message in the last 120 seconds keeps the ask from being reported stale. Presence refreshes do not count as activity (the bench found that every joined room looked active forever).
 6. **Cost.** The session-start text grew to about 2.5 KB.
+7. **A session that ends frees its claims (#277).** The SessionEnd hook releases every claim the member holds, in every room (`release_member_claims`; a member that has ended cannot be working). An `ask:<N>` claim ends as a lapse: the lease is ended at that moment, so the asker is told once that the helper's claim ended without an answer and the ask is open again. Only the member's own claims are touched. The derived alternative (claims of a done member stop counting) was not built: a voluntary `status: done` is not proof that work stopped.
 
 ## 29. Long-running work: liveness, parked state and durable tasks (epic #308; prototype design 2026-11-13)
 

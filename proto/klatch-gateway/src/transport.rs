@@ -29,6 +29,8 @@ pub trait Transport {
     /// The scope the caller declared or was given.
     fn scope(&self) -> Result<Option<String>>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
+    /// Release every claim the caller holds in every room (its session ended); returns how many.
+    fn release_all(&self) -> Result<usize>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
     /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
@@ -108,6 +110,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn release(&self, room: &str, path: &str) -> Result<()> {
         self.gateway.release(&self.principal, room, path)
+    }
+    fn release_all(&self) -> Result<usize> {
+        self.gateway.release_all(&self.principal)
     }
     fn claims(&self, room: &str) -> Result<Vec<Claim>> {
         self.gateway.claims(&self.principal, room)

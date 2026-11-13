@@ -151,6 +151,12 @@ pub fn all() -> Vec<Scenario> {
             run: long_history,
         },
         Scenario {
+            name: "a_session_that_ends_frees_its_claims_at_once",
+            origin: "#277, #258",
+            layer: "fault",
+            run: ended_holder,
+        },
+        Scenario {
             name: "a_dead_holders_claim_lapses_and_another_takes_it",
             origin: "#233, #59, #262",
             layer: "fault",
@@ -951,6 +957,23 @@ fn dead_holder(w: &World) -> Res {
         "the lease is honoured while it lasts",
     )?;
     w.advance(2);
+    w.ok("other", &["claim", "r", "ask:1"])?;
+    Ok(vec![])
+}
+
+fn ended_holder(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("asker", &["join", "r"])?;
+    w.ok("asker", &["post", "r", "seeking: a thing"])?;
+    w.ok("holder", &["claim", "r", "ask:1"])?;
+    w.ok("holder", &["claim", "r", "src/a.rs"])?;
+    has(
+        &w.refused("other", &["claim", "r", "src/a.rs"])?,
+        "holder",
+        "the claim is honoured while the holder works",
+    )?;
+    w.ok("holder", &["hook", "--event", "SessionEnd"])?;
+    w.ok("other", &["claim", "r", "src/a.rs"])?;
     w.ok("other", &["claim", "r", "ask:1"])?;
     Ok(vec![])
 }

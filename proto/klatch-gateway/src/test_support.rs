@@ -75,6 +75,10 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release(room, owner, path)
     }
+    fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.gate()?;
+        self.inner.release_member_claims(member, now)
+    }
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
         self.gate()?;
         self.inner.claims(room, now)
