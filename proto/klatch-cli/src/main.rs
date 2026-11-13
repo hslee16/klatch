@@ -6,7 +6,7 @@
 mod init;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, flat, hook_context_json, render_board, render_hook};
+use klatch_core::{Principal, convention, flat, hook_context_json, render_board, render_hook};
 use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
@@ -408,6 +408,10 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 && !boards.iter().any(|b| b == room)
             {
                 boards.push(room.to_string());
+            }
+            // A session that joins is also taught how to use the lobby, in a few hundred bytes (DESIGN section 25.11).
+            if starting && (!no_join || !boards.is_empty()) {
+                text.push_str(&convention(&std::env::current_exe()?.to_string_lossy()));
             }
             for room in boards.iter().filter(|_| starting) {
                 let b = render_board(&t.board(room)?, d.now);
