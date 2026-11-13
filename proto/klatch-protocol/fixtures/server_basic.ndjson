@@ -1,0 +1,8 @@
+{"v":1,"type":"hello","member":"alice","attribution":"verified","clearance":"private"}
+{"v":1,"type":"message","room":"core","seq":1,"id":"01HZX3K9Q2ABCDEFGHJKMNPQRS","sender":"bob","attribution":"verified","label":"internal","body":"claiming src/a.rs","ts":1700000000}
+{"v":1,"type":"message","room":"core","seq":2,"id":"01HZX3K9Q3ABCDEFGHJKMNPQRT","sender":"eve","attribution":"unattributed","label":"public","body":"line one\nline two","ts":1700000001}
+{"v":1,"type":"caught_up","room":"core","seq":2}
+{"v":1,"type":"heartbeat","ts":1700000005}
+{"v":1,"type":"refusal","request":"r7","rule":"label.room_below_message","reason":"the message label is higher than the room label"}
+{"v":1,"type":"response","id":"r1","ok":true,"result":{"seq":3}}
+{"v":1,"type":"response","id":"r2","ok":false,"error":{"code":"conflict","message":"refused: src is claimed by bob for another 42s"}}
