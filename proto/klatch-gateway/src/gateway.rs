@@ -175,6 +175,20 @@ impl<S: Store> Gateway<S> {
         self.store.hook_runs(member)
     }
 
+    /// Remember that the caller is the member of harness session `session_id`.
+    pub fn note_session(&self, who: &Principal, session_id: &str) -> Result<()> {
+        check_member(who)?;
+        if session_id.is_empty()
+            || session_id.len() > 80
+            || !session_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        {
+            return Err(Error::Invalid("bad session id".into()));
+        }
+        self.store.note_session(session_id, &who.member, self.now())
+    }
+
     /// Housekeeping at session start: remove members not seen for `older_than` seconds. Returns how many.
     pub fn prune_members(&self, who: &Principal, older_than: i64) -> Result<usize> {
         check_member(who)?;
@@ -1035,6 +1049,28 @@ mod tests {
         g.store.join("r", "fresh", 9_900).unwrap();
         assert_eq!(g.prune_members(&alice(), 5_000).unwrap(), 1);
         assert_eq!(g.who(&alice(), "r").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_session_noted_by_a_member_is_remembered_as_that_member() {
+        let g = open();
+        g.note_session(&alice(), "sess-1").unwrap();
+        assert_eq!(
+            g.store.member_of_session("sess-1").unwrap().as_deref(),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn a_bad_session_id_is_rejected_before_the_store() {
+        let g = open();
+        for bad in ["", "a b", "x\ny", &"s".repeat(81)] {
+            assert!(
+                matches!(g.note_session(&alice(), bad), Err(Error::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(g.store.calls.get(), 0);
     }
 
     #[test]

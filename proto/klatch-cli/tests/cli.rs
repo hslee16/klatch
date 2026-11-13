@@ -1689,3 +1689,83 @@ fn who_all_lists_every_member_and_a_plain_who_lists_the_recent_ones() {
     assert!(all.contains("alice") && all.contains("bob"), "{all}");
     assert!(!plain.contains("not seen for over"), "{plain}");
 }
+
+// ---- a hook acts only as the session it was started for (#284) ----
+
+fn hook_as_session(h: &Home, name: Option<&str>, sid: &str, args: &[&str]) -> Output {
+    use std::io::Write;
+    let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_clear()
+        .env("KLATCH_HOME", &h.0)
+        .env("HOME", &h.0)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if let Some(n) = name {
+        c.env("KLATCH_NAME", n);
+    }
+    let mut child = c.spawn().unwrap();
+    let payload = format!(r#"{{"session_id":"{sid}","hook_event_name":"x"}}"#);
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn session_end_finds_its_member_by_the_remembered_session_id_when_the_record_is_gone() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    let start = hook_as_session(
+        &h,
+        Some("alice"),
+        "sess-1",
+        &["hook", "--event", "SessionStart"],
+    );
+    assert!(
+        start.status.success(),
+        "{}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+    // The harness has dropped its record and the hook has no typed name: only the session id is left.
+    let end = hook_as_session(
+        &h,
+        None,
+        "sess-1",
+        &["--discover", "hook", "--event", "SessionEnd"],
+    );
+    assert!(
+        end.status.success(),
+        "{}",
+        String::from_utf8_lossy(&end.stderr)
+    );
+    let who = h.ok("bob", &["who", "lobby", "--all"]);
+    let line = who.lines().find(|l| l.starts_with("alice")).unwrap();
+    assert!(line.contains("status: done"), "{who}");
+}
+
+#[test]
+fn session_end_for_a_session_nobody_remembers_changes_nothing_and_does_not_fail() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    let end = hook_as_session(
+        &h,
+        None,
+        "never-seen",
+        &["--discover", "hook", "--event", "SessionEnd"],
+    );
+    assert!(
+        end.status.success(),
+        "a SessionEnd hook must never fail: {}",
+        String::from_utf8_lossy(&end.stderr)
+    );
+    let who = h.ok("bob", &["who", "lobby", "--all"]);
+    assert!(
+        !who.contains("status: done"),
+        "someone was marked done: {who}"
+    );
+}

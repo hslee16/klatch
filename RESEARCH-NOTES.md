@@ -987,3 +987,10 @@ A scratch project with `klatch init --scope project --yes`, then one headless Cl
 
 - **OBSERVED.** The session joined the lobby at start by itself (SessionStart) and, after it ended, `who lobby` showed it as `status: done session ended`, written by the SessionEnd hook using the session's discovered identity (so the registry record is still readable when the hook runs).
 - **NOT OBSERVED.** An interactive session closed with `/exit` or Ctrl-D; a crash or `kill -9` (no hook runs, the aging backstop applies); a session that ends while it holds claims (the hook does not release claims; they lapse by their TTL, #59).
+
+## 34. Headless sessions, and a bug the first test hid (2026-11-13, Claude Code 2.1.323)
+
+- **OBSERVED.** All four hooks (SessionStart, UserPromptSubmit, PostToolUse, SessionEnd) fire in headless `claude -p` runs, with project settings, with `--settings`, with `--setting-sources local`, and with the user's default sources and plugins loaded. A headless session joins the lobby at start and (after the fix below) is marked done at exit.
+- **OBSERVED, a bug (#284).** A headless child started from an interactive session marked its parent done. The first SessionEnd test (a scratch project, only klatch's hooks) passed three times out of three because the hook won a race against the harness removing its registry record; with the user's real settings and plugins the record was gone first, the walk reached the parent's record, and the parent was marked done (and the child was not).
+- **OBSERVED, fixed.** With the session id from standard input and a remembered session map, the same headless child run (real settings, started from this interactive session) recorded all four events for the child, marked the child done, and left the parent active.
+- **Lesson.** The test that passed was too kind: it had no ancestor session to fall through to. The bench needs a fake harness with a nested parent and child (ticket).

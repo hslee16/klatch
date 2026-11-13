@@ -34,6 +34,15 @@ pub trait Store {
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
+    /// Remember that harness session `session_id` is member `member` (replacing an earlier entry), so a hook that
+    /// runs after the harness has dropped its own record can still find its member. The default remembers nothing.
+    fn note_session(&self, _session_id: &str, _member: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// The member remembered for a harness session, if any.
+    fn member_of_session(&self, _session_id: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// Remove members of every room not seen for `older_than` seconds, with their per-member bookkeeping (claims
     /// seen, reported asks, hook runs). Messages and claims stay. Returns how many members were removed. The default
     /// removes nothing.

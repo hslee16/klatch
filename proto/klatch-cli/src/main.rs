@@ -13,7 +13,7 @@ use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
 use klatch_harness::{Found, FsRegistry, Miss, PsTable, find_session};
-use klatch_store::SqliteStore;
+use klatch_store::{SqliteStore, Store};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -194,13 +194,28 @@ fn main() -> Result<()> {
     // The only thing the CLI knows about its caller is a typed name, which proves nothing.
     let declared = cli.as_member.or_else(|| std::env::var("KLATCH_NAME").ok());
     let discover = cli.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1");
-    let (evidence, notice) = gather_evidence(declared, discover.then_some(&discover_session));
+    let store = SqliteStore::open(&db_path()?)?;
+    // A hook gets the session it was started for on standard input. It acts only as that session: a registry
+    // record for another session (the parent that started this one) is never used (ticket #284).
+    let is_hook = matches!(cli.cmd, Cmd::Hook { .. });
+    let session_end = matches!(&cli.cmd, Cmd::Hook { event: Some(e), .. } if e == "SessionEnd");
+    let stdin_session = if is_hook { stdin_session_id() } else { None };
+    let (evidence, notice) = match (&declared, is_hook && discover) {
+        (None, true) => hook_evidence(stdin_session.as_deref(), discover_session(), &|sid| {
+            store.member_of_session(sid).ok().flatten()
+        }),
+        _ => gather_evidence(declared, discover.then_some(&discover_session)),
+    };
+    // A SessionEnd hook that cannot tell which session it ends does nothing, quietly: it must never fail a
+    // session's exit and never act as anyone else.
+    if session_end && matches!(evidence, PeerEvidence::None) {
+        return Ok(());
+    }
     if let Some(n) = notice {
         eprintln!("klatch: {n}");
     }
     let principal = resolve_principal(&LocalIdentity, &evidence)?;
     let me = principal.member.clone();
-    let store = SqliteStore::open(&db_path()?)?;
     let gateway = Rc::new(Gateway::new(store, SystemClock, AllowAll));
     if let Cmd::Serve { stdio } = cli.cmd {
         if !stdio {
@@ -237,11 +252,11 @@ fn main() -> Result<()> {
         )?);
     }
     let transport = Direct::new(gateway, principal);
-    run(&transport, &me, cli.cmd, now())
+    run(&transport, &me, cli.cmd, now(), stdin_session.as_deref())
 }
 
 /// Dispatch one command through any transport. `now` is the client clock, used only for display.
-fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
+fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&str>) -> Result<()> {
     match cmd {
         Cmd::Join { room } => {
             t.join(&room)?;
@@ -394,6 +409,11 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 let _ = t.record_hook_run("SessionEnd", 0);
                 return Ok(());
             }
+            // Remember which member this session is, so a hook that runs after the harness dropped its own record
+            // (the SessionEnd hook) can still find it.
+            if let Some(sid) = stdin_session {
+                let _ = t.note_session(sid);
+            }
             let starting = event.as_deref() == Some("SessionStart");
             // Housekeeping: a session start removes members not seen for a day (their messages stay). A failure
             // here must never stop the session.
@@ -506,6 +526,56 @@ fn gather_evidence(
             )),
         ),
     }
+}
+
+/// The caller of a hook, from what Claude Code says it started the hook for. `stdin_session` is the session id on
+/// the hook's standard input; `found` is what the walk up the process tree reached; `remembered` is the member
+/// the store has for a session id. A record whose session id is not the one the hook was started for belongs to
+/// another session (the parent that started this one, say) and is never used (ticket #284).
+fn hook_evidence(
+    stdin_session: Option<&str>,
+    found: Result<Found, Miss>,
+    remembered: &dyn Fn(&str) -> Option<String>,
+) -> (PeerEvidence, Option<String>) {
+    let Some(sid) = stdin_session else {
+        return gather_evidence(None, Some(&move || found.clone()));
+    };
+    match found {
+        Ok(f) if f.session_id == sid => (
+            PeerEvidence::Session {
+                session_id: f.session_id,
+                name: f.name,
+            },
+            None,
+        ),
+        other => match remembered(sid) {
+            Some(member) => (PeerEvidence::DeclaredName(member), None),
+            None => (
+                PeerEvidence::None,
+                Some(match other {
+                    Ok(_) => "the session above this process is not the session this hook was started for; not acting as it".to_string(),
+                    Err(_) => "no record of the session this hook was started for; falling back to a typed name".to_string(),
+                }),
+            ),
+        },
+    }
+}
+
+/// The session id Claude Code puts on a hook's standard input. Reads nothing when standard input is a terminal.
+fn stdin_session_id() -> Option<String> {
+    use std::io::{IsTerminal, Read};
+    let mut input = std::io::stdin();
+    if input.is_terminal() {
+        return None;
+    }
+    let mut text = String::new();
+    input
+        .by_ref()
+        .take(1 << 20)
+        .read_to_string(&mut text)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("session_id")?.as_str().map(String::from)
 }
 
 /// Look for the session above this process, using the real process table and the harness registry
@@ -655,5 +725,75 @@ fn effective_timeout(requested: u64) -> (u64, bool) {
         (MAX_WAIT_SECONDS, true)
     } else {
         (requested, false)
+    }
+}
+
+#[cfg(test)]
+mod hook_identity_tests {
+    use super::*;
+
+    fn found(sid: &str, name: &str) -> Result<Found, Miss> {
+        Ok(Found {
+            session_id: sid.into(),
+            name: Some(name.into()),
+            cwd: "/x".into(),
+            pid: 1,
+        })
+    }
+
+    fn none(_: &str) -> Option<String> {
+        None
+    }
+
+    fn mapped(sid: &str) -> Option<String> {
+        (sid == "child").then(|| "proj-child".to_string())
+    }
+
+    #[test]
+    fn a_record_for_the_session_the_hook_was_started_for_is_used() {
+        let (e, notice) = hook_evidence(Some("child"), found("child", "proj-child"), &none);
+        assert!(matches!(e, PeerEvidence::Session { ref session_id, .. } if session_id == "child"));
+        assert!(notice.is_none());
+    }
+
+    #[test]
+    fn a_record_for_another_session_is_never_used_and_the_remembered_member_is() {
+        let (e, _) = hook_evidence(Some("child"), found("parent", "klatch-1b"), &mapped);
+        assert!(
+            matches!(e, PeerEvidence::DeclaredName(ref n) if n == "proj-child"),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn a_record_for_another_session_with_nothing_remembered_gives_no_identity() {
+        let (e, notice) = hook_evidence(Some("stranger"), found("parent", "klatch-1b"), &mapped);
+        assert!(
+            matches!(e, PeerEvidence::None),
+            "acted as the parent: {e:?}"
+        );
+        assert!(
+            notice.is_some_and(|n| n.contains("not the session")),
+            "no explanation"
+        );
+    }
+
+    #[test]
+    fn no_record_at_all_falls_back_to_the_remembered_member() {
+        let (e, _) = hook_evidence(Some("child"), Err(Miss::NoSession), &mapped);
+        assert!(
+            matches!(e, PeerEvidence::DeclaredName(ref n) if n == "proj-child"),
+            "{e:?}"
+        );
+        let (e, _) = hook_evidence(Some("child"), Err(Miss::NoSession), &none);
+        assert!(matches!(e, PeerEvidence::None));
+    }
+
+    #[test]
+    fn without_a_session_id_on_standard_input_the_walk_decides_as_before() {
+        let (e, _) = hook_evidence(None, found("parent", "klatch-1b"), &mapped);
+        assert!(
+            matches!(e, PeerEvidence::Session { ref session_id, .. } if session_id == "parent")
+        );
     }
 }

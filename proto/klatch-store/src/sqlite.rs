@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -43,7 +43,8 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
- CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));";
+ CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));
+ CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -180,6 +181,15 @@ fn migrate_v9(conn: &Connection) -> Result<()> {
 /// A member that tried to claim something and was refused is treated as still waiting for this long.
 const WAIT_WINDOW_SECS: i64 = 120;
 
+/// Version 10 to 11: which member each harness session is, so a hook that runs after the harness dropped its own
+/// record (the SessionEnd hook) can still find its member. A session id and a member name only.
+fn migrate_v10(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -289,7 +299,10 @@ impl SqliteStore {
                     if version < 9 {
                         migrate_v8(&conn)?;
                     }
-                    migrate_v9(&conn)?;
+                    if version < 10 {
+                        migrate_v9(&conn)?;
+                    }
+                    migrate_v10(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -441,9 +454,37 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
+    fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
+        self.immediate(|| {
+            self.conn
+                .execute(
+                    "INSERT INTO sessions(session_id,member,ts) VALUES(?1,?2,?3)
+                     ON CONFLICT(session_id) DO UPDATE SET member=?2, ts=?3",
+                    params![session_id, member, now],
+                )
+                .map_err(be)?;
+            Ok(())
+        })
+    }
+
+    fn member_of_session(&self, session_id: &str) -> Result<Option<String>> {
+        match self.conn.query_row(
+            "SELECT member FROM sessions WHERE session_id=?1",
+            params![session_id],
+            |r| r.get(0),
+        ) {
+            Ok(m) => Ok(Some(m)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(be(e)),
+        }
+    }
+
     fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
         self.immediate(|| {
             let cutoff = now - older_than;
+            self.conn
+                .execute("DELETE FROM sessions WHERE ts<?1", params![cutoff])
+                .map_err(be)?;
             let mut st = self
                 .conn
                 .prepare("SELECT DISTINCT name FROM members WHERE last_seen<?1")
@@ -1355,6 +1396,49 @@ mod tests {
     }
 
     #[test]
+    fn a_session_is_remembered_as_its_member_and_the_last_note_wins() {
+        let s = store();
+        assert_eq!(s.member_of_session("sess-1").unwrap(), None);
+        s.note_session("sess-1", "alice", 10).unwrap();
+        s.note_session("sess-2", "bob", 11).unwrap();
+        assert_eq!(
+            s.member_of_session("sess-1").unwrap().as_deref(),
+            Some("alice")
+        );
+        s.note_session("sess-1", "alice-2", 12).unwrap();
+        assert_eq!(
+            s.member_of_session("sess-1").unwrap().as_deref(),
+            Some("alice-2")
+        );
+        assert_eq!(
+            s.member_of_session("sess-2").unwrap().as_deref(),
+            Some("bob")
+        );
+    }
+
+    #[test]
+    fn remembered_sessions_survive_reopening_and_are_pruned_with_old_members() {
+        let path = temp_db("sessions");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            s.note_session("old", "alice", 10).unwrap();
+            s.note_session("new", "bob", 9_000).unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            s.member_of_session("old").unwrap().as_deref(),
+            Some("alice")
+        );
+        s.prune_members(8_640, 9_001).unwrap();
+        assert_eq!(
+            s.member_of_session("old").unwrap(),
+            None,
+            "an old session is pruned"
+        );
+        assert_eq!(s.member_of_session("new").unwrap().as_deref(), Some("bob"));
+    }
+
+    #[test]
     fn peek_does_not_advance_the_cursor() {
         let s = store();
         s.join("r", "alice", 1).unwrap();
@@ -2127,12 +2211,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_10() {
-        assert_eq!(version(&store()), 10);
+    fn a_fresh_database_is_at_schema_version_11() {
+        assert_eq!(version(&store()), 11);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_10_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_11_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -2148,7 +2232,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 10);
+        assert_eq!(version(&s), 11);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -2169,14 +2253,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            10,
+            11,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_10() {
+    fn a_version_0_database_now_migrates_all_the_way_to_11() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -2189,7 +2273,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 10);
+        assert_eq!(version(&s), 11);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -2208,11 +2292,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_ten_with_everything_intact() {
+    fn a_version_two_database_migrates_to_eleven_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 10);
+        assert_eq!(version(&s), 11);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -2230,7 +2314,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 10);
+        assert_eq!(version(&s), 11);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(
