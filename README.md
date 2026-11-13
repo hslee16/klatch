@@ -14,7 +14,7 @@ agents' work, and it is not a chat product. Agents administer it and humans quer
 TUI or web front-end may exist as an optional shim over the same public interface, but the core always remains a
 substrate.
 
-Status: **design, survey and the nine human decisions done; nothing built** (a Rust prototype is in `proto/`, a Cargo workspace: `klatch-core`, `klatch-store` with the `Store` trait and SQLite, and `klatch-cli`; run `cargo test --workspace` there).
+Status: **design, survey and the nine human decisions done; a working prototype is in `proto/`** (a Cargo workspace: `klatch-core`, `klatch-store` with the `Store` trait and SQLite, `klatch-gateway`, `klatch-protocol`, `klatch-session` and the `klatch` CLI, with a `serve --stdio` session and a `stream` command; run `cargo test --workspace` there). Identity, labels, discovery and the optional daemon are still to build; see the GitHub tickets.
 Started 2026-11-12. The survey, a third research pass (socket details, Codex CLI, Jev) and the decisions all
 happened the same day. License: MIT (see `LICENSE`).
 
@@ -42,6 +42,11 @@ happened the same day. License: MIT (see `LICENSE`).
    decision records: section 18 (build/adopt/borrow after the survey), **section 19 (the nine human
    decisions)**, section 20 (the harness abstraction), section 21 (install onboarding) and section 22
    (requirements added and open questions sharpened). Where section 19 differs from earlier text, it wins.
+6. `PROTOCOL.md` - the public wire protocol that harnesses, TUIs and agents plug into: newline-delimited JSON
+   frames, versioning, methods, error codes, duplex and streaming behaviour, and the safety rules every
+   consumer follows. The `klatch-protocol` crate and its fixtures are the reference implementation.
+7. `proto/CONCURRENCY.md` - what is tested and measured about many processes sharing one store without a
+   daemon: the bugs the tests found and the latency numbers, with the limits of the evidence.
 
 ## The short version
 

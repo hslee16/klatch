@@ -46,14 +46,13 @@ fn response(frames: &[ServerFrame], id: &str) -> (bool, Option<Value>, Option<(S
             error,
             ..
         } = f
+            && rid == id
         {
-            if rid == id {
-                return (
-                    *ok,
-                    result.clone(),
-                    error.as_ref().map(|e| (e.code.clone(), e.message.clone())),
-                );
-            }
+            return (
+                *ok,
+                result.clone(),
+                error.as_ref().map(|e| (e.code.clone(), e.message.clone())),
+            );
         }
     }
     panic!("no response for {id}: {frames:?}");
@@ -287,13 +286,13 @@ fn invalid_input_and_unknown_methods_get_distinct_error_codes() {
 struct DenyRoom(&'static str);
 impl Guard for DenyRoom {
     fn check(&self, _who: &Principal, op: &Operation) -> Result<()> {
-        if let Operation::Post { room, .. } = op {
-            if room == self.0 {
-                return Err(Error::Refused {
-                    rule: "test.deny".into(),
-                    reason: "that room is closed".into(),
-                });
-            }
+        if let Operation::Post { room, .. } = op
+            && room == self.0
+        {
+            return Err(Error::Refused {
+                rule: "test.deny".into(),
+                reason: "that room is closed".into(),
+            });
         }
         Ok(())
     }
@@ -1138,4 +1137,15 @@ fn a_message_posted_through_a_verified_session_reads_back_verified() {
         response(&f, "r").1.unwrap()["messages"][0]["attribution"],
         "verified"
     );
+}
+
+#[test]
+fn an_empty_post_body_is_an_invalid_request_over_the_wire() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &alice(),
+        &[req("p", "post", json!({"room":"r","body":"   "}))],
+    );
+    assert_eq!(response(&f, "p").2.unwrap().0, "invalid");
 }

@@ -170,6 +170,8 @@ mod tests {
         let mut sub = alice.subscribe("r", 0).unwrap();
         assert_eq!(sub.room(), "r");
         assert!(alice.poll(&mut sub, 1).unwrap().messages.is_empty());
-        assert!(DEFAULT_WINDOW >= 64);
     }
+
+    // A compile-time check: the default window must leave room for a useful amount of streaming.
+    const _: () = assert!(DEFAULT_WINDOW >= 64);
 }

@@ -72,10 +72,16 @@ impl<S: Store> Gateway<S> {
     }
 
     pub fn post(&self, who: &Principal, room: &str, body: &str) -> Result<Posted> {
-        self.admit(
+        check_member(who)?;
+        check_room(room)?;
+        if body.trim().is_empty() {
+            return Err(Error::Invalid(
+                "empty message: there is nothing to post".into(),
+            ));
+        }
+        self.guard.check(
             who,
-            room,
-            Operation::Post {
+            &Operation::Post {
                 room: room.into(),
                 body: body.into(),
             },
@@ -576,6 +582,21 @@ mod tests {
             DEFAULT_LABEL
         );
         assert_eq!(DEFAULT_LABEL, "public");
+    }
+
+    #[test]
+    fn an_empty_or_whitespace_only_body_is_refused_before_the_guard_and_the_store() {
+        let guard = Rc::new(SpyGuard::allowing());
+        let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
+        for body in ["", " ", "   \t ", "\n", " \r\n "] {
+            assert!(
+                matches!(g.post(&alice(), "r", body), Err(Error::Invalid(_))),
+                "body {body:?}"
+            );
+        }
+        assert_eq!(g.store.calls.get(), 0);
+        assert!(guard.seen.borrow().is_empty());
+        g.post(&alice(), "r", " x ").unwrap();
     }
 
     #[test]

@@ -547,7 +547,7 @@ fn the_cli_stream_and_a_serve_subscription_produce_identical_events() {
                     ServerFrame::Message { .. } | ServerFrame::CaughtUp { .. }
                 )
             })
-            .map(|x| klatch_protocol::encode_line(x))
+            .map(klatch_protocol::encode_line)
             .collect()
     };
     assert_eq!(events(&via_stream), events(&via_serve));
@@ -566,4 +566,64 @@ fn messages_posted_from_the_cli_are_unattributed_on_the_stream() {
     assert!(
         matches!(m, ServerFrame::Message { attribution: klatch_protocol::Attribution::Unattributed, label, .. } if label == "public")
     );
+}
+
+#[test]
+fn posting_nothing_or_only_whitespace_is_refused() {
+    let h = Home::new();
+    assert!(h.fail("alice", &["post", "r"]).contains("empty"));
+    assert!(
+        h.fail("alice", &["post", "r", "  ", "\t"])
+            .contains("empty")
+    );
+    assert!(
+        h.ok("alice", &["read", "r"]).is_empty(),
+        "nothing was stored"
+    );
+}
+
+#[test]
+fn message_ids_are_distinct_across_many_processes_posting_at_once() {
+    // Ids combine a timestamp, per-process random bits and a counter. Uniqueness inside one process is
+    // unit tested; this checks it across processes that all start and post at the same moment.
+    let h = Home::new();
+    let mut kids = Vec::new();
+    for i in 0..16 {
+        let mut child = h.spawn(&format!("w{i}"), &["serve", "--stdio"]);
+        {
+            let stdin = child.stdin.as_mut().unwrap();
+            for j in 0..10 {
+                writeln!(
+                    stdin,
+                    "{}",
+                    request(&format!("p{j}"), "post", r#"{"room":"r","body":"x"}"#)
+                )
+                .unwrap();
+            }
+        }
+        drop(child.stdin.take());
+        kids.push(child);
+    }
+    let mut ids = std::collections::HashSet::new();
+    for k in kids {
+        let out = k.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for line in String::from_utf8(out.stdout).unwrap().lines() {
+            if let ServerFrame::Response {
+                ok: true,
+                result: Some(r),
+                ..
+            } = decode_server_line(line).unwrap()
+            {
+                let id = r["id"].as_str().unwrap().to_string();
+                assert_eq!(id.len(), 26);
+                assert!(ids.insert(id.clone()), "duplicate id {id}");
+            }
+        }
+    }
+    assert_eq!(ids.len(), 160);
 }

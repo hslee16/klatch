@@ -473,6 +473,24 @@ mod tests {
         );
     }
 
+    const README: &str = include_str!("../../../README.md");
+
+    #[test]
+    fn the_readme_links_the_protocol_and_the_concurrency_notes() {
+        assert!(
+            README.contains("`PROTOCOL.md`"),
+            "README does not link PROTOCOL.md"
+        );
+        assert!(
+            README.contains("`proto/CONCURRENCY.md`"),
+            "README does not link proto/CONCURRENCY.md"
+        );
+        assert!(
+            !README.contains("nothing built"),
+            "the README status still says nothing is built"
+        );
+    }
+
     #[test]
     fn the_written_spec_documents_every_frame_type_and_error_rule() {
         for name in [
