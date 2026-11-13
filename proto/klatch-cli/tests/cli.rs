@@ -147,3 +147,13 @@ fn own_claims_are_not_echoed_by_the_hook() {
     h.ok("alice", &["claim", "r", "src"]);
     assert_eq!(h.ok("alice", &["hook"]), "");
 }
+
+#[test]
+fn read_shows_the_per_room_seq_not_a_global_row_number() {
+    let h = Home::new();
+    h.ok("alice", &["join", "b"]);
+    h.ok("bob", &["post", "a", "first in a"]);
+    h.ok("bob", &["post", "b", "first in b"]);
+    let out = h.ok("alice", &["read", "b"]);
+    assert!(out.starts_with("[1 "), "got: {out}");
+}

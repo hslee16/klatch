@@ -1,9 +1,19 @@
+/// A message as delivered. `id` is globally unique and opaque; `seq` is dense and per room, and is
+/// what people and cursors refer to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
-    pub id: i64,
+    pub id: String,
+    pub seq: i64,
     pub sender: String,
     pub body: String,
     pub ts: i64,
+}
+
+/// What a successful post returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Posted {
+    pub id: String,
+    pub seq: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

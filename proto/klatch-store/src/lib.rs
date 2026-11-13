@@ -1,17 +1,19 @@
 //! klatch-store: the storage seam. Everything above this crate talks to `Store`, never to a database,
 //! so SQLite can later be swapped (DESIGN.md D2, R31). Time is passed in so behaviour is testable.
 
+mod ids;
 mod sqlite;
 
 pub use sqlite::SqliteStore;
 
-use klatch_core::{Claim, MemberInfo, Message, Result};
+use klatch_core::{Claim, MemberInfo, Message, Posted, Result};
 
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
-    /// Append a message; also marks the sender as present. Returns the message id.
-    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<i64>;
+    /// Append a message; also marks the sender as present. Returns its unique id and its per-room `seq`
+    /// (dense, starting at 1).
+    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted>;
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
