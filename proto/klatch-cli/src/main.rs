@@ -93,6 +93,9 @@ enum Cmd {
         /// Ask nothing: the flags are the consent. Needs --scope; never turns the board on by itself
         #[arg(long)]
         yes: bool,
+        /// Do not join new sessions to the default lobby at session start (the default is to join)
+        #[arg(long)]
+        no_lobby: bool,
     },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
@@ -110,6 +113,9 @@ enum Cmd {
         /// Consent lives here: only a hook command that carries this flag reads a room before joining it.
         #[arg(long)]
         board: Option<String>,
+        /// At session start, do not join the default lobby (the default is to join it, as the session's first act)
+        #[arg(long)]
+        no_join: bool,
     },
     /// Write the event stream of a room to standard output as newline-delimited JSON (PROTOCOL.md)
     Stream {
@@ -150,12 +156,19 @@ fn db_path() -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    if let Cmd::Init { scope, board, yes } = &cli.cmd {
+    if let Cmd::Init {
+        scope,
+        board,
+        yes,
+        no_lobby,
+    } = &cli.cmd
+    {
         return init::run(
             &init::Options {
                 scope: *scope,
                 board: board.clone(),
                 yes: *yes,
+                no_lobby: *no_lobby,
             },
             &mut std::io::stdin().lock(),
             &mut std::io::stdout().lock(),
@@ -359,10 +372,27 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Serve { .. } | Cmd::Stream { .. } => {
             unreachable!("serve and stream are handled before dispatch")
         }
-        Cmd::Hook { event, board } => {
+        Cmd::Hook {
+            event,
+            board,
+            no_join,
+        } => {
+            let starting = event.as_deref() == Some("SessionStart");
+            // A session start joins the default lobby, so nobody has to tell a new session to (installing the
+            // hooks is the consent). A member that was not there starts at the end of the history, so it is not
+            // flooded, and sees the board instead; one that was there keeps its unread messages.
+            let mut boards: Vec<String> = Vec::new();
+            if starting && !no_join {
+                let was_member = t.who(DEFAULT_ROOM)?.iter().any(|m| m.name == me);
+                t.join(DEFAULT_ROOM)?;
+                if !was_member {
+                    t.ack(DEFAULT_ROOM, i64::MAX)?;
+                    boards.push(DEFAULT_ROOM.to_string());
+                }
+            }
             // A session start also lists open asks nobody has claimed, so a new or restarted helper picks up
             // what it missed.
-            let d = t.digest_with(event.as_deref() == Some("SessionStart"))?;
+            let d = t.digest_with(starting)?;
             let mut text = String::new();
             for r in &d.refused {
                 text.push_str(&format!(
@@ -374,7 +404,12 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             text.push_str(&render_hook(&d.rooms, d.now));
             // Consent to read a room before joining it is the hook command carrying --board; it is shown only
             // at session start and reads without joining, so a visitor never becomes a member.
-            if let (Some(room), Some("SessionStart")) = (board.as_deref(), event.as_deref()) {
+            if let (Some(room), true) = (board.as_deref(), starting)
+                && !boards.iter().any(|b| b == room)
+            {
+                boards.push(room.to_string());
+            }
+            for room in boards.iter().filter(|_| starting) {
                 let b = render_board(&t.board(room)?, d.now);
                 let (head, rest) = b.split_once('\n').unwrap_or((b.as_str(), ""));
                 text.push_str(&format!(
@@ -392,6 +427,9 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
     }
     Ok(())
 }
+
+/// The room every session joins at session start unless told not to.
+const DEFAULT_ROOM: &str = "lobby";
 
 type Finder<'a> = &'a dyn Fn() -> Result<Found, Miss>;
 
