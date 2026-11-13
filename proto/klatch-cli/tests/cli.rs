@@ -1083,14 +1083,24 @@ fn the_session_start_board_is_shown_only_when_asked_for_and_does_not_join() {
     h.ok("lib", &["post", "lobby", "offering: text helpers"]);
     h.ok("api", &["post", "lobby", "seeking: slugify"]);
     h.ok("newcomer", &["join", "elsewhere"]);
-    let none = h.ok("newcomer", &["hook", "--event", "SessionStart"]);
+    let none = h.ok(
+        "newcomer",
+        &["hook", "--event", "SessionStart", "--no-join"],
+    );
     assert!(
         !none.contains("[board"),
         "board shown without consent: {none}"
     );
     let start = h.ok(
         "newcomer",
-        &["hook", "--event", "SessionStart", "--board", "lobby"],
+        &[
+            "hook",
+            "--event",
+            "SessionStart",
+            "--board",
+            "lobby",
+            "--no-join",
+        ],
     );
     assert!(start.contains("[board lobby]"), "got: {start}");
     assert!(start.contains("seeking: slugify") && start.contains("offering: text helpers"));
@@ -1287,7 +1297,7 @@ fn init_yes_without_a_scope_refuses_and_writes_nothing() {
 #[test]
 fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
     let s = Setup::new();
-    let o = s.init(&["--scope", "project"], "n\nn\n");
+    let o = s.init(&["--scope", "project"], "n\ny\nn\n");
     assert!(o.status.success());
     assert!(
         out(&o).contains("+ ") && out(&o).contains("--discover hook --event"),
@@ -1295,7 +1305,7 @@ fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
         out(&o)
     );
     assert!(!s.project_settings().exists(), "wrote without a yes");
-    let y = s.init(&["--scope", "project"], "n\ny\n");
+    let y = s.init(&["--scope", "project"], "n\ny\ny\n");
     assert!(y.status.success());
     assert!(s.project_settings().exists());
 }
@@ -1303,7 +1313,7 @@ fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
 #[test]
 fn init_both_consents_to_each_scope_separately() {
     let s = Setup::new();
-    s.init(&["--scope", "both"], "n\ny\nn\n");
+    s.init(&["--scope", "both"], "n\ny\ny\nn\n");
     assert!(s.project_settings().exists(), "project was said yes");
     assert!(!s.user_settings().exists(), "user was said no");
 }
@@ -1319,7 +1329,7 @@ fn the_board_is_off_unless_asked_for_and_only_on_session_start() {
     assert!(hook_cmds(&v, "SessionStart")[0].ends_with("--board lobby"));
     assert!(!hook_cmds(&v, "PostToolUse")[0].contains("--board"));
     let i = Setup::new();
-    i.init(&["--scope", "project"], "y\ny\n");
+    i.init(&["--scope", "project"], "y\ny\ny\n");
     assert!(
         hook_cmds(&Setup::read(&i.project_settings()), "SessionStart")[0].contains("--board lobby")
     );
@@ -1391,5 +1401,93 @@ fn hooks_shows_when_each_event_last_ran_with_a_count_and_no_content() {
     assert!(
         other.contains("PostToolUse") && other.contains("runs 2"),
         "got: {other}"
+    );
+}
+
+// ---- joining the default lobby at session start ----
+
+#[test]
+fn a_new_session_joins_the_default_lobby_at_session_start_and_nothing_else_does() {
+    let h = Home::new();
+    h.ok("old", &["join", "lobby"]);
+    h.ok("fresh", &["hook", "--event", "UserPromptSubmit"]);
+    h.ok("fresh", &["hook", "--event", "PostToolUse"]);
+    assert!(
+        !h.ok("old", &["who", "lobby"]).contains("fresh"),
+        "joined outside session start"
+    );
+    h.ok("fresh", &["hook", "--event", "SessionStart"]);
+    assert!(
+        h.ok("old", &["who", "lobby"]).contains("fresh"),
+        "did not join the default lobby"
+    );
+}
+
+#[test]
+fn a_joining_session_is_not_flooded_with_the_lobbys_history_but_sees_the_board() {
+    let h = Home::new();
+    h.ok("old", &["join", "lobby"]);
+    h.ok("old", &["post", "lobby", "old chatter one"]);
+    h.ok("old", &["post", "lobby", "seeking: a rare thing"]);
+    h.ok("old", &["post", "lobby", "offering: text helpers"]);
+    let start = h.ok("fresh", &["hook", "--event", "SessionStart"]);
+    assert!(
+        !start.contains("old chatter one"),
+        "history flooded the new session: {start}"
+    );
+    assert!(
+        start.contains("[board lobby]") && start.contains("seeking: a rare thing"),
+        "no board: {start}"
+    );
+    assert!(start.contains("offering: text helpers"));
+    h.ok("old", &["post", "lobby", "fresh news"]);
+    let later = h.ok("fresh", &["hook", "--event", "PostToolUse"]);
+    assert!(
+        later.contains("fresh news") && !later.contains("old chatter one"),
+        "got: {later}"
+    );
+}
+
+#[test]
+fn a_session_already_in_the_lobby_keeps_its_unread_messages_at_session_start() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("bob", &["post", "lobby", "while you were away"]);
+    let start = h.ok("alice", &["hook", "--event", "SessionStart"]);
+    assert!(
+        start.contains("while you were away"),
+        "a resumed session lost its unread: {start}"
+    );
+}
+
+#[test]
+fn no_join_leaves_a_session_out_of_the_lobby() {
+    let h = Home::new();
+    h.ok("old", &["join", "lobby"]);
+    h.ok("fresh", &["hook", "--event", "SessionStart", "--no-join"]);
+    assert!(!h.ok("old", &["who", "lobby"]).contains("fresh"));
+}
+
+#[test]
+fn init_writes_no_join_only_when_asked_and_asks_about_the_lobby() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    assert!(
+        !hook_cmds(&Setup::read(&s.project_settings()), "SessionStart")[0].contains("--no-join")
+    );
+    let n = Setup::new();
+    n.init(&["--scope", "project", "--yes", "--no-lobby"], "");
+    assert!(
+        hook_cmds(&Setup::read(&n.project_settings()), "SessionStart")[0].ends_with("--no-join")
+    );
+    let i = Setup::new();
+    let o = i.init(&["--scope", "project", "--board", "elsewhere"], "n\ny\n");
+    assert!(
+        out(&o).contains("lobby automatically"),
+        "no lobby question: {}",
+        out(&o)
+    );
+    assert!(
+        hook_cmds(&Setup::read(&i.project_settings()), "SessionStart")[0].ends_with("--no-join")
     );
 }

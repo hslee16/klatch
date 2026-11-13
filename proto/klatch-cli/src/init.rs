@@ -17,6 +17,8 @@ pub struct Options {
     pub scope: Option<Scope>,
     pub board: Option<String>,
     pub yes: bool,
+    /// Do not join new sessions to the default lobby at session start.
+    pub no_lobby: bool,
 }
 
 /// Ask a yes or no question; an empty answer, end of input and anything but yes mean `default`.
@@ -86,6 +88,19 @@ pub fn run(
         )?
         .then(|| "lobby".to_string()),
     };
+    // Joining the default lobby at session start is on: installing the hooks is the consent (DESIGN section 24, 25.10).
+    let join = if options.no_lobby {
+        false
+    } else if options.yes {
+        true
+    } else {
+        ask(
+            input,
+            out,
+            "Join every new session to the default lobby automatically?",
+            true,
+        )?
+    };
     let mut targets: Vec<(&str, std::path::PathBuf)> = Vec::new();
     if matches!(scope, Scope::Project | Scope::Both) {
         targets.push((
@@ -109,7 +124,7 @@ pub fn run(
         } else {
             None
         };
-        let merged = merge_hooks(existing.as_ref(), bin, board.as_deref())
+        let merged = merge_hooks(existing.as_ref(), bin, board.as_deref(), join)
             .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
         plans.push((label, path, existing, merged));
     }
@@ -147,7 +162,12 @@ pub const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"
 /// The hook command for one event: the binary by absolute path, never a shell variable (permission rules refuse
 /// those, #174). `board` adds the session-start board for that room (only on SessionStart; the consent to read a
 /// room before joining it, DESIGN section 25.6).
-pub fn hook_command(bin: &str, event: &str, board: Option<&str>) -> Result<String, String> {
+pub fn hook_command(
+    bin: &str,
+    event: &str,
+    board: Option<&str>,
+    join: bool,
+) -> Result<String, String> {
     if !bin.starts_with('/') {
         return Err(format!("the binary path must be absolute: {bin}"));
     }
@@ -179,6 +199,9 @@ pub fn hook_command(bin: &str, event: &str, board: Option<&str>) -> Result<Strin
             cmd.push_str(&format!(" --board {room}"));
         }
     }
+    if !join && event == "SessionStart" {
+        cmd.push_str(" --no-join");
+    }
     Ok(cmd)
 }
 
@@ -194,6 +217,7 @@ pub fn merge_hooks(
     existing: Option<&Value>,
     bin: &str,
     board: Option<&str>,
+    join: bool,
 ) -> Result<Value, String> {
     let mut settings = existing.cloned().unwrap_or_else(|| json!({}));
     let root = settings
@@ -204,7 +228,7 @@ pub fn merge_hooks(
         .as_object_mut()
         .ok_or("\"hooks\" in the settings file is not an object")?;
     for event in EVENTS {
-        let cmd = hook_command(bin, event, board)?;
+        let cmd = hook_command(bin, event, board, join)?;
         let list = hooks.entry(event).or_insert_with(|| json!([]));
         let list = list
             .as_array_mut()
@@ -294,21 +318,21 @@ mod tests {
 
     #[test]
     fn the_command_uses_the_absolute_path_discover_and_the_event() {
-        let c = hook_command(BIN, "PostToolUse", None).unwrap();
+        let c = hook_command(BIN, "PostToolUse", None, true).unwrap();
         assert_eq!(c, "/opt/klatch/klatch --discover hook --event PostToolUse");
     }
 
     #[test]
     fn the_board_flag_is_added_only_for_session_start() {
-        let s = hook_command(BIN, "SessionStart", Some("lobby")).unwrap();
+        let s = hook_command(BIN, "SessionStart", Some("lobby"), true).unwrap();
         assert!(s.ends_with("--event SessionStart --board lobby"), "{s}");
-        let p = hook_command(BIN, "PostToolUse", Some("lobby")).unwrap();
+        let p = hook_command(BIN, "PostToolUse", Some("lobby"), true).unwrap();
         assert!(!p.contains("--board"), "{p}");
     }
 
     #[test]
     fn a_path_with_spaces_is_quoted_and_a_dangerous_path_is_refused() {
-        let c = hook_command("/Users/a b/klatch", "PostToolUse", None).unwrap();
+        let c = hook_command("/Users/a b/klatch", "PostToolUse", None, true).unwrap();
         assert!(c.starts_with("'/Users/a b/klatch' --discover"), "{c}");
         for bad in [
             "$HOME/klatch",
@@ -319,7 +343,7 @@ mod tests {
             "klatch",
         ] {
             assert!(
-                hook_command(bad, "PostToolUse", None).is_err(),
+                hook_command(bad, "PostToolUse", None, true).is_err(),
                 "{bad:?} was accepted"
             );
         }
@@ -327,14 +351,14 @@ mod tests {
 
     #[test]
     fn a_bad_board_room_name_is_refused() {
-        assert!(hook_command(BIN, "SessionStart", Some("a b")).is_err());
-        assert!(hook_command(BIN, "SessionStart", Some("")).is_err());
-        assert!(hook_command(BIN, "SessionStart", Some("x;rm")).is_err());
+        assert!(hook_command(BIN, "SessionStart", Some("a b"), true).is_err());
+        assert!(hook_command(BIN, "SessionStart", Some(""), true).is_err());
+        assert!(hook_command(BIN, "SessionStart", Some("x;rm"), true).is_err());
     }
 
     #[test]
     fn merging_into_nothing_adds_the_three_events() {
-        let v = merge_hooks(None, BIN, None).unwrap();
+        let v = merge_hooks(None, BIN, None, true).unwrap();
         for e in EVENTS {
             assert_eq!(commands(&v, e).len(), 1, "{e}");
         }
@@ -347,7 +371,7 @@ mod tests {
             "permissions": {"allow": ["Bash(ls)"]},
             "hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/bin/audit"}]}]}
         });
-        let v = merge_hooks(Some(&before), BIN, None).unwrap();
+        let v = merge_hooks(Some(&before), BIN, None, true).unwrap();
         assert_eq!(v["permissions"], before["permissions"]);
         let cmds = commands(&v, "PostToolUse");
         assert!(cmds.contains(&"/usr/bin/audit".to_string()));
@@ -360,32 +384,32 @@ mod tests {
 
     #[test]
     fn merging_twice_changes_nothing_the_second_time() {
-        let once = merge_hooks(None, BIN, Some("lobby")).unwrap();
-        let twice = merge_hooks(Some(&once), BIN, Some("lobby")).unwrap();
+        let once = merge_hooks(None, BIN, Some("lobby"), true).unwrap();
+        let twice = merge_hooks(Some(&once), BIN, Some("lobby"), true).unwrap();
         assert_eq!(once, twice);
         assert_eq!(commands(&twice, "PostToolUse").len(), 1);
     }
 
     #[test]
     fn rerunning_with_other_answers_updates_the_entry_in_place() {
-        let with = merge_hooks(None, BIN, Some("lobby")).unwrap();
-        let without = merge_hooks(Some(&with), BIN, None).unwrap();
+        let with = merge_hooks(None, BIN, Some("lobby"), true).unwrap();
+        let without = merge_hooks(Some(&with), BIN, None, true).unwrap();
         assert_eq!(
             commands(&without, "SessionStart").len(),
             1,
             "added a duplicate"
         );
         assert!(!commands(&without, "SessionStart")[0].contains("--board"));
-        let moved = merge_hooks(Some(&with), "/other/klatch", Some("lobby")).unwrap();
+        let moved = merge_hooks(Some(&with), "/other/klatch", Some("lobby"), true).unwrap();
         assert_eq!(commands(&moved, "PostToolUse").len(), 1);
         assert!(commands(&moved, "PostToolUse")[0].starts_with("/other/klatch"));
     }
 
     #[test]
     fn a_settings_file_of_the_wrong_shape_is_refused() {
-        assert!(merge_hooks(Some(&json!([1, 2])), BIN, None).is_err());
-        assert!(merge_hooks(Some(&json!({"hooks": "no"})), BIN, None).is_err());
-        assert!(merge_hooks(Some(&json!({"hooks": {"PostToolUse": 3}})), BIN, None).is_err());
+        assert!(merge_hooks(Some(&json!([1, 2])), BIN, None, true).is_err());
+        assert!(merge_hooks(Some(&json!({"hooks": "no"})), BIN, None, true).is_err());
+        assert!(merge_hooks(Some(&json!({"hooks": {"PostToolUse": 3}})), BIN, None, true).is_err());
     }
 
     #[test]
@@ -396,5 +420,24 @@ mod tests {
             "{d}"
         );
         assert_eq!(diff("same\n", "same\n").lines().count(), 1);
+    }
+
+    #[test]
+    fn a_session_start_command_opts_out_of_joining_only_when_joining_is_off() {
+        let on = hook_command(BIN, "SessionStart", None, true).unwrap();
+        assert!(!on.contains("--no-join"), "{on}");
+        let off = hook_command(BIN, "SessionStart", None, false).unwrap();
+        assert!(off.ends_with("--no-join"), "{off}");
+        let other = hook_command(BIN, "PostToolUse", None, false).unwrap();
+        assert!(!other.contains("--no-join"), "{other}");
+    }
+
+    #[test]
+    fn turning_joining_off_and_on_again_updates_the_entry_in_place() {
+        let off = merge_hooks(None, BIN, None, false).unwrap();
+        assert!(commands(&off, "SessionStart")[0].contains("--no-join"));
+        let on = merge_hooks(Some(&off), BIN, None, true).unwrap();
+        assert_eq!(commands(&on, "SessionStart").len(), 1);
+        assert!(!commands(&on, "SessionStart")[0].contains("--no-join"));
     }
 }
