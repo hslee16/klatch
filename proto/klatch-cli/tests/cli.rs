@@ -800,3 +800,76 @@ fn a_message_the_hook_showed_is_still_readable_once() {
     assert!(h.ok("alice", &["read", "r"]).contains("the ask"));
     assert!(!h.ok("alice", &["read", "r"]).contains("the ask"));
 }
+
+#[test]
+fn wait_returns_at_once_when_something_is_unread_and_marks_it_read() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "the answer"]);
+    let start = std::time::Instant::now();
+    let out = h.ok("alice", &["wait", "r", "--timeout", "30"]);
+    assert!(
+        start.elapsed().as_secs() < 5,
+        "waited although a message was unread"
+    );
+    assert!(out.contains("the answer"), "got: {out}");
+    assert!(
+        !h.ok("alice", &["read", "r"]).contains("the answer"),
+        "wait leaves the message unread"
+    );
+}
+
+#[test]
+fn wait_times_out_and_says_so() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    let start = std::time::Instant::now();
+    let out = h.ok("alice", &["wait", "r", "--timeout", "1"]);
+    let took = start.elapsed();
+    assert!(took.as_millis() >= 900, "returned early: {took:?}");
+    assert!(took.as_secs() < 10, "overran: {took:?}");
+    assert!(out.contains("no new messages"), "got: {out}");
+}
+
+#[test]
+fn wait_with_zero_timeout_checks_once() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    assert!(
+        h.ok("alice", &["wait", "r", "--timeout", "0"])
+            .contains("no new messages")
+    );
+    h.ok("bob", &["post", "r", "hi"]);
+    assert!(
+        h.ok("alice", &["wait", "r", "--timeout", "0"])
+            .contains("hi")
+    );
+}
+
+#[test]
+fn wait_wakes_when_another_member_posts() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env("KLATCH_HOME", &h.0)
+        .env("KLATCH_NAME", "alice")
+        .args(["wait", "r", "--timeout", "30"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    h.ok("bob", &["post", "r", "wake up"]);
+    let out = child.wait_with_output().unwrap();
+    assert!(start.elapsed().as_secs() < 10, "did not wake promptly");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("wake up"));
+}
+
+#[test]
+fn wait_is_not_woken_by_the_members_own_posts() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("alice", &["post", "r", "mine"]);
+    let out = h.ok("alice", &["wait", "r", "--timeout", "1"]);
+    assert!(out.contains("no new messages"), "got: {out}");
+}

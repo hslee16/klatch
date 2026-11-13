@@ -42,6 +42,13 @@ enum Cmd {
         #[arg(long)]
         peek: bool,
     },
+    /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
+    Wait {
+        room: String,
+        /// Seconds to wait; 0 checks once
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
     /// List members of a room with last activity
     Who { room: String },
     /// Claim a path prefix (advisory lease with TTL)
@@ -166,6 +173,23 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         Cmd::Read { room, peek } => {
             for m in t.read(&room, !peek)? {
                 println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+            }
+        }
+        Cmd::Wait { room, timeout } => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+            loop {
+                let msgs = t.read(&room, true)?;
+                if !msgs.is_empty() {
+                    for m in msgs {
+                        println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+                    }
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    println!("no new messages in {room} after {timeout}s");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
             }
         }
         Cmd::Who { room } => {
