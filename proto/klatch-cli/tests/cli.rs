@@ -660,3 +660,72 @@ fn the_caller_from_the_environment_is_never_verified_in_stored_messages() {
         matches!(m, ServerFrame::Message { attribution: klatch_protocol::Attribution::Unattributed, sender, .. } if sender == "root")
     );
 }
+
+// Discovery (opt-in): the caller found from the process tree and the harness registry.
+
+fn without_a_name(home: &Home, fake_home: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env("KLATCH_HOME", &home.0)
+        .env_remove("KLATCH_NAME")
+        .env_remove("KLATCH_DISCOVER")
+        .env("HOME", fake_home)
+        .env("CLAUDE_CODE_MESSAGING_TOKEN", "TOKEN-SENTINEL-d41d8cd98f")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn discovery_that_finds_nothing_says_so_and_asks_for_a_name_without_printing_the_environment() {
+    let home = Home::new();
+    let o = without_a_name(&home, &home.0, &["--discover", "who", "r"]);
+    assert!(!o.status.success());
+    let (out, err) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(out.is_empty(), "{out}");
+    assert!(err.contains("no running session"), "{err}");
+    assert!(err.contains("KLATCH_NAME"), "{err}");
+    for text in [&out, &err] {
+        assert!(
+            !text.contains("TOKEN-SENTINEL"),
+            "environment leaked: {text}"
+        );
+    }
+}
+
+#[test]
+fn discovery_is_off_by_default_and_the_registry_is_not_read() {
+    let home = Home::new();
+    // a registry that would be an error to read: a directory where the record file should be
+    let reg = home.0.join(".claude").join("sessions");
+    std::fs::create_dir_all(reg.join(format!("{}.json", std::process::id()))).unwrap();
+    let o = without_a_name(&home, &home.0, &["who", "r"]);
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!err.contains("no running session"), "discovery ran: {err}");
+    assert!(err.contains("KLATCH_NAME"), "{err}");
+}
+
+#[test]
+fn the_environment_switch_turns_discovery_on() {
+    let home = Home::new();
+    let o = Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env("KLATCH_HOME", &home.0)
+        .env_remove("KLATCH_NAME")
+        .env("KLATCH_DISCOVER", "1")
+        .env("HOME", &home.0)
+        .args(["who", "r"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("no running session"));
+}
+
+#[test]
+fn a_typed_name_beats_discovery() {
+    let home = Home::new();
+    let o = home.run("alice", &["--discover", "join", "r"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(home.ok("alice", &["who", "r"]).contains("alice"));
+}

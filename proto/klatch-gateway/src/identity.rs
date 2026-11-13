@@ -13,6 +13,12 @@ pub enum PeerEvidence {
     None,
     /// A name the peer typed (an environment variable or a flag). It proves nothing.
     DeclaredName(String),
+    /// A session of a coding-agent harness found from the process tree and the harness registry (same-user
+    /// evidence: anything running as the same user can read the registry, so it is not proof).
+    Session {
+        session_id: String,
+        name: Option<String>,
+    },
 }
 
 /// Maps evidence to a caller. Implementations must never return a verified principal on evidence that
@@ -38,6 +44,47 @@ impl Identity for DeclaredName {
                 "the member name is not valid: {NAME_HINT}"
             ))),
             _ => Err(Error::Invalid(format!("no member name given: {NAME_HINT}"))),
+        }
+    }
+}
+
+/// The identity for a local process: believes a typed name or a session found from the process tree. Both are
+/// same-user evidence, so the caller is always unattributed until a stronger source exists.
+pub struct LocalIdentity;
+
+/// Turn a session's own name into a valid member name: every character outside the allowed set becomes `-`,
+/// the ends are trimmed and the result is cut to 40 characters. Empty results are `None`.
+fn member_name_from(raw: &str) -> Option<String> {
+    let mapped: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let cut: String = mapped.trim_matches('-').chars().take(40).collect();
+    let cut = cut.trim_matches('-').to_string();
+    valid_name(&cut).then_some(cut)
+}
+
+impl Identity for LocalIdentity {
+    fn resolve(&self, evidence: &PeerEvidence) -> Result<Principal> {
+        match evidence {
+            PeerEvidence::Session { session_id, name } => {
+                let member = name
+                    .as_deref()
+                    .and_then(member_name_from)
+                    .or_else(|| {
+                        let short: String = session_id.chars().take(8).collect();
+                        member_name_from(&format!("session-{short}")).filter(|_| !short.is_empty())
+                    })
+                    .ok_or_else(|| Error::Invalid("the session has no usable name or id".into()))?;
+                Ok(Principal::unattributed(&member))
+            }
+            other => DeclaredName.resolve(other),
         }
     }
 }
@@ -133,6 +180,83 @@ mod tests {
                 ("carol", Attribution::Verified)
             );
         }
+    }
+
+    fn session(id: &str, name: Option<&str>) -> PeerEvidence {
+        PeerEvidence::Session {
+            session_id: id.into(),
+            name: name.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_session_resolves_to_its_name_and_is_never_verified() {
+        let p = LocalIdentity
+            .resolve(&session("abc-123", Some("klatch-1b")))
+            .unwrap();
+        assert_eq!(p.member, "klatch-1b");
+        assert_eq!(p.attribution, Attribution::Unattributed);
+    }
+
+    #[test]
+    fn a_session_name_is_made_into_a_valid_member_name() {
+        let cases = [
+            ("My Session!", "My-Session"),
+            ("a/b c", "a-b-c"),
+            ("line\nbreak", "line-break"),
+            ("  spaced  ", "spaced"),
+            ("ünï", "n"),
+        ];
+        for (raw, want) in cases {
+            let p = LocalIdentity
+                .resolve(&session("id12345678", Some(raw)))
+                .unwrap();
+            assert_eq!(p.member, want, "{raw}");
+            assert!(valid_name(&p.member));
+        }
+        let long = "x".repeat(60);
+        let p = LocalIdentity.resolve(&session("i", Some(&long))).unwrap();
+        assert_eq!(p.member.len(), 40);
+    }
+
+    #[test]
+    fn a_session_without_a_usable_name_is_named_from_its_id() {
+        for name in [None, Some(""), Some("!!!"), Some("   ")] {
+            let p = LocalIdentity
+                .resolve(&session("0123456789abcdef", name))
+                .unwrap();
+            assert_eq!(p.member, "session-01234567", "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_session_with_no_name_and_no_id_is_refused() {
+        let err = LocalIdentity.resolve(&session("", None)).unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)));
+    }
+
+    #[test]
+    fn the_session_id_is_never_the_whole_member_name_so_it_cannot_leak_into_messages() {
+        let id = "0123456789abcdef-secretish";
+        let p = LocalIdentity.resolve(&session(id, None)).unwrap();
+        assert!(!p.member.contains("secretish"));
+    }
+
+    #[test]
+    fn local_identity_still_handles_a_typed_name_and_no_evidence() {
+        assert_eq!(
+            LocalIdentity.resolve(&declared("alice")).unwrap().member,
+            "alice"
+        );
+        assert!(LocalIdentity.resolve(&PeerEvidence::None).is_err());
+    }
+
+    #[test]
+    fn the_declared_name_identity_does_not_believe_a_session() {
+        let err = DeclaredName
+            .resolve(&session("abc", Some("x")))
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)));
     }
 
     #[test]

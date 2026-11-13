@@ -14,6 +14,7 @@ anyhow.workspace = true
 clap.workspace = true
 klatch-core.workspace = true
 klatch-gateway.workspace = true
+klatch-harness.workspace = true
 klatch-session.workspace = true
 klatch-store.workspace = true
 

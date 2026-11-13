@@ -1158,8 +1158,14 @@ and the other items marked as reports):**
       optional daemon.
     - **Implemented so far:** the `Identity` trait and `PeerEvidence` (crate `klatch-gateway`). The only implementation
       is `DeclaredName`, which believes a typed name and therefore always yields an unattributed principal; a typed
-      name can never be verified. Evidence from a session found in the process tree, an SSH key or a certificate
-      are added as new evidence variants with their own tickets (#132, #107, #108).
+      name can never be verified. `LocalIdentity` also accepts a session found from the process tree and the harness
+      registry (crate `klatch-harness`, #132): the CLI walks up from its own pid to the nearest ancestor with a
+      registry record that passes the liveness checks (pid alive, start time equal in UTC, process named `claude`,
+      pid domain matches), and the caller is still unattributed because the registry is readable by anything running
+      as the user. Discovery is opt-in (`--discover` or `KLATCH_DISCOVER=1`), a typed name beats it, and a miss
+      is explained on standard error. The member name comes from the session name (ticket #170 covers collisions and
+      renames). Evidence from an SSH key or a certificate is added as new evidence variants with their own tickets
+      (#107, #108).
 12. **Every transport is duplex, for pull and push (2026-11-12).** One logical session carries client requests (pull:
     read, who, claim, post, resume from a sequence number) and server events (push: messages, refusals,
     heartbeats, nudges). Natural duplex transports (stdio, Unix socket, TCP, TLS, SSH, WebSocket, gRPC streaming)
