@@ -1303,7 +1303,7 @@ fn init_yes_without_a_scope_refuses_and_writes_nothing() {
 #[test]
 fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
     let s = Setup::new();
-    let o = s.init(&["--scope", "project"], "n\ny\nn\n");
+    let o = s.init(&["--scope", "project"], "n\ny\ny\nn\n");
     assert!(o.status.success());
     assert!(
         out(&o).contains("+ ") && out(&o).contains("--discover hook --event"),
@@ -1311,7 +1311,7 @@ fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
         out(&o)
     );
     assert!(!s.project_settings().exists(), "wrote without a yes");
-    let y = s.init(&["--scope", "project"], "n\ny\ny\n");
+    let y = s.init(&["--scope", "project"], "n\ny\ny\ny\n");
     assert!(y.status.success());
     assert!(s.project_settings().exists());
 }
@@ -1319,7 +1319,7 @@ fn init_asks_before_writing_shows_the_diff_and_a_no_writes_nothing() {
 #[test]
 fn init_both_consents_to_each_scope_separately() {
     let s = Setup::new();
-    s.init(&["--scope", "both"], "n\ny\ny\nn\n");
+    s.init(&["--scope", "both"], "n\ny\ny\ny\nn\n");
     assert!(s.project_settings().exists(), "project was said yes");
     assert!(!s.user_settings().exists(), "user was said no");
 }
@@ -1335,7 +1335,7 @@ fn the_board_is_off_unless_asked_for_and_only_on_session_start() {
     assert!(hook_cmds(&v, "SessionStart")[0].ends_with("--board lobby"));
     assert!(!hook_cmds(&v, "PostToolUse")[0].contains("--board"));
     let i = Setup::new();
-    i.init(&["--scope", "project"], "y\ny\ny\n");
+    i.init(&["--scope", "project"], "y\ny\ny\ny\n");
     assert!(
         hook_cmds(&Setup::read(&i.project_settings()), "SessionStart")[0].contains("--board lobby")
     );
@@ -1487,7 +1487,7 @@ fn init_writes_no_join_only_when_asked_and_asks_about_the_lobby() {
         hook_cmds(&Setup::read(&n.project_settings()), "SessionStart")[0].ends_with("--no-join")
     );
     let i = Setup::new();
-    let o = i.init(&["--scope", "project", "--board", "elsewhere"], "n\ny\n");
+    let o = i.init(&["--scope", "project", "--board", "elsewhere"], "n\ny\ny\n");
     assert!(
         out(&o).contains("lobby automatically"),
         "no lobby question: {}",
@@ -1556,4 +1556,66 @@ fn the_claim_that_closes_a_cycle_is_refused_as_a_deadlock_naming_who_yields() {
     );
     h.ok("bob", &["release", "r", "Y.py"]);
     h.ok("alice", &["claim", "r", "Y.py"]);
+}
+
+// ---- the SessionEnd hook (#258) ----
+
+#[test]
+fn session_end_marks_the_member_done_in_every_room_it_joined_and_prints_nothing() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("alice", &["join", "side"]);
+    h.ok("alice", &["post", "lobby", "offering: text helpers"]);
+    h.ok("bob", &["join", "lobby"]);
+    let out = h.ok("alice", &["hook", "--event", "SessionEnd"]);
+    assert_eq!(out, "", "SessionEnd must print nothing: {out}");
+    for room in ["lobby", "side"] {
+        let who = h.ok("bob", &["who", room]);
+        let line = who.lines().find(|l| l.starts_with("alice")).unwrap();
+        assert!(line.contains("status: done"), "{room}: {line}");
+    }
+    assert!(
+        h.ok("bob", &["board", "lobby"])
+            .contains("no current offers"),
+        "the offer stayed on the board"
+    );
+    assert!(
+        h.ok("alice", &["hooks"]).contains("SessionEnd"),
+        "the run was not recorded"
+    );
+}
+
+#[test]
+fn session_end_for_a_member_in_no_room_is_harmless() {
+    let h = Home::new();
+    let o = h.run("loner", &["hook", "--event", "SessionEnd"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+#[test]
+fn init_installs_the_session_end_hook_by_default_and_not_with_no_session_end() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    let c = hook_cmds(&Setup::read(&s.project_settings()), "SessionEnd");
+    assert_eq!(c.len(), 1);
+    assert!(
+        c[0].ends_with("--discover hook --event SessionEnd"),
+        "{}",
+        c[0]
+    );
+    let n = Setup::new();
+    n.init(&["--scope", "project", "--yes", "--no-session-end"], "");
+    assert!(
+        Setup::read(&n.project_settings())["hooks"]
+            .get("SessionEnd")
+            .is_none()
+    );
+    let i = Setup::new();
+    let o = i.init(&["--scope", "project", "--board", "elsewhere"], "y\nn\ny\n");
+    assert!(out(&o).contains("when it ends"), "no question: {}", out(&o));
+    assert!(
+        Setup::read(&i.project_settings())["hooks"]
+            .get("SessionEnd")
+            .is_none()
+    );
 }

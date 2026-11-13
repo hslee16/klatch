@@ -19,6 +19,8 @@ pub struct Options {
     pub yes: bool,
     /// Do not join new sessions to the default lobby at session start.
     pub no_lobby: bool,
+    /// Do not install the SessionEnd hook that marks a finished session done.
+    pub no_session_end: bool,
 }
 
 /// Ask a yes or no question; an empty answer, end of input and anything but yes mean `default`.
@@ -101,6 +103,19 @@ pub fn run(
             true,
         )?
     };
+    // The SessionEnd hook is on by default: it only marks the session done in klatch's own store.
+    let session_end = if options.no_session_end {
+        false
+    } else if options.yes {
+        true
+    } else {
+        ask(
+            input,
+            out,
+            "Mark a session done when it ends, so it leaves the lobby board at once?",
+            true,
+        )?
+    };
     let mut targets: Vec<(&str, std::path::PathBuf)> = Vec::new();
     if matches!(scope, Scope::Project | Scope::Both) {
         targets.push((
@@ -124,7 +139,9 @@ pub fn run(
         } else {
             None
         };
-        let merged = merge_hooks(existing.as_ref(), bin, board.as_deref(), join)
+        let mut merged = merge_hooks(existing.as_ref(), bin, board.as_deref(), join)
+            .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
+        set_session_end(&mut merged, bin, session_end)
             .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
         plans.push((label, path, existing, merged));
     }
@@ -264,6 +281,62 @@ pub fn merge_hooks(
         }
     }
     Ok(settings)
+}
+
+/// Install (`on`) or remove (`!on`) klatch's SessionEnd hook, which marks a finished session done so it leaves the
+/// board at once. Everything else in the settings is left as it was.
+pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), String> {
+    let cmd = hook_command(bin, "SessionEnd", None, true)?;
+    let root = settings
+        .as_object_mut()
+        .ok_or("the settings file is not a JSON object")?;
+    if !on && !root.contains_key("hooks") {
+        return Ok(());
+    }
+    let hooks = root.entry("hooks").or_insert_with(|| json!({}));
+    let hooks = hooks
+        .as_object_mut()
+        .ok_or("\"hooks\" in the settings file is not an object")?;
+    if !on && !hooks.contains_key("SessionEnd") {
+        return Ok(());
+    }
+    let list = hooks.entry("SessionEnd").or_insert_with(|| json!([]));
+    let list = list
+        .as_array_mut()
+        .ok_or("hooks.SessionEnd in the settings file is not a list")?;
+    let mut found = false;
+    for matcher in list.iter_mut() {
+        let Some(inner) = matcher.get_mut("hooks").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        inner.retain_mut(|h| {
+            let ours = h
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(is_klatch_command);
+            if !ours {
+                return true;
+            }
+            if !on || found {
+                return false;
+            }
+            found = true;
+            h["command"] = json!(cmd);
+            true
+        });
+    }
+    list.retain(|m| {
+        m.get("hooks")
+            .and_then(Value::as_array)
+            .is_none_or(|a| !a.is_empty())
+    });
+    if on && !found {
+        list.push(json!({"hooks": [{"type": "command", "command": cmd}]}));
+    }
+    if list.is_empty() {
+        hooks.remove("SessionEnd");
+    }
+    Ok(())
 }
 
 /// A line diff of two texts: removed lines with `-`, added with `+`, unchanged lines with two spaces.
@@ -439,5 +512,49 @@ mod tests {
         let on = merge_hooks(Some(&off), BIN, None, true).unwrap();
         assert_eq!(commands(&on, "SessionStart").len(), 1);
         assert!(!commands(&on, "SessionStart")[0].contains("--no-join"));
+    }
+
+    #[test]
+    fn the_session_end_hook_is_added_and_is_idempotent() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_session_end(&mut v, BIN, true).unwrap();
+        assert_eq!(
+            commands(&v, "SessionEnd"),
+            vec!["/opt/klatch/klatch --discover hook --event SessionEnd".to_string()]
+        );
+        let once = v.clone();
+        set_session_end(&mut v, BIN, true).unwrap();
+        assert_eq!(v, once);
+        assert_eq!(
+            commands(&v, "PostToolUse").len(),
+            1,
+            "the other events are untouched"
+        );
+    }
+
+    #[test]
+    fn turning_the_session_end_hook_off_removes_only_klatchs_entry() {
+        let mut v = json!({"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "/usr/bin/other"}]}]}});
+        set_session_end(&mut v, BIN, true).unwrap();
+        assert_eq!(commands(&v, "SessionEnd").len(), 2);
+        set_session_end(&mut v, BIN, false).unwrap();
+        assert_eq!(
+            commands(&v, "SessionEnd"),
+            vec!["/usr/bin/other".to_string()]
+        );
+        let mut only = merge_hooks(None, BIN, None, true).unwrap();
+        set_session_end(&mut only, BIN, true).unwrap();
+        set_session_end(&mut only, BIN, false).unwrap();
+        assert!(
+            only["hooks"].get("SessionEnd").is_none(),
+            "an empty list was left behind"
+        );
+        set_session_end(&mut only, BIN, false).unwrap();
+    }
+
+    #[test]
+    fn a_session_end_in_a_settings_file_of_the_wrong_shape_is_refused() {
+        assert!(set_session_end(&mut json!([1]), BIN, true).is_err());
+        assert!(set_session_end(&mut json!({"hooks": {"SessionEnd": 3}}), BIN, true).is_err());
     }
 }
