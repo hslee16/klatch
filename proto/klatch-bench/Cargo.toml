@@ -1,0 +1,12 @@
+[package]
+name = "klatch-bench"
+description = "Scripted scenarios that drive the real klatch binary, with a report and a bug corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
