@@ -6,7 +6,7 @@
 mod init;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, convention, flat, hook_context_json, render_board, render_hook};
+use klatch_core::{Principal, convention, flat, hook_output_json, render_board, render_hook};
 use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
@@ -402,9 +402,21 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             // hooks is the consent). A member that was not there starts at the end of the history, so it is not
             // flooded, and sees the board instead; one that was there keeps its unread messages.
             let mut boards: Vec<String> = Vec::new();
+            // What the human sees when the session starts (Claude Code shows `systemMessage` to the user; the
+            // board and the convention go to the model as context).
+            let mut notice: Option<String> = None;
             if starting && !no_join {
                 let was_member = t.who(DEFAULT_ROOM)?.iter().any(|m| m.name == me);
                 t.join(DEFAULT_ROOM)?;
+                if let Ok(b) = t.board(DEFAULT_ROOM) {
+                    let asks = b.asks.len();
+                    notice = Some(format!(
+                        "klatch: {} {DEFAULT_ROOM} as {me} ({} members, {asks} open ask{})",
+                        if was_member { "back in" } else { "joined" },
+                        b.members.len(),
+                        if asks == 1 { "" } else { "s" }
+                    ));
+                }
                 if !was_member {
                     t.ack(DEFAULT_ROOM, i64::MAX)?;
                     boards.push(DEFAULT_ROOM.to_string());
@@ -444,7 +456,7 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
             // alive for a session. A failure to record must not stop the hook delivering.
             let _ = t.record_hook_run(event.as_deref().unwrap_or("hook"), text.len());
             match event {
-                Some(e) => print!("{}", hook_context_json(&e, &text)),
+                Some(e) => print!("{}", hook_output_json(&e, &text, notice.as_deref())),
                 None => print!("{text}"),
             }
         }

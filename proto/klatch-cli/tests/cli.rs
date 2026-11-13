@@ -1619,3 +1619,58 @@ fn init_installs_the_session_end_hook_by_default_and_not_with_no_session_end() {
             .is_none()
     );
 }
+
+// ---- a notice the human can see when a session joins ----
+
+fn notice_of(out: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(out.trim()).ok()?;
+    v["systemMessage"].as_str().map(String::from)
+}
+
+#[test]
+fn session_start_tells_the_human_which_room_and_who_the_session_is() {
+    let h = Home::new();
+    h.ok("old", &["join", "lobby"]);
+    h.ok("old", &["post", "lobby", "seeking: a rare thing"]);
+    let out = h.ok("fresh", &["hook", "--event", "SessionStart"]);
+    let notice = notice_of(&out).unwrap_or_else(|| panic!("no systemMessage in: {out}"));
+    assert!(
+        notice.contains("klatch") && notice.contains("joined lobby as fresh"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("2 members") && notice.contains("1 open ask"),
+        "{notice}"
+    );
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert!(
+        v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("[board lobby]")
+    );
+}
+
+#[test]
+fn a_returning_session_is_told_it_is_back_and_other_events_say_nothing_visible() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    let back = notice_of(&h.ok("alice", &["hook", "--event", "SessionStart"])).expect("a notice");
+    assert!(back.contains("back in lobby as alice"), "{back}");
+    h.ok("bob", &["post", "lobby", "hi"]);
+    assert_eq!(
+        notice_of(&h.ok("alice", &["hook", "--event", "UserPromptSubmit"])),
+        None
+    );
+    assert_eq!(
+        notice_of(&h.ok("alice", &["hook", "--event", "PostToolUse"])),
+        None
+    );
+}
+
+#[test]
+fn a_session_that_stays_out_gets_no_join_notice() {
+    let h = Home::new();
+    let out = h.ok("quiet", &["hook", "--event", "SessionStart", "--no-join"]);
+    assert_eq!(notice_of(&out), None, "{out}");
+}
