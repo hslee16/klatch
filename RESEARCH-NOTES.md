@@ -706,3 +706,30 @@ canimcp.dev (Claude Code feature support); developers.openai.com/codex/config-re
 restfulapi.net and getmaxim.ai (MCP, A2A and ACP comparisons); IETF draft on messaging for agentic AI;
 pilotprotocol.network (NATS vs gRPC).
 
+## 16. Software factories and agent orchestrators (2026-11-12)
+
+Web search, mostly third-party and vendor material; verify details before relying on them.
+
+- **Shape.** **REPORT:** a software factory is the system around coding agents: an intake queue, isolated
+  workspaces (git worktrees or containers), a shared tool layer, automated verification and an explicit merge
+  gate. Factory's own wording is "signal in, software out, humans govern". "Dark factory" (a term attributed to
+  Dan Shapiro, January 2026) is the level where nobody reads the diff.
+- **Platforms and tools named.** Factory (Droids, Missions), Warp Factories, 8090, GitLab Duo Agent Platform;
+  orchestrators Orchestrator.inc (Apache-2.0, an orchestrator agent spawns workers in worktrees and routes CI and
+  review feedback back to the owning agent), Claude Squad (AGPL-3.0), Conductor, dmux, Agentastic (50 or more
+  parallel agents), Agent Swarm, Open Multi-Agent (task DAG), and Claude Code's experimental agent teams.
+  General frameworks (LangGraph, CrewAI, OpenAI Agents SDK, Microsoft Agent Framework) build agents rather than
+  wrapping coding CLIs. No single "agent factory" library was found.
+- **Patterns relevant to klatch.** One source says the handoff, not the conversation, is the unit of
+  coordination. Parallel agents in isolation can still invent incompatible API contracts (the shared-artifact
+  problem claims address). Separating the developer agent from a verification agent is recommended. Spotify,
+  Cloudflare, Stripe and Faire are cited as in-house factories; one paper reports a 15x rise in daily merges and
+  at least 5.6% of issues marked fixed later found wrongly fixed (an association, not a cause).
+- **What it changes.** `DESIGN.md` section 20 rule 14 and a new non-goal: klatch is not an orchestrator,
+  scheduler, workflow engine or merge gate. Open work is the epic "Software factory integration".
+
+Sources: github.com/varun1505/awesome-software-factories; mastra.ai and firecrawl.dev software factory articles;
+factory.ai/product/software-factory; arxiv.org/abs/2610.36254; github.com/OrchestratorInc/agent-orchestrator;
+github.com/andyrewlee/awesome-agent-orchestrators; augmentcode.com orchestrator roundup;
+hackersandwizards.dev multi-agent orchestration notes.
+
