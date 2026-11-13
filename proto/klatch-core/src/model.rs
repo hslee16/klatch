@@ -97,3 +97,13 @@ mod tests {
         assert_eq!(Principal::verified("a").member, "a");
     }
 }
+
+/// The latest run of one hook event for a member: when, how many times so far, and how much it printed.
+/// Never the content, only its size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookRun {
+    pub event: String,
+    pub last_ts: i64,
+    pub runs: i64,
+    pub last_bytes: i64,
+}

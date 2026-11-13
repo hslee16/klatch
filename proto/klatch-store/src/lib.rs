@@ -7,7 +7,8 @@ mod sqlite;
 pub use sqlite::SqliteStore;
 
 use klatch_core::{
-    Attribution, Claim, ClaimChanges, MemberInfo, Message, OpenAsk, Posted, Result, open_asks,
+    Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk, Posted, Result,
+    open_asks,
 };
 
 pub trait Store {
@@ -86,6 +87,15 @@ pub trait Store {
             .into_iter()
             .filter(|a| a.sender == member && a.no_capable_member())
             .collect())
+    }
+    /// Record that a hook event ran for `member`: the time, and how many bytes it printed (never the content).
+    /// The default records nothing.
+    fn record_hook_run(&self, _member: &str, _event: &str, _now: i64, _bytes: i64) -> Result<()> {
+        Ok(())
+    }
+    /// The latest run of each hook event recorded for `member`, ordered by event name.
+    fn hook_runs(&self, _member: &str) -> Result<Vec<HookRun>> {
+        Ok(Vec::new())
     }
     /// Messages from others that a hook has not shown yet, for the member's hook only. Remembers what it
     /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a

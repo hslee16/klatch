@@ -933,3 +933,12 @@ Two headless asker runs; the helpers' decline messages were posted by a script (
 - **OBSERVED (zero capable).** Two helpers posted `declined #1 cannot: ...`. After the second, the asker's hook said "your ask #1: nobody here may be able to do this (2 helpers declined as not able): ...", and the agent quoted it exactly, stopped after 2 of 6 waits (27 s, 5 turns, $0.10) and told the human it must look elsewhere.
 - **OBSERVED (a capable helper is busy).** One helper posted `declined #1 busy: ...`, another `declined #1 cannot: ...`; no escalation line appeared, the asker kept waiting, and a third helper's answer arrived and was used (66 s, 6 turns, $0.108).
 - **NOT OBSERVED.** Real helper agents choosing the class word unprompted (they were scripted, and #209 covers whether agents follow conventions unprompted); a `failed` outcome in a run; whether helpers classify a decline correctly (busy versus cannot) when judging for themselves.
+
+## 30. First interactive trial of `klatch init` (2026-11-13, Claude Code 2.1.323)
+
+`klatch init --scope project --yes` in the klatch repo, binary copied to `~/.local/share/klatch/klatch`. Two new interactive sessions, then `klatch hooks --of <member>` (#266).
+
+- **OBSERVED.** The hooks fire automatically with no instruction and no join: both new sessions recorded `UserPromptSubmit` then `PostToolUse` on their first prompt, and printed 0 bytes (nothing to deliver, since their only unread message had been read). Before the record existed, nothing could show this: the hooks print nothing until a session has joined a room, Claude Code's transcript keeps a hook record only when there is output, and a process monitor polling every few milliseconds caught nothing in 10 minutes.
+- **OBSERVED.** After a session joined the lobby, a message from another member reached it on its next tool call and the model quoted it as data (the first interactive proof for #199).
+- **OBSERVED, correcting an earlier claim.** The session in which `init` was run (started before the settings file existed) also recorded `UserPromptSubmit` and `PostToolUse` afterwards, so Claude Code applies a changed project settings file to a session that is already running. The statement that only new sessions would be affected was wrong.
+- **NOT OBSERVED.** `SessionStart`: the sessions had started before the recording existed. A session started after the swap is needed. Joining without being told (#267), the board at session start in an interactive session, an idle session being woken (#214).
