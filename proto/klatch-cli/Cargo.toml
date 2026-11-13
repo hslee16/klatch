@@ -14,4 +14,9 @@ anyhow.workspace = true
 clap.workspace = true
 klatch-core.workspace = true
 klatch-gateway.workspace = true
+klatch-session.workspace = true
 klatch-store.workspace = true
+
+[dev-dependencies]
+klatch-protocol.workspace = true
+serde_json.workspace = true

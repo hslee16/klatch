@@ -410,6 +410,31 @@ mod tests {
     const SPEC: &str = include_str!("../../../PROTOCOL.md");
 
     #[test]
+    fn the_written_spec_documents_every_error_code_and_refusal_rule_the_session_emits() {
+        for name in [
+            "invalid_params",
+            "unknown_method",
+            "not_implemented",
+            "conflict",
+            "refused",
+            "not_found",
+            "busy",
+            "backend",
+            "invalid",
+            "protocol.decode",
+            "protocol.version",
+            "messages",
+            "members",
+            "claims",
+        ] {
+            assert!(
+                SPEC.contains(&format!("`{name}`")),
+                "PROTOCOL.md does not document `{name}`"
+            );
+        }
+    }
+
+    #[test]
     fn the_written_spec_documents_every_frame_type_and_error_rule() {
         for name in [
             "hello",

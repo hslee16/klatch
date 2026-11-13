@@ -113,10 +113,10 @@ impl Guard for std::rc::Rc<SpyGuard> {
     fn check(&self, _who: &Principal, op: &Operation) -> Result<()> {
         self.seen.borrow_mut().push(op.clone());
         if self.deny_rooms.iter().any(|r| r == room_of(op)) {
-            Err(Error::Invalid(format!(
-                "refused by policy: room {}",
-                room_of(op)
-            )))
+            Err(Error::Refused {
+                rule: "test.deny_room".into(),
+                reason: format!("room {} is not allowed", room_of(op)),
+            })
         } else {
             Ok(())
         }

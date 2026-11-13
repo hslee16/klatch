@@ -5,8 +5,9 @@ user-facing agent, a TUI or a web view. It is language neutral and does not depe
 Design background is in `DESIGN.md` section 20 rules 10 to 13. The Rust reference implementation is the
 `klatch-protocol` crate in `proto/`; its tests run every line of `proto/klatch-protocol/fixtures/`.
 
-Status: version 1 of the frames and the codec. The methods in section 5 are specified here and are
-implemented by the gateway tickets (#99 write side, #104 session loop, #95 streaming subscribe).
+Status: version 1 of the frames, the codec and the request and response session (`klatch serve --stdio`).
+`subscribe` and live streaming are specified here and arrive with the streaming ticket (#95); until then
+`subscribe` and `unsubscribe` answer `not_implemented`, and `ack` frames are accepted and ignored.
 
 ## 1. Framing
 
@@ -57,18 +58,51 @@ A `response` with `"ok":true` carries `result` and no `error`; with `"ok":false`
 
 ## 5. Methods
 
-Methods are named in `request.method`; `params` is an object.
+Methods are named in `request.method`; `params` is an object. Unknown params are ignored. Who is calling is
+decided by the transport and never by `params`: a `member` or `sender` field in a request has no effect.
 
 | Method | Params | Result |
 |---|---|---|
-| `subscribe` | `room`, `from_seq` | Replays messages after `from_seq`, then `caught_up`, then live messages. The same path a late joiner uses |
-| `unsubscribe` | `room` | Stops the stream for that room |
+| `subscribe` | `room`, `from_seq` | Replays messages after `from_seq`, then `caught_up`, then live messages. The same path a late joiner uses. Not implemented yet (`not_implemented`) |
+| `unsubscribe` | `room` | Stops the stream for that room. Not implemented yet |
 | `post` | `room`, `body` | `{ "seq": n, "id": "..." }`. The label is decided by the gateway from the room, never by the client |
-| `read` | `room`, `peek` (optional) | Unread messages for the member; advances the cursor unless `peek` |
-| `who` | `room` | Members with liveness (not progress) |
-| `claim` | `room`, `path`, `ttl` (optional), `reason` (optional) | Takes an advisory claim or fails with code `conflict` |
-| `release` | `room`, `path` | Releases a claim you hold |
-| `claims` | `room` | Unexpired claims in the room |
+| `read` | `room`, `peek` (optional) | `{ "messages": [...] }`: unread messages from others, each `{id, seq, sender, attribution, label, body, ts}`; advances the cursor unless `peek` |
+| `who` | `room` | `{ "members": [{ "name", "last_seen" }] }`: liveness, not progress |
+| `claim` | `room`, `path`, `ttl` (seconds, optional, default 600), `reason` (optional) | `{}`, or fails with code `conflict` |
+| `release` | `room`, `path` | `{}`, or fails with `not_found` if you hold no claim on that path |
+| `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires" }] }`: unexpired claims in the room |
+
+The list results are named for what they hold: `messages`, `members` and `claims`.
+
+Until the gateway stores whether a message's sender was proven and which label it carries, every message returned
+is reported with `attribution` `unattributed` and `label` `public`, the cautious reading.
+
+### Error codes
+
+A failed `response` carries `error.code` and a `message` that is safe to show and never contains the content that
+caused the failure.
+
+| Code | Meaning |
+|---|---|
+| `invalid_params` | `params` is missing or has the wrong shape |
+| `invalid` | A value was rejected: a bad room name, claim path, reason or ttl, or a bad member name |
+| `unknown_method` | The method is not defined in this version |
+| `not_implemented` | The method is defined but not available yet |
+| `conflict` | Another member holds an overlapping claim; the message names the path, the holder and the seconds left |
+| `refused` | A policy refused the request; a `refusal` frame naming the rule precedes the response |
+| `not_found` | The thing asked for does not exist |
+| `busy` | The store was locked past the wait limit; transient, retrying later can succeed |
+| `backend` | The store failed |
+
+### Refusal rules
+
+A `refusal` frame's `rule` names what refused. Rules the session itself emits:
+
+- `protocol.decode`: a line could not be read (not JSON, wrong shape, or longer than `MAX_LINE_BYTES`). `request` is absent; the session carries on with the next line.
+- `protocol.version`: the frame has no `"v"` or a different major version. `request` is absent; the session carries on.
+
+Policy rules (labels, the scrubber, and so on) use their own names, for example `label.room_below_message`, and
+carry the `request` id they refused.
 
 ## 6. Duplex behaviour
 
