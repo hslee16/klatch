@@ -109,6 +109,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.set_status(room, member, status, now)
     }
+    fn record_hook_run(&self, member: &str, event: &str, now: i64, bytes: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.record_hook_run(member, event, now, bytes)
+    }
+    fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>> {
+        self.gate()?;
+        self.inner.hook_runs(member)
+    }
     fn claim_changes(
         &self,
         room: &str,

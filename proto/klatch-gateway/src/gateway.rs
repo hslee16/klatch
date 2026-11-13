@@ -155,6 +155,26 @@ impl<S: Store> Gateway<S> {
             .set_status(room, &who.member, status.trim(), self.now())
     }
 
+    /// Record that one of the caller's hook events ran, and how many bytes it printed (never the content).
+    pub fn record_hook_run(&self, who: &Principal, event: &str, bytes: usize) -> Result<()> {
+        check_member(who)?;
+        if event.is_empty() || event.len() > 40 || !event.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            return Err(Error::Invalid("bad hook event name".into()));
+        }
+        self.store
+            .record_hook_run(&who.member, event, self.now(), bytes as i64)
+    }
+
+    /// The latest run of each hook event recorded for `member` (who may be the caller or anyone: metadata only).
+    pub fn hook_runs(&self, who: &Principal, member: &str) -> Result<Vec<klatch_core::HookRun>> {
+        check_member(who)?;
+        if !valid_name(member) {
+            return Err(Error::Invalid("bad member name".into()));
+        }
+        self.store.hook_runs(member)
+    }
+
     /// The room's board: open asks, current offers and members with their last announced status.
     pub fn board(&self, who: &Principal, room: &str) -> Result<klatch_core::Board> {
         self.admit(
@@ -966,6 +986,40 @@ mod tests {
             1,
             "a waiting member lost its offer to the clock"
         );
+    }
+
+    #[test]
+    fn a_hook_run_is_recorded_for_the_caller_and_readable_by_anyone() {
+        let g = open();
+        g.record_hook_run(&alice(), "SessionStart", 0).unwrap();
+        g.record_hook_run(&alice(), "SessionStart", 40).unwrap();
+        let r = g.hook_runs(&bob(), "alice").unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            (
+                r[0].event.as_str(),
+                r[0].runs,
+                r[0].last_bytes,
+                r[0].last_ts
+            ),
+            ("SessionStart", 2, 40, 100)
+        );
+    }
+
+    #[test]
+    fn a_bad_event_or_member_name_is_rejected_before_the_store() {
+        let g = open();
+        for bad in ["", "a b", "x\ny", &"e".repeat(41)] {
+            assert!(
+                matches!(g.record_hook_run(&alice(), bad, 0), Err(Error::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+        assert!(matches!(
+            g.hook_runs(&alice(), "bad name"),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(g.store.calls.get(), 0);
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub use board::{
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, render_hook};
 pub use model::{
-    Attribution, Claim, ClaimChanges, MemberInfo, Message, Posted, Principal, ReleasedClaim,
+    Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
+    ReleasedClaim,
 };
 pub use text::{flat, norm, overlaps, valid_name};

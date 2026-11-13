@@ -1,8 +1,8 @@
 use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
-    Claim, ClaimChanges, Error, MemberInfo, Message, OpenAsk, Posted, ReleasedClaim, Result,
-    overlaps,
+    Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted, ReleasedClaim,
+    Result, overlaps,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -41,7 +41,8 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
- CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));";
+ CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
+ CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -157,6 +158,15 @@ fn migrate_v7(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 8 to 9: the latest run of each hook event per member (time, count, size printed), so a user can see
+/// the hooks are alive without asking the session. Never any content.
+fn migrate_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -260,7 +270,10 @@ impl SqliteStore {
                     if version < 7 {
                         migrate_v6(&conn)?;
                     }
-                    migrate_v7(&conn)?;
+                    if version < 8 {
+                        migrate_v7(&conn)?;
+                    }
+                    migrate_v8(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -463,6 +476,37 @@ impl Store for SqliteStore {
             }
             Ok(fresh)
         })
+    }
+
+    fn record_hook_run(&self, member: &str, event: &str, now: i64, bytes: i64) -> Result<()> {
+        self.immediate(|| {
+            self.conn
+                .execute(
+                    "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES(?1,?2,?3,1,?4)
+                     ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4",
+                    params![member, event, now, bytes],
+                )
+                .map_err(be)?;
+            Ok(())
+        })
+    }
+
+    fn hook_runs(&self, member: &str) -> Result<Vec<HookRun>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT event,last_ts,runs,last_bytes FROM hook_runs WHERE member=?1 ORDER BY event")
+            .map_err(be)?;
+        st.query_map(params![member], |r| {
+            Ok(HookRun {
+                event: r.get(0)?,
+                last_ts: r.get(1)?,
+                runs: r.get(2)?,
+                last_bytes: r.get(3)?,
+            })
+        })
+        .map_err(be)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(be)
     }
 
     fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
@@ -1013,6 +1057,34 @@ mod tests {
         s.post("r", "h3", &format!("declined #{a} busy: later"), 2)
             .unwrap();
         assert!(s.escalated_asks("r", "alice", 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only() {
+        let s = store();
+        s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
+        s.record_hook_run("alice", "PostToolUse", 11, 120).unwrap();
+        s.record_hook_run("alice", "PostToolUse", 15, 0).unwrap();
+        s.record_hook_run("bob", "SessionStart", 12, 5).unwrap();
+        let r = s.hook_runs("alice").unwrap();
+        assert_eq!(r.len(), 2);
+        let post = r.iter().find(|h| h.event == "PostToolUse").unwrap();
+        assert_eq!((post.last_ts, post.runs, post.last_bytes), (15, 2, 0));
+        let start = r.iter().find(|h| h.event == "SessionStart").unwrap();
+        assert_eq!((start.last_ts, start.runs), (10, 1));
+        assert_eq!(s.hook_runs("bob").unwrap().len(), 1);
+        assert!(s.hook_runs("nobody").unwrap().is_empty());
+    }
+
+    #[test]
+    fn hook_runs_survive_reopening_the_database() {
+        let path = temp_db("hook-runs");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(s.hook_runs("alice").unwrap()[0].runs, 1);
     }
 
     #[test]
@@ -1787,12 +1859,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_8() {
-        assert_eq!(version(&store()), 8);
+    fn a_fresh_database_is_at_schema_version_9() {
+        assert_eq!(version(&store()), 9);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_8_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_9_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1808,7 +1880,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 8);
+        assert_eq!(version(&s), 9);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1829,14 +1901,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            8,
+            9,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_8() {
+    fn a_version_0_database_now_migrates_all_the_way_to_9() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1849,7 +1921,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 8);
+        assert_eq!(version(&s), 9);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1868,11 +1940,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_eight_with_everything_intact() {
+    fn a_version_two_database_migrates_to_nine_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 8);
+        assert_eq!(version(&s), 9);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1890,7 +1962,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 8);
+        assert_eq!(version(&s), 9);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

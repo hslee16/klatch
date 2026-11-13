@@ -1361,3 +1361,35 @@ fn init_refuses_an_unreadable_settings_file_and_writes_no_scope_at_all() {
         "wrote one scope although the other was unreadable"
     );
 }
+
+#[test]
+fn hooks_shows_when_each_event_last_ran_with_a_count_and_no_content() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "secret-looking message body"]);
+    assert!(
+        h.ok("alice", &["hooks"]).contains("no hook has run"),
+        "before any run"
+    );
+    h.ok("alice", &["hook", "--event", "SessionStart"]);
+    h.ok("alice", &["hook", "--event", "PostToolUse"]);
+    h.ok("alice", &["hook", "--event", "PostToolUse"]);
+    let own = h.ok("alice", &["hooks"]);
+    assert!(
+        own.contains("SessionStart") && own.contains("runs 1"),
+        "got: {own}"
+    );
+    assert!(
+        own.contains("PostToolUse") && own.contains("runs 2"),
+        "got: {own}"
+    );
+    assert!(
+        !own.contains("secret-looking"),
+        "message content leaked: {own}"
+    );
+    let other = h.ok("bob", &["hooks", "--of", "alice"]);
+    assert!(
+        other.contains("PostToolUse") && other.contains("runs 2"),
+        "got: {other}"
+    );
+}

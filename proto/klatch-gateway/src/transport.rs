@@ -20,6 +20,10 @@ pub trait Transport {
     fn digest(&self) -> Result<Digest>;
     /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
     fn digest_with(&self, backlog: bool) -> Result<Digest>;
+    /// Record a hook run (event and bytes printed) for the caller.
+    fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()>;
+    /// The latest run of each hook event recorded for `member`.
+    fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>>;
     /// Set the caller's own status in a room.
     fn set_status(&self, room: &str, status: &str) -> Result<()>;
     /// The room's board (open asks, current offers, members with status).
@@ -79,6 +83,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn digest_with(&self, backlog: bool) -> Result<Digest> {
         self.gateway.digest_with(&self.principal, backlog)
+    }
+    fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()> {
+        self.gateway.record_hook_run(&self.principal, event, bytes)
+    }
+    fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>> {
+        self.gateway.hook_runs(&self.principal, member)
     }
     fn set_status(&self, room: &str, status: &str) -> Result<()> {
         self.gateway.set_status(&self.principal, room, status)
