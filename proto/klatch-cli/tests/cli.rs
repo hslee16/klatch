@@ -1,6 +1,6 @@
 //! End-to-end tests: run the real binary against a throwaway KLATCH_HOME.
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static N: AtomicU32 = AtomicU32::new(0);
@@ -23,6 +23,16 @@ impl Home {
             .env("KLATCH_NAME", who)
             .args(args)
             .output()
+            .unwrap()
+    }
+    fn spawn(&self, who: &str, args: &[&str]) -> Child {
+        Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_NAME", who)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap()
     }
     fn ok(&self, who: &str, args: &[&str]) -> String {
@@ -156,4 +166,80 @@ fn read_shows_the_per_room_seq_not_a_global_row_number() {
     h.ok("bob", &["post", "b", "first in b"]);
     let out = h.ok("alice", &["read", "b"]);
     assert!(out.starts_with("[1 "), "got: {out}");
+}
+
+#[test]
+fn sixteen_processes_posting_at_once_lose_nothing() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    let kids: Vec<_> = (0..16)
+        .map(|i| h.spawn(&format!("w{i}"), &["post", "r", &format!("m{i}")]))
+        .collect();
+    for k in kids {
+        let o = k.wait_with_output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    let out = h.ok("alice", &["read", "r"]);
+    let mut seqs: Vec<u32> = out
+        .lines()
+        .map(|l| {
+            l.trim_start_matches('[')
+                .split(' ')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        })
+        .collect();
+    seqs.sort();
+    assert_eq!(seqs, (1..=16).collect::<Vec<u32>>(), "got: {out}");
+}
+
+#[test]
+fn sixteen_processes_claiming_one_path_have_one_winner() {
+    let h = Home::new();
+    let kids: Vec<_> = (0..16)
+        .map(|i| h.spawn(&format!("w{i}"), &["claim", "r", "src"]))
+        .collect();
+    let outs: Vec<_> = kids
+        .into_iter()
+        .map(|k| k.wait_with_output().unwrap())
+        .collect();
+    assert_eq!(outs.iter().filter(|o| o.status.success()).count(), 1);
+    for o in outs.iter().filter(|o| !o.status.success()) {
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("refused"),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}
+
+#[test]
+fn processes_reading_while_others_post_see_every_message_once() {
+    let h = Home::new();
+    h.ok("reader", &["join", "r"]);
+    let writers: Vec<_> = (0..8)
+        .map(|i| h.spawn(&format!("w{i}"), &["post", "r", &format!("m{i}")]))
+        .collect();
+    let mut seen: Vec<u32> = Vec::new();
+    let mut take = |out: String| {
+        seen.extend(out.lines().map(|l| {
+            l.trim_start_matches('[')
+                .split(' ')
+                .next()
+                .unwrap()
+                .parse::<u32>()
+                .unwrap()
+        }));
+    };
+    for _ in 0..5 {
+        take(h.ok("reader", &["read", "r"]));
+    }
+    for w in writers {
+        assert!(w.wait_with_output().unwrap().status.success());
+    }
+    take(h.ok("reader", &["read", "r"]));
+    seen.sort();
+    assert_eq!(seen, (1..=8).collect::<Vec<u32>>());
 }

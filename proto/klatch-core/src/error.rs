@@ -16,12 +16,16 @@ pub enum Error {
     NotFound(String),
     /// The storage backend failed.
     Backend(String),
+    /// The store is locked by another writer past the wait limit. Transient: retrying later can succeed.
+    Busy(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Invalid(m) | Error::NotFound(m) | Error::Backend(m) => write!(f, "{m}"),
+            Error::Invalid(m) | Error::NotFound(m) | Error::Backend(m) | Error::Busy(m) => {
+                write!(f, "{m}")
+            }
             Error::Conflict {
                 path,
                 owner,
@@ -60,5 +64,6 @@ mod tests {
         assert_eq!(Error::Invalid("bad".into()).to_string(), "bad");
         assert_eq!(Error::NotFound("none".into()).to_string(), "none");
         assert_eq!(Error::Backend("down".into()).to_string(), "down");
+        assert_eq!(Error::Busy("locked".into()).to_string(), "locked");
     }
 }

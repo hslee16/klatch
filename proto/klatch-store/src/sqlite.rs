@@ -16,7 +16,17 @@ pub struct SqliteStore {
 }
 
 fn be(e: rusqlite::Error) -> Error {
-    Error::Backend(e.to_string())
+    match &e {
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(
+                f.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) =>
+        {
+            Error::Busy(e.to_string())
+        }
+        _ => Error::Backend(e.to_string()),
+    }
 }
 
 const SCHEMA_VERSION: i64 = 1;
@@ -86,9 +96,35 @@ fn migrate_v0(conn: &Connection) -> Result<()> {
 }
 
 impl SqliteStore {
+    /// Open with the default five second wait for another writer.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_timeout(path, Duration::from_secs(5))
+    }
+
+    /// Open with an explicit limit on how long a write waits for another writer. Past the limit the
+    /// write fails with `Error::Backend` and leaves nothing behind; it never hangs.
+    pub fn open_with_timeout(path: &Path, busy: Duration) -> Result<Self> {
+        // Switching a fresh database to WAL and creating its schema can collide with other first-time
+        // openers in a way SQLite's own busy handler does not cover, so the whole open is retried on
+        // contention, with a small backoff, until the limit.
+        let deadline = std::time::Instant::now() + busy;
+        let mut attempt: u64 = 0;
+        loop {
+            match Self::try_open(path, busy) {
+                Err(Error::Busy(_)) if std::time::Instant::now() < deadline => {
+                    let step = (2u64 << attempt.min(4)).min(50);
+                    let jitter = (u64::from(std::process::id()) * 7 + attempt * 13) % 5;
+                    std::thread::sleep(Duration::from_millis(step + jitter));
+                    attempt += 1;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    fn try_open(path: &Path, busy: Duration) -> Result<Self> {
         let conn = Connection::open(path).map_err(be)?;
-        conn.busy_timeout(Duration::from_secs(5)).map_err(be)?;
+        conn.busy_timeout(busy).map_err(be)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(be)?;
         conn.pragma_update(None, "synchronous", "NORMAL")
@@ -207,18 +243,14 @@ impl Store for SqliteStore {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(be)?;
         if advance {
-            let max: i64 = self
-                .conn
-                .query_row(
-                    "SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1",
-                    params![room],
-                    |r| r.get(0),
-                )
-                .map_err(be)?;
+            // Advance to the last message actually returned, never to the room's current maximum:
+            // a message posted between the select above and this update would otherwise be skipped
+            // for good. Own messages after the last returned one are simply filtered again next time.
+            let cursor = rows.last().map_or(last, |m| m.seq.max(last));
             self.conn
                 .execute(
                     "UPDATE members SET last_seq=?3, last_seen=?4 WHERE room=?1 AND name=?2",
-                    params![room, member, max, now],
+                    params![room, member, cursor, now],
                 )
                 .map_err(be)?;
         }
@@ -653,5 +685,251 @@ mod tests {
         drop(s);
         SqliteStore::open(&path).unwrap(); // reopening a migrated database is a no-op
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    // ---- concurrency hardening (#18) ----
+
+    #[test]
+    fn the_cursor_advances_to_the_last_message_returned_never_past_it() {
+        // A message that arrives between the select and the cursor update would be lost if the cursor
+        // jumped to the room's current maximum. The cursor must stop at the last message returned.
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap(); // seq 1
+        s.post("r", "alice", "mine", 3).unwrap(); // seq 2, her own
+        let got = s.read("r", "alice", true, 4).unwrap();
+        assert_eq!(got.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1]);
+        let cursor: i64 = s
+            .conn
+            .query_row(
+                "SELECT last_seq FROM members WHERE room='r' AND name='alice'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cursor, 1, "cursor must equal the last returned seq");
+        s.post("r", "bob", "two", 5).unwrap(); // seq 3
+        assert_eq!(s.read("r", "alice", true, 6).unwrap()[0].seq, 3);
+    }
+
+    #[test]
+    fn many_connections_opening_a_fresh_database_at_once_all_succeed() {
+        for round in 0..30 {
+            let path = temp_db(&format!("fresh{round}"));
+            let gate = std::sync::Arc::new(std::sync::Barrier::new(12));
+            let handles: Vec<_> = (0..12)
+                .map(|_| {
+                    let (path, gate) = (path.clone(), gate.clone());
+                    std::thread::spawn(move || {
+                        gate.wait();
+                        SqliteStore::open(&path).map(|_| ())
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join()
+                    .unwrap()
+                    .unwrap_or_else(|e| panic!("round {round}: {e}"));
+            }
+            std::fs::remove_dir_all(path.parent().unwrap()).ok();
+        }
+    }
+
+    use std::time::Instant;
+
+    fn percentile(sorted: &[u128], p: f64) -> u128 {
+        sorted[(((sorted.len() - 1) as f64) * p).round() as usize]
+    }
+
+    #[test]
+    fn concurrent_claims_on_one_path_have_exactly_one_winner() {
+        let path = temp_db("claimrace");
+        SqliteStore::open(&path).unwrap();
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let s = SqliteStore::open(&path).unwrap();
+                    s.claim("r", &format!("w{t}"), "src", 100, "", 0)
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert!(
+            results
+                .iter()
+                .filter(|r| r.is_err())
+                .all(|r| matches!(r, Err(Error::Conflict { .. })))
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn concurrent_claims_on_disjoint_paths_all_succeed() {
+        let path = temp_db("claimdisjoint");
+        SqliteStore::open(&path).unwrap();
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let s = SqliteStore::open(&path).unwrap();
+                    s.claim("r", &format!("w{t}"), &format!("src/f{t}"), 100, "", 0)
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        assert_eq!(
+            SqliteStore::open(&path)
+                .unwrap()
+                .claims("r", 1)
+                .unwrap()
+                .len(),
+            8
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn readers_and_writers_together_lose_and_duplicate_nothing() {
+        let path = temp_db("rw");
+        SqliteStore::open(&path).unwrap();
+        let writers: Vec<_> = (0..4)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let s = SqliteStore::open(&path).unwrap();
+                    for i in 0..25 {
+                        s.post("r", &format!("w{t}"), "x", i).unwrap();
+                    }
+                })
+            })
+            .collect();
+        let readers: Vec<_> = (0..3)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let s = SqliteStore::open(&path).unwrap();
+                    let me = format!("reader{t}");
+                    let mut seen = Vec::new();
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    while seen.len() < 100 && Instant::now() < deadline {
+                        seen.extend(
+                            s.read("r", &me, true, 0)
+                                .unwrap()
+                                .into_iter()
+                                .map(|m| m.seq),
+                        );
+                    }
+                    seen
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        for r in readers {
+            let seen = r.join().unwrap();
+            assert_eq!(
+                seen,
+                (1..=100).collect::<Vec<i64>>(),
+                "each reader sees every message once, in order"
+            );
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
+        let path = temp_db("locked");
+        SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open_with_timeout(&path, Duration::from_millis(100)).unwrap();
+        let holder = Connection::open(&path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = Instant::now();
+        let err = s.post("r", "bob", "x", 1).unwrap_err();
+        assert!(matches!(err, Error::Busy(_)), "{err:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "waited {:?}",
+            started.elapsed()
+        );
+        holder.execute_batch("COMMIT").unwrap();
+        assert_eq!(
+            s.post("r", "bob", "x", 2).unwrap().seq,
+            1,
+            "a failed post leaves no gap in seq"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn pure_reads_proceed_while_another_connection_holds_the_write_lock() {
+        let path = temp_db("readsok");
+        let s = SqliteStore::open_with_timeout(&path, Duration::from_millis(100)).unwrap();
+        s.claim("r", "bob", "src", 100, "", 0).unwrap();
+        let holder = Connection::open(&path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert_eq!(s.claims("r", 1).unwrap().len(), 1);
+        assert_eq!(s.members("r").unwrap().len(), 0);
+        holder.execute_batch("COMMIT").unwrap();
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// Run by hand: `cargo test --release -p klatch-store -- --ignored --nocapture`. Prints, not asserts.
+    #[test]
+    #[ignore]
+    fn measure_hook_path_latency_under_write_load() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        for pause_us in [0u64, 1_000, 10_000, 100_000] {
+            let path = temp_db(&format!("bench{pause_us}"));
+            SqliteStore::open(&path).unwrap();
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            let posted = std::sync::Arc::new(AtomicU64::new(0));
+            let writers: Vec<_> = (0..4)
+                .map(|t| {
+                    let (path, stop, posted) = (path.clone(), stop.clone(), posted.clone());
+                    std::thread::spawn(move || {
+                        let s = SqliteStore::open(&path).unwrap();
+                        while !stop.load(Ordering::Relaxed) {
+                            s.post("r", &format!("w{t}"), "x", 0).unwrap();
+                            posted.fetch_add(1, Ordering::Relaxed);
+                            std::thread::sleep(Duration::from_micros(pause_us));
+                        }
+                    })
+                })
+                .collect();
+            let s = SqliteStore::open(&path).unwrap();
+            let (mut read_us, mut claims_us) = (Vec::new(), Vec::new());
+            let end = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < end {
+                let t0 = Instant::now();
+                s.read("r", "reader", true, 0).unwrap();
+                read_us.push(t0.elapsed().as_micros());
+                let t1 = Instant::now();
+                s.claims("r", 0).unwrap();
+                claims_us.push(t1.elapsed().as_micros());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            stop.store(true, Ordering::Relaxed);
+            for w in writers {
+                w.join().unwrap();
+            }
+            read_us.sort();
+            claims_us.sort();
+            println!(
+                "writers pause {pause_us}us: {} posts/s | read p50={}us p99={}us max={}us | claims p50={}us p99={}us (n={})",
+                posted.load(Ordering::Relaxed) / 5,
+                percentile(&read_us, 0.5),
+                percentile(&read_us, 0.99),
+                read_us.last().unwrap(),
+                percentile(&claims_us, 0.5),
+                percentile(&claims_us, 0.99),
+                read_us.len()
+            );
+            std::fs::remove_dir_all(path.parent().unwrap()).ok();
+        }
     }
 }
