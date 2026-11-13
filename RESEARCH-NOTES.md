@@ -998,3 +998,7 @@ A scratch project with `klatch init --scope project --yes`, then one headless Cl
 ## 35. A real-agent run of leases and clarification (2026-11-13, Claude Code 2.1.323)
 
 One helper (owns a package with two slug variants) and one asker (needs the ASCII variant, told to say so only if asked). Both finished, 7 and 9 turns. The helper volunteered both variants in its offer, so the asker never needed `need-info`: the clarification words were not exercised by a real agent in this run. The ask, answer, closed and status path worked. Clarification and lapse behaviour are covered by the bench scenarios (scripted); a real-agent run that forces `need-info` stays open on #235.
+
+## 36. What Claude Code exposes about a running session (2026-11-13, Claude Code 2.1.323)
+
+Hooks: no timer, heartbeat or per-tool-call tick; one idle notification. Registry record: `status` busy or idle with the time of the last change (watched for 90 s while busy: unchanged, so not a heartbeat). `claude agents --json` lists interactive and background sessions with the same status, and `blocked` states for background ones; seven sessions on this machine, two forgotten background ones. Process view: `ps` state, CPU time and child processes are readable; the transcript file grows as a session works. No progress inside a turn is reported by Claude Code. See DESIGN section 29.
