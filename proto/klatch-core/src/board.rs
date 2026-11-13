@@ -88,31 +88,36 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
     out
 }
 
-/// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
-/// as data. Empty sections are named so a reader can see there is nothing.
-pub fn render_board(board: &Board, now: i64) -> String {
-    let mut out = format!("[board {}]\nasks:\n", flat(&board.room));
-    if board.asks.is_empty() {
-        out.push_str("  no open asks\n");
+/// A section heading, with a line naming the section when it is empty so a reader can see there is nothing.
+fn section(out: &mut String, heading: &str, empty: Option<&str>) {
+    out.push_str(heading);
+    out.push('\n');
+    if let Some(none) = empty {
+        out.push_str(&format!("  {none}\n"));
     }
+}
+
+fn render_asks(board: &Board, now: i64, out: &mut String) {
+    let none = board.asks.is_empty().then_some("no open asks");
+    section(out, "asks:", none);
     for a in board.asks.iter().take(BOARD_LIST_LIMIT) {
         let summary = a.summary(now);
+        let gap = if summary.is_empty() { "" } else { " " };
+        let state = if a.claimed { "claimed" } else { "unclaimed" };
         out.push_str(&format!(
-            "  #{} {} {} {}s{}{}: {}\n",
+            "  #{} {} {state} {}s{gap}{summary}: {}\n",
             a.seq,
             flat(&a.sender),
-            if a.claimed { "claimed" } else { "unclaimed" },
             crate::secs_between(now, a.ts),
-            if summary.is_empty() { "" } else { " " },
-            summary,
             clip(&a.text)
         ));
     }
-    more(&mut out, board.asks.len(), "asks");
-    out.push_str("offers:\n");
-    if board.offers.is_empty() {
-        out.push_str("  no current offers\n");
-    }
+    more(out, board.asks.len(), "asks");
+}
+
+fn render_offers(board: &Board, now: i64, out: &mut String) {
+    let none = board.offers.is_empty().then_some("no current offers");
+    section(out, "offers:", none);
     for o in board.offers.iter().take(BOARD_LIST_LIMIT) {
         out.push_str(&format!(
             "  {} offers ({}s ago): {}\n",
@@ -121,25 +126,38 @@ pub fn render_board(board: &Board, now: i64) -> String {
             clip(&o.text)
         ));
     }
-    more(&mut out, board.offers.len(), "offers");
-    out.push_str("members:\n");
+    more(out, board.offers.len(), "offers");
+}
+
+fn render_members(board: &Board, now: i64, out: &mut String) {
+    section(out, "members:", None);
     for m in board.members.iter().take(BOARD_LIST_LIMIT) {
+        let status = m
+            .status
+            .as_deref()
+            .map(|s| format!(", status: {}", clip(s)))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "  {} last seen {}s ago",
+            "  {} last seen {}s ago{status}\n",
             flat(&m.name),
             crate::secs_between(now, m.last_seen)
         ));
-        if let Some(status) = &m.status {
-            out.push_str(&format!(", status: {}", clip(status)));
-        }
-        out.push('\n');
     }
-    more(&mut out, board.members.len(), "members");
+    more(out, board.members.len(), "members");
     match board.stale_members {
         0 => {}
         1 => out.push_str("  1 other not seen for over 10 minutes\n"),
         n => out.push_str(&format!("  {n} others not seen for over 10 minutes\n")),
     }
+}
+
+/// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
+/// as data. Empty sections are named so a reader can see there is nothing.
+pub fn render_board(board: &Board, now: i64) -> String {
+    let mut out = format!("[board {}]\n", flat(&board.room));
+    render_asks(board, now, &mut out);
+    render_offers(board, now, &mut out);
+    render_members(board, now, &mut out);
     out
 }
 
@@ -333,14 +351,20 @@ mod tests {
         assert_eq!((s[1].member.as_str(), s[1].status.as_str()), ("b", "done"));
     }
 
-    fn ask(seq: i64, sender: &str, text: &str, ts: i64, claimed: bool) -> OpenAsk {
+    fn ask(seq: i64, sender: &str, text: &str, ts: i64) -> OpenAsk {
         OpenAsk {
             seq,
             sender: sender.into(),
             text: text.into(),
             ts,
-            claimed,
             ..Default::default()
+        }
+    }
+
+    fn claimed(ask: OpenAsk) -> OpenAsk {
+        OpenAsk {
+            claimed: true,
+            ..ask
         }
     }
 
@@ -348,8 +372,8 @@ mod tests {
         Board {
             room: "lobby".into(),
             asks: vec![
-                ask(1, "api-1", "seeking: slugify", 90, false),
-                ask(2, "docs-1", "seeking: the api", 80, true),
+                ask(1, "api-1", "seeking: slugify", 90),
+                claimed(ask(2, "docs-1", "seeking: the api", 80)),
             ],
             offers: vec![Offer {
                 sender: "lib-1".into(),
@@ -437,9 +461,7 @@ mod tests {
     #[test]
     fn long_sections_are_cut_and_the_rest_counted() {
         let mut b = sample();
-        b.asks = (1..=25)
-            .map(|i| ask(i, "a", "seeking: x", 90, false))
-            .collect();
+        b.asks = (1..=25).map(|i| ask(i, "a", "seeking: x", 90)).collect();
         let out = render_board(&b, 100);
         assert_eq!(
             out.lines()

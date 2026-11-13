@@ -257,6 +257,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         no_session_end,
     } = &cli.cmd
     {
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         return init::run(
             &init::Options {
                 scope: *scope,
@@ -265,13 +266,15 @@ fn run_cli(cli: Cli) -> Result<()> {
                 no_lobby: *no_lobby,
                 no_session_end: *no_session_end,
             },
-            &mut std::io::stdin().lock(),
-            &mut std::io::stdout().lock(),
-            &std::env::current_dir()?,
-            std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .as_deref(),
-            &std::env::current_exe()?,
+            &mut init::Io {
+                input: &mut std::io::stdin().lock(),
+                out: &mut std::io::stdout().lock(),
+            },
+            &init::Places {
+                project_dir: &std::env::current_dir()?,
+                home: home.as_deref(),
+                bin: &std::env::current_exe()?,
+            },
         );
     }
     if matches!(cli.cmd, Cmd::Admin { .. }) {
