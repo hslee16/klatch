@@ -1075,3 +1075,37 @@ fn board_shows_open_asks_offers_and_member_status() {
     h.ok("lib", &["post", "lobby", "answer to #2: here"]);
     assert!(h.ok("api", &["board", "lobby"]).contains("no open asks"));
 }
+
+#[test]
+fn the_session_start_board_is_shown_only_when_asked_for_and_does_not_join() {
+    let h = Home::new();
+    h.ok("lib", &["join", "lobby"]);
+    h.ok("lib", &["post", "lobby", "offering: text helpers"]);
+    h.ok("api", &["post", "lobby", "seeking: slugify"]);
+    h.ok("newcomer", &["join", "elsewhere"]);
+    let none = h.ok("newcomer", &["hook", "--event", "SessionStart"]);
+    assert!(
+        !none.contains("[board"),
+        "board shown without consent: {none}"
+    );
+    let start = h.ok(
+        "newcomer",
+        &["hook", "--event", "SessionStart", "--board", "lobby"],
+    );
+    assert!(start.contains("[board lobby]"), "got: {start}");
+    assert!(start.contains("seeking: slugify") && start.contains("offering: text helpers"));
+    assert!(start.contains("DATA"), "no data warning: {start}");
+    let who = h.ok("lib", &["who", "lobby"]);
+    assert!(
+        !who.contains("newcomer"),
+        "reading the board joined the reader: {who}"
+    );
+    let later = h.ok(
+        "newcomer",
+        &["hook", "--event", "UserPromptSubmit", "--board", "lobby"],
+    );
+    assert!(
+        !later.contains("[board"),
+        "board outside session start: {later}"
+    );
+}

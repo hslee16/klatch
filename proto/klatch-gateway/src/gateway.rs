@@ -148,9 +148,12 @@ impl<S: Store> Gateway<S> {
         let now = self.now();
         let messages = self.store.tail(room, 0, 5000)?;
         let statuses = klatch_core::statuses(&messages);
-        let members = self
+        let (recent, gone): (Vec<_>, Vec<_>) = self
             .store
             .members(room)?
+            .into_iter()
+            .partition(|m| now - m.last_seen <= klatch_core::MEMBER_ACTIVE_SECS);
+        let members = recent
             .into_iter()
             .map(|m| klatch_core::BoardMember {
                 status: statuses
@@ -166,6 +169,7 @@ impl<S: Store> Gateway<S> {
             asks: self.store.open_asks(room, now)?,
             offers: klatch_core::current_offers(&messages, now, klatch_core::OFFER_TTL_SECS),
             members,
+            stale_members: gone.len(),
         })
     }
 
@@ -818,6 +822,39 @@ mod tests {
         );
         assert!(g.board(&alice(), "locked").is_err());
         assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn the_board_lists_recent_members_and_counts_the_long_gone() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+        g.join(&alice(), "r").unwrap();
+        g.store.join("r", "ghost", 1).unwrap();
+        g.store.join("r", "bob", 999).unwrap();
+        let b = g.board(&alice(), "r").unwrap();
+        let names: Vec<_> = b.members.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            names.contains(&"alice") && names.contains(&"bob"),
+            "{names:?}"
+        );
+        assert!(
+            !names.contains(&"ghost"),
+            "listed a member not seen for ages: {names:?}"
+        );
+        assert_eq!(b.stale_members, 1);
+    }
+
+    #[test]
+    fn reading_the_board_does_not_make_the_reader_a_member() {
+        let g = open();
+        g.join(&bob(), "r").unwrap();
+        g.board(&alice(), "r").unwrap();
+        let names: Vec<_> = g
+            .who(&bob(), "r")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        assert!(!names.contains(&"alice".to_string()), "{names:?}");
     }
 
     #[test]

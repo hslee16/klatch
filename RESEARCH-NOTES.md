@@ -917,3 +917,11 @@ Two headless asker runs, one scripted room with two offers (`text-helper`: slugi
 - **OBSERVED.** With both offers current, the agent named `text-helper` (3 turns, $0.075).
 - **OBSERVED.** After `text-helper` posted `status: done`, the agent said NO HELPER AVAILABLE and explained why (3 turns, $0.077). One call to `board` gave what run eight's late asker needed several turns of lobby history to find.
 - **NOT OBSERVED.** A requester addressing the helper in a room of two after the board (it only named them); an offer going stale in a real run (#250).
+
+## 28. A new helper sees the session-start board (2026-11-13)
+
+A scripted asker posted an ask and an unrelated offer; then a real headless helper with no joined room started with the hook `klatch hook --event SessionStart --board lobby` (and told not to run other klatch commands before joining).
+
+- **OBSERVED.** The helper's SessionStart context carried the board (437 bytes: the data warning, the open unclaimed ask, the offer). It joined, claimed `ask:1`, answered, released, posted `status: done`, in 8 turns for $0.129, without being told to run `klatch asks` (run nine's late helper needed that fallback).
+- **OBSERVED.** Before it joined, the hook read the board without making it a member.
+- **NOT OBSERVED.** A session with `--board` and no open ask (the board shows nothing to do); the aging in a real run (unit and gateway tests cover it); `init` writing the flag (#65).
