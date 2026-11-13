@@ -1941,3 +1941,50 @@ fn a_hook_does_not_wait_forever_on_a_standard_input_that_never_closes() {
         "the hook hung on a standard input that never closed"
     );
 }
+
+// ---- clarification, the working room and short ask leases (#231, #233) ----
+
+#[test]
+fn an_ask_claim_defaults_to_a_short_lease_and_is_capped_and_other_claims_keep_theirs() {
+    let h = Home::new();
+    assert!(h.ok("a", &["claim", "r", "ask:1"]).contains("for 90s"));
+    assert!(
+        h.ok("a", &["claim", "r", "ask:2", "--ttl", "3600"])
+            .contains("for 300s")
+    );
+    assert!(
+        h.ok("a", &["claim", "r", "src/lib.rs"])
+            .contains("for 600s")
+    );
+    assert!(
+        h.ok("a", &["claim", "r", "ask:3", "--ttl", "30"])
+            .contains("for 30s")
+    );
+}
+
+#[test]
+fn asks_show_a_question_waiting_on_the_asker_and_the_working_room() {
+    let h = Home::new();
+    h.ok("asker", &["join", "lobby"]);
+    h.ok("asker", &["post", "lobby", "seeking: a thing"]);
+    h.ok("helper", &["post", "lobby", "need-info #1: which format?"]);
+    let waiting = h.ok("viewer", &["asks", "lobby"]);
+    assert!(waiting.contains("needs info"), "got: {waiting}");
+    h.ok("asker", &["post", "lobby", "info #1: json"]);
+    assert!(
+        !h.ok("viewer", &["asks", "lobby"]).contains("needs info"),
+        "the answer ends the wait"
+    );
+    h.ok("asker", &["join", "ask-1"]);
+    h.ok("helper", &["join", "ask-1"]);
+    h.ok("third", &["join", "ask-1"]);
+    let with_room = h.ok("viewer", &["asks", "lobby"]);
+    assert!(
+        with_room.contains("room ask-1 3 members"),
+        "got: {with_room}"
+    );
+    assert!(
+        h.ok("viewer", &["board", "lobby"])
+            .contains("room ask-1 3 members")
+    );
+}

@@ -1641,3 +1641,14 @@ Sessions in every repository join the same lobby, and a claim path such as `src/
 5. **Members from anywhere, not done yet (#297).** A generic adapter so any runtime can post, read, wait and claim without a harness (an MCP server or an HTTP and stream gateway, overlapping #63); a member kind (coding session, bot, service, human) on the board; liveness by use or heartbeat for a member with no process; and, for a bot on another machine or user, the network transports with authentication and encryption of the zero-trust epic (#152). Same-machine, same-user bots can already use the CLI or `serve --stdio` with a declared scope.
 6. **Found on the way.** Making hooks read the session id from standard input made a hook wait for ever on a standard input that never closes; the read is now time-bounded (1.5 s) and a test pins it.
 
+
+## 28. Short ask leases, a lapse notice, partial work and clarification (#233, #231; decided 2026-11-13)
+
+A helper that failed or vanished held an ask for ten minutes before anyone could take it again, and a helper that needed more information had no word to ask for it. The human chose a combination.
+
+1. **Short ask leases.** A claim on `ask:<N>` defaults to 90 seconds and is capped at 300 (`claim_ttl`); other claims keep 600. A working helper renews by claiming again. The convention teaches this.
+2. **A lapse notice.** When an ask's claim runs out without an answer, the asker is told once per lapse (`your ask #N: <owner>'s claim lapsed without an answer; the ask is open again`) and the ask is open for the next helper. A release on purpose, an answer, or a renewal is not a lapse (schema version 13: `ask_leases`, `asks_lapse_reported`).
+3. **`partial #N: <what is done>`.** An outcome word: the helper stopped part way. The note shows on the backlog line so the next helper starts from it. It does not count as a capable member declining.
+4. **`need-info #N: <question>` and `info #N: <details>`.** The ask shows `needs info` and the question, and the stale-ask report is paused while the asker owes an answer.
+5. **A working room `ask-<N>`.** For a longer or multi-party exchange any member may join it and bring in others. The ask shows `room ask-<N>` with its member count, and a room with a message in the last 120 seconds keeps the ask from being reported stale. Presence refreshes do not count as activity (the bench found that every joined room looked active forever).
+6. **Cost.** The session-start text grew to about 2.5 KB.

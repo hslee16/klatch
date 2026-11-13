@@ -316,6 +316,7 @@ impl<S: Store> Gateway<S> {
                 path: path.into(),
             },
         )?;
+        let ttl = klatch_core::claim_ttl(path, Some(ttl));
         let member_scope = self.store.member_scope(&who.member)?;
         let scope = klatch_core::claim_scope(path, shared, member_scope.as_deref());
         self.store
@@ -409,6 +410,7 @@ impl<S: Store> Gateway<S> {
                 .store
                 .stale_asks(&room, &who.member, now, STALE_AFTER_SECS)?;
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
+            let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let backlog = if backlog {
                 self.store
                     .open_asks(&room, now)?
@@ -426,6 +428,7 @@ impl<S: Store> Gateway<S> {
                 stale,
                 backlog,
                 escalated,
+                lapsed,
             });
         }
         Ok(Digest {
@@ -1158,6 +1161,35 @@ mod tests {
             );
         }
         assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn an_ask_claim_lease_is_capped_and_a_digest_tells_the_asker_once_when_it_lapses() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "alice", "seeking: a thing", 900).unwrap();
+        g.claim(&bob(), "r", "ask:1", 3600, "").unwrap();
+        let held = g.claims(&alice(), "r").unwrap();
+        assert_eq!(
+            held[0].expires,
+            1000 + 300,
+            "an ask lease is at most five minutes"
+        );
+        let g2 = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+        g2.join(&alice(), "r").unwrap();
+        g2.store
+            .post("r", "alice", "seeking: a thing", 900)
+            .unwrap();
+        g2.store
+            .claim_in("r", "bob", "*", "ask:1", 90, "", 500)
+            .unwrap(); // lapsed at 590
+        let told = g2.digest(&alice()).unwrap();
+        assert_eq!(told.rooms[0].lapsed.len(), 1);
+        assert_eq!(told.rooms[0].lapsed[0].1, "bob");
+        assert!(
+            g2.digest(&alice()).unwrap().rooms[0].lapsed.is_empty(),
+            "told once"
+        );
     }
 
     #[test]

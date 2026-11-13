@@ -15,6 +15,8 @@ pub struct RoomDigest {
     pub backlog: Vec<OpenAsk>,
     /// The member's own open asks that enough helpers declined as not able (reported once).
     pub escalated: Vec<OpenAsk>,
+    /// The member's own open asks whose claim lapsed without an answer, with the holder (reported once).
+    pub lapsed: Vec<(OpenAsk, String)>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -76,6 +78,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
             && d.stale.is_empty()
             && d.backlog.is_empty()
             && d.escalated.is_empty()
+            && d.lapsed.is_empty()
         {
             continue;
         }
@@ -122,6 +125,14 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
                 clip(&a.text)
             ));
         }
+        for (a, owner) in &d.lapsed {
+            out.push_str(&format!(
+                "  your ask #{}: {}'s claim lapsed without an answer; the ask is open again: {}\n",
+                a.seq,
+                flat(owner),
+                clip(&a.text)
+            ));
+        }
         for a in &d.backlog {
             out.push_str(&format!(
                 "  open ask #{} from {} (no claim): {}\n",
@@ -129,6 +140,25 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
                 flat(&a.sender),
                 clip(&a.text)
             ));
+            // What the next helper starts from: the partial work already done and any question the asker owes.
+            for o in a
+                .outcomes
+                .iter()
+                .filter(|o| o.kind == crate::OutcomeKind::Partial)
+            {
+                out.push_str(&format!(
+                    "    partial by {}: {}\n",
+                    flat(&o.by),
+                    clip(&o.reason)
+                ));
+            }
+            if let Some(w) = &a.waiting_on_asker {
+                out.push_str(&format!(
+                    "    waiting on {}: {}\n",
+                    flat(&a.sender),
+                    clip(&w.question)
+                ));
+            }
         }
     }
     out
@@ -306,6 +336,47 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(j.trim()).unwrap();
         assert_eq!(v["systemMessage"], "a \"b\"\nc");
         assert!(v.get("hookSpecificOutput").is_none());
+    }
+    #[test]
+    fn a_lapsed_claim_tells_the_asker_the_ask_is_open_again_and_who_let_it_lapse() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            lapsed: vec![(ask(4, "me", "seeking: a thing", 10), "helper-1".into())],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            out.contains("your ask #4: helper-1's claim lapsed without an answer; the ask is open again: seeking: a thing"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn the_backlog_hands_the_next_helper_the_partial_work_and_the_state_of_the_ask() {
+        let mut a = ask(5, "docs-1", "seeking: the api", 10);
+        a.outcomes = vec![crate::Outcome {
+            kind: crate::OutcomeKind::Partial,
+            by: "h1".into(),
+            reason: "parsed the file; tests not written".into(),
+        }];
+        a.waiting_on_asker = Some(crate::Clarification {
+            by: "h2".into(),
+            question: "which format?".into(),
+        });
+        let d = RoomDigest {
+            room: "lobby".into(),
+            backlog: vec![a],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            out.contains("partial by h1: parsed the file; tests not written"),
+            "got: {out}"
+        );
+        assert!(
+            out.contains("waiting on docs-1: which format?"),
+            "got: {out}"
+        );
     }
     #[test]
     fn empty_rooms_print_nothing() {

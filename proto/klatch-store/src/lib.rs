@@ -7,8 +7,8 @@ mod sqlite;
 pub use sqlite::SqliteStore;
 
 use klatch_core::{
-    Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk, Posted, Result,
-    open_asks,
+    AskRoom, Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk, Posted,
+    Result, open_asks,
 };
 
 pub trait Store {
@@ -96,10 +96,30 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
+    /// Rooms whose name starts with `prefix`, with their member count and latest activity (a member seen or a
+    /// message posted). The default knows none.
+    fn rooms_with_prefix(&self, _prefix: &str) -> Result<Vec<AskRoom>> {
+        Ok(Vec::new())
+    }
     /// Asks nobody has answered or closed (DESIGN section 25.4), oldest first. A released claim does not end one.
+    /// Each carries its working room, `ask-<N>`, if anyone has joined it.
     fn open_asks(&self, room: &str, now: i64) -> Result<Vec<OpenAsk>> {
         let messages = self.tail(room, 0, 5000)?;
-        Ok(open_asks(&messages, &self.claims(room, now)?))
+        let mut asks = open_asks(&messages, &self.claims(room, now)?);
+        let rooms = self.rooms_with_prefix("ask-")?;
+        for a in &mut asks {
+            a.room = rooms
+                .iter()
+                .find(|r| r.name == format!("ask-{}", a.seq))
+                .cloned();
+        }
+        Ok(asks)
+    }
+    /// `member`'s own open asks whose claim lapsed without an answer (a helper that failed or vanished), not
+    /// reported to it before for that lapse, with the holder whose lease ran out; remembers what it returned. An
+    /// ask whose claim was released on purpose, or that is claimed again, is not a lapse. The default knows none.
+    fn lapsed_asks(&self, _room: &str, _member: &str, _now: i64) -> Result<Vec<(OpenAsk, String)>> {
+        Ok(Vec::new())
     }
     /// `member`'s own open asks that have had no claim for at least `after` seconds and were not reported to
     /// it before; remembers what it returned. The default remembers nothing and reports them every time.
@@ -107,7 +127,13 @@ pub trait Store {
         Ok(self
             .open_asks(room, now)?
             .into_iter()
-            .filter(|a| a.sender == member && !a.claimed && now - a.ts >= after)
+            .filter(|a| {
+                a.sender == member
+                    && !a.claimed
+                    && a.waiting_on_asker.is_none()
+                    && !a.room_active(now)
+                    && now - a.ts >= after
+            })
             .collect())
     }
     /// Messages from others past both the read cursor and the member's wait position. Changes no cursor, but
