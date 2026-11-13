@@ -4,12 +4,18 @@
 in the core only if it serves that sentence. Klatch is a communication channel that makes work between agents
 more efficient. It is not a judge of the product or of the agents' work (section 3, non-goals).
 
+**Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in all of
+klatch (section 23).** It is built before the initial public release, not now: until then the prototype stores and
+transmits plaintext and must not hold sensitive data. The release does not happen until the epic and milestone
+that carry this maxim are closed (GitHub epic #152, milestone "Initial public release gate").
+
 Status: **draft for review. Nothing is built.** Written 2026-11-12. Revised the same day after the
 survey in `SURVEY.md`; section 18 records what the survey changed and what it decided. All nine human
 decisions in section 15 were made on 2026-11-12: section 19 records them, section 20 the harness
 abstraction (Claude Code first, Codex CLI next), section 21 install onboarding and section 22 the open
 questions that the decisions and a third research pass added or sharpened. Where section 19 differs from
-earlier text (notably 10.1, the human-only declassification, and R7), section 19 wins.
+earlier text (notably 10.1, the human-only declassification, and R7), section 19 wins. Section 23 (zero trust and
+encryption) adds the second binding maxim and revises threat-model items 6 and 7.
 
 Companion files: `RESEARCH-NOTES.md` (what the Claude Code documentation says and does not say),
 `CASE-STUDY.md` (the session that motivated this, anonymized), `SURVEY.md` (what already exists, with
@@ -80,6 +86,7 @@ agents to hurt each other.
    it does not break on a release. Optional upgrades are isolated behind clear seams.
 6. Cheap in context: an agent should pay tokens only for what concerns it.
 7. Observable and stoppable by the human at any time.
+8. Zero trust, with all data encrypted at rest and on the wire, before the initial public release (section 23).
 
 ### Non-goals
 
@@ -155,10 +162,16 @@ Who and what can go wrong, in order of how likely each is:
    SDK's peer message). Needs gateway-verified identity (R5): the gateway derives the sender from
    the caller's session environment and a per-session token it issued at join time, not from the
    message body.
-6. **A malicious process of the same user.** Out of scope: a same-user attacker can already do
-   anything the user can. The design only needs to make accidents and injection hard.
-7. **Cross-user attacks.** Out of scope for v1 (single user, single machine). Directory
-   permissions `0700` for room storage.
+6. **A malicious process of the same user.** Revised by section 23: not assumed away, because zero trust is
+   inherent. Data is encrypted and keys are kept apart from the data, which narrows what such a process can
+   take; what remains cannot be fully closed by software on one user account and is stated plainly in
+   `SECURITY.md` (section 23.4). Before the release gate the old position still holds: a same-user attacker can
+   already do anything the user can.
+7. **Cross-user attacks and anyone with the files.** Revised by section 23. Directory permissions `0700` are a
+   baseline, and encryption at rest is the control that holds when permissions fail: another OS user, a backup, a
+   synced folder, a stolen disk. Before the release gate neither exists beyond the permissions.
+8. **A network eavesdropper or tamperer, and a compromised proxy or tunnel endpoint** (added by section 23). Needs
+   every transport encrypted and mutually authenticated, and no plaintext hop that crosses a machine boundary.
 
 Hard rules inherited from the documentation and the harness, restated as design rules:
 
@@ -1271,3 +1284,87 @@ permissions, hook trust); it can be re-run with `klatch init --reconfigure`; eve
     interactive TUI and with a bypassing receiver, and record which gate actually applies.
 30. `PostToolUse` injection, warn-without-block in `PreToolUse`, hook output limits, and `asyncRewake` in the
     interactive TUI and under long delays are still untested.
+
+## 23. Zero trust and encryption (2026-11-12)
+
+The second binding maxim, stated by the human: **all data is encrypted, at rest and on the wire, and zero trust is
+inherent in all of klatch.** It is not implemented in the prototype, which stores and transmits plaintext, and it is
+not part of the current build. It is a hard gate: the initial public release does not happen until it is done and
+reviewed. Work is tracked in epic #152 and the milestone "Initial public release gate".
+
+### 23.1 What the maxim means
+
+- **No trust from location.** A request is trusted because it is authenticated and authorized, never because it
+  comes from localhost, a socket or the same machine. The gateway already works this way inside the process: every
+  operation takes a `Principal` and passes the guard.
+- **Verify explicitly, every time.** Identity (attribution), clearance and claims are checked on every request, and
+  credentials are short-lived and rotated.
+- **Least privilege.** Clearance caps what an agent may read. Under this maxim that is also enforced by keys: an agent
+  is given keys only up to its clearance, and the secret label's keys are never given to any agent (D3, D4).
+- **Assume breach.** Stolen files, a leaked backup, a synced folder or another OS user yield nothing readable, and
+  tampering is detected, so a breach has a small blast radius.
+- **Encrypted at rest** covers the database including its write-ahead log, journal and temporary files, archives
+  (D2), transcripts and exports (R10), logs and backups. **Encrypted on the wire** covers every transport in rule 11
+  of section 20 (SSH, TLS with client certificates, WebSocket over TLS, HTTPS), and the local case in 23.4.
+- **Where plaintext necessarily exists.** In the gateway's memory, and in the harness and the model's context when a
+  hook or stream delivers a message, because delivering content to agents is the product. There the label check
+  decides what may reach which agent; encryption protects the data everywhere else.
+
+### 23.2 Requirements
+
+| Id | Requirement |
+|---|---|
+| R32 | All persistent data is encrypted at rest with authenticated encryption: the database (including WAL, journal and temporary files), archives, transcripts, exports, backups and logs. Tampering is detected |
+| R33 | Every transport that leaves a process or a machine is encrypted and mutually authenticated. There is no plaintext mode, and a plaintext listener refuses to start off loopback |
+| R34 | Keys are never stored beside the data they protect. A key-store interface has an operating-system keystore backend and a way to key unattended workers; keys can be rotated and revoked, and a recovery policy exists |
+| R35 | Zero trust in code: every operation takes a `Principal` and passes the guard; nothing is trusted for its address or process; member credentials are short-lived |
+| R36 | Cryptography uses audited libraries only, with no home-grown primitives; secrets are zeroized; comparisons are constant time; every encrypted artifact carries a format version and algorithm identifiers |
+| R37 | Message content and keys never reach logs, crash output, temporary files, command-line arguments or the environment |
+| R38 | Producing readable text from encrypted data (an export) is an explicit, audited act |
+| R39 | Existing plaintext databases can be migrated in place without leaving a plaintext copy |
+| R40 | Release gate: no public release until R32 to R39 are implemented, tested, measured and externally reviewed |
+
+### 23.3 Options to decide (tickets #153 and #154; not yet researched)
+
+- **At rest.** (A) Whole-database encryption such as SQLCipher through `rusqlite`'s bundled-sqlcipher feature: hides
+  pages, the WAL and metadata, with one key for everything; its licence must be checked against D8. (B)
+  Application-level envelope encryption: per-room or per-label data keys wrapped by a key-encryption key, which also
+  enforces labels cryptographically, but leaves room ids, sequence numbers and timestamps visible unless they are
+  encrypted too, and is more code to get right. (C) Both: A for the baseline and metadata, B for label keys.
+- **Key custody.** An operating-system keystore (macOS Keychain, Linux Secret Service), an optional passphrase
+  (a memory-hard derivation), and machine or service keys for unattended workers and factories.
+- **Wire.** The network transports are already specified as authenticated and encrypted; the question is whether
+  an application-layer channel between member and gateway should sit on top, so a compromised tunnel endpoint or
+  reverse proxy cannot read content.
+
+### 23.4 Honest limits and open questions
+
+- **A hostile process as the same user.** Encryption at rest does not stop such a process if it can reach the key
+  (the keystore answers the user) or read the gateway's memory. Zero trust forbids assuming that attacker away,
+  so the design narrows it: keys in an operating-system keystore with per-application access control where the
+  platform offers it, no keys in the environment (the harness child environment already carries that session's
+  messaging token), member credentials that cannot decrypt above their clearance, and, for stronger separation, a
+  separate OS user for the gateway or daemon (D6, later stage) or hardware-backed keys. The remainder is stated in
+  `SECURITY.md`.
+- **A lost key is lost data** unless a recovery path is chosen, and every recovery path has a cost.
+- **Metadata** (room names, sender names, timestamps, sequence numbers) is either encrypted or knowingly exposed.
+- **Local IPC.** Standard-input pipes and Unix sockets never cross a machine. The maxim says all data on the wire, so
+  either authenticated peers with operating-system permissions are accepted as enough, or a session layer is added.
+- **The hook path.** Decryption on every prompt must stay within a latency budget, and keys must be available to
+  hooks non-interactively without entering a transcript.
+- **Querying encrypted fields.** The store looks up by room, sequence number and sender; field-level encryption
+  constrains that.
+
+Open questions added: **31.** Which at-rest design, A, B or C (#154). **32.** Which metadata is encrypted (#153).
+**33.** Local IPC: are authenticated peers enough, or is a session layer added (#158). **34.** Key custody for
+interactive users: keystore only, or also a passphrase, and which is the default (#155). **35.** Recovery policy:
+none, a recovery code or escrow (#155). **36.** How unattended workers and factories are keyed without a human
+(#155, #121). **37.** How far the same-user threat can be reduced on each platform (#153). **38.** Whether an
+application-layer authenticated channel sits above the transports (#157).
+
+### 23.5 Until the gate
+
+The prototype stores and transmits plaintext. The README and `SECURITY.md` say so, and nothing sensitive should be
+stored in it. Work that touches storage, transports, exports or logs should not make the later change harder: no
+new plaintext artifact without a ticket, and no key or message content in logs, arguments or the environment.
+
