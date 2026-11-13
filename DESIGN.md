@@ -975,7 +975,7 @@ gradually:
 | `Store` | SQLite | Postgres, replicated or sharded stores |
 | `Judge` | `rules`; local model; optional hosted | per-org policy |
 | `AnchorAdapter` | GitHub (REST) | GitLab, Linear, Jira |
-| `Transport` (client to gateway) | local socket or direct call | HTTPS with mutual TLS |
+| `Transport` (client to gateway) | direct call or local socket, **both with a streaming subscribe from the start** | HTTPS with mutual TLS |
 | `Identity` | gateway-issued member bound to a session | accounts, SSO, org membership |
 | `Notifier` (wake-up) | hooks and polling; optional nudge | push channels, webhooks |
 | `Harness` | Claude Code, then Codex CLI, plus a generic CLI and MCP adapter | other runtimes (section 20) |
@@ -1099,6 +1099,16 @@ and the other items marked as reports):**
    and none of them depends on it. If a front-end needs something the public interface lacks, the interface
    is extended so that agents benefit too. Humans still ask questions through the librarian; a front-end only
    presents the same read-only answers.
+10. **Delivery model: a durable ordered log, pushed signals, pulled content (2026-11-12).** The store is the
+    source of truth. Where a harness allows it, klatch pushes a signal (channels, `asyncRewake`, a content-free
+    nudge); a session reads content through its hook or `klatch read`, because a session only takes input at
+    turn boundaries and a raw push carries no sender, no fencing and bypasses the label check. Pull is the
+    floor, not the design. `Transport` has a **streaming subscribe from day one**: `subscribe(room, from_seq)`
+    yields events in per-room order, resumes from a sequence number (the same path a late joiner uses), and
+    passes through the same identity, label and audit checks as a read. Without a daemon the direct transport
+    implements it as a cursor tail of the store; a daemon later replaces the polling with a pushed stream and
+    no caller changes. Non-LLM clients (a TUI or web shim, the librarian, a user-facing agent) use this same
+    call, and it is what a future multi-machine transport must carry.
 
 ## 21. Install onboarding
 
