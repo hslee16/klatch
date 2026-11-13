@@ -956,3 +956,13 @@ Runs twelve and thirteen: a helper and an asker whose task text says nothing abo
 - **OBSERVED.** The only defect was in my text, not in the agents: it named the actions but not the command forms, so run twelve burned turns guessing. Showing the exact commands removed the wasted turns (asker 14 to 9 turns).
 - **Caveats.** One run each, so the 14 to 9 and 13 to 11 turn drops could include model variance; the removal of `--help` and the wrong claim form is a direct effect of the text. The helper's task text did say to stay available until the askers were finished (the stop rule is not part of the convention; it follows the V3 `status: done` signal). Two agents only: no contention, no declines.
 - **NOT OBSERVED.** More than one helper, declines, the dual role (#246), a session that ignores the convention, longer lobbies.
+
+## 32. A deadlock trap: opposite-order claims (2026-11-13)
+
+Run fourteen (#246). Two real agents, one shared directory with `X.py` and `Y.py`, convention taught only by the SessionStart hook, task text only saying to claim a file before editing it. Alpha must edit X then Y and keep its claim on X until Y is done; beta must edit Y then X and keep its claim on Y until X is done: hold-and-wait in opposite order.
+
+- **OBSERVED.** The deadlock formed for real: each claimed its first file and edited it, then each got a claim conflict on the other's file (the conflict message names the holder and the seconds left).
+- **OBSERVED.** The agents resolved it by themselves in the lobby in about a minute (alpha 69 s, 18 turns, $0.237; beta 51 s, 15 turns, $0.202). Both posted the deadlock; the proposals crossed ("our messages crossed"); they agreed that the one who had already edited its first file goes first; the other reverted its edit and released; the first finished both and released; the second then did its own. No human involved, no claim lapse needed.
+- **OBSERVED.** The final files say `from alpha` in both: the second agent's later edits replaced the first agent's. Nothing in klatch (or in my task text, which required both changes "to land together") made the first agent's result survive; the claims prevented concurrent edits, not a sequence of overwrites.
+- **OBSERVED.** Crossed proposals: each offered to yield to the other at the same moment. A deterministic tie-break was not available to them and cost a message round.
+- **NOT OBSERVED.** Three or more members in a cycle; a cycle through asks (A waits on B's answer, B waits on A's) rather than through claims; a member that is busy for minutes and cannot answer; agents that do not negotiate (a crashed holder, a claim that outlives its owner by the 600 s TTL).
