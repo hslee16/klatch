@@ -69,9 +69,10 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 | `read` | `room`, `peek` (optional) | `{ "messages": [...] }`: unread messages from others, each `{id, seq, sender, attribution, label, body, ts}`; advances the cursor unless `peek` |
 | `who` | `room` | `{ "members": [{ "name", "last_seen", "status" }] }`: liveness, not progress; `status` is present only when the member set one |
 | `status` | `room`, `status` | `{}`. Sets the caller's own status in the room (one line, 1 to 80 characters, no control characters), for example `done`. Shown by `who` and the board; `done` also takes the member's offers off the board. Fails with `invalid` for a bad status |
-| `claim` | `room`, `path`, `ttl` (seconds, optional, default 600), `reason` (optional) | `{}`, or fails with code `conflict` |
+| `claim` | `room`, `path`, `ttl` (seconds, optional, default 600), `reason` (optional), `shared` (optional, default false) | `{}`, or fails with code `conflict`. A claim lives in the caller's scope (see `scope`) and conflicts only with overlapping claims in the same scope; a `shared` claim, and any path starting `ask:`, conflict with every scope |
+| `scope` | `scope` | `{}`. Declares the scope the caller works in: 1 to 80 characters of letters, digits and `. : _ - /`, for example `git:klatch-3fa9c1d2`, `bot:grok`, `project:acme`. `invalid` for a bad value. A caller with no scope shares the empty scope with every other such caller |
 | `release` | `room`, `path` | `{}`, or fails with `not_found` if you hold no claim on that path |
-| `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires" }] }`: unexpired claims in the room |
+| `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires", "scope" }] }`: unexpired claims in the room; `scope` is present when the claim has one (`*` for a shared claim) |
 
 The list results are named for what they hold: `messages`, `members` and `claims`.
 

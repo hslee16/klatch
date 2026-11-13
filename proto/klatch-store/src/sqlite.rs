@@ -2,7 +2,7 @@ use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
     Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted, ReleasedClaim,
-    Result, overlaps,
+    Result, overlaps, scopes_collide,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -32,19 +32,20 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
- CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
+ CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER, scope TEXT NOT NULL DEFAULT '');
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
- CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));
- CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);";
+ CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));
+ CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);
+ CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -190,6 +191,17 @@ fn migrate_v10(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 11 to 12: the scope a claim lives in and the scope a member works in (DESIGN section 27), so two
+/// repositories, or two bots, can claim the same path without colliding. Existing claims keep the empty scope.
+fn migrate_v11(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE claims ADD COLUMN scope TEXT NOT NULL DEFAULT '';
+         ALTER TABLE claim_waits ADD COLUMN scope TEXT NOT NULL DEFAULT '';
+         CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -302,7 +314,10 @@ impl SqliteStore {
                     if version < 10 {
                         migrate_v9(&conn)?;
                     }
-                    migrate_v10(&conn)?;
+                    if version < 11 {
+                        migrate_v10(&conn)?;
+                    }
+                    migrate_v11(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -338,14 +353,14 @@ impl SqliteStore {
         room: &str,
         requester: &str,
         holder: &str,
-        held: &[(String, String, i64)],
+        held: &[(String, String, i64, String)],
     ) -> Result<bool> {
         let mut st = self
             .conn
-            .prepare("SELECT member,path FROM claim_waits WHERE room=?1")
+            .prepare("SELECT member,path,scope FROM claim_waits WHERE room=?1")
             .map_err(be)?;
-        let waits: Vec<(String, String)> = st
-            .query_map(params![room], |r| Ok((r.get(0)?, r.get(1)?)))
+        let waits: Vec<(String, String, String)> = st
+            .query_map(params![room], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .map_err(be)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(be)?;
@@ -359,9 +374,9 @@ impl SqliteStore {
                 continue;
             }
             seen.push(node.clone());
-            for (member, wanted) in waits.iter().filter(|(m, _)| *m == node) {
-                for (p, o, _) in held {
-                    if o != member && overlaps(p, wanted) {
+            for (member, wanted, wscope) in waits.iter().filter(|(m, _, _)| *m == node) {
+                for (p, o, _, sc) in held {
+                    if o != member && overlaps(p, wanted) && scopes_collide(sc, wscope) {
                         stack.push(o.clone());
                     }
                 }
@@ -533,6 +548,31 @@ impl Store for SqliteStore {
                 }
             }
             Ok(removed)
+        })
+    }
+
+    fn member_scope(&self, member: &str) -> Result<Option<String>> {
+        match self.conn.query_row(
+            "SELECT scope FROM member_scope WHERE member=?1",
+            params![member],
+            |r| r.get(0),
+        ) {
+            Ok(m) => Ok(Some(m)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(be(e)),
+        }
+    }
+
+    fn set_member_scope(&self, member: &str, scope: &str, now: i64) -> Result<()> {
+        self.immediate(|| {
+            self.conn
+                .execute(
+                    "INSERT INTO member_scope(member,scope,ts) VALUES(?1,?2,?3)
+                     ON CONFLICT(member) DO UPDATE SET scope=?2, ts=?3",
+                    params![member, scope, now],
+                )
+                .map_err(be)?;
+            Ok(())
         })
     }
 
@@ -719,6 +759,19 @@ impl Store for SqliteStore {
         reason: &str,
         now: i64,
     ) -> Result<()> {
+        self.claim_in(room, owner, "", path, ttl, reason, now)
+    }
+
+    fn claim_in(
+        &self,
+        room: &str,
+        owner: &str,
+        scope: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        now: i64,
+    ) -> Result<()> {
         // The closure returns the outcome as a value, not an error, so that a refused attempt is still committed:
         // it is remembered as a wait, which is what lets a later conflict be recognised as closing a cycle.
         self.immediate(|| {
@@ -733,7 +786,7 @@ impl Store for SqliteStore {
                 .map_err(be)?;
             let mut st = self
                 .conn
-                .prepare("SELECT path,owner,expires FROM claims WHERE room=?1")
+                .prepare("SELECT path,owner,expires,scope FROM claims WHERE room=?1")
                 .map_err(be)?;
             let held = st
                 .query_map(params![room], |r| {
@@ -741,18 +794,19 @@ impl Store for SqliteStore {
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
                     ))
                 })
                 .map_err(be)?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(be)?;
-            for (p, o, e) in &held {
-                if o != owner && overlaps(p, path) {
+            for (p, o, e, sc) in &held {
+                if o != owner && overlaps(p, path) && scopes_collide(sc, scope) {
                     self.conn
                         .execute(
-                            "INSERT INTO claim_waits(room,member,path,ts) VALUES(?1,?2,?3,?4)
-                             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4",
-                            params![room, owner, path, now],
+                            "INSERT INTO claim_waits(room,member,path,ts,scope) VALUES(?1,?2,?3,?4,?5)
+                             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, scope=?5",
+                            params![room, owner, path, now, scope],
                         )
                         .map_err(be)?;
                     let deadlock = self.closes_cycle(room, owner, o, &held)?;
@@ -790,8 +844,8 @@ impl Store for SqliteStore {
                 .map_err(be)?;
             self.conn
                 .execute(
-                    "INSERT INTO claims(room,path,owner,member,reason,expires) VALUES(?1,?2,?3,?3,?4,?5)",
-                    params![room, path, owner, reason, now + ttl],
+                    "INSERT INTO claims(room,path,owner,member,reason,expires,scope) VALUES(?1,?2,?3,?3,?4,?5,?6)",
+                    params![room, path, owner, reason, now + ttl, scope],
                 )
                 .map_err(be)?;
             Ok(Ok(()))
@@ -815,7 +869,7 @@ impl Store for SqliteStore {
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
         let mut st = self
             .conn
-            .prepare("SELECT path,owner,reason,expires FROM claims WHERE room=?1 AND expires>?2 ORDER BY path")
+            .prepare("SELECT path,owner,reason,expires,scope FROM claims WHERE room=?1 AND expires>?2 ORDER BY path")
             .map_err(be)?;
         st.query_map(params![room, now], |r| {
             Ok(Claim {
@@ -823,6 +877,7 @@ impl Store for SqliteStore {
                 owner: r.get(1)?,
                 reason: r.get(2)?,
                 expires: r.get(3)?,
+                scope: r.get(4)?,
             })
         })
         .map_err(be)?
@@ -1465,6 +1520,73 @@ mod tests {
     }
 
     #[test]
+    fn claims_in_different_scopes_do_not_collide_but_the_same_scope_does() {
+        let s = store();
+        s.claim_in("r", "alice", "git:a", "src/lib.rs", 100, "", 0)
+            .unwrap();
+        s.claim_in("r", "bob", "git:b", "src/lib.rs", 100, "", 0)
+            .unwrap();
+        let err = s
+            .claim_in("r", "carol", "git:a", "src/lib.rs", 100, "", 1)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Conflict { ref owner, .. } if owner == "alice"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_shared_claim_collides_with_every_scope_in_both_directions() {
+        let s = store();
+        s.claim_in("r", "alice", "*", "docs", 100, "", 0).unwrap();
+        assert!(
+            s.claim_in("r", "bob", "git:b", "docs/api.md", 100, "", 1)
+                .is_err(),
+            "scoped against shared"
+        );
+        s.claim_in("r", "carol", "git:c", "src", 100, "", 2)
+            .unwrap();
+        assert!(
+            s.claim_in("r", "dave", "*", "src/x.rs", 100, "", 3)
+                .is_err(),
+            "shared against scoped"
+        );
+    }
+
+    #[test]
+    fn an_empty_scope_behaves_as_claims_always_did_and_the_listing_shows_each_scope() {
+        let s = store();
+        s.claim("r", "alice", "p", 100, "", 0).unwrap();
+        assert!(
+            s.claim("r", "bob", "p", 100, "", 1).is_err(),
+            "the default scope still collides"
+        );
+        s.claim_in("r", "carol", "git:c", "q", 100, "", 2).unwrap();
+        let claims = s.claims("r", 3).unwrap();
+        let scope_of = |p: &str| claims.iter().find(|c| c.path == p).map(|c| c.scope.clone());
+        assert_eq!(scope_of("p").as_deref(), Some(""));
+        assert_eq!(scope_of("q").as_deref(), Some("git:c"));
+    }
+
+    #[test]
+    fn a_members_scope_is_remembered_and_the_last_one_wins() {
+        let path = temp_db("member-scope");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            assert_eq!(s.member_scope("alice").unwrap(), None);
+            s.set_member_scope("alice", "git:a", 1).unwrap();
+            s.set_member_scope("alice", "bot:grok", 2).unwrap();
+            s.set_member_scope("bob", "git:b", 3).unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            s.member_scope("alice").unwrap().as_deref(),
+            Some("bot:grok")
+        );
+        assert_eq!(s.member_scope("bob").unwrap().as_deref(), Some("git:b"));
+    }
+
+    #[test]
     fn peek_does_not_advance_the_cursor() {
         let s = store();
         s.join("r", "alice", 1).unwrap();
@@ -1527,7 +1649,8 @@ mod tests {
                 path: "src".into(),
                 owner: "bob".into(),
                 reason: "b".into(),
-                expires: 200
+                expires: 200,
+                scope: String::new()
             }]
         );
     }
@@ -2237,12 +2360,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_11() {
-        assert_eq!(version(&store()), 11);
+    fn a_fresh_database_is_at_schema_version_12() {
+        assert_eq!(version(&store()), 12);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_11_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_12_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -2258,7 +2381,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 11);
+        assert_eq!(version(&s), 12);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -2279,14 +2402,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            11,
+            12,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_11() {
+    fn a_version_0_database_now_migrates_all_the_way_to_12() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -2299,7 +2422,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 11);
+        assert_eq!(version(&s), 12);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -2318,11 +2441,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_eleven_with_everything_intact() {
+    fn a_version_two_database_migrates_to_twelve_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 11);
+        assert_eq!(version(&s), 12);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -2340,7 +2463,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 11);
+        assert_eq!(version(&s), 12);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

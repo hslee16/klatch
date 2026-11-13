@@ -7,6 +7,7 @@ mod convention;
 mod error;
 mod hook;
 mod model;
+mod scope;
 mod text;
 
 pub use asks::{
@@ -25,4 +26,5 @@ pub use model::{
     Attribution, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
     ReleasedClaim,
 };
+pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{flat, norm, overlaps, valid_name};

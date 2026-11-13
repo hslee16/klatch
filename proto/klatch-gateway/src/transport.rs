@@ -15,6 +15,19 @@ pub trait Transport {
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
     fn claim(&self, room: &str, path: &str, ttl: i64, reason: &str) -> Result<()>;
+    /// `claim`, optionally shared with every scope.
+    fn claim_with(
+        &self,
+        room: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        shared: bool,
+    ) -> Result<()>;
+    /// Declare the scope the caller works in.
+    fn set_scope(&self, scope: &str) -> Result<()>;
+    /// The scope the caller declared or was given.
+    fn scope(&self) -> Result<Option<String>>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
@@ -75,6 +88,23 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn claim(&self, room: &str, path: &str, ttl: i64, reason: &str) -> Result<()> {
         self.gateway.claim(&self.principal, room, path, ttl, reason)
+    }
+    fn claim_with(
+        &self,
+        room: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        shared: bool,
+    ) -> Result<()> {
+        self.gateway
+            .claim_with(&self.principal, room, path, ttl, reason, shared)
+    }
+    fn set_scope(&self, scope: &str) -> Result<()> {
+        self.gateway.set_scope(&self.principal, scope)
+    }
+    fn scope(&self) -> Result<Option<String>> {
+        self.gateway.scope_of(&self.principal)
     }
     fn release(&self, room: &str, path: &str) -> Result<()> {
         self.gateway.release(&self.principal, room, path)

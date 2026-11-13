@@ -271,6 +271,37 @@ impl<S: Store> Gateway<S> {
         ttl: i64,
         reason: &str,
     ) -> Result<()> {
+        self.claim_with(who, room, path, ttl, reason, false)
+    }
+
+    /// Declare the scope the caller works in (a repository, a bot's area, a project): claims then conflict only
+    /// inside one scope (DESIGN section 27).
+    pub fn set_scope(&self, who: &Principal, scope: &str) -> Result<()> {
+        check_member(who)?;
+        if !klatch_core::valid_scope(scope) {
+            return Err(Error::Invalid(
+                "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
+            ));
+        }
+        self.store.set_member_scope(&who.member, scope, self.now())
+    }
+
+    /// The scope the caller declared or was given, if any.
+    pub fn scope_of(&self, who: &Principal) -> Result<Option<String>> {
+        check_member(who)?;
+        self.store.member_scope(&who.member)
+    }
+
+    /// `claim`, optionally `shared`: a shared claim, like any `ask:<N>`, conflicts with every scope.
+    pub fn claim_with(
+        &self,
+        who: &Principal,
+        room: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        shared: bool,
+    ) -> Result<()> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
@@ -285,8 +316,10 @@ impl<S: Store> Gateway<S> {
                 path: path.into(),
             },
         )?;
+        let member_scope = self.store.member_scope(&who.member)?;
+        let scope = klatch_core::claim_scope(path, shared, member_scope.as_deref());
         self.store
-            .claim(room, &who.member, path, ttl, reason, self.now())
+            .claim_in(room, &who.member, &scope, path, ttl, reason, self.now())
     }
 
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {
@@ -560,7 +593,8 @@ mod tests {
         ));
         g.claim(&who, "r", "src/a b.rs", 10, "a fine reason")
             .unwrap();
-        assert_eq!(g.store.calls.get(), 1);
+        // Only the valid claim reached the store: it looks up the member's scope, then claims.
+        assert_eq!(g.store.calls.get(), 2);
     }
 
     #[test]
@@ -1067,6 +1101,59 @@ mod tests {
         for bad in ["", "a b", "x\ny", &"s".repeat(81)] {
             assert!(
                 matches!(g.note_session(&alice(), bad), Err(Error::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn two_scopes_can_claim_the_same_path_and_one_scope_cannot_claim_it_twice() {
+        let g = open();
+        let (a, b, c) = (alice(), bob(), Principal::unattributed("carol"));
+        g.set_scope(&a, "git:a").unwrap();
+        g.set_scope(&b, "git:b").unwrap();
+        g.set_scope(&c, "git:a").unwrap();
+        g.claim(&a, "r", "src/lib.rs", 100, "").unwrap();
+        g.claim(&b, "r", "src/lib.rs", 100, "").unwrap();
+        assert!(matches!(
+            g.claim(&c, "r", "src/lib.rs", 100, ""),
+            Err(Error::Conflict { .. })
+        ));
+        assert_eq!(g.claims(&a, "r").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_shared_claim_and_an_ask_claim_conflict_across_scopes() {
+        let g = open();
+        let (a, b) = (alice(), bob());
+        g.set_scope(&a, "git:a").unwrap();
+        g.set_scope(&b, "git:b").unwrap();
+        g.claim_with(&a, "r", "docs", 100, "", true).unwrap();
+        assert!(
+            g.claim(&b, "r", "docs/api.md", 100, "").is_err(),
+            "a scoped claim against a shared one"
+        );
+        g.claim(&a, "r", "ask:3", 100, "").unwrap();
+        assert!(
+            g.claim(&b, "r", "ask:3", 100, "").is_err(),
+            "an ask is room-wide"
+        );
+    }
+
+    #[test]
+    fn members_with_no_scope_still_collide_as_before() {
+        let g = open();
+        g.claim(&alice(), "r", "p", 100, "").unwrap();
+        assert!(g.claim(&bob(), "r", "p", 100, "").is_err());
+    }
+
+    #[test]
+    fn a_bad_scope_is_rejected_before_the_store() {
+        let g = open();
+        for bad in ["", "has space", "*", "new\nline", &"s".repeat(81)] {
+            assert!(
+                matches!(g.set_scope(&alice(), bad), Err(Error::Invalid(_))),
                 "{bad:?}"
             );
         }

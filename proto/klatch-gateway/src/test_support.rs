@@ -133,6 +133,28 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.member_of_session(session_id)
     }
+    fn claim_in(
+        &self,
+        room: &str,
+        owner: &str,
+        scope: &str,
+        path: &str,
+        ttl: i64,
+        reason: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.gate()?;
+        self.inner
+            .claim_in(room, owner, scope, path, ttl, reason, now)
+    }
+    fn member_scope(&self, member: &str) -> Result<Option<String>> {
+        self.gate()?;
+        self.inner.member_scope(member)
+    }
+    fn set_member_scope(&self, member: &str, scope: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.set_member_scope(member, scope, now)
+    }
     fn claim_changes(
         &self,
         room: &str,

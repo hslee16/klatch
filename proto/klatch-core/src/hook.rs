@@ -329,6 +329,7 @@ mod tests {
                 owner: "bob".into(),
                 reason: "".into(),
                 expires: 130,
+                scope: String::new(),
             }],
             released: vec![],
             ..Default::default()

@@ -26,6 +26,10 @@ struct Cli {
     /// given (default: off, or set KLATCH_DISCOVER=1). Reads only the registry's .json files, never a key file.
     #[arg(long, global = true)]
     discover: bool,
+    /// The scope this member works in (default: $KLATCH_SCOPE, else a coding session's repository). Claims conflict
+    /// only inside one scope, so two repositories or two bots can each claim `src/lib.rs`.
+    #[arg(long = "member-scope", global = true)]
+    member_scope: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -76,7 +80,12 @@ enum Cmd {
         ttl: i64,
         #[arg(long, default_value = "")]
         reason: String,
+        /// Conflict with every scope, not only your own (an `ask:<N>` claim always does)
+        #[arg(long)]
+        shared: bool,
     },
+    /// Show the scope you work in, or set it
+    Scope { scope: Option<String> },
     /// Release a claim you hold
     Release { room: String, path: String },
     /// Set your status in a room (for example "done"), shown by who and the board
@@ -224,11 +233,18 @@ fn main() -> Result<()> {
     let is_hook = matches!(cli.cmd, Cmd::Hook { .. });
     let session_end = matches!(&cli.cmd, Cmd::Hook { event: Some(e), .. } if e == "SessionEnd");
     let stdin_session = if is_hook { stdin_session_id() } else { None };
-    let (evidence, notice) = match (&declared, is_hook && discover) {
-        (None, true) => hook_evidence(stdin_session.as_deref(), discover_session(), &|sid| {
+    // What the walk up the process tree found, once: it gives the identity and, for a coding session, its directory.
+    let found = (declared.is_none() && discover).then(discover_session);
+    let session_dir = found
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|f| f.cwd.clone());
+    let (evidence, notice) = match (&declared, &found, is_hook) {
+        (None, Some(f), true) => hook_evidence(stdin_session.as_deref(), f.clone(), &|sid| {
             store.member_of_session(sid).ok().flatten()
         }),
-        _ => gather_evidence(declared, discover.then_some(&discover_session)),
+        (None, Some(f), false) => gather_evidence(None, Some(&|| f.clone())),
+        _ => gather_evidence(declared, None),
     };
     // A SessionEnd hook that cannot tell which session it ends does nothing, quietly: it must never fail a
     // session's exit and never act as anyone else.
@@ -253,6 +269,19 @@ fn main() -> Result<()> {
     };
     let principal = resolve_principal(&LocalIdentity, &evidence)?;
     let me = principal.member.clone();
+    // The scope a member works in: the one it declared (flag or KLATCH_SCOPE), else the one it already has, else
+    // for a coding session the repository it started in (DESIGN section 27).
+    let declared_scope = cli
+        .member_scope
+        .clone()
+        .or_else(|| std::env::var("KLATCH_SCOPE").ok());
+    ensure_member_scope(
+        &store,
+        &me,
+        declared_scope.as_deref(),
+        session_dir.as_deref(),
+        now(),
+    )?;
     let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
     if let Cmd::Serve { stdio } = cli.cmd {
         if !stdio {
@@ -365,10 +394,21 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
             path,
             ttl,
             reason,
+            shared,
         } => {
-            t.claim(&room, &path, ttl, &reason)?;
+            t.claim_with(&room, &path, ttl, &reason, shared)?;
             println!("claimed {path} for {ttl}s (advisory)");
         }
+        Cmd::Scope { scope } => match scope {
+            Some(s) => {
+                t.set_scope(&s)?;
+                println!("scope set to {s}");
+            }
+            None => match t.scope()? {
+                Some(s) => println!("{s}"),
+                None => println!("no scope (set one with `klatch scope <name>`)"),
+            },
+        },
         Cmd::Release { room, path } => {
             t.release(&room, &path)?;
             println!("released {path}");
@@ -414,11 +454,16 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
         Cmd::Claims { room } => {
             for c in t.claims(&room)? {
                 println!(
-                    "{}\t{}\t{}s left\t{}",
+                    "{}\t{}\t{}s left\t{}{}",
                     c.path,
                     c.owner,
                     c.expires - now,
-                    flat(&c.reason)
+                    flat(&c.reason),
+                    if c.scope.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\tscope: {}", c.scope)
+                    }
                 );
             }
         }
@@ -640,18 +685,121 @@ fn ensure_session_member(
     Ok(member)
 }
 
+/// FNV-1a, a hash that is the same on every run and platform (a scope id must be).
+fn fnv1a(text: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// The scope of a directory: `git:<name>-<hash>` for a git repository (a worktree shares its repository's scope,
+/// because the git common directory is the same), else `dir:<name>-<hash>`.
+fn scope_for_dir(dir: &str) -> Option<String> {
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+    let base = canon(std::path::Path::new(dir))?;
+    let git = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&base)
+        .args(["rev-parse", "--git-common-dir"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|p| !p.is_empty())
+        .and_then(|p| {
+            let path = std::path::Path::new(&p);
+            canon(&if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base.join(path)
+            })
+        });
+    let (kind, root) = match git {
+        Some(common) => {
+            // The repository directory is the parent of `.git`; a bare repository is the directory itself.
+            let root = if common.file_name().is_some_and(|n| n == ".git") {
+                common
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or(common.clone())
+            } else {
+                common.clone()
+            };
+            ("git", (common, root))
+        }
+        None => ("dir", (base.clone(), base)),
+    };
+    let name: String = root
+        .1
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(40)
+        .collect();
+    let id = fnv1a(&root.0.to_string_lossy()) as u32;
+    let scope = format!(
+        "{kind}:{}-{id:08x}",
+        if name.is_empty() { "repo" } else { &name }
+    );
+    klatch_core::valid_scope(&scope).then_some(scope)
+}
+
+/// Settle a member's scope: a declared one wins and is remembered, an existing one is kept, and a coding session
+/// with none gets the scope of its directory.
+fn ensure_member_scope(
+    store: &dyn Store,
+    member: &str,
+    declared: Option<&str>,
+    dir: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    let stored = store.member_scope(member)?;
+    match (declared, &stored) {
+        (Some(d), Some(s)) if d == s => Ok(()),
+        (Some(d), _) => {
+            if !klatch_core::valid_scope(d) {
+                bail!("bad scope {d:?}: 1 to 80 characters of letters, digits and . : _ - /");
+            }
+            Ok(store.set_member_scope(member, d, now)?)
+        }
+        (None, Some(_)) => Ok(()),
+        (None, None) => {
+            if let Some(scope) = dir.and_then(scope_for_dir) {
+                store.set_member_scope(member, &scope, now)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 /// The session id Claude Code puts on a hook's standard input. Reads nothing when standard input is a terminal.
 fn stdin_session_id() -> Option<String> {
     use std::io::{IsTerminal, Read};
-    let mut input = std::io::stdin();
-    if input.is_terminal() {
+    if std::io::stdin().is_terminal() {
         return None;
     }
-    let mut text = String::new();
-    input
-        .by_ref()
-        .take(1 << 20)
-        .read_to_string(&mut text)
+    // Claude Code writes the JSON at once and closes the pipe. Anything else (a script that holds standard input
+    // open, a pipe nobody writes to) must not make a hook wait for ever, so the read is time-bounded.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::stdin().take(1 << 20).read_to_string(&mut text);
+        let _ = tx.send(text);
+    });
+    let text = rx
+        .recv_timeout(std::time::Duration::from_millis(1500))
         .ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v.get("session_id")?.as_str().map(String::from)
@@ -953,5 +1101,90 @@ mod member_name_tests {
             ensure_session_member(&s, "0123456789abcdef", None, 3).unwrap(),
             "session-01234567"
         );
+    }
+}
+
+#[cfg(test)]
+mod scope_dir_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir()
+            .join(format!(
+                "klatch-scope-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ))
+            .join(name);
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::canonicalize(&d).unwrap()
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    #[test]
+    fn a_git_repository_and_its_subdirectory_share_one_scope_and_another_repository_has_its_own() {
+        let a = tmp("repo-a");
+        let b = tmp("repo-b");
+        if !git(&a, &["init", "-q"]) || !git(&b, &["init", "-q"]) {
+            return; // no git here: the directory fallback is tested below
+        }
+        std::fs::create_dir_all(a.join("src/deep")).unwrap();
+        let top = scope_for_dir(&a.to_string_lossy()).unwrap();
+        let sub = scope_for_dir(&a.join("src/deep").to_string_lossy()).unwrap();
+        let other = scope_for_dir(&b.to_string_lossy()).unwrap();
+        assert!(top.starts_with("git:repo-a-"), "{top}");
+        assert_eq!(top, sub, "a subdirectory is the same repository");
+        assert_ne!(top, other);
+        assert!(klatch_core::valid_scope(&top) && top.len() <= 80);
+    }
+
+    #[test]
+    fn a_directory_that_is_not_a_repository_gets_a_dir_scope_and_a_missing_one_gets_none() {
+        let d = tmp("plain");
+        let scope = scope_for_dir(&d.to_string_lossy()).unwrap();
+        assert!(
+            scope.starts_with("dir:") || scope.starts_with("git:"),
+            "{scope}"
+        );
+        assert_eq!(scope_for_dir("/definitely/not/a/directory/klatch"), None);
+    }
+
+    #[test]
+    fn the_scope_of_a_directory_is_the_same_on_every_run() {
+        let d = tmp("stable");
+        assert_eq!(
+            scope_for_dir(&d.to_string_lossy()),
+            scope_for_dir(&d.to_string_lossy())
+        );
+    }
+
+    #[test]
+    fn an_explicit_scope_wins_and_is_kept_and_a_bad_one_is_refused() {
+        let dir = tmp("store");
+        let s = SqliteStore::open(&dir.join("t.db")).unwrap();
+        ensure_member_scope(&s, "alice", None, Some(&dir.to_string_lossy()), 1).unwrap();
+        let derived = s.member_scope("alice").unwrap().unwrap();
+        ensure_member_scope(&s, "alice", None, Some("/other"), 2).unwrap();
+        assert_eq!(
+            s.member_scope("alice").unwrap().unwrap(),
+            derived,
+            "an existing scope is kept"
+        );
+        ensure_member_scope(&s, "alice", Some("bot:grok"), None, 3).unwrap();
+        assert_eq!(
+            s.member_scope("alice").unwrap().as_deref(),
+            Some("bot:grok")
+        );
+        assert!(ensure_member_scope(&s, "alice", Some("has space"), None, 4).is_err());
     }
 }
