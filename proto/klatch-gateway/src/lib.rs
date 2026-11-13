@@ -12,7 +12,7 @@ mod transport;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{Digest, Gateway, Refused};
 pub use guard::{AllowAll, Guard, Operation};
-pub use identity::{DeclaredName, FixedIdentity, Identity, PeerEvidence};
+pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use transport::{Direct, Transport};
 
