@@ -835,3 +835,22 @@ Setup: two idle helpers on the same `lib` package and two askers (alpha in `api`
 - **OBSERVED, a gap.** One helper waited on `lobby dm-api-30-lib-a1 --only seeking:`. The filter applies to every named room, so a reply in the room of two that does not start with `seeking:` would not have woken it. This run did not need it, but it is a trap (see the ticket).
 - **OBSERVED.** The helpers lingered (240 s and 289 s) only because my stop rule told them to wait for three timeouts; the askers ended in 48 s and 54 s.
 - **NOT OBSERVED.** A multi-step exchange in the room of two: alpha's ask already said accents should be transliterated, so the helper had nothing to ask back. The scenario did not force a question (#210 stays open). Two helpers racing within one poll; a third helper; whether agents would use any of this unprompted (#209).
+
+## 25. Run seven: how a helper knows it is finished (2026-11-13)
+
+Question (#221): which completion signal ends an idle helper cheapest? Six stop rules, each with two real helper agents and two scripted askers (the same two asks), binary with `wait` v2. Per variant the helpers had the same task text except the stop rule; at most 12 `wait` calls each. Askers were scripts so the only variable is the helper's rule; the signal itself (closing message, `status: done`, `closed #N`) was posted by my script after both asks were answered.
+
+| Variant | Stop rule | Turns (both helpers) | Cost, both | Sum of helper time | Longest exit after the signal |
+|---|---|---|---|---|---|
+| V0 | 3 timeouts in a row (baseline) | 26 | $0.325 | 452 s | 197 s |
+| V1 | a `closing:` message | 17 | $0.268 | 75 s | 3 s |
+| V2 | presence: askers last seen over 60 s ago | 26 | $0.340 | 222 s | 73 s |
+| V3 | asker posts `status: done` (member status) | 21 | $0.273 | 58 s | 5 s |
+| V4 | asker posts `closed #N` (ask state) | 21 | $0.291 | 68 s | 6 s |
+| V5 | told to expect exactly 2 asks | 20 | $0.261 | 54 s | 1 s |
+
+- **OBSERVED.** Every rule with an explicit signal (V1, V3, V4, V5) ended both helpers within about 1 to 6 seconds of it. The timeout rule (V0) left helpers waiting 190 to 200 seconds after the answers, and presence (V2) about 70 seconds, because it must wait out the quiet period.
+- **OBSERVED.** In every variant the claim worked: no ask was answered twice; in V2, V4 and V5 the two helpers split the asks, one answering each, and in V0, V1 and V3 one helper answered both.
+- **OBSERVED.** Cost differences are small (all between $0.26 and $0.34 for two helpers), because a `wait` call is one cheap turn. The saving is wall time and idle sessions, not tokens. Turn counts ranged from 17 (V1) to 26 (V0 and V2).
+- **Reading, with caveats.** One run per variant, so the differences among V1, V3, V4 and V5 (17 to 21 turns, $0.26 to $0.29) are within what model variance could produce; only the gap between those four and V0 and V2 is clear. V1 and V5 look cheapest because they ask the helper to check nothing: V1's signal came free from a script (in a real team someone must post it), and V5 requires knowing how many asks will come. V3 and V4 let the asker say it is done, so no outside party is needed, at the cost of the helper reading the lobby to check; they cost about 4 more turns than V1 in this run.
+- **NOT OBSERVED.** V3 and V4 with real askers (the scripts posted the done and closed messages, so whether an agent asker remembers to post them is untested); more than two asks; a helper whose asker never sends the signal (the 12-wait cap was not reached in any run).
