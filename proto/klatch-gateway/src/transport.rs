@@ -24,6 +24,8 @@ pub trait Transport {
     fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()>;
     /// The latest run of each hook event recorded for `member`.
     fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>>;
+    /// Remember that the caller is the member of harness session `session_id`.
+    fn note_session(&self, session_id: &str) -> Result<()>;
     /// Housekeeping: remove members not seen for `older_than` seconds; returns how many.
     fn prune_members(&self, older_than: i64) -> Result<usize>;
     /// Set the caller's own status in a room.
@@ -91,6 +93,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>> {
         self.gateway.hook_runs(&self.principal, member)
+    }
+    fn note_session(&self, session_id: &str) -> Result<()> {
+        self.gateway.note_session(&self.principal, session_id)
     }
     fn prune_members(&self, older_than: i64) -> Result<usize> {
         self.gateway.prune_members(&self.principal, older_than)

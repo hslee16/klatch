@@ -121,6 +121,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.prune_members(older_than, now)
     }
+    fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.note_session(session_id, member, now)
+    }
+    fn member_of_session(&self, session_id: &str) -> Result<Option<String>> {
+        self.gate()?;
+        self.inner.member_of_session(session_id)
+    }
     fn claim_changes(
         &self,
         room: &str,
