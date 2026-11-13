@@ -62,7 +62,8 @@ pub trait Store {
             .filter(|a| a.sender == member && !a.claimed && now - a.ts >= after)
             .collect())
     }
-    /// Messages from others past both the read cursor and the member's wait position, with no state change.
+    /// Messages from others past both the read cursor and the member's wait position. Changes no cursor, but
+    /// refreshes the member's presence, as a read does.
     /// The default is `read` without advancing, which has no wait position.
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
         self.read(room, member, false, now)

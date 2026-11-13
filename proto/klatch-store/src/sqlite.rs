@@ -351,7 +351,9 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
-    fn wait_poll(&self, room: &str, member: &str, _now: i64) -> Result<Vec<Message>> {
+    fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        // A waiting member is present: every poll refreshes presence, as a read does (#237).
+        self.touch(room, member, now)?;
         let (read, seen): (i64, i64) = self
             .conn
             .query_row(
@@ -778,6 +780,16 @@ mod tests {
         let w = s.wait_poll("r", "alice", 9).unwrap();
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].body, "two");
+    }
+
+    #[test]
+    fn a_wait_poll_refreshes_the_waiters_presence_like_a_read() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.wait_poll("r", "alice", 9).unwrap();
+        assert_eq!(s.members("r").unwrap()[0].last_seen, 9);
+        s.read("r", "alice", false, 12).unwrap();
+        assert_eq!(s.members("r").unwrap()[0].last_seen, 12);
     }
 
     #[test]
