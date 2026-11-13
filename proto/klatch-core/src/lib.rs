@@ -3,6 +3,7 @@
 
 mod asks;
 mod board;
+mod convention;
 mod error;
 mod hook;
 mod model;
@@ -17,6 +18,7 @@ pub use board::{
     OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, current_offers, is_offer, render_board,
     statuses,
 };
+pub use convention::{CONVENTION_MARKER, convention};
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, render_hook};
 pub use model::{

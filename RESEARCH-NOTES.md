@@ -942,3 +942,17 @@ Two headless asker runs; the helpers' decline messages were posted by a script (
 - **OBSERVED.** After a session joined the lobby, a message from another member reached it on its next tool call and the model quoted it as data (the first interactive proof for #199).
 - **OBSERVED, correcting an earlier claim.** The session in which `init` was run (started before the settings file existed) also recorded `UserPromptSubmit` and `PostToolUse` afterwards, so Claude Code applies a changed project settings file to a session that is already running. The statement that only new sessions would be affected was wrong.
 - **NOT OBSERVED.** `SessionStart`: the sessions had started before the recording existed. A session started after the swap is needed. Joining without being told (#267), the board at session start in an interactive session, an idle session being woken (#214).
+
+## 31. The convention taught only by klatch (2026-11-13)
+
+Runs twelve and thirteen: a helper and an asker whose task text says nothing about klatch commands or the convention ("use whatever klatch gives you"). Everything else came from the SessionStart hook: the board and the convention text (DESIGN section 25.11). Same scenario both runs; run thirteen added the exact commands to the text.
+
+| | Helper turns, cost | Asker turns, cost | Wasted turns |
+|---|---|---|---|
+| Run twelve (actions named, commands not) | 13, $0.193 | 14, $0.182 | `--help` on both sides; the helper tried `claim ask:2` three times before it found the room argument |
+| Run thirteen (exact commands) | 11, $0.158 | 9, $0.161 | none: no `--help`, every command right first time |
+
+- **OBSERVED (both runs).** Nothing in the task text taught the convention, yet: the helper read its repository, then posted one concrete `offering:` (not a generic one, and not at start); the asker posted `seeking:` and waited with `wait`, never `sleep`; the helper claimed `ask:2`, answered with `answer to #2:` and released; the asker posted `closed #2` and `status: done`; the helper withdrew its offer and left with `status: done`. The asker's tests pass (6 and 5).
+- **OBSERVED.** The only defect was in my text, not in the agents: it named the actions but not the command forms, so run twelve burned turns guessing. Showing the exact commands removed the wasted turns (asker 14 to 9 turns).
+- **Caveats.** One run each, so the 14 to 9 and 13 to 11 turn drops could include model variance; the removal of `--help` and the wrong claim form is a direct effect of the text. The helper's task text did say to stay available until the askers were finished (the stop rule is not part of the convention; it follows the V3 `status: done` signal). Two agents only: no contention, no declines.
+- **NOT OBSERVED.** More than one helper, declines, the dual role (#246), a session that ignores the convention, longer lobbies.

@@ -1491,3 +1491,42 @@ fn init_writes_no_join_only_when_asked_and_asks_about_the_lobby() {
         hook_cmds(&Setup::read(&i.project_settings()), "SessionStart")[0].ends_with("--no-join")
     );
 }
+
+#[test]
+fn a_session_start_that_joins_shows_the_convention_once_with_the_binary_path() {
+    let h = Home::new();
+    let start = h.ok("fresh", &["hook", "--event", "SessionStart"]);
+    assert!(
+        start.contains("[klatch convention v1]"),
+        "no convention: {start}"
+    );
+    assert!(
+        start.contains(env!("CARGO_BIN_EXE_klatch")),
+        "no binary path: {start}"
+    );
+    assert_eq!(start.matches("[klatch convention v1]").count(), 1);
+    assert!(start.contains("seeking:") && start.contains("offering:"));
+    let again = h.ok("fresh", &["hook", "--event", "SessionStart"]);
+    assert!(
+        again.contains("[klatch convention v1]"),
+        "a restarted session needs it too: {again}"
+    );
+}
+
+#[test]
+fn the_convention_is_not_shown_outside_session_start_or_to_a_session_that_stays_out() {
+    let h = Home::new();
+    assert!(
+        !h.ok("a", &["hook", "--event", "UserPromptSubmit"])
+            .contains("convention")
+    );
+    assert!(
+        !h.ok("a", &["hook", "--event", "PostToolUse"])
+            .contains("convention")
+    );
+    let out = h.ok("b", &["hook", "--event", "SessionStart", "--no-join"]);
+    assert!(
+        !out.contains("convention"),
+        "shown to a session that stays out: {out}"
+    );
+}
