@@ -2,7 +2,10 @@
 //! The pure parts (building the hook command, merging into a settings file, showing a diff) live here so they are
 //! testable; the prompting and file writing are in `run`.
 
+use anyhow::{Context, bail};
 use serde_json::{Value, json};
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 
 /// Where `init` writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -23,158 +26,267 @@ pub struct Options {
     pub no_session_end: bool,
 }
 
-/// Ask a yes or no question; an empty answer, end of input and anything but yes mean `default`.
-fn ask(
-    input: &mut dyn std::io::BufRead,
-    out: &mut dyn std::io::Write,
-    question: &str,
-    default_yes: bool,
-) -> anyhow::Result<bool> {
-    write!(
-        out,
-        "{question} [{}] ",
-        if default_yes { "Y/n" } else { "y/N" }
-    )?;
-    out.flush()?;
-    let mut line = String::new();
-    input.read_line(&mut line)?;
-    Ok(match line.trim().to_ascii_lowercase().as_str() {
-        "" => default_yes,
-        "y" | "yes" => true,
-        _ => false,
-    })
+/// Where `init` reads answers from and writes its questions and results to.
+pub struct Io<'a> {
+    pub input: &'a mut dyn BufRead,
+    pub out: &'a mut dyn Write,
 }
 
-/// Run `init`: choose scope and board (asking unless `--yes`), show each diff, write only on a yes.
-pub fn run(
-    options: &Options,
-    input: &mut dyn std::io::BufRead,
-    out: &mut dyn std::io::Write,
-    project_dir: &std::path::Path,
-    home: Option<&std::path::Path>,
-    bin: &std::path::Path,
-) -> anyhow::Result<()> {
-    use anyhow::{Context, bail};
-    let bin = bin
-        .to_str()
-        .context("the path of this binary is not valid text")?;
-    let scope = match options.scope {
-        Some(s) => s,
-        None if options.yes => {
-            bail!("init --yes asks nothing, so it needs --scope project, user or both")
+/// The places `init` works with: the project it was run in, the home directory (if known) and this binary.
+pub struct Places<'a> {
+    pub project_dir: &'a Path,
+    pub home: Option<&'a Path>,
+    pub bin: &'a Path,
+}
+
+/// What the user decided, by flag or by answering.
+struct Choices {
+    scope: Scope,
+    board: Option<String>,
+    join: bool,
+    session_end: bool,
+}
+
+/// A settings file and what it would become.
+struct Plan {
+    label: &'static str,
+    path: PathBuf,
+    existing: Option<Value>,
+    merged: Value,
+}
+
+impl Io<'_> {
+    fn read_line(&mut self) -> anyhow::Result<String> {
+        let mut line = String::new();
+        self.input.read_line(&mut line)?;
+        Ok(line.trim().to_ascii_lowercase())
+    }
+
+    /// Ask a yes or no question; an empty answer, end of input and anything but yes mean `default`.
+    fn ask(&mut self, question: &str, default_yes: bool) -> anyhow::Result<bool> {
+        write!(
+            self.out,
+            "{question} [{}] ",
+            if default_yes { "Y/n" } else { "y/N" }
+        )?;
+        self.out.flush()?;
+        Ok(match self.read_line()?.as_str() {
+            "" => default_yes,
+            "y" | "yes" => true,
+            _ => false,
+        })
+    }
+
+    /// A setting that is on unless switched off by a flag, and is not asked about under `--yes`.
+    fn on_unless(&mut self, off: bool, yes: bool, question: &str) -> anyhow::Result<bool> {
+        if off {
+            return Ok(false);
         }
-        None => {
-            write!(
-                out,
-                "Where should klatch install its hooks? project (.claude/settings.local.json here), user (~/.claude/settings.json) or both [project]: "
-            )?;
-            out.flush()?;
-            let mut line = String::new();
-            input.read_line(&mut line)?;
-            match line.trim().to_ascii_lowercase().as_str() {
-                "" | "project" => Scope::Project,
-                "user" => Scope::User,
-                "both" => Scope::Both,
-                other => bail!("unknown scope {other:?}: say project, user or both"),
-            }
+        if yes {
+            return Ok(true);
         }
-    };
-    let board = match &options.board {
-        Some(room) => Some(room.clone()),
-        None if options.yes => None,
-        None => ask(
-            input,
-            out,
+        self.ask(question, true)
+    }
+
+    fn choose_scope(&mut self, options: &Options) -> anyhow::Result<Scope> {
+        if let Some(scope) = options.scope {
+            return Ok(scope);
+        }
+        if options.yes {
+            bail!("init --yes asks nothing, so it needs --scope project, user or both");
+        }
+        write!(
+            self.out,
+            "Where should klatch install its hooks? project (.claude/settings.local.json here), user (~/.claude/settings.json) or both [project]: "
+        )?;
+        self.out.flush()?;
+        match self.read_line()?.as_str() {
+            "" | "project" => Ok(Scope::Project),
+            "user" => Ok(Scope::User),
+            "both" => Ok(Scope::Both),
+            other => bail!("unknown scope {other:?}: say project, user or both"),
+        }
+    }
+
+    fn choose_board(&mut self, options: &Options) -> anyhow::Result<Option<String>> {
+        if let Some(room) = &options.board {
+            return Ok(Some(room.clone()));
+        }
+        if options.yes {
+            return Ok(None);
+        }
+        let show = self.ask(
             "Show the lobby board when a session starts? This reads the lobby before the session has joined it.",
             false,
-        )?
-        .then(|| "lobby".to_string()),
-    };
-    // Joining the default lobby at session start is on: installing the hooks is the consent (DESIGN section 24, 25.10).
-    let join = if options.no_lobby {
-        false
-    } else if options.yes {
-        true
-    } else {
-        ask(
-            input,
-            out,
+        )?;
+        Ok(show.then(|| "lobby".to_string()))
+    }
+
+    fn choose(&mut self, options: &Options) -> anyhow::Result<Choices> {
+        let scope = self.choose_scope(options)?;
+        let board = self.choose_board(options)?;
+        // Joining the default lobby at session start is on: installing the hooks is the consent (DESIGN section 24,
+        // 25.10).
+        let join = self.on_unless(
+            options.no_lobby,
+            options.yes,
             "Join every new session to the default lobby automatically?",
-            true,
-        )?
-    };
-    // The SessionEnd hook is on by default: it only marks the session done in klatch's own store.
-    let session_end = if options.no_session_end {
-        false
-    } else if options.yes {
-        true
-    } else {
-        ask(
-            input,
-            out,
+        )?;
+        // The SessionEnd hook is on by default: it only marks the session done in klatch's own store.
+        let session_end = self.on_unless(
+            options.no_session_end,
+            options.yes,
             "Mark a session done when it ends, so it leaves the lobby board at once?",
-            true,
-        )?
-    };
-    let mut targets: Vec<(&str, std::path::PathBuf)> = Vec::new();
+        )?;
+        Ok(Choices {
+            scope,
+            board,
+            join,
+            session_end,
+        })
+    }
+}
+
+/// The settings files a scope writes to, with a label for each.
+fn targets(scope: Scope, places: &Places) -> anyhow::Result<Vec<(&'static str, PathBuf)>> {
+    let mut targets = Vec::new();
     if matches!(scope, Scope::Project | Scope::Both) {
         targets.push((
             "project",
-            project_dir.join(".claude").join("settings.local.json"),
+            places
+                .project_dir
+                .join(".claude")
+                .join("settings.local.json"),
         ));
     }
     if matches!(scope, Scope::User | Scope::Both) {
-        let home = home.context("HOME is not set, so the user settings file cannot be found")?;
+        let home = places
+            .home
+            .context("HOME is not set, so the user settings file cannot be found")?;
         targets.push(("user", home.join(".claude").join("settings.json")));
     }
-    // Read and merge everything first: a file that cannot be read stops the whole run before anything is written.
-    let mut plans = Vec::new();
-    for (label, path) in targets {
-        let existing: Option<Value> = if path.exists() {
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading {}", path.display()))?;
-            Some(serde_json::from_str(&text).with_context(|| {
-                format!("{} is not valid JSON; nothing was written", path.display())
-            })?)
-        } else {
-            None
-        };
-        let mut merged = merge_hooks(existing.as_ref(), bin, board.as_deref(), join)
-            .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
-        set_session_end(&mut merged, bin, session_end)
-            .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
-        plans.push((label, path, existing, merged));
+    Ok(targets)
+}
+
+/// The current content of a settings file, if there is one.
+fn read_settings(path: &Path) -> anyhow::Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
     }
-    for (label, path, existing, merged) in plans {
-        if existing.as_ref() == Some(&merged) {
-            writeln!(out, "{} ({label}): already up to date", path.display())?;
-            continue;
-        }
-        let old = existing
-            .as_ref()
-            .map(serde_json::to_string_pretty)
-            .transpose()?
-            .unwrap_or_default();
-        let new = serde_json::to_string_pretty(&merged)?;
-        writeln!(out, "{} ({label}):", path.display())?;
-        write!(out, "{}", diff(&old, &new))?;
-        if !options.yes && !ask(input, out, &format!("Write {}?", path.display()), false)? {
-            writeln!(out, "skipped {}", path.display())?;
-            continue;
-        }
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.klatch-tmp");
-        std::fs::write(&tmp, format!("{new}\n"))?;
-        std::fs::rename(&tmp, &path)?;
-        writeln!(out, "wrote {}", path.display())?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let value = serde_json::from_str(&text)
+        .with_context(|| format!("{} is not valid JSON; nothing was written", path.display()))?;
+    Ok(Some(value))
+}
+
+/// Read and merge one settings file; any failure stops the whole run before anything is written.
+fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> anyhow::Result<Plan> {
+    let existing = read_settings(&path)?;
+    let refuse = |e: String| anyhow::anyhow!("{}: {e}; nothing was written", path.display());
+    let mut merged = merge_hooks(
+        existing.as_ref(),
+        bin,
+        choices.board.as_deref(),
+        choices.join,
+    )
+    .map_err(refuse)?;
+    set_session_end(&mut merged, bin, choices.session_end).map_err(refuse)?;
+    Ok(Plan {
+        label,
+        path,
+        existing,
+        merged,
+    })
+}
+
+/// Show the diff for one plan and write it, unless it is already in place or the user says no.
+fn apply(plan: Plan, yes: bool, io: &mut Io) -> anyhow::Result<()> {
+    let Plan {
+        label,
+        path,
+        existing,
+        merged,
+    } = plan;
+    if existing.as_ref() == Some(&merged) {
+        writeln!(io.out, "{} ({label}): already up to date", path.display())?;
+        return Ok(());
+    }
+    let old = existing
+        .as_ref()
+        .map(serde_json::to_string_pretty)
+        .transpose()?
+        .unwrap_or_default();
+    let new = serde_json::to_string_pretty(&merged)?;
+    writeln!(io.out, "{} ({label}):", path.display())?;
+    write!(io.out, "{}", diff(&old, &new))?;
+    if !yes && !io.ask(&format!("Write {}?", path.display()), false)? {
+        writeln!(io.out, "skipped {}", path.display())?;
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.klatch-tmp");
+    std::fs::write(&tmp, format!("{new}\n"))?;
+    std::fs::rename(&tmp, &path)?;
+    writeln!(io.out, "wrote {}", path.display())?;
+    Ok(())
+}
+
+/// Run `init`: choose scope and board (asking unless `--yes`), show each diff, write only on a yes.
+pub fn run(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()> {
+    let bin = places
+        .bin
+        .to_str()
+        .context("the path of this binary is not valid text")?;
+    let choices = io.choose(options)?;
+    // Read and merge everything first: a file that cannot be read stops the whole run before anything is written.
+    let plans = targets(choices.scope, places)?
+        .into_iter()
+        .map(|(label, path)| plan(label, path, bin, &choices))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for plan in plans {
+        apply(plan, options.yes, io)?;
     }
     Ok(())
 }
 
 /// The Claude Code hook events klatch listens on.
 pub const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"];
+
+/// A binary path a hook command can carry: absolute and free of anything a shell would act on.
+fn check_bin_path(bin: &str) -> Result<(), String> {
+    if !bin.starts_with('/') {
+        return Err(format!("the binary path must be absolute: {bin}"));
+    }
+    let unsafe_char = |c: char| matches!(c, '$' | '`' | '\'' | '"' | '\\') || c.is_control();
+    if bin.chars().any(unsafe_char) {
+        return Err(format!(
+            "the binary path has a character a hook command cannot carry safely (a shell variable, quote, backslash or control character): {bin}"
+        ));
+    }
+    Ok(())
+}
+
+fn check_event_name(event: &str) -> Result<(), String> {
+    if event.is_empty() || !event.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("bad hook event name: {event}"));
+    }
+    Ok(())
+}
+
+/// The binary path as it goes into a command: plain when it needs no quoting, else in single quotes.
+fn shell_path(bin: &str) -> String {
+    let plain = bin
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/_.-+:@%,=~".contains(c));
+    if plain {
+        bin.to_string()
+    } else {
+        format!("'{bin}'")
+    }
+}
 
 /// The hook command for one event: the binary by absolute path, never a shell variable (permission rules refuse
 /// those, #174). `board` adds the session-start board for that room (only on SessionStart; the consent to read a
@@ -185,29 +297,9 @@ pub fn hook_command(
     board: Option<&str>,
     join: bool,
 ) -> Result<String, String> {
-    if !bin.starts_with('/') {
-        return Err(format!("the binary path must be absolute: {bin}"));
-    }
-    if bin
-        .chars()
-        .any(|c| matches!(c, '$' | '`' | '\'' | '"' | '\\') || c.is_control())
-    {
-        return Err(format!(
-            "the binary path has a character a hook command cannot carry safely (a shell variable, quote, backslash or control character): {bin}"
-        ));
-    }
-    if event.is_empty() || !event.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("bad hook event name: {event}"));
-    }
-    let plain = bin
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "/_.-+:@%,=~".contains(c));
-    let path = if plain {
-        bin.to_string()
-    } else {
-        format!("'{bin}'")
-    };
-    let mut cmd = format!("{path} --discover hook --event {event}");
+    check_bin_path(bin)?;
+    check_event_name(event)?;
+    let mut cmd = format!("{} --discover hook --event {event}", shell_path(bin));
     if let Some(room) = board {
         if !klatch_core::valid_name(room) {
             return Err(format!("bad board room name: {room:?}"));
@@ -227,97 +319,26 @@ fn is_klatch_command(cmd: &str) -> bool {
     cmd.contains(" hook --event ") && cmd.contains("klatch")
 }
 
-/// `settings` with klatch's hook entries set to exactly what is asked: added when missing, updated in place when
-/// present, everything else left as it was. Fails (writing nothing) when the file is not a JSON object or its
-/// `hooks` is not an object.
-pub fn merge_hooks(
-    existing: Option<&Value>,
-    bin: &str,
-    board: Option<&str>,
-    join: bool,
-) -> Result<Value, String> {
-    let mut settings = existing.cloned().unwrap_or_else(|| json!({}));
-    let root = settings
-        .as_object_mut()
-        .ok_or("the settings file is not a JSON object")?;
-    let hooks = root.entry("hooks").or_insert_with(|| json!({}));
-    let hooks = hooks
-        .as_object_mut()
-        .ok_or("\"hooks\" in the settings file is not an object")?;
-    for event in EVENTS {
-        let cmd = hook_command(bin, event, board, join)?;
-        let list = hooks.entry(event).or_insert_with(|| json!([]));
-        let list = list
-            .as_array_mut()
-            .ok_or_else(|| format!("hooks.{event} in the settings file is not a list"))?;
-        let mut found = false;
-        for matcher in list.iter_mut() {
-            let Some(inner) = matcher.get_mut("hooks").and_then(Value::as_array_mut) else {
-                continue;
-            };
-            inner.retain_mut(|h| {
-                let is_ours = h
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_klatch_command);
-                if !is_ours {
-                    return true;
-                }
-                if found {
-                    return false;
-                }
-                found = true;
-                h["command"] = json!(cmd);
-                true
-            });
-        }
-        list.retain(|m| {
-            m.get("hooks")
-                .and_then(Value::as_array)
-                .is_none_or(|a| !a.is_empty())
-        });
-        if !found {
-            list.push(json!({"hooks": [{"type": "command", "command": cmd}]}));
-        }
-    }
-    Ok(settings)
+fn is_ours(hook: &Value) -> bool {
+    hook.get("command")
+        .and_then(Value::as_str)
+        .is_some_and(is_klatch_command)
 }
 
-/// Install (`on`) or remove (`!on`) klatch's SessionEnd hook, which marks a finished session done so it leaves the
-/// board at once. Everything else in the settings is left as it was.
-pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), String> {
-    let cmd = hook_command(bin, "SessionEnd", None, true)?;
-    let root = settings
-        .as_object_mut()
-        .ok_or("the settings file is not a JSON object")?;
-    if !on && !root.contains_key("hooks") {
-        return Ok(());
-    }
-    let hooks = root.entry("hooks").or_insert_with(|| json!({}));
-    let hooks = hooks
-        .as_object_mut()
-        .ok_or("\"hooks\" in the settings file is not an object")?;
-    if !on && !hooks.contains_key("SessionEnd") {
-        return Ok(());
-    }
-    let list = hooks.entry("SessionEnd").or_insert_with(|| json!([]));
-    let list = list
-        .as_array_mut()
-        .ok_or("hooks.SessionEnd in the settings file is not a list")?;
+/// Make the list of hook matchers hold exactly one klatch entry running `cmd` (`keep`) or none (`!keep`), leaving
+/// every other entry as it was. A matcher left with no hooks is dropped. Returns whether an entry of klatch's
+/// stayed in place, so the caller knows whether to add one.
+fn sync_entries(list: &mut Vec<Value>, cmd: &str, keep: bool) -> bool {
     let mut found = false;
     for matcher in list.iter_mut() {
         let Some(inner) = matcher.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
         inner.retain_mut(|h| {
-            let ours = h
-                .get("command")
-                .and_then(Value::as_str)
-                .is_some_and(is_klatch_command);
-            if !ours {
+            if !is_ours(h) {
                 return true;
             }
-            if !on || found {
+            if !keep || found {
                 return false;
             }
             found = true;
@@ -330,41 +351,137 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
             .and_then(Value::as_array)
             .is_none_or(|a| !a.is_empty())
     });
-    if on && !found {
-        list.push(json!({"hooks": [{"type": "command", "command": cmd}]}));
+    found
+}
+
+/// The `hooks` object of a settings file, created if missing.
+fn hooks_of(settings: &mut Value) -> Result<&mut serde_json::Map<String, Value>, String> {
+    let root = settings
+        .as_object_mut()
+        .ok_or("the settings file is not a JSON object")?;
+    root.entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "\"hooks\" in the settings file is not an object".to_string())
+}
+
+/// The list of matchers for one event, created if missing.
+fn event_list<'a>(
+    hooks: &'a mut serde_json::Map<String, Value>,
+    event: &str,
+) -> Result<&'a mut Vec<Value>, String> {
+    hooks
+        .entry(event)
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(|| format!("hooks.{event} in the settings file is not a list"))
+}
+
+fn new_entry(cmd: &str) -> Value {
+    json!({"hooks": [{"type": "command", "command": cmd}]})
+}
+
+/// `settings` with klatch's hook entries set to exactly what is asked: added when missing, updated in place when
+/// present, everything else left as it was. Fails (writing nothing) when the file is not a JSON object or its
+/// `hooks` is not an object.
+pub fn merge_hooks(
+    existing: Option<&Value>,
+    bin: &str,
+    board: Option<&str>,
+    join: bool,
+) -> Result<Value, String> {
+    let mut settings = existing.cloned().unwrap_or_else(|| json!({}));
+    let hooks = hooks_of(&mut settings)?;
+    for event in EVENTS {
+        let cmd = hook_command(bin, event, board, join)?;
+        let list = event_list(hooks, event)?;
+        if !sync_entries(list, &cmd, true) {
+            list.push(new_entry(&cmd));
+        }
+    }
+    Ok(settings)
+}
+
+/// Install (`on`) or remove (`!on`) klatch's SessionEnd hook, which marks a finished session done so it leaves the
+/// board at once. Everything else in the settings is left as it was.
+pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), String> {
+    const EVENT: &str = "SessionEnd";
+    let cmd = hook_command(bin, EVENT, None, true)?;
+    if !on
+        && settings
+            .as_object()
+            .is_some_and(|r| !r.contains_key("hooks"))
+    {
+        return Ok(());
+    }
+    let hooks = hooks_of(settings)?;
+    if !on && !hooks.contains_key(EVENT) {
+        return Ok(());
+    }
+    let list = event_list(hooks, EVENT)?;
+    if !sync_entries(list, &cmd, on) && on {
+        list.push(new_entry(&cmd));
     }
     if list.is_empty() {
-        hooks.remove("SessionEnd");
+        hooks.remove(EVENT);
     }
     Ok(())
+}
+
+/// The longest-common-subsequence table of two line lists: `table[i][j]` is the length for `a[i..]` and `b[j..]`.
+fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<usize>> {
+    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            table[i][j] = if a[i] == b[j] {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    table
+}
+
+/// What the next line of a diff is.
+enum Step {
+    Same,
+    Add,
+    Remove,
+}
+
+/// The next step through two line lists at positions `i` and `j`, following the longest common subsequence.
+fn next_step(a: &[&str], b: &[&str], lcs: &[Vec<usize>], (i, j): (usize, usize)) -> Step {
+    match (a.get(i), b.get(j)) {
+        (Some(x), Some(y)) if x == y => Step::Same,
+        (Some(_), None) => Step::Remove,
+        (None, _) => Step::Add,
+        (Some(_), Some(_)) if lcs[i][j + 1] >= lcs[i + 1][j] => Step::Add,
+        (Some(_), Some(_)) => Step::Remove,
+    }
 }
 
 /// A line diff of two texts: removed lines with `-`, added with `+`, unchanged lines with two spaces.
 pub fn diff(old: &str, new: &str) -> String {
     let a: Vec<&str> = old.lines().collect();
     let b: Vec<&str> = new.lines().collect();
-    let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            lcs[i][j] = if a[i] == b[j] {
-                lcs[i + 1][j + 1] + 1
-            } else {
-                lcs[i + 1][j].max(lcs[i][j + 1])
-            };
-        }
-    }
+    let lcs = lcs_table(&a, &b);
     let (mut i, mut j, mut out) = (0, 0, String::new());
     while i < a.len() || j < b.len() {
-        if i < a.len() && j < b.len() && a[i] == b[j] {
-            out.push_str(&format!("  {}\n", a[i]));
-            i += 1;
-            j += 1;
-        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            out.push_str(&format!("+ {}\n", b[j]));
-            j += 1;
-        } else {
-            out.push_str(&format!("- {}\n", a[i]));
-            i += 1;
+        match next_step(&a, &b, &lcs, (i, j)) {
+            Step::Same => {
+                out.push_str(&format!("  {}\n", a[i]));
+                i += 1;
+                j += 1;
+            }
+            Step::Add => {
+                out.push_str(&format!("+ {}\n", b[j]));
+                j += 1;
+            }
+            Step::Remove => {
+                out.push_str(&format!("- {}\n", a[i]));
+                i += 1;
+            }
         }
     }
     out
