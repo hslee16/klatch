@@ -791,3 +791,12 @@ Method: `experiments/two-agents/RUN-THREE.md`; three headless `claude -p` sessio
 - **OBSERVED.** After #194 the hook was quiet: 34 of 41 calls printed nothing, and no unchanged claim was repeated (run two: 13 of 25 calls repeated).
 - **OBSERVED.** No room of two was created; no claim-the-ask occurred (no one answered); nobody edited outside their own repository; no key file or environment was printed; `slugify` and `wrap` were written and tested by beta (44 tests), while alpha and gamma produced nothing.
 - **NOT OBSERVED.** The herd, claim-the-ask, rooms of two, and whether a busy owner is usefully interrupted, because the owner never saw the asks as asks.
+
+## 21. Canary: does PostToolUse hook output reach the model? (2026-11-13, Claude Code 2.1.323)
+
+Setup: throwaway `--settings` with `--setting-sources local`; hooks on SessionStart, UserPromptSubmit and PostToolUse each printed an instruction to include a distinct word in the final answer. One settings file printed plain stdout, the other printed JSON `{"hookSpecificOutput":{"hookEventName":...,"additionalContext":...}}`. Headless `claude -p`, task "run `echo hello`, then say done", two runs each.
+
+- **OBSERVED (both runs).** Plain stdout: the SessionStart and UserPromptSubmit words reached the model; the PostToolUse word never did.
+- **OBSERVED (both runs).** JSON `additionalContext`: all three words reached the model, including PostToolUse.
+- **Consequence.** `klatch hook` prints plain text, so on PostToolUse its output is not seen by the model in headless sessions. This explains run one ("no message reached me") and run three (beta never acted on asks) without any model misbehaviour.
+- **NOT OBSERVED.** Interactive sessions were not tested (cannot be driven headless); earlier notes saying delivery worked interactively remain unverified for PostToolUse.
