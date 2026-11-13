@@ -883,3 +883,18 @@ Two real helpers and two real asker agents (alpha: `cli.py`; gamma: README) per 
 - **OBSERVED.** The two variants cost about the same ($0.60 and $0.64 for the four agents); the 1 to 3 extra turns in V4 are within what noise could give. Neither is clearly cheaper.
 - **Caveat.** The askers were told to post the signal; this shows agents carry it out when told, not that they would invent it (#209). The signal convention has to reach every asker.
 - **NOT OBSERVED.** An asker that crashes or forgets (the 12-wait cap then ends the helper, at the cost of the full wait); an ask that arrives after the helpers stopped; more than two askers.
+
+### 25.3 A late ask after the helpers have stopped (same day)
+
+Under the V3 rule: two helpers and one asker run normally; the helpers post `status: done` (saying they are leaving) and exit; five seconds later a second asker starts. Two late-ask cases, because the first pair (`l0`, `l1`) used a question the lobby history had already answered (the late asker read the earlier answer in the history and wrote its README without a new answer, so it did not test an unanswered ask). The second pair (`m0`, `m1`) asks for something only a helper could do (add `reverse_words(text)` to the package).
+
+| Late asker | What it did | Turns | Cost | Time |
+|---|---|---|---|---|
+| m0: plain convention | Posted the ask, waited 4 x 60 s, nobody answered, reported to the human that it could not proceed | 8 | $0.148 | 217 s |
+| m1: told to read the lobby history and check `who` first | Saw both helpers had posted `status: done`, did not post or wait, reported at once that no helper is available | 3 | $0.092 | 16 s |
+
+- **OBSERVED.** With the V3 rule a late ask is lost: nobody is there. The plain asker found out only after four full waits, then told the human, so the human was the escalation path (against the minimal-intervention aim, though only after a real failure).
+- **OBSERVED.** A late asker that checks first learns in seconds. It used the helpers' own `status: done` messages in the lobby history; its one `who` call failed (it omitted the room name) and it did not need it. The check cost 3 turns and $0.09 against 8 turns and $0.15 for waiting it out.
+- **OBSERVED.** The lobby's durable history can itself answer a late ask (`l0`): a question already answered once costs nothing the second time.
+- **Caveat.** One run each; the checking asker was told to check, so this shows the idea works, not that agents would do it unprompted (#209).
+- **NOT OBSERVED.** Anything that re-starts a stopped helper when a late ask arrives (needs the harness or a supervisor, not klatch alone).
