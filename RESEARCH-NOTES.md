@@ -854,3 +854,17 @@ Question (#221): which completion signal ends an idle helper cheapest? Six stop 
 - **OBSERVED.** Cost differences are small (all between $0.26 and $0.34 for two helpers), because a `wait` call is one cheap turn. The saving is wall time and idle sessions, not tokens. Turn counts ranged from 17 (V1) to 26 (V0 and V2).
 - **Reading, with caveats.** One run per variant, so the differences among V1, V3, V4 and V5 (17 to 21 turns, $0.26 to $0.29) are within what model variance could produce; only the gap between those four and V0 and V2 is clear. V1 and V5 look cheapest because they ask the helper to check nothing: V1's signal came free from a script (in a real team someone must post it), and V5 requires knowing how many asks will come. V3 and V4 let the asker say it is done, so no outside party is needed, at the cost of the helper reading the lobby to check; they cost about 4 more turns than V1 in this run.
 - **NOT OBSERVED.** V3 and V4 with real askers (the scripts posted the done and closed messages, so whether an agent asker remembers to post them is untested); more than two asks; a helper whose asker never sends the signal (the 12-wait cap was not reached in any run).
+
+### 25.1 The combination V1 + V5 (same day)
+
+Rule: the helper is told to expect exactly 2 asks and stops when 2 have an answer or as soon as a `closing:` message appears, whichever is first. Two real helpers per case, scripted askers.
+
+| Case | What arrives | Result |
+|---|---|---|
+| c-a | 2 asks | Both asks answered (one by each helper); helpers ended 1 second after the second answer, on the count. 17 turns, $0.25 |
+| c-b | 1 ask (fewer than expected) | The count never reached 2; both helpers ended 3 seconds after the script posted `closing:`. 16 turns, $0.24 |
+| c-c | 3 asks (more than expected) | Both helpers stopped after answering 2 asks; ask #3 ("which module has `wrap`") was never answered and nothing said so. 15 turns, $0.26 |
+
+- **OBSERVED.** The combination works when the count is right (c-a) or too high (c-b, rescued only by the closing message). It silently drops work when the count is too low (c-c): the helpers had done what they were told, and no one learned ask 3 was unanswered.
+- **Reading.** A count is only as good as whoever supplies it, and `closing:` needs a human or a script that knows the work is over, so for the aim of minimal human intervention the pair puts a human in the loop exactly in the case c-b (too few asks). A rule that looks at the asks themselves (V3 member status, V4 ask state) has neither problem, because it does not need to know the number of asks in advance.
+- **NOT OBSERVED.** V3 or V4 with real asker agents; an ask that arrives after the helpers have decided to stop, under any rule.
