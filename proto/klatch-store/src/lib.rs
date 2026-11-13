@@ -6,7 +6,9 @@ mod sqlite;
 
 pub use sqlite::SqliteStore;
 
-use klatch_core::{Attribution, Claim, ClaimChanges, MemberInfo, Message, Posted, Result};
+use klatch_core::{
+    Attribution, Claim, ClaimChanges, MemberInfo, Message, OpenAsk, Posted, Result, open_asks,
+};
 
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
@@ -46,6 +48,20 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
+    /// Asks nobody has answered or closed (DESIGN section 25.4), oldest first. A released claim does not end one.
+    fn open_asks(&self, room: &str, now: i64) -> Result<Vec<OpenAsk>> {
+        let messages = self.tail(room, 0, 5000)?;
+        Ok(open_asks(&messages, &self.claims(room, now)?))
+    }
+    /// `member`'s own open asks that have had no claim for at least `after` seconds and were not reported to
+    /// it before; remembers what it returned. The default remembers nothing and reports them every time.
+    fn stale_asks(&self, room: &str, member: &str, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
+        Ok(self
+            .open_asks(room, now)?
+            .into_iter()
+            .filter(|a| a.sender == member && !a.claimed && now - a.ts >= after)
+            .collect())
+    }
     /// Messages from others past both the read cursor and the member's wait position, with no state change.
     /// The default is `read` without advancing, which has no wait position.
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {

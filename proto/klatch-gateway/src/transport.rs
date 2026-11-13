@@ -18,6 +18,10 @@ pub trait Transport {
     fn release(&self, room: &str, path: &str) -> Result<()>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
+    /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
+    fn digest_with(&self, backlog: bool) -> Result<Digest>;
+    /// Asks in a room nobody has answered or closed.
+    fn open_asks(&self, room: &str) -> Result<Vec<klatch_core::OpenAsk>>;
     /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription>;
     /// The next batch of a subscription, at most `max` messages.
@@ -68,6 +72,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn digest(&self) -> Result<Digest> {
         self.gateway.digest(&self.principal)
+    }
+    fn digest_with(&self, backlog: bool) -> Result<Digest> {
+        self.gateway.digest_with(&self.principal, backlog)
+    }
+    fn open_asks(&self, room: &str) -> Result<Vec<klatch_core::OpenAsk>> {
+        self.gateway.open_asks(&self.principal, room)
     }
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
         Ok(Subscription::new(room, from_seq, DEFAULT_WINDOW))

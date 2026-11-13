@@ -1,7 +1,8 @@
 use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
-    Claim, ClaimChanges, Error, MemberInfo, Message, Posted, ReleasedClaim, Result, overlaps,
+    Claim, ClaimChanges, Error, MemberInfo, Message, OpenAsk, Posted, ReleasedClaim, Result,
+    overlaps,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -31,14 +32,15 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
  CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
- CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));";
+ CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
+ CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -130,6 +132,14 @@ fn migrate_v3(conn: &Connection) -> Result<()> {
 fn migrate_v4(conn: &Connection) -> Result<()> {
     conn.execute_batch("ALTER TABLE members ADD COLUMN wait_seq INTEGER NOT NULL DEFAULT 0;")
         .map_err(be)
+}
+
+/// Version 5 to 6: which stale asks were already reported to their asker, so each is reported once.
+fn migrate_v5(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));",
+    )
+    .map_err(be)
 }
 
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
@@ -226,7 +236,10 @@ impl SqliteStore {
                     if version < 4 {
                         migrate_v3(&conn)?;
                     }
-                    migrate_v4(&conn)?;
+                    if version < 5 {
+                        migrate_v4(&conn)?;
+                    }
+                    migrate_v5(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -369,6 +382,28 @@ impl Store for SqliteStore {
                 )
                 .map_err(be)?;
             Ok(())
+        })
+    }
+
+    fn stale_asks(&self, room: &str, member: &str, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
+        self.immediate(|| {
+            let mut fresh = Vec::new();
+            for a in self.open_asks(room, now)? {
+                if a.sender != member || a.claimed || now - a.ts < after {
+                    continue;
+                }
+                let n = self
+                    .conn
+                    .execute(
+                        "INSERT OR IGNORE INTO asks_reported(room,member,seq) VALUES(?1,?2,?3)",
+                        params![room, member, a.seq],
+                    )
+                    .map_err(be)?;
+                if n == 1 {
+                    fresh.push(a);
+                }
+            }
+            Ok(fresh)
         })
     }
 
@@ -764,6 +799,74 @@ mod tests {
         s.read("r", "alice", true, 3).unwrap();
         s.post("r", "alice", "mine", 4).unwrap();
         assert!(s.wait_poll("r", "alice", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn open_asks_follow_answers_and_claims_and_a_release_leaves_the_ask_open() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: slugify", 1).unwrap().seq;
+        let o = s.open_asks("r", 2).unwrap();
+        assert_eq!((o.len(), o[0].claimed), (1, false));
+        s.claim("r", "bob", &format!("ask:{a}"), 100, "", 3)
+            .unwrap();
+        assert!(s.open_asks("r", 4).unwrap()[0].claimed);
+        assert!(
+            !s.open_asks("r", 500).unwrap()[0].claimed,
+            "a lapsed claim leaves the ask unclaimed"
+        );
+        s.release("r", "bob", &format!("ask:{a}")).unwrap();
+        let after = s.open_asks("r", 5).unwrap();
+        assert_eq!(
+            (after.len(), after[0].claimed),
+            (1, false),
+            "a release must not end the ask"
+        );
+    }
+
+    #[test]
+    fn a_reply_or_a_close_ends_an_open_ask() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: one", 1).unwrap().seq;
+        let b = s.post("r", "alice", "seeking: two", 1).unwrap().seq;
+        s.post("r", "bob", &format!("answer to #{a}: here"), 2)
+            .unwrap();
+        s.post("r", "alice", &format!("closed #{b}"), 3).unwrap();
+        assert!(s.open_asks("r", 4).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_asks_report_my_unclaimed_old_asks_once() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: mine", 10).unwrap().seq;
+        s.post("r", "bob", "seeking: his", 10).unwrap();
+        assert!(
+            s.stale_asks("r", "alice", 69, 60).unwrap().is_empty(),
+            "too young"
+        );
+        let first = s.stale_asks("r", "alice", 70, 60).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].seq, a);
+        assert!(
+            s.stale_asks("r", "alice", 71, 60).unwrap().is_empty(),
+            "reported once"
+        );
+        assert_eq!(
+            s.stale_asks("r", "bob", 70, 60).unwrap().len(),
+            1,
+            "each asker is told about its own ask"
+        );
+    }
+
+    #[test]
+    fn a_claimed_or_answered_ask_is_not_stale() {
+        let s = store();
+        let a = s.post("r", "alice", "seeking: claimed", 10).unwrap().seq;
+        let b = s.post("r", "alice", "seeking: answered", 10).unwrap().seq;
+        s.claim("r", "bob", &format!("ask:{a}"), 1000, "", 11)
+            .unwrap();
+        s.post("r", "bob", &format!("answer to #{b}: ok"), 12)
+            .unwrap();
+        assert!(s.stale_asks("r", "alice", 100, 60).unwrap().is_empty());
     }
 
     #[test]
@@ -1538,12 +1641,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_5() {
-        assert_eq!(version(&store()), 5);
+    fn a_fresh_database_is_at_schema_version_6() {
+        assert_eq!(version(&store()), 6);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_5_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_6_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1559,7 +1662,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 5);
+        assert_eq!(version(&s), 6);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1580,14 +1683,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            5,
+            6,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_5() {
+    fn a_version_0_database_now_migrates_all_the_way_to_6() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1600,7 +1703,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 5);
+        assert_eq!(version(&s), 6);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1619,11 +1722,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_five_with_everything_intact() {
+    fn a_version_two_database_migrates_to_six_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 5);
+        assert_eq!(version(&s), 6);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1641,7 +1744,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 5);
+        assert_eq!(version(&s), 6);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(
