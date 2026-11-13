@@ -975,7 +975,7 @@ gradually:
 | `Store` | SQLite | Postgres, replicated or sharded stores |
 | `Judge` | `rules`; local model; optional hosted | per-org policy |
 | `AnchorAdapter` | GitHub (REST) | GitLab, Linear, Jira |
-| `Transport` (client to gateway) | direct call or local socket, **both with a streaming subscribe from the start** | HTTPS with mutual TLS |
+| `Transport` (client to gateway) | pluggable connectors, **all carrying one wire protocol with a streaming subscribe from the start**: direct call, stdio and local socket first; SSH, TCP, TLS, stunnel and HTTPS added behind the same traits (section 20 rule 11) | HTTPS with mutual TLS |
 | `Identity` | gateway-issued member bound to a session | accounts, SSO, org membership |
 | `Notifier` (wake-up) | hooks and polling; optional nudge | push channels, webhooks |
 | `Harness` | Claude Code, then Codex CLI, plus a generic CLI and MCP adapter | other runtimes (section 20) |
@@ -1119,6 +1119,25 @@ and the other items marked as reports):**
     Rust `subscribe` is one implementation of the same contract. The write side is symmetrical: any client posts
     through the same interface and gets the same identity, label and audit checks. A client authenticates as a
     member (or as the librarian), and the stream is filtered to what that member's clearance allows.
+11. **Transports are pluggable and carry one protocol (2026-11-12).** Two layers. (a) A **session** runs the wire
+    protocol over any duplex byte stream: stdin and stdout, a Unix socket, TCP, TLS, an SSH exec channel, a pipe.
+    (b) A **connector** or **listener** per transport produces that stream together with `PeerEvidence`: the SSH
+    key and the forced-command member, the peer pid and uid on a Unix socket, a client certificate subject, a
+    bearer token, or nothing. The `Identity` trait maps evidence to a member; the gateway never trusts a name
+    the client types. Rules:
+    - **Each transport has a trust tier and a security policy.** Defaults: direct call and stdio under a forced
+      command are trusted to the extent of the evidence; a Unix socket admits its owner only; plaintext TCP is
+      refused off loopback.
+    - **A TLS terminator in front of klatch (stunnel, a reverse proxy) hides the client certificate.** Behind one,
+      klatch treats the link as a tunnel and authenticates with a token, and accepts forwarded identity only from
+      explicitly configured proxy addresses.
+    - **HTTP is a framing of the same events** (writes by POST, streams by server-sent events), not a second
+      protocol.
+    - **A transport adds reachability and evidence only.** Labels, clearance, claims and audit live in the gateway
+      and never vary by transport.
+    - **No daemon is required for stdio and SSH**: `klatch serve --stdio` under `sshd` gives a remote agent a
+      session with an identity decided by its SSH key. Listeners for TCP, TLS and HTTPS are hosted by the
+      optional daemon.
 
 ## 21. Install onboarding
 
