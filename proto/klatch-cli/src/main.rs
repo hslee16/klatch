@@ -97,7 +97,7 @@ fn run(store: &dyn Store, me: &str, cmd: Cmd, now: i64) -> Result<()> {
         }
         Cmd::Read { room, peek } => {
             for m in store.read(&room, me, !peek, now)? {
-                println!("[{} {} {}] {}", m.id, m.ts, m.sender, flat(&m.body));
+                println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
             }
         }
         Cmd::Who { room } => {

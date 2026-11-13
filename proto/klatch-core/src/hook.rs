@@ -23,7 +23,7 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
         for m in &d.messages {
             out.push_str(&format!(
                 "  #{} from {}: {}\n",
-                m.id,
+                m.seq,
                 m.sender,
                 flat(&m.body)
             ));
@@ -44,9 +44,10 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
 mod tests {
     use super::*;
 
-    fn msg(id: i64, sender: &str, body: &str) -> Message {
+    fn msg(seq: i64, sender: &str, body: &str) -> Message {
         Message {
-            id,
+            id: format!("ID{seq}"),
+            seq,
             sender: sender.into(),
             body: body.into(),
             ts: 0,
