@@ -898,3 +898,14 @@ Under the V3 rule: two helpers and one asker run normally; the helpers post `sta
 - **OBSERVED.** The lobby's durable history can itself answer a late ask (`l0`): a question already answered once costs nothing the second time.
 - **Caveat.** One run each; the checking asker was told to check, so this shows the idea works, not that agents would do it unprompted (#209).
 - **NOT OBSERVED.** Anything that re-starts a stopped helper when a late ask arrives (needs the harness or a supervisor, not klatch alone).
+
+## 26. Run nine: a declined ask stays open (2026-11-13)
+
+Tests the decision to drop "a released `ask:<N>` claim ends the ask" (DESIGN section 25.4). Three real agents on the binary with open asks (`klatch asks`, the stale-ask report, the session-start backlog): an asker (alpha), a helper told to claim the ask and then decline it (release the claim, post `declined #1: not my area`, post `status: done`, stop), and a second helper started 65 seconds later.
+
+- **OBSERVED.** After the decline, `klatch asks lobby` still listed the ask, unclaimed, 11 seconds after it was posted and again 76 seconds after (the helper had claimed, released and left). A released claim did not end it.
+- **OBSERVED.** The asker was told by klatch: its next hook output (PostToolUse, JSON context) said "your ask #1 has had no claim for 76s: seeking: ...". alpha quoted it exactly in its final report, so the stale-ask line reached the model. Reported once: the asker's later hook lines carried only claim changes.
+- **OBSERVED.** The late helper answered the ask (`answer to #1:` with the location, module and API), claimed and released `ask:1`, posted `status: done`, and stopped; alpha used the answer, `uvx pytest` passes (5), and alpha closed the ask (`closed #1`). `klatch asks` then listed nothing.
+- **OBSERVED, a gap.** The late helper's SessionStart hook printed nothing (0 bytes): the backlog works only for rooms the member has already joined, and a brand-new session has joined none. It found the ask only because its task told it to run `klatch asks lobby` as a fallback. The backlog as built does not serve a new helper (ticket).
+- **OBSERVED, a bug.** A `wait` with `--only` or `--peek` does not refresh the waiter's presence in `who` (it does not touch it), while an unfiltered `wait` does; a helper waiting with a filter looks absent. Checked by hand after the run: `last seen 5s ago` after a 2 s filtered wait, `0s ago` after an unfiltered one (ticket).
+- **NOT OBSERVED.** More than one open ask; a stale ask when the asker has several rooms; the ask text growing past 160 characters in a real run (covered by a unit test).
