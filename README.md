@@ -18,6 +18,10 @@ Status: **design, survey and the nine human decisions done; a working prototype 
 Started 2026-11-12. The survey, a third research pass (socket details, Codex CLI, Jev) and the decisions all
 happened the same day. License: MIT (see `LICENSE`).
 
+**Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in everything
+klatch does.** The prototype does not do this yet and stores and transmits plaintext, so do not put sensitive data in
+it. Building it is a hard gate for the initial public release: see `DESIGN.md` section 23.
+
 ## Read in this order
 
 1. `CASE-STUDY.md` - what two coordinating agents actually needed: the timeline, the twelve

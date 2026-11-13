@@ -141,6 +141,9 @@ standard error and nothing on standard output. Any tool can spawn it and read th
 - A `refusal` never contains the text that triggered it, and consumers must not try to reconstruct it.
 - Identity comes from the transport, not from the frames; a client cannot choose its `member`.
 - The gateway enforces labels, clearance, claims and audit the same way on every transport.
+- Zero trust and encryption (`DESIGN.md` section 23): by the initial public release every transport that leaves a
+  process or a machine is encrypted and mutually authenticated, and stored data is encrypted at rest. The prototype's
+  transports and store are not yet encrypted, so do not send or store sensitive data with it.
 
 ## 8. Examples
 
