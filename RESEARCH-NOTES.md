@@ -766,3 +766,16 @@ Method: two headless `claude -p` sessions (Claude Code 2.1.323, macOS) named alp
 - **OBSERVED.** Permission rules refused commands containing shell variables (`$KLATCH_BIN`, `$EXP`); both agents fell back to literal paths from the protocol (#174).
 - **OBSERVED.** The klatch repository stayed clean; no key file or environment was printed.
 - **NOT OBSERVED.** Whether the hook delivered anything (#175), claim collisions (#176), idle and resume (#177).
+
+## 19. Run two: finding each other through the lobby (2026-11-13)
+
+Method: protocol experiments/two-agents/RUN-TWO.md; three headless claude -p sessions (Claude Code 2.1.323, macOS), each started in its own scratch repository, throwaway settings with a hook wrapper that logs every call (time, session, event, exit, bytes, output), narrow tool allowlist, absolute paths and no shell variable in any command. The observer only read the rooms and files.
+
+- **OBSERVED.** The hook fired for all three sessions on SessionStart, UserPromptSubmit and every PostToolUse (25 calls, exit 0 each). With no shell variable in the commands the agents used the absolute path as instructed, so #174 did not recur.
+- **OBSERVED.** The hook delivered a peer's ask to two other sessions, with the data warning and sender, on the next tool call after it was posted (same second in the log). Neither answered, because the ask (read access to a directory) could not be answered by a peer.
+- **OBSERVED.** All three followed the claim convention: claimed their files and the ticket before editing, released after, and posted a done message. No claim conflict occurred.
+- **OBSERVED.** No agent needed to find another: alpha's dependency was written by beta in seconds, so nothing blocked it. The scenario was too easy and too fast to test discovery (#195).
+- **OBSERVED.** gamma was blocked by headless read permission on a sibling repository (a run design flaw; comment on #178), asked in the lobby, got no reply and stopped.
+- **OBSERVED.** No agent edited outside its own repository; no key file or environment was printed; no room of two was created.
+- **OBSERVED.** The hook repeated unchanged claims on 13 of 25 calls with a changing countdown (#194).
+- **NOT OBSERVED.** The asks agents write when really blocked, the herd, claim-the-ask, rooms of two.
