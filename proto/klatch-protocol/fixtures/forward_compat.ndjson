@@ -1,0 +1,2 @@
+{"v":1,"type":"presence_changed","room":"core","who":"bob"}
+{"v":1,"type":"message","room":"core","seq":4,"id":"01HZX3K9Q4ABCDEFGHJKMNPQRU","sender":"bob","attribution":"verified","label":"internal","body":"extra fields are ignored","ts":1700000009,"reactions":["ok"]}
