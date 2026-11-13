@@ -368,6 +368,53 @@ impl Store for SqliteStore {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(be)
     }
+
+    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT mid,seq,sender,body,ts FROM messages WHERE room=?1 AND seq>?2 ORDER BY seq LIMIT ?3",
+            )
+            .map_err(be)?;
+        st.query_map(params![room, after_seq, limit as i64], |r| {
+            Ok(Message {
+                id: r.get(0)?,
+                seq: r.get(1)?,
+                sender: r.get(2)?,
+                body: r.get(3)?,
+                ts: r.get(4)?,
+            })
+        })
+        .map_err(be)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(be)
+    }
+
+    fn head(&self, room: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1",
+                params![room],
+                |r| r.get(0),
+            )
+            .map_err(be)
+    }
+
+    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+        // One statement, so it is atomic: forward only, and clamped to the room's head so an
+        // acknowledgement can never skip a message that has not arrived yet.
+        self.conn
+            .execute(
+                "INSERT INTO members(room,name,joined,last_seen,last_seq)
+                 VALUES(?1,?2,?4,?4,MAX(0,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))))
+                 ON CONFLICT(room,name) DO UPDATE SET
+                   last_seq=MAX(last_seq,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))),
+                   last_seen=?4",
+                params![room, member, seq, now],
+            )
+            .map_err(be)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -931,5 +978,112 @@ mod tests {
             );
             std::fs::remove_dir_all(path.parent().unwrap()).ok();
         }
+    }
+
+    // ---- streaming support: tail, head, advance_cursor (#95) ----
+
+    #[test]
+    fn head_is_zero_for_an_empty_room_and_the_highest_seq_otherwise() {
+        let s = store();
+        assert_eq!(s.head("r").unwrap(), 0);
+        s.post("r", "bob", "a", 1).unwrap();
+        s.post("r", "bob", "b", 2).unwrap();
+        s.post("other", "bob", "c", 3).unwrap();
+        assert_eq!(s.head("r").unwrap(), 2);
+    }
+
+    #[test]
+    fn tail_returns_messages_after_a_seq_in_order_from_every_sender() {
+        let s = store();
+        s.post("r", "alice", "mine", 1).unwrap();
+        s.post("r", "bob", "theirs", 2).unwrap();
+        s.post("r", "alice", "mine2", 3).unwrap();
+        let all = s.tail("r", 0, 100).unwrap();
+        assert_eq!(all.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            all[0].sender, "alice",
+            "own messages are included so seq has no gaps"
+        );
+        let after = s.tail("r", 1, 100).unwrap();
+        assert_eq!(after.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![2, 3]);
+        assert!(s.tail("r", 3, 100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tail_honours_the_limit_and_the_room() {
+        let s = store();
+        for i in 0..5 {
+            s.post("r", "bob", &format!("m{i}"), i).unwrap();
+        }
+        s.post("other", "bob", "x", 9).unwrap();
+        let two = s.tail("r", 0, 2).unwrap();
+        assert_eq!(two.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 2]);
+        assert!(s.tail("empty", 0, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tail_has_no_side_effects_on_cursors_or_presence() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "x", 2).unwrap();
+        s.tail("r", 0, 10).unwrap();
+        assert_eq!(
+            s.read("r", "alice", false, 3).unwrap().len(),
+            1,
+            "still unread"
+        );
+        assert_eq!(
+            s.members("r")
+                .unwrap()
+                .iter()
+                .find(|m| m.name == "alice")
+                .unwrap()
+                .last_seen,
+            3
+        );
+    }
+
+    #[test]
+    fn advance_cursor_moves_forward_only_and_read_follows_it() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        for i in 0..4 {
+            s.post("r", "bob", &format!("m{i}"), i).unwrap();
+        }
+        s.advance_cursor("r", "alice", 2, 5).unwrap();
+        assert_eq!(
+            s.read("r", "alice", false, 6)
+                .unwrap()
+                .iter()
+                .map(|m| m.seq)
+                .collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        s.advance_cursor("r", "alice", 1, 7).unwrap(); // backward: ignored
+        assert_eq!(s.read("r", "alice", false, 8).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn advance_cursor_never_passes_the_head_so_it_cannot_skip_future_messages() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        s.advance_cursor("r", "alice", 99, 3).unwrap();
+        s.post("r", "bob", "two", 4).unwrap();
+        let got = s.read("r", "alice", false, 5).unwrap();
+        assert_eq!(
+            got.iter().map(|m| m.seq).collect::<Vec<_>>(),
+            vec![2],
+            "the later message must still arrive"
+        );
+    }
+
+    #[test]
+    fn advance_cursor_creates_the_membership_if_needed() {
+        let s = store();
+        s.post("r", "bob", "x", 1).unwrap();
+        s.advance_cursor("r", "alice", 1, 2).unwrap();
+        assert!(s.members("r").unwrap().iter().any(|m| m.name == "alice"));
+        assert!(s.read("r", "alice", false, 3).unwrap().is_empty());
     }
 }

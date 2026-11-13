@@ -1,4 +1,4 @@
-use crate::{Digest, Gateway};
+use crate::{Batch, DEFAULT_WINDOW, Digest, Gateway, Subscription};
 use klatch_core::{Claim, MemberInfo, Message, Posted, Principal, Result};
 use klatch_store::Store;
 use std::rc::Rc;
@@ -14,6 +14,12 @@ pub trait Transport {
     fn release(&self, room: &str, path: &str) -> Result<()>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
+    /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
+    fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription>;
+    /// The next batch of a subscription, at most `max` messages.
+    fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch>;
+    /// Acknowledge messages up to `seq`: advances this member's read cursor.
+    fn ack(&self, room: &str, seq: i64) -> Result<()>;
 }
 
 /// In-process transport: calls the gateway directly. No daemon, no socket.
@@ -52,6 +58,15 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn digest(&self) -> Result<Digest> {
         self.gateway.digest(&self.principal)
+    }
+    fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
+        Ok(Subscription::new(room, from_seq, DEFAULT_WINDOW))
+    }
+    fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch> {
+        subscription.poll(&self.gateway, &self.principal, max)
+    }
+    fn ack(&self, room: &str, seq: i64) -> Result<()> {
+        self.gateway.ack(&self.principal, room, seq)
     }
 }
 
@@ -108,5 +123,53 @@ mod tests {
         alice.join("r").unwrap();
         bob.join("r").unwrap();
         assert_eq!(alice.who("r").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn subscribe_and_poll_replay_history_then_caught_up_then_live() {
+        let (alice, bob) = pair();
+        bob.post("r", "one").unwrap();
+        bob.post("r", "two").unwrap();
+        let mut sub = alice.subscribe("r", 0).unwrap();
+        let first = alice.poll(&mut sub, 50).unwrap();
+        assert_eq!(
+            first.messages.iter().map(|m| m.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(first.caught_up, Some(2));
+        bob.post("r", "three").unwrap();
+        let live = alice.poll(&mut sub, 50).unwrap();
+        assert_eq!(
+            (live.messages[0].body.as_str(), live.caught_up),
+            ("three", None)
+        );
+    }
+
+    #[test]
+    fn an_ack_through_the_transport_advances_the_members_read_cursor() {
+        let (alice, bob) = pair();
+        alice.join("r").unwrap();
+        for i in 0..3 {
+            bob.post("r", &format!("m{i}")).unwrap();
+        }
+        alice.ack("r", 2).unwrap();
+        assert_eq!(
+            alice
+                .read("r", false)
+                .unwrap()
+                .iter()
+                .map(|m| m.seq)
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn a_subscription_uses_the_default_window() {
+        let (alice, _) = pair();
+        let mut sub = alice.subscribe("r", 0).unwrap();
+        assert_eq!(sub.room(), "r");
+        assert!(alice.poll(&mut sub, 1).unwrap().messages.is_empty());
+        assert!(DEFAULT_WINDOW >= 64);
     }
 }

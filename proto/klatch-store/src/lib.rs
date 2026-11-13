@@ -34,4 +34,11 @@ pub trait Store {
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
     /// Rooms a member has joined, ordered by name.
     fn rooms_of(&self, member: &str) -> Result<Vec<String>>;
+    /// Messages with `seq` greater than `after_seq`, oldest first, at most `limit`, from every sender
+    /// (including the caller, so `seq` has no gaps). No cursor and no presence side effects.
+    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>>;
+    /// The highest `seq` in a room, 0 when it is empty.
+    fn head(&self, room: &str) -> Result<i64>;
+    /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
+    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()>;
 }

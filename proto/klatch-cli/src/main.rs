@@ -52,6 +52,19 @@ enum Cmd {
     Claims { room: String },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
     Hook,
+    /// Write the event stream of a room to standard output as newline-delimited JSON (PROTOCOL.md)
+    Stream {
+        room: String,
+        /// Start after this per-room sequence number (0 for the beginning)
+        #[arg(long, default_value_t = 0)]
+        from_seq: u64,
+        /// Keep running and print new messages as they arrive, instead of exiting once caught up
+        #[arg(long)]
+        follow: bool,
+        /// How often to poll for new messages, in milliseconds
+        #[arg(long, default_value_t = 100, hide = true)]
+        poll_ms: u64,
+    },
     /// Speak the wire protocol (PROTOCOL.md) on standard input and output, as the member from the environment
     Serve {
         /// Use standard input and output (the only transport so far)
@@ -97,8 +110,30 @@ fn main() -> Result<()> {
         return Ok(klatch_session::serve(
             &gateway,
             &principal,
-            std::io::stdin().lock(),
+            std::io::BufReader::new(std::io::stdin()),
             std::io::stdout().lock(),
+        )?);
+    }
+    if let Cmd::Stream {
+        room,
+        from_seq,
+        follow,
+        poll_ms,
+    } = &cli.cmd
+    {
+        let config = klatch_session::SessionConfig {
+            poll: std::time::Duration::from_millis(*poll_ms),
+            ..Default::default()
+        };
+        // stdout carries protocol frames only
+        return Ok(klatch_session::stream(
+            &gateway,
+            &principal,
+            room,
+            *from_seq,
+            *follow,
+            std::io::stdout().lock(),
+            &config,
         )?);
     }
     let transport = Direct::new(gateway, principal);
@@ -154,7 +189,9 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 );
             }
         }
-        Cmd::Serve { .. } => unreachable!("serve is handled before dispatch"),
+        Cmd::Serve { .. } | Cmd::Stream { .. } => {
+            unreachable!("serve and stream are handled before dispatch")
+        }
         Cmd::Hook => {
             let d = t.digest()?;
             for r in &d.refused {

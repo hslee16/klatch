@@ -5,9 +5,9 @@ user-facing agent, a TUI or a web view. It is language neutral and does not depe
 Design background is in `DESIGN.md` section 20 rules 10 to 13. The Rust reference implementation is the
 `klatch-protocol` crate in `proto/`; its tests run every line of `proto/klatch-protocol/fixtures/`.
 
-Status: version 1 of the frames, the codec and the request and response session (`klatch serve --stdio`).
-`subscribe` and live streaming are specified here and arrive with the streaming ticket (#95); until then
-`subscribe` and `unsubscribe` answer `not_implemented`, and `ack` frames are accepted and ignored.
+Status: version 1 of the frames, the codec, the request and response session (`klatch serve --stdio`) and
+streaming (`subscribe`, live push, heartbeats, acknowledgement and resume). The zero-daemon producer is
+`klatch stream <room> [--from-seq N] [--follow]`.
 
 ## 1. Framing
 
@@ -63,8 +63,8 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 
 | Method | Params | Result |
 |---|---|---|
-| `subscribe` | `room`, `from_seq` | Replays messages after `from_seq`, then `caught_up`, then live messages. The same path a late joiner uses. Not implemented yet (`not_implemented`) |
-| `unsubscribe` | `room` | Stops the stream for that room. Not implemented yet |
+| `subscribe` | `room`, `from_seq` (integer, 0 for the beginning) | `{ "head": n }`, the room's highest `seq`. Then `message` frames after `from_seq`, then `caught_up`, then live messages. The same path a late joiner uses. A second `subscribe` for the same room replaces the first (resume) |
+| `unsubscribe` | `room` | `{}`. Stops the stream for that room; harmless if there is none |
 | `post` | `room`, `body` | `{ "seq": n, "id": "..." }`. The label is decided by the gateway from the room, never by the client |
 | `read` | `room`, `peek` (optional) | `{ "messages": [...] }`: unread messages from others, each `{id, seq, sender, attribution, label, body, ts}`; advances the cursor unless `peek` |
 | `who` | `room` | `{ "members": [{ "name", "last_seen" }] }`: liveness, not progress |
@@ -87,7 +87,7 @@ caused the failure.
 | `invalid_params` | `params` is missing or has the wrong shape |
 | `invalid` | A value was rejected: a bad room name, claim path, reason or ttl, or a bad member name |
 | `unknown_method` | The method is not defined in this version |
-| `not_implemented` | The method is defined but not available yet |
+| `not_implemented` | The method is defined but not available yet (none are at present) |
 | `conflict` | Another member holds an overlapping claim; the message names the path, the holder and the seconds left |
 | `refused` | A policy refused the request; a `refusal` frame naming the rule precedes the response |
 | `not_found` | The thing asked for does not exist |
@@ -108,11 +108,31 @@ carry the `request` id they refused.
 
 - **Pull and push share one session.** Requests and their responses travel one way, events the other, in any
   interleaving. A response is matched to its request by `id`; events carry `seq` and are ordered per room.
-- **Acknowledge to advance.** A consumer sends `ack` as it processes messages. The gateway may stop sending
-  past a bound beyond the last `ack`, so a slow consumer is not flooded.
+- **Replay, then live.** After a `subscribe` response the gateway sends the `message` frames after `from_seq` in
+  `seq` order, then one `caught_up` frame (its `seq` is the last message sent, or the head for an empty room),
+  then new messages as they are posted. A stream includes the member's own messages, so `seq` has no gaps.
+- **`from_seq` beyond the room's head** is treated as the head, so messages posted later are not skipped.
+- **Acknowledge to advance.** A consumer sends `ack` as it processes messages. An `ack` moves the stream's flow
+  control window and also advances the member's read cursor (the same cursor `read` uses), never backward and never
+  past the room's head. The gateway sends at most a window of messages beyond the last `ack` for each room; the
+  default window is 256 messages. A consumer that never acknowledges receives one window and then waits.
+  `klatch stream` has no window, because a pipe reader cannot acknowledge.
 - **Resume after a reconnect.** Subscribe again with `from_seq` set to the last `seq` you processed. Messages
   already acknowledged are not repeated; unacknowledged ones may be, and `seq` lets you drop duplicates.
-- **Heartbeats** are sent while idle so a consumer can tell a quiet room from a dead connection.
+- **Heartbeats** are sent while the stream is idle (default every 15 seconds) so a consumer can tell a quiet room
+  from a dead connection.
+- **Transient failures.** If the store is busy (`Busy`) the gateway retries on the next poll and says nothing. Any
+  other failure while streaming sends a `refusal` (rule `stream.backend`, `stream.invalid` or `stream.not_found`, or
+  the policy's own rule) and drops that room's subscription; the consumer may subscribe again.
+- **End of input.** When the input of a session closes, the gateway delivers the replay that is immediately
+  available within each window and ends the session.
+
+### `klatch stream`
+
+`klatch stream <room> [--from-seq N] [--follow]` writes `hello`, the history after `N`, and `caught_up` to standard
+output, one frame per line, and exits; with `--follow` it keeps running, printing live messages and heartbeats until
+its output closes. The room is checked before anything is printed, so an invalid or refused room produces an error on
+standard error and nothing on standard output. Any tool can spawn it and read the pipe, with no daemon.
 
 ## 7. Safety rules every consumer follows
 
