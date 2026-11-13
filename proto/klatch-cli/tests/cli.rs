@@ -553,3 +553,17 @@ fn the_cli_stream_and_a_serve_subscription_produce_identical_events() {
     assert_eq!(events(&via_stream), events(&via_serve));
     assert_eq!(seqs_of(&via_stream), vec![2, 3]);
 }
+
+#[test]
+fn messages_posted_from_the_cli_are_unattributed_on_the_stream() {
+    let h = Home::new();
+    h.ok("bob", &["post", "r", "from the env var"]);
+    let f = h.stream("alice", &["r"]);
+    let m = f
+        .iter()
+        .find(|x| matches!(x, ServerFrame::Message { .. }))
+        .unwrap();
+    assert!(
+        matches!(m, ServerFrame::Message { attribution: klatch_protocol::Attribution::Unattributed, label, .. } if label == "public")
+    );
+}

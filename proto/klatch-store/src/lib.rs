@@ -6,14 +6,28 @@ mod sqlite;
 
 pub use sqlite::SqliteStore;
 
-use klatch_core::{Claim, MemberInfo, Message, Posted, Result};
+use klatch_core::{Attribution, Claim, MemberInfo, Message, Posted, Result};
 
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
-    /// Append a message; also marks the sender as present. Returns its unique id and its per-room `seq`
-    /// (dense, starting at 1).
-    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted>;
+    /// Append a message, recording whether its sender was proven and the label it is posted under; also marks
+    /// the sender as present. Returns its unique id and its per-room `seq` (dense, starting at 1).
+    fn post_as(
+        &self,
+        room: &str,
+        sender: &str,
+        attribution: Attribution,
+        label: &str,
+        body: &str,
+        now: i64,
+    ) -> Result<Posted>;
+
+    /// `post_as` for a sender that is not proven, under the lowest label: the cautious default. The gateway
+    /// never uses this; it passes the caller's real attribution.
+    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted> {
+        self.post_as(room, sender, Attribution::Unattributed, "public", body, now)
+    }
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;

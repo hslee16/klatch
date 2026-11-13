@@ -282,16 +282,14 @@ fn pump<S: Store, W: Write>(
 }
 
 fn message_frame(room: &str, m: &Message) -> ServerFrame {
-    // Stored messages do not yet record whether their sender was proven or what label they carry, so they are
-    // reported as unattributed and public, the cautious reading (R23, DESIGN D3).
     ServerFrame::Message {
         v: PROTOCOL_VERSION,
         room: room.to_string(),
         seq: u64::try_from(m.seq).unwrap_or(0),
         id: m.id.clone(),
         sender: m.sender.clone(),
-        attribution: Attribution::Unattributed,
-        label: "public".into(),
+        attribution: attribution(m.attribution),
+        label: m.label.clone(),
         body: m.body.clone(),
         ts: m.ts,
     }
@@ -468,11 +466,13 @@ fn params<T: DeserializeOwned>(id: &str, value: Value) -> Result<T, Vec<ServerFr
 }
 
 fn message_json(m: &Message) -> Value {
-    // Stored messages do not yet record whether their sender was proven or what label they carry, so they are
-    // reported as unattributed and public, which is the cautious reading (R23, DESIGN D3).
     json!({
-        "id": m.id, "seq": m.seq, "sender": m.sender, "attribution": "unattributed",
-        "label": "public", "body": m.body, "ts": m.ts
+        "id": m.id, "seq": m.seq, "sender": m.sender,
+        "attribution": match m.attribution {
+            Who::Verified => "verified",
+            Who::Unattributed => "unattributed",
+        },
+        "label": m.label, "body": m.body, "ts": m.ts
     })
 }
 

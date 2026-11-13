@@ -29,10 +29,10 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, PRIMARY KEY(room,name));
- CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER);
+ CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
  CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);";
@@ -95,6 +95,48 @@ fn migrate_v0(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 1 to 2: messages record whether the sender was proven and the label they were posted under.
+/// History written before this is reported as unattributed and public, which is the truthful reading
+/// because nothing recorded otherwise.
+fn migrate_v1(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE messages ADD COLUMN attribution TEXT NOT NULL DEFAULT 'unattributed';
+         ALTER TABLE messages ADD COLUMN label TEXT NOT NULL DEFAULT 'public';",
+    )
+    .map_err(be)
+}
+
+fn attribution_text(a: klatch_core::Attribution) -> &'static str {
+    match a {
+        klatch_core::Attribution::Verified => "verified",
+        klatch_core::Attribution::Unattributed => "unattributed",
+    }
+}
+
+/// Anything other than `verified` reads as unattributed: an unknown value must never look proven.
+fn attribution_from(text: &str) -> klatch_core::Attribution {
+    if text == "verified" {
+        klatch_core::Attribution::Verified
+    } else {
+        klatch_core::Attribution::Unattributed
+    }
+}
+
+/// The columns every message query selects, in the order `message_from_row` reads them.
+const MESSAGE_COLUMNS: &str = "mid,seq,sender,attribution,label,body,ts";
+
+fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+    Ok(Message {
+        id: r.get(0)?,
+        seq: r.get(1)?,
+        sender: r.get(2)?,
+        attribution: attribution_from(&r.get::<_, String>(3)?),
+        label: r.get(4)?,
+        body: r.get(5)?,
+        ts: r.get(6)?,
+    })
+}
+
 impl SqliteStore {
     /// Open with the default five second wait for another writer.
     pub fn open(path: &Path) -> Result<Self> {
@@ -141,11 +183,15 @@ impl SqliteStore {
         // database at once cannot both migrate it.
         conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
         let outcome = (|| -> Result<()> {
-            if user_version(&conn)? < SCHEMA_VERSION {
-                if has_table(&conn, "messages")? {
-                    migrate_v0(&conn)?;
-                } else {
+            let version = user_version(&conn)?;
+            if version < SCHEMA_VERSION {
+                if version == 0 && !has_table(&conn, "messages")? {
                     conn.execute_batch(SCHEMA).map_err(be)?;
+                } else {
+                    if version == 0 {
+                        migrate_v0(&conn)?;
+                    }
+                    migrate_v1(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -193,7 +239,15 @@ impl Store for SqliteStore {
         self.touch(room, member, now)
     }
 
-    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted> {
+    fn post_as(
+        &self,
+        room: &str,
+        sender: &str,
+        attribution: klatch_core::Attribution,
+        label: &str,
+        body: &str,
+        now: i64,
+    ) -> Result<Posted> {
         self.immediate(|| {
             let seq: i64 = self
                 .conn
@@ -206,8 +260,8 @@ impl Store for SqliteStore {
             let id = new_id((now.max(0) as u64) * 1000);
             self.conn
                 .execute(
-                    "INSERT INTO messages(room,seq,mid,sender,member,body,ts) VALUES(?1,?2,?3,?4,?4,?5,?6)",
-                    params![room, seq, id, sender, body, now],
+                    "INSERT INTO messages(room,seq,mid,sender,member,body,ts,attribution,label) VALUES(?1,?2,?3,?4,?4,?5,?6,?7,?8)",
+                    params![room, seq, id, sender, body, now, attribution_text(attribution), label],
                 )
                 .map_err(be)?;
             self.touch(room, sender, now)?;
@@ -227,18 +281,10 @@ impl Store for SqliteStore {
             .unwrap_or(0);
         let mut st = self
             .conn
-            .prepare("SELECT mid,seq,sender,body,ts FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq")
+            .prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"))
             .map_err(be)?;
         let rows = st
-            .query_map(params![room, last, member], |r| {
-                Ok(Message {
-                    id: r.get(0)?,
-                    seq: r.get(1)?,
-                    sender: r.get(2)?,
-                    body: r.get(3)?,
-                    ts: r.get(4)?,
-                })
-            })
+            .query_map(params![room, last, member], message_from_row)
             .map_err(be)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(be)?;
@@ -372,22 +418,14 @@ impl Store for SqliteStore {
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
         let mut st = self
             .conn
-            .prepare(
-                "SELECT mid,seq,sender,body,ts FROM messages WHERE room=?1 AND seq>?2 ORDER BY seq LIMIT ?3",
-            )
+            .prepare(&format!(
+                "SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 ORDER BY seq LIMIT ?3"
+            ))
             .map_err(be)?;
-        st.query_map(params![room, after_seq, limit as i64], |r| {
-            Ok(Message {
-                id: r.get(0)?,
-                seq: r.get(1)?,
-                sender: r.get(2)?,
-                body: r.get(3)?,
-                ts: r.get(4)?,
-            })
-        })
-        .map_err(be)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(be)
+        st.query_map(params![room, after_seq, limit as i64], message_from_row)
+            .map_err(be)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(be)
     }
 
     fn head(&self, room: &str) -> Result<i64> {
@@ -1085,5 +1123,120 @@ mod tests {
         s.advance_cursor("r", "alice", 1, 2).unwrap();
         assert!(s.members("r").unwrap().iter().any(|m| m.name == "alice"));
         assert!(s.read("r", "alice", false, 3).unwrap().is_empty());
+    }
+
+    // ---- attribution and label are stored with each message (#139) ----
+
+    use klatch_core::Attribution;
+
+    fn version(s: &SqliteStore) -> i64 {
+        s.conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn post_as_stores_attribution_and_label_and_read_and_tail_return_them() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post_as("r", "bob", Attribution::Verified, "internal", "hi", 2)
+            .unwrap();
+        s.post_as("r", "eve", Attribution::Unattributed, "public", "yo", 3)
+            .unwrap();
+        let read = s.read("r", "alice", false, 4).unwrap();
+        let facts = |ms: &[Message]| -> Vec<(Attribution, String)> {
+            ms.iter()
+                .map(|m| (m.attribution, m.label.clone()))
+                .collect()
+        };
+        let expected = vec![
+            (Attribution::Verified, "internal".to_string()),
+            (Attribution::Unattributed, "public".to_string()),
+        ];
+        assert_eq!(facts(&read), expected);
+        assert_eq!(facts(&s.tail("r", 0, 10).unwrap()), expected);
+    }
+
+    #[test]
+    fn the_plain_post_is_unattributed_and_public() {
+        let s = store();
+        s.post("r", "bob", "x", 1).unwrap();
+        let m = &s.tail("r", 0, 10).unwrap()[0];
+        assert_eq!(
+            (m.attribution, m.label.as_str()),
+            (Attribution::Unattributed, "public")
+        );
+    }
+
+    #[test]
+    fn a_fresh_database_is_at_schema_version_2() {
+        assert_eq!(version(&store()), 2);
+    }
+
+    #[test]
+    fn a_version_1_database_is_migrated_to_2_and_keeps_its_messages() {
+        let path = temp_db("migrate-v1");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, PRIMARY KEY(room,name));
+                 CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER);
+                 CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
+                 CREATE UNIQUE INDEX messages_mid ON messages(mid);
+                 CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER);
+                 INSERT INTO messages(room,seq,mid,sender,member,body,ts) VALUES('r',1,'01HZX3K9Q2ABCDEFGHJKMNPQRS','bob','bob','old one',1),('r',2,'01HZX3K9Q3ABCDEFGHJKMNPQRT','bob','bob','old two',2);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(version(&s), 2);
+        let old = s.tail("r", 0, 10).unwrap();
+        assert_eq!(old.len(), 2);
+        assert!(
+            old.iter()
+                .all(|m| m.attribution == Attribution::Unattributed && m.label == "public"),
+            "unknown history is reported as unattributed and public"
+        );
+        assert_eq!(old[0].id, "01HZX3K9Q2ABCDEFGHJKMNPQRS", "ids survive");
+        let p = s
+            .post_as("r", "carol", Attribution::Verified, "internal", "new", 3)
+            .unwrap();
+        assert_eq!(p.seq, 3);
+        assert_eq!(
+            s.tail("r", 2, 10).unwrap()[0].attribution,
+            Attribution::Verified
+        );
+        drop(s);
+        let again = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            version(&again),
+            2,
+            "reopening a migrated database is a no-op"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_version_0_database_now_migrates_all_the_way_to_2() {
+        let path = temp_db("migrate-v0-to-2");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE members(room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_id INTEGER DEFAULT 0, PRIMARY KEY(room,name));
+                 CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, sender TEXT, body TEXT, ts INTEGER);
+                 CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, path TEXT, owner TEXT, reason TEXT, expires INTEGER);
+                 INSERT INTO messages(room,sender,body,ts) VALUES('r','bob','m1',1);",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(version(&s), 2);
+        let m = &s.tail("r", 0, 10).unwrap()[0];
+        assert_eq!(
+            (m.attribution, m.label.as_str()),
+            (Attribution::Unattributed, "public")
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 }

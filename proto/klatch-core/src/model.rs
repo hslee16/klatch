@@ -5,6 +5,10 @@ pub struct Message {
     pub id: String,
     pub seq: i64,
     pub sender: String,
+    /// Whether the gateway proved who the sender was when the message was posted (R23).
+    pub attribution: Attribution,
+    /// The sensitivity label the message was posted under.
+    pub label: String,
     pub body: String,
     pub ts: i64,
 }

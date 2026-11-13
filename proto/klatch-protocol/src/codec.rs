@@ -462,6 +462,18 @@ mod tests {
     }
 
     #[test]
+    fn the_spec_no_longer_describes_attribution_and_label_as_placeholders() {
+        assert!(
+            !SPEC.contains("Until the gateway stores whether a message's sender was proven"),
+            "PROTOCOL.md still describes the placeholder behaviour"
+        );
+        assert!(
+            SPEC.contains("stored with the message"),
+            "PROTOCOL.md should say attribution and label are stored"
+        );
+    }
+
+    #[test]
     fn the_written_spec_documents_every_frame_type_and_error_rule() {
         for name in [
             "hello",

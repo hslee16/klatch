@@ -74,8 +74,9 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 
 The list results are named for what they hold: `messages`, `members` and `claims`.
 
-Until the gateway stores whether a message's sender was proven and which label it carries, every message returned
-is reported with `attribution` `unattributed` and `label` `public`, the cautious reading.
+Each message's `attribution` and `label` are stored with the message when it is posted, so a message posted by a proven
+sender reads back `verified` under the label it was posted with. Messages written before this was recorded (storage
+schema version 2) read as `unattributed` and `public`, the truthful reading because nothing recorded otherwise.
 
 ### Error codes
 
