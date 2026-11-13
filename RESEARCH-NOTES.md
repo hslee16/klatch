@@ -613,3 +613,61 @@ Tags as before, plus **REPORT** (a third-party write-up, not verified against a 
 Anthropic: the cross-session messaging page; issues 103123 and 93720 (read); issues 85497 and 89338 (snippets).
 OpenAI: the Codex hooks page (read); issue 16447 and a `codex queue` article (read). Jev: LangChain, AWS builder,
 Harness and VentureBeat write-ups and an arXiv gate paper (snippets only).
+
+## 14. Experiments run on 2026-11-12 (Claude Code 2.1.323, macOS, Darwin 23.3.0)
+
+Method: throwaway `--settings` files with `--setting-sources local` (so none of the user's own hooks loaded),
+scratch working directory, headless workers (`claude -p`, and `-p` with stream-json input to keep a worker idle
+between turns). The user's real login was used because an isolated `CLAUDE_CONFIG_DIR` starts logged out and
+would need an interactive `/login`. Side effect: each worker wrote a transcript under the user's
+`~/.claude/projects` for the scratch directory. Every hook and probe wrote only inside the scratch directory.
+Each result is **OBSERVED** on one version on one machine; none is a guarantee.
+
+### 14.1 Hooks (DESIGN section 14 questions 1, 2, 3, 5 and 23)
+
+| Question | Result |
+|---|---|
+| Does hook stdout reach the model? | **Yes** for `SessionStart` and `UserPromptSubmit`: the model quoted both marker lines. `PostToolUse` was not tested. |
+| Do hooks run in `claude -p`? | **Yes**, including `SessionStart`, `UserPromptSubmit` and `PreToolUse`. |
+| What does a hook receive? | JSON on stdin: `session_id`, `transcript_path`, `cwd`, `hook_event_name`. `UserPromptSubmit` and `PreToolUse` also carry `permission_mode`. `SessionStart` carried `source` and no `permission_mode`. `PreToolUse` carries `tool_name`, `tool_input` (for Bash, the full `command`) and `tool_use_id`. |
+| Can `PreToolUse` see and block a Bash call? | **Yes.** Exit code 2 blocked the call even under `bypassPermissions`. The model received the hook's stderr text as a `PreToolUse:Bash hook error` and did not retry. Warn-without-block and output limits were not tested. |
+| Does `asyncRewake` wake an idle session? | **Yes** in a headless stream-json session: a `SessionStart` hook with `async` and `asyncRewake` that slept 15 seconds and exited 2 caused a new turn, and the model acted on the stderr text. Not tested in the interactive TUI or with long delays. |
+
+### 14.2 Sockets (DESIGN section 14 questions 12 and 13)
+
+- **A headless worker registers like an interactive session.** `claude -p` with stream-json input wrote
+  `~/.claude/sessions/<pid>.json` (kind `interactive`, entrypoint `sdk-cli`, status `idle`), a key file and a
+  socket under `/tmp/cc-socks/`. Registry fields seen: `pid`, `sessionId`, `cwd`, `startedAt`, `procStart`,
+  `version`, `peerProtocol`, `peerFeatures` (`notify_idle`, `reply_across_default_dirs`, `artifact_yield`),
+  `kind`, `entrypoint`, `pidDomain`, `messagingSocketPath`, `name`, `nameSource`, `status`, `updatedAt`. The
+  key file holds `peerToken`, `procStart` and `pidDomain`.
+- **A process that is not the session's child delivered a message.** An auth line plus
+  `{"type":"user","message":{"role":"user","content":"..."},"priority":"now","uuid":"..."}` was accepted by an
+  idle worker in `default` mode and the model replied. It saw the text as an ordinary user message with no
+  sender. No acknowledgement was returned on the socket.
+- **The token was not enforced in this run.** A wrong token and a missing auth line were both delivered
+  (three posts sent in quick succession; the model acted on all three). The effective gate looked like the
+  socket's `0600` mode, which means same-user processes can post without reading any key file. Do not rely on
+  this; it contradicts third-party descriptions and may be version-specific. Klatch should not depend on the
+  token or the socket mode for its own security.
+- **Not tested:** a busy session, the interactive TUI, a bypassing receiver, and the hold and refuse paths.
+
+### 14.3 Registering a fake peer (DESIGN section 22, new questions 27 and 28)
+
+A throwaway process owned a socket, wrote a registry record and a key file modelled on the real ones
+(second attempt: valid UUID session id, key file named by the SHA-256 of the token), and a `bypassPermissions`
+worker was told to run `ListAgents` and `SendMessage` to it. Both attempts: **the record was not listed** and
+`SendMessage` reported the name as unreachable. In the second attempt a process connected to the fake socket
+twice with an empty payload before the record was rejected (that process was most likely the worker checking
+liveness; its pid was recorded but not matched to the worker). The server obtained the peer pid with
+`LOCAL_PEERPID` (`getsockopt(0, 2)` on macOS). Conclusion: a hand-built record is not enough, probably because
+Claude Code checks more than the file (process evidence or a handshake). **Native-peer mode is not available by
+simple forgery**, and no further attempt was made. Registry and sockets were cleaned up afterwards.
+
+### 14.4 What this changes
+
+- Posting from outside to a session that is already running works today with no change to that session, so
+  Tier 0 nudging is feasible; it stays undocumented and version-probed, and content-free.
+- The shipped hook path (Tier 1) is confirmed for delivery, enforcement and wake-up in headless workers.
+- Native-peer mode (registering the gateway as a peer) stays out of v1; the default remains the CLI, hooks and
+  the content-free nudge.
