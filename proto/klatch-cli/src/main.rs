@@ -518,6 +518,8 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64, stdin_session: Option<&s
             // of aging out (DESIGN section 25.13). It prints nothing: the session is over.
             if event.as_deref() == Some("SessionEnd") {
                 let d = t.digest_with(false)?;
+                // a member that has ended cannot be working: free what it held (#277)
+                let _ = t.release_all();
                 for room in d
                     .rooms
                     .iter()

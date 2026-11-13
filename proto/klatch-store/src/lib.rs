@@ -94,6 +94,12 @@ pub trait Store {
     }
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
+    /// Release every claim `member` holds in every room, as when its session ends (#277): a member that has ended
+    /// cannot be working. An `ask:<N>` claim ends as a lapse, so the asker is told that the helper's claim ended
+    /// without an answer. Returns how many unexpired claims were released. The default releases nothing.
+    fn release_member_claims(&self, _member: &str, _now: i64) -> Result<usize> {
+        Ok(0)
+    }
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
     /// Rooms whose name starts with `prefix`, with their member count and latest activity (a member seen or a

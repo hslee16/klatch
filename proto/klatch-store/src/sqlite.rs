@@ -964,6 +964,45 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.immediate(|| {
+            let mut st = self
+                .conn
+                .prepare("SELECT room,path,expires FROM claims WHERE owner=?1")
+                .map_err(be)?;
+            let held: Vec<(String, String, i64)> = st
+                .query_map(params![member], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(be)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(be)?;
+            let mut released = 0;
+            for (room, path, expires) in held {
+                if expires > now {
+                    released += 1;
+                    if let Some(seq) = path
+                        .strip_prefix("ask:")
+                        .and_then(|n| n.parse::<i64>().ok())
+                    {
+                        // ends the lease now, so the asker is told it lapsed
+                        self.conn
+                            .execute(
+                                "UPDATE ask_leases SET expires=?4 WHERE room=?1 AND seq=?2 AND owner=?3 AND expires>?4",
+                                params![room, seq, member, now],
+                            )
+                            .map_err(be)?;
+                    }
+                }
+                self.conn
+                    .execute(
+                        "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
+                        params![room, path, member],
+                    )
+                    .map_err(be)?;
+            }
+            Ok(released)
+        })
+    }
+
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
         let mut st = self
             .conn
@@ -1763,6 +1802,38 @@ mod tests {
                 .is_empty()
                 || true
         );
+    }
+
+    #[test]
+    fn releasing_a_members_claims_frees_every_room_and_tells_the_asker() {
+        let s = store();
+        let a = s.post("lobby", "asker", "seeking: x", 1).unwrap().seq;
+        s.claim_in("lobby", "helper", "*", &format!("ask:{a}"), 90, "", 10)
+            .unwrap();
+        s.claim("lobby", "helper", "src/a.rs", 600, "", 10).unwrap();
+        s.claim("side", "helper", "docs", 600, "", 10).unwrap();
+        s.claim("lobby", "other", "src/b.rs", 600, "", 10).unwrap();
+        assert_eq!(s.release_member_claims("helper", 20).unwrap(), 3);
+        let held: Vec<String> = s
+            .claims("lobby", 21)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.path)
+            .collect();
+        assert_eq!(
+            held,
+            vec!["src/b.rs".to_string()],
+            "only the other member's"
+        );
+        assert!(s.claims("side", 21).unwrap().is_empty());
+        // the ask is open again and its asker is told once that the helper's claim ended without an answer
+        let open = s.open_asks("lobby", 21).unwrap();
+        assert!(!open[0].claimed);
+        let told = s.lapsed_asks("lobby", "asker", 21).unwrap();
+        assert_eq!((told[0].0.seq, told[0].1.as_str()), (a, "helper"));
+        assert!(s.lapsed_asks("lobby", "asker", 22).unwrap().is_empty());
+        // nothing left to release
+        assert_eq!(s.release_member_claims("helper", 23).unwrap(), 0);
     }
 
     #[test]
