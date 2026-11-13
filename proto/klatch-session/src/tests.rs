@@ -381,7 +381,15 @@ impl Store for DownStore {
     fn join(&self, _: &str, _: &str, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
-    fn post(&self, _: &str, _: &str, _: &str, _: i64) -> Result<Posted> {
+    fn post_as(
+        &self,
+        _: &str,
+        _: &str,
+        _: klatch_core::Attribution,
+        _: &str,
+        _: &str,
+        _: i64,
+    ) -> Result<Posted> {
         Err(Error::Backend("down".into()))
     }
     fn read(&self, _: &str, _: &str, _: bool, _: i64) -> Result<Vec<Message>> {
@@ -963,8 +971,16 @@ impl Store for FlakyStore {
     fn join(&self, r: &str, m: &str, n: i64) -> Result<()> {
         self.inner.join(r, m, n)
     }
-    fn post(&self, r: &str, s: &str, b: &str, n: i64) -> Result<Posted> {
-        self.inner.post(r, s, b, n)
+    fn post_as(
+        &self,
+        r: &str,
+        s: &str,
+        a: klatch_core::Attribution,
+        l: &str,
+        b: &str,
+        n: i64,
+    ) -> Result<Posted> {
+        self.inner.post_as(r, s, a, l, b, n)
     }
     fn read(&self, r: &str, m: &str, a: bool, n: i64) -> Result<Vec<Message>> {
         self.inner.read(r, m, a, n)
@@ -1045,4 +1061,81 @@ fn a_store_failure_mid_stream_refuses_drops_the_subscription_and_allows_resubscr
     live.send(req("again", "subscribe", json!({"room":"r","from_seq":0})));
     live.wait_for("the replay after resubscribing", |f| messages(f).len() == 1);
     live.end();
+}
+
+// ---- stored attribution and label are reported, not placeholders (#139) ----
+
+#[test]
+fn read_and_the_stream_report_the_stored_attribution_and_label() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    store
+        .post_as(
+            "r",
+            "carol",
+            klatch_core::Attribution::Verified,
+            "internal",
+            "proven",
+            1,
+        )
+        .unwrap();
+    store
+        .post_as(
+            "r",
+            "eve",
+            klatch_core::Attribution::Unattributed,
+            "public",
+            "unproven",
+            2,
+        )
+        .unwrap();
+    let g = Gateway::new(store, FixedClock(5), AllowAll);
+    let f = run(
+        &g,
+        &bob(),
+        &[
+            req("r", "read", json!({"room":"r","peek":true})),
+            req("s", "subscribe", json!({"room":"r","from_seq":0})),
+        ],
+    );
+    let read = response(&f, "r").1.unwrap();
+    let m = read["messages"].as_array().unwrap();
+    assert_eq!(
+        (m[0]["attribution"].as_str(), m[0]["label"].as_str()),
+        (Some("verified"), Some("internal"))
+    );
+    assert_eq!(
+        (m[1]["attribution"].as_str(), m[1]["label"].as_str()),
+        (Some("unattributed"), Some("public"))
+    );
+    let streamed: Vec<_> = f
+        .iter()
+        .filter_map(|x| match x {
+            ServerFrame::Message {
+                attribution, label, ..
+            } => Some((attribution.clone(), label.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        streamed,
+        vec![
+            (Attribution::Verified, "internal".to_string()),
+            (Attribution::Unattributed, "public".to_string())
+        ]
+    );
+}
+
+#[test]
+fn a_message_posted_through_a_verified_session_reads_back_verified() {
+    let g = gateway();
+    run(
+        &g,
+        &Principal::verified("carol"),
+        &[req("p", "post", json!({"room":"r","body":"hello"}))],
+    );
+    let f = run(&g, &bob(), &[req("r", "read", json!({"room":"r"}))]);
+    assert_eq!(
+        response(&f, "r").1.unwrap()["messages"][0]["attribution"],
+        "verified"
+    );
 }

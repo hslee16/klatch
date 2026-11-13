@@ -38,9 +38,18 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.join(room, member, now)
     }
-    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted> {
+    fn post_as(
+        &self,
+        room: &str,
+        sender: &str,
+        attribution: klatch_core::Attribution,
+        label: &str,
+        body: &str,
+        now: i64,
+    ) -> Result<Posted> {
         self.gate()?;
-        self.inner.post(room, sender, body, now)
+        self.inner
+            .post_as(room, sender, attribution, label, body, now)
     }
     fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>> {
         self.gate()?;

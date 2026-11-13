@@ -19,6 +19,9 @@ pub struct Refused {
     pub reason: String,
 }
 
+/// The label every message is posted under until rooms have labels (DESIGN D3, the label tickets).
+pub const DEFAULT_LABEL: &str = "public";
+
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;
 
@@ -77,7 +80,14 @@ impl<S: Store> Gateway<S> {
                 body: body.into(),
             },
         )?;
-        self.store.post(room, &who.member, body, self.now())
+        self.store.post_as(
+            room,
+            &who.member,
+            who.attribution,
+            DEFAULT_LABEL,
+            body,
+            self.now(),
+        )
     }
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
@@ -543,6 +553,29 @@ mod tests {
             Err(Error::Refused { .. })
         ));
         assert_eq!(g.store.calls.get(), 0);
+    }
+
+    #[test]
+    fn a_verified_principal_posts_a_verified_message_and_an_unattributed_one_stays_unattributed() {
+        let g = open();
+        g.post(&Principal::verified("carol"), "r", "proven")
+            .unwrap();
+        g.post(&Principal::unattributed("eve"), "r", "unproven")
+            .unwrap();
+        let got = g.tail(&alice(), "r", 0, 10).unwrap();
+        assert_eq!(got[0].attribution, klatch_core::Attribution::Verified);
+        assert_eq!(got[1].attribution, klatch_core::Attribution::Unattributed);
+    }
+
+    #[test]
+    fn messages_are_posted_under_the_default_label() {
+        let g = open();
+        g.post(&alice(), "r", "x").unwrap();
+        assert_eq!(
+            g.tail(&alice(), "r", 0, 10).unwrap()[0].label,
+            DEFAULT_LABEL
+        );
+        assert_eq!(DEFAULT_LABEL, "public");
     }
 
     #[test]

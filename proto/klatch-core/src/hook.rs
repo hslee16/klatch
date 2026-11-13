@@ -49,6 +49,8 @@ mod tests {
             id: format!("ID{seq}"),
             seq,
             sender: sender.into(),
+            attribution: crate::Attribution::Unattributed,
+            label: "public".into(),
             body: body.into(),
             ts: 0,
         }
