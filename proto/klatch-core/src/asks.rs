@@ -96,10 +96,8 @@ pub fn parse_outcome(body: &str) -> Option<(OutcomeKind, i64, String)> {
         let after = after.strip_prefix(' ')?;
         let (kind, rest) = if let Some(r) = after.strip_prefix("busy:") {
             (OutcomeKind::Busy, r)
-        } else if let Some(r) = after.strip_prefix("cannot:") {
-            (OutcomeKind::Cannot, r)
         } else {
-            return None;
+            (OutcomeKind::Cannot, after.strip_prefix("cannot:")?)
         };
         return Some((kind, n, reason(rest)));
     }
