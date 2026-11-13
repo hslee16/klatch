@@ -1130,3 +1130,28 @@ fn status_is_set_shown_by_who_and_the_board_and_clears_the_members_offers() {
     let err = h.fail("api", &["status", "lobby", ""]);
     assert!(err.to_lowercase().contains("status"), "got: {err}");
 }
+
+#[test]
+fn declines_show_on_asks_and_the_asker_is_told_once_when_nobody_can() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("alice", &["post", "r", "seeking: a rare thing"]);
+    h.ok("h1", &["post", "r", "declined #1 cannot: not mine"]);
+    assert!(h.ok("alice", &["asks", "r"]).contains("[cannot 1]"));
+    assert!(!h.ok("alice", &["hook"]).contains("nobody here may be able"));
+    h.ok("h2", &["post", "r", "declined #1 cannot: not mine either"]);
+    let asks = h.ok("alice", &["asks", "r"]);
+    assert!(
+        asks.contains("[cannot 2]") && asks.contains("#1"),
+        "an ask with declines must stay open: {asks}"
+    );
+    let first = h.ok("alice", &["hook"]);
+    assert!(
+        first.contains("your ask #1: nobody here may be able to do this"),
+        "got: {first}"
+    );
+    assert!(
+        !h.ok("alice", &["hook"]).contains("nobody here may be able"),
+        "told twice"
+    );
+}

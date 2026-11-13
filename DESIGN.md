@@ -1509,3 +1509,11 @@ The human adopted V3, a member status, as the completion signal. Today it is a f
 2. **Ends sooner on request.** `withdrawn:` clears it; a status starting with `done` (the fact, #222, or the `status:` message) clears it at once; a later `offering:` replaces it, which is how an offer is renewed or changed.
 3. **Backstop.** `OFFER_TTL_SECS` is 86,400 (24 hours): an offer older than that is dropped even if its sender stays present, so a forgotten offer cannot stay forever. The earlier provisional hour was too short for a long-lived helper and would have forced it to re-post.
 4. **`busy` versus `available`** are not interpreted by klatch (vocabulary, #223). A claim-based `offer:<name>` heartbeat was considered and not needed.
+
+### 25.9 Declined and failed outcomes (#230, decided 2026-11-13)
+
+1. **Words.** `declined #N busy: <reason>` (capable, not now), `declined #N cannot: <reason>` (not capable, or not mine) and `failed #N: <reason>` (tried, did not succeed). Parsed by `klatch-core` (`parse_outcome`); the asker's own messages do not count.
+2. **A decline does not end the ask.** It stays open and unclaimed for another helper (the same rule as a released claim, section 25.4). The asker already sees each decline at once as a message in its hook; the board and `klatch asks` also show a summary of the ask, `[busy 1, cannot 2]`, counting distinct helpers.
+3. **Two causes, two outcomes (the human's question).** A `busy` decline means a capable member is occupied: wait or retry; the ask stays open and no escalation is said. When `NO_CAPABLE_AFTER` (2) distinct helpers declined `cannot` and none declined `busy` or failed, klatch tells the asker once, in its hook, "your ask #N: nobody here may be able to do this (2 helpers declined as not able)", so it can rephrase, widen the ask or go to the human instead of waiting. The count is provisional and becomes a room setting later (#242).
+4. **Where.** `OpenAsk.outcomes`, `OpenAsk::distinct`, `no_capable_member`, `Store::escalated_asks` (remembers what it reported, in `asks_escalated`, schema version 8), `RoomDigest.escalated`.
+5. **Not covered:** a helper that claims and then goes silent (#233), the asker reopening after an insufficient answer (#232), a clarification question (#231).

@@ -9,7 +9,8 @@ mod model;
 mod text;
 
 pub use asks::{
-    ASK_PREFIX, OpenAsk, STALE_AFTER_SECS, answer_target, closed_target, is_ask, open_asks,
+    ASK_PREFIX, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind, STALE_AFTER_SECS, answer_target,
+    closed_target, is_ask, open_asks, parse_outcome,
 };
 pub use board::{
     BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MemberStatus, OFFER_PREFIX,

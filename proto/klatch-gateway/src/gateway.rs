@@ -335,6 +335,7 @@ impl<S: Store> Gateway<S> {
             let stale = self
                 .store
                 .stale_asks(&room, &who.member, now, STALE_AFTER_SECS)?;
+            let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let backlog = if backlog {
                 self.store
                     .open_asks(&room, now)?
@@ -351,6 +352,7 @@ impl<S: Store> Gateway<S> {
                 released: changes.released,
                 stale,
                 backlog,
+                escalated,
             });
         }
         Ok(Digest {

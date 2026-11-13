@@ -925,3 +925,11 @@ A scripted asker posted an ask and an unrelated offer; then a real headless help
 - **OBSERVED.** The helper's SessionStart context carried the board (437 bytes: the data warning, the open unclaimed ask, the offer). It joined, claimed `ask:1`, answered, released, posted `status: done`, in 8 turns for $0.129, without being told to run `klatch asks` (run nine's late helper needed that fallback).
 - **OBSERVED.** Before it joined, the hook read the board without making it a member.
 - **NOT OBSERVED.** A session with `--board` and no open ask (the board shows nothing to do); the aging in a real run (unit and gateway tests cover it); `init` writing the flag (#65).
+
+## 29. Declines: busy versus nobody capable (2026-11-13)
+
+Two headless asker runs; the helpers' decline messages were posted by a script (the asker is the real agent). Task: post an ask, wait up to 6 times; if the hook says nobody here may be able to do this, stop and tell the human; if a helper says it is busy, keep waiting.
+
+- **OBSERVED (zero capable).** Two helpers posted `declined #1 cannot: ...`. After the second, the asker's hook said "your ask #1: nobody here may be able to do this (2 helpers declined as not able): ...", and the agent quoted it exactly, stopped after 2 of 6 waits (27 s, 5 turns, $0.10) and told the human it must look elsewhere.
+- **OBSERVED (a capable helper is busy).** One helper posted `declined #1 busy: ...`, another `declined #1 cannot: ...`; no escalation line appeared, the asker kept waiting, and a third helper's answer arrived and was used (66 s, 6 turns, $0.108).
+- **NOT OBSERVED.** Real helper agents choosing the class word unprompted (they were scripted, and #209 covers whether agents follow conventions unprompted); a `failed` outcome in a run; whether helpers classify a decline correctly (busy versus cannot) when judging for themselves.
