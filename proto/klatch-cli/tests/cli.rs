@@ -828,7 +828,10 @@ fn wait_times_out_and_says_so() {
     let took = start.elapsed();
     assert!(took.as_millis() >= 900, "returned early: {took:?}");
     assert!(took.as_secs() < 10, "overran: {took:?}");
-    assert!(out.contains("no new messages"), "got: {out}");
+    assert!(
+        out.contains("[klatch wait: timeout room=r after=1s]"),
+        "got: {out}"
+    );
 }
 
 #[test]
@@ -837,7 +840,7 @@ fn wait_with_zero_timeout_checks_once() {
     h.ok("alice", &["join", "r"]);
     assert!(
         h.ok("alice", &["wait", "r", "--timeout", "0"])
-            .contains("no new messages")
+            .contains("[klatch wait: timeout room=r after=0s]")
     );
     h.ok("bob", &["post", "r", "hi"]);
     assert!(
@@ -871,5 +874,100 @@ fn wait_is_not_woken_by_the_members_own_posts() {
     h.ok("alice", &["join", "r"]);
     h.ok("alice", &["post", "r", "mine"]);
     let out = h.ok("alice", &["wait", "r", "--timeout", "1"]);
-    assert!(out.contains("no new messages"), "got: {out}");
+    assert!(
+        out.contains("[klatch wait: timeout room=r after=1s]"),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn wait_only_ignores_other_messages_but_leaves_them_unread() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "chatter"]);
+    let out = h.ok(
+        "alice",
+        &["wait", "r", "--timeout", "1", "--only", "seeking:"],
+    );
+    assert!(
+        out.contains("[klatch wait: timeout room=r after=1s]"),
+        "got: {out}"
+    );
+    assert!(!out.contains("chatter"));
+    assert!(
+        h.ok("alice", &["read", "r"]).contains("chatter"),
+        "a filter lost a message"
+    );
+}
+
+#[test]
+fn wait_only_returns_a_match_leaves_it_unread_and_does_not_wake_again_for_it() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "chatter"]);
+    h.ok("bob", &["post", "r", "seeking: a lib"]);
+    let out = h.ok(
+        "alice",
+        &["wait", "r", "--timeout", "5", "--only", "seeking:"],
+    );
+    assert!(
+        out.contains("seeking: a lib") && !out.contains("chatter"),
+        "got: {out}"
+    );
+    let again = h.ok(
+        "alice",
+        &["wait", "r", "--timeout", "1", "--only", "seeking:"],
+    );
+    assert!(
+        again.contains("[klatch wait: timeout"),
+        "woke again for the same message: {again}"
+    );
+    let read = h.ok("alice", &["read", "r"]);
+    assert!(read.contains("chatter") && read.contains("seeking: a lib"));
+}
+
+#[test]
+fn wait_from_matches_only_that_sender() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("carol", &["post", "r", "noise"]);
+    h.ok("bob", &["post", "r", "from bob"]);
+    let out = h.ok("alice", &["wait", "r", "--timeout", "5", "--from", "bob"]);
+    assert!(
+        out.contains("from bob") && !out.contains("noise"),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn wait_names_the_room_and_wakes_on_the_first_of_several() {
+    let h = Home::new();
+    h.ok("alice", &["join", "a"]);
+    h.ok("alice", &["join", "b"]);
+    h.ok("bob", &["post", "b", "in b"]);
+    let out = h.ok("alice", &["wait", "a", "b", "--timeout", "5"]);
+    assert!(out.contains("[b ") && out.contains("in b"), "got: {out}");
+    assert!(!out.contains("[a "));
+    let t = h.ok("alice", &["wait", "a", "b", "--timeout", "1"]);
+    assert!(
+        t.contains("[klatch wait: timeout room=a,b after=1s]"),
+        "got: {t}"
+    );
+}
+
+#[test]
+fn wait_peek_returns_the_message_without_marking_it_read() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "keep me"]);
+    assert!(
+        h.ok("alice", &["wait", "r", "--timeout", "5", "--peek"])
+            .contains("keep me")
+    );
+    assert!(
+        h.ok("alice", &["wait", "r", "--timeout", "1", "--peek"])
+            .contains("[klatch wait: timeout"),
+        "peek wait woke again for the same message"
+    );
+    assert!(h.ok("alice", &["read", "r"]).contains("keep me"));
 }

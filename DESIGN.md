@@ -1461,6 +1461,7 @@ Decided after runs one to five (`RESEARCH-NOTES.md` sections 18 to 23) and the h
 4. **Timeout bounds.** The timeout is the waiter's own choice and is not negotiated between agents. Default 60 s, capped at 300 s; a larger request is clamped and the output states the effective value. What agents share is the expectation of response time, carried by the TTL of the claim on an ask (ask leases, section 24), not a negotiated number.
 5. **How it notices.** Polling the store every 200 ms. It needs no daemon and works on any filesystem; the cost is a few cheap queries a second per waiter and up to 200 ms of latency.
 6. **Read state.** Returned messages are marked read (the hook then skips them); `--peek` returns them without marking them read, as `read --peek` does.
+   Implemented in #216: with a filter (`--only`, `--from`) or `--peek` a wait never marks anything read, because the single read cursor cannot skip a message without hiding it. It keeps a separate wait position so the same message does not wake it twice, and a later `read` or the hook still shows every message. Without a filter or `--peek` it consumes what it returns, like a blocking `read`.
 
 ### 25.3 Open
 - A harness-native push for interactive sessions (#214).

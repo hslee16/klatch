@@ -9,6 +9,10 @@ pub trait Transport {
     fn join(&self, room: &str) -> Result<()>;
     fn post(&self, room: &str, body: &str) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
+    /// Unread messages a wait has not looked at yet; changes nothing.
+    fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
+    /// A wait has looked at the room up to `seq`; the messages stay unread.
+    fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
     fn claim(&self, room: &str, path: &str, ttl: i64, reason: &str) -> Result<()>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
@@ -43,6 +47,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
+    }
+    fn wait_poll(&self, room: &str) -> Result<Vec<Message>> {
+        self.gateway.wait_poll(&self.principal, room)
+    }
+    fn wait_seen(&self, room: &str, seq: i64) -> Result<()> {
+        self.gateway.wait_seen(&self.principal, room, seq)
     }
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.gateway.who(&self.principal, room)

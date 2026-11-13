@@ -83,6 +83,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.hook_read(room, member, now)
     }
+    fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<klatch_core::Message>> {
+        self.gate()?;
+        self.inner.wait_poll(room, member, now)
+    }
+    fn wait_seen(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.wait_seen(room, member, seq, now)
+    }
     fn claim_changes(
         &self,
         room: &str,

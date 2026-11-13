@@ -31,9 +31,9 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
-const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
+const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
@@ -122,6 +122,13 @@ fn migrate_v2(conn: &Connection) -> Result<()> {
 /// Existing members start at 0, which the hook treats as "no further than the read cursor".
 fn migrate_v3(conn: &Connection) -> Result<()> {
     conn.execute_batch("ALTER TABLE members ADD COLUMN hook_seq INTEGER NOT NULL DEFAULT 0;")
+        .map_err(be)
+}
+
+/// Version 4 to 5: how far a `wait` has looked at each member's room, apart from the read cursor, so a filtered
+/// wait does not wake again for a message it already skipped or returned while the message stays unread.
+fn migrate_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE members ADD COLUMN wait_seq INTEGER NOT NULL DEFAULT 0;")
         .map_err(be)
 }
 
@@ -216,7 +223,10 @@ impl SqliteStore {
                     if version < 3 {
                         migrate_v2(&conn)?;
                     }
-                    migrate_v3(&conn)?;
+                    if version < 4 {
+                        migrate_v3(&conn)?;
+                    }
+                    migrate_v4(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -326,6 +336,40 @@ impl Store for SqliteStore {
                 .map_err(be)?;
         }
         Ok(rows)
+    }
+
+    fn wait_poll(&self, room: &str, member: &str, _now: i64) -> Result<Vec<Message>> {
+        let (read, seen): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(last_seq,0), wait_seq FROM members WHERE room=?1 AND name=?2",
+                params![room, member],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+        let mut st = self
+            .conn
+            .prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"))
+            .map_err(be)?;
+        let rows = st
+            .query_map(params![room, read.max(seen), member], message_from_row)
+            .map_err(be)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(be)?;
+        Ok(rows)
+    }
+
+    fn wait_seen(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+        self.immediate(|| {
+            self.touch(room, member, now)?;
+            self.conn
+                .execute(
+                    "UPDATE members SET wait_seq=MAX(wait_seq,?3) WHERE room=?1 AND name=?2",
+                    params![room, member, seq],
+                )
+                .map_err(be)?;
+            Ok(())
+        })
     }
 
     fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
@@ -675,6 +719,51 @@ mod tests {
         s.join("r", "alice", 1).unwrap();
         s.post("r", "alice", "mine", 2).unwrap();
         assert!(s.hook_read("r", "alice", 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn wait_poll_changes_nothing_and_wait_seen_stops_the_next_wake_but_not_read() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        assert_eq!(s.wait_poll("r", "alice", 3).unwrap().len(), 1);
+        assert_eq!(
+            s.wait_poll("r", "alice", 4).unwrap().len(),
+            1,
+            "poll alone must not change state"
+        );
+        s.wait_seen("r", "alice", 1, 5).unwrap();
+        assert!(s.wait_poll("r", "alice", 6).unwrap().is_empty());
+        assert_eq!(
+            s.read("r", "alice", false, 7).unwrap().len(),
+            1,
+            "seen by a wait is still unread"
+        );
+        s.post("r", "bob", "two", 8).unwrap();
+        let w = s.wait_poll("r", "alice", 9).unwrap();
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].body, "two");
+    }
+
+    #[test]
+    fn wait_seen_only_moves_forward() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        s.post("r", "bob", "two", 3).unwrap();
+        s.wait_seen("r", "alice", 2, 4).unwrap();
+        s.wait_seen("r", "alice", 1, 5).unwrap();
+        assert!(s.wait_poll("r", "alice", 6).unwrap().is_empty());
+    }
+
+    #[test]
+    fn wait_poll_skips_what_was_read_and_own_messages() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        s.read("r", "alice", true, 3).unwrap();
+        s.post("r", "alice", "mine", 4).unwrap();
+        assert!(s.wait_poll("r", "alice", 5).unwrap().is_empty());
     }
 
     #[test]
@@ -1449,12 +1538,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_4() {
-        assert_eq!(version(&store()), 4);
+    fn a_fresh_database_is_at_schema_version_5() {
+        assert_eq!(version(&store()), 5);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_4_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_5_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1470,7 +1559,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 4);
+        assert_eq!(version(&s), 5);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1491,14 +1580,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            4,
+            5,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_4() {
+    fn a_version_0_database_now_migrates_all_the_way_to_5() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1511,7 +1600,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 4);
+        assert_eq!(version(&s), 5);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1530,11 +1619,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_four_with_everything_intact() {
+    fn a_version_two_database_migrates_to_five_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 4);
+        assert_eq!(version(&s), 5);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1552,7 +1641,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 4);
+        assert_eq!(version(&s), 5);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(
