@@ -19,6 +19,7 @@ pub fn convention(bin: &str) -> String {
   - Ask: post \"seeking: <what you need>\". When the answer helped, post \"closed #N\".\n\
   - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. Then post \"answer to #N: <answer>\" and release the claim.\n\
   - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
+  - Claim: claim a file before you edit it. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
   - When you leave, post \"status: done\" and run the status command.\n"
     )
@@ -116,5 +117,13 @@ mod tests {
         ] {
             assert!(t.contains(cmd), "the convention does not show: {cmd}\n{t}");
         }
+    }
+
+    #[test]
+    fn the_text_says_what_to_do_when_a_claim_conflicts_and_when_it_is_a_deadlock() {
+        let t = convention(BIN);
+        assert!(t.contains("claim conflicts"), "{t}");
+        assert!(t.contains("release the claims you hold"), "{t}");
+        assert!(t.contains("deadlock") && t.contains("you yield"), "{t}");
     }
 }

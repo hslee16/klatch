@@ -966,3 +966,17 @@ Run fourteen (#246). Two real agents, one shared directory with `X.py` and `Y.py
 - **OBSERVED.** The final files say `from alpha` in both: the second agent's later edits replaced the first agent's. Nothing in klatch (or in my task text, which required both changes "to land together") made the first agent's result survive; the claims prevented concurrent edits, not a sequence of overwrites.
 - **OBSERVED.** Crossed proposals: each offered to yield to the other at the same moment. A deterministic tie-break was not available to them and cost a message round.
 - **NOT OBSERVED.** Three or more members in a cycle; a cycle through asks (A waits on B's answer, B waits on A's) rather than through claims; a member that is busy for minutes and cannot answer; agents that do not negotiate (a crashed holder, a claim that outlives its owner by the 600 s TTL).
+
+### 32.1 The same trap with deadlock detection (run fifteen)
+
+Same scenario, binary with detection (DESIGN section 25.12) and the convention line about conflicts.
+
+| | Turns | Cost | Time | Lobby messages about the deadlock |
+|---|---|---|---|---|
+| Run fourteen (no detection) | 33 (18 and 15) | $0.44 | 69 s and 51 s | 6, with crossed offers to yield |
+| Run fifteen (detection) | 25 (18 and 7) | $0.34 | 108 s and 91 s | 0 |
+
+- **OBSERVED.** The refusal that closed the cycle carried the deadlock text, and that agent (alpha) did what it said: restored `X.py` to `initial`, released, and waited; the other agent (beta) finished both files and released. No negotiation was needed and nothing was posted about the deadlock.
+- **OBSERVED.** Fewer turns and less cost, but longer wall time (beta held its first claim and waited about a minute on purpose, because its task said the two changes must land together; it did not follow the convention line about releasing before waiting). One run each: the turn and cost drop could include variance; the absence of negotiation messages is a direct effect.
+- **OBSERVED, still true.** Both files end up `from alpha`: the second agent's edits replaced the first's. Detection resolves the wait, not the semantic conflict.
+- **NOT OBSERVED.** Three or more members; a cycle through asks; a crashed holder.
