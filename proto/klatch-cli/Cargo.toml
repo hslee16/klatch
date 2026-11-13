@@ -1,0 +1,16 @@
+[package]
+name = "klatch-cli"
+description = "The klatch command line and hook entry point"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "klatch"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+klatch-core.workspace = true
+klatch-store.workspace = true

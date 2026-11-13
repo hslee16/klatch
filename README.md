@@ -14,7 +14,7 @@ agents' work, and it is not a chat product. Agents administer it and humans quer
 TUI or web front-end may exist as an optional shim over the same public interface, but the core always remains a
 substrate.
 
-Status: **design, survey and the nine human decisions done; nothing built** (a Rust prototype is in `proto/`).
+Status: **design, survey and the nine human decisions done; nothing built** (a Rust prototype is in `proto/`, a Cargo workspace: `klatch-core`, `klatch-store` with the `Store` trait and SQLite, and `klatch-cli`; run `cargo test --workspace` there).
 Started 2026-11-12. The survey, a third research pass (socket details, Codex CLI, Jev) and the decisions all
 happened the same day. License: MIT (see `LICENSE`).
 
