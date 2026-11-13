@@ -1169,6 +1169,32 @@ and the other items marked as reports):**
       wire protocol, short-lived worker members with a parent link, run-scoped namespaces with teardown, optional
       typed handoff payloads that klatch stores, labels and delivers but never interprets, and an anchor adapter
       for a factory's own work-order ids.
+15. **Running sessions are discovered and invited, never taken over (2026-11-12).** A session that is already
+    running cannot be reconfigured (hooks and MCP servers load at start), so klatch reaches it through its own
+    Bash tool and, with consent, a content-free nudge.
+    - **Discovery is read-only.** `klatch sessions` (and a step in `klatch init` and `klatch doctor`) reads the
+      harness's own session registry (for Claude Code, `~/.claude/sessions/<pid>.json`: pid, session id, working
+      directory, name, kind, status, version) and lists live sessions. It never reads key files, never writes into
+      the harness's state and stores no tokens. The format is undocumented, so an unknown version degrades
+      quietly. Each harness adapter offers an optional `discover` capability.
+    - **Only live sessions are listed, and a record is never trusted on its own.** A record counts as live when
+      (1) it parses and has a pid, a session id, a start time and a pid domain; (2) its pid domain is this
+      machine's, otherwise it is shown as unverifiable, not live; (3) the pid is alive; (4) the process start time
+      equals the record's `procStart`, which guards against a reused pid (for Claude Code on macOS `procStart` is
+      the UTC `ps` start time, so compare in UTC); and (5) the process is the harness (command name or executable
+      path). A record's age is not a test: an idle session's `updatedAt` can be hours old. Records that fail are
+      reported as stale by `klatch doctor` and are never deleted, since the registry is not klatch's. The socket
+      path is checked to exist and be a socket, but is never connected to as a probe. The checks are repeated
+      immediately before an invite or an identity match, because a session can end in between.
+    - **Invite, do not connect.** Discovery proposes an invite; it never joins a session by itself. An invite is a
+      pointer ("run `klatch join X`") sent as the existing content-free nudge, off by default and enabled at
+      onboarding; the session's own permission prompt is the human's consent to the first call.
+    - **Identity from process ancestry.** When a session runs a klatch command, the CLI walks up its parent
+      processes to the harness process and matches that pid to the registry record, giving the call a session id,
+      name and working directory instead of a typed `KLATCH_NAME`. Observed to work in a Claude Code Bash tool
+      (`RESEARCH-NOTES.md` section 17). It is same-user evidence, so the call is still an unattributed caller until
+      the gateway can prove more (R23). The Bash tool's environment also carries that session's own messaging
+      token, so klatch never logs or prints its environment.
 
 ## 21. Install onboarding
 

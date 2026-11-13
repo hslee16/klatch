@@ -733,3 +733,25 @@ factory.ai/product/software-factory; arxiv.org/abs/2610.36254; github.com/Orches
 github.com/andyrewlee/awesome-agent-orchestrators; augmentcode.com orchestrator roundup;
 hackersandwizards.dev multi-agent orchestration notes.
 
+## 17. Discovering and identifying running sessions (2026-11-12)
+
+Observed in this Claude Code session (2.1.323, macOS), one observation each, read-only.
+
+- **Environment of the Bash tool.** `CLAUDE_CODE_SESSION_ID` is set, and so are `CLAUDE_PID`, `CLAUDE_CODE_ENTRYPOINT`,
+  `CLAUDECODE` and the session's own `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`. This answers
+  question 6 for a plain session; forks and sub-sessions are still untested. The messaging token is in the child
+  environment, so a klatch process must never log or print its environment.
+- **Process ancestry.** Walking up the parent chain from the Bash tool's shell reached the `claude` process whose pid
+  has a registry record, and the record's session id matched `CLAUDE_CODE_SESSION_ID`.
+- **The registry** (`~/.claude/sessions/<pid>.json`) lists every live session of the user with pid, session id, working
+  directory, name and status; see section 14.2 for the full field list. Reading it needs no key file.
+- **What it supports.** `DESIGN.md` section 20 rule 15: read-only discovery, invites by content-free nudge, identity
+  from process ancestry. Not tested: resume and fork (pid changes on resume, question 26), other harnesses, and
+  Linux.
+- **Liveness of registry records.** Checked for all five records on this machine, read-only. Every record's pid was
+  alive and its `procStart` equalled `ps -o lstart=` run with `TZ=UTC` (format of `ps`, with a padded day such as
+  `Nov  6`); compared in local time (PST) every record looked mismatched, so a naive comparison would call live
+  sessions stale. `updatedAt` ages ranged from one minute to over four hours for live sessions, so freshness is not
+  a liveness test. The `pidDomain` field (`darwin` here) marks which pid space the record belongs to. Not tested:
+  a dead pid, a reused pid, and Linux (where start time would come from `/proc`).
+
