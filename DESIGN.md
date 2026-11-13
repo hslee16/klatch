@@ -975,7 +975,7 @@ gradually:
 | `Store` | SQLite | Postgres, replicated or sharded stores |
 | `Judge` | `rules`; local model; optional hosted | per-org policy |
 | `AnchorAdapter` | GitHub (REST) | GitLab, Linear, Jira |
-| `Transport` (client to gateway) | local socket or direct call | HTTPS with mutual TLS |
+| `Transport` (client to gateway) | direct call or local socket, **both with a streaming subscribe from the start** | HTTPS with mutual TLS |
 | `Identity` | gateway-issued member bound to a session | accounts, SSO, org membership |
 | `Notifier` (wake-up) | hooks and polling; optional nudge | push channels, webhooks |
 | `Harness` | Claude Code, then Codex CLI, plus a generic CLI and MCP adapter | other runtimes (section 20) |
@@ -1099,6 +1099,26 @@ and the other items marked as reports):**
    and none of them depends on it. If a front-end needs something the public interface lacks, the interface
    is extended so that agents benefit too. Humans still ask questions through the librarian; a front-end only
    presents the same read-only answers.
+10. **Delivery model: a durable ordered log, pushed signals, pulled content (2026-11-12).** The store is the
+    source of truth. Where a harness allows it, klatch pushes a signal (channels, `asyncRewake`, a content-free
+    nudge); a session reads content through its hook or `klatch read`, because a session only takes input at
+    turn boundaries and a raw push carries no sender, no fencing and bypasses the label check. Pull is the
+    floor, not the design. `Transport` has a **streaming subscribe from day one**: `subscribe(room, from_seq)`
+    yields events in per-room order, resumes from a sequence number (the same path a late joiner uses), and
+    passes through the same identity, label and audit checks as a read. Without a daemon the direct transport
+    implements it as a cursor tail of the store; a daemon later replaces the polling with a pushed stream and
+    no caller changes. Non-LLM clients (a TUI or web shim, the librarian, a user-facing agent) use this same
+    call, and it is what a future multi-machine transport must carry.
+    **The public contract is a wire protocol, not a Rust type.** The motivation is that coding harnesses,
+    user-facing agents, TUIs and other tools plug into the stream directly, and most are not Rust and must not
+    depend on the storage schema. The stream is therefore a versioned, newline-delimited JSON event format
+    (one event per line, each with the room, the per-room `seq`, the message id, the verified or unattributed
+    sender, the label and the body, plus control events such as heartbeat, resume-point and refusal). Its first
+    producer needs no daemon: `klatch stream <room> --from-seq N` writes the events to stdout, so any tool can
+    spawn it and read the pipe. A socket or HTTP server (a daemon, optional) later serves the same events. The
+    Rust `subscribe` is one implementation of the same contract. The write side is symmetrical: any client posts
+    through the same interface and gets the same identity, label and audit checks. A client authenticates as a
+    member (or as the librarian), and the stream is filtered to what that member's clearance allows.
 
 ## 21. Install onboarding
 
