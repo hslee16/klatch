@@ -136,6 +136,15 @@ impl World {
         .to_string()
     }
 
+    /// Start a klatch process with a piped standard input, for scenarios that feed it by hand or kill it.
+    pub fn spawn_piped(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
+        self.command(who, args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    }
+
     /// Start a klatch process and return it, for concurrent scenarios.
     pub fn spawn(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
         self.command(who, args)

@@ -148,6 +148,42 @@ pub fn all() -> Vec<Scenario> {
             run: long_history,
         },
         Scenario {
+            name: "a_dead_holders_claim_lapses_and_another_takes_it",
+            origin: "#233, #59, #262",
+            layer: "fault",
+            run: dead_holder,
+        },
+        Scenario {
+            name: "killed_claimants_leave_the_store_usable",
+            origin: "#262",
+            layer: "fault",
+            run: killed_claimants,
+        },
+        Scenario {
+            name: "a_killed_poster_leaves_a_consistent_history",
+            origin: "#262",
+            layer: "fault",
+            run: killed_poster,
+        },
+        Scenario {
+            name: "a_read_only_store_fails_cleanly_and_recovers",
+            origin: "#262",
+            layer: "fault",
+            run: read_only_store,
+        },
+        Scenario {
+            name: "a_garbage_database_is_refused_and_left_alone",
+            origin: "#262",
+            layer: "fault",
+            run: garbage_database,
+        },
+        Scenario {
+            name: "a_hook_survives_hostile_standard_input",
+            origin: "#262, #284",
+            layer: "fault",
+            run: hostile_stdin,
+        },
+        Scenario {
             name: "hostile_text_cannot_forge_a_header",
             origin: "#138",
             layer: "fault",
@@ -814,4 +850,209 @@ fn long_history(w: &World) -> Res {
         ("read_ms".into(), read_ms),
         ("stream_ms".into(), stream_ms),
     ])
+}
+
+fn no_panic(text: &str, what: &str) -> Result<(), String> {
+    check(
+        !text.contains("panicked") && !text.contains("RUST_BACKTRACE"),
+        format!("{what} panicked:\n{text}"),
+    )
+}
+
+fn dead_holder(w: &World) -> Res {
+    // The holder's process is gone (each CLI call exits), but its claim persists until its lease runs out.
+    w.ok("holder", &["claim", "r", "ask:1", "--ttl", "2"])?;
+    let refused = w.refused("other", &["claim", "r", "ask:1"])?;
+    has(&refused, "holder", "the lease is honoured while it lasts")?;
+    std::thread::sleep(std::time::Duration::from_millis(2300));
+    w.ok("other", &["claim", "r", "ask:1"])?;
+    Ok(vec![])
+}
+
+fn killed_claimants(w: &World) -> Res {
+    let n = 30;
+    let mut children = Vec::new();
+    for i in 0..n {
+        children.push(
+            w.spawn(&format!("c{i}"), &["claim", "r", &format!("path{i}")])
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    for (i, c) in children.iter_mut().enumerate() {
+        if i % 2 == 0 {
+            let _ = c.kill();
+        }
+    }
+    for mut c in children {
+        let _ = c.wait();
+    }
+    // Whatever was killed, the store must still work and hold no duplicate claim.
+    let claims = w.ok("viewer", &["claims", "r"])?;
+    let mut paths: Vec<&str> = claims
+        .lines()
+        .filter_map(|l| l.split('\t').next())
+        .collect();
+    let before = paths.len();
+    paths.sort_unstable();
+    paths.dedup();
+    check(
+        paths.len() == before,
+        format!("a claim appears twice:\n{claims}"),
+    )?;
+    w.ok("viewer", &["post", "r", "still alive"])?;
+    has(
+        &w.ok("other", &["read", "r"])?,
+        "still alive",
+        "the store still works",
+    )?;
+    Ok(vec![("claims_kept".into(), before as f64)])
+}
+
+fn killed_poster(w: &World) -> Res {
+    use std::io::Write;
+    w.ok("reader", &["join", "r"])?;
+    let mut child = w
+        .spawn_piped("poster", &["serve", "--stdio"])
+        .map_err(|e| e.to_string())?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    let writer = std::thread::spawn(move || {
+        for i in 0..20000 {
+            let line = format!("{}\n", World::post_request(i, "r", &format!("m{i}")));
+            if stdin.write_all(line.as_bytes()).is_err() {
+                break;
+            }
+        }
+    });
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = writer.join();
+    let read = w.ok("reader", &["read", "r", "--peek"])?;
+    let seqs: Vec<i64> = read
+        .lines()
+        .filter_map(|l| l.strip_prefix('[')?.split(' ').next()?.parse().ok())
+        .collect();
+    check(
+        !seqs.is_empty(),
+        "the poster was killed before anything was written",
+    )?;
+    check(
+        seqs.iter().enumerate().all(|(i, s)| *s == i as i64 + 1),
+        format!(
+            "the history has a gap after the kill: first {:?}",
+            &seqs[..seqs.len().min(8)]
+        ),
+    )?;
+    w.ok("poster2", &["post", "r", "after the kill"])?;
+    let again = w.ok("reader", &["read", "r", "--peek"])?;
+    has(&again, "after the kill", "a new post lands")?;
+    Ok(vec![("messages_before_kill".into(), seqs.len() as f64)])
+}
+
+fn read_only_store(w: &World) -> Res {
+    use std::os::unix::fs::PermissionsExt;
+    w.ok("alice", &["join", "r"])?;
+    w.ok("alice", &["post", "r", "written before"])?;
+    let set = |dir: u32, file: u32| -> Result<(), String> {
+        for entry in std::fs::read_dir(&w.home).map_err(|e| e.to_string())? {
+            let p = entry.map_err(|e| e.to_string())?.path();
+            if p.is_file() {
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(file))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::set_permissions(&w.home, std::fs::Permissions::from_mode(dir))
+            .map_err(|e| e.to_string())
+    };
+    set(0o555, 0o444)?;
+    for args in [
+        vec!["post", "r", "to a read-only store"],
+        vec!["read", "r"],
+        vec!["hook"],
+    ] {
+        let r = w.run("alice", &args);
+        let both = format!("{}{}", r.stdout, r.stderr);
+        if let Err(e) = no_panic(&both, &format!("klatch {args:?} on a read-only store")) {
+            set(0o755, 0o644)?;
+            return Err(e);
+        }
+    }
+    set(0o755, 0o644)?;
+    // Another member reads: a member never reads its own messages back.
+    has(
+        &w.ok("bob", &["read", "r", "--peek"])?,
+        "written before",
+        "the data survived and the store works again",
+    )?;
+    Ok(vec![])
+}
+
+fn garbage_database(w: &World) -> Res {
+    let path = w.home.join("rooms.db");
+    let junk: Vec<u8> = (0..4096u32).map(|i| (i * 31 % 251) as u8).collect();
+    std::fs::write(&path, &junk).map_err(|e| e.to_string())?;
+    let r = w.run("alice", &["who", "lobby"]);
+    check(!r.ok, "a garbage database was accepted")?;
+    no_panic(
+        &format!("{}{}", r.stdout, r.stderr),
+        "klatch on a garbage database",
+    )?;
+    check(
+        !r.stderr.trim().is_empty(),
+        "a garbage database gave no error message",
+    )?;
+    check(
+        std::fs::read(&path).map_err(|e| e.to_string())? == junk,
+        "klatch changed or removed a file that was not its database",
+    )?;
+    Ok(vec![])
+}
+
+fn hostile_stdin(w: &World) -> Res {
+    use std::io::Write;
+    w.ok("alice", &["join", "lobby"])?;
+    let payloads: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "two megabytes of non-UTF-8",
+            (0..2_000_000u32).map(|i| (i % 256) as u8).collect(),
+        ),
+        ("a NUL-filled line", vec![0u8; 5000]),
+        (
+            "a path traversal session id",
+            br#"{"session_id":"../../etc/passwd"}"#.to_vec(),
+        ),
+        (
+            "a huge session id",
+            format!(r#"{{"session_id":"{}"}}"#, "x".repeat(100_000)).into_bytes(),
+        ),
+        (
+            "a non-string session id",
+            br#"{"session_id":{"a":[1,2,3]}}"#.to_vec(),
+        ),
+    ];
+    for (what, bytes) in payloads {
+        let start = Instant::now();
+        let mut child = w
+            .spawn_piped("alice", &["hook", "--event", "PostToolUse"])
+            .map_err(|e| e.to_string())?;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(&bytes);
+        });
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        no_panic(
+            &format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+            &format!("a hook given {what}"),
+        )?;
+        check(
+            start.elapsed().as_secs() < 10,
+            format!("a hook given {what} took {:?}", start.elapsed()),
+        )?;
+    }
+    Ok(vec![])
 }
