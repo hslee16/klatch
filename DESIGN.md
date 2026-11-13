@@ -1385,6 +1385,8 @@ Decided in conversation with the human. A user runs agents in many repositories,
 repository. This section says who a member is, where agents meet, and how they find each other, without adding an
 orchestrator.
 
+Tracked as epic #180 (children #181 to #192, plus #170, #179, #43, #20, #39, #133, #65 and #41).
+
 ### 24.1 Decisions
 
 1. **A member is a session, and the repository is an attribute.** A member has a stable id and attributes: name,
