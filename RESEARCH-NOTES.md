@@ -671,3 +671,38 @@ simple forgery**, and no further attempt was made. Registry and sockets were cle
 - The shipped hook path (Tier 1) is confirmed for delivery, enforcement and wake-up in headless workers.
 - Native-peer mode (registering the gateway as a peer) stays out of v1; the default remains the CLI, hooks and
   the content-free nudge.
+
+## 15. Other transports, MCP, ACP and A2A (2026-11-12)
+
+Mostly third-party summaries found by web search; the MCP specification and the Codex configuration reference are
+the primary sources, and only their search snippets were read. Verify before relying on a detail.
+
+- **MCP.** **REPORT:** the current revision is 2026-07-28. Transports are stdio and Streamable HTTP; HTTP+SSE is
+  deprecated. In that revision the initialize handshake and protocol sessions are removed, server-initiated
+  requests are replaced by `input_required` results, and server push uses `subscriptions/listen` (a client lists
+  resource URIs and receives `notifications/resources/updated`). Tasks moved to an extension; roots, sampling and
+  logging are deprecated. Authorization on HTTP is an OAuth 2.1 profile.
+- **MCP in the harnesses.** Claude Code handles `list_changed` for tools, resources and prompts and refreshes
+  only the tool list in `-p` mode; per-resource subscribe support is marked unknown. A remote server added as a
+  claude.ai connector reportedly keeps its start-of-session tool list (issue 108596). Codex reads MCP servers from
+  `config.toml` (stdio and Streamable HTTP, OAuth login, tool allowlists); one source says only the tools part of
+  the spec is implemented (**unverified**). A stateless HTTP MCP server cannot push at all.
+- **ACP (Agent Client Protocol).** An editor starts an agent as a subprocess and exchanges JSON-RPC over stdio;
+  remote transport is still in development. Zed and JetBrains support it natively; Claude Code and Codex are
+  reached through adapters (`codex-acp`, a Claude Code SDK wrapper). Relevance: a user-facing klatch agent such as
+  the librarian could be offered to editors through it.
+- **A2A v1.0 (March 2026).** Agent to agent. Data model in Protocol Buffers with JSON-RPC, gRPC and HTTP+JSON
+  bindings; discovery by an Agent Card at `/.well-known/agent-card.json`. Task-oriented between independent
+  agents, unlike many-to-many rooms; IBM's ACP merged into A2A in August 2025. A bridge is possible later.
+- **Generic transports.** WebSocket: duplex, simplest for UI shims. gRPC: typed bidirectional streams, good for
+  server-to-server. NATS and MQTT: brokered pub/sub (a broker was rejected for same-machine use; MQTT targets
+  constrained devices). QUIC and WebTransport: promising, less mature. Tailscale or WireGuard is a network layer
+  and the practical way to reach another machine (not researched here).
+- **What it changes.** `DESIGN.md` section 20 rules 12 and 13: every transport is duplex, and MCP is an adapter in
+  v1 and an optional connector later, not the core transport.
+
+Sources: modelcontextprotocol.io (specification 2026-07-28, resources); code.claude.com/docs/en/mcp;
+canimcp.dev (Claude Code feature support); developers.openai.com/codex/config-reference; zed.dev/blog/claude-code-via-acp;
+restfulapi.net and getmaxim.ai (MCP, A2A and ACP comparisons); IETF draft on messaging for agentic AI;
+pilotprotocol.network (NATS vs gRPC).
+

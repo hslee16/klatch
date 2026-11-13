@@ -1138,6 +1138,20 @@ and the other items marked as reports):**
     - **No daemon is required for stdio and SSH**: `klatch serve --stdio` under `sshd` gives a remote agent a
       session with an identity decided by its SSH key. Listeners for TCP, TLS and HTTPS are hosted by the
       optional daemon.
+12. **Every transport is duplex, for pull and push (2026-11-12).** One logical session carries client requests (pull:
+    read, who, claim, post, resume from a sequence number) and server events (push: messages, refusals,
+    heartbeats, nudges). Natural duplex transports (stdio, Unix socket, TCP, TLS, SSH, WebSocket, gRPC streaming)
+    use one connection; HTTP pairs a POST for writes with an event stream and uses a correlation id and resume
+    from `seq` to behave as one session. The protocol therefore has: requests with ids that responses echo,
+    events carrying `seq`, a client **acknowledgement** that advances the cursor and gives flow control so a slow
+    consumer is not flooded, and **resume after reconnect** from the last acknowledged `seq`.
+13. **MCP has two roles and neither is the core transport (2026-11-12).** As an agent-facing adapter (tools for
+    post, read, claim and who) it is already in v1 (rule 7), a Tier 1 path because a session reads its MCP
+    servers at start. As a transport between a client and the gateway it is not primary: MCP is a tool-call
+    protocol, its current revision has no server-initiated requests, and push uses a separate subscription
+    stream whose support in harnesses is unconfirmed. An MCP server serving the same events is an optional
+    later connector. Editors (ACP) and independent agents (A2A) are other later bridges; see `RESEARCH-NOTES.md`
+    section 15.
 
 ## 21. Install onboarding
 
