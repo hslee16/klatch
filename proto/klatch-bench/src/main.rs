@@ -5,11 +5,19 @@ fn main() {
     let mut layer: Option<String> = None;
     let mut json: Option<String> = None;
     let mut names: Vec<String> = Vec::new();
+    let mut budgets: Option<String> = None;
+    let mut save_baseline: Option<String> = None;
+    let mut factor = 3.0_f64;
+    let mut floor = 200.0_f64;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--layer" => layer = args.next(),
             "--json" => json = args.next(),
+            "--budgets" => budgets = args.next(),
+            "--save-baseline" => save_baseline = args.next(),
+            "--factor" => factor = args.next().and_then(|v| v.parse().ok()).unwrap_or(factor),
+            "--floor" => floor = args.next().and_then(|v| v.parse().ok()).unwrap_or(floor),
             other => names.push(other.to_string()),
         }
     }
@@ -42,7 +50,28 @@ fn main() {
         eprintln!("klatch-bench: cannot write {path}: {e}");
         std::process::exit(2);
     }
-    if outcomes.iter().any(|o| !o.passed) {
+    if let Some(path) = save_baseline {
+        let text =
+            serde_json::to_string_pretty(&klatch_bench::baseline_of(&outcomes)).unwrap_or_default();
+        if let Err(e) = std::fs::write(&path, format!("{text}\n")) {
+            eprintln!("klatch-bench: cannot write {path}: {e}");
+            std::process::exit(2);
+        }
+        println!("baseline written to {path}");
+    }
+    let mut regressed = false;
+    if let Some(path) = budgets {
+        let baseline = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let report = klatch_bench::check_budgets(&outcomes, &baseline, factor, floor);
+        print!("\n{}", klatch_bench::format_budgets(&report));
+        regressed = report
+            .iter()
+            .any(|b| b.status == klatch_bench::BudgetStatus::Regression);
+    }
+    if outcomes.iter().any(|o| !o.passed) || regressed {
         std::process::exit(1);
     }
 }

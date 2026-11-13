@@ -1602,3 +1602,10 @@ A headless run started from an interactive session marked the interactive sessio
 
 It does not cover Claude Code's own timing (when the harness drops its record): that stays with the real-session scripts and the interactive checklist of #285.
 
+### 26.2 Scale scenarios and budgets (#262; 2026-11-13)
+
+1. **Scale scenarios (layer `scale`).** Five scenarios seed a store (many through one `serve --stdio` process, which is how thousands of messages go in quickly), check correctness under load, and record timings: the board and the open-ask list with 100 members and 400 open asks (a long section is cut and counted); one hook across 40 rooms; 20 waiters woken together by one post; 20 claimants racing for one ask (exactly one wins, the rest are refused); a 3,000 message history read and streamed whole. `cargo test --workspace` runs them for correctness only.
+2. **Budgets, informational.** A timing metric is any metric ending in `_ms`. `klatch-bench --budgets FILE [--factor 3] [--floor 200]` compares each with a recorded baseline (`proto/klatch-bench/baseline.json`, written by `--save-baseline FILE`): a metric may take `factor` times its baseline but never less than the floor, so a fast metric on a slow runner is not a regression. The report names each metric as ok, new (no baseline) or REGRESSION, and only a regression makes the command exit non-zero. CI does not run the budget check: a loaded runner was about 13 times slower than the author's machine earlier, so enforcement would flake; the check is a local and on-demand tool until the budgets are calibrated on the runner (the human chose informational first).
+3. **First numbers (the author's machine, a debug build).** Board 15 ms and open asks 15 ms with 400 asks; hook across 40 rooms 11 ms; 20 waiters woken in about 200 ms (the poll interval); 20 claimants 54 ms; a 3,000 message read 13 ms and stream 33 ms. Nothing is near a limit at this size; the baseline exists to catch a cliff.
+4. **Not yet:** much larger sizes, the layer 4 agent-run scripts with repeats (#243), a runner-calibrated baseline for CI, killed-claimant and read-only-store fault scenarios.
+

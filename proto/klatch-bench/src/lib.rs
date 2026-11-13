@@ -89,7 +89,17 @@ pub fn table(outcomes: &[Outcome]) -> String {
             o.origin,
             o.millis,
             if o.passed {
-                String::new()
+                let shown: Vec<String> = o
+                    .metrics
+                    .iter()
+                    .filter(|(k, _)| k.ends_with("_ms"))
+                    .map(|(k, v)| format!("{k}={v:.0}"))
+                    .collect();
+                if shown.is_empty() {
+                    String::new()
+                } else {
+                    format!("   {}", shown.join(" "))
+                }
             } else {
                 format!("   {}", o.message)
             }
@@ -123,6 +133,110 @@ pub fn to_json(outcomes: &[Outcome], bin_version: &str, now: u64) -> String {
         "klatch": bin_version, "time": now, "scenarios": list,
     }))
     .expect("a JSON record serialises")
+}
+
+/// How one timing metric compares with its recorded baseline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Budget {
+    pub scenario: String,
+    pub metric: String,
+    pub value: f64,
+    /// The recorded baseline, if there is one.
+    pub baseline: Option<f64>,
+    /// The most the metric may take before it counts as a regression.
+    pub limit: Option<f64>,
+    pub status: BudgetStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetStatus {
+    Ok,
+    /// Beyond the allowed factor over the baseline: the only status that fails the check.
+    Regression,
+    /// No baseline for it yet.
+    New,
+}
+
+/// Compare every timing metric (a name ending in `_ms`) of every passing scenario with the baseline
+/// (`{"<scenario>": {"<metric>": <ms>}}`). A metric may take `factor` times its baseline, but never less than
+/// `floor_ms`, so a fast metric on a slow runner is not a regression.
+pub fn check_budgets(
+    outcomes: &[Outcome],
+    baseline: &serde_json::Value,
+    factor: f64,
+    floor_ms: f64,
+) -> Vec<Budget> {
+    let mut out = Vec::new();
+    for o in outcomes.iter().filter(|o| o.passed) {
+        for (metric, value) in o.metrics.iter().filter(|(k, _)| k.ends_with("_ms")) {
+            let recorded = baseline
+                .get(&o.name)
+                .and_then(|m| m.get(metric))
+                .and_then(serde_json::Value::as_f64);
+            let limit = recorded.map(|b| (b * factor).max(floor_ms));
+            let status = match limit {
+                None => BudgetStatus::New,
+                Some(l) if *value > l => BudgetStatus::Regression,
+                Some(_) => BudgetStatus::Ok,
+            };
+            out.push(Budget {
+                scenario: o.name.clone(),
+                metric: metric.clone(),
+                value: *value,
+                baseline: recorded,
+                limit,
+                status,
+            });
+        }
+    }
+    out
+}
+
+/// The budget comparison as text, one line per metric and a total.
+pub fn format_budgets(budgets: &[Budget]) -> String {
+    let mut out = String::new();
+    for b in budgets {
+        let verdict = match b.status {
+            BudgetStatus::Ok => "ok",
+            BudgetStatus::Regression => "REGRESSION",
+            BudgetStatus::New => "new (no baseline)",
+        };
+        out.push_str(&format!(
+            "{:<10} {:<42} {:<14} {:>9.1} ms (baseline {}, limit {})\n",
+            verdict,
+            b.scenario,
+            b.metric,
+            b.value,
+            b.baseline.map_or("-".to_string(), |v| format!("{v:.1}")),
+            b.limit.map_or("-".to_string(), |v| format!("{v:.1}")),
+        ));
+    }
+    let regressions = budgets
+        .iter()
+        .filter(|b| b.status == BudgetStatus::Regression)
+        .count();
+    out.push_str(&format!(
+        "{regressions} regression{}\n",
+        if regressions == 1 { "" } else { "s" }
+    ));
+    out
+}
+
+/// The baseline record for these outcomes: each timing metric as measured.
+pub fn baseline_of(outcomes: &[Outcome]) -> serde_json::Value {
+    let mut all = serde_json::Map::new();
+    for o in outcomes.iter().filter(|o| o.passed) {
+        let timings: serde_json::Map<String, serde_json::Value> = o
+            .metrics
+            .iter()
+            .filter(|(k, _)| k.ends_with("_ms"))
+            .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+            .collect();
+        if !timings.is_empty() {
+            all.insert(o.name.clone(), serde_json::Value::Object(timings));
+        }
+    }
+    serde_json::Value::Object(all)
 }
 
 /// The klatch binary the workspace builds, next to the test or bench executable's directory. Builds it with cargo
@@ -296,5 +410,136 @@ mod tests {
         let out = run_scenarios(&all(), &bin);
         let failed: Vec<_> = out.iter().filter(|o| !o.passed).collect();
         assert!(failed.is_empty(), "{}", table(&out));
+    }
+
+    fn timed(name: &str, metrics: &[(&str, f64)], passed: bool) -> Outcome {
+        Outcome {
+            name: name.into(),
+            origin: "#1".into(),
+            layer: "scale".into(),
+            passed,
+            millis: 1,
+            message: String::new(),
+            metrics: metrics.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    #[test]
+    fn a_metric_within_the_factor_over_its_baseline_is_ok_and_beyond_it_is_a_regression() {
+        let base = serde_json::json!({"board": {"board_ms": 100.0}});
+        let ok = check_budgets(
+            &[timed("board", &[("board_ms", 290.0)], true)],
+            &base,
+            3.0,
+            50.0,
+        );
+        assert_eq!(ok.len(), 1);
+        assert_eq!(ok[0].status, BudgetStatus::Ok);
+        assert_eq!((ok[0].baseline, ok[0].limit), (Some(100.0), Some(300.0)));
+        let bad = check_budgets(
+            &[timed("board", &[("board_ms", 301.0)], true)],
+            &base,
+            3.0,
+            50.0,
+        );
+        assert_eq!(bad[0].status, BudgetStatus::Regression);
+    }
+
+    #[test]
+    fn the_floor_protects_a_fast_metric_on_a_slow_runner() {
+        let base = serde_json::json!({"quick": {"quick_ms": 5.0}});
+        let r = check_budgets(
+            &[timed("quick", &[("quick_ms", 150.0)], true)],
+            &base,
+            3.0,
+            200.0,
+        );
+        assert_eq!(
+            r[0].status,
+            BudgetStatus::Ok,
+            "150 ms is under the 200 ms floor"
+        );
+        assert_eq!(r[0].limit, Some(200.0));
+    }
+
+    #[test]
+    fn a_metric_with_no_baseline_is_new_and_other_metrics_are_ignored() {
+        let base = serde_json::json!({});
+        let r = check_budgets(
+            &[timed(
+                "s",
+                &[
+                    ("fresh_ms", 10.0),
+                    ("klatch_calls", 88.0),
+                    ("members", 150.0),
+                ],
+                true,
+            )],
+            &base,
+            3.0,
+            50.0,
+        );
+        assert_eq!(r.len(), 1, "only the _ms metric is a budget: {r:?}");
+        assert_eq!(r[0].status, BudgetStatus::New);
+        assert_eq!(r[0].baseline, None);
+    }
+
+    #[test]
+    fn a_failed_scenario_has_no_budget_check() {
+        let r = check_budgets(
+            &[timed("s", &[("a_ms", 10.0)], false)],
+            &serde_json::json!({}),
+            3.0,
+            50.0,
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn the_baseline_record_keeps_only_timing_metrics_of_passing_scenarios() {
+        let b = baseline_of(&[
+            timed("board", &[("board_ms", 12.0), ("members", 150.0)], true),
+            timed("broken", &[("x_ms", 1.0)], false),
+        ]);
+        assert_eq!(b["board"]["board_ms"], 12.0);
+        assert!(b["board"].get("members").is_none());
+        assert!(b.get("broken").is_none());
+    }
+
+    #[test]
+    fn the_budget_report_has_a_line_per_metric_and_names_regressions_and_new_metrics() {
+        let base = serde_json::json!({"a": {"a_ms": 10.0}, "b": {"b_ms": 10.0}});
+        let b = check_budgets(
+            &[
+                timed("a", &[("a_ms", 12.0)], true),
+                timed("b", &[("b_ms", 900.0)], true),
+                timed("c", &[("c_ms", 5.0)], true),
+            ],
+            &base,
+            3.0,
+            50.0,
+        );
+        let text = format_budgets(&b);
+        assert!(
+            text.contains("a_ms") && text.contains("b_ms") && text.contains("c_ms"),
+            "{text}"
+        );
+        assert!(
+            text.contains("REGRESSION") && text.contains("new"),
+            "{text}"
+        );
+        assert!(text.contains("1 regression"), "{text}");
+        assert!(format_budgets(&[]).contains("0 regressions"));
+    }
+
+    #[test]
+    fn the_table_shows_the_timing_metrics_of_a_passing_scenario() {
+        let out = vec![timed(
+            "board",
+            &[("board_ms", 12.4), ("members", 100.0)],
+            true,
+        )];
+        let t = table(&out);
+        assert!(t.contains("board_ms=12") && !t.contains("members="), "{t}");
     }
 }

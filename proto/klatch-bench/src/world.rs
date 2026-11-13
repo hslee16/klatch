@@ -94,6 +94,48 @@ impl World {
         }
     }
 
+    /// Speak the wire protocol (`serve --stdio`) as member `who`: send the request lines, return the response
+    /// lines. One process handles all of them, which is how a scenario seeds thousands of messages quickly.
+    pub fn serve(&self, who: &str, requests: &[String]) -> Result<Vec<String>, String> {
+        use std::io::Write;
+        let mut c = self.command(who, &["serve", "--stdio"]);
+        c.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = c.spawn().map_err(|e| format!("start serve: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let body: String = requests.iter().map(|r| format!("{r}\n")).collect();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(body.as_bytes());
+        });
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        if !out.status.success() {
+            return Err(format!(
+                "serve failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(String::from)
+            .collect())
+    }
+
+    /// A `post` request line for the wire protocol.
+    pub fn post_request(id: usize, room: &str, body: &str) -> String {
+        serde_json::json!({"v": 1, "type": "request", "id": id.to_string(), "method": "post",
+            "params": {"room": room, "body": body}})
+        .to_string()
+    }
+
+    /// A `read` request line (with `peek`, so it joins the member without moving a cursor).
+    pub fn read_request(id: usize, room: &str) -> String {
+        serde_json::json!({"v": 1, "type": "request", "id": id.to_string(), "method": "read",
+            "params": {"room": room, "peek": true}})
+        .to_string()
+    }
+
     /// Start a klatch process and return it, for concurrent scenarios.
     pub fn spawn(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
         self.command(who, args)
