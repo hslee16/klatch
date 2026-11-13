@@ -790,3 +790,13 @@ fn hook_with_event_prints_nothing_when_there_is_nothing() {
     h.ok("alice", &["join", "r"]);
     assert_eq!(h.ok("alice", &["hook", "--event", "PostToolUse"]), "");
 }
+
+#[test]
+fn a_message_the_hook_showed_is_still_readable_once() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "the ask"]);
+    assert!(h.ok("alice", &["hook"]).contains("from bob: the ask"));
+    assert!(h.ok("alice", &["read", "r"]).contains("the ask"));
+    assert!(!h.ok("alice", &["read", "r"]).contains("the ask"));
+}

@@ -31,9 +31,9 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
-const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, PRIMARY KEY(room,name));
+const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
@@ -116,6 +116,13 @@ fn migrate_v2(conn: &Connection) -> Result<()> {
         "CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));",
     )
     .map_err(be)
+}
+
+/// Version 3 to 4: how far a hook has shown each member's messages, apart from how far the member has read.
+/// Existing members start at 0, which the hook treats as "no further than the read cursor".
+fn migrate_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE members ADD COLUMN hook_seq INTEGER NOT NULL DEFAULT 0;")
+        .map_err(be)
 }
 
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
@@ -206,7 +213,10 @@ impl SqliteStore {
                     if version < 2 {
                         migrate_v1(&conn)?;
                     }
-                    migrate_v2(&conn)?;
+                    if version < 3 {
+                        migrate_v2(&conn)?;
+                    }
+                    migrate_v3(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -316,6 +326,39 @@ impl Store for SqliteStore {
                 .map_err(be)?;
         }
         Ok(rows)
+    }
+
+    fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.immediate(|| {
+            self.touch(room, member, now)?;
+            let (read, shown): (i64, i64) = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(last_seq,0), hook_seq FROM members WHERE room=?1 AND name=?2",
+                    params![room, member],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(be)?;
+            let from = read.max(shown);
+            let mut st = self
+                .conn
+                .prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"))
+                .map_err(be)?;
+            let rows = st
+                .query_map(params![room, from, member], message_from_row)
+                .map_err(be)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(be)?;
+            if let Some(last) = rows.last() {
+                self.conn
+                    .execute(
+                        "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
+                        params![room, member, last.seq],
+                    )
+                    .map_err(be)?;
+            }
+            Ok(rows)
+        })
     }
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
@@ -579,6 +622,59 @@ mod tests {
             ("bob", "hi")
         );
         assert!(s.read("r", "alice", true, 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_hook_shows_a_message_once_but_read_still_returns_it() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "ask", 2).unwrap();
+        assert_eq!(s.hook_read("r", "alice", 3).unwrap().len(), 1);
+        assert!(
+            s.hook_read("r", "alice", 4).unwrap().is_empty(),
+            "hook repeated"
+        );
+        let r = s.read("r", "alice", true, 5).unwrap();
+        assert_eq!(r.len(), 1, "read lost a message the hook showed");
+        assert!(s.read("r", "alice", true, 6).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_hook_skips_what_the_member_already_read() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        s.read("r", "alice", true, 3).unwrap();
+        assert!(s.hook_read("r", "alice", 4).unwrap().is_empty());
+        s.post("r", "bob", "two", 5).unwrap();
+        let h = s.hook_read("r", "alice", 6).unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].body, "two");
+    }
+
+    #[test]
+    fn a_hook_shows_new_messages_after_an_earlier_hook_and_read_returns_all_unread() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "bob", "one", 2).unwrap();
+        s.hook_read("r", "alice", 3).unwrap();
+        s.post("r", "bob", "two", 4).unwrap();
+        assert_eq!(s.hook_read("r", "alice", 5).unwrap()[0].body, "two");
+        let bodies: Vec<_> = s
+            .read("r", "alice", true, 6)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.body)
+            .collect();
+        assert_eq!(bodies, ["one", "two"]);
+    }
+
+    #[test]
+    fn a_hook_excludes_own_messages() {
+        let s = store();
+        s.join("r", "alice", 1).unwrap();
+        s.post("r", "alice", "mine", 2).unwrap();
+        assert!(s.hook_read("r", "alice", 3).unwrap().is_empty());
     }
 
     #[test]
@@ -1353,12 +1449,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_3() {
-        assert_eq!(version(&store()), 3);
+    fn a_fresh_database_is_at_schema_version_4() {
+        assert_eq!(version(&store()), 4);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_3_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_4_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1374,7 +1470,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 3);
+        assert_eq!(version(&s), 4);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1395,14 +1491,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            3,
+            4,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_3() {
+    fn a_version_0_database_now_migrates_all_the_way_to_4() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1415,7 +1511,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 3);
+        assert_eq!(version(&s), 4);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1434,11 +1530,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_three_with_everything_intact() {
+    fn a_version_two_database_migrates_to_four_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 3);
+        assert_eq!(version(&s), 4);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1456,7 +1552,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 3);
+        assert_eq!(version(&s), 4);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

@@ -46,6 +46,12 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
+    /// Messages from others that a hook has not shown yet, for the member's hook only. Remembers what it
+    /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a
+    /// message a hook showed can still be read once with `read` (#198). The default advances the read cursor.
+    fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.read(room, member, true, now)
+    }
     /// Other members' claims in a room that `member` has not been shown yet, and claims it was shown that are
     /// gone; remembers what it returned so the next call reports only what changed. A claim renewed with a new
     /// expiry counts as changed; the passing of time alone does not. The default remembers nothing and reports
