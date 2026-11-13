@@ -1021,3 +1021,33 @@ fn the_session_start_hook_lists_the_backlog_but_other_events_do_not() {
         "got: {start}"
     );
 }
+
+#[test]
+fn a_filtered_or_peeking_wait_keeps_the_waiter_present_in_who() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    std::thread::sleep(std::time::Duration::from_millis(2200));
+    h.ok("alice", &["wait", "r", "--timeout", "0", "--only", "zzz"]);
+    let who = h.ok("bob", &["who", "r"]);
+    let line = who
+        .lines()
+        .find(|l| l.starts_with("alice"))
+        .unwrap()
+        .to_string();
+    assert!(
+        line.contains("last seen 0s ago") || line.contains("last seen 1s ago"),
+        "a filtered wait left the waiter looking absent: {line}"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(2200));
+    h.ok("alice", &["wait", "r", "--timeout", "0", "--peek"]);
+    let who = h.ok("bob", &["who", "r"]);
+    let line = who
+        .lines()
+        .find(|l| l.starts_with("alice"))
+        .unwrap()
+        .to_string();
+    assert!(
+        line.contains("last seen 0s ago") || line.contains("last seen 1s ago"),
+        "a peeking wait left the waiter looking absent: {line}"
+    );
+}

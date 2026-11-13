@@ -9,7 +9,7 @@ pub trait Transport {
     fn join(&self, room: &str) -> Result<()>;
     fn post(&self, room: &str, body: &str) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
-    /// Unread messages a wait has not looked at yet; changes nothing.
+    /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;

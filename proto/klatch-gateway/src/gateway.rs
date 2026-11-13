@@ -109,7 +109,7 @@ impl<S: Store> Gateway<S> {
         self.store.read(room, &who.member, advance, self.now())
     }
 
-    /// What a `wait` should consider: unread messages it has not yet looked at. Changes nothing.
+    /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
     pub fn wait_poll(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         self.admit(
             who,
