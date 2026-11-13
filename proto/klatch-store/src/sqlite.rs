@@ -2,7 +2,7 @@ use crate::Store;
 use crate::ids::new_id;
 use klatch_core::{
     AskRoom, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk, Posted,
-    ReleasedClaim, Result, overlaps, scopes_collide,
+    ReleaseNote, ReleasedClaim, Result, overlaps, scopes_collide,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -47,7 +47,8 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE ask_leases(room TEXT NOT NULL, seq INTEGER NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,seq));
- CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));";
+ CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));
+ CREATE TABLE claim_notes(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, note TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,path));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -214,6 +215,13 @@ fn migrate_v12(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+fn migrate_v13(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE claim_notes(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, note TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,path));",
+    )
+    .map_err(be)
+}
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -246,6 +254,14 @@ fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
 }
 
 impl SqliteStore {
+    /// The note `owner` left when it released `path`, if it was the latest release of that path (#272).
+    fn note_of(&self, room: &str, owner: &str, path: &str) -> Result<Option<String>> {
+        Ok(self
+            .last_release(room, path)?
+            .filter(|n| n.owner == owner)
+            .map(|n| n.note))
+    }
+
     /// Open with the default five second wait for another writer.
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_timeout(path, Duration::from_secs(5))
@@ -332,7 +348,10 @@ impl SqliteStore {
                     if version < 12 {
                         migrate_v11(&conn)?;
                     }
-                    migrate_v12(&conn)?;
+                    if version < 13 {
+                        migrate_v12(&conn)?;
+                    }
+                    migrate_v13(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -964,6 +983,54 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn release_with(
+        &self,
+        room: &str,
+        owner: &str,
+        path: &str,
+        note: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.immediate(|| {
+            self.release(room, owner, path)?;
+            if note.is_empty() {
+                self.conn
+                    .execute(
+                        "DELETE FROM claim_notes WHERE room=?1 AND path=?2",
+                        params![room, path],
+                    )
+                    .map_err(be)?;
+            } else {
+                self.conn
+                    .execute(
+                        "INSERT INTO claim_notes(room,path,owner,note,ts) VALUES(?1,?2,?3,?4,?5)
+                         ON CONFLICT(room,path) DO UPDATE SET owner=?3, note=?4, ts=?5",
+                        params![room, path, owner, note, now],
+                    )
+                    .map_err(be)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<ReleaseNote>> {
+        match self.conn.query_row(
+            "SELECT owner,note,ts FROM claim_notes WHERE room=?1 AND path=?2",
+            params![room, path],
+            |r| {
+                Ok(ReleaseNote {
+                    owner: r.get(0)?,
+                    note: r.get(1)?,
+                    ts: r.get(2)?,
+                })
+            },
+        ) {
+            Ok(n) => Ok(Some(n)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(be(e)),
+        }
+    }
+
     fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
         self.immediate(|| {
             let mut st = self
@@ -1045,11 +1112,17 @@ impl Store for SqliteStore {
                 .filter(|c| !seen.iter().any(|(o, p, e)| *o == c.owner && *p == c.path && *e == c.expires))
                 .cloned()
                 .collect();
-            let released: Vec<ReleasedClaim> = seen
+            let mut released = Vec::new();
+            for (o, p, _) in seen
                 .iter()
                 .filter(|(o, p, _)| !current.iter().any(|c| c.owner == *o && c.path == *p))
-                .map(|(o, p, _)| ReleasedClaim { owner: o.clone(), path: p.clone() })
-                .collect();
+            {
+                released.push(ReleasedClaim {
+                    owner: o.clone(),
+                    path: p.clone(),
+                    note: self.note_of(room, o, p)?,
+                });
+            }
             if added.is_empty() && released.is_empty() {
                 return Ok(ClaimChanges::default());
             }
@@ -1802,6 +1875,31 @@ mod tests {
                 .is_empty()
                 || true
         );
+    }
+
+    #[test]
+    fn a_release_note_travels_to_those_who_saw_the_claim_and_to_the_next_claimant() {
+        let s = store();
+        s.claim("r", "bob", "src/a.rs", 100, "", 0).unwrap();
+        assert_eq!(changes(&s, "r", "alice", 1).0.len(), 1);
+        s.release_with("r", "bob", "src/a.rs", "rewrote parse(); re-read it", 10)
+            .unwrap();
+        let c = s.claim_changes("r", "alice", 11).unwrap();
+        assert_eq!(c.released.len(), 1);
+        assert_eq!(
+            c.released[0].note.as_deref(),
+            Some("rewrote parse(); re-read it")
+        );
+        let last = s.last_release("r", "src/a.rs").unwrap().unwrap();
+        assert_eq!(
+            (last.owner.as_str(), last.note.as_str(), last.ts),
+            ("bob", "rewrote parse(); re-read it", 10)
+        );
+        // a later release on the same path replaces it; one with no note leaves no note behind
+        s.claim("r", "carol", "src/a.rs", 100, "", 20).unwrap();
+        s.release_with("r", "carol", "src/a.rs", "", 30).unwrap();
+        assert!(s.last_release("r", "src/a.rs").unwrap().is_none());
+        assert!(s.last_release("r", "other.rs").unwrap().is_none());
     }
 
     #[test]
@@ -2653,12 +2751,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_13() {
-        assert_eq!(version(&store()), 13);
+    fn a_fresh_database_is_at_schema_version_14() {
+        assert_eq!(version(&store()), 14);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_13_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_14_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -2674,7 +2772,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 13);
+        assert_eq!(version(&s), 14);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -2695,14 +2793,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            13,
+            14,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_13() {
+    fn a_version_0_database_now_migrates_all_the_way_to_14() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -2715,7 +2813,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 13);
+        assert_eq!(version(&s), 14);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -2734,11 +2832,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_thirteen_with_everything_intact() {
+    fn a_version_two_database_migrates_to_fourteen_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 13);
+        assert_eq!(version(&s), 14);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -2756,7 +2854,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 13);
+        assert_eq!(version(&s), 14);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

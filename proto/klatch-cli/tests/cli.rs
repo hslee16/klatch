@@ -386,6 +386,35 @@ fn serve_stdio_answers_post_and_read_over_the_protocol() {
 }
 
 #[test]
+fn a_release_over_the_wire_carries_its_note_and_a_missing_note_still_works() {
+    let h = Home::new();
+    h.ok("bob", &["claim", "r", "a.rs"]);
+    h.ok("bob", &["claim", "r", "b.rs"]);
+    let f = h.serve(
+        "bob",
+        &[
+            &request(
+                "1",
+                "release",
+                r#"{"room":"r","path":"a.rs","note":"edited a"}"#,
+            ),
+            &request("2", "release", r#"{"room":"r","path":"b.rs"}"#),
+        ],
+    );
+    assert_eq!(
+        f.iter()
+            .filter(|x| matches!(x, ServerFrame::Response { ok: true, .. }))
+            .count(),
+        2
+    );
+    let claimed = h.ok("carol", &["claim", "r", "a.rs"]);
+    assert!(
+        claimed.contains("last released by bob") && claimed.contains("edited a"),
+        "{claimed}"
+    );
+}
+
+#[test]
 fn a_serve_session_shares_state_with_the_plain_cli() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
@@ -1556,6 +1585,32 @@ fn the_claim_that_closes_a_cycle_is_refused_as_a_deadlock_naming_who_yields() {
     );
     h.ok("bob", &["release", "r", "Y.py"]);
     h.ok("alice", &["claim", "r", "Y.py"]);
+}
+
+#[test]
+fn a_release_note_reaches_a_member_who_saw_the_claim_and_the_next_claimant() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("bob", &["claim", "lobby", "src/a.rs"]);
+    let seen = h.ok("alice", &["hook", "--event", "PostToolUse"]);
+    assert!(seen.contains("src/a.rs"), "{seen}");
+    h.ok(
+        "bob",
+        &["release", "lobby", "src/a.rs", "--note", "rewrote parse()"],
+    );
+    let told = h.ok("alice", &["hook", "--event", "PostToolUse"]);
+    assert!(
+        told.contains("no longer holds src/a.rs: rewrote parse() (re-read it before you edit)"),
+        "{told}"
+    );
+    let claimed = h.ok("carol", &["claim", "lobby", "src/a.rs"]);
+    assert!(
+        claimed.contains("last released by bob") && claimed.contains("rewrote parse()"),
+        "{claimed}"
+    );
+    // a claim on a path nobody released with a note says nothing extra
+    let plain = h.ok("carol", &["claim", "lobby", "other.rs"]);
+    assert!(!plain.contains("last released"), "{plain}");
 }
 
 // ---- the SessionEnd hook (#258) ----

@@ -29,6 +29,10 @@ pub trait Transport {
     /// The scope the caller declared or was given.
     fn scope(&self) -> Result<Option<String>>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
+    /// `release` with a note on what the caller changed.
+    fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()>;
+    /// The latest release of a path that carried a note.
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>>;
     /// Release every claim the caller holds in every room (its session ended); returns how many.
     fn release_all(&self) -> Result<usize>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
@@ -110,6 +114,13 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn release(&self, room: &str, path: &str) -> Result<()> {
         self.gateway.release(&self.principal, room, path)
+    }
+    fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()> {
+        self.gateway
+            .release_with_note(&self.principal, room, path, note)
+    }
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>> {
+        self.gateway.last_release(&self.principal, room, path)
     }
     fn release_all(&self) -> Result<usize> {
         self.gateway.release_all(&self.principal)
