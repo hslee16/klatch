@@ -13,4 +13,5 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 klatch-core.workspace = true
+klatch-gateway.workspace = true
 klatch-store.workspace = true
