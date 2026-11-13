@@ -24,6 +24,8 @@ pub trait Transport {
     fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()>;
     /// The latest run of each hook event recorded for `member`.
     fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>>;
+    /// Housekeeping: remove members not seen for `older_than` seconds; returns how many.
+    fn prune_members(&self, older_than: i64) -> Result<usize>;
     /// Set the caller's own status in a room.
     fn set_status(&self, room: &str, status: &str) -> Result<()>;
     /// The room's board (open asks, current offers, members with status).
@@ -89,6 +91,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>> {
         self.gateway.hook_runs(&self.principal, member)
+    }
+    fn prune_members(&self, older_than: i64) -> Result<usize> {
+        self.gateway.prune_members(&self.principal, older_than)
     }
     fn set_status(&self, room: &str, status: &str) -> Result<()> {
         self.gateway.set_status(&self.principal, room, status)

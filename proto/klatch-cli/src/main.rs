@@ -6,7 +6,9 @@
 mod init;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use klatch_core::{Principal, convention, flat, hook_output_json, render_board, render_hook};
+use klatch_core::{
+    Principal, convention, flat, hook_output_json, render_board, render_hook, render_who,
+};
 use klatch_gateway::{
     AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, SystemClock, Transport,
 };
@@ -62,7 +64,12 @@ enum Cmd {
         peek: bool,
     },
     /// List members of a room with last activity
-    Who { room: String },
+    Who {
+        room: String,
+        /// List every member, including those not seen for over 10 minutes
+        #[arg(long)]
+        all: bool,
+    },
     /// Claim a path prefix (advisory lease with TTL)
     Claim {
         room: String,
@@ -298,18 +305,8 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
         }
-        Cmd::Who { room } => {
-            for m in t.who(&room)? {
-                println!(
-                    "{}\tlast seen {}s ago (liveness, not progress){}",
-                    m.name,
-                    now - m.last_seen,
-                    m.status
-                        .as_deref()
-                        .map(|s| format!("\tstatus: {}", flat(s)))
-                        .unwrap_or_default()
-                );
-            }
+        Cmd::Who { room, all } => {
+            print!("{}", render_who(&t.who(&room)?, now, all));
         }
         Cmd::Claim {
             room,
@@ -398,6 +395,11 @@ fn run(t: &dyn Transport, me: &str, cmd: Cmd, now: i64) -> Result<()> {
                 return Ok(());
             }
             let starting = event.as_deref() == Some("SessionStart");
+            // Housekeeping: a session start removes members not seen for a day (their messages stay). A failure
+            // here must never stop the session.
+            if starting {
+                let _ = t.prune_members(klatch_core::MEMBER_RETENTION_SECS);
+            }
             // A session start joins the default lobby, so nobody has to tell a new session to (installing the
             // hooks is the consent). A member that was not there starts at the end of the history, so it is not
             // flooded, and sees the board instead; one that was there keeps its unread messages.

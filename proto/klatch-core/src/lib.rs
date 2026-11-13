@@ -14,9 +14,9 @@ pub use asks::{
     closed_target, is_ask, open_asks, parse_outcome,
 };
 pub use board::{
-    BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MemberStatus, OFFER_PREFIX,
-    OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, current_offers, is_offer, render_board,
-    statuses,
+    BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS, MemberStatus,
+    OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, current_offers, is_offer,
+    render_board, render_who, statuses,
 };
 pub use convention::{CONVENTION_MARKER, convention};
 pub use error::{Error, Result};

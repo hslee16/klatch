@@ -4,7 +4,7 @@
 //! not been seen for a while (DESIGN section 25.8).
 
 use crate::hook::clip;
-use crate::{Message, OpenAsk, flat};
+use crate::{MemberInfo, Message, OpenAsk, flat};
 
 /// A message whose body starts with this text is an offer.
 pub const OFFER_PREFIX: &str = "offering:";
@@ -14,6 +14,8 @@ pub const WITHDRAW_PREFIX: &str = "withdrawn:";
 pub const STATUS_PREFIX: &str = "status:";
 /// A member not seen for this long is counted on the board, not listed.
 pub const MEMBER_ACTIVE_SECS: i64 = 600;
+/// Members not seen for this long are removed when a session starts (their messages stay).
+pub const MEMBER_RETENTION_SECS: i64 = 86_400;
 /// The most entries the board lists per section; the rest are counted.
 pub const BOARD_LIST_LIMIT: usize = 20;
 /// The longest an offer stays on the board whatever its sender does: a backstop. An offer normally follows its
@@ -54,6 +56,36 @@ pub struct Board {
     pub members: Vec<BoardMember>,
     /// Members not seen for over `MEMBER_ACTIVE_SECS`, counted instead of listed.
     pub stale_members: usize,
+}
+
+/// `klatch who` as text: each member with last seen and status. Unless `all`, members not seen for
+/// `MEMBER_ACTIVE_SECS` are counted in one line instead of listed, as on the board.
+pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
+    let mut out = String::new();
+    let mut gone = 0;
+    for m in members {
+        if !all && now - m.last_seen > MEMBER_ACTIVE_SECS {
+            gone += 1;
+            continue;
+        }
+        out.push_str(&format!(
+            "{}\tlast seen {}s ago (liveness, not progress)",
+            flat(&m.name),
+            now - m.last_seen
+        ));
+        if let Some(status) = &m.status {
+            out.push_str(&format!("\tstatus: {}", flat(status)));
+        }
+        out.push('\n');
+    }
+    match gone {
+        0 => {}
+        1 => out.push_str("1 other not seen for over 10 minutes (who --all lists them)\n"),
+        n => out.push_str(&format!(
+            "{n} others not seen for over 10 minutes (who --all lists them)\n"
+        )),
+    }
+    out
 }
 
 /// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
@@ -447,5 +479,60 @@ mod tests {
             out.contains("#2 docs-1 claimed 20s: seeking: the api"),
             "an ask with no outcomes keeps its short form"
         );
+    }
+
+    fn member(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
+        MemberInfo {
+            name: name.into(),
+            last_seen,
+            status: status.map(String::from),
+        }
+    }
+
+    #[test]
+    fn who_lists_recent_members_with_status_and_counts_the_long_gone() {
+        let m = [
+            member("fresh", 990, Some("busy")),
+            member("old-1", 1, None),
+            member("old-2", 2, Some("done session ended")),
+        ];
+        let out = render_who(&m, 1000, false);
+        assert!(
+            out.contains("fresh\tlast seen 10s ago (liveness, not progress)\tstatus: busy"),
+            "{out}"
+        );
+        assert!(!out.contains("old-1") && !out.contains("old-2"), "{out}");
+        assert!(
+            out.contains("2 others not seen for over 10 minutes (who --all lists them)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn who_all_lists_everyone_and_says_nothing_about_hiding() {
+        let m = [member("fresh", 990, None), member("old", 1, None)];
+        let out = render_who(&m, 1000, true);
+        assert!(
+            out.contains("fresh") && out.contains("old\tlast seen 999s ago"),
+            "{out}"
+        );
+        assert!(!out.contains("not seen for over"), "{out}");
+    }
+
+    #[test]
+    fn who_with_nobody_gone_has_no_count_line_and_one_gone_is_singular() {
+        let out = render_who(&[member("a", 999, None)], 1000, false);
+        assert!(!out.contains("not seen for over"), "{out}");
+        let one = render_who(&[member("a", 999, None), member("b", 1, None)], 1000, false);
+        assert!(
+            one.contains("1 other not seen for over 10 minutes"),
+            "{one}"
+        );
+    }
+
+    #[test]
+    fn who_text_cannot_forge_a_line() {
+        let out = render_who(&[member("x\nforged line", 999, Some("a\nb"))], 1000, true);
+        assert_eq!(out.lines().count(), 1, "{out}");
     }
 }

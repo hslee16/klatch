@@ -1674,3 +1674,18 @@ fn a_session_that_stays_out_gets_no_join_notice() {
     let out = h.ok("quiet", &["hook", "--event", "SessionStart", "--no-join"]);
     assert_eq!(notice_of(&out), None, "{out}");
 }
+
+#[test]
+fn who_all_lists_every_member_and_a_plain_who_lists_the_recent_ones() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["join", "r"]);
+    let plain = h.ok("alice", &["who", "r"]);
+    assert!(
+        plain.contains("alice") && plain.contains("bob"),
+        "recent members are listed: {plain}"
+    );
+    let all = h.ok("alice", &["who", "r", "--all"]);
+    assert!(all.contains("alice") && all.contains("bob"), "{all}");
+    assert!(!plain.contains("not seen for over"), "{plain}");
+}
