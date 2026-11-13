@@ -2,9 +2,11 @@
 //! and a bug corpus (#262, layers 1 to 3 of the bench). A scenario is a function over a `World`; the runner times it,
 //! catches a panic or an error as a failure, and prints a table and a JSON record.
 
+mod harness;
 mod scenarios;
 mod world;
 
+pub use harness::{FakeHarness, Session};
 pub use scenarios::all;
 pub use world::World;
 

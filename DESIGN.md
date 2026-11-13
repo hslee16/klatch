@@ -1595,3 +1595,10 @@ A headless run started from an interactive session marked the interactive sessio
 1. **One name for a session's life.** The first member name a harness session gets is remembered (`sessions`, section 25.16) and used from then on: a rename in the harness no longer makes a new member.
 2. **No two sessions share a name.** When a session's name is already held by a different session, a few characters of its session id are added (`proj-20-3fa9`, four characters, more if that also collides, always within 40). Names stay short and readable except on a real collision, so agents can still type them.
 3. **Unique id versus name.** The session id is the unique internal id; the display name is what people and agents see. Making the name only an attribute of a stable member id, with the repository and directory, is the larger model of section 24 (#181) and is not done here.
+
+### 26.1 The fake harness (#285, 2026-11-13)
+
+`klatch-bench` has a fake harness for the parts of klatch that depend on process ancestry and the session registry: a symlink named `claude` to `/bin/sh` (a symlink, because macOS kills a copied system binary, and the program name `ps` reports follows the name the process was started under, which is what the liveness check reads), fake sessions that run scripts the test sends them, real registry records in a temporary `HOME/.claude/sessions` with matching process start times, and child sessions started from a parent's shell so the process tree is real. Scenarios: a child ending never marks its parent done; nested sessions get their own members; two sessions with one name get distinct members; a renamed session keeps its member; a hook with no session id still uses the walk; a SessionEnd with no record and no memory does nothing. A mutation check showed each catches its bug: ignoring the session id on standard input fails the child scenario; making names neither stable nor unique fails the same-name and rename scenarios.
+
+It does not cover Claude Code's own timing (when the harness drops its record): that stays with the real-session scripts and the interactive checklist of #285.
+
