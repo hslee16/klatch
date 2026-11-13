@@ -1530,3 +1530,24 @@ fn the_convention_is_not_shown_outside_session_start_or_to_a_session_that_stays_
         "shown to a session that stays out: {out}"
     );
 }
+
+#[test]
+fn the_claim_that_closes_a_cycle_is_refused_as_a_deadlock_naming_who_yields() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("alice", &["claim", "r", "X.py"]);
+    h.ok("bob", &["claim", "r", "Y.py"]);
+    let first = h.fail("alice", &["claim", "r", "Y.py"]);
+    assert!(!first.contains("deadlock"), "no cycle yet: {first}");
+    let second = h.fail("bob", &["claim", "r", "X.py"]);
+    assert!(
+        second.contains("deadlock") && second.contains("you yield"),
+        "got: {second}"
+    );
+    assert!(
+        second.contains("alice"),
+        "does not name the holder: {second}"
+    );
+    h.ok("bob", &["release", "r", "Y.py"]);
+    h.ok("alice", &["claim", "r", "Y.py"]);
+}

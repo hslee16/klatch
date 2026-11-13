@@ -32,7 +32,7 @@ fn be(e: rusqlite::Error) -> Error {
     }
 }
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -42,7 +42,8 @@ const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local',
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
- CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));";
+ CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
+ CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));";
 
 fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -167,6 +168,18 @@ fn migrate_v8(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 9 to 10: the claims members recently tried and could not take, so a conflict that closes a cycle of
+/// waits can be named a deadlock. Short lived, never any content.
+fn migrate_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));",
+    )
+    .map_err(be)
+}
+
+/// A member that tried to claim something and was refused is treated as still waiting for this long.
+const WAIT_WINDOW_SECS: i64 = 120;
+
 fn attribution_text(a: klatch_core::Attribution) -> &'static str {
     match a {
         klatch_core::Attribution::Verified => "verified",
@@ -273,7 +286,10 @@ impl SqliteStore {
                     if version < 8 {
                         migrate_v7(&conn)?;
                     }
-                    migrate_v8(&conn)?;
+                    if version < 9 {
+                        migrate_v8(&conn)?;
+                    }
+                    migrate_v9(&conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(be)?;
@@ -299,6 +315,46 @@ impl SqliteStore {
             )
             .map_err(be)?;
         Ok(())
+    }
+
+    /// Whether a refusal of `requester` by `holder` closes a cycle of waits: `holder` is waiting (a refused claim
+    /// attempt within the window) for something a member holds who is waiting for something ... that `requester`
+    /// holds. `held` is every live claim in the room.
+    fn closes_cycle(
+        &self,
+        room: &str,
+        requester: &str,
+        holder: &str,
+        held: &[(String, String, i64)],
+    ) -> Result<bool> {
+        let mut st = self
+            .conn
+            .prepare("SELECT member,path FROM claim_waits WHERE room=?1")
+            .map_err(be)?;
+        let waits: Vec<(String, String)> = st
+            .query_map(params![room], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(be)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(be)?;
+        let mut seen: Vec<String> = Vec::new();
+        let mut stack = vec![holder.to_string()];
+        while let Some(node) = stack.pop() {
+            if node == requester {
+                return Ok(true);
+            }
+            if seen.contains(&node) {
+                continue;
+            }
+            seen.push(node.clone());
+            for (member, wanted) in waits.iter().filter(|(m, _)| *m == node) {
+                for (p, o, _) in held {
+                    if o != member && overlaps(p, wanted) {
+                        stack.push(o.clone());
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn immediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -568,9 +624,17 @@ impl Store for SqliteStore {
         reason: &str,
         now: i64,
     ) -> Result<()> {
+        // The closure returns the outcome as a value, not an error, so that a refused attempt is still committed:
+        // it is remembered as a wait, which is what lets a later conflict be recognised as closing a cycle.
         self.immediate(|| {
             self.conn
                 .execute("DELETE FROM claims WHERE expires<=?1", params![now])
+                .map_err(be)?;
+            self.conn
+                .execute(
+                    "DELETE FROM claim_waits WHERE ts<?1",
+                    params![now - WAIT_WINDOW_SECS],
+                )
                 .map_err(be)?;
             let mut st = self
                 .conn
@@ -587,14 +651,41 @@ impl Store for SqliteStore {
                 .map_err(be)?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(be)?;
-            for (p, o, e) in held {
-                if o != owner && overlaps(&p, path) {
-                    return Err(Error::Conflict {
-                        path: p,
-                        owner: o,
+            for (p, o, e) in &held {
+                if o != owner && overlaps(p, path) {
+                    self.conn
+                        .execute(
+                            "INSERT INTO claim_waits(room,member,path,ts) VALUES(?1,?2,?3,?4)
+                             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4",
+                            params![room, owner, path, now],
+                        )
+                        .map_err(be)?;
+                    let deadlock = self.closes_cycle(room, owner, o, &held)?;
+                    return Ok(Err(Error::Conflict {
+                        path: p.clone(),
+                        owner: o.clone(),
                         secs_left: e - now,
-                    });
+                        deadlock,
+                    }));
                 }
+            }
+            // Taking the path ends this member's wait for it.
+            let mut waits = self
+                .conn
+                .prepare("SELECT path FROM claim_waits WHERE room=?1 AND member=?2")
+                .map_err(be)?;
+            let mine: Vec<String> = waits
+                .query_map(params![room, owner], |r| r.get(0))
+                .map_err(be)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(be)?;
+            for w in mine.into_iter().filter(|w| overlaps(w, path)) {
+                self.conn
+                    .execute(
+                        "DELETE FROM claim_waits WHERE room=?1 AND member=?2 AND path=?3",
+                        params![room, owner, w],
+                    )
+                    .map_err(be)?;
             }
             self.conn
                 .execute(
@@ -608,8 +699,8 @@ impl Store for SqliteStore {
                     params![room, path, owner, reason, now + ttl],
                 )
                 .map_err(be)?;
-            Ok(())
-        })
+            Ok(Ok(()))
+        })?
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
@@ -1087,6 +1178,106 @@ mod tests {
         assert_eq!(s.hook_runs("alice").unwrap()[0].runs, 1);
     }
 
+    fn deadlocked(r: Result<()>) -> Option<bool> {
+        match r {
+            Err(Error::Conflict { deadlock, .. }) => Some(deadlock),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_attempt_that_closes_a_two_party_cycle_is_told_it_is_a_deadlock() {
+        let s = store();
+        s.claim("r", "alice", "X", 1000, "", 0).unwrap();
+        s.claim("r", "bob", "Y", 1000, "", 0).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "alice", "Y", 1000, "", 10)),
+            Some(false),
+            "no cycle yet"
+        );
+        assert_eq!(
+            deadlocked(s.claim("r", "bob", "X", 1000, "", 20)),
+            Some(true),
+            "bob closed the cycle"
+        );
+    }
+
+    #[test]
+    fn a_plain_conflict_is_not_a_deadlock() {
+        let s = store();
+        s.claim("r", "alice", "X", 1000, "", 0).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "bob", "X", 1000, "", 5)),
+            Some(false)
+        );
+        s.claim("r", "bob", "Y", 1000, "", 6).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "bob", "X", 1000, "", 7)),
+            Some(false),
+            "alice is not waiting on bob"
+        );
+    }
+
+    #[test]
+    fn a_wait_older_than_the_window_does_not_make_a_cycle() {
+        let s = store();
+        s.claim("r", "alice", "X", 5000, "", 0).unwrap();
+        s.claim("r", "bob", "Y", 5000, "", 0).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "alice", "Y", 5000, "", 10)),
+            Some(false)
+        );
+        assert_eq!(
+            deadlocked(s.claim("r", "bob", "X", 5000, "", 10 + 121)),
+            Some(false),
+            "alice stopped waiting long ago"
+        );
+    }
+
+    #[test]
+    fn a_cycle_of_three_is_found_at_the_attempt_that_closes_it() {
+        let s = store();
+        s.claim("r", "a", "X", 1000, "", 0).unwrap();
+        s.claim("r", "b", "Y", 1000, "", 0).unwrap();
+        s.claim("r", "c", "Z", 1000, "", 0).unwrap();
+        assert_eq!(deadlocked(s.claim("r", "a", "Y", 1000, "", 5)), Some(false));
+        assert_eq!(deadlocked(s.claim("r", "b", "Z", 1000, "", 6)), Some(false));
+        assert_eq!(deadlocked(s.claim("r", "c", "X", 1000, "", 7)), Some(true));
+    }
+
+    #[test]
+    fn a_satisfied_wait_no_longer_counts() {
+        let s = store();
+        s.claim("r", "alice", "X", 1000, "", 0).unwrap();
+        s.claim("r", "bob", "Y", 1000, "", 0).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "alice", "Y", 1000, "", 5)),
+            Some(false)
+        );
+        s.release("r", "bob", "Y").unwrap();
+        s.claim("r", "alice", "Y", 1000, "", 6).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r", "bob", "X", 1000, "", 7)),
+            Some(false),
+            "alice got Y, so she is not waiting"
+        );
+    }
+
+    #[test]
+    fn waits_in_one_room_do_not_make_a_cycle_in_another() {
+        let s = store();
+        s.claim("r1", "alice", "X", 1000, "", 0).unwrap();
+        s.claim("r2", "bob", "Y", 1000, "", 0).unwrap();
+        assert_eq!(
+            deadlocked(s.claim("r2", "alice", "Y", 1000, "", 5)),
+            Some(false)
+        );
+        assert_eq!(
+            deadlocked(s.claim("r1", "bob", "X", 1000, "", 6)),
+            Some(false)
+        );
+    }
+
     #[test]
     fn peek_does_not_advance_the_cursor() {
         let s = store();
@@ -1124,7 +1315,8 @@ mod tests {
             Error::Conflict {
                 path: "src".into(),
                 owner: "bob".into(),
-                secs_left: 90
+                secs_left: 90,
+                deadlock: false
             }
         );
         s.claim("r", "alice", "docs", 100, "", 10).unwrap(); // disjoint is fine
@@ -1859,12 +2051,12 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_database_is_at_schema_version_9() {
-        assert_eq!(version(&store()), 9);
+    fn a_fresh_database_is_at_schema_version_10() {
+        assert_eq!(version(&store()), 10);
     }
 
     #[test]
-    fn a_version_1_database_is_migrated_to_9_and_keeps_its_messages() {
+    fn a_version_1_database_is_migrated_to_10_and_keeps_its_messages() {
         let path = temp_db("migrate-v1");
         {
             let c = Connection::open(&path).unwrap();
@@ -1880,7 +2072,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 9);
+        assert_eq!(version(&s), 10);
         let old = s.tail("r", 0, 10).unwrap();
         assert_eq!(old.len(), 2);
         assert!(
@@ -1901,14 +2093,14 @@ mod tests {
         let again = SqliteStore::open(&path).unwrap();
         assert_eq!(
             version(&again),
-            9,
+            10,
             "reopening a migrated database is a no-op"
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
-    fn a_version_0_database_now_migrates_all_the_way_to_9() {
+    fn a_version_0_database_now_migrates_all_the_way_to_10() {
         let path = temp_db("migrate-v0-to-2");
         {
             let c = Connection::open(&path).unwrap();
@@ -1921,7 +2113,7 @@ mod tests {
             .unwrap();
         }
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 9);
+        assert_eq!(version(&s), 10);
         let m = &s.tail("r", 0, 10).unwrap()[0];
         assert_eq!(
             (m.attribution, m.label.as_str()),
@@ -1940,11 +2132,11 @@ mod tests {
     const RELEASE_V2: &[u8] = include_bytes!("../fixtures/prototype-v2.db");
 
     #[test]
-    fn a_version_two_database_migrates_to_nine_with_everything_intact() {
+    fn a_version_two_database_migrates_to_ten_with_everything_intact() {
         let path = temp_db("real-v2");
         std::fs::write(&path, RELEASE_V2).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 9);
+        assert_eq!(version(&s), 10);
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(core.len(), 1);
         assert_eq!(core[0].body, "hello from v2");
@@ -1962,7 +2154,7 @@ mod tests {
         let path = temp_db("real-v0");
         std::fs::write(&path, PROTOTYPE_V0).unwrap();
         let s = SqliteStore::open(&path).unwrap();
-        assert_eq!(version(&s), 9);
+        assert_eq!(version(&s), 10);
         // messages: per-room seq backfilled in the original order, ids assigned and distinct
         let core = s.tail("core", 0, 10).unwrap();
         assert_eq!(

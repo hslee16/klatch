@@ -11,6 +11,9 @@ pub enum Error {
         path: String,
         owner: String,
         secs_left: i64,
+        /// The holder is itself waiting, directly or through others, for something the requester holds, and the
+        /// requester's attempt closed that cycle: the requester yields (DESIGN section 25.12).
+        deadlock: bool,
     },
     /// A policy refused the operation. `rule` names the rule that did (for the audit record); `reason` is
     /// safe to show and never contains the content that triggered it.
@@ -34,11 +37,19 @@ impl fmt::Display for Error {
                 path,
                 owner,
                 secs_left,
+                deadlock,
             } => {
                 write!(
                     f,
                     "refused: {path} is claimed by {owner} for another {secs_left}s"
-                )
+                )?;
+                if *deadlock {
+                    write!(
+                        f,
+                        "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again"
+                    )?;
+                }
+                Ok(())
             }
         }
     }
@@ -56,10 +67,32 @@ mod tests {
             path: "src/a".into(),
             owner: "bob".into(),
             secs_left: 42,
+            deadlock: false,
         };
         assert_eq!(
             e.to_string(),
             "refused: src/a is claimed by bob for another 42s"
+        );
+    }
+
+    #[test]
+    fn a_deadlock_conflict_says_so_and_who_yields() {
+        let e = Error::Conflict {
+            path: "src/a".into(),
+            owner: "bob".into(),
+            secs_left: 42,
+            deadlock: true,
+        };
+        let m = e.to_string();
+        assert!(
+            m.starts_with("refused: src/a is claimed by bob for another 42s"),
+            "{m}"
+        );
+        assert!(
+            m.contains("deadlock")
+                && m.contains("you yield")
+                && m.contains("release the claims you hold"),
+            "{m}"
         );
     }
 

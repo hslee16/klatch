@@ -90,7 +90,7 @@ caused the failure.
 | `invalid` | A value was rejected: a bad room name, claim path, reason or ttl, or a bad member name |
 | `unknown_method` | The method is not defined in this version |
 | `not_implemented` | The method is defined but not available yet (none are at present) |
-| `conflict` | Another member holds an overlapping claim; the message names the path, the holder and the seconds left |
+| `conflict` | Another member holds an overlapping claim; the message names the path, the holder and the seconds left. When the refusal closes a cycle of waits (the holder is itself waiting, directly or through others, for a path the requester holds) the message also says `deadlock` and that the requester yields: release the claims it holds, wait, then try again |
 | `refused` | A policy refused the request; a `refusal` frame naming the rule precedes the response |
 | `not_found` | The thing asked for does not exist |
 | `busy` | The store was locked past the wait limit; transient, retrying later can succeed |
