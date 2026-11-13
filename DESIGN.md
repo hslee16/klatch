@@ -570,7 +570,8 @@ Each has a cheap experiment. None should be assumed.
 **Status after the 2026-11-12 experiments** (`RESEARCH-NOTES.md` section 14, one version, one machine):
 questions 2, 5 and 12 are answered; 3 is answered for headless workers only; 13 is answered for an idle
 headless receiver in `default` mode; 1 is answered for `SessionStart` and `UserPromptSubmit` only. Questions 8,
-9, 10, 14 and 17 remain open.
+9, 10 and 14 remain open; 17 is answered for local disks by `proto/CONCURRENCY.md` (two bugs found and fixed,
+latency measured).
 
 1. **Does injection on `PostToolUse` keep working across releases?** Docs and observation
    disagree slightly. Experiment: a hook that prints a unique token; assert the model quotes it.
