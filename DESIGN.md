@@ -1502,3 +1502,10 @@ The human adopted V3, a member status, as the completion signal. Today it is a f
 3. **What klatch understands.** Only the word `done` (a status starting with `done`): a member that is done has its offers taken off the board. The status text is otherwise free. The wider vocabulary (`available`, `busy`, `away`) is #223 and still open.
 4. **No automatic clearing.** Posting again after `done` does not clear it; the member sets another status. (The ticket allowed either; this is the simpler, predictable choice.) A status does not lapse by itself: the board's aging of members (section 25.6) and the SessionEnd hook (#258) cover members that are gone.
 5. **Where it lives.** `members.status` (schema version 7, migrated in place), `Store::set_status`, `MemberInfo.status`.
+
+### 25.8 Offer lifecycle (#250, decided 2026-11-13)
+
+1. **Presence is the heartbeat.** An offer is on the board while its sender has been seen within `MEMBER_ACTIVE_SECS` (600). A member that is waiting refreshes its presence on every poll (#237), so it keeps its offer with no renewal and no heartbeat messages in the room. A member that stops (crashes, session ends) loses the offer within ten minutes, with no one telling the board.
+2. **Ends sooner on request.** `withdrawn:` clears it; a status starting with `done` (the fact, #222, or the `status:` message) clears it at once; a later `offering:` replaces it, which is how an offer is renewed or changed.
+3. **Backstop.** `OFFER_TTL_SECS` is 86,400 (24 hours): an offer older than that is dropped even if its sender stays present, so a forgotten offer cannot stay forever. The earlier provisional hour was too short for a long-lived helper and would have forced it to re-post.
+4. **`busy` versus `available`** are not interpreted by klatch (vocabulary, #223). A claim-based `offer:<name>` heartbeat was considered and not needed.

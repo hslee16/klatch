@@ -177,6 +177,9 @@ impl<S: Store> Gateway<S> {
         let (recent, gone): (Vec<_>, Vec<_>) = all
             .into_iter()
             .partition(|m| now - m.last_seen <= klatch_core::MEMBER_ACTIVE_SECS);
+        // An offer follows its sender's presence: a member that has gone quiet is not available, and a member
+        // that keeps waiting (which refreshes presence) keeps its offer with no renewal.
+        let absent: Vec<String> = gone.iter().map(|m| m.name.clone()).collect();
         let members = recent
             .into_iter()
             .map(|m| klatch_core::BoardMember {
@@ -195,7 +198,7 @@ impl<S: Store> Gateway<S> {
             asks: self.store.open_asks(room, now)?,
             offers: klatch_core::current_offers(&messages, now, klatch_core::OFFER_TTL_SECS)
                 .into_iter()
-                .filter(|o| !done.contains(&o.sender))
+                .filter(|o| !done.contains(&o.sender) && !absent.contains(&o.sender))
                 .collect(),
             members,
             stale_members: gone.len(),
@@ -933,6 +936,33 @@ mod tests {
         assert!(
             b.offers.is_empty(),
             "a done member's offer stayed on the board"
+        );
+    }
+
+    #[test]
+    fn an_offer_goes_when_its_sender_has_not_been_seen_for_a_while() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "ghost", "offering: old help", 1).unwrap();
+        g.store
+            .post("r", "bob", "offering: fresh help", 999)
+            .unwrap();
+        let b = g.board(&alice(), "r").unwrap();
+        let who: Vec<_> = b.offers.iter().map(|o| o.sender.as_str()).collect();
+        assert_eq!(who, ["bob"], "an offer outlived its sender's presence");
+    }
+
+    #[test]
+    fn a_present_member_keeps_its_offer_without_renewing_it() {
+        let g = Gateway::new(SpyStore::new(), FixedClock(5000), AllowAll);
+        g.join(&alice(), "r").unwrap();
+        g.store.post("r", "bob", "offering: help", 100).unwrap();
+        g.store.wait_poll("r", "bob", 4990).unwrap();
+        let b = g.board(&alice(), "r").unwrap();
+        assert_eq!(
+            b.offers.len(),
+            1,
+            "a waiting member lost its offer to the clock"
         );
     }
 
