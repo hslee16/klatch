@@ -824,3 +824,77 @@ Setup: two idle helpers (rho and sigma, same read-only `lib` package with `text.
 - **OBSERVED.** `klatch wait` fixed the lingering sessions of run four: alpha ended after 28 s and gamma after 30 s, both right after the answer. The helpers lingered only because their task told them to keep waiting.
 - **OBSERVED.** alpha's tests pass (5), gamma's README describes the real module, `lib/text.py` was not modified (hash), and nobody edited outside their own repository.
 - **NOT OBSERVED.** A tie within the same poll (200 ms); more than two helpers; a helper that is busy when the ask arrives; an ask no one can answer; whether agents would use `ask:<N>` without being told (#209). The `ask:<short name>` convention of runs three and four can miss a conflict when two helpers pick different names; the sequence number removes that, and is worth making the documented convention.
+
+## 24. Run six: wait v2 in the herd (2026-11-13)
+
+Setup: two idle helpers on the same `lib` package and two askers (alpha in `api`, gamma in `docs`) released together, as run five, on the binary with `klatch wait` v2 (PR #218). Helpers waited with `wait lobby --only seeking: --timeout 60`. alpha needed a `slugify` that transliterates accents (the existing one dropped them), so the owner had to change the package. Headless, throwaway `--settings`, hook log on every call.
+
+- **OBSERVED.** The filtered wait woke both helpers for the two asks. One helper (`lib-a1`) claimed `ask:1` and `ask:2` and posted both answers 16 to 18 seconds after the asks (seq 3 and 4); the other helper's claims were refused on both and it stayed out. The same pattern as run five: one winner, one refused loser, no duplicate answers.
+- **OBSERVED.** The winner changed the package to meet alpha's need: `text.py` now transliterates accents with NFKD, with tests; `uvx pytest -q` passes in `lib` (4) and `api` (4), and `cli.py "Café Crème"` prints `cafe-creme`. gamma's README mentions the accent handling, so it was written from the updated module.
+- **OBSERVED.** A room of two was created and used: the helper moved to `dm-api-30-lib-a1`, told alpha the import path and what changed; alpha confirmed in the same room.
+- **OBSERVED, a gap.** One helper waited on `lobby dm-api-30-lib-a1 --only seeking:`. The filter applies to every named room, so a reply in the room of two that does not start with `seeking:` would not have woken it. This run did not need it, but it is a trap (see the ticket).
+- **OBSERVED.** The helpers lingered (240 s and 289 s) only because my stop rule told them to wait for three timeouts; the askers ended in 48 s and 54 s.
+- **NOT OBSERVED.** A multi-step exchange in the room of two: alpha's ask already said accents should be transliterated, so the helper had nothing to ask back. The scenario did not force a question (#210 stays open). Two helpers racing within one poll; a third helper; whether agents would use any of this unprompted (#209).
+
+## 25. Run seven: how a helper knows it is finished (2026-11-13)
+
+Question (#221): which completion signal ends an idle helper cheapest? Six stop rules, each with two real helper agents and two scripted askers (the same two asks), binary with `wait` v2. Per variant the helpers had the same task text except the stop rule; at most 12 `wait` calls each. Askers were scripts so the only variable is the helper's rule; the signal itself (closing message, `status: done`, `closed #N`) was posted by my script after both asks were answered.
+
+| Variant | Stop rule | Turns (both helpers) | Cost, both | Sum of helper time | Longest exit after the signal |
+|---|---|---|---|---|---|
+| V0 | 3 timeouts in a row (baseline) | 26 | $0.325 | 452 s | 197 s |
+| V1 | a `closing:` message | 17 | $0.268 | 75 s | 3 s |
+| V2 | presence: askers last seen over 60 s ago | 26 | $0.340 | 222 s | 73 s |
+| V3 | asker posts `status: done` (member status) | 21 | $0.273 | 58 s | 5 s |
+| V4 | asker posts `closed #N` (ask state) | 21 | $0.291 | 68 s | 6 s |
+| V5 | told to expect exactly 2 asks | 20 | $0.261 | 54 s | 1 s |
+
+- **OBSERVED.** Every rule with an explicit signal (V1, V3, V4, V5) ended both helpers within about 1 to 6 seconds of it. The timeout rule (V0) left helpers waiting 190 to 200 seconds after the answers, and presence (V2) about 70 seconds, because it must wait out the quiet period.
+- **OBSERVED.** In every variant the claim worked: no ask was answered twice; in V2, V4 and V5 the two helpers split the asks, one answering each, and in V0, V1 and V3 one helper answered both.
+- **OBSERVED.** Cost differences are small (all between $0.26 and $0.34 for two helpers), because a `wait` call is one cheap turn. The saving is wall time and idle sessions, not tokens. Turn counts ranged from 17 (V1) to 26 (V0 and V2).
+- **Reading, with caveats.** One run per variant, so the differences among V1, V3, V4 and V5 (17 to 21 turns, $0.26 to $0.29) are within what model variance could produce; only the gap between those four and V0 and V2 is clear. V1 and V5 look cheapest because they ask the helper to check nothing: V1's signal came free from a script (in a real team someone must post it), and V5 requires knowing how many asks will come. V3 and V4 let the asker say it is done, so no outside party is needed, at the cost of the helper reading the lobby to check; they cost about 4 more turns than V1 in this run.
+- **NOT OBSERVED.** V3 and V4 with real askers (the scripts posted the done and closed messages, so whether an agent asker remembers to post them is untested); more than two asks; a helper whose asker never sends the signal (the 12-wait cap was not reached in any run).
+
+### 25.1 The combination V1 + V5 (same day)
+
+Rule: the helper is told to expect exactly 2 asks and stops when 2 have an answer or as soon as a `closing:` message appears, whichever is first. Two real helpers per case, scripted askers.
+
+| Case | What arrives | Result |
+|---|---|---|
+| c-a | 2 asks | Both asks answered (one by each helper); helpers ended 1 second after the second answer, on the count. 17 turns, $0.25 |
+| c-b | 1 ask (fewer than expected) | The count never reached 2; both helpers ended 3 seconds after the script posted `closing:`. 16 turns, $0.24 |
+| c-c | 3 asks (more than expected) | Both helpers stopped after answering 2 asks; ask #3 ("which module has `wrap`") was never answered and nothing said so. 15 turns, $0.26 |
+
+- **OBSERVED.** The combination works when the count is right (c-a) or too high (c-b, rescued only by the closing message). It silently drops work when the count is too low (c-c): the helpers had done what they were told, and no one learned ask 3 was unanswered.
+- **Reading.** A count is only as good as whoever supplies it, and `closing:` needs a human or a script that knows the work is over, so for the aim of minimal human intervention the pair puts a human in the loop exactly in the case c-b (too few asks). A rule that looks at the asks themselves (V3 member status, V4 ask state) has neither problem, because it does not need to know the number of asks in advance.
+- **NOT OBSERVED.** V3 or V4 with real asker agents; an ask that arrives after the helpers have decided to stop, under any rule.
+
+### 25.2 V3 and V4 with real asker agents (same day)
+
+Two real helpers and two real asker agents (alpha: `cli.py`; gamma: README) per variant, no scripts. The askers were told in their task text to post the signal themselves: V3 `status: done` when completely finished, V4 `closed #N` (their own ask number) once the answer was used. Helpers had the V3 or V4 stop rule from run seven, at most 12 `wait` calls.
+
+| Variant | Helper turns | Helper cost | Asker turns | Asker cost | Helpers ended, relative to last asker exit | Work |
+|---|---|---|---|---|---|---|
+| V3 `status: done` | 12 + 10 | $0.301 | 9 + 9 | $0.298 | -1 s and -1 s | `uvx pytest` passes (4), README written |
+| V4 `closed #N` | 13 + 12 | $0.324 | 10 + 11 | $0.320 | +1 s and -2 s | `uvx pytest` passes (3), README written |
+
+- **OBSERVED.** Both askers posted the signal themselves, in both variants (lobby seq 5 and 6 in each), and the helpers stopped as the last asker finished: within about two seconds either side of the asker's exit. No helper reached the 12-wait cap, no scripted signal was needed, and no human was involved.
+- **OBSERVED.** The claim worked as before: V3's one helper answered both asks, V4's helpers split them. No duplicate answers.
+- **OBSERVED.** The two variants cost about the same ($0.60 and $0.64 for the four agents); the 1 to 3 extra turns in V4 are within what noise could give. Neither is clearly cheaper.
+- **Caveat.** The askers were told to post the signal; this shows agents carry it out when told, not that they would invent it (#209). The signal convention has to reach every asker.
+- **NOT OBSERVED.** An asker that crashes or forgets (the 12-wait cap then ends the helper, at the cost of the full wait); an ask that arrives after the helpers stopped; more than two askers.
+
+### 25.3 A late ask after the helpers have stopped (same day)
+
+Under the V3 rule: two helpers and one asker run normally; the helpers post `status: done` (saying they are leaving) and exit; five seconds later a second asker starts. Two late-ask cases, because the first pair (`l0`, `l1`) used a question the lobby history had already answered (the late asker read the earlier answer in the history and wrote its README without a new answer, so it did not test an unanswered ask). The second pair (`m0`, `m1`) asks for something only a helper could do (add `reverse_words(text)` to the package).
+
+| Late asker | What it did | Turns | Cost | Time |
+|---|---|---|---|---|
+| m0: plain convention | Posted the ask, waited 4 x 60 s, nobody answered, reported to the human that it could not proceed | 8 | $0.148 | 217 s |
+| m1: told to read the lobby history and check `who` first | Saw both helpers had posted `status: done`, did not post or wait, reported at once that no helper is available | 3 | $0.092 | 16 s |
+
+- **OBSERVED.** With the V3 rule a late ask is lost: nobody is there. The plain asker found out only after four full waits, then told the human, so the human was the escalation path (against the minimal-intervention aim, though only after a real failure).
+- **OBSERVED.** A late asker that checks first learns in seconds. It used the helpers' own `status: done` messages in the lobby history; its one `who` call failed (it omitted the room name) and it did not need it. The check cost 3 turns and $0.09 against 8 turns and $0.15 for waiting it out.
+- **OBSERVED.** The lobby's durable history can itself answer a late ask (`l0`): a question already answered once costs nothing the second time.
+- **Caveat.** One run each; the checking asker was told to check, so this shows the idea works, not that agents would do it unprompted (#209).
+- **NOT OBSERVED.** Anything that re-starts a stopped helper when a late ask arrives (needs the harness or a supervisor, not klatch alone).
