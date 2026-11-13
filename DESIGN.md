@@ -1156,6 +1156,10 @@ and the other items marked as reports):**
     - **No daemon is required for stdio and SSH**: `klatch serve --stdio` under `sshd` gives a remote agent a
       session with an identity decided by its SSH key. Listeners for TCP, TLS and HTTPS are hosted by the
       optional daemon.
+    - **Implemented so far:** the `Identity` trait and `PeerEvidence` (crate `klatch-gateway`). The only implementation
+      is `DeclaredName`, which believes a typed name and therefore always yields an unattributed principal; a typed
+      name can never be verified. Evidence from a session found in the process tree, an SSH key or a certificate
+      are added as new evidence variants with their own tickets (#132, #107, #108).
 12. **Every transport is duplex, for pull and push (2026-11-12).** One logical session carries client requests (pull:
     read, who, claim, post, resume from a sequence number) and server events (push: messages, refusals,
     heartbeats, nudges). Natural duplex transports (stdio, Unix socket, TCP, TLS, SSH, WebSocket, gRPC streaming)
