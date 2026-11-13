@@ -1,11 +1,15 @@
-[package]
-name = "klatch"
+[workspace]
+resolver = "3"
+members = ["klatch-core", "klatch-store", "klatch-cli"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 rusqlite = { version = "0.42.0", features = ["bundled"] }
-
+klatch-core = { path = "klatch-core" }
+klatch-store = { path = "klatch-store" }
