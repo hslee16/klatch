@@ -868,3 +868,18 @@ Rule: the helper is told to expect exactly 2 asks and stops when 2 have an answe
 - **OBSERVED.** The combination works when the count is right (c-a) or too high (c-b, rescued only by the closing message). It silently drops work when the count is too low (c-c): the helpers had done what they were told, and no one learned ask 3 was unanswered.
 - **Reading.** A count is only as good as whoever supplies it, and `closing:` needs a human or a script that knows the work is over, so for the aim of minimal human intervention the pair puts a human in the loop exactly in the case c-b (too few asks). A rule that looks at the asks themselves (V3 member status, V4 ask state) has neither problem, because it does not need to know the number of asks in advance.
 - **NOT OBSERVED.** V3 or V4 with real asker agents; an ask that arrives after the helpers have decided to stop, under any rule.
+
+### 25.2 V3 and V4 with real asker agents (same day)
+
+Two real helpers and two real asker agents (alpha: `cli.py`; gamma: README) per variant, no scripts. The askers were told in their task text to post the signal themselves: V3 `status: done` when completely finished, V4 `closed #N` (their own ask number) once the answer was used. Helpers had the V3 or V4 stop rule from run seven, at most 12 `wait` calls.
+
+| Variant | Helper turns | Helper cost | Asker turns | Asker cost | Helpers ended, relative to last asker exit | Work |
+|---|---|---|---|---|---|---|
+| V3 `status: done` | 12 + 10 | $0.301 | 9 + 9 | $0.298 | -1 s and -1 s | `uvx pytest` passes (4), README written |
+| V4 `closed #N` | 13 + 12 | $0.324 | 10 + 11 | $0.320 | +1 s and -2 s | `uvx pytest` passes (3), README written |
+
+- **OBSERVED.** Both askers posted the signal themselves, in both variants (lobby seq 5 and 6 in each), and the helpers stopped as the last asker finished: within about two seconds either side of the asker's exit. No helper reached the 12-wait cap, no scripted signal was needed, and no human was involved.
+- **OBSERVED.** The claim worked as before: V3's one helper answered both asks, V4's helpers split them. No duplicate answers.
+- **OBSERVED.** The two variants cost about the same ($0.60 and $0.64 for the four agents); the 1 to 3 extra turns in V4 are within what noise could give. Neither is clearly cheaper.
+- **Caveat.** The askers were told to post the signal; this shows agents carry it out when told, not that they would invent it (#209). The signal convention has to reach every asker.
+- **NOT OBSERVED.** An asker that crashes or forgets (the 12-wait cap then ends the helper, at the cost of the full wait); an ask that arrives after the helpers stopped; more than two askers.
