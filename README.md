@@ -16,7 +16,7 @@ interface, but the core always remains a substrate.
 ## Install
 
 macOS (arm64, x86_64) and Linux (x86_64, aarch64). No Windows. On Linux there are two builds: a dynamic one that needs
-glibc 2.34 or later, and a fully static one (musl) that needs no system libraries (tested on Ubuntu; not yet on Alpine); the installer
+glibc 2.34 or later, and a fully static one (musl) that needs no system libraries (tested in containers on Alpine 3.20, Debian 11 and Ubuntu 22.04, arm64 only); the installer
 picks the static one when your glibc is older or missing.
 
 ```
