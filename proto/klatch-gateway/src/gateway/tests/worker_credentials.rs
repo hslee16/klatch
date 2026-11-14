@@ -190,3 +190,40 @@ fn credentials_are_listed_without_their_hashes_and_say_their_state() {
     assert_eq!((state("w-1"), state("w-2")), ("expired", "revoked"));
     assert!(g.admin_revoke_credential(&admin(), "nobody").is_err());
 }
+
+#[test]
+fn a_worker_ending_its_own_session_revokes_its_credential_and_nobody_elses() {
+    let g = open();
+    let t1 = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    let t2 = g.admin_issue_credential(&admin(), &spec("w-2")).unwrap();
+    let w1 = g.verify_credential("w-1", &t1).unwrap();
+    assert!(g.end_credential(&w1).unwrap());
+    assert!(
+        g.verify_credential("w-1", &t1)
+            .unwrap_err()
+            .to_string()
+            .contains("revoked")
+    );
+    g.verify_credential("w-2", &t2).unwrap();
+    assert!(
+        !g.end_credential(&w1).unwrap(),
+        "a second end revoked something"
+    );
+    let audit = g.admin_audit(&admin(), 10).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "end-credential" && a.target == "w-1"),
+        "{audit:?}"
+    );
+}
+
+#[test]
+fn a_member_with_no_credential_ends_nothing_and_a_typed_name_cannot_end_a_workers() {
+    let g = open();
+    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    // a typed name is unattributed: it must not be able to revoke the worker it names
+    assert!(!g.end_credential(&Principal::unattributed("w-1")).unwrap());
+    g.verify_credential("w-1", &token).unwrap();
+    assert!(!g.end_credential(&alice()).unwrap());
+}

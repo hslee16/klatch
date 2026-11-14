@@ -130,6 +130,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "the same, limited to what one member's clearance reaches; takes no principal",
     ),
     (
+        "end_credential",
+        "a worker revokes only its own credential, and only as a verified principal",
+    ),
+    (
         "verify_credential",
         "authentication itself: it takes proof of identity instead of a principal, and records a failure",
     ),

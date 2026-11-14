@@ -333,6 +333,8 @@ fn session_end(t: &dyn Transport) -> Result<()> {
         let _ = t.set_status(room, "done session ended");
     }
     let _ = t.record_hook_run("SessionEnd", 0);
+    // a worker that holds a credential loses it with its session (a launcher can issue another)
+    let _ = t.end_credential();
     Ok(())
 }
 

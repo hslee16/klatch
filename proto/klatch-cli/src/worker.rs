@@ -11,9 +11,12 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum WorkerCmd {
-    /// Issue a credential for a worker and write its key bundle (mode 600, never replacing a file)
+    /// Issue a credential for a worker and write its key bundle (mode 600, never replacing a file); or, with
+    /// `--count`, for N workers named `<prefix>-1` to `<prefix>-N`, all or nothing
     Issue {
-        member: String,
+        /// One worker's name (with `--out`)
+        #[arg(conflicts_with_all = ["count", "prefix", "out_dir"], required_unless_present = "count")]
+        member: Option<String>,
         /// The highest label the worker may read and post, at most the agent cap
         #[arg(long)]
         clearance: String,
@@ -23,9 +26,18 @@ pub enum WorkerCmd {
         /// The member that launched the worker, recorded in the audit
         #[arg(long)]
         parent: Option<String>,
-        /// Where to write the bundle
+        /// Where to write one worker's bundle
+        #[arg(long, requires = "member", conflicts_with = "out_dir")]
+        out: Option<PathBuf>,
+        /// How many workers to issue in one call (1 to 500)
+        #[arg(long, requires_all = ["prefix", "out_dir"])]
+        count: Option<usize>,
+        /// The name every worker of the batch starts with
         #[arg(long)]
-        out: PathBuf,
+        prefix: Option<String>,
+        /// The directory the batch's bundles are written to, one `<name>.bundle` each
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
     },
     /// Revoke a worker's credential: its token stops working at once
     Revoke { member: String },
@@ -46,6 +58,109 @@ fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
     None
 }
 
+/// The most workers one call may issue.
+const MAX_BATCH: usize = 500;
+
+/// What to issue: each worker's name and the file its bundle goes to.
+fn plan_issue(
+    member: Option<String>,
+    out: Option<PathBuf>,
+    count: Option<usize>,
+    prefix: Option<String>,
+    out_dir: Option<PathBuf>,
+) -> Result<Vec<(String, PathBuf)>> {
+    match (member, out, count, prefix, out_dir) {
+        (Some(m), Some(out), None, None, None) => Ok(vec![(m, out)]),
+        (None, None, Some(n), Some(prefix), Some(dir)) => {
+            if !(1..=MAX_BATCH).contains(&n) {
+                bail!("a batch is 1 to {MAX_BATCH} workers");
+            }
+            Ok((1..=n)
+                .map(|i| {
+                    let name = format!("{prefix}-{i}");
+                    let path = dir.join(format!("{name}.bundle"));
+                    (name, path)
+                })
+                .collect())
+        }
+        _ => bail!("give one worker with --out, or --count with --prefix and --out-dir"),
+    }
+}
+
+/// Issue every worker of the plan. All or nothing: if any one fails, every credential this call issued is revoked and
+/// every bundle it wrote is removed, so no live credential is left that nobody holds the token of.
+fn issue_all(
+    (gateway, launcher, db): (&Gateway<SqliteStore>, &Principal, &std::path::Path),
+    plan: &[(String, PathBuf)],
+    (clearance, ttl, parent): (&str, i64, Option<&str>),
+) -> Result<Vec<(String, PathBuf)>> {
+    if let Some(dir) = plan
+        .first()
+        .and_then(|(_, p)| p.parent())
+        .filter(|d| !d.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut done: Vec<(String, PathBuf)> = Vec::new();
+    for (member, path) in plan {
+        if let Err(e) = issue_one(
+            (gateway, launcher, db),
+            (member, path),
+            (clearance, ttl, parent),
+        ) {
+            for (m, p) in &done {
+                let _ = std::fs::remove_file(p);
+                let _ = gateway.admin_revoke_credential(launcher, m);
+            }
+            return Err(e);
+        }
+        done.push((member.clone(), path.clone()));
+    }
+    Ok(done)
+}
+
+fn issue_one(
+    (gateway, launcher, db): (&Gateway<SqliteStore>, &Principal, &std::path::Path),
+    (member, out): (&str, &std::path::Path),
+    (clearance, ttl, parent): (&str, i64, Option<&str>),
+) -> Result<()> {
+    let spec = CredentialSpec {
+        member,
+        clearance,
+        ttl,
+        parent,
+    };
+    let token = gateway.admin_issue_credential(launcher, &spec)?;
+    let written = (|| -> Result<()> {
+        let store_key = keys::current_key(db)?
+            .ok_or_else(|| anyhow::anyhow!("this store has no key to hand a worker"))?;
+        let labels = gateway.sealed_labels_within(member)?;
+        let ring = keys::label_ring(db, &labels)?;
+        let label_keys = ring
+            .labels()
+            .into_iter()
+            .filter_map(|l| {
+                ring.get(l)
+                    .map(|k| (l.to_string(), klatch_keys::Key::from_bytes(*k.expose())))
+            })
+            .collect();
+        klatch_keys::Bundle {
+            member: member.to_string(),
+            token,
+            store_key,
+            label_keys,
+        }
+        .write(out)?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        // no live credential may be left that nobody holds the token of
+        let _ = gateway.admin_revoke_credential(launcher, member);
+        return Err(e);
+    }
+    Ok(())
+}
+
 pub fn run(cmd: WorkerCmd) -> Result<()> {
     if let Some(why) = refusal(
         std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
@@ -63,44 +178,24 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
             ttl,
             parent,
             out,
+            count,
+            prefix,
+            out_dir,
         } => {
-            let spec = CredentialSpec {
-                member: &member,
-                clearance: &clearance,
-                ttl,
-                parent: parent.as_deref(),
-            };
-            let token = gateway.admin_issue_credential(&launcher, &spec)?;
-            let written = (|| -> Result<()> {
-                let store_key = keys::current_key(&db)?
-                    .ok_or_else(|| anyhow::anyhow!("this store has no key to hand a worker"))?;
-                let labels = gateway.sealed_labels_within(&member)?;
-                let ring = keys::label_ring(&db, &labels)?;
-                let label_keys = ring
-                    .labels()
-                    .into_iter()
-                    .filter_map(|l| {
-                        ring.get(l)
-                            .map(|k| (l.to_string(), klatch_keys::Key::from_bytes(*k.expose())))
-                    })
-                    .collect();
-                klatch_keys::Bundle {
-                    member: member.clone(),
-                    token,
-                    store_key,
-                    label_keys,
-                }
-                .write(&out)?;
-                Ok(())
-            })();
-            if let Err(e) = written {
-                // no live credential may be left that nobody holds the token of
-                let _ = gateway.admin_revoke_credential(&launcher, &member);
-                return Err(e);
+            let plan = plan_issue(member, out, count, prefix, out_dir)?;
+            let issued = issue_all(
+                (&gateway, &launcher, &db),
+                &plan,
+                (&clearance, ttl, parent.as_deref()),
+            )?;
+            for (member, path) in &issued {
+                println!(
+                    "wrote the key bundle for {member} to {} (expires in {ttl}s)",
+                    path.display()
+                );
             }
             println!(
-                "wrote the key bundle for {member} to {} (expires in {ttl}s). Give the worker the path in KLATCH_IDENTITY_FILE, never the contents.",
-                out.display()
+                "Give each worker the path of its bundle in KLATCH_IDENTITY_FILE, never the contents."
             );
         }
         WorkerCmd::Revoke { member } => {

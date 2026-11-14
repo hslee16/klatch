@@ -37,6 +37,8 @@ pub trait Transport {
     fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>>;
     /// Release every claim the caller holds in every room (its session ended); returns how many.
     fn release_all(&self) -> Result<usize>;
+    /// A worker's session ended: revoke the caller's own credential (nothing for a caller that holds none).
+    fn end_credential(&self) -> Result<bool>;
     /// Administrative acts (`klatch admin`, R11); who may call them is the caller's decision, not the gateway's.
     fn admin_close_room(&self, room: &str, closed: bool) -> Result<()>;
     fn admin_pause(&self, paused: bool) -> Result<()>;
@@ -149,6 +151,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn release_all(&self) -> Result<usize> {
         self.gateway.release_all(&self.principal)
+    }
+    fn end_credential(&self) -> Result<bool> {
+        self.gateway.end_credential(&self.principal)
     }
     fn admin_close_room(&self, room: &str, closed: bool) -> Result<()> {
         self.gateway.admin_close_room(&self.principal, room, closed)

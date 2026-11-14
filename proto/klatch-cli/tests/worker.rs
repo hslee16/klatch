@@ -222,3 +222,159 @@ fn the_lifetime_and_the_clearance_have_limits() {
     );
     assert!(!out.exists(), "a bundle was written for a refused issue");
 }
+
+#[test]
+fn a_worker_whose_session_ends_loses_its_credential() {
+    let h = Home::new();
+    let b = issue(&h, "w-1", "internal", &[]);
+    assert!(h.worker(&b, &["post", "r", "working"]).status.success());
+    let end = h.worker(&b, &["hook", "--event", "SessionEnd"]);
+    assert!(end.status.success(), "{}", text(&end));
+    let o = h.worker(&b, &["post", "r", "after the end"]);
+    assert!(
+        !o.status.success() && text(&o).contains("revoked"),
+        "{}",
+        text(&o)
+    );
+    // the launcher can see it was revoked, and issue another
+    assert!(text(&h.launcher(&["worker", "list"])).contains("revoked"));
+    std::fs::remove_file(&b).unwrap(); // a bundle is never written over a file
+    let again = issue(&h, "w-1", "internal", &[]);
+    assert!(h.worker(&again, &["post", "r", "back"]).status.success());
+}
+
+#[test]
+fn n_workers_are_issued_in_one_call_each_with_its_own_bundle_and_the_same_parent() {
+    let h = Home::new();
+    let dir = h.0.join("bundles");
+    let o = h.launcher(&[
+        "worker",
+        "issue",
+        "--count",
+        "3",
+        "--prefix",
+        "batch",
+        "--clearance",
+        "internal",
+        "--parent",
+        "lead",
+        "--out-dir",
+        dir.to_str().unwrap(),
+    ]);
+    assert!(o.status.success(), "{}", text(&o));
+    let mut tokens = Vec::new();
+    for i in 1..=3 {
+        let b = dir.join(format!("batch-{i}.bundle"));
+        assert_eq!(std::fs::metadata(&b).unwrap().mode() & 0o777, 0o600);
+        let token = std::fs::read_to_string(&b)
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("token "))
+            .unwrap()
+            .to_string();
+        tokens.push(token);
+        assert!(
+            h.worker(&b, &["post", "r", &format!("from {i}")])
+                .status
+                .success()
+        );
+    }
+    tokens.sort();
+    tokens.dedup();
+    assert_eq!(tokens.len(), 3, "two workers shared a token");
+    let list = text(&h.launcher(&["worker", "list"]));
+    assert_eq!(list.matches("parent lead").count(), 3, "{list}");
+}
+
+#[test]
+fn a_batch_that_fails_part_way_leaves_no_live_credential_and_no_bundle() {
+    let h = Home::new();
+    let dir = h.0.join("bundles");
+    std::fs::create_dir_all(&dir).unwrap();
+    // the second bundle cannot be written: a file is already there
+    std::fs::write(dir.join("batch-2.bundle"), "in the way").unwrap();
+    let o = h.launcher(&[
+        "worker",
+        "issue",
+        "--count",
+        "3",
+        "--prefix",
+        "batch",
+        "--clearance",
+        "internal",
+        "--out-dir",
+        dir.to_str().unwrap(),
+    ]);
+    assert!(!o.status.success());
+    let list = text(&h.launcher(&["worker", "list"]));
+    assert!(!list.contains("live"), "a credential was left live: {list}");
+    assert!(
+        !dir.join("batch-1.bundle").exists(),
+        "a bundle of the failed batch was left"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("batch-2.bundle")).unwrap(),
+        "in the way",
+        "a file that was there was changed"
+    );
+}
+
+#[test]
+fn the_batch_form_and_the_single_form_cannot_be_mixed_and_the_count_has_a_limit() {
+    let h = Home::new();
+    let dir = h.0.join("bundles");
+    let d = dir.to_str().unwrap();
+    for args in [
+        vec![
+            "worker",
+            "issue",
+            "w-1",
+            "--count",
+            "2",
+            "--prefix",
+            "b",
+            "--clearance",
+            "internal",
+            "--out-dir",
+            d,
+        ],
+        vec![
+            "worker",
+            "issue",
+            "--count",
+            "0",
+            "--prefix",
+            "b",
+            "--clearance",
+            "internal",
+            "--out-dir",
+            d,
+        ],
+        vec![
+            "worker",
+            "issue",
+            "--count",
+            "100000",
+            "--prefix",
+            "b",
+            "--clearance",
+            "internal",
+            "--out-dir",
+            d,
+        ],
+        vec![
+            "worker",
+            "issue",
+            "--count",
+            "2",
+            "--clearance",
+            "internal",
+            "--out-dir",
+            d,
+        ],
+        vec!["worker", "issue", "--clearance", "internal"],
+    ] {
+        assert!(!h.launcher(&args).status.success(), "{args:?}");
+    }
+    assert!(text(&h.launcher(&["worker", "list"])).trim().is_empty());
+}
