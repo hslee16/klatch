@@ -3,6 +3,7 @@
 
 mod frames;
 mod methods;
+pub mod policy;
 
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
 use klatch_core::Principal;
