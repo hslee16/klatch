@@ -45,6 +45,8 @@ fn the_binstall_url_is_the_release_archive() {
         "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
     ] {
         assert!(release.contains(&format!("target: {target}")), "{target}");
     }
@@ -60,7 +62,7 @@ fn the_binary_sits_in_the_archives_top_directory() {
     );
     let release = read("../../.github/workflows/release.yml");
     assert!(
-        release.contains(r#"cp proto/target/release/klatch "dist/$name/klatch""#),
+        release.contains(r#"cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch""#),
         "the archive layout changed"
     );
 }

@@ -26,8 +26,8 @@ make_release() { # dir target
 
 run_install() { # dir [env assignments...]; installs into $dir/bin
   d="$1"; shift
-  env "$@" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" \
-    KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1
+  env KLATCH_LDD_OUTPUT="ldd (Ubuntu GLIBC 2.35-0ubuntu3.8) 2.35" "$@" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 \
+    KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1
 }
 
 # 1. the happy path
@@ -79,8 +79,36 @@ if grep -q "not on your PATH" "$d/out"; then pass "warns when the directory is n
 for pair in "Darwin:arm64:aarch64-apple-darwin" "Darwin:x86_64:x86_64-apple-darwin" "Linux:aarch64:aarch64-unknown-linux-gnu" "Linux:amd64:x86_64-unknown-linux-gnu"; do
   os=${pair%%:*}; rest=${pair#*:}; arch=${rest%%:*}; target=${rest#*:}
   d="$work/t9-$os-$arch"; mkdir -p "$d"; make_release "$d" "$target"
-  if env KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS="$os" KLATCH_ARCH="$arch" sh "$installer" >"$d/out" 2>&1 && [ -x "$d/bin/klatch" ]; then pass "$os $arch installs the $target archive"; else fail "$os $arch: $(cat "$d/out")"; fi
+  if env KLATCH_LDD_OUTPUT="ldd (GNU libc) 2.35" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS="$os" KLATCH_ARCH="$arch" sh "$installer" >"$d/out" 2>&1 && [ -x "$d/bin/klatch" ]; then pass "$os $arch installs the $target archive"; else fail "$os $arch: $(cat "$d/out")"; fi
 done
+
+# 10. which Linux build: glibc 2.34 or later gets the dynamic build; older glibc, musl and an unknown libc get the static one
+linux_pick() { # label ldd-text expected-target [extra env]
+  label="$1"; ldd_text="$2"; want="$3"; shift 3
+  d="$work/t10-$label"; mkdir -p "$d"; make_release "$d" "$want"
+  if env KLATCH_LDD_OUTPUT="$ldd_text" "$@" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" \
+      KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1 && [ -x "$d/bin/klatch" ] && grep -q "$want" "$d/out"; then
+    pass "Linux $label uses the $want archive"
+  else
+    fail "Linux $label: $(cat "$d/out")"
+  fi
+}
+linux_pick glibc-2.35 "ldd (Ubuntu GLIBC 2.35-0ubuntu3.8) 2.35" x86_64-unknown-linux-gnu
+linux_pick glibc-2.34 "ldd (GNU libc) 2.34" x86_64-unknown-linux-gnu
+linux_pick glibc-2.36 "ldd (Debian GLIBC 2.36-9+deb12u7) 2.36" x86_64-unknown-linux-gnu
+linux_pick glibc-2.31 "ldd (Ubuntu GLIBC 2.31-0ubuntu9.9) 2.31" x86_64-unknown-linux-musl
+linux_pick glibc-2.9 "ldd (GNU libc) 2.9" x86_64-unknown-linux-musl
+linux_pick alpine "musl libc (x86_64)
+Version 1.2.4" x86_64-unknown-linux-musl
+linux_pick unknown-libc "" x86_64-unknown-linux-musl
+linux_pick forced-musl "ldd (GNU libc) 2.35" x86_64-unknown-linux-musl KLATCH_LIBC=musl
+linux_pick forced-gnu "musl libc (x86_64)" x86_64-unknown-linux-gnu KLATCH_LIBC=gnu
+
+# a bad KLATCH_LIBC is refused, and macOS ignores it
+d="$work/t10-bad"; mkdir -p "$d"; make_release "$d" x86_64-unknown-linux-gnu
+if env KLATCH_LIBC=uclibc KLATCH_LDD_OUTPUT="ldd (GNU libc) 2.35" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1; then fail "accepted KLATCH_LIBC=uclibc"; elif grep -q "KLATCH_LIBC must be gnu or musl" "$d/out" && ! grep -q "^klatch .* for " "$d/out"; then pass "refuses an unknown KLATCH_LIBC with a message"; else fail "wrong refusal: $(cat "$d/out")"; fi
+d="$work/t10-mac"; mkdir -p "$d"; make_release "$d" aarch64-apple-darwin
+if env KLATCH_LIBC=musl KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Darwin KLATCH_ARCH=arm64 sh "$installer" >"$d/out" 2>&1 && [ -x "$d/bin/klatch" ]; then pass "macOS ignores KLATCH_LIBC"; else fail "macOS with KLATCH_LIBC: $(cat "$d/out")"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all install tests passed"; else echo "$fails install test(s) failed"; exit 1; fi

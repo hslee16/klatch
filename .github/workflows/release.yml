@@ -5,7 +5,8 @@ name: Release
 # repository, workflow file and environment name. Binary wheels join this file later (#431).
 #
 # The release also attaches the klatch binary, as archives with checksums, to the GitHub release: macOS arm64 and
-# x86_64, Linux x86_64 and aarch64 (glibc 2.34 or later, built on Ubuntu 22.04). Each archive holds the binary, LICENSE
+# x86_64, Linux x86_64 and aarch64 as a dynamic build (glibc 2.34 or later, built on Ubuntu 22.04) and as a fully
+# static musl build that needs no system libraries. Each archive holds the binary, LICENSE
 # and THIRD-PARTY-LICENSES.txt (SQLCipher's BSD licence requires its notice in a binary distribution). Beside each
 # archive go a CycloneDX SBOM, and for the whole release SHA256SUMS, its Sigstore signature, and GitHub build
 # provenance attestations for every file.
@@ -291,6 +292,17 @@ jobs:
             runner: ubuntu-22.04-arm
             cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
             cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
+          # the static builds (#435): no glibc or other system library needed. The SBOM tool is the runner's own gnu build.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+            musl: true
+            cdx: cargo-cyclonedx-x86_64-unknown-linux-gnu
+            cdx_sha256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-22.04-arm
+            musl: true
+            cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
+            cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -307,14 +319,22 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
 
       - name: Build the release binary
         working-directory: proto
-        run: cargo build --release --locked -p klatch
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked -p klatch --target "$TARGET"
 
       - name: Smoke test the built binary (version, then a whole launcher flow)
         env:
-          KLATCH_BIN: ${{ github.workspace }}/proto/target/release/klatch
+          KLATCH_BIN: ${{ github.workspace }}/proto/target/${{ matrix.target }}/release/klatch
         run: |
           set -euo pipefail
           actual=$("$KLATCH_BIN" --version)
@@ -350,7 +370,7 @@ jobs:
           set -euo pipefail
           name="klatch-${VERSION}-${TARGET}"
           mkdir -p "dist/$name"
-          cp proto/target/release/klatch "dist/$name/klatch"
+          cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch"
           strip "dist/$name/klatch"
           cp LICENSE proto/THIRD-PARTY-LICENSES.txt "dist/$name/"
           tar -czf "dist/$name.tar.gz" -C dist "$name"
