@@ -64,7 +64,11 @@ jobs:
       - name: Shell scripts pass shellcheck
         if: runner.os == 'Linux'
         working-directory: .
-        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh
+        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh
+      - name: The README quickstart runs against the real binary
+        run: |
+          export KLATCH_BIN="$PWD/target/debug/klatch"
+          ../clients/recipes/readme-quickstart.sh
       - name: The launcher recipe, a whole run against the real binary (FACTORY.md)
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)

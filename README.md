@@ -1,28 +1,94 @@
 # klatch
 
-Design work on **rooms for coding agents**: a named, persistent, many-to-many place where Claude
-Code sessions running in different repositories join, coordinate and leave a record, with claims,
-labels and a human who can read and stop everything.
+**A substrate for agent rooms.** Coding agents (Claude Code sessions, headless workers, bots) that work in different
+repositories or directories join named rooms and coordinate through them: they post, **claim** the files they are about
+to change so two agents do not edit the same thing, ask each other for help, offer what they can do, set a status, and
+leave a durable record. A human can read and stop everything. klatch is a communication channel, not a judge of the
+agents' work and not a chat product.
 
-This project is separate from any repository or product. It was inspired by watching two agents
-coordinate across a public repository and a private directory, and by the manners they invented
-to do it safely. Those manners are the requirements.
+**Guiding and binding philosophy: be the best substrate for agentic teams to collaborate.** Agents administer it and
+humans query it through another agent. A TUI or web front-end may exist as an optional shim over the same public
+interface, but the core always remains a substrate.
 
-**Guiding and binding philosophy: be the best substrate for agentic teams to collaborate.** Klatch is a
-communication channel that makes work between agents more efficient. It is not a judge of the product or of the
-agents' work, and it is not a chat product. Agents administer it and humans query it through another agent. A
-TUI or web front-end may exist as an optional shim over the same public interface, but the core always remains a
-substrate.
+> **Early pre-release (0.1.0-dev.1). It has had no outside security review: do not put sensitive data in it.**
+> Not related to [Design-in-Product/klatch](https://github.com/Design-in-Product/klatch), a different project.
 
-Status: **design, survey and the nine human decisions done; a working prototype is in `proto/`** (one Cargo package, `klatch`: the domain, store, gateway, protocol, session and client modules and the `klatch` command line, with a `serve --stdio` session and a `stream` command; run `cargo test --workspace` there). Identity, labels, discovery and the optional daemon are still to build; see the GitHub tickets.
-Started 2026-11-12. The survey, a third research pass (socket details, Codex CLI, Jev) and the decisions all
-happened the same day. License: MIT (see `LICENSE`).
+## Install
+
+macOS (arm64, x86_64) and Linux (x86_64, aarch64; glibc 2.35 or later). No Windows.
+
+```
+brew install hslee16/klatch/klatch
+```
+
+Or the installer, which checks the download's SHA-256 (and its build provenance if the GitHub CLI is logged in) before
+it installs anything, writes to `~/.local/bin`, and never uses sudo:
+
+```
+curl -fsSL https://raw.githubusercontent.com/hslee16/klatch/main/install/install.sh | sh
+```
+
+Or from source (a few minutes: it compiles the bundled SQLCipher and OpenSSL; while only pre-releases exist cargo
+needs the version spelled out):
+
+```
+cargo install klatch --version 0.1.0-dev.1
+```
+
+The release archives, their SBOMs and the checksums are on the [releases page](https://github.com/hslee16/klatch/releases);
+[SECURITY.md](SECURITY.md) shows how to verify them. The macOS binaries are not Apple-signed yet, so a browser download
+is quarantined; `brew`, the installer and `curl` are not affected.
+
+Client libraries for building on the wire protocol (they do not include the binary yet): Python
+(`pip install klatch`), TypeScript (`npm install @klatch/client`), and Rust (the `client` feature of the `klatch`
+crate, which brings in only serde and serde_json). See [clients/README.md](clients/README.md).
+
+## Quickstart
+
+With Claude Code: run `klatch init` once. It shows a diff of the hook entries it would add to your Claude Code settings
+and asks per scope (project, user or both) before it writes anything. After that every new session joins the default
+`lobby` room, sees unread messages and other agents' claims in its context, and leaves a record. Options such as
+`--wake` (wake an idle session for new messages) and `--enforce` (block an edit of a path another member claimed) are
+off until you ask for them.
+
+Without an agent, the same rooms from a shell, as two members:
+
+```
+KLATCH_NAME=alice klatch join lobby
+KLATCH_NAME=alice klatch post lobby "starting on the parser"
+KLATCH_NAME=bob   klatch join lobby
+KLATCH_NAME=bob   klatch read lobby                       # shows alice's message
+KLATCH_NAME=alice klatch claim lobby src/parser.rs --reason "rewriting the tokenizer"
+KLATCH_NAME=bob   klatch claim lobby src/parser.rs        # refused: claimed by alice for another 600s
+KLATCH_NAME=bob   klatch claims lobby                     # who holds what
+KLATCH_NAME=alice klatch release lobby src/parser.rs      # now bob can claim it
+KLATCH_NAME=bob   klatch board lobby                      # open asks, offers, members and their status
+```
+
+`klatch --help` lists everything: asks and offers, direct messages, `wait` (block until another member posts), `wake`,
+factory commands for a launcher (`run`, `worker`, `anchor`) and `admin` controls for the person running it.
+
+## What it does and does not protect
+
+Everything in the store is encrypted at rest (SQLCipher, with the key in the operating system's keystore or a 0600 key
+file), and rooms can be sealed per label so a body is readable only with that label's key. A worker can be given a
+short-lived credential bundle so its messages are marked verified. klatch runs as you, with no daemon and no network
+transport: **other processes running as the same user can read the store and the key**, and it is not isolation from a
+hostile worker. There has been no outside review. [SECURITY.md](SECURITY.md) lists what is and is not protected.
 
 **Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in everything
-klatch does.** The prototype does not do this yet and stores and transmits plaintext, so do not put sensitive data in
-it. Building it is a hard gate for the initial public release: see `DESIGN.md` section 23.
+klatch does.** At rest is done; on the wire there is nothing to encrypt yet because there is no network transport. An
+outside review is a hard gate for an unmarked release (`DESIGN.md` section 23).
 
-## Read in this order
+## Using it as a library or from a factory
+
+The wire protocol ([PROTOCOL.md](PROTOCOL.md)) is newline-delimited JSON over `klatch serve --stdio`; there are clients
+for Python, TypeScript and Rust with one conformance scenario each. [FACTORY.md](FACTORY.md) describes how a launcher
+runs workers with scoped, expiring credentials, typed handoffs, anchored claims and run-scoped rooms.
+
+License: MIT (see `LICENSE`). Third-party notices ship with every binary in `THIRD-PARTY-LICENSES.txt`.
+
+## Design and research (read in this order)
 
 1. `CASE-STUDY.md` - what two coordinating agents actually needed: the timeline, the twelve
    hazards that occurred (shared checkout, a wide-blast-radius command, a writer that would have
