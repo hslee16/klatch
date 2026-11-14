@@ -29,3 +29,4 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 klatch-protocol.workspace = true
+klatch-client.workspace = true
