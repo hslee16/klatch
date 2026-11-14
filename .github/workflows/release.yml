@@ -107,6 +107,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
           node --experimental-strip-types --test package.test.ts
+          mkdir -p "$RUNNER_TEMP/npm-dist"
           npm pack --pack-destination "$RUNNER_TEMP/npm-dist"
 
       - name: Upload the tarball
