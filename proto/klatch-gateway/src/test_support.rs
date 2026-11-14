@@ -140,6 +140,9 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_poll(room, member, now)
     }
+    fn set_label_keys(&self, keys: klatch_keys::LabelKeys) {
+        self.inner.set_label_keys(keys);
+    }
     fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<klatch_core::Message>> {
         self.inner.wake_poll(room, member, now)
     }

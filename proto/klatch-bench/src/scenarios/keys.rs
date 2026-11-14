@@ -15,6 +15,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: backup_and_export,
         },
         Scenario {
+            name: "a_sealed_label_needs_its_own_key_and_the_key_comes_back_from_its_recovery_code",
+            origin: "#160, D3, D4",
+            layer: "fault",
+            run: sealed_label,
+        },
+        Scenario {
             name: "rotating_the_key_keeps_every_message_and_retires_the_old_key",
             origin: "#155, R34",
             layer: "fault",
@@ -169,6 +175,95 @@ fn backup_and_export(w: &World) -> Res {
     check(
         !w.admin(&["export", "r"], "wrong").ok,
         "an export ran without the room typed back",
+    )?;
+    Ok(vec![])
+}
+
+fn sealed_label(w: &World) -> Res {
+    w.set_clock(T0);
+    for who in ["alice", "carol"] {
+        check(w.admin(&["clear", who, "private"], "").ok, "clear failed")?;
+    }
+    check(
+        w.admin(&["label", "vault", "private"], "").ok,
+        "label failed",
+    )?;
+    let sealed = w.admin(&["seal-label", "private"], "");
+    check(sealed.ok, format!("seal-label failed: {}", sealed.stderr))?;
+    has(&sealed.stdout, "a key was made", "no label key was made")?;
+    check(
+        !w.admin(&["seal-label", "public"], "").ok,
+        "the lowest label was sealed",
+    )?;
+    // a member cleared for the label holds its key and reads and writes normally
+    w.ok(
+        "alice",
+        &["post", "vault", "the sealed launch code is hunter2"],
+    )?;
+    has(
+        &w.ok("carol", &["read", "vault", "--peek"])?,
+        "hunter2",
+        "a member with the key could not read",
+    )?;
+    // the label key is the only way in: the store key alone shows neither the text nor lets text be written
+    let codes = w.admin(&["recovery"], "");
+    let label_code = codes
+        .stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("label private: "))
+        .ok_or("no recovery code for the label key")?
+        .trim()
+        .to_string();
+    let keyfile = key_files(w)
+        .into_iter()
+        .find(|p| p.to_string_lossy().contains(".label.private"))
+        .ok_or("no label key file")?;
+    let saved = std::fs::read(&keyfile).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&keyfile).map_err(|e| e.to_string())?;
+    let blind_run = w.run("carol", &["read", "vault", "--peek"]);
+    let blind = format!(
+        "ok={} {}{}",
+        blind_run.ok, blind_run.stdout, blind_run.stderr
+    );
+    lacks(
+        &blind,
+        "hunter2",
+        "the text was readable without the label key",
+    )?;
+    has(&blind, "sealed", "no note that the message is sealed")?;
+    has(
+        &w.refused(
+            "alice",
+            &["post", "vault", "plain text under a sealed label"],
+        )?,
+        "sealed and you hold no key",
+        "a write without the label key was not refused",
+    )?;
+    // the key comes back from its recovery code, and a code for another key does not
+    check(
+        !w.admin(
+            &["recover", "--label", "private", "KLATCH-AAAA-AAAA"],
+            "recover",
+        )
+        .ok,
+        "a wrong code was accepted",
+    )?;
+    let back = w.admin(&["recover", "--label", "private", &label_code], "recover");
+    check(back.ok, format!("recover failed: {}", back.stderr))?;
+    check(
+        std::fs::read(&keyfile).map_err(|e| e.to_string())? == saved,
+        "the restored key differs",
+    )?;
+    has(
+        &w.ok("carol", &["read", "vault", "--peek"])?,
+        "hunter2",
+        "the text did not come back",
+    )?;
+    // the person administering holds every label key, and the readable export is audited
+    has(
+        &w.admin(&["export", "vault"], "vault").stdout,
+        "hunter2",
+        "the export cannot read a sealed label",
     )?;
     Ok(vec![])
 }

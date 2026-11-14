@@ -6,7 +6,9 @@
 
 mod file;
 mod key;
+mod labels;
 mod recovery;
+mod sealed;
 mod source;
 
 #[cfg(target_os = "linux")]
@@ -16,7 +18,11 @@ mod macos;
 
 pub use file::FileKeys;
 pub use key::{KEY_LEN, Key};
+pub use labels::{LabelKeys, label_key_name};
 pub use recovery::{RecoveryError, recovery_code, restore};
+pub use sealed::{
+    RevealError, is_sealed_text, looks_protected, protect, protect_text, reveal, reveal_text,
+};
 pub use source::{
     Error, KeySource, MemoryKeys, create, default_source, open_or_create, store_key_name,
 };

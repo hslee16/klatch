@@ -24,6 +24,8 @@ use schema::{SCHEMA, SCHEMA_VERSION, WAIT_WINDOW_SECS, has_table, user_version};
 /// and separate from the dense per-room `seq`.
 pub struct SqliteStore {
     conn: Connection,
+    /// The label keys this principal holds (DESIGN section 32 item 8). A label it has no key for stays sealed.
+    labels: std::cell::RefCell<klatch_keys::LabelKeys>,
 }
 
 fn be(e: rusqlite::Error) -> Error {
@@ -127,6 +129,54 @@ impl SqliteStore {
             .map_err(be)
     }
 
+    /// What binds a sealed body to its message: moved to another message or label it no longer opens.
+    fn sealed_context(id: &str, label: &str) -> String {
+        format!("klatch message {id} under {label}")
+    }
+
+    /// The body to store: sealed under the label's key when the label is sealed. A sealed label without a key is
+    /// refused (plain text must never be stored under it), and so is a plain body that looks like a sealed one.
+    fn seal_body(&self, label: &str, id: &str, body: &str) -> Result<String> {
+        let sealed = self.policy_get(&format!("sealed:{label}"))?.is_some();
+        if !sealed {
+            if klatch_keys::is_sealed_text(body) {
+                return Err(Error::Invalid(
+                    "a message cannot start with klatch-sealed:1:, which is how sealed text is written".into(),
+                ));
+            }
+            return Ok(body.to_string());
+        }
+        let ring = self.labels.borrow();
+        let Some(key) = ring.get(label) else {
+            return Err(Error::Refused {
+                rule: "label-key".into(),
+                reason: format!("label {label} is sealed and you hold no key for it"),
+            });
+        };
+        klatch_keys::protect_text(key, Self::sealed_context(id, label).as_bytes(), body)
+            .map_err(|e| Error::Backend(format!("no random source: {e}")))
+    }
+
+    /// A message row, with a sealed body opened if this principal holds the label's key and replaced by a note if not.
+    fn open_message(&self, r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+        let mut m = message_from_row(r)?;
+        if klatch_keys::is_sealed_text(&m.body) {
+            let ctx = Self::sealed_context(&m.id, &m.label);
+            let opened = self
+                .labels
+                .borrow()
+                .get(&m.label)
+                .and_then(|k| klatch_keys::reveal_text(k, ctx.as_bytes(), &m.body).ok());
+            m.body = opened.unwrap_or_else(|| {
+                format!(
+                    "[sealed: this {0} message needs the {0} key, which you do not hold]",
+                    m.label
+                )
+            });
+        }
+        Ok(m)
+    }
+
     /// Write an encrypted copy of the whole store to `out` (a backup or archive), under `key`. It never overwrites an
     /// existing file, builds the copy beside the target and checks that it opens before putting it in place, so a
     /// failure leaves nothing half written.
@@ -212,7 +262,10 @@ impl SqliteStore {
                 return Err(e);
             }
         }
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            labels: std::cell::RefCell::default(),
+        })
     }
 
     fn touch(&self, room: &str, me: &str, now: i64) -> Result<()> {
@@ -291,6 +344,10 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn set_label_keys(&self, keys: klatch_keys::LabelKeys) {
+        *self.labels.borrow_mut() = keys;
+    }
+
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()> {
         self.touch(room, member, now)
     }
@@ -313,9 +370,10 @@ impl Store for SqliteStore {
                 )
                 .map_err(be)?;
             let id = new_id((now.max(0) as u64) * 1000);
+            let stored = self.seal_body(label, &id, body)?;
             self.exec(
                     "INSERT INTO messages(room,seq,mid,sender,member,body,ts,attribution,label) VALUES(?1,?2,?3,?4,?4,?5,?6,?7,?8)",
-                    params![room, seq, id, sender, body, now, attribution_text(attribution), label],
+                    params![room, seq, id, sender, stored, now, attribution_text(attribution), label],
                 )?;
             self.touch(room, sender, now)?;
             Ok(Posted { id, seq })
@@ -333,7 +391,7 @@ impl Store for SqliteStore {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, last, member], message_from_row)?;
+        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
         if advance {
             // Advance to the last message actually returned, never to the room's current maximum:
             // a message posted between the select above and this update would otherwise be skipped
@@ -442,7 +500,7 @@ impl Store for SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], message_from_row)?;
+        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))?;
         Ok(rows)
     }
 
@@ -464,7 +522,7 @@ impl Store for SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], message_from_row)
+        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))
     }
 
     fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
@@ -577,7 +635,7 @@ impl Store for SqliteStore {
                 )
                 .map_err(be)?;
             let from = read.max(shown);
-            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, from, member], message_from_row)?;
+            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, from, member], |r| self.open_message(r))?;
             if let Some(last) = rows.last() {
                 self.exec(
                         "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
@@ -964,7 +1022,7 @@ impl Store for SqliteStore {
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
         self.rows(&format!(
                 "SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 ORDER BY seq LIMIT ?3"
-            ), params![room, after_seq, limit as i64], message_from_row)
+            ), params![room, after_seq, limit as i64], |r| self.open_message(r))
     }
 
     fn head(&self, room: &str) -> Result<i64> {

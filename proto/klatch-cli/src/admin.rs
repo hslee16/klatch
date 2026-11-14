@@ -68,7 +68,15 @@ pub enum AdminCmd {
     /// be restored, and without both it and the keystore entry the data is gone
     Recovery,
     /// Restore this store's key from its recovery code, when the keystore entry is missing
-    Recover { code: Vec<String> },
+    Recover {
+        code: Vec<String>,
+        /// The code is for this sealed label's key, not the store's
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Seal a label: its messages are stored encrypted under a key of their own, so only a principal holding that key
+    /// (its clearance reaches the label and the key was handed to it) can read or write them
+    SealLabel { label: String },
     /// Re-encrypt the store under a new key; the old key (and the old recovery code) stop working
     RotateKey,
     /// Write an encrypted copy of the whole store to a file (never overwrites one); keep it with its recovery code
@@ -266,7 +274,8 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         | AdminCmd::RotateKey
         | AdminCmd::Backup { .. }
         | AdminCmd::Restore { .. }
-        | AdminCmd::Export { .. } => {
+        | AdminCmd::Export { .. }
+        | AdminCmd::SealLabel { .. } => {
             unreachable!("handled in run, which needs the keystore and not only the gateway")
         }
     }
@@ -287,15 +296,37 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             })?;
             note("recovery-show", "")?;
             println!("{}", klatch_keys::recovery_code(&key));
+            let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+            for label in gateway.sealed_labels()? {
+                if let Some(k) = keys::label_key(db, &label)? {
+                    println!("label {label}: {}", klatch_keys::recovery_code(&k));
+                }
+            }
             println!(
-                "Keep this code somewhere safe and private. It restores the key; it is not stored anywhere else."
+                "Keep these codes somewhere safe and private. Each restores one key; they are not stored anywhere else."
             );
         }
-        AdminCmd::Recover { code } => {
+        AdminCmd::Recover { code, label } => {
             let key = klatch_keys::restore(&code.join(" ")).map_err(|e| anyhow::anyhow!("{e}"))?;
-            keys::restore_key(db, &key)?;
-            note("recover-key", "")?;
+            match &label {
+                Some(l) => keys::restore_label_key(db, l, &key)?,
+                None => keys::restore_key(db, &key)?,
+            }
+            note("recover-key", label.as_deref().unwrap_or(""))?;
             println!("the key is back in place");
+        }
+        AdminCmd::SealLabel { label } => {
+            let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+            gateway.admin_seal_label(&who, &label)?;
+            let made = keys::ensure_label_key(db, &label)?;
+            println!(
+                "label {label} is sealed: new messages under it are stored encrypted under a key of their own"
+            );
+            if made {
+                println!(
+                    "a key was made for it; `klatch admin recovery` shows the code that restores it. Keep that code: a sealed label whose key is lost cannot be read again."
+                );
+            }
         }
         AdminCmd::Backup { file } => {
             let key = keys::current_key(db)?
@@ -322,6 +353,7 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
         }
         AdminCmd::Export { room } => {
             let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+            gateway.use_label_keys(keys::label_ring(db, &gateway.sealed_labels()?)?);
             // audited before anything is printed: the act is recorded even if the output is cut short
             gateway.admin_note(&who, ("export", &room), "readable transcript printed")?;
             for m in gateway.tail(&who, &room, (0, 1_000_000))? {
@@ -358,6 +390,7 @@ fn needs_the_keystore(cmd: &AdminCmd) -> bool {
             | AdminCmd::Backup { .. }
             | AdminCmd::Restore { .. }
             | AdminCmd::Export { .. }
+            | AdminCmd::SealLabel { .. }
     )
 }
 
@@ -369,6 +402,8 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
     }
     let store = keys::open_store(&db)?;
     let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+    // the person administering holds every label key
+    gateway.use_label_keys(keys::label_ring(&db, &gateway.sealed_labels()?)?);
     execute(&Direct::new(gateway, Principal::unattributed("admin")), cmd)
 }
 

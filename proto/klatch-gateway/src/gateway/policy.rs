@@ -120,6 +120,52 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// Seal a label: from now on a message under it is stored encrypted under the label's own key, and a principal
+    /// without that key can neither read nor write it (#160). The lowest label cannot be sealed, because everyone
+    /// holds it. Existing messages under the label stay as they were.
+    pub fn admin_seal_label(&self, who: &Principal, label: &str) -> Result<()> {
+        let chain = self.chain()?;
+        known_label(&chain, label)?;
+        if label == chain.lowest() {
+            return Err(Error::Invalid(format!(
+                "{label} is the lowest label and everyone holds it, so it cannot be sealed"
+            )));
+        }
+        self.administer(who, ("seal-label", label), |now| {
+            self.store
+                .policy_set(&format!("sealed:{label}"), Some("1"), now)?;
+            Ok(String::new())
+        })
+    }
+
+    /// Every sealed label, lowest first.
+    pub fn sealed_labels(&self) -> Result<Vec<String>> {
+        let chain = self.chain()?;
+        let mut out = Vec::new();
+        for label in chain.names() {
+            if self.store.policy_get(&format!("sealed:{label}"))?.is_some() {
+                out.push(label.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// The sealed labels `member`'s clearance reaches: the keys it may be given.
+    pub fn sealed_labels_within(&self, member: &str) -> Result<Vec<String>> {
+        let chain = self.chain()?;
+        let clearance = self.clearance_of(member)?;
+        Ok(self
+            .sealed_labels()?
+            .into_iter()
+            .filter(|l| chain.dominates(&clearance, l))
+            .collect())
+    }
+
+    /// Hand this process the label keys it holds (in memory only). A sealed label it has no key for stays sealed.
+    pub fn use_label_keys(&self, keys: klatch_keys::LabelKeys) {
+        self.store.set_label_keys(keys);
+    }
+
     /// Set a member's clearance, at most the agent cap: `secret` is out of every agent's reach (D4).
     pub fn admin_set_clearance(&self, who: &Principal, member: &str, label: &str) -> Result<()> {
         if !valid_name(member) {

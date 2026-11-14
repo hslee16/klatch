@@ -144,3 +144,51 @@ pub(crate) fn rotate_key(db: &Path) -> Result<Key> {
     kh.source.delete(&next_name(&kh.name))?;
     Ok(new)
 }
+
+/// The keys of `labels` this store has in its key source; a label with no key there is not held.
+pub(crate) fn label_ring(db: &Path, labels: &[String]) -> Result<klatch_keys::LabelKeys> {
+    let kh = key_home(db);
+    let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+    Ok(klatch_keys::LabelKeys::load(
+        kh.source.as_ref(),
+        &kh.name,
+        &names,
+    )?)
+}
+
+/// Make the key of a sealed label if there is none. Returns whether one was made. Under the directory lock, so two
+/// processes sealing at once make one key.
+pub(crate) fn ensure_label_key(db: &Path, label: &str) -> Result<bool> {
+    let kh = key_home(db);
+    let name = klatch_keys::label_key_name(&kh.name, label);
+    let _lock = klatch_store::encrypt::lock_dir(db)?;
+    if kh.source.get(&name)?.is_some() {
+        return Ok(false);
+    }
+    klatch_keys::create(kh.source.as_ref(), &name)?;
+    Ok(true)
+}
+
+/// The key of a sealed label, for showing its recovery code.
+pub(crate) fn label_key(db: &Path, label: &str) -> Result<Option<Key>> {
+    let kh = key_home(db);
+    Ok(kh
+        .source
+        .get(&klatch_keys::label_key_name(&kh.name, label))?)
+}
+
+/// Put a sealed label's key back from its recovery code. It is refused if a different key is already there.
+pub(crate) fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()> {
+    let kh = key_home(db);
+    let name = klatch_keys::label_key_name(&kh.name, label);
+    if let Some(existing) = kh.source.get(&name)?
+        && existing != *key
+    {
+        bail!(
+            "label {label} already has a different key; remove it from the {} first",
+            kh.source.describe()
+        );
+    }
+    kh.source.put(&name, key)?;
+    Ok(())
+}

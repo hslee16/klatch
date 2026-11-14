@@ -258,3 +258,42 @@ fn a_refusal_by_the_admin_rules_is_audited_too() {
         "admin-pause"
     );
 }
+
+// ---- sealed labels (#160) ----
+
+#[test]
+fn sealing_a_label_is_an_audited_admin_act_that_needs_a_known_label() {
+    let g = open();
+    g.admin_seal_label(&admin(), "private").unwrap();
+    assert!(g.sealed_labels().unwrap().contains(&"private".to_string()));
+    let audit = g.admin_audit(&admin(), 5).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "seal-label" && a.target == "private")
+    );
+    assert!(is_invalid(g.admin_seal_label(&admin(), "no-such-label")));
+    assert!(
+        !g.sealed_labels()
+            .unwrap()
+            .contains(&"no-such-label".to_string())
+    );
+}
+
+#[test]
+fn a_member_may_hold_the_keys_of_the_sealed_labels_its_clearance_reaches_and_no_others() {
+    let g = vault();
+    g.admin_seal_label(&admin(), "private").unwrap();
+    g.admin_seal_label(&admin(), "secret").unwrap();
+    assert_eq!(
+        g.sealed_labels_within("alice").unwrap(),
+        vec!["private".to_string()]
+    );
+    assert!(g.sealed_labels_within("bob").unwrap().is_empty());
+}
+
+#[test]
+fn the_lowest_label_cannot_be_sealed_because_everyone_is_at_it() {
+    let g = open();
+    assert!(is_invalid(g.admin_seal_label(&admin(), "public")));
+}

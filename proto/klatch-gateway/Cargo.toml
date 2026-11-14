@@ -7,5 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
+klatch-keys.workspace = true
 klatch-core.workspace = true
 klatch-store.workspace = true
