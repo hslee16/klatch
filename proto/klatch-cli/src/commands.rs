@@ -23,6 +23,11 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             t.join(&room)?;
             println!("{} joined {room}", ctx.me);
         }
+        Cmd::Dm {
+            member,
+            body,
+            label,
+        } => dm(t, &member, &body, label.as_deref())?,
         Cmd::Post { room, body, label } => post(t, &room, &body, label.as_deref())?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
         Cmd::Wait {
@@ -87,6 +92,12 @@ fn mute(t: &dyn Transport, room: &str, muted: bool) -> Result<()> {
     } else {
         println!("unmuted {room}");
     }
+    Ok(())
+}
+
+fn dm(t: &dyn Transport, member: &str, body: &[String], label: Option<&str>) -> Result<()> {
+    let (room, _) = t.dm(member, &body.join(" "), label)?;
+    println!("sent to {member} in room {room} (queued; `klatch read {room}` shows the thread)");
     Ok(())
 }
 

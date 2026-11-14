@@ -54,6 +54,14 @@ struct WhoFlags {
 enum Cmd {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     Join { room: String },
+    /// Send a direct message to one member, in a room only the two of you can use
+    Dm {
+        member: String,
+        body: Vec<String>,
+        /// A label lower than the room's ceiling (the lower of the two clearances)
+        #[arg(long)]
+        label: Option<String>,
+    },
     /// Post a message to a room
     Post {
         room: String,

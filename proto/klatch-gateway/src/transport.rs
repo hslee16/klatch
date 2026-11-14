@@ -10,6 +10,8 @@ pub trait Transport {
     fn post(&self, room: &str, body: &str) -> Result<Posted> {
         self.post_labeled(room, body, None)
     }
+    /// Send a direct message: post to the two-member room shared with `to`. Returns the room and the post.
+    fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)>;
     /// Post under a label lower than the room's own (`None` for the room's).
     fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
@@ -42,6 +44,10 @@ pub trait Transport {
     fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()>;
     fn admin_set_cap(&self, label: &str) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
+    /// The scrubber (#44): list a private term under a rule name, stop it, and show what is listed.
+    fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()>;
+    fn admin_remove_scrub_term(&self, name: &str) -> Result<()>;
+    fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>>;
     /// The latest refused calls, newest first.
     fn admin_refusals(&self, limit: usize) -> Result<Vec<klatch_core::RefusalRecord>>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
@@ -89,6 +95,9 @@ impl<S: Store> Direct<S> {
 impl<S: Store> Transport for Direct<S> {
     fn join(&self, room: &str) -> Result<()> {
         self.gateway.join(&self.principal, room)
+    }
+    fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)> {
+        self.gateway.dm(&self.principal, to, body, label)
     }
     fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted> {
         self.gateway
@@ -159,6 +168,16 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()> {
         self.gateway.admin_set_label_chain(&self.principal, names)
+    }
+    fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()> {
+        self.gateway
+            .admin_add_scrub_term(&self.principal, name, term)
+    }
+    fn admin_remove_scrub_term(&self, name: &str) -> Result<()> {
+        self.gateway.admin_remove_scrub_term(&self.principal, name)
+    }
+    fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>> {
+        self.gateway.admin_scrub_terms(&self.principal)
     }
     fn admin_refusals(&self, limit: usize) -> Result<Vec<klatch_core::RefusalRecord>> {
         self.gateway.admin_refusals(&self.principal, limit)

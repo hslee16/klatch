@@ -54,6 +54,13 @@ pub enum AdminCmd {
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
     Chain { levels: String },
+    /// Refuse posts, claim reasons, release notes and statuses that contain a private term, in rooms below the
+    /// agent cap; matching ignores case and a refusal never repeats the term
+    ScrubAdd { name: String, term: Vec<String> },
+    /// Stop refusing a scrub rule
+    ScrubRemove { name: String },
+    /// Show the scrub rules and their terms
+    ScrubList,
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -213,6 +220,19 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 "label order is {}; the agent cap is back to its default",
                 names.join(" < ")
             );
+        }
+        AdminCmd::ScrubAdd { name, term } => {
+            t.admin_add_scrub_term(&name, &term.join(" "))?;
+            println!("rule {name} now refuses its term in rooms below the agent cap");
+        }
+        AdminCmd::ScrubRemove { name } => {
+            t.admin_remove_scrub_term(&name)?;
+            println!("rule {name} removed");
+        }
+        AdminCmd::ScrubList => {
+            for (name, term) in t.admin_scrub_terms()? {
+                println!("{name}\t{}", flat(&term));
+            }
         }
         AdminCmd::Refusals { limit } => refusals(t, limit)?,
         AdminCmd::Audit { limit } => audit(t, limit)?,
