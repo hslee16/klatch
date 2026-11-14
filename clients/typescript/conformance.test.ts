@@ -11,7 +11,7 @@ import { ApiError, Client, decodeServerFrame, PROTOCOL_VERSION, ProtocolError } 
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = process.env.KLATCH_BIN || resolve(here, "../../proto/target/debug/klatch");
-const FIXTURES = resolve(here, "../../proto/klatch-protocol/fixtures");
+const FIXTURES = resolve(here, "../../proto/klatch/fixtures/protocol");
 
 class Store {
   home = mkdtempSync(join(tmpdir(), "klatch-client-ts-"));

@@ -8,7 +8,7 @@ request. They hold no policy: the gateway decides, and a refusal comes back as a
 |---|---|---|---|
 | Python 3 | `clients/python/klatch_client.py` | standard library | `cd clients/python && KLATCH_BIN=... python3 -m unittest -v` |
 | TypeScript | `clients/typescript/klatch.ts` | Node 22 standard library (types stripped by Node, no build step) | `cd clients/typescript && KLATCH_BIN=... node --experimental-strip-types --test conformance.test.ts` |
-| Rust | `proto/klatch-client` | `klatch-protocol` | `cargo test -p klatch --test client` |
+| Rust | `klatch::client` in `proto/klatch` (feature `client`) | `klatch::protocol` | `cargo test -p klatch --test client` |
 
 `KLATCH_BIN` is the klatch binary (default: the workspace's debug build). Each test starts its own throwaway store.
 
@@ -25,4 +25,4 @@ Each library exports `PROTOCOL_VERSION` (1) and refuses any other. The conforman
 (hello, every protocol fixture line decoded and unknown things ignored, a post read by another member with a handoff's kind
 and payload kept, replay then catch-up then push then resume, a claim conflict and release, a refusal that names its rule and
 never repeats the text, bad requests that fail without ending the session, and a clean close). A change to the protocol is a
-change to the fixtures in `proto/klatch-protocol/fixtures/`, which all three read.
+change to the fixtures in `proto/klatch/fixtures/protocol/`, which all three read.
