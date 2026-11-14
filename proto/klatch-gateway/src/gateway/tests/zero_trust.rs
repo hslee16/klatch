@@ -9,6 +9,14 @@ use crate::ClaimSpec;
 /// guard that refuses everything it is refused with nothing read or written.
 type Call = fn(&Gateway<SpyStore>, &Principal) -> bool;
 
+/// An adapter that knows nothing: only used to prove the call is refused before it is asked.
+struct NoFactory;
+impl crate::AnchorAdapter for NoFactory {
+    fn is_done(&self, _anchor: &str) -> Result<bool> {
+        Ok(false)
+    }
+}
+
 fn refused<T>(r: Result<T>) -> bool {
     matches!(r, Err(Error::Refused { .. }))
 }
@@ -84,6 +92,10 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_revoke_credential(w, "w-1"))
     }),
     ("admin_credentials", |g, w| refused(g.admin_credentials(w))),
+    ("anchor_done", |g, w| refused(g.anchor_done(w, "wo:1"))),
+    ("reap_anchors", |g, w| {
+        refused(g.reap_anchors(w, &NoFactory))
+    }),
     ("admin_seal_label", |g, w| {
         refused(g.admin_seal_label(w, "private"))
     }),
@@ -168,6 +180,7 @@ fn public_methods() -> Vec<String> {
     let files = [
         include_str!("../../gateway.rs"),
         include_str!("../admin.rs"),
+        include_str!("../anchors.rs"),
         include_str!("../budget.rs"),
         include_str!("../dm.rs"),
         include_str!("../policy.rs"),
@@ -192,8 +205,8 @@ fn public_methods() -> Vec<String> {
 fn every_public_method_of_the_gateway_is_classified() {
     let mut known: Vec<&str> = GUARDED.iter().map(|(n, _)| *n).collect();
     known.extend(OWN_RECORD.iter().map(|(n, _)| *n));
-    // `shared` and `new` belong to ClaimSpec and the gateway builders, not to operations
-    known.extend(["shared"]);
+    // `shared` and `anchored` belong to ClaimSpec, a builder, not to operations
+    known.extend(["shared", "anchored"]);
     let unclassified: Vec<String> = public_methods()
         .into_iter()
         .filter(|m| !known.contains(&m.as_str()))

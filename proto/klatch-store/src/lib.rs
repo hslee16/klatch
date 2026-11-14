@@ -82,6 +82,9 @@ pub struct ClaimRequest<'a> {
     pub path: &'a str,
     pub ttl: i64,
     pub reason: &'a str,
+    /// The work item the claim is for (a factory's work order, mission or ticket id), empty for none. When the item
+    /// is reported done the claim is released.
+    pub anchor: &'a str,
 }
 
 impl<'a> ClaimRequest<'a> {
@@ -98,7 +101,13 @@ impl<'a> ClaimRequest<'a> {
             path,
             ttl,
             reason,
+            anchor: "",
         }
+    }
+
+    /// The same request anchored to a work item.
+    pub fn anchored(self, anchor: &'a str) -> Self {
+        Self { anchor, ..self }
     }
 
     /// The same request inside a scope.
@@ -344,6 +353,15 @@ pub trait Store {
         Ok(false)
     }
     fn credentials(&self) -> Result<Vec<CredentialRecord>> {
+        Ok(Vec::new())
+    }
+    /// Release every live claim anchored to `anchor` (the work item was reported done) and clear the lapsed ones;
+    /// returns `(room, path, owner)` of each live claim released. The default releases nothing.
+    fn release_anchored(&self, _anchor: &str, _now: i64) -> Result<Vec<(String, String, String)>> {
+        Ok(Vec::new())
+    }
+    /// The distinct anchors of live claims, sorted: what a poll has to ask about.
+    fn anchors_in_use(&self, _now: i64) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
     /// The label keys this principal holds (DESIGN section 32 item 8). The default ignores them.
