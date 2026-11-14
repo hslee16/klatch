@@ -14,11 +14,11 @@ def read(*parts):
 class PackageMetadata(unittest.TestCase):
     def test_the_package_version_matches_pyproject(self):
         declared = re.search(r'^version = "([^"]+)"', read("pyproject.toml"), re.M).group(1)
-        inside = re.search(r'__version__ = "([^"]+)"', read("package", "__init__.py")).group(1)
+        inside = re.search(r'__version__ = "([^"]+)"', read("package", "wheel_init.py")).group(1)
         self.assertEqual(declared, inside)
 
     def test_the_package_exports_the_client_names(self):
-        init = read("package", "__init__.py")
+        init = read("package", "wheel_init.py")
         for name in ("Client", "ApiError", "ProtocolError", "PROTOCOL_VERSION"):
             self.assertIn(name, init)
 

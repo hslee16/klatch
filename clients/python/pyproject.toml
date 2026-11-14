@@ -21,8 +21,8 @@ Source = "https://github.com/hslee16/klatch"
 bypass-selection = true
 
 [tool.hatch.build.targets.wheel.force-include]
-"package/__init__.py" = "klatch/__init__.py"
+"package/wheel_init.py" = "klatch/__init__.py"
 "klatch_client.py" = "klatch/client.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["package/__init__.py", "klatch_client.py", "README.md", "LICENSE", "pyproject.toml"]
+include = ["package/wheel_init.py", "klatch_client.py", "README.md", "LICENSE", "pyproject.toml"]
