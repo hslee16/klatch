@@ -33,7 +33,7 @@ on:
       target:
         description: Which registry to publish to
         type: choice
-        options: [npm, crates, binaries]
+        options: [npm, crates, binaries, python]
         required: true
 
 permissions:
@@ -42,7 +42,7 @@ permissions:
 jobs:
   python-build:
     name: Build the Python package
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.target == 'python'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -52,7 +52,7 @@ jobs:
 
       - name: The tag must name the version in pyproject.toml
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("pyproject.toml").read(), re.M).group(1))')
@@ -84,10 +84,54 @@ jobs:
           name: python-dist
           path: clients/python/dist/
 
+  # The platform wheels (#431): the klatch command and the Python client for macOS and Linux, built from the very
+  # archives this release publishes (the static musl builds serve every Linux). No compilation happens here.
+  python-wheels:
+    name: Build the platform wheels
+    if: github.event_name == 'release' || inputs.target == 'python'
+    needs: binaries-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in pyproject.toml, and the archives the version in Cargo.toml
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          pypi=$(sed -n 's/^version = "\(.*\)"$/\1/p' clients/python/pyproject.toml | head -1)
+          cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
+          [ "$TAG" = "v$pypi" ] || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
+          echo "PYPI_VERSION=$pypi" >> "$GITHUB_ENV"
+          echo "CARGO_VERSION=$cargo" >> "$GITHUB_ENV"
+
+      - name: Download the release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bin-*
+          merge-multiple: true
+          path: archives/
+
+      - name: Check the archives against the build jobs' checksums, then build one wheel per platform
+        run: |
+          set -euo pipefail
+          (cd archives && for f in ./*.tar.gz.sha256; do sha256sum -c "$f"; done)
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            python3 clients/python/build_wheels.py --version "$PYPI_VERSION" --target "$target" \
+              --archive "archives/klatch-${CARGO_VERSION}-${target}.tar.gz" --out-dir wheels
+          done
+          ls -l wheels
+
+      - name: Upload the wheels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-wheels
+          path: wheels/
+
   python-publish:
     name: Publish to PyPI
-    if: github.event_name == 'release'
-    needs: python-build
+    if: github.event_name == 'release' || inputs.target == 'python'
+    needs: [python-build, python-wheels]
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -95,10 +139,12 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # the sdist and the pure-Python wheel (every other platform), and the four platform wheels
       - name: Download built distributions
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: python-dist
+          pattern: python-*
+          merge-multiple: true
           path: dist/
 
       - name: Publish via trusted publishing
@@ -268,7 +314,7 @@ jobs:
 
   binaries-build:
     name: Build klatch (${{ matrix.target }})
-    if: github.event_name == 'release' || inputs.target == 'binaries'
+    if: github.event_name == 'release' || inputs.target == 'binaries' || inputs.target == 'python'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -398,6 +444,7 @@ jobs:
 
   binaries-publish:
     name: Attach the binaries to the release
+    if: github.event_name == 'release' || inputs.target == 'binaries'
     needs: binaries-build
     runs-on: ubuntu-latest
     environment:

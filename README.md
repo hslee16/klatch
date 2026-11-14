@@ -41,9 +41,11 @@ The release archives, their SBOMs and the checksums are on the [releases page](h
 [SECURITY.md](SECURITY.md) shows how to verify them. The macOS binaries are not Apple-signed yet, so a browser download
 is quarantined; `brew`, the installer and `curl` are not affected.
 
-Client libraries for building on the wire protocol (they do not include the binary yet): Python
-(`pip install klatch`), TypeScript (`npm install @klatch/client`), and Rust (the `client` feature of the `klatch`
-crate, which brings in only serde and serde_json). See [clients/README.md](clients/README.md).
+Python: `pipx install klatch` or `uvx klatch` give you the `klatch` command and the Python client from the first
+release after 0.1.0-dev.1 on (the platform wheels: macOS arm64 and x86_64, Linux x86_64 and aarch64; 0.1.0.dev1 has
+the client only). Client libraries for building on the wire protocol: Python (`pip install klatch`), TypeScript
+(`npm install @klatch/client`, no binary), and Rust (the `client` feature of the `klatch` crate, which brings in only
+serde and serde_json). See [clients/README.md](clients/README.md).
 
 ## Quickstart
 
