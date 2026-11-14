@@ -225,3 +225,207 @@ fn a_flag_and_its_opposite_are_refused() {
             .success()
     );
 }
+
+// ---- init --uninstall (#436): remove klatch's hooks, and only klatch's ----
+
+const OTHERS: &str = r#"{"zeta":1,"permissions":{"allow":["Bash(ls)"]},"hooks":{
+  "PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/audit"}]}],
+  "Stop":[{"hooks":[{"type":"command","command":"/usr/local/bin/notify-done"}]}]}}"#;
+
+fn commands_anywhere(v: &serde_json::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    if let Some(hooks) = v["hooks"].as_object() {
+        for list in hooks.values() {
+            for m in list.as_array().into_iter().flatten() {
+                for h in m["hooks"].as_array().into_iter().flatten() {
+                    if let Some(c) = h["command"].as_str() {
+                        found.push(c.to_string());
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+fn install_everything(s: &Setup) {
+    std::fs::create_dir_all(s.project().join(".claude")).unwrap();
+    std::fs::write(s.project_settings(), OTHERS).unwrap();
+    let o = s.init(&["--scope", "project", "--yes", "--enforce", "--wake"], "");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let before = commands_anywhere(&Setup::read(&s.project_settings()));
+    assert!(
+        before.iter().filter(|c| c.contains("klatch")).count() >= 6,
+        "the fixture should hold every klatch hook: {before:?}"
+    );
+}
+
+#[test]
+fn uninstall_removes_every_klatch_hook_and_keeps_everything_else() {
+    let s = Setup::new();
+    install_everything(&s);
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v = Setup::read(&s.project_settings());
+    let left = commands_anywhere(&v);
+    assert!(
+        !left.iter().any(|c| c.contains("klatch")),
+        "klatch hooks remain: {left:?}"
+    );
+    assert!(left.contains(&"/usr/bin/audit".to_string()), "{left:?}");
+    assert!(
+        left.contains(&"/usr/local/bin/notify-done".to_string()),
+        "{left:?}"
+    );
+    assert_eq!(v["permissions"]["allow"][0], "Bash(ls)");
+    assert_eq!(v["zeta"], 1);
+    // an event klatch alone used leaves no empty list behind
+    for e in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "SessionEnd",
+        "PreToolUse",
+    ] {
+        assert!(v["hooks"].get(e).is_none(), "an empty {e} list was left");
+    }
+    let text = std::fs::read_to_string(s.project_settings()).unwrap();
+    assert!(
+        text.find("zeta").unwrap() < text.find("permissions").unwrap(),
+        "keys were reordered"
+    );
+}
+
+#[test]
+fn uninstall_says_the_rooms_and_the_key_are_kept() {
+    let s = Setup::new();
+    install_everything(&s);
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    let text = out(&o);
+    assert!(
+        text.contains("not touched") && text.contains("UNINSTALL.md"),
+        "no note about the data: {text}"
+    );
+}
+
+#[test]
+fn uninstall_with_nothing_installed_changes_nothing() {
+    let s = Setup::new();
+    std::fs::create_dir_all(s.project().join(".claude")).unwrap();
+    std::fs::write(s.project_settings(), OTHERS).unwrap();
+    let before = std::fs::read(s.project_settings()).unwrap();
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    assert!(o.status.success());
+    assert!(out(&o).contains("nothing to remove"), "{}", out(&o));
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), before);
+}
+
+#[test]
+fn uninstall_without_a_settings_file_creates_nothing() {
+    let s = Setup::new();
+    let o = s.init(&["--uninstall", "--scope", "both", "--yes"], "");
+    assert!(o.status.success());
+    assert!(out(&o).contains("nothing to remove"), "{}", out(&o));
+    assert!(!s.project_settings().exists() && !s.user_settings().exists());
+}
+
+#[test]
+fn uninstall_is_safe_to_run_twice() {
+    let s = Setup::new();
+    install_everything(&s);
+    s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    let after_first = std::fs::read(s.project_settings()).unwrap();
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    assert!(out(&o).contains("nothing to remove"), "{}", out(&o));
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), after_first);
+}
+
+#[test]
+fn uninstall_shows_the_diff_and_a_no_keeps_the_file() {
+    let s = Setup::new();
+    install_everything(&s);
+    let before = std::fs::read(s.project_settings()).unwrap();
+    let o = s.init(&["--uninstall", "--scope", "project"], "n\n");
+    assert!(o.status.success());
+    assert!(out(&o).contains("- "), "no diff shown: {}", out(&o));
+    assert_eq!(
+        std::fs::read(s.project_settings()).unwrap(),
+        before,
+        "wrote without a yes"
+    );
+    let y = s.init(&["--uninstall", "--scope", "project"], "y\n");
+    assert!(y.status.success());
+    let left = commands_anywhere(&Setup::read(&s.project_settings()));
+    assert!(!left.iter().any(|c| c.contains("klatch")), "{left:?}");
+}
+
+#[test]
+fn uninstall_only_removes_what_klatch_wrote() {
+    let s = Setup::new();
+    std::fs::create_dir_all(s.project().join(".claude")).unwrap();
+    std::fs::write(
+        s.project_settings(),
+        r#"{"hooks":{"PostToolUse":[{"hooks":[
+          {"type":"command","command":"echo klatch is mentioned here"},
+          {"type":"command","command":"/usr/bin/klatch-backup --nightly"}]}]}}"#,
+    )
+    .unwrap();
+    let before = std::fs::read(s.project_settings()).unwrap();
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    assert!(o.status.success());
+    assert_eq!(
+        std::fs::read(s.project_settings()).unwrap(),
+        before,
+        "a hook that only mentions klatch was removed"
+    );
+}
+
+#[test]
+fn uninstall_refuses_an_unreadable_settings_file_and_touches_no_scope() {
+    let s = Setup::new();
+    install_everything(&s);
+    let project_before = std::fs::read(s.project_settings()).unwrap();
+    std::fs::create_dir_all(s.home().join(".claude")).unwrap();
+    std::fs::write(s.user_settings(), "{ not json").unwrap();
+    let o = s.init(&["--uninstall", "--scope", "both", "--yes"], "");
+    assert!(!o.status.success());
+    assert_eq!(
+        std::fs::read_to_string(s.user_settings()).unwrap(),
+        "{ not json"
+    );
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), project_before);
+}
+
+#[test]
+fn uninstall_cleans_both_scopes() {
+    let s = Setup::new();
+    s.init(&["--scope", "both", "--yes"], "");
+    assert!(s.user_settings().exists() && s.project_settings().exists());
+    let o = s.init(&["--uninstall", "--scope", "both", "--yes"], "");
+    assert!(o.status.success());
+    for path in [s.user_settings(), s.project_settings()] {
+        let left = commands_anywhere(&Setup::read(&path));
+        assert!(left.is_empty(), "{}: {left:?}", path.display());
+    }
+}
+
+#[test]
+fn uninstall_and_init_again_gives_back_the_same_hooks() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    let installed = std::fs::read(s.project_settings()).unwrap();
+    s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    s.init(&["--scope", "project", "--yes"], "");
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), installed);
+}
+
+#[test]
+fn uninstall_does_not_combine_with_options_that_install() {
+    let s = Setup::new();
+    for flag in [&["--enforce"][..], &["--wake"], &["--board", "lobby"]] {
+        let mut args = vec!["--uninstall", "--scope", "project", "--yes"];
+        args.extend_from_slice(flag);
+        let o = s.init(&args, "");
+        assert!(!o.status.success(), "accepted --uninstall with {flag:?}");
+    }
+    assert!(!s.project_settings().exists());
+}

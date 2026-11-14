@@ -27,6 +27,8 @@ pub struct Options {
     /// The PreToolUse claim hook (#33) and the wake hook (#37): opt in, opt out, or leave as is.
     pub enforce: Switch,
     pub wake: Switch,
+    /// Remove every hook klatch wrote instead of installing (#436); nothing else in the settings is touched.
+    pub uninstall: bool,
 }
 
 /// Where `init` reads answers from and writes its questions and results to.
@@ -233,18 +235,124 @@ fn apply(plan: Plan, yes: bool, io: &mut Io) -> anyhow::Result<()> {
         writeln!(io.out, "skipped {}", path.display())?;
         return Ok(());
     }
+    write_settings(&path, &new, io)
+}
+
+/// Write a settings file whole or not at all: beside it, then a rename.
+fn write_settings(path: &Path, text: &str, io: &mut Io) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("json.klatch-tmp");
-    std::fs::write(&tmp, format!("{new}\n"))?;
-    std::fs::rename(&tmp, &path)?;
+    std::fs::write(&tmp, format!("{text}\n"))?;
+    std::fs::rename(&tmp, path)?;
     writeln!(io.out, "wrote {}", path.display())?;
+    Ok(())
+}
+
+/// What `init --uninstall` would do to one settings file.
+struct Removal {
+    label: &'static str,
+    path: PathBuf,
+    /// The file as it is, and as it would be; `None` when there is no file or no klatch hook in it.
+    change: Option<(Value, Value)>,
+}
+
+/// Remove every klatch hook from a settings value. Every other hook, and every other setting, stays as it was; an
+/// event klatch emptied is dropped, and so is `hooks` itself if klatch emptied it.
+pub fn remove_hooks(settings: &mut Value) -> Result<(), String> {
+    let Some(hooks) = settings.get_mut("hooks") else {
+        return Ok(());
+    };
+    let map = hooks.as_object_mut().ok_or("\"hooks\" is not an object")?;
+    let mut emptied = Vec::new();
+    for (event, list) in map.iter_mut() {
+        let Some(list) = list.as_array_mut() else {
+            continue;
+        };
+        let had_entries = !list.is_empty();
+        sync_owned(list, "", false, is_ours);
+        sync_owned(list, "", false, is_wake);
+        if had_entries && list.is_empty() {
+            emptied.push(event.clone());
+        }
+    }
+    for event in &emptied {
+        map.remove(event);
+    }
+    if !emptied.is_empty()
+        && map.is_empty()
+        && let Some(obj) = settings.as_object_mut()
+    {
+        obj.remove("hooks");
+    }
+    Ok(())
+}
+
+fn plan_removal(label: &'static str, path: PathBuf) -> anyhow::Result<Removal> {
+    let existing = read_settings(&path)?;
+    let change = match existing {
+        None => None,
+        Some(old) => {
+            let mut new = old.clone();
+            remove_hooks(&mut new)
+                .map_err(|e| anyhow::anyhow!("{}: {e}; nothing was written", path.display()))?;
+            (new != old).then_some((old, new))
+        }
+    };
+    Ok(Removal {
+        label,
+        path,
+        change,
+    })
+}
+
+/// `init --uninstall`: ask the scope, read every file first, then show each diff and remove on a yes.
+fn uninstall(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()> {
+    let scope = io.choose_scope(options)?;
+    let removals = targets(scope, places)?
+        .into_iter()
+        .map(|(label, path)| plan_removal(label, path))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for Removal {
+        label,
+        path,
+        change,
+    } in removals
+    {
+        let Some((old, new)) = change else {
+            writeln!(io.out, "{} ({label}): nothing to remove", path.display())?;
+            continue;
+        };
+        writeln!(io.out, "{} ({label}):", path.display())?;
+        let (old, new) = (
+            serde_json::to_string_pretty(&old)?,
+            serde_json::to_string_pretty(&new)?,
+        );
+        write!(io.out, "{}", diff(&old, &new))?;
+        if !options.yes
+            && !io.ask(
+                &format!("Remove klatch's hooks from {}?", path.display()),
+                false,
+            )?
+        {
+            writeln!(io.out, "skipped {}", path.display())?;
+            continue;
+        }
+        write_settings(&path, &new, io)?;
+    }
+    writeln!(
+        io.out,
+        "Your rooms, messages and keys are not touched; see UNINSTALL.md to remove them."
+    )?;
     Ok(())
 }
 
 /// Run `init`: choose scope and board (asking unless `--yes`), show each diff, write only on a yes.
 pub fn run(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()> {
+    if options.uninstall {
+        return uninstall(options, io, places);
+    }
     let bin = places
         .bin
         .to_str()

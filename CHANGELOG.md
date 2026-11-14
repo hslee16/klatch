@@ -6,6 +6,11 @@ These are early pre-releases with no outside security review.
 
 ## [Unreleased]
 
+### Added
+
+- `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
+- UNINSTALL.md: what klatch keeps (hooks, binary, rooms, key), how to remove each, and how an upgrade behaves.
+
 ## [0.1.0-dev.1] - 2026-11-14
 
 The first release published through the release workflow, to PyPI, npm and crates.io together, with binaries for macOS
