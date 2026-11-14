@@ -75,3 +75,25 @@ why the database key is never derived from a passphrase.
 **Budget.** A hook may add at most 50 ms at p99 over its work, so a prompt is never visibly slower. The measured
 worst case, the Keychain, is 32 ms at p99, of which about 17 ms is the keystore. Within budget. The first read of the
 key by a newly built binary on macOS takes about 5 seconds once (#372); it is a one-time cost of each new build.
+
+## Fifty credentialed workers at once (ticket #124, 2026-11-14)
+
+Bench scenario `fifty_credentialed_workers_post_claim_and_read_at_once` (layer `scale`). A launcher issues 50 worker
+credentials with one call (`worker issue --count 50`); then 50 threads each run, as that worker through its key bundle
+(no name, no key directory), `join`, ten `post`s, one `claim` of a path all of them want, one `claim` of its own path
+and one `read`. Every command is a separate `klatch` process, as a hook or a worker's shell tool would run it. Release
+build, Apple M3 Pro, macOS 14.3, three runs:
+
+| Run | Wall | Posts per second | Post p50 | Post p99 |
+|---|---|---|---|---|
+| 1 | 0.72 s | 697 | 38.8 ms | 171 ms |
+| 2 | 0.77 s | 650 | 34.1 ms | 288 ms |
+| 3 | 0.96 s | 522 | 49.0 ms | 232 ms |
+
+Checked each run, and the scenario fails if any is false: all 500 posts succeed; the room's sequence is exactly 1 to 500
+(nothing lost, nothing doubled, dense); exactly one worker wins the contested path and all 50 private claims succeed
+(no double claim); every message is marked verified; the claims list holds the contested path once and 50 private
+paths. A post is slower than the 6 ms of a lone command because 50 processes contend for one SQLCipher write lock and
+each pays process start, key read and open. **Not covered:** memory for a slow consumer. A consumer that stops reading
+a stream still blocks its whole session (ticket #147), so "bounded memory for slow consumers" is not met and stays a
+known limit.
