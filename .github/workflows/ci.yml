@@ -61,10 +61,15 @@ jobs:
       - name: The installer (install/install.sh) against a fake release, no network
         working-directory: .
         run: sh install/test-install.sh
+      - name: One release number everywhere (and the check itself notices drift)
+        working-directory: .
+        run: |
+          release/check-versions.sh
+          release/test-check-versions.sh
       - name: Shell scripts pass shellcheck
         if: runner.os == 'Linux'
         working-directory: .
-        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh
+        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh release/check-versions.sh release/test-check-versions.sh
       - name: The README quickstart runs against the real binary
         run: |
           export KLATCH_BIN="$PWD/target/debug/klatch"

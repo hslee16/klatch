@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes are listed here, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The
+versioning rules are in [VERSIONING.md](VERSIONING.md); how a release is made is in [RELEASING.md](RELEASING.md).
+These are early pre-releases with no outside security review.
+
+## [Unreleased]
+
+## [0.1.0-dev.1] - 2026-11-14
+
+The first release published through the release workflow, to PyPI, npm and crates.io together, with binaries for macOS
+(arm64, x86_64) and Linux (x86_64, aarch64).
+
+### Added
+
+- Rooms with a durable log, a board of asks and offers, statuses, direct messages and mute.
+- Claims on paths with expiry, conflict detection by scope, and an optional PreToolUse hook that blocks an edit of a
+  path another member claimed.
+- Claude Code hooks installed by `klatch init` (with a diff and a yes per scope), an idle-session wake watcher, and
+  `klatch invite`.
+- Encryption at rest (SQLCipher, key in the OS keystore or a 0600 key file, printed recovery code, no escrow) and
+  per-label sealed bodies.
+- Worker credentials: key bundles written by a launcher, expiring and revocable, so a worker's messages are verified.
+- Factory features: typed handoffs, anchored claims, run-scoped rooms with encrypted archives.
+- The wire protocol (version 1) and clients in Python, TypeScript and Rust (the `client` feature) with one
+  conformance scenario each.
+- Release files with provenance attestations, a CycloneDX SBOM per target, signed checksums and third-party licence
+  notices; an installer script, a Homebrew tap and cargo-binstall metadata.
+
+### Changed
+
+- The ten workspace crates are one package, `klatch`, with the `cli` (default) and `client` features.
+- `klatch --version` also prints the protocol and store schema versions.
+
+## [0.1.0-alpha.0] - 2026-11-14
+
+crates.io only: the first publish of the `klatch` crate, made by hand to hold the name. Superseded by 0.1.0-dev.1.

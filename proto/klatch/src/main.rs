@@ -31,7 +31,7 @@ use identity::*;
 use scope::*;
 
 #[derive(Parser)]
-#[command(name = "klatch", about = "Local agent rooms prototype", version = VERSION)]
+#[command(name = "klatch", about = "Local agent rooms prototype", version = version_text())]
 struct Cli {
     #[command(flatten)]
     who: WhoFlags,
@@ -288,12 +288,25 @@ impl klatch::gateway::Clock for CliClock {
     }
 }
 
-/// The version text; a test build says so, which is how the bench knows it has the right binary.
-const VERSION: &str = if cfg!(feature = "test-clock") {
-    concat!(env!("CARGO_PKG_VERSION"), " (test-clock)")
-} else {
-    env!("CARGO_PKG_VERSION")
-};
+/// The version text: the package version, then the wire protocol and the store schema this binary speaks (a store
+/// written by a newer schema is refused, so this says whether the binary can open yours). A test build says so too,
+/// which is how the bench knows it has the right binary.
+fn version_text() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| {
+        let test_build = if cfg!(feature = "test-clock") {
+            ", test-clock"
+        } else {
+            ""
+        };
+        format!(
+            "{} (protocol {}, store schema {}{test_build})",
+            env!("CARGO_PKG_VERSION"),
+            klatch::protocol::PROTOCOL_VERSION,
+            klatch::store::SCHEMA_VERSION
+        )
+    })
+}
 
 fn db_path() -> Result<PathBuf> {
     let base = match std::env::var("KLATCH_HOME") {

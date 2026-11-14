@@ -16,7 +16,8 @@ mod claims;
 mod rows;
 mod schema;
 use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
-use schema::{SCHEMA, SCHEMA_VERSION, WAIT_WINDOW_SECS, has_table, user_version};
+pub use schema::SCHEMA_VERSION;
+use schema::{SCHEMA, WAIT_WINDOW_SECS, has_table, user_version};
 
 /// SQLite in WAL mode. Many readers, one writer at a time; a claim check-and-insert and a post are each one
 /// `BEGIN IMMEDIATE` transaction so they are atomic across processes.

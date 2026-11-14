@@ -5,7 +5,7 @@ pub mod encrypt;
 mod ids;
 mod sqlite;
 
-pub use sqlite::SqliteStore;
+pub use sqlite::{SCHEMA_VERSION, SqliteStore};
 
 use crate::domain::{
     AskRoom, Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk,
