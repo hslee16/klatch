@@ -11,6 +11,9 @@ These are early pre-releases with no outside security review.
 - `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
 - Static Linux builds (musl, x86_64 and aarch64): no glibc or other system library needed (tested in containers on Alpine 3.20, Debian 11 and Ubuntu 22.04, arm64 only). The installer chooses them when
   glibc is older than 2.34 or the system is not glibc; the dynamic builds need glibc 2.34 or later.
+- Platform wheels on PyPI for macOS (arm64, x86_64) and Linux (x86_64, aarch64): `pipx install klatch` and
+  `uvx klatch` install the `klatch` command and the Python client. The Linux wheels are the static builds, so one wheel
+  serves glibc and musl systems; other platforms get the client only.
 - UNINSTALL.md: what klatch keeps (hooks, binary, rooms, key), how to remove each, and how an upgrade behaves.
 
 ## [0.1.0-dev.1] - 2026-11-14

@@ -33,7 +33,8 @@ version is not republished: bump to the next number.
 
 ## 3. Verify
 
-- PyPI shows the version; `pip install klatch==<version>` imports.
+- PyPI shows the version with an sdist, a pure-Python wheel and four platform wheels; `pip install klatch==<version>`
+  imports, and `pipx run klatch==<version> --version` (or `uvx`) prints the version line.
 - npm shows it as `latest` with provenance; crates.io shows it with the trusted publishing data.
 - The release has the six archives, six SBOMs, `install.sh`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Check one
   with the commands in [SECURITY.md](SECURITY.md) ("Verifying a download").
