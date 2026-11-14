@@ -11,8 +11,8 @@ mod transport;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{
-    AnchorAdapter, ClaimSpec, CredentialInfo, CredentialSpec, Digest, Gateway, Handoff,
-    MAX_CREDENTIAL_TTL_SECS, Refused, check_credential,
+    AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, Digest, Gateway, Handoff,
+    MAX_CREDENTIAL_TTL_SECS, Refused, RunInfo, check_credential, run_prefix, valid_run_id,
 };
 pub use guard::{AllowAll, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};

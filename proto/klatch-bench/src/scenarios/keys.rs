@@ -27,6 +27,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: workers,
         },
         Scenario {
+            name: "a_run_is_its_own_namespace_archived_encrypted_and_removed_without_touching_anything_else",
+            origin: "#122, #118",
+            layer: "fault",
+            run: runs,
+        },
+        Scenario {
             name: "rotating_the_key_keeps_every_message_and_retires_the_old_key",
             origin: "#155, R34",
             layer: "fault",
@@ -378,6 +384,76 @@ fn workers(w: &World) -> Res {
         &w.as_worker(&short_path, &["post", "r", "too late"]).stderr,
         "expired",
         "an expired worker still posted",
+    )?;
+    Ok(vec![])
+}
+
+fn runs(w: &World) -> Res {
+    w.set_clock(T0);
+    for id in ["a", "b"] {
+        check(
+            w.run("launcher", &["run", "create", id]).ok,
+            "run create failed",
+        )?;
+    }
+    w.ok(
+        "alice",
+        &["post", "run.a.main", "the run a secret is hunter2"],
+    )?;
+    w.ok("alice", &["post", "run.a.review", "second room of run a"])?;
+    w.ok("bob", &["post", "run.b.main", "work for run b"])?;
+    w.ok("bob", &["post", "lobby", "an ordinary room"])?;
+    let archive = w.home.join("run-a.archive");
+    let archive_s = archive.to_string_lossy().into_owned();
+    let ended = w.run("launcher", &["run", "end", "a", "--archive", &archive_s]);
+    check(ended.ok, format!("run end failed: {}", ended.stderr))?;
+    has(
+        &ended.stdout,
+        "2 room(s)",
+        "the run did not say what it removed",
+    )?;
+    // the rooms are gone and cannot come back; everything else stays
+    has(
+        &w.refused("alice", &["post", "run.a.main", "late"])?,
+        "not open",
+        "a worker recreated a torn-down run",
+    )?;
+    has(
+        &w.ok("carol", &["read", "run.b.main", "--peek"])?,
+        "work for run b",
+        "another run was touched",
+    )?;
+    has(
+        &w.ok("carol", &["read", "lobby", "--peek"])?,
+        "ordinary room",
+        "an ordinary room was touched",
+    )?;
+    // the archive is encrypted and still readable by the person at the terminal, audited
+    let bytes = std::fs::read(&archive).map_err(|e| e.to_string())?;
+    check(
+        !bytes.windows(7).any(|x| x == b"hunter2"),
+        "the archive holds plaintext",
+    )?;
+    let shown = w.admin(&["run-archive", &archive_s, "--run", "a"], "a");
+    check(shown.ok, format!("run-archive failed: {}", shown.stderr))?;
+    has(
+        &shown.stdout,
+        "hunter2",
+        "the archive did not hold what the run held",
+    )?;
+    has(
+        &shown.stdout,
+        "run.a.review",
+        "the second room is missing from the archive",
+    )?;
+    has(
+        &w.admin(&["audit"], "").stdout,
+        "run-archive",
+        "reading the archive is not in the audit",
+    )?;
+    check(
+        !w.admin(&["run-archive", &archive_s, "--run", "b"], "b").ok,
+        "an archive opened for another run",
     )?;
     Ok(vec![])
 }

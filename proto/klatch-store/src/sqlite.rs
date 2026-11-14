@@ -363,6 +363,61 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn delete_rooms_with_prefix(&self, prefix: &str, _now: i64) -> Result<crate::DeletedRooms> {
+        if prefix.is_empty() {
+            return Ok(crate::DeletedRooms::default());
+        }
+        let n = prefix.chars().count() as i64;
+        self.immediate(|| {
+            let rooms: Vec<String> = self.rows(
+                "SELECT DISTINCT room FROM members WHERE substr(room,1,?2)=?1
+                 UNION SELECT DISTINCT room FROM messages WHERE substr(room,1,?2)=?1",
+                params![prefix, n],
+                |r| r.get(0),
+            )?;
+            let messages: i64 = self
+                .conn
+                .query_row(
+                    "SELECT count(*) FROM messages WHERE substr(room,1,?2)=?1",
+                    params![prefix, n],
+                    |r| r.get(0),
+                )
+                .map_err(be)?;
+            // every table that is keyed by a room, found from the schema so a table added later is not forgotten;
+            // the record of refusals is an audit trail and stays
+            let tables: Vec<String> = self.rows(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+                params![],
+                |r| r.get(0),
+            )?;
+            for t in tables.iter().filter(|t| t.as_str() != "refusals") {
+                let has_room: bool = self
+                    .rows(&format!("PRAGMA table_info(\"{t}\")"), params![], |r| {
+                        r.get::<_, String>(1)
+                    })?
+                    .iter()
+                    .any(|c| c == "room");
+                if has_room {
+                    self.exec(
+                        &format!("DELETE FROM \"{t}\" WHERE substr(room,1,?2)=?1"),
+                        params![prefix, n],
+                    )?;
+                }
+            }
+            self.exec(
+                "DELETE FROM policy WHERE substr(key,1,?2)=?1",
+                params![
+                    format!("label:{prefix}"),
+                    (prefix.chars().count() + 6) as i64
+                ],
+            )?;
+            Ok(crate::DeletedRooms {
+                rooms: rooms.len(),
+                messages: messages as usize,
+            })
+        })
+    }
+
     fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
         if anchor.is_empty() {
             return Ok(Vec::new());

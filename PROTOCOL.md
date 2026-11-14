@@ -110,6 +110,8 @@ The label rules refuse a call by label (DESIGN section 30): `clearance` (the mem
 
 **Handoffs (additive within version 1, DESIGN section 32 item 16).** A `post` may carry `kind`, a short name (1 to 40 characters of letters, digits, dot, dash and underscore), and, only with a kind, `payload`, opaque text of at most 16384 bytes without NUL. klatch stores, labels, scrubs, delivers and audits them and never interprets them. The payload is refused by every rule that refuses a body (`credentials`, `canary`, `scrub:<rule>`, the room's label) and the reason never repeats it; under a sealed label the payload is sealed with the body; a bad kind, an empty or oversize payload, or a payload without a kind is `invalid`. A hook shows a handoff's kind and the size of its payload and never the payload; `read`, `wait` and the stream carry it.
 
+`run-unknown` refuses any call on a room named `run.<id>.<name>` whose run is not open, and on a room that only looks like one (`run.`, `run.x`, `run.nope.x`): the rooms of a factory run exist only while a launcher keeps the run open (DESIGN section 32 item 18). `credential` is recorded when a worker's credential is refused (not valid, revoked, expired); it is not a wire call and the circuit breaker does not count it.
+
 The credential rule `credentials` refuses a post, claim reason, release note or status that carries a well known credential shape (a private key, an AWS, GitHub, Slack, Stripe or Google key, an `sk-` API key, a bearer token, a JSON web token); its reason names the kind and never the text.
 
 Policy rules (labels, the scrubber, and so on) use their own names, for example `label.room_below_message`, and

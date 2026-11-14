@@ -116,6 +116,13 @@ impl<'a> ClaimRequest<'a> {
     }
 }
 
+/// What deleting a run's rooms removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DeletedRooms {
+    pub rooms: usize,
+    pub messages: usize,
+}
+
 /// A credential to register: the hash of its token (the token itself is never stored), the clearance it carries, the
 /// member that launched it and how long it lives.
 #[derive(Debug, Clone, Copy)]
@@ -363,6 +370,12 @@ pub trait Store {
     /// The distinct anchors of live claims, sorted: what a poll has to ask about.
     fn anchors_in_use(&self, _now: i64) -> Result<Vec<String>> {
         Ok(Vec::new())
+    }
+    /// Delete every room whose name starts with `prefix` (matched literally), from every table keyed by room, and the
+    /// label policy of those rooms. The record of refusals and the administrative audit are not part of a room and
+    /// stay. An empty prefix deletes nothing. The default deletes nothing.
+    fn delete_rooms_with_prefix(&self, _prefix: &str, _now: i64) -> Result<DeletedRooms> {
+        Ok(DeletedRooms::default())
     }
     /// The label keys this principal holds (DESIGN section 32 item 8). The default ignores them.
     fn set_label_keys(&self, _keys: klatch_keys::LabelKeys) {}
