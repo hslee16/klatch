@@ -1,0 +1,64 @@
+[package]
+name = "klatch"
+description = "A substrate for agent rooms: claims, asks, offers, a board and a durable encrypted log, as a command line, a wire protocol and a Rust client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "klatch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "klatch"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# The wire protocol and the Rust client (`klatch::protocol`, `klatch::client`): serde and serde_json only, no
+# SQLCipher, no OpenSSL, no keystore. A Rust integrator depends on `klatch` with
+# `default-features = false, features = ["client"]`.
+client = ["dep:serde", "dep:serde_json"]
+# The engine and the command line: store, keys, gateway, session, harness and the `klatch` binary.
+cli = [
+    "client",
+    "serde_json/preserve_order",
+    "dep:anyhow",
+    "dep:clap",
+    "dep:libc",
+    "dep:rusqlite",
+    "dep:zeroize",
+    "dep:getrandom",
+    "dep:sha2",
+    "dep:data-encoding",
+    "dep:subtle",
+    "dep:chacha20poly1305",
+    "dep:security-framework",
+]
+# A test build only: lets KLATCH_NOW set the clock so time-dependent behaviour can be tested end to end. The
+# shipped binary is built without it and has no way to move its clock (DESIGN section 26.5).
+test-clock = []
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+libc = { version = "0.2", optional = true }
+zeroize = { version = "1", optional = true }
+getrandom = { version = "0.3", optional = true }
+sha2 = { version = "0.10", optional = true }
+data-encoding = { version = "2", optional = true }
+subtle = { version = "2", optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true

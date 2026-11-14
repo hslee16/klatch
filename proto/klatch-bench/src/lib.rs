@@ -271,7 +271,7 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
             "build",
             "-q",
             "-p",
-            "klatch-cli",
+            "klatch",
             "--features",
             "test-clock",
             "--target-dir",

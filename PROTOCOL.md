@@ -3,7 +3,7 @@
 This is the public contract for anything that plugs into a klatch stream: a coding-agent harness, a
 user-facing agent, a TUI or a web view. It is language neutral and does not depend on how klatch stores data.
 Design background is in `DESIGN.md` section 20 rules 10 to 13. The Rust reference implementation is the
-`klatch-protocol` crate in `proto/`; its tests run every line of `proto/klatch-protocol/fixtures/`.
+`klatch::protocol` module of the `klatch` crate in `proto/`; its tests run every line of `proto/klatch/fixtures/protocol/`.
 
 Status: version 1 of the frames, the codec, the request and response session (`klatch serve --stdio`) and
 streaming (`subscribe`, live push, heartbeats, acknowledgement and resume). The zero-daemon producer is
@@ -159,6 +159,6 @@ standard error and nothing on standard output. Any tool can spawn it and read th
 
 ## 8. Examples
 
-`proto/klatch-protocol/fixtures/server_basic.ndjson`, `client_basic.ndjson` and `forward_compat.ndjson` hold
+`proto/klatch/fixtures/protocol/server_basic.ndjson`, `client_basic.ndjson` and `forward_compat.ndjson` hold
 valid frames for every type, including an unattributed sender, a refusal, both response shapes, and a frame of
 an unknown type that consumers must ignore.

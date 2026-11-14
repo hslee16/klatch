@@ -13,7 +13,7 @@ import klatch_client as kc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.environ.get("KLATCH_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "klatch")
-FIXTURES = os.path.join(HERE, "..", "..", "proto", "klatch-protocol", "fixtures")
+FIXTURES = os.path.join(HERE, "..", "..", "proto", "klatch", "fixtures", "protocol")
 
 
 class Store:

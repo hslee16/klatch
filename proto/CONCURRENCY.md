@@ -33,7 +33,7 @@ The full suite was run 80 times in a row after the fixes with no failure.
 
 Release build, Apple M3 Pro (12 cores), macOS 14.3, four writer threads on separate connections, one reader that
 runs `read` (which also writes the cursor) and `claims` (a pure read) every 10 ms for 5 seconds. One run per row; the
-`measure_hook_path_latency_under_write_load` test prints these (`cargo test --release -p klatch-store -- --ignored
+`measure_hook_path_latency_under_write_load` test prints these (`cargo test --release -p klatch -- --ignored
 --nocapture`).
 
 | Writer pause | Posts per second | `read` p50 | `read` p99 | `read` max | `claims` p99 |

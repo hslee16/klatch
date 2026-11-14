@@ -145,7 +145,7 @@ fn ids_unique(w: &World) -> Res {
 
 fn old_databases(w: &World) -> Res {
     let fixtures =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../klatch-store/fixtures");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../klatch/fixtures/store");
     for (file, expect) in [
         ("prototype-v0.db", "alpha"),
         ("prototype-v2.db", "hello from v2"),
