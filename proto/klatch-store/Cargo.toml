@@ -4,6 +4,7 @@ description = "The Store trait and its SQLite implementation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 klatch-core.workspace = true

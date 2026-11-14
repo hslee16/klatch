@@ -4,6 +4,7 @@ description = "The klatch command line and hook entry point"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [[bin]]
 name = "klatch"
@@ -23,6 +24,7 @@ klatch-harness.workspace = true
 klatch-session.workspace = true
 klatch-store.workspace = true
 klatch-keys.workspace = true
+libc = "0.2"
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]

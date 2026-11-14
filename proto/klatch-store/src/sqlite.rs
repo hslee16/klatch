@@ -84,6 +84,9 @@ impl SqliteStore {
             .map_err(be)?;
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(be)?;
+        // sorting and indexing spill to memory, never to a temporary file (R37)
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .map_err(be)?;
         Self::init(conn)
     }
 
@@ -142,6 +145,11 @@ impl SqliteStore {
         conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
         let outcome = (|| -> Result<()> {
             let version = user_version(&conn)?;
+            if version > SCHEMA_VERSION {
+                return Err(Error::Backend(format!(
+                    "this store was written by a newer klatch (schema {version}, this one knows {SCHEMA_VERSION}); upgrade klatch instead of opening it with an older one"
+                )));
+            }
             if version < SCHEMA_VERSION {
                 if version == 0 && !has_table(&conn, "messages")? {
                     conn.execute_batch(SCHEMA).map_err(be)?;

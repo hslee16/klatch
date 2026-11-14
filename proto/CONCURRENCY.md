@@ -53,3 +53,25 @@ runs `read` (which also writes the cursor) and `claims` (a pure read) every 10 m
 - **Limits of this evidence:** one machine, one run per row, threads for the benchmark (processes for the CLI tests),
   macOS only (CI also runs the tests on Linux), local disk only. A database on a network filesystem is still not
   supported (question 17).
+
+## With encryption (ticket #166, 2026-11-14)
+
+The store is now SQLCipher under a raw 256-bit key. The cost that matters is per process, because every command and
+every hook is a new process that opens the store and fetches the key. Release builds, Apple M3 Pro, macOS 14.3, 150
+runs of each command against a store of 300 messages in 5 rooms, run one after another as a hook would be. The old
+column is the build deployed before encryption (plaintext).
+
+| Command | Plaintext p50 / p99 | Encrypted, key file p50 / p99 | Encrypted, Keychain p50 / p99 |
+|---|---|---|---|
+| `hook` (nothing to show) | 3.7 / 5.4 ms | 6.5 / 8.0 ms | 20.2 / 32.3 ms |
+| `who` | 3.1 / 3.6 ms | 5.8 / 7.4 ms | 19.6 / 31.9 ms |
+| `post` | 3.2 / 3.8 ms | 5.9 / 6.7 ms | not measured |
+
+In process (from the spike, `experiments/crypto-spike`): reading 20 messages 0.007 ms with and without SQLCipher; a
+5000-row bulk insert about 550k rows a second plain and 485k with SQLCipher; open, key and first query 0.21 ms plain
+and 0.34 ms with a raw key. A passphrase run through SQLCipher's default key derivation costs 77 ms per open, which is
+why the database key is never derived from a passphrase.
+
+**Budget.** A hook may add at most 50 ms at p99 over its work, so a prompt is never visibly slower. The measured
+worst case, the Keychain, is 32 ms at p99, of which about 17 ms is the keystore. Within budget. The first read of the
+key by a newly built binary on macOS takes about 5 seconds once (#372); it is a one-time cost of each new build.
