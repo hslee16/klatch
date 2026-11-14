@@ -5,8 +5,10 @@ fn a_digest_collects_unread_and_others_claims_and_advances_the_cursor() {
     let g = open();
     g.join(&alice(), "r").unwrap();
     g.post(&bob(), "r", "ping").unwrap();
-    g.claim(&bob(), "r", "src", 50, "").unwrap();
-    g.claim(&alice(), "r", "docs", 50, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("src", 50, ""))
+        .unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("docs", 50, ""))
+        .unwrap();
     let d = g.digest(&alice()).unwrap();
     assert_eq!(d.now, 100);
     assert_eq!(d.rooms.len(), 1);
@@ -44,7 +46,8 @@ fn an_ask_claim_lease_is_capped_and_a_digest_tells_the_asker_once_when_it_lapses
     g.store
         .post(Seat::new("r", "alice"), "seeking: a thing", 900)
         .unwrap();
-    g.claim(&bob(), "r", "ask:1", 3600, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("ask:1", 3600, ""))
+        .unwrap();
     let held = g.claims(&alice(), "r").unwrap();
     assert_eq!(
         held[0].expires,
@@ -75,7 +78,8 @@ fn an_ask_claim_lease_is_capped_and_a_digest_tells_the_asker_once_when_it_lapses
 fn a_digest_shows_a_claim_once_not_on_every_call() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.claim(&bob(), "r", "src", 50, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("src", 50, ""))
+        .unwrap();
     assert_eq!(g.digest(&alice()).unwrap().rooms[0].claims.len(), 1);
     for _ in 0..3 {
         let d = g.digest(&alice()).unwrap();
@@ -88,7 +92,8 @@ fn a_digest_shows_a_claim_once_not_on_every_call() {
 fn a_digest_reports_a_release_once() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.claim(&bob(), "r", "src", 50, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("src", 50, ""))
+        .unwrap();
     g.digest(&alice()).unwrap();
     g.release(&bob(), "r", "src").unwrap();
     let d = g.digest(&alice()).unwrap();
@@ -102,7 +107,8 @@ fn a_digest_reports_a_release_once() {
 fn a_digest_still_delivers_messages_when_claims_are_unchanged() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.claim(&bob(), "r", "src", 50, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("src", 50, ""))
+        .unwrap();
     g.digest(&alice()).unwrap();
     g.post(&bob(), "r", "later").unwrap();
     let d = g.digest(&alice()).unwrap();

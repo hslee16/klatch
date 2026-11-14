@@ -35,6 +35,31 @@ pub(crate) trait AsSpy {
     fn spy_fail(&self, fail: bool);
 }
 
+/// What a claim asks for: the path, how long it should last, why, and whether it is shared with every scope.
+#[derive(Debug, Clone, Copy)]
+pub struct ClaimSpec<'a> {
+    pub path: &'a str,
+    pub ttl: i64,
+    pub reason: &'a str,
+    pub shared: bool,
+}
+
+impl<'a> ClaimSpec<'a> {
+    pub fn new(path: &'a str, ttl: i64, reason: &'a str) -> Self {
+        Self {
+            path,
+            ttl,
+            reason,
+            shared: false,
+        }
+    }
+
+    /// The same claim, shared with every scope when `shared`.
+    pub fn shared(self, shared: bool) -> Self {
+        Self { shared, ..self }
+    }
+}
+
 pub struct Gateway<S: Store> {
     store: S,
     clock: Box<dyn Clock>,
@@ -218,45 +243,14 @@ impl<S: Store> Gateway<S> {
         self.store.members(room)
     }
 
-    pub fn claim(
-        &self,
-        who: &Principal,
-        room: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-    ) -> Result<()> {
-        self.claim_with(who, room, path, ttl, reason, false)
-    }
-
-    /// Declare the scope the caller works in (a repository, a bot's area, a project): claims then conflict only
-    /// inside one scope (DESIGN section 27).
-    pub fn set_scope(&self, who: &Principal, scope: &str) -> Result<()> {
-        check_member(who)?;
-        if !klatch_core::valid_scope(scope) {
-            return Err(Error::Invalid(
-                "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
-            ));
-        }
-        self.store.set_member_scope(&who.member, scope, self.now())
-    }
-
-    /// The scope the caller declared or was given, if any.
-    pub fn scope_of(&self, who: &Principal) -> Result<Option<String>> {
-        check_member(who)?;
-        self.store.member_scope(&who.member)
-    }
-
-    /// `claim`, optionally `shared`: a shared claim, like any `ask:<N>`, conflicts with every scope.
-    pub fn claim_with(
-        &self,
-        who: &Principal,
-        room: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        shared: bool,
-    ) -> Result<()> {
+    /// Take a claim. A shared claim, like any `ask:<N>`, conflicts with every scope.
+    pub fn claim(&self, who: &Principal, room: &str, spec: &ClaimSpec) -> Result<()> {
+        let ClaimSpec {
+            path,
+            ttl,
+            reason,
+            shared,
+        } = *spec;
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
@@ -280,6 +274,24 @@ impl<S: Store> Gateway<S> {
         )
     }
 
+    /// Declare the scope the caller works in (a repository, a bot's area, a project): claims then conflict only
+    /// inside one scope (DESIGN section 27).
+    pub fn set_scope(&self, who: &Principal, scope: &str) -> Result<()> {
+        check_member(who)?;
+        if !klatch_core::valid_scope(scope) {
+            return Err(Error::Invalid(
+                "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
+            ));
+        }
+        self.store.set_member_scope(&who.member, scope, self.now())
+    }
+
+    /// The scope the caller declared or was given, if any.
+    pub fn scope_of(&self, who: &Principal) -> Result<Option<String>> {
+        check_member(who)?;
+        self.store.member_scope(&who.member)
+    }
+
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {
         check_member(who)?;
         check_room(room)?;
@@ -293,8 +305,7 @@ impl<S: Store> Gateway<S> {
     pub fn release_with_note(
         &self,
         who: &Principal,
-        room: &str,
-        path: &str,
+        (room, path): (&str, &str),
         note: &str,
     ) -> Result<()> {
         check_member(who)?;
@@ -342,8 +353,7 @@ impl<S: Store> Gateway<S> {
         &self,
         who: &Principal,
         room: &str,
-        after_seq: i64,
-        limit: usize,
+        (after_seq, limit): (i64, usize),
     ) -> Result<Vec<Message>> {
         check_member(who)?;
         check_room(room)?;

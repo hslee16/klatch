@@ -16,7 +16,8 @@ fn post_then_read_round_trips_through_the_gateway() {
 #[test]
 fn the_injected_clock_is_the_only_source_of_time() {
     let g = open();
-    g.claim(&alice(), "r", "src", 10, "").unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("src", 10, ""))
+        .unwrap();
     assert_eq!(g.claims(&alice(), "r").unwrap()[0].expires, 110);
     assert_eq!(g.now(), 100);
 }
@@ -26,7 +27,7 @@ fn tail_includes_everyones_messages_and_head_reports_the_top_seq() {
     let g = open();
     g.post(&alice(), "r", "one").unwrap();
     g.post(&bob(), "r", "two").unwrap();
-    assert_eq!(g.tail(&alice(), "r", 0, 10).unwrap().len(), 2);
+    assert_eq!(g.tail(&alice(), "r", (0, 10)).unwrap().len(), 2);
     assert_eq!(g.head(&alice(), "r").unwrap(), 2);
 }
 
@@ -49,7 +50,7 @@ fn a_verified_principal_posts_a_verified_message_and_an_unattributed_one_stays_u
         .unwrap();
     g.post(&Principal::unattributed("eve"), "r", "unproven")
         .unwrap();
-    let got = g.tail(&alice(), "r", 0, 10).unwrap();
+    let got = g.tail(&alice(), "r", (0, 10)).unwrap();
     assert_eq!(got[0].attribution, klatch_core::Attribution::Verified);
     assert_eq!(got[1].attribution, klatch_core::Attribution::Unattributed);
 }
@@ -59,7 +60,7 @@ fn messages_are_posted_under_the_default_label() {
     let g = open();
     g.post(&alice(), "r", "x").unwrap();
     assert_eq!(
-        g.tail(&alice(), "r", 0, 10).unwrap()[0].label,
+        g.tail(&alice(), "r", (0, 10)).unwrap()[0].label,
         DEFAULT_LABEL
     );
     assert_eq!(DEFAULT_LABEL, "public");
