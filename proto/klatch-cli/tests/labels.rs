@@ -39,6 +39,9 @@ fn the_label_commands_need_a_real_terminal_like_every_admin_command() {
         vec!["admin", "cap", "internal"],
         vec!["admin", "chain", "a,b"],
         vec!["admin", "refusals"],
+        vec!["admin", "scrub-add", "hosts", "quokka"],
+        vec!["admin", "scrub-remove", "hosts"],
+        vec!["admin", "scrub-list"],
     ] {
         let err = h.fail("alice", &args);
         assert!(
@@ -69,4 +72,24 @@ fn the_wire_post_takes_a_label_and_refuses_one_above_the_room() {
     };
     assert!(ok("a"));
     assert!(!ok("b"));
+}
+
+#[test]
+fn a_direct_message_reaches_only_its_recipient() {
+    let h = Home::new();
+    let out = h.ok("alice", &["dm", "bob", "just", "for", "you"]);
+    assert!(out.contains("dm.alice.bob"), "{out}");
+    assert!(
+        h.ok("bob", &["read", "dm.alice.bob"])
+            .contains("just for you")
+    );
+    let err = h.fail("carol", &["read", "dm.alice.bob"]);
+    assert!(
+        err.contains("direct message between two other members"),
+        "{err}"
+    );
+    assert!(
+        h.fail("alice", &["dm", "alice", "me"])
+            .contains("one other member")
+    );
 }

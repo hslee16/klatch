@@ -1,12 +1,15 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
-    vec![Scenario {
-        name: "labels_keep_a_private_fact_out_of_a_public_room_and_every_refusal_is_audited",
-        origin: "#40 to #45, R7 to R9, R27",
-        layer: "fault",
-        run: labels_and_clearance,
-    }]
+    vec![
+        scrub_and_dm(),
+        Scenario {
+            name: "labels_keep_a_private_fact_out_of_a_public_room_and_every_refusal_is_audited",
+            origin: "#40 to #45, R7 to R9, R27",
+            layer: "fault",
+            run: labels_and_clearance,
+        },
+    ]
 }
 
 fn labels_and_clearance(w: &World) -> Res {
@@ -74,6 +77,77 @@ fn labels_and_clearance(w: &World) -> Res {
         &w.refused("priv", &["post", "vault", "one more"])?,
         "above your clearance internal",
         "a lowered clearance applies at once",
+    )?;
+    Ok(vec![])
+}
+
+pub(super) fn scrub_and_dm() -> Scenario {
+    Scenario {
+        name: "the_scrubber_refuses_private_terms_and_direct_messages_are_capped_rooms",
+        origin: "#43, #44, R9",
+        layer: "fault",
+        run: scrub_and_direct_messages,
+    }
+}
+
+fn scrub_and_direct_messages(w: &World) -> Res {
+    w.set_clock(T0);
+    check(
+        w.admin(&["scrub-add", "hosts", "quokka.internal"], "").ok,
+        "scrub-add failed",
+    )?;
+    let refused = w.refused("alice", &["post", "town", "ssh to QUOKKA.internal"])?;
+    has(
+        &refused,
+        "private-term rule hosts",
+        "a listed term is refused by rule",
+    )?;
+    lacks(
+        &refused.to_lowercase(),
+        "quokka",
+        "the refusal repeated the term",
+    )?;
+    w.ok("alice", &["post", "town", "a quokka is a marsupial"])?;
+    let list = w.admin(&["scrub-list"], "");
+    has(
+        &list.stdout,
+        "hosts\tquokka.internal",
+        "the list shows the rule",
+    )?;
+    check(
+        w.admin(&["scrub-remove", "hosts"], "").ok,
+        "scrub-remove failed",
+    )?;
+    w.ok("alice", &["post", "town", "quokka.internal is fine now"])?;
+    // a direct message is a two-member room capped at the lower clearance
+    check(
+        w.admin(&["clear", "alice", "private"], "").ok,
+        "clear failed",
+    )?;
+    check(
+        w.admin(&["clear", "bob", "internal"], "").ok,
+        "clear failed",
+    )?;
+    let sent = w.ok("alice", &["dm", "bob", "just between us"])?;
+    has(
+        &sent,
+        "room dm.alice.bob",
+        "a direct message names its room",
+    )?;
+    has(
+        &w.ok("bob", &["read", "dm.alice.bob"])?,
+        "just between us",
+        "the recipient reads it",
+    )?;
+    has(
+        &w.refused("alice", &["dm", "bob", "--label", "private", "too high"])?,
+        "cannot go into room dm.alice.bob",
+        "a message above the lower clearance is refused",
+    )?;
+    has(
+        &w.refused("carol", &["read", "dm.alice.bob"])?,
+        "direct message between two other members",
+        "a third member is refused",
     )?;
     Ok(vec![])
 }

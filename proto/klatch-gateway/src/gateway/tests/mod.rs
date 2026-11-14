@@ -13,10 +13,12 @@ mod budget;
 mod claims;
 mod credentials;
 mod digest;
+mod dm;
 mod guarding;
 mod labels;
 mod members;
 mod mute;
+mod scrub;
 mod stream;
 
 pub(super) fn alice() -> Principal {

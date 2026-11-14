@@ -22,7 +22,9 @@ pub struct Refused {
 
 mod admin;
 mod budget;
+mod dm;
 mod policy;
+mod scrub;
 
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;
@@ -117,7 +119,7 @@ impl<S: Store> Gateway<S> {
                 "empty message: there is nothing to post".into(),
             ));
         }
-        self.refuse_credentials(who, (room, "post"), body)?;
+        self.refuse_text(who, (room, "post"), body)?;
         self.authorize(
             who,
             &Operation::Post {
@@ -204,7 +206,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_status(status)?;
-        self.refuse_credentials(who, (room, "status"), status)?;
+        self.refuse_text(who, (room, "status"), status)?;
         self.authorize(
             who,
             &Operation::Status {
@@ -315,7 +317,7 @@ impl<S: Store> Gateway<S> {
         check_room(room)?;
         check_path(path)?;
         check_reason(reason)?;
-        self.refuse_credentials(who, (room, "claim"), reason)?;
+        self.refuse_text(who, (room, "claim"), reason)?;
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
@@ -372,7 +374,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
-        self.refuse_credentials(who, (room, "release"), note)?;
+        self.refuse_text(who, (room, "release"), note)?;
         let note = klatch_core::flat(note);
         if note.chars().count() > 300 {
             return Err(Error::Invalid(
@@ -536,6 +538,7 @@ impl<S: Store> Gateway<S> {
                     reason: format!("room {room} is closed by the admin; it is read-only"),
                 });
             }
+            self.check_dm(who, room)?;
             if !matches!(op, Operation::Release { .. }) {
                 self.check_clearance(who, room)?;
             }

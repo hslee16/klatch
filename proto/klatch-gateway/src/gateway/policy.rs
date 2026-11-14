@@ -8,7 +8,7 @@ use klatch_store::NewRefusal;
 
 impl<S: Store> Gateway<S> {
     /// The label order: the default four levels unless the administrator set a chain.
-    fn chain(&self) -> Result<LabelChain> {
+    pub(super) fn chain(&self) -> Result<LabelChain> {
         match self.store.policy_get("chain")? {
             Some(text) => LabelChain::parse(&text).map_err(Error::Backend),
             None => Ok(LabelChain::default()),
@@ -23,8 +23,14 @@ impl<S: Store> Gateway<S> {
             .unwrap_or_else(|| chain.default_cap().to_string()))
     }
 
-    /// A room's label; the lowest level for a room nobody labelled.
+    /// A room's label; the lowest level for a room nobody labelled. A direct message room's label is the lower of
+    /// its two members' clearances.
     pub fn room_label(&self, room: &str) -> Result<String> {
+        if let Some((a, b)) = self.dm_pair(room)? {
+            let (ca, cb) = (self.clearance_of(&a)?, self.clearance_of(&b)?);
+            let chain = self.chain()?;
+            return Ok(chain.min(&ca, &cb).unwrap_or("unknown").to_string());
+        }
         match self.store.policy_get(&format!("label:{room}"))? {
             Some(label) => Ok(label),
             None => Ok(self.chain()?.lowest().to_string()),
@@ -89,14 +95,16 @@ impl<S: Store> Gateway<S> {
         }
     }
 
-    /// Refuse text that looks like a credential, and keep a record of the refusal.
-    pub(super) fn refuse_credentials(
+    /// Refuse text that looks like a credential or matches a private term, and keep a record of the refusal.
+    pub(super) fn refuse_text(
         &self,
         who: &Principal,
         (room, operation): (&str, &str),
         text: &str,
     ) -> Result<()> {
-        check_no_credentials(text).inspect_err(|e| self.note_refusal(who, room, operation, e))
+        check_no_credentials(text)
+            .and_then(|()| self.check_scrub(room, text))
+            .inspect_err(|e| self.note_refusal(who, room, operation, e))
     }
 
     /// Set a room's label.

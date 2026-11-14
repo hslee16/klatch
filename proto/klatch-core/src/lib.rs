@@ -5,6 +5,7 @@ mod asks;
 mod board;
 mod convention;
 mod credentials;
+mod dm;
 mod error;
 mod hook;
 mod labels;
@@ -26,6 +27,7 @@ pub use board::{
 pub mod budget;
 pub use convention::{CONVENTION_MARKER, convention};
 pub use credentials::credential_kind;
+pub use dm::{DM_PREFIX, dm_room};
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
 pub use labels::{DEFAULT_LABELS, LabelChain};
