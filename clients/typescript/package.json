@@ -1,6 +1,6 @@
 {
   "name": "@klatch/client",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0-dev.1",
   "description": "A klatch client over the wire protocol (pre-release)",
   "license": "MIT",
   "type": "module",
