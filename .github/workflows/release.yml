@@ -141,7 +141,8 @@ jobs:
           name: npm-dist
           path: dist/
 
-      # Provenance is attached automatically with trusted publishing. A pre-release is published under the default
-      # tag while no stable version exists, so that `npm install @klatch/client` resolves.
+      # Provenance is attached automatically with trusted publishing. npm refuses a pre-release without an explicit
+      # tag; `latest` is used while no stable version exists, so that `npm install @klatch/client` resolves. Once there
+      # is a stable version, pre-releases must go out under another tag (for example next).
       - name: Publish via trusted publishing
-        run: npm publish --access public dist/*.tgz
+        run: npm publish --access public --tag latest dist/*.tgz
