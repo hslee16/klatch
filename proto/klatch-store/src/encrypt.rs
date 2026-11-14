@@ -207,3 +207,64 @@ fn swap(path: &Path, enc: &Path, old: &Path) -> Result<()> {
     std::fs::hard_link(path, old).map_err(|e| io("keeping the old copy", e))?;
     std::fs::rename(enc, path).map_err(|e| io("putting the copy in place", e))
 }
+
+/// Whether the encrypted file at `path` opens with `key` and passes SQLCipher's page check. Changes nothing.
+pub(crate) fn check_opens(path: &Path, key: &Key) -> Result<()> {
+    let sql = |e: rusqlite::Error| io("checking the copy", e);
+    let c = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .map_err(sql)?;
+    c.pragma_update(None, "key", key.sqlcipher_pragma().as_str())
+        .map_err(|e| io("checking the copy", e))?;
+    c.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map_err(|_| io("checking the copy", "it does not open with this key"))?;
+    let problems: Vec<String> = c
+        .prepare("PRAGMA cipher_integrity_check")
+        .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+        .map_err(sql)?;
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(io(
+            "checking the copy",
+            format!("{} damaged pages", problems.len()),
+        ))
+    }
+}
+
+/// Replace the store at `db` with the backup at `backup`. The backup is checked first (it must open with `key`);
+/// the store it replaces is folded into one file and kept beside it as `<db>.before-restore`, still encrypted, so a
+/// mistaken restore can be undone. A refused restore changes nothing.
+pub fn restore_backup(db: &Path, backup: &Path, key: &Key) -> Result<()> {
+    let restoring = sidecar(db, ".restoring");
+    let aside = sidecar(db, ".before-restore");
+    let _lock = lock_dir(db)?;
+    let _ = std::fs::remove_file(&restoring);
+    let outcome = (|| -> Result<()> {
+        std::fs::copy(backup, &restoring).map_err(|e| io("reading the backup", e))?;
+        check_opens(&restoring, key)?;
+        if db.exists() {
+            // the current store must open with this key, and its log is folded in so the kept copy is whole
+            let c = Connection::open(db).map_err(|e| io("opening the current store", e))?;
+            c.pragma_update(None, "key", key.sqlcipher_pragma().as_str())
+                .map_err(|e| io("opening the current store", e))?;
+            c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                .map_err(|e| io("opening the current store (is the key right?)", e))?;
+            drop(c);
+            for ext in ["-wal", "-shm"] {
+                let _ = std::fs::remove_file(sidecar(db, ext));
+            }
+            let _ = std::fs::remove_file(&aside);
+            std::fs::rename(db, &aside).map_err(|e| io("keeping the current store", e))?;
+        }
+        std::fs::rename(&restoring, db).map_err(|e| io("putting the backup in place", e))
+    })();
+    if outcome.is_err() {
+        let _ = std::fs::remove_file(&restoring);
+    }
+    outcome
+}
