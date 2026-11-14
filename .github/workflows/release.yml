@@ -15,12 +15,18 @@ name: Release
 on:
   release:
     types: [published]
-  # Re-run only the npm jobs for an existing tag, for example after a failed stage. The version in package.json must
-  # not already be on npm. Still needs the release environment approval and the approval on npmjs.com.
+  # Run one registry's job for an existing tag, for example after a failed npm stage or to try the crates.io job on its
+  # own. The version of that package must not already be published. Still needs the release environment approval
+  # (and, for npm, the approval on npmjs.com).
   workflow_dispatch:
     inputs:
       tag:
-        description: The release tag the npm package belongs to (for example v0.1.0.dev1)
+        description: The release tag the package belongs to (for example v0.1.0.dev1)
+        required: true
+      target:
+        description: Which registry to publish to
+        type: choice
+        options: [npm, crates]
         required: true
 
 permissions:
@@ -93,7 +99,7 @@ jobs:
 
   npm-build:
     name: Build the npm package
-    if: vars.NPM_TRUSTED_PUBLISHING == 'true'
+    if: vars.NPM_TRUSTED_PUBLISHING == 'true' && (github.event_name == 'release' || inputs.target == 'npm')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -165,7 +171,7 @@ jobs:
 
   crates-publish:
     name: Publish to crates.io
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.target == 'crates'
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -181,7 +187,7 @@ jobs:
 
       - name: The tag must name the version in Cargo.toml
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
