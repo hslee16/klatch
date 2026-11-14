@@ -100,7 +100,7 @@ fn wake(w: &World) -> Res {
         format!("did not wake: {:?}", o.status.code()),
     )?;
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
-    has(&err, "klatch read r", "the pointer names the command")?;
+    has(&err, "--discover read r", "the pointer names the command")?;
     lacks(&err, "hunter2", "the pointer carried the message")?;
     lacks(&err, "peer", "the pointer named the sender")?;
     // the message is still unread, for the hook to show

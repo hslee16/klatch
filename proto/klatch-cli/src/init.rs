@@ -467,14 +467,16 @@ struct Optional {
     event: &'static str,
     entry: fn(&str) -> Result<Value, String>,
     owns: fn(&Value) -> bool,
+    /// Replace an existing entry whole, not only its command.
+    refresh: bool,
 }
 
 /// The tools the claim hook looks at.
 const ENFORCE_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 
 /// How long the wake watcher may run, and the timeout Claude Code gets for it (a little more).
-const WAKE_WATCH_SECS: u64 = 540;
-const WAKE_HOOK_TIMEOUT_SECS: u64 = 600;
+const WAKE_WATCH_SECS: u64 = 3500;
+const WAKE_HOOK_TIMEOUT_SECS: u64 = 3600;
 
 fn is_wake_command(cmd: &str) -> bool {
     cmd.contains("klatch") && cmd.contains(" --discover wake")
@@ -523,6 +525,16 @@ fn set_optional(
     let list = event_list(hooks, spec.event)?;
     if !sync_owned(list, &cmd, how != Switch::Off, spec.owns) && how == Switch::On {
         list.push(entry);
+    } else if how != Switch::Off && spec.refresh {
+        // an entry written by an older klatch: bring every field up to date, not just the command
+        for hook in list
+            .iter_mut()
+            .filter_map(|m| m.get_mut("hooks").and_then(Value::as_array_mut))
+            .flatten()
+            .filter(|h| (spec.owns)(h))
+        {
+            *hook = entry["hooks"][0].clone();
+        }
     }
     if list.is_empty() {
         hooks.remove(spec.event);
@@ -536,6 +548,7 @@ pub fn set_enforce(settings: &mut Value, bin: &str, how: Switch) -> Result<(), S
         event: "PreToolUse",
         entry: enforce_entry,
         owns: is_ours,
+        refresh: false,
     };
     set_optional(settings, bin, (&spec, how))
 }
@@ -549,6 +562,7 @@ pub fn set_wake(settings: &mut Value, bin: &str, how: Switch) -> Result<(), Stri
             event,
             entry: wake_entry,
             owns: is_wake,
+            refresh: true,
         };
         set_optional(settings, bin, (&spec, how))?;
     }
@@ -860,11 +874,11 @@ mod tests {
         let wake = &list[1]["hooks"][0];
         assert_eq!(
             wake["command"],
-            "/opt/klatch/klatch --discover wake --timeout 540"
+            "/opt/klatch/klatch --discover wake --timeout 3500"
         );
         assert_eq!(wake["async"], true);
         assert_eq!(wake["asyncRewake"], true);
-        assert_eq!(wake["timeout"], 600);
+        assert_eq!(wake["timeout"], 3600);
         let once = v.clone();
         set_wake(&mut v, BIN, Switch::On).unwrap();
         assert_eq!(v, once);
@@ -900,7 +914,7 @@ mod tests {
         let stop = &v["hooks"]["Stop"][0]["hooks"][0];
         assert_eq!(
             stop["command"],
-            "/opt/klatch/klatch --discover wake --timeout 540"
+            "/opt/klatch/klatch --discover wake --timeout 3500"
         );
         assert_eq!(
             (stop["async"].as_bool(), stop["asyncRewake"].as_bool()),
@@ -918,5 +932,21 @@ mod tests {
         set_wake(&mut other, BIN, Switch::On).unwrap();
         set_wake(&mut other, BIN, Switch::Off).unwrap();
         assert_eq!(commands(&other, "Stop"), vec!["/usr/bin/mine".to_string()]);
+    }
+    #[test]
+    fn rerunning_init_brings_an_old_wake_entry_up_to_date_including_its_timeout() {
+        let mut v = json!({"hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "/old/klatch --discover wake --timeout 540", "async": true, "asyncRewake": true, "timeout": 600}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "/old/klatch --discover wake --timeout 540", "async": true, "asyncRewake": true, "timeout": 600}]}]
+        }});
+        set_wake(&mut v, BIN, Switch::Keep).unwrap();
+        for event in ["SessionStart", "Stop"] {
+            let h = &v["hooks"][event][0]["hooks"][0];
+            assert_eq!(
+                h["command"], "/opt/klatch/klatch --discover wake --timeout 3500",
+                "{event}"
+            );
+            assert_eq!(h["timeout"], 3600, "{event}");
+        }
     }
 }

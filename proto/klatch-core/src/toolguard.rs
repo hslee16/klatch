@@ -79,7 +79,7 @@ pub fn clean_path(path: &str, cwd: &str) -> String {
 }
 
 /// The paths a shell command names: its words, split at quotes, redirections, separators and `=` or `:`.
-fn words(command: &str) -> impl Iterator<Item = &str> {
+pub fn command_words(command: &str) -> impl Iterator<Item = &str> {
     command
         .split(|c: char| c.is_whitespace() || "'\"`;|&<>()=:,".contains(c))
         .filter(|w| !w.is_empty())
@@ -147,7 +147,7 @@ pub fn judge_tool(call: &ToolCall, who: &Asker, held: &[Held]) -> ToolVerdict {
                 let p = h.claim.path.trim_end_matches('/');
                 let claim = clean_path(p, call.cwd);
                 call.command.contains(p)
-                    || words(call.command).any(|w| under(&claim, &clean_path(w, call.cwd)))
+                    || command_words(call.command).any(|w| under(&claim, &clean_path(w, call.cwd)))
             })
             .map(|h| describe(h, who.now))
             .collect();

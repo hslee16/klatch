@@ -108,8 +108,8 @@ enum Cmd {
     /// Watch for unread messages and, when one arrives, exit 2 with a one-line pointer (no content): the command
     /// of an `asyncRewake` hook. Quiet at its timeout. Moves no read cursor; refreshes presence.
     Wake {
-        /// Seconds to watch (default 540, at most 3600)
-        #[arg(long, default_value_t = 540)]
+        /// Seconds to watch (default 3500, at most 3600)
+        #[arg(long, default_value_t = 3500)]
         timeout: u64,
     },
     /// List members of a room with last activity

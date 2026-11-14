@@ -39,5 +39,6 @@ pub use model::{
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{flat, mentions, norm, overlaps, secs_between, valid_name};
 pub use toolguard::{
-    Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, judge_tool, patch_targets,
+    Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
+    patch_targets,
 };
