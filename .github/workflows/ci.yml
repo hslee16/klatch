@@ -19,10 +19,11 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
     defaults:
       run:
         working-directory: proto
@@ -61,7 +62,9 @@ jobs:
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)
         run: cargo test -p klatch --features test-clock --test no_plaintext --locked
+      # A Docker action, which only runs on Linux; the policy does not depend on the operating system.
       - name: Dependency policy (licences, advisories, sources, refused crypto crates)
+        if: runner.os == 'Linux'
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: proto/Cargo.toml
