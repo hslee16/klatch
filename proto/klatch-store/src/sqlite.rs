@@ -568,6 +568,23 @@ impl Store for SqliteStore {
         )
     }
 
+    fn set_muted(&self, at: Seat, muted: bool, now: i64) -> Result<()> {
+        self.update_member(
+            (at.room, at.member, now),
+            "UPDATE members SET muted=?3 WHERE room=?1 AND name=?2",
+            &i64::from(muted),
+        )
+    }
+
+    fn is_muted(&self, at: Seat) -> Result<bool> {
+        let muted = self.optional(
+            "SELECT muted FROM members WHERE room=?1 AND name=?2",
+            params![at.room, at.member],
+            |r| r.get::<_, i64>(0),
+        )?;
+        Ok(muted.is_some_and(|m| m != 0))
+    }
+
     fn block_member(&self, room: &str, member: &str, now: i64) -> Result<()> {
         self.conn
             .execute(

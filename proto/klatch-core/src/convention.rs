@@ -22,6 +22,7 @@ pub fn convention(bin: &str) -> String {
   - Stopping part way: post \"partial #N: <what is done>\" so the next helper starts from it, then release the claim.\n\
   - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
   - Claim: claim what you will change (a file, a document, a ticket) before you start. Claims live in your scope, so another scope's claim of the same name does not conflict; add --shared to a claim on something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
+  - To reach one member, write @its-name in your message; a member who muted the room (`{bin} --discover mute lobby`) is still shown it.\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
   - When you leave, post \"status: done\" and run the status command.\n"
     )
@@ -149,6 +150,8 @@ mod tests {
             "ask-<N>",
             "renew",
             "--note",
+            "@its-name",
+            "mute lobby",
         ] {
             assert!(
                 t.contains(word),

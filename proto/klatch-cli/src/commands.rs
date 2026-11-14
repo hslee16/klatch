@@ -56,6 +56,8 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             t.set_status(&room, &status.join(" "))?;
             println!("status set");
         }
+        Cmd::Mute { room } => mute(t, &room, true)?,
+        Cmd::Unmute { room } => mute(t, &room, false)?,
         Cmd::Board { room } => print!("{}", render_board(&t.board(&room)?, ctx.now)),
         Cmd::Asks { room } => asks(ctx, &room)?,
         Cmd::Claims { room } => claims(ctx, &room)?,
@@ -74,6 +76,16 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         Cmd::Init { .. } | Cmd::Admin { .. } | Cmd::Serve { .. } | Cmd::Stream { .. } => {
             unreachable!("handled before dispatch")
         }
+    }
+    Ok(())
+}
+
+fn mute(t: &dyn Transport, room: &str, muted: bool) -> Result<()> {
+    t.set_muted(room, muted)?;
+    if muted {
+        println!("muted {room}: your hook shows only messages that mention you (read shows all)");
+    } else {
+        println!("unmuted {room}");
     }
     Ok(())
 }

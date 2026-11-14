@@ -30,4 +30,4 @@ pub use model::{
     ReleaseNote, ReleasedClaim,
 };
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
-pub use text::{flat, norm, overlaps, secs_between, valid_name};
+pub use text::{flat, mentions, norm, overlaps, secs_between, valid_name};

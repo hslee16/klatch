@@ -41,6 +41,11 @@ pub enum Operation {
     Ack {
         room: String,
     },
+    /// Muting or unmuting a room for the caller.
+    Mute {
+        room: String,
+        muted: bool,
+    },
     /// An administrative act (`klatch admin`): close or reopen a room, pause or resume all, remove or allow a
     /// member. `action` names it; `target` is the room or member it is about.
     Admin {
@@ -80,6 +85,7 @@ impl Operation {
             | Operation::Claims { room }
             | Operation::Subscribe { room }
             | Operation::Status { room, .. }
+            | Operation::Mute { room, .. }
             | Operation::Ack { room } => Some(room),
             Operation::Admin { .. } => None,
         }

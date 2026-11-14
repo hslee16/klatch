@@ -117,6 +117,10 @@ enum Cmd {
         #[arg(long)]
         note: Option<String>,
     },
+    /// Mute a room: your hook then shows only messages that mention you as @your-name (`read` still shows all)
+    Mute { room: String },
+    /// Unmute a room
+    Unmute { room: String },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
     /// Show when each hook event last ran for you (or for another member with --of), without any content

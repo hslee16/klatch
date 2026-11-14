@@ -6,6 +6,27 @@ pub fn valid_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
+fn name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
+}
+
+/// Whether `body` mentions `member` as `@member`: the name stands alone, so `@bob` does not mention `bob-1` or
+/// `bob.smith`, a name inside another word (an address) does not count, and a full stop that ends a sentence does not
+/// belong to the name (#20).
+pub fn mentions(body: &str, member: &str) -> bool {
+    let target = format!("@{member}");
+    body.match_indices(&target).any(|(i, _)| {
+        let before = body[..i].chars().next_back();
+        let rest = &body[i + target.len()..];
+        let after_ok = match rest.chars().next() {
+            None => true,
+            Some('.') => rest[1..].chars().next().is_none_or(|n| !name_char(n)),
+            Some(c) => !name_char(c),
+        };
+        before.is_none_or(|c| !name_char(c)) && after_ok
+    })
+}
+
 /// Seconds from `earlier` to `later`, never negative: a clock set back, or a time written by a machine whose clock
 /// is ahead, must not print as a negative age (#295). Decisions that compare times keep the raw difference.
 pub fn secs_between(later: i64, earlier: i64) -> i64 {
@@ -47,6 +68,38 @@ mod tests {
         assert!(!valid_name("a/b"));
         assert!(!valid_name(&"x".repeat(41)));
         assert!(valid_name(&"x".repeat(40)));
+    }
+
+    #[test]
+    fn a_mention_is_the_exact_name_after_an_at_sign() {
+        let yes = [
+            "@alice please look",
+            "hi @alice.",
+            "hi @alice, ok?",
+            "(@alice)",
+            "first line\n@alice second",
+            "@bob and @alice",
+        ];
+        for body in yes {
+            assert!(mentions(body, "alice"), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn a_name_inside_another_word_or_name_is_not_a_mention() {
+        let no = [
+            "@alice2 x",
+            "@alice-1 x",
+            "@alice.smith x",
+            "me@alice",
+            "@Alice",
+            "alice",
+            "@ alice",
+            "",
+        ];
+        for body in no {
+            assert!(!mentions(body, "alice"), "{body:?}");
+        }
     }
 
     #[test]
