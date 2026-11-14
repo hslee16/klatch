@@ -57,6 +57,9 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_allow_member(w, "r", "bob"))
     }),
     ("admin_audit", |g, w| refused(g.admin_audit(w, 5))),
+    ("admin_seal_label", |g, w| {
+        refused(g.admin_seal_label(w, "private"))
+    }),
     ("admin_note", |g, w| {
         refused(g.admin_note(w, ("key-test", "x"), "y"))
     }),
@@ -103,6 +106,18 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ("record_hook_run", "the caller's own hook run record"),
     ("release_all", "releases only the claims the caller holds"),
     ("rooms", "the rooms the caller joined"),
+    (
+        "sealed_labels",
+        "a policy lookup the CLI uses to find which keys to load; takes no principal",
+    ),
+    (
+        "sealed_labels_within",
+        "the same, limited to what one member's clearance reaches; takes no principal",
+    ),
+    (
+        "use_label_keys",
+        "the keys this process holds, in memory only",
+    ),
     (
         "clearance_of",
         "a policy lookup the gateway uses on every call; takes no principal",

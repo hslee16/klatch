@@ -422,6 +422,11 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     )?;
     let parent = pending_parent(&store, &caller);
     let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+    // the keys of the sealed labels this member's clearance reaches, and no others (#160)
+    let labels = gateway.sealed_labels_within(&caller.principal.member)?;
+    if !labels.is_empty() {
+        gateway.use_label_keys(keys::label_ring(&db_path()?, &labels)?);
+    }
     if let Some(parent) = parent {
         // a failure to note it must never stop the command
         let _ = gateway.note_parent(&caller.principal, parent.as_deref());

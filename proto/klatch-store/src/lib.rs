@@ -285,6 +285,8 @@ pub trait Store {
     fn policy_get(&self, _key: &str) -> Result<Option<String>> {
         Ok(None)
     }
+    /// The label keys this principal holds (DESIGN section 32 item 8). The default ignores them.
+    fn set_label_keys(&self, _keys: klatch_keys::LabelKeys) {}
     fn policy_set(&self, _key: &str, _value: Option<&str>, _now: i64) -> Result<()> {
         Ok(())
     }
