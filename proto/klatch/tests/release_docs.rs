@@ -59,7 +59,10 @@ fn the_release_checklist_names_every_place_a_version_lives() {
 #[test]
 fn the_rollback_plan_names_how_to_pull_back_each_place_a_release_goes() {
     let doc = read("RELEASING.md");
-    assert!(doc.contains("## Rolling back"), "RELEASING.md needs a 'Rolling back' section");
+    assert!(
+        doc.contains("## Rolling back"),
+        "RELEASING.md needs a 'Rolling back' section"
+    );
     let plan = doc.split("## Rolling back").nth(1).unwrap();
     for (place, how) in [
         ("crates.io", "cargo yank"),
@@ -68,7 +71,13 @@ fn the_rollback_plan_names_how_to_pull_back_each_place_a_release_goes() {
         ("GitHub release", "gh release delete-asset"),
         ("Homebrew", "git revert"),
     ] {
-        assert!(plan.contains(place) && plan.contains(how), "the rollback plan must say how to pull back {place} ({how})");
+        assert!(
+            plan.contains(place) && plan.contains(how),
+            "the rollback plan must say how to pull back {place} ({how})"
+        );
     }
-    assert!(plan.contains("Not yet exercised"), "say plainly which of these have not been run");
+    assert!(
+        plan.contains("Not yet exercised"),
+        "say plainly which of these have not been run"
+    );
 }
