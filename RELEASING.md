@@ -45,6 +45,35 @@ The formula in `hslee16/homebrew-klatch` is bumped by hand: the version, the fou
 values from the release's `SHA256SUMS` (`Formula/klatch.rb`). Open a pull request there; its CI audits, installs and
 tests the formula on macOS and Linux.
 
+## Rolling back
+
+Nothing published is deleted. A bad release is **replaced by the next number** (see VERSIONING.md) and the bad one is
+marked so people stop picking it. In this order, so that nobody new is steered to it while you work:
+
+1. **GitHub release.** `gh release edit <tag> --draft` hides it (the installer finds the newest release through the
+   public list, so a drafted release is no longer found). To remove one bad file: `gh release delete-asset <tag> <name>`.
+   Do not delete the tag while a registry version points at it. Build provenance attestations stay; they are true
+   statements about the files they name.
+2. **crates.io.** `cargo yank --version <version> klatch` stops new dependency resolutions; projects that already
+   locked it keep working. `cargo yank --undo --version <version> klatch` reverses it. It needs an API token with the
+   `yank-version` scope (create one at crates.io/settings/tokens, use it, revoke it): trusted publishing only publishes.
+3. **PyPI.** On the project's release page choose **Yank release** and give a reason: pip skips a yanked version unless
+   it is pinned exactly. Deleting a release is possible but cannot be undone, and the file names are never reusable.
+4. **npm.** `npm deprecate @klatch/client@<version> "<reason>"` (npm asks for your security key): the version stays
+   installable and prints the reason. A version that is staged but wrong is rejected on npmjs.com (Staged Packages)
+   instead of approved.
+5. **Homebrew.** In `hslee16/homebrew-klatch`, `git revert` the commit that bumped the formula and open a pull request,
+   so the formula points at the previous good release again.
+
+**Who is told.** There are no known users of the pre-releases, so today that is the maintainer. A security problem
+goes through a private security advisory (see SECURITY.md), published when it is fixed; the written advisory process
+waits for the outside review (#438).
+
+**Not yet exercised.** None of these has been run against a real release. The one piece that has been used is
+`gh release delete-asset`, which removed and replaced the assets of the v0.1.0.dev1 test release on 2026-11-14. The
+yank, deprecate and revert steps are written from each tool's documented behaviour. Run each once on a throwaway
+pre-release before relying on it.
+
 ## Not written yet
 
-Yanking and the rollback plan, and the dry run of the whole release on a pull request (#437).
+The dry run of the whole release on a pull request (#437).
