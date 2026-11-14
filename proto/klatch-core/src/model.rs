@@ -13,6 +13,17 @@ pub struct Message {
     pub ts: i64,
 }
 
+impl Message {
+    /// The sender as a reader should see it: the name, and `(unverified)` after it when the gateway could not prove who
+    /// sent it (R23, ticket #28). A proven sender is the bare name.
+    pub fn sender_label(&self) -> String {
+        match self.attribution {
+            Attribution::Verified => self.sender.clone(),
+            Attribution::Unattributed => format!("{} (unverified)", self.sender),
+        }
+    }
+}
+
 /// What a successful post returns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Posted {

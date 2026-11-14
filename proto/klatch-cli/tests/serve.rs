@@ -86,7 +86,7 @@ fn a_serve_session_shares_state_with_the_plain_cli() {
     );
     assert!(
         h.ok("alice", &["read", "r"])
-            .contains("bob] from a session")
+            .contains("bob (unverified)] from a session")
     );
 }
 
@@ -101,7 +101,10 @@ fn a_serve_request_cannot_post_as_someone_else() {
             r#"{"room":"r","body":"x","member":"bob","sender":"bob"}"#,
         )],
     );
-    assert!(h.ok("carol", &["read", "r"]).contains("alice] x"));
+    assert!(
+        h.ok("carol", &["read", "r"])
+            .contains("alice (unverified)] x")
+    );
 }
 
 #[test]

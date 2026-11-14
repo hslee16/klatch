@@ -102,7 +102,7 @@ fn hook_message_readable_once(w: &World) -> Res {
     w.ok("bob", &["post", "r", "the ask"])?;
     has(
         &w.ok("alice", &["hook"])?,
-        "from bob: the ask",
+        "from bob (unverified): the ask",
         "the hook shows it",
     )?;
     lacks(

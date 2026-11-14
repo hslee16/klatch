@@ -157,3 +157,24 @@ fn a_typed_name_beats_discovery() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(home.ok("alice", &["who", "r"]).contains("alice"));
 }
+
+#[test]
+fn what_read_prints_marks_a_sender_that_was_not_proven() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("bob", &["post", "lobby", "typed name only"]);
+    let read = h.ok("alice", &["read", "lobby", "--peek"]);
+    assert!(read.contains("bob (unverified)] typed name only"), "{read}");
+}
+
+#[test]
+fn what_a_hook_prints_marks_a_sender_that_was_not_proven() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("bob", &["post", "lobby", "typed name only"]);
+    let hook = h.ok("alice", &["hook"]);
+    assert!(
+        hook.contains("from bob (unverified): typed name only"),
+        "{hook}"
+    );
+}
