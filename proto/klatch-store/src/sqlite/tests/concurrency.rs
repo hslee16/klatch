@@ -17,7 +17,11 @@ fn concurrent_posters_get_dense_unique_seqs() {
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path).unwrap();
                 (0..25)
-                    .map(|i| s.post("r", &format!("w{t}"), "x", i).unwrap().seq)
+                    .map(|i| {
+                        s.post(Seat::new("r", &format!("w{t}")), "x", i)
+                            .unwrap()
+                            .seq
+                    })
                     .collect::<Vec<_>>()
             })
         })
@@ -63,7 +67,10 @@ fn concurrent_claims_on_one_path_have_exactly_one_winner() {
             let path = path.clone();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path).unwrap();
-                s.claim("r", &format!("w{t}"), "src", 100, "", 0)
+                s.claim(
+                    &ClaimRequest::new(("r", &format!("w{t}")), "src", 100, ""),
+                    0,
+                )
             })
         })
         .collect();
@@ -87,7 +94,10 @@ fn concurrent_claims_on_disjoint_paths_all_succeed() {
             let path = path.clone();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path).unwrap();
-                s.claim("r", &format!("w{t}"), &format!("src/f{t}"), 100, "", 0)
+                s.claim(
+                    &ClaimRequest::new(("r", &format!("w{t}")), &format!("src/f{t}"), 100, ""),
+                    0,
+                )
             })
         })
         .collect();
@@ -115,7 +125,7 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path).unwrap();
                 for i in 0..25 {
-                    s.post("r", &format!("w{t}"), "x", i).unwrap();
+                    s.post(Seat::new("r", &format!("w{t}")), "x", i).unwrap();
                 }
             })
         })
@@ -130,7 +140,7 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
                 let deadline = Instant::now() + Duration::from_secs(30);
                 while seen.len() < 100 && Instant::now() < deadline {
                     seen.extend(
-                        s.read("r", &me, true, 0)
+                        s.read(Seat::new("r", &me), true, 0)
                             .unwrap()
                             .into_iter()
                             .map(|m| m.seq),
@@ -162,7 +172,7 @@ fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let started = Instant::now();
-    let err = s.post("r", "bob", "x", 1).unwrap_err();
+    let err = s.post(Seat::new("r", "bob"), "x", 1).unwrap_err();
     assert!(matches!(err, Error::Busy(_)), "{err:?}");
     assert!(
         started.elapsed() < Duration::from_secs(3),
@@ -171,7 +181,7 @@ fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
     );
     holder.execute_batch("COMMIT").unwrap();
     assert_eq!(
-        s.post("r", "bob", "x", 2).unwrap().seq,
+        s.post(Seat::new("r", "bob"), "x", 2).unwrap().seq,
         1,
         "a failed post leaves no gap in seq"
     );
@@ -182,7 +192,8 @@ fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
 fn pure_reads_proceed_while_another_connection_holds_the_write_lock() {
     let path = temp_db("readsok");
     let s = SqliteStore::open_with_timeout(&path, Duration::from_millis(100)).unwrap();
-    s.claim("r", "bob", "src", 100, "", 0).unwrap();
+    s.claim(&ClaimRequest::new(("r", "bob"), "src", 100, ""), 0)
+        .unwrap();
     let holder = Connection::open(&path).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     assert_eq!(s.claims("r", 1).unwrap().len(), 1);
@@ -207,7 +218,7 @@ fn measure_hook_path_latency_under_write_load() {
                 std::thread::spawn(move || {
                     let s = SqliteStore::open(&path).unwrap();
                     while !stop.load(Ordering::Relaxed) {
-                        s.post("r", &format!("w{t}"), "x", 0).unwrap();
+                        s.post(Seat::new("r", &format!("w{t}")), "x", 0).unwrap();
                         posted.fetch_add(1, Ordering::Relaxed);
                         std::thread::sleep(Duration::from_micros(pause_us));
                     }
@@ -219,7 +230,7 @@ fn measure_hook_path_latency_under_write_load() {
         let end = Instant::now() + Duration::from_secs(5);
         while Instant::now() < end {
             let t0 = Instant::now();
-            s.read("r", "reader", true, 0).unwrap();
+            s.read(Seat::new("r", "reader"), true, 0).unwrap();
             read_us.push(t0.elapsed().as_micros());
             let t1 = Instant::now();
             s.claims("r", 0).unwrap();

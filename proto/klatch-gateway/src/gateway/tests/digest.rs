@@ -26,7 +26,9 @@ fn a_digest_collects_unread_and_others_claims_and_advances_the_cursor() {
 fn a_digest_tells_the_asker_once_that_its_ask_has_no_claim() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "alice", "seeking: a lib", 10).unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "seeking: a lib", 10)
+        .unwrap();
     let d = g.digest(&alice()).unwrap();
     assert_eq!(d.rooms[0].stale.len(), 1);
     assert!(
@@ -39,7 +41,9 @@ fn a_digest_tells_the_asker_once_that_its_ask_has_no_claim() {
 fn an_ask_claim_lease_is_capped_and_a_digest_tells_the_asker_once_when_it_lapses() {
     let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "alice", "seeking: a thing", 900).unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "seeking: a thing", 900)
+        .unwrap();
     g.claim(&bob(), "r", "ask:1", 3600, "").unwrap();
     let held = g.claims(&alice(), "r").unwrap();
     assert_eq!(
@@ -50,10 +54,13 @@ fn an_ask_claim_lease_is_capped_and_a_digest_tells_the_asker_once_when_it_lapses
     let g2 = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
     g2.join(&alice(), "r").unwrap();
     g2.store
-        .post("r", "alice", "seeking: a thing", 900)
+        .post(Seat::new("r", "alice"), "seeking: a thing", 900)
         .unwrap();
     g2.store
-        .claim_in("r", "bob", "*", "ask:1", 90, "", 500)
+        .claim(
+            &ClaimRequest::new(("r", "bob"), "ask:1", 90, "").scoped("*"),
+            500,
+        )
         .unwrap(); // lapsed at 590
     let told = g2.digest(&alice()).unwrap();
     assert_eq!(told.rooms[0].lapsed.len(), 1);

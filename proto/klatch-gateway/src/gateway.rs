@@ -3,7 +3,7 @@ use klatch_core::{
     Claim, Error, MemberInfo, Message, Posted, Principal, Result, RoomDigest, STALE_AFTER_SECS,
     valid_name,
 };
-use klatch_store::Store;
+use klatch_store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Store};
 
 /// What a hook needs: unread messages and others' claims per room, and the rooms that were refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,18 +92,15 @@ impl<S: Store> Gateway<S> {
         )?;
         self.check_budget(who, room, body)?;
         self.store.post_as(
-            room,
-            &who.member,
-            who.attribution,
-            DEFAULT_LABEL,
-            body,
+            &NewMessage::new((room, &who.member), who.attribution, DEFAULT_LABEL, body),
             self.now(),
         )
     }
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, advance))?;
-        self.store.read(room, &who.member, advance, self.now())
+        self.store
+            .read(Seat::new(room, &who.member), advance, self.now())
     }
 
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
@@ -115,7 +112,8 @@ impl<S: Store> Gateway<S> {
     /// Record that a `wait` looked at the room up to `seq`; the messages stay unread.
     pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
-        self.store.wait_seen(room, &who.member, seq, self.now())
+        self.store
+            .wait_seen(Seat::new(room, &who.member), seq, self.now())
     }
 
     /// Set the caller's own status in a room (for example `done`). Short, one line, no control characters.
@@ -131,15 +129,17 @@ impl<S: Store> Gateway<S> {
             },
         )?;
         self.store
-            .set_status(room, &who.member, status.trim(), self.now())
+            .set_status(Seat::new(room, &who.member), status.trim(), self.now())
     }
 
     /// Record that one of the caller's hook events ran, and how many bytes it printed (never the content).
     pub fn record_hook_run(&self, who: &Principal, event: &str, bytes: usize) -> Result<()> {
         check_member(who)?;
         check_event_name(event)?;
-        self.store
-            .record_hook_run(&who.member, event, self.now(), bytes as i64)
+        self.store.record_hook_run(
+            &HookEvent::new(&who.member, event, bytes as i64),
+            self.now(),
+        )
     }
 
     /// The latest run of each hook event recorded for `member` (who may be the caller or anyone: metadata only).
@@ -274,8 +274,10 @@ impl<S: Store> Gateway<S> {
         let ttl = klatch_core::claim_ttl(path, Some(ttl));
         let member_scope = self.store.member_scope(&who.member)?;
         let scope = klatch_core::claim_scope(path, shared, member_scope.as_deref());
-        self.store
-            .claim_in(room, &who.member, &scope, path, ttl, reason, self.now())
+        self.store.claim(
+            &ClaimRequest::new((room, &who.member), path, ttl, reason).scoped(&scope),
+            self.now(),
+        )
     }
 
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {
@@ -305,8 +307,10 @@ impl<S: Store> Gateway<S> {
             ));
         }
         self.authorize(who, &Operation::release(room, path))?;
-        self.store
-            .release_with(room, &who.member, path, note.trim(), self.now())
+        self.store.release_with(
+            &Release::new((room, &who.member), path, note.trim()),
+            self.now(),
+        )
     }
 
     /// The latest release of a path that carried a note.
@@ -367,7 +371,7 @@ impl<S: Store> Gateway<S> {
         self.guard
             .check(who, &Operation::Ack { room: room.into() })?;
         self.store
-            .advance_cursor(room, &who.member, seq, self.now())
+            .advance_cursor(Seat::new(room, &who.member), seq, self.now())
     }
 
     /// Unread messages and others' claims for every room the caller has joined. A room the guard refuses
@@ -396,9 +400,9 @@ impl<S: Store> Gateway<S> {
             }
             let messages = self.store.hook_read(&room, &who.member, now)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
-            let stale = self
-                .store
-                .stale_asks(&room, &who.member, now, STALE_AFTER_SECS)?;
+            let stale =
+                self.store
+                    .stale_asks(Seat::new(&room, &who.member), now, STALE_AFTER_SECS)?;
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let backlog = if backlog {

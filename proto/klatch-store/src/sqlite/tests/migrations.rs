@@ -32,11 +32,11 @@ fn an_old_database_is_migrated_in_place() {
         .unwrap();
     }
     let s = SqliteStore::open(&path).unwrap();
-    let unread = s.read("r", "alice", false, 5).unwrap();
+    let unread = s.read(Seat::new("r", "alice"), false, 5).unwrap();
     assert_eq!(unread.len(), 1, "cursor must survive the migration");
     assert_eq!((unread[0].body.as_str(), unread[0].seq), ("m4", 3));
     assert_eq!(unread[0].id.len(), 26);
-    assert_eq!(s.post("r2", "bob", "m5", 6).unwrap().seq, 2);
+    assert_eq!(s.post(Seat::new("r2", "bob"), "m5", 6).unwrap().seq, 2);
     assert_eq!(s.claims("r", 1).unwrap()[0].owner, "bob");
     let local: i64 = s
         .conn
@@ -84,7 +84,10 @@ fn a_version_1_database_is_migrated_to_15_and_keeps_its_messages() {
     );
     assert_eq!(old[0].id, "01HZX3K9Q2ABCDEFGHJKMNPQRS", "ids survive");
     let p = s
-        .post_as("r", "carol", Attribution::Verified, "internal", "new", 3)
+        .post_as(
+            &NewMessage::new(("r", "carol"), Attribution::Verified, "internal", "new"),
+            3,
+        )
         .unwrap();
     assert_eq!(p.seq, 3);
     assert_eq!(
@@ -171,7 +174,7 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
             .all(|m| m.attribution == Attribution::Unattributed && m.label == "public")
     );
     // alice had read through beta in the prototype, so only gamma is unread
-    let unread = s.read("core", "alice", false, 1).unwrap();
+    let unread = s.read(Seat::new("core", "alice"), false, 1).unwrap();
     assert_eq!(
         unread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
         vec!["gamma"],
@@ -201,7 +204,7 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
     );
     // the migrated database keeps working
     assert_eq!(
-        s.post("core", "dave", "after the migration", 5)
+        s.post(Seat::new("core", "dave"), "after the migration", 5)
             .unwrap()
             .seq,
         4

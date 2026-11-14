@@ -1,7 +1,9 @@
 //! Test doubles shared by the gateway tests.
 use crate::{Guard, Operation};
 use klatch_core::{Claim, Error, MemberInfo, Message, Posted, Principal, Result};
-use klatch_store::{SqliteStore, Store};
+use klatch_store::{
+    ClaimRequest, HookEvent, NewAudit, NewMessage, Release, Seat, SqliteStore, Store,
+};
 use std::cell::{Cell, RefCell};
 
 /// A real in-memory store that counts calls and can be told to fail every one.
@@ -38,38 +40,21 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.join(room, member, now)
     }
-    fn post_as(
-        &self,
-        room: &str,
-        sender: &str,
-        attribution: klatch_core::Attribution,
-        label: &str,
-        body: &str,
-        now: i64,
-    ) -> Result<Posted> {
+    fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
         self.gate()?;
-        self.inner
-            .post_as(room, sender, attribution, label, body, now)
+        self.inner.post_as(message, now)
     }
-    fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>> {
+    fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
         self.gate()?;
-        self.inner.read(room, member, advance, now)
+        self.inner.read(at, advance, now)
     }
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.gate()?;
         self.inner.members(room)
     }
-    fn claim(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()> {
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.claim(room, owner, path, ttl, reason, now)
+        self.inner.claim(request, now)
     }
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
         self.gate()?;
@@ -93,22 +78,15 @@ impl Store for SpyStore {
     fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
         self.inner.remove_member(room, member, now)
     }
-    fn record_audit(&self, action: &str, target: &str, detail: &str, now: i64) -> Result<()> {
-        self.inner.record_audit(action, target, detail, now)
+    fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
+        self.inner.record_audit(entry, now)
     }
     fn audit_log(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>> {
         self.inner.audit_log(limit)
     }
-    fn release_with(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        note: &str,
-        now: i64,
-    ) -> Result<()> {
+    fn release_with(&self, release: &Release, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.release_with(room, owner, path, note, now)
+        self.inner.release_with(release, now)
     }
     fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>> {
         self.gate()?;
@@ -130,31 +108,25 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_poll(room, member, now)
     }
-    fn wait_seen(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+    fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.wait_seen(room, member, seq, now)
+        self.inner.wait_seen(at, seq, now)
     }
-    fn stale_asks(
-        &self,
-        room: &str,
-        member: &str,
-        now: i64,
-        after: i64,
-    ) -> Result<Vec<klatch_core::OpenAsk>> {
+    fn stale_asks(&self, at: Seat, now: i64, after: i64) -> Result<Vec<klatch_core::OpenAsk>> {
         self.gate()?;
-        self.inner.stale_asks(room, member, now, after)
+        self.inner.stale_asks(at, now, after)
     }
     fn open_asks(&self, room: &str, now: i64) -> Result<Vec<klatch_core::OpenAsk>> {
         self.gate()?;
         self.inner.open_asks(room, now)
     }
-    fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
+    fn set_status(&self, at: Seat, status: &str, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.set_status(room, member, status, now)
+        self.inner.set_status(at, status, now)
     }
-    fn record_hook_run(&self, member: &str, event: &str, now: i64, bytes: i64) -> Result<()> {
+    fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.record_hook_run(member, event, now, bytes)
+        self.inner.record_hook_run(run, now)
     }
     fn hook_runs(&self, member: &str) -> Result<Vec<klatch_core::HookRun>> {
         self.gate()?;
@@ -176,20 +148,7 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.member_of_session(session_id)
     }
-    fn claim_in(
-        &self,
-        room: &str,
-        owner: &str,
-        scope: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()> {
-        self.gate()?;
-        self.inner
-            .claim_in(room, owner, scope, path, ttl, reason, now)
-    }
+
     fn member_scope(&self, member: &str) -> Result<Option<String>> {
         self.gate()?;
         self.inner.member_scope(member)
@@ -232,9 +191,9 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.head(room)
     }
-    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.advance_cursor(room, member, seq, now)
+        self.inner.advance_cursor(at, seq, now)
     }
 }
 

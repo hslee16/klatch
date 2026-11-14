@@ -2,18 +2,19 @@
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
 use super::{SqliteStore, WAIT_WINDOW_SECS};
+use crate::ClaimRequest;
 use klatch_core::{Error, Result, overlaps, scopes_collide};
 use rusqlite::params;
 
-/// Everything one attempt to take a claim needs.
-pub(super) struct ClaimRequest<'a> {
-    pub room: &'a str,
-    pub owner: &'a str,
-    pub scope: &'a str,
-    pub path: &'a str,
-    pub ttl: i64,
-    pub reason: &'a str,
-    pub now: i64,
+/// Everything one attempt to take a claim needs: the request and the moment.
+struct Attempt<'a> {
+    room: &'a str,
+    owner: &'a str,
+    scope: &'a str,
+    path: &'a str,
+    ttl: i64,
+    reason: &'a str,
+    now: i64,
 }
 
 /// A live claim.
@@ -105,7 +106,7 @@ impl SqliteStore {
     }
 
     /// Remember that the requester is waiting for the path, and say what refused it.
-    fn refuse(&self, req: &ClaimRequest, blocker: &Held, held: &[Held]) -> Result<Error> {
+    fn refuse(&self, req: &Attempt, blocker: &Held, held: &[Held]) -> Result<Error> {
         self.exec(
             "INSERT INTO claim_waits(room,member,path,ts,scope) VALUES(?1,?2,?3,?4,?5)
              ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, scope=?5",
@@ -121,7 +122,7 @@ impl SqliteStore {
     }
 
     /// Taking the path ends this member's wait for it (and for anything it overlaps).
-    fn end_waits(&self, req: &ClaimRequest) -> Result<()> {
+    fn end_waits(&self, req: &Attempt) -> Result<()> {
         let mine: Vec<String> = self.rows(
             "SELECT path FROM claim_waits WHERE room=?1 AND member=?2",
             params![req.room, req.owner],
@@ -136,7 +137,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn insert_claim(&self, req: &ClaimRequest) -> Result<()> {
+    fn insert_claim(&self, req: &Attempt) -> Result<()> {
         self.exec(
             "DELETE FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
             params![req.room, req.owner, req.path],
@@ -158,7 +159,7 @@ impl SqliteStore {
     /// Take the claim or say what refused it. The outcome is a value, not an error, so that a refused attempt is
     /// still committed: it is remembered as a wait, which is what lets a later conflict be recognised as closing a
     /// cycle.
-    fn attempt(&self, req: &ClaimRequest) -> Result<std::result::Result<(), Error>> {
+    fn attempt(&self, req: &Attempt) -> Result<std::result::Result<(), Error>> {
         self.exec("DELETE FROM claims WHERE expires<=?1", params![req.now])?;
         self.exec(
             "DELETE FROM claim_waits WHERE ts<?1",
@@ -178,7 +179,16 @@ impl SqliteStore {
         Ok(Ok(()))
     }
 
-    pub(super) fn take_claim(&self, req: &ClaimRequest) -> Result<()> {
-        self.immediate(|| self.attempt(req))?
+    pub(super) fn take_claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        let attempt = Attempt {
+            room: request.room,
+            owner: request.owner,
+            scope: request.scope,
+            path: request.path,
+            ttl: request.ttl,
+            reason: request.reason,
+            now,
+        };
+        self.immediate(|| self.attempt(&attempt))?
     }
 }

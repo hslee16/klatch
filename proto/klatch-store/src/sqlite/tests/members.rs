@@ -34,10 +34,11 @@ fn a_status_is_stored_per_member_and_room_and_replaced_by_the_next() {
     let s = store();
     s.join("r", "alice", 1).unwrap();
     s.join("r2", "alice", 1).unwrap();
-    s.set_status("r", "alice", "busy", 2).unwrap();
+    s.set_status(Seat::new("r", "alice"), "busy", 2).unwrap();
     assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
     assert_eq!(s.members("r2").unwrap()[0].status, None);
-    s.set_status("r", "alice", "done leaving", 3).unwrap();
+    s.set_status(Seat::new("r", "alice"), "done leaving", 3)
+        .unwrap();
     assert_eq!(
         s.members("r").unwrap()[0].status.as_deref(),
         Some("done leaving")
@@ -47,7 +48,7 @@ fn a_status_is_stored_per_member_and_room_and_replaced_by_the_next() {
 #[test]
 fn setting_a_status_joins_a_member_who_was_not_there() {
     let s = store();
-    s.set_status("r", "bob", "done", 5).unwrap();
+    s.set_status(Seat::new("r", "bob"), "done", 5).unwrap();
     let m = s.members("r").unwrap();
     assert_eq!(
         (m[0].name.as_str(), m[0].status.as_deref()),
@@ -61,7 +62,7 @@ fn a_status_survives_reopening_the_database() {
     {
         let s = SqliteStore::open(&path).unwrap();
         s.join("r", "alice", 1).unwrap();
-        s.set_status("r", "alice", "busy", 2).unwrap();
+        s.set_status(Seat::new("r", "alice"), "busy", 2).unwrap();
     }
     let s = SqliteStore::open(&path).unwrap();
     assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
@@ -70,10 +71,14 @@ fn a_status_survives_reopening_the_database() {
 #[test]
 fn a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only() {
     let s = store();
-    s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
-    s.record_hook_run("alice", "PostToolUse", 11, 120).unwrap();
-    s.record_hook_run("alice", "PostToolUse", 15, 0).unwrap();
-    s.record_hook_run("bob", "SessionStart", 12, 5).unwrap();
+    s.record_hook_run(&HookEvent::new("alice", "SessionStart", 0), 10)
+        .unwrap();
+    s.record_hook_run(&HookEvent::new("alice", "PostToolUse", 120), 11)
+        .unwrap();
+    s.record_hook_run(&HookEvent::new("alice", "PostToolUse", 0), 15)
+        .unwrap();
+    s.record_hook_run(&HookEvent::new("bob", "SessionStart", 5), 12)
+        .unwrap();
     let r = s.hook_runs("alice").unwrap();
     assert_eq!(r.len(), 2);
     let post = r.iter().find(|h| h.event == "PostToolUse").unwrap();
@@ -89,7 +94,8 @@ fn hook_runs_survive_reopening_the_database() {
     let path = temp_db("hook-runs");
     {
         let s = SqliteStore::open(&path).unwrap();
-        s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
+        s.record_hook_run(&HookEvent::new("alice", "SessionStart", 0), 10)
+            .unwrap();
     }
     let s = SqliteStore::open(&path).unwrap();
     assert_eq!(s.hook_runs("alice").unwrap()[0].runs, 1);
@@ -176,9 +182,12 @@ fn room_state_pause_and_blocks_are_remembered_and_audited() {
         "nothing left to allow"
     );
     assert!(!s.is_blocked("r", "mallory").unwrap());
-    s.record_audit("pause", "*", "", 7).unwrap();
-    s.record_audit("remove", "r/mallory", "claims released: 2", 8)
-        .unwrap();
+    s.record_audit(&NewAudit::new("pause", "*", ""), 7).unwrap();
+    s.record_audit(
+        &NewAudit::new("remove", "r/mallory", "claims released: 2"),
+        8,
+    )
+    .unwrap();
     let log = s.audit_log(10).unwrap();
     assert_eq!(log.len(), 2);
     assert_eq!(
@@ -192,7 +201,7 @@ fn room_state_pause_and_blocks_are_remembered_and_audited() {
 #[test]
 fn a_late_joiner_sees_history() {
     let s = store();
-    s.post("r", "bob", "early", 1).unwrap();
+    s.post(Seat::new("r", "bob"), "early", 1).unwrap();
     s.join("r", "alice", 2).unwrap();
-    assert_eq!(s.read("r", "alice", true, 3).unwrap().len(), 1);
+    assert_eq!(s.read(Seat::new("r", "alice"), true, 3).unwrap().len(), 1);
 }

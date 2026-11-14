@@ -13,10 +13,12 @@ fn open_asks_go_through_the_gateway() {
 fn a_young_or_claimed_ask_is_not_stale() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "alice", "seeking: young", 90).unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "seeking: young", 90)
+        .unwrap();
     let old = g
         .store
-        .post("r", "alice", "seeking: claimed", 10)
+        .post(Seat::new("r", "alice"), "seeking: claimed", 10)
         .unwrap()
         .seq;
     g.claim(&bob(), "r", &format!("ask:{old}"), 500, "")
@@ -28,9 +30,17 @@ fn a_young_or_claimed_ask_is_not_stale() {
 fn the_backlog_lists_others_open_unclaimed_asks_only_when_asked_for() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "bob", "seeking: open", 10).unwrap();
-    let claimed = g.store.post("r", "bob", "seeking: taken", 10).unwrap().seq;
-    g.store.post("r", "alice", "seeking: mine", 10).unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "seeking: open", 10)
+        .unwrap();
+    let claimed = g
+        .store
+        .post(Seat::new("r", "bob"), "seeking: taken", 10)
+        .unwrap()
+        .seq;
+    g.store
+        .post(Seat::new("r", "alice"), "seeking: mine", 10)
+        .unwrap();
     g.claim(&bob(), "r", &format!("ask:{claimed}"), 500, "")
         .unwrap();
     assert!(
