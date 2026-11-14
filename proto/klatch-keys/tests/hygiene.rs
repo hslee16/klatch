@@ -37,6 +37,11 @@ fn sources() -> Vec<(PathBuf, String)> {
     }
     files
         .into_iter()
+        // test modules kept in their own files (`src/.../tests/*.rs`, `tests.rs`) are not shipped code
+        .filter(|p| {
+            let s = p.to_string_lossy();
+            !s.contains("/tests/") && !s.ends_with("/tests.rs")
+        })
         .map(|p| {
             let t = std::fs::read_to_string(&p).unwrap_or_default();
             (p, t)
@@ -49,31 +54,39 @@ fn code_only(text: &str) -> &str {
     text.split("#[cfg(test)]").next().unwrap_or(text)
 }
 
+/// The name in a `fn name(` or `fn name<` on this line, if there is one.
+fn fn_name(line: &str) -> Option<&str> {
+    let rest = line.split("fn ").nth(1)?;
+    let end = rest.find(['(', '<'])?;
+    Some(rest[..end].trim())
+}
+
 #[test]
 fn nothing_defines_its_own_cipher_hash_mac_or_key_derivation() {
     let forbidden = [
-        "fn encrypt",
-        "fn decrypt",
-        "fn seal",
-        "fn unseal",
-        "fn cipher",
-        "fn hmac",
-        "fn sha1",
-        "fn sha2",
-        "fn sha256",
-        "fn sha512",
-        "fn md5",
-        "fn aes",
-        "fn chacha",
-        "fn salsa",
-        "fn xor_cipher",
-        "fn rot13",
-        "fn kdf",
-        "fn pbkdf",
-        "fn derive_key",
-        "const SBOX",
-        "static SBOX",
+        "encrypt",
+        "decrypt",
+        "seal",
+        "unseal",
+        "cipher",
+        "hmac",
+        "sha1",
+        "sha2",
+        "sha256",
+        "sha512",
+        "md5",
+        "aes",
+        "chacha",
+        "salsa",
+        "xor_cipher",
+        "rot13",
+        "kdf",
+        "pbkdf",
+        "derive_key",
     ];
+    // helpers that only call the audited crates: they ask SQLCipher its version, and seal a message body through
+    // `klatch_keys::protect_text`
+    let reviewed = ["cipher_version", "seal_body"];
     let mut found = Vec::new();
     for (path, text) in sources() {
         for (n, line) in code_only(&text).lines().enumerate() {
@@ -81,13 +94,33 @@ fn nothing_defines_its_own_cipher_hash_mac_or_key_derivation() {
             if t.starts_with("//") {
                 continue;
             }
-            // `fn cipher_version` only asks SQLCipher which version it is
-            if !t.contains("fn cipher_version") && forbidden.iter().any(|f| t.contains(f)) {
+            let Some(name) = fn_name(t) else { continue };
+            let hit = forbidden
+                .iter()
+                .any(|f| name == *f || name.starts_with(&format!("{f}_")));
+            if hit && !reviewed.contains(&name) {
+                found.push(format!("{}:{}: {}", path.display(), n + 1, t));
+            }
+        }
+        for (n, line) in code_only(&text).lines().enumerate() {
+            let t = line.trim_start();
+            if !t.starts_with("//") && (t.contains("const SBOX") || t.contains("static SBOX")) {
                 found.push(format!("{}:{}: {}", path.display(), n + 1, t));
             }
         }
     }
     assert!(found.is_empty(), "home-grown crypto?\n{}", found.join("\n"));
+}
+
+#[test]
+fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() {
+    assert_eq!(fn_name("pub fn encrypt(x: u8)"), Some("encrypt"));
+    assert_eq!(fn_name("fn seal_block<T>(x: T)"), Some("seal_block"));
+    assert_eq!(
+        fn_name("    pub fn sealed_labels(&self)"),
+        Some("sealed_labels")
+    );
+    assert_eq!(fn_name("let x = 3;"), None);
 }
 
 #[test]
