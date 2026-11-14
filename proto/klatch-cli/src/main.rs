@@ -305,7 +305,36 @@ fn failure_line(e: &anyhow::Error, event: &str) -> String {
     )
 }
 
+/// Keep content and keys out of crash output (R37): a panic prints where it happened and nothing it carried (a
+/// payload can hold text a caller sent), and a crash leaves no core file (it would hold keys and messages in memory).
+fn harden() {
+    std::panic::set_hook(Box::new(|info| {
+        let at = info.location().map_or_else(
+            || "unknown place".to_string(),
+            |l| format!("{}:{}", l.file(), l.line()),
+        );
+        eprintln!("klatch: internal error at {at}; this is a bug (nothing you sent is shown here)");
+    }));
+    disable_core_dumps();
+}
+
+fn disable_core_dumps() {
+    let zero = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // best effort: failing to lower a limit is not a reason to stop
+    unsafe {
+        libc::setrlimit(libc::RLIMIT_CORE, &zero);
+    }
+}
+
 fn main() -> Result<()> {
+    harden();
+    #[cfg(feature = "test-clock")]
+    if let Ok(text) = std::env::var("KLATCH_TEST_PANIC") {
+        panic!("{text}");
+    }
     let cli = Cli::parse();
     let hook_event = match &cli.cmd {
         Cmd::Hook { event, .. } => Some(event.clone()),
@@ -445,4 +474,20 @@ fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: boo
         std::io::BufReader::new(std::io::stdin()),
         std::io::stdout().lock(),
     )?)
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    #[test]
+    fn core_dumps_are_disabled() {
+        super::disable_core_dumps();
+        let mut now = libc::rlimit {
+            rlim_cur: 1,
+            rlim_max: 1,
+        };
+        unsafe {
+            libc::getrlimit(libc::RLIMIT_CORE, &mut now);
+        }
+        assert_eq!((now.rlim_cur, now.rlim_max), (0, 0));
+    }
 }

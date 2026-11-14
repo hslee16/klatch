@@ -1,0 +1,53 @@
+# cargo-deny policy (#162, R36): licences, advisories, sources and the crypto crates we refuse.
+[graph]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "blessing",
+    "OpenSSL",
+    # libtomcrypt, which sqlcipher-src carries; SQLCipher is built to use the vendored OpenSSL instead
+    "WTFPL",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# No home-grown or broken primitives, and no system OpenSSL binding: SQLCipher brings its own vendored OpenSSL.
+deny = [
+    { crate = "md-5" },
+    { crate = "md5" },
+    { crate = "sha1" },
+    { crate = "rust-crypto" },
+    { crate = "crypto-hash" },
+    { crate = "des" },
+    { crate = "rc4" },
+    { crate = "openssl" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -4,6 +4,7 @@ description = "Finding the coding-agent session a process belongs to, from the h
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 serde_json.workspace = true

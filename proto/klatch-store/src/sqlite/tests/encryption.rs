@@ -209,3 +209,61 @@ fn a_store_keeps_working_for_other_connections_after_a_rekey() {
     let other = SqliteStore::open(&path, &key(9)).unwrap();
     assert_eq!(other.tail("vault-room-name", 0, 10).unwrap().len(), 2);
 }
+
+#[test]
+fn temporary_results_stay_in_memory() {
+    let path = temp_db("enc-temp");
+    let s = filled(&path, &key(7));
+    let mode: i64 = s
+        .conn
+        .query_row("PRAGMA temp_store", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, 2, "temp_store is not MEMORY");
+}
+
+#[test]
+fn a_store_written_by_a_newer_klatch_is_refused_not_guessed_at() {
+    let path = temp_db("enc-newer");
+    drop(filled(&path, &key(7)));
+    {
+        let c = keyed_with(&path, &key(7));
+        c.pragma_update(
+            None,
+            "user_version",
+            crate::sqlite::schema::SCHEMA_VERSION + 5,
+        )
+        .unwrap();
+    }
+    let err = SqliteStore::open(&path, &key(7))
+        .err()
+        .expect("opened a newer store")
+        .to_string();
+    assert!(err.contains("newer klatch"), "{err}");
+}
+
+#[test]
+fn a_plaintext_file_is_refused_by_open_and_left_untouched() {
+    let path = temp_db("enc-plain-refused");
+    std::fs::write(&path, include_bytes!("../../../fixtures/prototype-v2.db")).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let err = SqliteStore::open(&path, &key(7))
+        .err()
+        .expect("opened a plaintext file")
+        .to_string();
+    assert!(
+        err.contains("wrong key") || err.contains("not an encrypted"),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "a refused open changed the file"
+    );
+}
+
+fn keyed_with(path: &std::path::Path, k: &klatch_keys::Key) -> Connection {
+    let c = Connection::open(path).unwrap();
+    c.pragma_update(None, "key", k.sqlcipher_pragma().as_str())
+        .unwrap();
+    c
+}

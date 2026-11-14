@@ -37,12 +37,9 @@ impl Key {
 
 impl PartialEq for Key {
     fn eq(&self, other: &Self) -> bool {
-        // constant time: no early exit on the first differing byte
-        self.0
-            .iter()
-            .zip(other.0.iter())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+        // constant time, from an audited crate: no early exit on the first differing byte
+        use subtle::ConstantTimeEq;
+        self.0.ct_eq(&*other.0).into()
     }
 }
 impl Eq for Key {}
