@@ -22,6 +22,7 @@ mod scrub;
 mod stream;
 mod tripwire;
 mod wake;
+mod zero_trust;
 
 pub(super) fn alice() -> Principal {
     Principal::unattributed("alice")
