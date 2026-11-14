@@ -1,0 +1,27 @@
+{
+  "name": "@klatch/client",
+  "version": "0.1.0-dev.0",
+  "description": "A klatch client over the wire protocol (pre-release)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/klatch.js",
+  "types": "./dist/klatch.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/klatch.d.ts",
+      "import": "./dist/klatch.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "git+https://github.com/hslee16/klatch.git", "directory": "clients/typescript" },
+  "homepage": "https://github.com/hslee16/klatch",
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "6.0.3"
+  }
+}

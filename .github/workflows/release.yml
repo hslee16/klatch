@@ -2,7 +2,11 @@ name: Release
 
 # Publishes the Python package to PyPI through trusted publishing (OIDC, no token is stored). The publish job runs in
 # the protected `release` environment, which needs the maintainer's approval, and PyPI only accepts this exact
-# repository, workflow file and environment name. Binary wheels, crates and npm join this file later (#425).
+# repository, workflow file and environment name. Binary wheels and crates join this file later (#425).
+#
+# npm: the package must exist before npm lets you configure a trusted publisher, so the first version of
+# @klatch/client is published by hand. Then set the repository variable NPM_TRUSTED_PUBLISHING to true to switch the
+# npm job on.
 on:
   release:
     types: [published]
@@ -72,3 +76,72 @@ jobs:
 
       - name: Publish via trusted publishing
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  npm-build:
+    name: Build the npm package
+    if: vars.NPM_TRUSTED_PUBLISHING == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: The tag must name the version in package.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package.json").version')
+          # the Python pre-release 0.1.0.dev0 and the npm pre-release 0.1.0-dev.0 are the same release
+          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+
+      - name: Install, build, pack and import the tarball in a clean directory
+        run: |
+          npm ci --ignore-scripts
+          node --experimental-strip-types --test package.test.ts
+          mkdir -p "$RUNNER_TEMP/npm-dist"
+          npm pack --pack-destination "$RUNNER_TEMP/npm-dist"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-dist
+          path: ${{ runner.temp }}/npm-dist/
+
+  npm-publish:
+    name: Publish to npm
+    needs: npm-build
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/@klatch/client
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later; node 22 ships an older npm.
+      - name: Update npm
+        run: npm install --global npm@11.6.0
+
+      - name: Download the tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-dist
+          path: dist/
+
+      # Provenance is attached automatically with trusted publishing. A pre-release is published under the default
+      # tag while no stable version exists, so that `npm install @klatch/client` resolves.
+      - name: Publish via trusted publishing
+        run: npm publish --access public dist/*.tgz
