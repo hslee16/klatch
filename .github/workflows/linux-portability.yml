@@ -55,7 +55,7 @@ jobs:
             echo "--- newest glibc symbol version the binary needs"
             objdump -T "$bin" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1 || true
             echo "--- size"
-            ls -l "$bin" | awk '{print $5 " bytes"}'
+            printf '%s bytes\n' "$(wc -c < "$bin" | tr -d ' ')"
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -76,7 +76,7 @@ jobs:
           "$bin" join lobby
           "$bin" post lobby "from the key file fallback"
           test -d "$home/state/klatch/keys"
-          ls -l "$home/state/klatch/keys" | tail -n +2
+          stat -c '%a %n' "$home"/state/klatch/keys/*
           KLATCH_NAME=bob "$bin" join lobby
           KLATCH_NAME=bob "$bin" read lobby --peek 2>/dev/null | grep -q "from the key file fallback"
           echo "key file fallback ok" | tee -a "$GITHUB_STEP_SUMMARY"
