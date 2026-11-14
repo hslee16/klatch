@@ -59,6 +59,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             ttl,
             reason,
             shared,
+            anchor,
         } => claim(
             ctx,
             &ClaimArgs {
@@ -67,6 +68,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
                 reason,
                 ttl,
                 shared,
+                anchor,
             },
         )?,
         Cmd::Scope { scope } => scope_cmd(t, scope)?,
@@ -96,6 +98,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         Cmd::Init { .. }
         | Cmd::Admin { .. }
         | Cmd::Worker { .. }
+        | Cmd::Anchor { .. }
         | Cmd::Run { .. }
         | Cmd::Serve { .. }
         | Cmd::Stream { .. } => {
@@ -270,6 +273,7 @@ struct ClaimArgs {
     reason: String,
     ttl: Option<i64>,
     shared: bool,
+    anchor: Option<String>,
 }
 
 fn claim(ctx: &Ctx, a: &ClaimArgs) -> Result<()> {
@@ -277,8 +281,11 @@ fn claim(ctx: &Ctx, a: &ClaimArgs) -> Result<()> {
     let ttl = klatch_core::claim_ttl(path, a.ttl);
     // what the last holder said it changed, read before this claim so it is the earlier holder's
     let earlier = ctx.t.last_release(room, path).ok().flatten();
-    ctx.t
-        .claim(room, &ClaimSpec::new(path, ttl, &a.reason).shared(a.shared))?;
+    let mut spec = ClaimSpec::new(path, ttl, &a.reason).shared(a.shared);
+    if let Some(anchor) = a.anchor.as_deref() {
+        spec = spec.anchored(anchor);
+    }
+    ctx.t.claim(room, &spec)?;
     println!("claimed {path} for {ttl}s (advisory)");
     if let Some(n) = earlier.filter(|n| n.owner != ctx.me) {
         println!(

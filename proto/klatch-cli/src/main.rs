@@ -3,6 +3,7 @@
 //! Identity is the KLATCH_NAME env var, which is FORGEABLE (prototype only; see DESIGN.md 8.4).
 //! All state goes through the `Store` trait; this file only parses arguments and prints.
 mod admin;
+mod anchor;
 mod commands;
 mod identity;
 mod init;
@@ -142,11 +143,21 @@ enum Cmd {
         /// Conflict with every scope, not only your own (an `ask:<N>` claim always does)
         #[arg(long)]
         shared: bool,
+        /// The work item this claim is for (a factory's work order, mission or ticket id); the claim is released when
+        /// a launcher reports the item done
+        #[arg(long)]
+        anchor: Option<String>,
     },
     /// Issue, revoke and list the credentials of workers (for a launcher; see `klatch worker --help`)
     Worker {
         #[command(subcommand)]
         cmd: worker::WorkerCmd,
+    },
+    /// Report a factory's work item done, or poll for finished ones, and release the claims anchored to them (for a
+    /// launcher; see `klatch anchor --help`)
+    Anchor {
+        #[command(subcommand)]
+        cmd: anchor::AnchorCmd,
     },
     /// Open and end a factory run, whose rooms are `run.<id>.<name>` (for a launcher; see `klatch run --help`)
     Run {
@@ -402,6 +413,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         }),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
+        Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }

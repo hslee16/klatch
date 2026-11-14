@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod anchors;
 mod asks;
 mod claims;
 mod concurrency;

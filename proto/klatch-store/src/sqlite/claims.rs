@@ -14,6 +14,7 @@ struct Attempt<'a> {
     path: &'a str,
     ttl: i64,
     reason: &'a str,
+    anchor: &'a str,
     now: i64,
 }
 
@@ -143,8 +144,8 @@ impl SqliteStore {
             params![req.room, req.owner, req.path],
         )?;
         self.exec(
-            "INSERT INTO claims(room,path,owner,member,reason,expires,scope) VALUES(?1,?2,?3,?3,?4,?5,?6)",
-            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope],
+            "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor) VALUES(?1,?2,?3,?3,?4,?5,?6,?7)",
+            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor],
         )?;
         if let Some(seq) = ask_number(req.path) {
             self.exec(
@@ -187,6 +188,7 @@ impl SqliteStore {
             path: request.path,
             ttl: request.ttl,
             reason: request.reason,
+            anchor: request.anchor,
             now,
         };
         self.immediate(|| self.attempt(&attempt))?

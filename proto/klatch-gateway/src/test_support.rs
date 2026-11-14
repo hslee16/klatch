@@ -140,6 +140,12 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_poll(room, member, now)
     }
+    fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        self.inner.release_anchored(anchor, now)
+    }
+    fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
+        self.inner.anchors_in_use(now)
+    }
     fn issue_credential(&self, c: &klatch_store::NewCredential, now: i64) -> Result<()> {
         self.inner.issue_credential(c, now)
     }

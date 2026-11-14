@@ -418,6 +418,38 @@ impl Store for SqliteStore {
         })
     }
 
+    fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        if anchor.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.immediate(|| {
+            let held: Vec<(String, String, String, i64)> = self.rows(
+                "SELECT room,path,owner,expires FROM claims WHERE anchor=?1 ORDER BY room,path",
+                params![anchor],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            let mut released = Vec::new();
+            for (room, path, owner, expires) in held {
+                self.exec(
+                    "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
+                    params![room, path, owner],
+                )?;
+                if expires > now {
+                    released.push((room, path, owner));
+                }
+            }
+            Ok(released)
+        })
+    }
+
+    fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
+        self.rows(
+            "SELECT DISTINCT anchor FROM claims WHERE anchor<>'' AND expires>?1 ORDER BY anchor",
+            params![now],
+            |r| r.get(0),
+        )
+    }
+
     fn issue_credential(&self, c: &crate::NewCredential, now: i64) -> Result<()> {
         self.immediate(|| {
             let live: Option<(i64, i64)> = self

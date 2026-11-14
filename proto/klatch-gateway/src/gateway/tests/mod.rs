@@ -7,6 +7,7 @@ use klatch_core::Error;
 use std::rc::Rc;
 
 mod admin_acts;
+mod anchors;
 mod asks;
 mod board;
 mod budget;
