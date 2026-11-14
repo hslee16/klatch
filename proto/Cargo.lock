@@ -351,15 +351,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
-name = "klatch-bench"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "klatch-cli"
-version = "0.1.0"
+name = "klatch"
+version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -376,8 +369,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "klatch-bench"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "klatch-client"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "klatch-protocol",
  "serde_json",
@@ -385,14 +385,14 @@ dependencies = [
 
 [[package]]
 name = "klatch-core"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "klatch-gateway"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "klatch-core",
  "klatch-keys",
@@ -401,14 +401,14 @@ dependencies = [
 
 [[package]]
 name = "klatch-harness"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "klatch-keys"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "chacha20poly1305",
  "data-encoding",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "klatch-protocol"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "klatch-session"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "klatch-core",
  "klatch-gateway",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "klatch-store"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 dependencies = [
  "klatch-core",
  "klatch-keys",

@@ -4,7 +4,9 @@ description = "Key custody: the KeySource trait, its backends and the recovery c
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 zeroize = "1"

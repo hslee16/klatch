@@ -4,7 +4,9 @@ description = "Types and pure logic for klatch: no I/O, no dependencies"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -8,7 +8,7 @@ request. They hold no policy: the gateway decides, and a refusal comes back as a
 |---|---|---|---|
 | Python 3 | `clients/python/klatch_client.py` | standard library | `cd clients/python && KLATCH_BIN=... python3 -m unittest -v` |
 | TypeScript | `clients/typescript/klatch.ts` | Node 22 standard library (types stripped by Node, no build step) | `cd clients/typescript && KLATCH_BIN=... node --experimental-strip-types --test conformance.test.ts` |
-| Rust | `proto/klatch-client` | `klatch-protocol` | `cargo test -p klatch-cli --test client` |
+| Rust | `proto/klatch-client` | `klatch-protocol` | `cargo test -p klatch --test client` |
 
 `KLATCH_BIN` is the klatch binary (default: the workspace's debug build). Each test starts its own throwaway store.
 

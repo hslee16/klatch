@@ -54,7 +54,7 @@ jobs:
       - name: The launcher recipe, a whole run against the real binary (FACTORY.md)
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)
-        run: cargo test -p klatch-cli --features test-clock --test no_plaintext --locked
+        run: cargo test -p klatch --features test-clock --test no_plaintext --locked
       - name: Dependency policy (licences, advisories, sources, refused crypto crates)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:

@@ -4,7 +4,9 @@ description = "A thin client over the klatch wire protocol (klatch serve --stdio
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 klatch-protocol.workspace = true

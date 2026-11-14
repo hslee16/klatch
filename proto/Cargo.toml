@@ -3,21 +3,24 @@ resolver = "3"
 members = ["klatch-client", "klatch-keys", "klatch-core", "klatch-store", "klatch-cli", "klatch-protocol", "klatch-gateway", "klatch-session", "klatch-harness", "klatch-bench"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/hslee16/klatch"
+keywords = ["agents", "coordination", "claims", "multi-agent", "sqlite"]
+categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl"] }
-klatch-core = { path = "klatch-core" }
-klatch-store = { path = "klatch-store" }
-klatch-keys = { path = "klatch-keys" }
-klatch-client = { path = "klatch-client" }
-klatch-gateway = { path = "klatch-gateway" }
-klatch-protocol = { path = "klatch-protocol" }
-klatch-session = { path = "klatch-session" }
-klatch-harness = { path = "klatch-harness" }
+klatch-core = { path = "klatch-core", version = "0.1.0-alpha.0" }
+klatch-store = { path = "klatch-store", version = "0.1.0-alpha.0" }
+klatch-keys = { path = "klatch-keys", version = "0.1.0-alpha.0" }
+klatch-client = { path = "klatch-client", version = "0.1.0-alpha.0" }
+klatch-gateway = { path = "klatch-gateway", version = "0.1.0-alpha.0" }
+klatch-protocol = { path = "klatch-protocol", version = "0.1.0-alpha.0" }
+klatch-session = { path = "klatch-session", version = "0.1.0-alpha.0" }
+klatch-harness = { path = "klatch-harness", version = "0.1.0-alpha.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

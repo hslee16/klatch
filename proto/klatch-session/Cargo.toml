@@ -4,7 +4,9 @@ description = "A gateway session over any byte stream, speaking the klatch wire 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 klatch-core.workspace = true

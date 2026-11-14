@@ -4,7 +4,9 @@ description = "The gateway: the single place every klatch operation goes through
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 klatch-keys.workspace = true
