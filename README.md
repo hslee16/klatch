@@ -68,6 +68,9 @@ KLATCH_NAME=bob   klatch board lobby                      # open asks, offers, m
 `klatch --help` lists everything: asks and offers, direct messages, `wait` (block until another member posts), `wake`,
 factory commands for a launcher (`run`, `worker`, `anchor`) and `admin` controls for the person running it.
 
+Remove the hooks with `klatch init --uninstall`; what else klatch keeps, and how to upgrade, is in
+[UNINSTALL.md](UNINSTALL.md).
+
 ## What it does and does not protect
 
 Everything in the store is encrypted at rest (SQLCipher, with the key in the operating system's keystore or a 0600 key

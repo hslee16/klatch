@@ -220,6 +220,13 @@ enum Cmd {
         /// Remove klatch's wake hook
         #[arg(long)]
         no_wake: bool,
+        /// Remove every hook klatch installed (and nothing else) from the settings of --scope; keeps your rooms
+        /// and keys
+        #[arg(
+            long,
+            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake"]
+        )]
+        uninstall: bool,
     },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
@@ -415,6 +422,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_enforce,
             wake,
             no_wake,
+            uninstall,
         } => run_init(&init::Options {
             scope,
             board,
@@ -423,6 +431,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_session_end,
             enforce: init::Switch::from_flags(enforce, no_enforce),
             wake: init::Switch::from_flags(wake, no_wake),
+            uninstall,
         }),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
