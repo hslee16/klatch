@@ -1,12 +1,15 @@
 name: Linux portability
 
 # What the Linux binaries depend on (#435): the glibc version the gnu build needs, and whether a musl build links
-# statically and still works. Run by hand or when this file changes; the result is in each job's summary.
+# statically and still works. Run by hand; the result is in each job's summary.
+#
+# Not run automatically for now: it is more than the project needs before v1.0 (the human's call, 2026-11-14). To turn
+# it back on at v1.0, add this under `on:`:
+#   pull_request:
+#     paths:
+#       - .github/workflows/linux-portability.yml
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/linux-portability.yml
 
 permissions:
   contents: read
