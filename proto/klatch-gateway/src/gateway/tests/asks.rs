@@ -21,7 +21,7 @@ fn a_young_or_claimed_ask_is_not_stale() {
         .post(Seat::new("r", "alice"), "seeking: claimed", 10)
         .unwrap()
         .seq;
-    g.claim(&bob(), "r", &format!("ask:{old}"), 500, "")
+    g.claim(&bob(), "r", &ClaimSpec::new(&format!("ask:{old}"), 500, ""))
         .unwrap();
     assert!(g.digest(&alice()).unwrap().rooms[0].stale.is_empty());
 }
@@ -41,8 +41,12 @@ fn the_backlog_lists_others_open_unclaimed_asks_only_when_asked_for() {
     g.store
         .post(Seat::new("r", "alice"), "seeking: mine", 10)
         .unwrap();
-    g.claim(&bob(), "r", &format!("ask:{claimed}"), 500, "")
-        .unwrap();
+    g.claim(
+        &bob(),
+        "r",
+        &ClaimSpec::new(&format!("ask:{claimed}"), 500, ""),
+    )
+    .unwrap();
     assert!(
         g.digest(&alice())
             .unwrap()
@@ -62,14 +66,16 @@ fn a_shared_claim_and_an_ask_claim_conflict_across_scopes() {
     let (a, b) = (alice(), bob());
     g.set_scope(&a, "git:a").unwrap();
     g.set_scope(&b, "git:b").unwrap();
-    g.claim_with(&a, "r", "docs", 100, "", true).unwrap();
+    g.claim(&a, "r", &ClaimSpec::new("docs", 100, "").shared(true))
+        .unwrap();
     assert!(
-        g.claim(&b, "r", "docs/api.md", 100, "").is_err(),
+        g.claim(&b, "r", &ClaimSpec::new("docs/api.md", 100, ""))
+            .is_err(),
         "a scoped claim against a shared one"
     );
-    g.claim(&a, "r", "ask:3", 100, "").unwrap();
+    g.claim(&a, "r", &ClaimSpec::new("ask:3", 100, "")).unwrap();
     assert!(
-        g.claim(&b, "r", "ask:3", 100, "").is_err(),
+        g.claim(&b, "r", &ClaimSpec::new("ask:3", 100, "")).is_err(),
         "an ask is room-wide"
     );
 }

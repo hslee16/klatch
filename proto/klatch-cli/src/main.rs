@@ -12,7 +12,9 @@ use clap::{Parser, Subcommand};
 use klatch_core::{
     Principal, convention, flat, hook_output_json, render_board, render_hook, render_who,
 };
-use klatch_gateway::{AllowAll, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport};
+use klatch_gateway::{
+    AllowAll, ClaimSpec, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport,
+};
 use klatch_harness::{Found, FsRegistry, Miss, PsTable, find_session};
 use klatch_store::{SqliteStore, Store};
 use std::path::PathBuf;

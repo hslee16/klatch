@@ -1,4 +1,4 @@
-use crate::{Batch, DEFAULT_WINDOW, Digest, Gateway, Subscription};
+use crate::{Batch, ClaimSpec, DEFAULT_WINDOW, Digest, Gateway, Subscription};
 use klatch_core::{Claim, MemberInfo, Message, Posted, Principal, Result};
 use klatch_store::Store;
 use std::rc::Rc;
@@ -14,16 +14,8 @@ pub trait Transport {
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
-    fn claim(&self, room: &str, path: &str, ttl: i64, reason: &str) -> Result<()>;
-    /// `claim`, optionally shared with every scope.
-    fn claim_with(
-        &self,
-        room: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        shared: bool,
-    ) -> Result<()>;
+    /// Take a claim (optionally shared with every scope).
+    fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()>;
     /// Declare the scope the caller works in.
     fn set_scope(&self, scope: &str) -> Result<()>;
     /// The scope the caller declared or was given.
@@ -98,20 +90,10 @@ impl<S: Store> Transport for Direct<S> {
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.gateway.who(&self.principal, room)
     }
-    fn claim(&self, room: &str, path: &str, ttl: i64, reason: &str) -> Result<()> {
-        self.gateway.claim(&self.principal, room, path, ttl, reason)
+    fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()> {
+        self.gateway.claim(&self.principal, room, spec)
     }
-    fn claim_with(
-        &self,
-        room: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        shared: bool,
-    ) -> Result<()> {
-        self.gateway
-            .claim_with(&self.principal, room, path, ttl, reason, shared)
-    }
+
     fn set_scope(&self, scope: &str) -> Result<()> {
         self.gateway.set_scope(&self.principal, scope)
     }
@@ -123,7 +105,7 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()> {
         self.gateway
-            .release_with_note(&self.principal, room, path, note)
+            .release_with_note(&self.principal, (room, path), note)
     }
     fn last_release(&self, room: &str, path: &str) -> Result<Option<klatch_core::ReleaseNote>> {
         self.gateway.last_release(&self.principal, room, path)
@@ -218,14 +200,14 @@ mod tests {
     #[test]
     fn two_transports_over_one_gateway_share_claims() {
         let (alice, bob) = pair();
-        alice.claim("r", "src", 60, "").unwrap();
+        alice.claim("r", &ClaimSpec::new("src", 60, "")).unwrap();
         assert!(matches!(
-            bob.claim("r", "src/a.rs", 60, ""),
+            bob.claim("r", &ClaimSpec::new("src/a.rs", 60, "")),
             Err(klatch_core::Error::Conflict { .. })
         ));
         assert_eq!(bob.claims("r").unwrap()[0].owner, "alice");
         alice.release("r", "src").unwrap();
-        bob.claim("r", "src/a.rs", 60, "").unwrap();
+        bob.claim("r", &ClaimSpec::new("src/a.rs", 60, "")).unwrap();
     }
 
     #[test]

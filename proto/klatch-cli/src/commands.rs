@@ -175,7 +175,8 @@ fn claim(ctx: &Ctx, a: &ClaimArgs) -> Result<()> {
     let ttl = klatch_core::claim_ttl(path, a.ttl);
     // what the last holder said it changed, read before this claim so it is the earlier holder's
     let earlier = ctx.t.last_release(room, path).ok().flatten();
-    ctx.t.claim_with(room, path, ttl, &a.reason, a.shared)?;
+    ctx.t
+        .claim(room, &ClaimSpec::new(path, ttl, &a.reason).shared(a.shared))?;
     println!("claimed {path} for {ttl}s (advisory)");
     if let Some(n) = earlier.filter(|n| n.owner != ctx.me) {
         println!(

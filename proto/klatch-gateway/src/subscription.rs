@@ -87,7 +87,7 @@ impl Subscription {
             });
         }
         let limit = budget.min(max).max(1);
-        let messages = gateway.tail(who, &self.room, after, limit)?;
+        let messages = gateway.tail(who, &self.room, (after, limit))?;
         let after = messages.last().map_or(after, |m| m.seq);
         self.after = Some(after);
         let caught_up = if self.caught_up {

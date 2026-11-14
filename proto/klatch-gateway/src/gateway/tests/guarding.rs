@@ -22,7 +22,10 @@ fn every_operation_validates_the_room_name_before_anything_else() {
             "who {room:?}"
         );
         assert!(
-            matches!(g.claim(&who, room, "p", 10, ""), Err(Error::Invalid(_))),
+            matches!(
+                g.claim(&who, room, &ClaimSpec::new("p", 10, "")),
+                Err(Error::Invalid(_))
+            ),
             "claim {room:?}"
         );
         assert!(
@@ -57,20 +60,27 @@ fn claim_paths_and_reasons_are_checked() {
     let who = alice();
     for path in ["", "a\nb", "a\rb", "a\u{0}b", &"x".repeat(1025)] {
         assert!(
-            matches!(g.claim(&who, "r", path, 10, ""), Err(Error::Invalid(_))),
+            matches!(
+                g.claim(&who, "r", &ClaimSpec::new(path, 10, "")),
+                Err(Error::Invalid(_))
+            ),
             "path {path:?}"
         );
     }
     assert!(matches!(
-        g.claim(&who, "r", "src", 10, "bad\nreason"),
+        g.claim(&who, "r", &ClaimSpec::new("src", 10, "bad\nreason")),
         Err(Error::Invalid(_))
     ));
     assert!(matches!(
-        g.claim(&who, "r", "src", 10, &"y".repeat(501)),
+        g.claim(&who, "r", &ClaimSpec::new("src", 10, &"y".repeat(501))),
         Err(Error::Invalid(_))
     ));
-    g.claim(&who, "r", "src/a b.rs", 10, "a fine reason")
-        .unwrap();
+    g.claim(
+        &who,
+        "r",
+        &ClaimSpec::new("src/a b.rs", 10, "a fine reason"),
+    )
+    .unwrap();
     // Only the valid claim reached the store: it looks up the member's scope, then claims.
     assert_eq!(g.store.calls.get(), 2);
 }
@@ -79,11 +89,11 @@ fn claim_paths_and_reasons_are_checked() {
 fn a_claim_needs_a_positive_ttl() {
     let g = open();
     assert!(matches!(
-        g.claim(&alice(), "r", "src", 0, ""),
+        g.claim(&alice(), "r", &ClaimSpec::new("src", 0, "")),
         Err(Error::Invalid(_))
     ));
     assert!(matches!(
-        g.claim(&alice(), "r", "src", -5, ""),
+        g.claim(&alice(), "r", &ClaimSpec::new("src", -5, "")),
         Err(Error::Invalid(_))
     ));
 }
@@ -97,7 +107,7 @@ fn the_guard_runs_once_per_operation_in_order_before_the_store() {
     g.post(&who, "r", "hi").unwrap();
     g.read(&who, "r", false).unwrap();
     g.who(&who, "r").unwrap();
-    g.claim(&who, "r", "src", 10, "").unwrap();
+    g.claim(&who, "r", &ClaimSpec::new("src", 10, "")).unwrap();
     g.claims(&who, "r").unwrap();
     g.release(&who, "r", "src").unwrap();
     let kinds: Vec<&str> = guard
@@ -152,7 +162,10 @@ fn a_denied_operation_never_reaches_the_store_and_returns_the_guards_error() {
         "{err}"
     );
     assert!(g.read(&who, "locked", true).is_err());
-    assert!(g.claim(&who, "locked", "p", 10, "").is_err());
+    assert!(
+        g.claim(&who, "locked", &ClaimSpec::new("p", 10, ""))
+            .is_err()
+    );
     assert_eq!(g.store.calls.get(), 0);
     g.post(&who, "open", "x").unwrap();
 }
@@ -165,7 +178,7 @@ fn store_failures_surface_as_errors_never_as_success() {
     assert!(matches!(g.post(&who, "r", "x"), Err(Error::Backend(_))));
     assert!(matches!(g.read(&who, "r", true), Err(Error::Backend(_))));
     assert!(matches!(
-        g.claim(&who, "r", "p", 10, ""),
+        g.claim(&who, "r", &ClaimSpec::new("p", 10, "")),
         Err(Error::Backend(_))
     ));
     assert!(matches!(g.claims(&who, "r"), Err(Error::Backend(_))));
@@ -178,19 +191,25 @@ fn tail_head_and_ack_validate_before_the_store_and_go_through_the_guard() {
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
     let who = alice();
     for room in ["bad room", "a\nb", ""] {
-        assert!(matches!(g.tail(&who, room, 0, 10), Err(Error::Invalid(_))));
+        assert!(matches!(
+            g.tail(&who, room, (0, 10)),
+            Err(Error::Invalid(_))
+        ));
         assert!(matches!(g.head(&who, room), Err(Error::Invalid(_))));
         assert!(matches!(g.ack(&who, room, 1), Err(Error::Invalid(_))));
     }
-    assert!(matches!(g.tail(&who, "r", -1, 10), Err(Error::Invalid(_))));
-    assert!(matches!(g.tail(&who, "r", 0, 0), Err(Error::Invalid(_))));
+    assert!(matches!(
+        g.tail(&who, "r", (-1, 10)),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(g.tail(&who, "r", (0, 0)), Err(Error::Invalid(_))));
     assert!(matches!(g.ack(&who, "r", -1), Err(Error::Invalid(_))));
     assert_eq!(g.store.calls.get(), 0);
     assert!(
         guard.seen.borrow().is_empty(),
         "invalid requests never reach the guard"
     );
-    g.tail(&who, "r", 0, 10).unwrap();
+    g.tail(&who, "r", (0, 10)).unwrap();
     g.head(&who, "r").unwrap();
     g.ack(&who, "r", 0).unwrap();
     assert_eq!(
@@ -211,7 +230,7 @@ fn a_denied_tail_never_reaches_the_store() {
         Rc::new(SpyGuard::denying(&["locked"])),
     );
     assert!(matches!(
-        g.tail(&alice(), "locked", 0, 10),
+        g.tail(&alice(), "locked", (0, 10)),
         Err(Error::Refused { .. })
     ));
     assert!(matches!(

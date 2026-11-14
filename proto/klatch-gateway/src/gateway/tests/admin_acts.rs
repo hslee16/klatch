@@ -11,7 +11,10 @@ fn a_paused_gateway_refuses_every_room_operation_and_resumes() {
     );
     assert_eq!(rule_of(g.join(&bob(), "r").unwrap_err()), "admin-pause");
     assert_eq!(
-        rule_of(g.claim(&alice(), "r", "a", 60, "").unwrap_err()),
+        rule_of(
+            g.claim(&alice(), "r", &ClaimSpec::new("a", 60, ""))
+                .unwrap_err()
+        ),
         "admin-pause"
     );
     assert_eq!(
@@ -29,14 +32,18 @@ fn a_paused_gateway_refuses_every_room_operation_and_resumes() {
 fn a_closed_room_stays_readable_but_takes_no_posts_claims_or_statuses() {
     let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
     g.post(&alice(), "r", "history").unwrap();
-    g.claim(&alice(), "r", "a", 60, "").unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("a", 60, ""))
+        .unwrap();
     g.admin_close_room(&admin(), "r", true).unwrap();
     assert_eq!(
         rule_of(g.post(&bob(), "r", "x").unwrap_err()),
         "admin-close"
     );
     assert_eq!(
-        rule_of(g.claim(&bob(), "r", "b", 60, "").unwrap_err()),
+        rule_of(
+            g.claim(&bob(), "r", &ClaimSpec::new("b", 60, ""))
+                .unwrap_err()
+        ),
         "admin-close"
     );
     assert_eq!(
@@ -56,7 +63,7 @@ fn a_removed_member_is_refused_in_that_room_only_until_allowed() {
     let g = Gateway::new(SpyStore::new(), FixedClock(1), AllowAll);
     g.join(&bob(), "r").unwrap();
     g.join(&bob(), "side").unwrap();
-    g.claim(&bob(), "r", "a", 60, "").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("a", 60, "")).unwrap();
     g.admin_remove_member(&admin(), "r", "bob").unwrap();
     assert_eq!(
         rule_of(g.post(&bob(), "r", "x").unwrap_err()),

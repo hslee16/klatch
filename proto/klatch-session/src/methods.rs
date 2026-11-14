@@ -3,7 +3,7 @@
 
 use crate::frames::{fail_with, failure, message_json, ok};
 use klatch_core::{Claim, Error, MemberInfo, Message, Posted, Principal};
-use klatch_gateway::Gateway;
+use klatch_gateway::{ClaimSpec, Gateway};
 use klatch_protocol::ServerFrame;
 use klatch_store::Store;
 use serde::Deserialize;
@@ -130,14 +130,14 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         "claim" => call.run(
             |p: ClaimParams| {
                 let ttl = klatch_core::claim_ttl(&p.path, p.ttl);
-                g.claim_with(who, &p.room, &p.path, ttl, &p.reason, p.shared)
+                g.claim(who, &p.room, &ClaimSpec::new(&p.path, ttl, &p.reason).shared(p.shared))
             },
             empty,
         ),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
-                Some(n) => g.release_with_note(who, &p.room, &p.path, n),
+                Some(n) => g.release_with_note(who, (&p.room, &p.path), n),
                 None => g.release(who, &p.room, &p.path),
             },
             empty,
