@@ -9,7 +9,7 @@ These are early pre-releases with no outside security review.
 ### Added
 
 - `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
-- Static Linux builds (musl, x86_64 and aarch64): no glibc needed, they run on any Linux. The installer chooses them when
+- Static Linux builds (musl, x86_64 and aarch64): no glibc or other system library needed (tested on Ubuntu). The installer chooses them when
   glibc is older than 2.34 or the system is not glibc; the dynamic builds need glibc 2.34 or later.
 - UNINSTALL.md: what klatch keeps (hooks, binary, rooms, key), how to remove each, and how an upgrade behaves.
 

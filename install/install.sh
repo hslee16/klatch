@@ -40,8 +40,8 @@ sha256_of() {
 }
 
 # --- which archive -----------------------------------------------------------------------------------------------
-# On Linux there are two builds: a dynamic one that needs glibc 2.34 or later (gnu), and a fully static one that runs
-# on any Linux (musl). The static one is chosen when glibc is older, when the system is not glibc (Alpine) and when it
+# On Linux there are two builds: a dynamic one that needs glibc 2.34 or later (gnu), and a fully static one that needs
+# no system libraries (musl). The static one is chosen when glibc is older, when the system is not glibc (Alpine) and when it
 # cannot be told; KLATCH_LIBC=gnu or musl chooses by hand.
 linux_libc() {
   case "${KLATCH_LIBC:-}" in
@@ -97,7 +97,7 @@ archive="$name.tar.gz"
 
 say "klatch $version for $target"
 case "$target" in
-  *-linux-musl) say "(the static build: it runs on any Linux; the dynamic build needs glibc 2.34 or later)" ;;
+  *-linux-musl) say "(the static build, which needs no system libraries; the dynamic build needs glibc 2.34 or later)" ;;
 esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/klatch-install.XXXXXX")

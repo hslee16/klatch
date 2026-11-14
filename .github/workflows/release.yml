@@ -6,7 +6,7 @@ name: Release
 #
 # The release also attaches the klatch binary, as archives with checksums, to the GitHub release: macOS arm64 and
 # x86_64, Linux x86_64 and aarch64 as a dynamic build (glibc 2.34 or later, built on Ubuntu 22.04) and as a fully
-# static musl build that runs on any Linux. Each archive holds the binary, LICENSE
+# static musl build that needs no system libraries. Each archive holds the binary, LICENSE
 # and THIRD-PARTY-LICENSES.txt (SQLCipher's BSD licence requires its notice in a binary distribution). Beside each
 # archive go a CycloneDX SBOM, and for the whole release SHA256SUMS, its Sigstore signature, and GitHub build
 # provenance attestations for every file.
@@ -292,7 +292,7 @@ jobs:
             runner: ubuntu-22.04-arm
             cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
             cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
-          # the static builds (#435): no glibc needed, they run on any Linux. The SBOM tool is the runner's own gnu build.
+          # the static builds (#435): no glibc or other system library needed. The SBOM tool is the runner's own gnu build.
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-22.04
             musl: true
