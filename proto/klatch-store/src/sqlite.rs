@@ -354,6 +354,27 @@ impl Store for SqliteStore {
         )
     }
 
+    fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.touch(room, member, now)?;
+        let (read, seen): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(last_seq,0), wake_seq FROM members WHERE room=?1 AND name=?2",
+                params![room, member],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], message_from_row)
+    }
+
+    fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        self.update_member(
+            (at.room, at.member, now),
+            "UPDATE members SET wake_seq=MAX(wake_seq,?3) WHERE room=?1 AND name=?2",
+            &seq,
+        )
+    }
+
     fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<AskRoom>> {
         self.rows(
             "SELECT m.room, COUNT(DISTINCT m.name), MAX(m.joined),

@@ -140,6 +140,12 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_poll(room, member, now)
     }
+    fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<klatch_core::Message>> {
+        self.inner.wake_poll(room, member, now)
+    }
+    fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        self.inner.wake_seen(at, seq, now)
+    }
     fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.wait_seen(at, seq, now)

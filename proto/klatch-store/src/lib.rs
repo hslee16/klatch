@@ -361,6 +361,15 @@ pub trait Store {
     fn wait_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
         Ok(())
     }
+    /// Messages from others past both the read cursor and the member's wake position (what a watcher has already
+    /// pointed at). Changes no position; refreshes presence. The default is `read` without advancing.
+    fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.read(Seat::new(room, member), false, now)
+    }
+    /// Remember that a watcher pointed at the room up to `seq` (forward only). The default remembers nothing.
+    fn wake_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
+        Ok(())
+    }
     /// `member`'s own open asks that enough helpers declined as `cannot` (none busy or failed), not reported to it
     /// before; remembers what it returned. The default remembers nothing and reports them every time.
     fn escalated_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<OpenAsk>> {

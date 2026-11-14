@@ -448,3 +448,47 @@ fn the_plain_post_is_unattributed_and_public() {
         (Attribution::Unattributed, "public")
     );
 }
+
+#[test]
+fn a_wake_position_is_separate_from_the_wait_position_and_the_read_cursor() {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "bob"), "one", 2).unwrap();
+    assert_eq!(s.wake_poll("r", "alice", 3).unwrap().len(), 1);
+    assert_eq!(
+        s.wake_poll("r", "alice", 4).unwrap().len(),
+        1,
+        "poll alone changes nothing"
+    );
+    s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    assert!(s.wake_poll("r", "alice", 6).unwrap().is_empty());
+    // a wait still sees it, and so does a read
+    assert_eq!(s.wait_poll("r", "alice", 7).unwrap().len(), 1);
+    assert_eq!(s.read(Seat::new("r", "alice"), false, 8).unwrap().len(), 1);
+    // and the other way round
+    s.post(Seat::new("r", "bob"), "two", 9).unwrap();
+    s.wait_seen(Seat::new("r", "alice"), 2, 10).unwrap();
+    assert_eq!(s.wake_poll("r", "alice", 11).unwrap().len(), 1);
+}
+
+#[test]
+fn wake_seen_only_moves_forward_and_a_read_hides_what_it_read_from_a_wake() {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "bob"), "one", 2).unwrap();
+    s.post(Seat::new("r", "bob"), "two", 3).unwrap();
+    s.wake_seen(Seat::new("r", "alice"), 2, 4).unwrap();
+    s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    assert!(s.wake_poll("r", "alice", 6).unwrap().is_empty());
+    s.post(Seat::new("r", "bob"), "three", 7).unwrap();
+    s.read(Seat::new("r", "alice"), true, 8).unwrap();
+    assert!(s.wake_poll("r", "alice", 9).unwrap().is_empty());
+}
+
+#[test]
+fn a_wake_poll_refreshes_presence_like_a_wait_poll() {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.wake_poll("r", "alice", 500).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].last_seen, 500);
+}

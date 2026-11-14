@@ -10,8 +10,8 @@ mod scope;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use klatch_core::{
-    Asker, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json, judge_tool,
-    patch_targets, render_board, render_hook, render_who,
+    Asker, Claim, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json,
+    judge_tool, patch_targets, render_board, render_hook, render_who,
 };
 use klatch_gateway::{
     AllowAll, ClaimSpec, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport,

@@ -6,9 +6,9 @@ use crate::ids::new_id;
 use klatch_core::Result;
 use rusqlite::{Connection, params};
 
-pub(super) const SCHEMA_VERSION: i64 = 18;
+pub(super) const SCHEMA_VERSION: i64 = 19;
 
-pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
+pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
@@ -234,11 +234,17 @@ pub(super) fn migrate_v17(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 18 to 19: a wake position of its own, so a watcher's pointer does not hide a message from a `wait` (#357).
+pub(super) fn migrate_v18(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE members ADD COLUMN wake_seq INTEGER NOT NULL DEFAULT 0;")
+        .map_err(be)
+}
+
 type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 18] = [
+const MIGRATIONS: [Step; 19] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -257,6 +263,7 @@ const MIGRATIONS: [Step; 18] = [
     migrate_v15,
     migrate_v16,
     migrate_v17,
+    migrate_v18,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.
