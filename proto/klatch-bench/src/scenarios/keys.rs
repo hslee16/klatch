@@ -21,6 +21,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: sealed_label,
         },
         Scenario {
+            name: "a_worker_holds_only_what_its_credential_carries_and_loses_it_on_revoke_or_expiry",
+            origin: "#121, #120, #161",
+            layer: "fault",
+            run: workers,
+        },
+        Scenario {
             name: "rotating_the_key_keeps_every_message_and_retires_the_old_key",
             origin: "#155, R34",
             layer: "fault",
@@ -264,6 +270,114 @@ fn sealed_label(w: &World) -> Res {
         &w.admin(&["export", "vault"], "vault").stdout,
         "hunter2",
         "the export cannot read a sealed label",
+    )?;
+    Ok(vec![])
+}
+
+fn workers(w: &World) -> Res {
+    w.set_clock(T0);
+    check(
+        w.admin(&["label", "vault", "private"], "").ok,
+        "label failed",
+    )?;
+    check(
+        w.admin(&["seal-label", "private"], "").ok,
+        "seal-label failed",
+    )?;
+    let bundle = |member: &str| w.home.join(format!("{member}.bundle"));
+    let issue = |member: &str, clearance: &str, ttl: &str| {
+        let out = bundle(member);
+        let o = w.run(
+            "launcher",
+            &[
+                "worker",
+                "issue",
+                member,
+                "--clearance",
+                clearance,
+                "--ttl",
+                ttl,
+                "--parent",
+                "lead",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        );
+        (o, out)
+    };
+    let (hi, hi_path) = issue("w-hi", "private", "600");
+    check(hi.ok, format!("issue failed: {}", hi.stderr))?;
+    let (lo, lo_path) = issue("w-lo", "internal", "600");
+    check(lo.ok, format!("issue failed: {}", lo.stderr))?;
+    // the worker with the clearance and the bundle's label key writes under the sealed label, verified, with no
+    // keystore and no typed name
+    let post = w.as_worker(
+        &hi_path,
+        &["post", "vault", "the sealed launch code is hunter2"],
+    );
+    check(
+        post.ok,
+        format!("the cleared worker could not post: {}", post.stderr),
+    )?;
+    let own = w.as_worker(&hi_path, &["read", "vault", "--peek"]);
+    check(own.ok, format!("read failed: {}", own.stderr))?;
+    // below the room's label the other worker is refused, whatever it holds
+    has(
+        &w.as_worker(&lo_path, &["read", "vault"]).stderr,
+        "above your clearance",
+        "a worker below the room was not refused",
+    )?;
+    // the credential is the only identity: a typed name cannot be added to it
+    let mut c = w.as_worker(&lo_path, &["post", "r", "x"]);
+    check(c.ok, "the lower worker could not post in an open room")?;
+    c = w.admin(&["export", "vault"], "vault");
+    has(&c.stdout, "w-hi [", "no verified sender in the export")
+        .or_else(|_| has(&c.stdout, "w-hi ", "no verified sender in the export"))?;
+    lacks(
+        &c.stdout,
+        "w-hi (unverified)",
+        "a credential holder was marked unverified",
+    )?;
+    has(
+        &c.stdout,
+        "hunter2",
+        "the export cannot read what the worker sealed",
+    )?;
+    // the audit names the parent and never the token
+    let audit = w.admin(&["audit"], "");
+    has(
+        &audit.stdout,
+        "issue-credential",
+        "the issue is not in the audit",
+    )?;
+    has(
+        &audit.stdout,
+        "parent=lead",
+        "the audit does not name the parent",
+    )?;
+    lacks(&audit.stdout, "KLATCH-CRED-", "a token reached the audit")?;
+    // revocation and expiry stop a worker at once
+    check(
+        w.run("launcher", &["worker", "revoke", "w-hi"]).ok,
+        "revoke failed",
+    )?;
+    has(
+        &w.as_worker(&hi_path, &["post", "vault", "after revoke"])
+            .stderr,
+        "revoked",
+        "a revoked worker still posted",
+    )?;
+    let (short, short_path) = issue("w-short", "internal", "5");
+    check(short.ok, "short issue failed")?;
+    check(
+        w.as_worker(&short_path, &["post", "r", "in time"]).ok,
+        "a fresh credential failed",
+    )?;
+    w.advance(10);
+    has(
+        &w.as_worker(&short_path, &["post", "r", "too late"]).stderr,
+        "expired",
+        "an expired worker still posted",
     )?;
     Ok(vec![])
 }

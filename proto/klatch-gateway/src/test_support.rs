@@ -140,6 +140,18 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.wait_poll(room, member, now)
     }
+    fn issue_credential(&self, c: &klatch_store::NewCredential, now: i64) -> Result<()> {
+        self.inner.issue_credential(c, now)
+    }
+    fn credential(&self, member: &str) -> Result<Option<klatch_store::CredentialRecord>> {
+        self.inner.credential(member)
+    }
+    fn revoke_credential(&self, member: &str, now: i64) -> Result<bool> {
+        self.inner.revoke_credential(member, now)
+    }
+    fn credentials(&self) -> Result<Vec<klatch_store::CredentialRecord>> {
+        self.inner.credentials()
+    }
     fn set_label_keys(&self, keys: klatch_keys::LabelKeys) {
         self.inner.set_label_keys(keys);
     }

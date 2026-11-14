@@ -8,6 +8,7 @@ mod identity;
 mod init;
 mod keys;
 mod scope;
+mod worker;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use klatch_core::{
@@ -133,6 +134,11 @@ enum Cmd {
         /// Conflict with every scope, not only your own (an `ask:<N>` claim always does)
         #[arg(long)]
         shared: bool,
+    },
+    /// Issue, revoke and list the credentials of workers (for a launcher; see `klatch worker --help`)
+    Worker {
+        #[command(subcommand)]
+        cmd: worker::WorkerCmd,
     },
     /// Controls for the person running klatch: pause, close, remove a member, audit (needs a real terminal)
     Admin {
@@ -382,6 +388,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             wake: init::Switch::from_flags(wake, no_wake),
         }),
         Cmd::Admin { cmd } => admin::run(cmd),
+        Cmd::Worker { cmd } => worker::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
 }

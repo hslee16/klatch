@@ -41,6 +41,35 @@ impl Home {
             .unwrap();
         child.wait_with_output().unwrap()
     }
+    /// Run as a launcher would: no name, and a home with no harness registry, so no coding-agent session is found
+    /// above the process (the tests themselves may run inside one).
+    pub fn launcher(&self, args: &[&str]) -> Output {
+        let fake = self.0.join("fake-home");
+        std::fs::create_dir_all(&fake).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_NAME")
+            .env_remove("KLATCH_IDENTITY_FILE")
+            .env("HOME", &fake)
+            .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_KEY_DIR", self.0.join("keys"))
+            .args(args)
+            .output()
+            .unwrap()
+    }
+    /// Run as a worker holding a key bundle: only the path is given, and no key directory or name.
+    pub fn worker(&self, bundle: &std::path::Path, args: &[&str]) -> Output {
+        let fake = self.0.join("fake-home");
+        std::fs::create_dir_all(&fake).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_NAME")
+            .env_remove("KLATCH_KEY_DIR")
+            .env("HOME", &fake)
+            .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_IDENTITY_FILE", bundle)
+            .args(args)
+            .output()
+            .unwrap()
+    }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env("KLATCH_HOME", &self.0)

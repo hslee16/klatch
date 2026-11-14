@@ -10,7 +10,10 @@ mod subscription;
 mod transport;
 
 pub use clock::{Clock, FixedClock, SystemClock};
-pub use gateway::{ClaimSpec, Digest, Gateway, Refused};
+pub use gateway::{
+    ClaimSpec, CredentialInfo, CredentialSpec, Digest, Gateway, MAX_CREDENTIAL_TTL_SECS, Refused,
+    check_credential,
+};
 pub use guard::{AllowAll, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};

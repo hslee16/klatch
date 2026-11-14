@@ -32,6 +32,18 @@ fn state_dir() -> PathBuf {
 pub(crate) fn key_home(db: &Path) -> KeyHome {
     let home = db.parent().unwrap_or(Path::new("."));
     let name = klatch_keys::store_key_name(home);
+    // A worker is handed the path of its key bundle and reads no keystore: its keys are the ones the launcher chose.
+    if let Some(path) = std::env::var_os("KLATCH_IDENTITY_FILE") {
+        let source: Box<dyn KeySource> = match klatch_keys::Bundle::read(Path::new(&path)) {
+            Ok(bundle) => Box::new(bundle.into_source(&name)),
+            Err(e) => Box::new(BrokenKeys(e.to_string())),
+        };
+        return KeyHome {
+            source,
+            name,
+            warning: None,
+        };
+    }
     if let Some(dir) = std::env::var_os("KLATCH_KEY_DIR") {
         return KeyHome {
             source: Box::new(klatch_keys::FileKeys::new(Path::new(&dir))),
@@ -44,6 +56,24 @@ pub(crate) fn key_home(db: &Path) -> KeyHome {
         source,
         name,
         warning,
+    }
+}
+
+/// What stands in for the key source when the key bundle cannot be used: every call says why.
+struct BrokenKeys(String);
+
+impl KeySource for BrokenKeys {
+    fn get(&self, _name: &str) -> Result<Option<Key>, klatch_keys::Error> {
+        Err(klatch_keys::Error::Bad(self.0.clone()))
+    }
+    fn put(&self, _name: &str, _key: &Key) -> Result<(), klatch_keys::Error> {
+        Err(klatch_keys::Error::Bad(self.0.clone()))
+    }
+    fn delete(&self, _name: &str) -> Result<(), klatch_keys::Error> {
+        Err(klatch_keys::Error::Bad(self.0.clone()))
+    }
+    fn describe(&self) -> &'static str {
+        "key bundle"
     }
 }
 

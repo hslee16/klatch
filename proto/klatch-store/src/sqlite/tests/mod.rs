@@ -5,6 +5,7 @@ use super::*;
 mod asks;
 mod claims;
 mod concurrency;
+mod credentials;
 mod encryption;
 mod members;
 mod messages;

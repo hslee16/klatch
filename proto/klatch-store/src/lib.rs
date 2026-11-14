@@ -86,6 +86,29 @@ impl<'a> ClaimRequest<'a> {
     }
 }
 
+/// A credential to register: the hash of its token (the token itself is never stored), the clearance it carries, the
+/// member that launched it and how long it lives.
+#[derive(Debug, Clone, Copy)]
+pub struct NewCredential<'a> {
+    pub member: &'a str,
+    pub token_hash: &'a [u8],
+    pub clearance: &'a str,
+    pub parent: &'a str,
+    pub ttl: i64,
+}
+
+/// A registered credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialRecord {
+    pub member: String,
+    pub token_hash: Vec<u8>,
+    pub clearance: String,
+    pub parent: String,
+    pub issued: i64,
+    pub expires: i64,
+    pub revoked: bool,
+}
+
 /// A claim being released, with a note on what the holder changed (empty for none).
 #[derive(Debug, Clone, Copy)]
 pub struct Release<'a> {
@@ -284,6 +307,23 @@ pub trait Store {
     /// key and one value each; `None` clears a key. The default remembers nothing.
     fn policy_get(&self, _key: &str) -> Result<Option<String>> {
         Ok(None)
+    }
+    /// Register a credential for a member. A member that holds a live one (not revoked, not expired) cannot be given
+    /// another until it is revoked or lapses. The default registers nothing.
+    fn issue_credential(&self, _credential: &NewCredential, _now: i64) -> Result<()> {
+        Err(klatch_core::Error::Invalid(
+            "this store keeps no credentials".into(),
+        ))
+    }
+    fn credential(&self, _member: &str) -> Result<Option<CredentialRecord>> {
+        Ok(None)
+    }
+    /// Revoke a member's credential; false when there is none or it was already revoked.
+    fn revoke_credential(&self, _member: &str, _now: i64) -> Result<bool> {
+        Ok(false)
+    }
+    fn credentials(&self) -> Result<Vec<CredentialRecord>> {
+        Ok(Vec::new())
     }
     /// The label keys this principal holds (DESIGN section 32 item 8). The default ignores them.
     fn set_label_keys(&self, _keys: klatch_keys::LabelKeys) {}

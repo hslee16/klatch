@@ -231,6 +231,15 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         .clone()
         .or_else(|| std::env::var("KLATCH_NAME").ok());
     let discover = who.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1");
+    // A worker holding a key bundle is who the bundle says, proven by its credential, and never anyone else.
+    if let Some(path) = std::env::var_os("KLATCH_IDENTITY_FILE") {
+        return identify_by_credential(
+            std::path::Path::new(&path),
+            declared.as_deref(),
+            cmd,
+            store,
+        );
+    }
     // A hook gets the session it was started for on standard input. It acts only as that session: a registry
     // record for another session (the parent that started this one) is never used (ticket #284).
     let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
@@ -260,6 +269,46 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         principal: resolve_principal(&LocalIdentity, &evidence)?,
         session,
         session_dir,
+        stdin_session,
+        stdin,
+    }))
+}
+
+/// The caller is the member of a key bundle, if its credential is live in the registry. A typed name is accepted only
+/// if it is the bundle's own; a failure is recorded without the token, and nothing falls back to a weaker identity.
+fn identify_by_credential(
+    path: &std::path::Path,
+    declared: Option<&str>,
+    cmd: &Cmd,
+    store: &SqliteStore,
+) -> Result<Option<Caller>> {
+    let bundle = klatch_keys::Bundle::read(path)?;
+    if let Some(name) = declared.filter(|n| *n != bundle.member) {
+        let _ = name;
+        bail!(
+            "this process holds a credential for {}, so it cannot act as another member",
+            bundle.member
+        );
+    }
+    let at = now();
+    if let Err(e) = klatch_gateway::check_credential(store, at, &bundle.member, &bundle.token) {
+        let _ = klatch_store::Store::record_refusal(
+            store,
+            &klatch_store::NewRefusal::new(&bundle.member, "", "credential", "credential"),
+            at,
+        );
+        return Err(e.into());
+    }
+    let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
+    let stdin = if is_hook { stdin_json() } else { None };
+    let stdin_session = stdin.as_ref().and_then(session_id_of);
+    let evidence = PeerEvidence::Credential {
+        member: bundle.member,
+    };
+    Ok(Some(Caller {
+        principal: resolve_principal(&LocalIdentity, &evidence)?,
+        session: None,
+        session_dir: None,
         stdin_session,
         stdin,
     }))
