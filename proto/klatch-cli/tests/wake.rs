@@ -86,3 +86,60 @@ fn the_timeout_is_capped_like_wait() {
     let o = h.run("alice", &["wake", "--timeout", "999999"]);
     assert_eq!(o.status.code(), Some(2));
 }
+
+#[test]
+fn a_message_it_pointed_at_never_wakes_it_again_but_a_new_one_does() {
+    // a session that is woken and does not read must not be woken again and again by the same message
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "first"]);
+    assert_eq!(
+        h.run("alice", &["wake", "--timeout", "5"]).status.code(),
+        Some(2)
+    );
+    assert_eq!(
+        h.run("alice", &["wake", "--timeout", "1"]).status.code(),
+        Some(0)
+    );
+    h.ok("bob", &["post", "r", "second"]);
+    assert_eq!(
+        h.run("alice", &["wake", "--timeout", "5"]).status.code(),
+        Some(2)
+    );
+    // all of it is still unread for the hook and for read
+    let read = h.ok("alice", &["read", "r"]);
+    assert!(read.contains("first") && read.contains("second"), "{read}");
+}
+
+#[test]
+fn a_newer_watcher_replaces_the_older_one_so_they_do_not_pile_up() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    let old = h.spawn("alice", &["wake", "--timeout", "30"]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let new = h.spawn("alice", &["wake", "--timeout", "30"]);
+    // the old one notices within a poll and leaves quietly
+    let started = std::time::Instant::now();
+    let old = old.wait_with_output().unwrap();
+    assert!(
+        started.elapsed().as_secs() < 10,
+        "the old watcher stayed on"
+    );
+    assert_eq!(old.status.code(), Some(0));
+    assert!(old.stderr.is_empty());
+    h.ok("bob", &["post", "r", "now"]);
+    assert_eq!(new.wait_with_output().unwrap().status.code(), Some(2));
+}
+
+#[test]
+fn watchers_of_different_members_do_not_replace_each_other() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("carol", &["join", "r"]);
+    let a = h.spawn("alice", &["wake", "--timeout", "30"]);
+    let c = h.spawn("carol", &["wake", "--timeout", "30"]);
+    std::thread::sleep(std::time::Duration::from_millis(4000));
+    h.ok("bob", &["post", "r", "hi"]);
+    assert_eq!(a.wait_with_output().unwrap().status.code(), Some(2));
+    assert_eq!(c.wait_with_output().unwrap().status.code(), Some(2));
+}

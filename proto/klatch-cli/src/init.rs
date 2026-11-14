@@ -543,12 +543,16 @@ pub fn set_enforce(settings: &mut Value, bin: &str, how: Switch) -> Result<(), S
 /// The wake watcher (#37): an `asyncRewake` hook that wakes an idle session for unread messages. Opt in with
 /// `--wake`.
 pub fn set_wake(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
-    let spec = Optional {
-        event: "SessionStart",
-        entry: wake_entry,
-        owns: is_wake,
-    };
-    set_optional(settings, bin, (&spec, how))
+    // At session start, and again whenever a turn ends: a watcher is one-shot, so each turn starts the next one.
+    for event in ["SessionStart", "Stop"] {
+        let spec = Optional {
+            event,
+            entry: wake_entry,
+            owns: is_wake,
+        };
+        set_optional(settings, bin, (&spec, how))?;
+    }
+    Ok(())
 }
 
 /// The longest-common-subsequence table of two line lists: `table[i][j]` is the length for `a[i..]` and `b[j..]`.
@@ -888,5 +892,31 @@ mod tests {
     fn the_new_hooks_refuse_a_settings_file_of_the_wrong_shape() {
         assert!(set_enforce(&mut json!([1]), BIN, Switch::On).is_err());
         assert!(set_wake(&mut json!({"hooks": {"SessionStart": 3}}), BIN, Switch::On).is_err());
+    }
+    #[test]
+    fn the_wake_hook_is_also_started_again_when_a_turn_ends() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_wake(&mut v, BIN, Switch::On).unwrap();
+        let stop = &v["hooks"]["Stop"][0]["hooks"][0];
+        assert_eq!(
+            stop["command"],
+            "/opt/klatch/klatch --discover wake --timeout 540"
+        );
+        assert_eq!(
+            (stop["async"].as_bool(), stop["asyncRewake"].as_bool()),
+            (Some(true), Some(true))
+        );
+        let once = v.clone();
+        set_wake(&mut v, BIN, Switch::On).unwrap();
+        assert_eq!(v, once);
+        set_wake(&mut v, BIN, Switch::Off).unwrap();
+        assert!(
+            v["hooks"].get("Stop").is_none(),
+            "an empty Stop list was left behind"
+        );
+        let mut other = json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/usr/bin/mine"}]}]}});
+        set_wake(&mut other, BIN, Switch::On).unwrap();
+        set_wake(&mut other, BIN, Switch::Off).unwrap();
+        assert_eq!(commands(&other, "Stop"), vec!["/usr/bin/mine".to_string()]);
     }
 }

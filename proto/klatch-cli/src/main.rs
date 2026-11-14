@@ -96,6 +96,15 @@ enum Cmd {
         #[arg(long)]
         peek: bool,
     },
+    /// Invite a member to a room: post a content-free pointer (`klatch join <room>`) in a room it is already in.
+    /// It joins nobody; the invited session decides. It reaches a session through the hooks or the watcher it has.
+    Invite {
+        member: String,
+        room: String,
+        /// The room both of you are in, where the pointer is posted
+        #[arg(long, default_value = "lobby")]
+        via: String,
+    },
     /// Watch for unread messages and, when one arrives, exit 2 with a one-line pointer (no content): the command
     /// of an `asyncRewake` hook. Quiet at its timeout. Moves no read cursor; refreshes presence.
     Wake {

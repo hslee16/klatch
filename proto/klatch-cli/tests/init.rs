@@ -205,6 +205,7 @@ fn enforce_and_wake_install_remove_and_survive_a_plain_rerun() {
     ok(&["--scope", "project", "--yes", "--no-wake"]);
     let v = Setup::read(&s.project_settings());
     assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    assert!(v["hooks"].get("Stop").is_none());
 }
 
 #[test]
