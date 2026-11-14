@@ -29,6 +29,17 @@ impl Home {
             .output()
             .unwrap()
     }
+    /// Run with `stdin` as standard input, as Claude Code runs a hook.
+    pub fn run_stdin(&self, who: &str, args: &[&str], stdin: &str) -> Output {
+        let mut child = self.spawn(who, args);
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env("KLATCH_HOME", &self.0)

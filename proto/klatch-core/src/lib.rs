@@ -12,6 +12,7 @@ mod labels;
 mod model;
 mod scope;
 mod text;
+mod toolguard;
 
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
@@ -37,3 +38,4 @@ pub use model::{
 };
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{flat, mentions, norm, overlaps, secs_between, valid_name};
+pub use toolguard::{Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, judge_tool, patch_targets};

@@ -10,7 +10,8 @@ mod scope;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use klatch_core::{
-    Principal, convention, flat, hook_output_json, render_board, render_hook, render_who,
+    Asker, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json, judge_tool,
+    patch_targets, render_board, render_hook, render_who,
 };
 use klatch_gateway::{
     AllowAll, ClaimSpec, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport,
@@ -95,6 +96,13 @@ enum Cmd {
         #[arg(long)]
         peek: bool,
     },
+    /// Watch for unread messages and, when one arrives, exit 2 with a one-line pointer (no content): the command
+    /// of an `asyncRewake` hook. Quiet at its timeout. Moves no read cursor; refreshes presence.
+    Wake {
+        /// Seconds to watch (default 540, at most 3600)
+        #[arg(long, default_value_t = 540)]
+        timeout: u64,
+    },
     /// List members of a room with last activity
     Who {
         room: String,
@@ -160,6 +168,18 @@ enum Cmd {
         /// Do not install the SessionEnd hook that marks a finished session done (the default is to install it)
         #[arg(long)]
         no_session_end: bool,
+        /// Install the PreToolUse hook that blocks an edit of a path another member claimed (off by default)
+        #[arg(long, conflicts_with = "no_enforce")]
+        enforce: bool,
+        /// Remove klatch's PreToolUse hook
+        #[arg(long)]
+        no_enforce: bool,
+        /// Install the asyncRewake hook that wakes an idle session for unread messages (off by default)
+        #[arg(long, conflicts_with = "no_wake")]
+        wake: bool,
+        /// Remove klatch's wake hook
+        #[arg(long)]
+        no_wake: bool,
     },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
@@ -255,24 +275,45 @@ fn is_read_only(e: &anyhow::Error) -> bool {
     })
 }
 
+/// The one line a hook prints when it could not read the rooms (R19, #34): in the agent's context, so a session
+/// does not take silence for "nothing new". The reason is the root cause only, on one line and bounded.
+fn failure_line(e: &anyhow::Error, event: &str) -> String {
+    if is_read_only(e) {
+        return READ_ONLY_NOTICE.to_string();
+    }
+    let why: String = klatch_core::flat(&e.root_cause().to_string())
+        .chars()
+        .take(120)
+        .collect();
+    if event == "PreToolUse" {
+        return format!(
+            "[klatch] could not check claims ({why}); this call was not checked against other members' claims"
+        );
+    }
+    format!(
+        "[klatch] could not read the rooms ({why}); messages may be waiting. Try `klatch read <room>` or tell your user"
+    )
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let hook_event = match &cli.cmd {
-        Cmd::Hook { event, .. } => Some(event.clone().unwrap_or_default()),
+        Cmd::Hook { event, .. } => Some(event.clone()),
         _ => None,
     };
     match run_cli(cli) {
-        Err(e) if hook_event.is_some() && is_read_only(&e) => {
-            // the session is over at SessionEnd: nothing to tell it
-            if hook_event.as_deref() != Some("SessionEnd") {
-                print!(
+        // A hook never fails a session: it says what went wrong where the model reads it, and exits 0. The session
+        // is over at SessionEnd, so there is nothing to tell it.
+        Err(e) if hook_event.is_some() => {
+            let event = hook_event.flatten();
+            let line = failure_line(&e, event.as_deref().unwrap_or(""));
+            match event.as_deref() {
+                Some("SessionEnd") => {}
+                Some(event) => print!(
                     "{}",
-                    klatch_core::hook_output_json(
-                        hook_event.as_deref().unwrap_or(""),
-                        READ_ONLY_NOTICE,
-                        None
-                    )
-                );
+                    klatch_core::hook_output_json(event, &line, Some(&line))
+                ),
+                None => println!("{line}"),
             }
             Ok(())
         }
@@ -288,12 +329,18 @@ fn run_cli(cli: Cli) -> Result<()> {
             yes,
             no_lobby,
             no_session_end,
+            enforce,
+            no_enforce,
+            wake,
+            no_wake,
         } => run_init(&init::Options {
             scope,
             board,
             yes,
             no_lobby,
             no_session_end,
+            enforce: init::Switch::from_flags(enforce, no_enforce),
+            wake: init::Switch::from_flags(wake, no_wake),
         }),
         Cmd::Admin { cmd } => admin::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
@@ -370,6 +417,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
                 me: &me,
                 now: now(),
                 stdin_session: caller.stdin_session.as_deref(),
+                stdin: caller.stdin.as_ref(),
             };
             run(&ctx, cmd)
         }

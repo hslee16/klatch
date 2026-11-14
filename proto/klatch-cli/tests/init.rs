@@ -165,3 +165,62 @@ fn hooks_shows_when_each_event_last_ran_with_a_count_and_no_content() {
         "got: {other}"
     );
 }
+
+#[test]
+fn the_claim_and_wake_hooks_are_off_unless_asked_for() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    let v = Setup::read(&s.project_settings());
+    assert!(v["hooks"].get("PreToolUse").is_none());
+    assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn enforce_and_wake_install_remove_and_survive_a_plain_rerun() {
+    let s = Setup::new();
+    let ok = |args: &[&str]| {
+        let o = s.init(args, "");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    ok(&["--scope", "project", "--yes", "--enforce", "--wake"]);
+    let v = Setup::read(&s.project_settings());
+    assert_eq!(hook_cmds(&v, "PreToolUse").len(), 1);
+    assert!(
+        hook_cmds(&v, "SessionStart")
+            .iter()
+            .any(|c| c.contains(" wake "))
+    );
+    // a plain rerun keeps both
+    ok(&["--scope", "project", "--yes"]);
+    assert_eq!(Setup::read(&s.project_settings()), v);
+    // each goes away on its own flag, the rest stays
+    ok(&["--scope", "project", "--yes", "--no-enforce"]);
+    let v = Setup::read(&s.project_settings());
+    assert!(v["hooks"].get("PreToolUse").is_none());
+    assert!(
+        hook_cmds(&v, "SessionStart")
+            .iter()
+            .any(|c| c.contains(" wake "))
+    );
+    ok(&["--scope", "project", "--yes", "--no-wake"]);
+    let v = Setup::read(&s.project_settings());
+    assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn a_flag_and_its_opposite_are_refused() {
+    let s = Setup::new();
+    assert!(
+        !s.init(
+            &["--scope", "project", "--yes", "--enforce", "--no-enforce"],
+            ""
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !s.init(&["--scope", "project", "--yes", "--wake", "--no-wake"], "")
+            .status
+            .success()
+    );
+}
