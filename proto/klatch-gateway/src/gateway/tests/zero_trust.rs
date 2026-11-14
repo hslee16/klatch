@@ -84,6 +84,13 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_revoke_credential(w, "w-1"))
     }),
     ("admin_credentials", |g, w| refused(g.admin_credentials(w))),
+    ("admin_run_create", |g, w| {
+        refused(g.admin_run_create(w, "a"))
+    }),
+    ("admin_run_end", |g, w| {
+        refused(g.admin_run_end(w, "a", None))
+    }),
+    ("admin_runs", |g, w| refused(g.admin_runs(w))),
     ("admin_seal_label", |g, w| {
         refused(g.admin_seal_label(w, "private"))
     }),
@@ -171,6 +178,7 @@ fn public_methods() -> Vec<String> {
         include_str!("../budget.rs"),
         include_str!("../dm.rs"),
         include_str!("../policy.rs"),
+        include_str!("../runs.rs"),
         include_str!("../scrub.rs"),
         include_str!("../tripwire.rs"),
         include_str!("../workers.rs"),

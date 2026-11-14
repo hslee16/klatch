@@ -12,6 +12,7 @@ mod messages;
 mod migrations;
 mod plaintext;
 mod policy;
+mod runs;
 
 pub(super) fn store() -> SqliteStore {
     SqliteStore::open_in_memory().unwrap()

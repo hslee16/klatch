@@ -24,6 +24,8 @@ mod admin;
 mod budget;
 mod dm;
 mod policy;
+mod runs;
+pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
 mod tripwire;
 mod workers;
@@ -627,6 +629,7 @@ impl<S: Store> Gateway<S> {
     fn authorize_quietly(&self, who: &Principal, op: &Operation) -> Result<()> {
         if let Some(room) = op.room() {
             self.check_stops(who, room, op)?;
+            self.check_run(room)?;
             self.check_dm(who, room)?;
             if !matches!(op, Operation::Release { .. }) {
                 self.check_clearance(who, room)?;

@@ -83,6 +83,14 @@ pub enum AdminCmd {
     Backup { file: std::path::PathBuf },
     /// Replace the store with a backup made under the same key; the store it replaces is kept beside it
     Restore { file: std::path::PathBuf },
+    /// Print a run's archive (made by `klatch run end --archive`) as readable JSON lines. Plaintext leaves on purpose,
+    /// so it is audited and asks for the run id typed back
+    RunArchive {
+        file: std::path::PathBuf,
+        /// The run the archive is of
+        #[arg(long)]
+        run: String,
+    },
     /// Print a room's messages as readable text. This is the one way plaintext leaves the store on purpose, so it is
     /// audited and asks for the room typed back
     Export { room: String },
@@ -121,6 +129,7 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
         AdminCmd::RotateKey => Some("rotate".into()),
         AdminCmd::Restore { .. } => Some("restore".into()),
         AdminCmd::Export { room } => Some(room.clone()),
+        AdminCmd::RunArchive { run, .. } => Some(run.clone()),
         AdminCmd::Remove { member, .. } => Some(member.clone()),
         _ => None,
     }
@@ -275,7 +284,8 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         | AdminCmd::Backup { .. }
         | AdminCmd::Restore { .. }
         | AdminCmd::Export { .. }
-        | AdminCmd::SealLabel { .. } => {
+        | AdminCmd::SealLabel { .. }
+        | AdminCmd::RunArchive { .. } => {
             unreachable!("handled in run, which needs the keystore and not only the gateway")
         }
     }
@@ -314,6 +324,14 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             }
             note("recover-key", label.as_deref().unwrap_or(""))?;
             println!("the key is back in place");
+        }
+        AdminCmd::RunArchive { file, run } => {
+            let key = keys::current_key(db)?
+                .ok_or_else(|| anyhow::anyhow!("this store has no key to open an archive with"))?;
+            let text = run::read_archive(&file, &key, &run)?;
+            // audited before anything is printed
+            note("run-archive", &format!("{run} from {}", file.display()))?;
+            print!("{text}");
         }
         AdminCmd::SealLabel { label } => {
             let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
@@ -391,6 +409,7 @@ fn needs_the_keystore(cmd: &AdminCmd) -> bool {
             | AdminCmd::Restore { .. }
             | AdminCmd::Export { .. }
             | AdminCmd::SealLabel { .. }
+            | AdminCmd::RunArchive { .. }
     )
 }
 

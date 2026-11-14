@@ -7,6 +7,7 @@ mod commands;
 mod identity;
 mod init;
 mod keys;
+mod run;
 mod scope;
 mod worker;
 use anyhow::{Context, Result, bail};
@@ -146,6 +147,11 @@ enum Cmd {
     Worker {
         #[command(subcommand)]
         cmd: worker::WorkerCmd,
+    },
+    /// Open and end a factory run, whose rooms are `run.<id>.<name>` (for a launcher; see `klatch run --help`)
+    Run {
+        #[command(subcommand)]
+        cmd: run::RunCmd,
     },
     /// Controls for the person running klatch: pause, close, remove a member, audit (needs a real terminal)
     Admin {
@@ -396,6 +402,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         }),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
+        Cmd::Run { cmd } => run::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
 }
