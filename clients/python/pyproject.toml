@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "klatch"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "A substrate for agent rooms (pre-release; the Python client)"
 readme = "README.md"
 license = "MIT"

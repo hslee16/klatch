@@ -4,4 +4,4 @@ The wheel installs this file (package/wheel_init.py) as `klatch/__init__.py` and
 """
 from .client import ApiError, Client, PROTOCOL_VERSION, ProtocolError  # noqa: F401
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0.dev1"
