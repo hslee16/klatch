@@ -38,5 +38,42 @@ reviewed by an outside person before release (#167).
 
 ## Reporting a problem
 
-Open a private security advisory on the repository, or email the maintainer named in the repository profile. Please
-do not file public issues for vulnerabilities.
+Use **Report a vulnerability** on the Security tab of https://github.com/hslee16/klatch (GitHub private vulnerability
+reporting). Please do not file public issues for vulnerabilities. There is no project email address yet.
+
+## Verifying a download
+
+Every file on a GitHub release is built by `.github/workflows/release.yml` and can be checked two ways. The binaries are
+not signed with an Apple Developer ID or notarized yet (#424), so a browser download on macOS is quarantined; downloads
+made with `gh` or `curl` are not.
+
+The release carries, for each of macOS arm64, macOS x86_64, Linux x86_64 and Linux aarch64: the archive
+(`klatch-<version>-<target>.tar.gz`: the binary, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a CycloneDX 1.5 SBOM
+(`klatch-<version>-<target>.cdx.json`). For the whole release: `SHA256SUMS` and its Sigstore signature
+`SHA256SUMS.sigstore.json`.
+
+**1. Build provenance (GitHub CLI).** Proves the file was built by this repository's release workflow, from which
+commit, on a GitHub-hosted runner:
+
+```
+gh release download v0.1.0.dev1 --repo hslee16/klatch
+gh attestation verify klatch-0.1.0-dev.1-aarch64-apple-darwin.tar.gz --repo hslee16/klatch
+```
+
+It prints nothing when it is not attached to a terminal and exits 0 on success; add `--format json` to see the signer
+workflow, the commit and the trigger. A file from any other repository fails.
+
+**2. Signed checksums (cosign, no GitHub CLI needed).** Verify the signature on `SHA256SUMS`, then the files against it:
+
+```
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/hslee16/klatch/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+shasum -a 256 -c SHA256SUMS      # on Linux: sha256sum -c SHA256SUMS
+```
+
+`Verified OK` means the checksum file was signed by the release workflow of this repository. A changed `SHA256SUMS`, or
+a different identity, fails. Both checks were run against the v0.1.0.dev1 release, including those failures.
+
+PyPI (`klatch`), npm (`@klatch/client`) and crates.io (`klatch`) are published only by that workflow through trusted
+publishing; PyPI and npm attach provenance to each version, and crates.io records the publishing workflow run.
