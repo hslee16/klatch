@@ -50,6 +50,8 @@ jobs:
           export KLATCH_BIN="$PWD/target/debug/klatch"
           (cd ../clients/python && python3 -m unittest discover -v)
           (cd ../clients/typescript && node --experimental-strip-types --test conformance.test.ts)
+      - name: The launcher recipe, a whole run against the real binary (FACTORY.md)
+        run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)
         run: cargo test -p klatch-cli --features test-clock --test no_plaintext --locked
       - name: Dependency policy (licences, advisories, sources, refused crypto crates)
