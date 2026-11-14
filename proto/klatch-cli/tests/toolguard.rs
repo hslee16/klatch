@@ -254,3 +254,38 @@ fn a_dot_dot_spelling_of_a_claimed_path_is_blocked() {
     );
     assert_eq!(o.status.code(), Some(2));
 }
+
+#[test]
+fn a_shell_command_naming_a_claimed_file_through_a_symlink_is_warned_about() {
+    let (real, link) = linked();
+    std::fs::write(real.join("api.rs"), "x").unwrap();
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["join", "r"]);
+    h.ok(
+        "bob",
+        &["claim", "r", real.join("api.rs").to_str().unwrap()],
+    );
+    let command = format!("sed -i s/a/b/ {}", link.join("api.rs").display());
+    let o = pre(
+        &h,
+        "alice",
+        &call("Bash", serde_json::json!({"command": command})),
+    );
+    assert_eq!(o.status.code(), Some(0));
+    assert!(
+        text(&o.stdout).contains("claimed path"),
+        "{}",
+        text(&o.stdout)
+    );
+    let quiet = format!("cat {}", link.join("other.rs").display());
+    assert!(
+        pre(
+            &h,
+            "alice",
+            &call("Bash", serde_json::json!({"command": quiet}))
+        )
+        .stdout
+        .is_empty()
+    );
+}
