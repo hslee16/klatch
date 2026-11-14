@@ -24,6 +24,9 @@ pub struct Options {
     pub no_lobby: bool,
     /// Do not install the SessionEnd hook that marks a finished session done.
     pub no_session_end: bool,
+    /// The PreToolUse claim hook (#33) and the wake hook (#37): opt in, opt out, or leave as is.
+    pub enforce: Switch,
+    pub wake: Switch,
 }
 
 /// Where `init` reads answers from and writes its questions and results to.
@@ -45,6 +48,8 @@ struct Choices {
     board: Option<String>,
     join: bool,
     session_end: bool,
+    enforce: Switch,
+    wake: Switch,
 }
 
 /// A settings file and what it would become.
@@ -143,6 +148,8 @@ impl Io<'_> {
             board,
             join,
             session_end,
+            enforce: options.enforce,
+            wake: options.wake,
         })
     }
 }
@@ -192,6 +199,8 @@ fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> any
     )
     .map_err(refuse)?;
     set_session_end(&mut merged, bin, choices.session_end).map_err(refuse)?;
+    set_enforce(&mut merged, bin, choices.enforce).map_err(refuse)?;
+    set_wake(&mut merged, bin, choices.wake).map_err(refuse)?;
     Ok(Plan {
         label,
         path,
@@ -329,13 +338,18 @@ fn is_ours(hook: &Value) -> bool {
 /// every other entry as it was. A matcher left with no hooks is dropped. Returns whether an entry of klatch's
 /// stayed in place, so the caller knows whether to add one.
 fn sync_entries(list: &mut Vec<Value>, cmd: &str, keep: bool) -> bool {
+    sync_owned(list, cmd, keep, is_ours)
+}
+
+/// `sync_entries` for the entries `owns` says are klatch's.
+fn sync_owned(list: &mut Vec<Value>, cmd: &str, keep: bool, owns: fn(&Value) -> bool) -> bool {
     let mut found = false;
     for matcher in list.iter_mut() {
         let Some(inner) = matcher.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
         inner.retain_mut(|h| {
-            if !is_ours(h) {
+            if !owns(h) {
                 return true;
             }
             if !keep || found {
@@ -426,6 +440,115 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
         hooks.remove(EVENT);
     }
     Ok(())
+}
+
+/// What to do with an optional hook: add it, remove it, or leave things as they are (update an entry already there,
+/// add none). Optional hooks are opt-in, so nothing here runs unless a flag asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    On,
+    Off,
+    Keep,
+}
+
+impl Switch {
+    /// The switch two flags (`--x` and `--no-x`) set; neither leaves things as they are.
+    pub fn from_flags(on: bool, off: bool) -> Self {
+        match (on, off) {
+            (true, _) => Self::On,
+            (_, true) => Self::Off,
+            _ => Self::Keep,
+        }
+    }
+}
+
+/// One optional hook klatch can install.
+struct Optional {
+    event: &'static str,
+    entry: fn(&str) -> Result<Value, String>,
+    owns: fn(&Value) -> bool,
+}
+
+/// The tools the claim hook looks at.
+const ENFORCE_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+
+/// How long the wake watcher may run, and the timeout Claude Code gets for it (a little more).
+const WAKE_WATCH_SECS: u64 = 540;
+const WAKE_HOOK_TIMEOUT_SECS: u64 = 600;
+
+fn is_wake_command(cmd: &str) -> bool {
+    cmd.contains("klatch") && cmd.contains(" --discover wake")
+}
+
+fn is_wake(hook: &Value) -> bool {
+    hook.get("command")
+        .and_then(Value::as_str)
+        .is_some_and(is_wake_command)
+}
+
+fn enforce_entry(bin: &str) -> Result<Value, String> {
+    let cmd = hook_command(bin, "PreToolUse", None, true)?;
+    Ok(json!({"matcher": ENFORCE_MATCHER, "hooks": [{"type": "command", "command": cmd}]}))
+}
+
+fn wake_entry(bin: &str) -> Result<Value, String> {
+    check_bin_path(bin)?;
+    let cmd = format!(
+        "{} --discover wake --timeout {WAKE_WATCH_SECS}",
+        shell_path(bin)
+    );
+    Ok(json!({"hooks": [{
+        "type": "command", "command": cmd, "async": true, "asyncRewake": true,
+        "timeout": WAKE_HOOK_TIMEOUT_SECS
+    }]}))
+}
+
+fn set_optional(
+    settings: &mut Value,
+    bin: &str,
+    (spec, how): (&Optional, Switch),
+) -> Result<(), String> {
+    let entry = (spec.entry)(bin)?;
+    let cmd = entry["hooks"][0]["command"]
+        .as_str()
+        .ok_or("no hook command")?
+        .to_string();
+    let absent = settings
+        .as_object()
+        .is_some_and(|r| !r.get("hooks").is_some_and(|h| h.get(spec.event).is_some()));
+    if how != Switch::On && absent {
+        return Ok(());
+    }
+    let hooks = hooks_of(settings)?;
+    let list = event_list(hooks, spec.event)?;
+    if !sync_owned(list, &cmd, how != Switch::Off, spec.owns) && how == Switch::On {
+        list.push(entry);
+    }
+    if list.is_empty() {
+        hooks.remove(spec.event);
+    }
+    Ok(())
+}
+
+/// The PreToolUse claim hook (#33): blocks an edit of a path another member claimed. Opt in with `--enforce`.
+pub fn set_enforce(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    let spec = Optional {
+        event: "PreToolUse",
+        entry: enforce_entry,
+        owns: is_ours,
+    };
+    set_optional(settings, bin, (&spec, how))
+}
+
+/// The wake watcher (#37): an `asyncRewake` hook that wakes an idle session for unread messages. Opt in with
+/// `--wake`.
+pub fn set_wake(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    let spec = Optional {
+        event: "SessionStart",
+        entry: wake_entry,
+        owns: is_wake,
+    };
+    set_optional(settings, bin, (&spec, how))
 }
 
 /// The longest-common-subsequence table of two line lists: `table[i][j]` is the length for `a[i..]` and `b[j..]`.
@@ -673,5 +796,97 @@ mod tests {
     fn a_session_end_in_a_settings_file_of_the_wrong_shape_is_refused() {
         assert!(set_session_end(&mut json!([1]), BIN, true).is_err());
         assert!(set_session_end(&mut json!({"hooks": {"SessionEnd": 3}}), BIN, true).is_err());
+    }
+    #[test]
+    fn the_claim_hook_is_opt_in_and_is_not_part_of_the_default_merge() {
+        let v = merge_hooks(None, BIN, None, true).unwrap();
+        assert!(v["hooks"].get("PreToolUse").is_none());
+    }
+
+    #[test]
+    fn turning_the_claim_hook_on_adds_one_matcher_entry_and_is_idempotent() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_enforce(&mut v, BIN, Switch::On).unwrap();
+        let entry = &v["hooks"]["PreToolUse"][0];
+        assert_eq!(entry["matcher"], "Edit|Write|MultiEdit|NotebookEdit|Bash");
+        assert_eq!(
+            commands(&v, "PreToolUse"),
+            vec!["/opt/klatch/klatch --discover hook --event PreToolUse".to_string()]
+        );
+        let once = v.clone();
+        set_enforce(&mut v, BIN, Switch::On).unwrap();
+        assert_eq!(v, once);
+    }
+
+    #[test]
+    fn turning_the_claim_hook_off_removes_only_klatchs_entry() {
+        let mut v = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/bin/guard"}]}]}});
+        set_enforce(&mut v, BIN, Switch::On).unwrap();
+        assert_eq!(commands(&v, "PreToolUse").len(), 2);
+        set_enforce(&mut v, BIN, Switch::Off).unwrap();
+        assert_eq!(
+            commands(&v, "PreToolUse"),
+            vec!["/usr/bin/guard".to_string()]
+        );
+        let mut only = json!({});
+        set_enforce(&mut only, BIN, Switch::On).unwrap();
+        set_enforce(&mut only, BIN, Switch::Off).unwrap();
+        assert!(only["hooks"].get("PreToolUse").is_none());
+    }
+
+    #[test]
+    fn keeping_the_claim_hook_updates_the_path_but_never_adds_it() {
+        let mut absent = merge_hooks(None, BIN, None, true).unwrap();
+        let before = absent.clone();
+        set_enforce(&mut absent, BIN, Switch::Keep).unwrap();
+        assert_eq!(absent, before);
+        let mut on = merge_hooks(None, BIN, None, true).unwrap();
+        set_enforce(&mut on, BIN, Switch::On).unwrap();
+        set_enforce(&mut on, "/other/klatch", Switch::Keep).unwrap();
+        assert!(commands(&on, "PreToolUse")[0].starts_with("/other/klatch"));
+        assert_eq!(commands(&on, "PreToolUse").len(), 1);
+    }
+
+    #[test]
+    fn the_wake_hook_is_an_async_rewake_entry_beside_the_session_start_hook() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_wake(&mut v, BIN, Switch::On).unwrap();
+        let list = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(list.len(), 2, "the session start hook stays");
+        let wake = &list[1]["hooks"][0];
+        assert_eq!(
+            wake["command"],
+            "/opt/klatch/klatch --discover wake --timeout 540"
+        );
+        assert_eq!(wake["async"], true);
+        assert_eq!(wake["asyncRewake"], true);
+        assert_eq!(wake["timeout"], 600);
+        let once = v.clone();
+        set_wake(&mut v, BIN, Switch::On).unwrap();
+        assert_eq!(v, once);
+    }
+
+    #[test]
+    fn the_default_merge_leaves_a_wake_entry_alone_and_wake_leaves_the_session_start_entry_alone() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_wake(&mut v, BIN, Switch::On).unwrap();
+        let again = merge_hooks(Some(&v), BIN, Some("lobby"), true).unwrap();
+        assert!(
+            again["hooks"]["SessionStart"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["hooks"][0]["asyncRewake"] == true)
+        );
+        let mut off = again.clone();
+        set_wake(&mut off, BIN, Switch::Off).unwrap();
+        assert_eq!(off["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+        assert!(commands(&off, "SessionStart")[0].contains("--board lobby"));
+    }
+
+    #[test]
+    fn the_new_hooks_refuse_a_settings_file_of_the_wrong_shape() {
+        assert!(set_enforce(&mut json!([1]), BIN, Switch::On).is_err());
+        assert!(set_wake(&mut json!({"hooks": {"SessionStart": 3}}), BIN, Switch::On).is_err());
     }
 }

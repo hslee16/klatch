@@ -126,8 +126,8 @@ pub(crate) fn ensure_session_member(
     Ok(member)
 }
 
-/// The session id Claude Code puts on a hook's standard input. Reads nothing when standard input is a terminal.
-pub(crate) fn stdin_session_id() -> Option<String> {
+/// The JSON Claude Code puts on a hook's standard input. Reads nothing when standard input is a terminal.
+pub(crate) fn stdin_json() -> Option<serde_json::Value> {
     use std::io::{IsTerminal, Read};
     if std::io::stdin().is_terminal() {
         return None;
@@ -143,7 +143,11 @@ pub(crate) fn stdin_session_id() -> Option<String> {
     let text = rx
         .recv_timeout(std::time::Duration::from_millis(1500))
         .ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The session id in a hook's input, when it is text.
+fn session_id_of(v: &serde_json::Value) -> Option<String> {
     v.get("session_id")?.as_str().map(String::from)
 }
 
@@ -213,6 +217,8 @@ pub(crate) struct Caller {
     pub session: Option<Found>,
     pub session_dir: Option<String>,
     pub stdin_session: Option<String>,
+    /// The whole input of a hook, for events that carry more than the session (a tool call).
+    pub stdin: Option<serde_json::Value>,
 }
 
 /// Who is calling: the typed name if there is one, else the coding-agent session found above this process, kept to
@@ -227,8 +233,9 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let discover = who.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1");
     // A hook gets the session it was started for on standard input. It acts only as that session: a registry
     // record for another session (the parent that started this one) is never used (ticket #284).
-    let is_hook = matches!(cmd, Cmd::Hook { .. });
-    let stdin_session = if is_hook { stdin_session_id() } else { None };
+    let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
+    let stdin = if is_hook { stdin_json() } else { None };
+    let stdin_session = stdin.as_ref().and_then(session_id_of);
     // What the walk up the process tree found, once: it gives the identity and, for a coding session, its directory.
     let found = (declared.is_none() && discover).then(discover_session);
     let session = found.as_ref().and_then(|r| r.as_ref().ok()).cloned();
@@ -254,6 +261,7 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         session,
         session_dir,
         stdin_session,
+        stdin,
     }))
 }
 

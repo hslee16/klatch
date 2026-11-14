@@ -21,6 +21,7 @@ mod mute;
 mod scrub;
 mod stream;
 mod tripwire;
+mod wake;
 
 pub(super) fn alice() -> Principal {
     Principal::unattributed("alice")

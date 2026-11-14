@@ -182,6 +182,20 @@ impl<S: Store> Gateway<S> {
         self.store.wait_poll(room, &who.member, self.now())
     }
 
+    /// How many unread messages would wake the caller in a room: from others, past both cursors, and only those
+    /// that mention the caller when it muted the room. Moves no cursor; refreshes presence, so a session that sits
+    /// in a watcher is not taken for gone (#37, #39).
+    pub fn wakeable(&self, who: &Principal, room: &str) -> Result<usize> {
+        let unread = self.wait_poll(who, room)?;
+        if !self.store.is_muted(Seat::new(room, &who.member))? {
+            return Ok(unread.len());
+        }
+        Ok(unread
+            .iter()
+            .filter(|m| klatch_core::mentions(&m.body, &who.member))
+            .count())
+    }
+
     /// Record that a `wait` looked at the room up to `seq`; the messages stay unread.
     pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;

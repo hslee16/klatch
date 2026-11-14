@@ -17,6 +17,8 @@ pub trait Transport {
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
     /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
+    /// How many unread messages would wake the caller in a room (mute aware); moves no cursor.
+    fn wakeable(&self, room: &str) -> Result<usize>;
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
@@ -107,6 +109,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
+    }
+    fn wakeable(&self, room: &str) -> Result<usize> {
+        self.gateway.wakeable(&self.principal, room)
     }
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>> {
         self.gateway.wait_poll(&self.principal, room)
