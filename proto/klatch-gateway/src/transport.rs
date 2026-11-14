@@ -44,6 +44,8 @@ pub trait Transport {
     fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()>;
     fn admin_set_cap(&self, label: &str) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
+    /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
+    fn admin_plant_canary(&self, room: &str) -> Result<()>;
     /// The scrubber (#44): list a private term under a rule name, stop it, and show what is listed.
     fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()>;
     fn admin_remove_scrub_term(&self, name: &str) -> Result<()>;
@@ -168,6 +170,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()> {
         self.gateway.admin_set_label_chain(&self.principal, names)
+    }
+    fn admin_plant_canary(&self, room: &str) -> Result<()> {
+        self.gateway.admin_plant_canary(&self.principal, room)
     }
     fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()> {
         self.gateway

@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         scrub_and_dm(),
+        tripwires(),
         Scenario {
             name: "labels_keep_a_private_fact_out_of_a_public_room_and_every_refusal_is_audited",
             origin: "#40 to #45, R7 to R9, R27",
@@ -149,5 +150,67 @@ fn scrub_and_direct_messages(w: &World) -> Res {
         "direct message between two other members",
         "a third member is refused",
     )?;
+    Ok(vec![])
+}
+
+pub(super) fn tripwires() -> Scenario {
+    Scenario {
+        name: "a_leaked_canary_pauses_the_room_it_reached_and_repeated_refusals_stop_the_member",
+        origin: "#46, #47, D4",
+        layer: "fault",
+        run: canary_and_breaker,
+    }
+}
+
+fn canary_and_breaker(w: &World) -> Res {
+    w.set_clock(T0);
+    check(
+        w.admin(&["label", "vault", "private"], "").ok,
+        "label failed",
+    )?;
+    check(
+        w.admin(&["clear", "priv", "private"], "").ok,
+        "clear failed",
+    )?;
+    check(w.admin(&["canary", "vault"], "").ok, "canary failed")?;
+    let seen = w.ok("priv", &["read", "vault"])?;
+    let token = seen
+        .split_whitespace()
+        .find(|t| t.starts_with("kc-canary-"))
+        .map(str::to_string)
+        .ok_or_else(|| format!("no canary in the room: {seen}"))?;
+    let refused = w.refused("priv", &["post", "town", &format!("see {token}")])?;
+    has(
+        &refused,
+        "paused until an admin reopens",
+        "a leaked canary is refused",
+    )?;
+    lacks(&refused, &token, "the refusal repeated the canary")?;
+    has(
+        &w.refused("priv", &["post", "town", "anything"])?,
+        "paused by a tripwire",
+        "the room it reached is paused",
+    )?;
+    let audit = w.admin(&["audit"], "");
+    has(&audit.stdout, "tripwire", "the audit records the trip")?;
+    lacks(&audit.stdout, &token, "the audit repeated the canary")?;
+    check(w.admin(&["reopen", "town"], "").ok, "reopen failed")?;
+    w.ok("priv", &["post", "town", "back to normal"])?;
+    // a member that keeps running into the safety rules is stopped, then allowed back
+    for i in 0..5 {
+        w.advance(5);
+        let r = w.refused("nosy", &["post", "vault", &format!("let me in {i}")])?;
+        has(&r, "above your clearance", "an uncleared member is refused")?;
+    }
+    has(
+        &w.refused("nosy", &["post", "town", "innocent"])?,
+        "stopped after 5 refused calls",
+        "the breaker stops the member everywhere",
+    )?;
+    check(
+        w.admin(&["allow", "nosy", "--all-rooms"], "").ok,
+        "allow failed",
+    )?;
+    w.ok("nosy", &["post", "town", "back"])?;
     Ok(vec![])
 }

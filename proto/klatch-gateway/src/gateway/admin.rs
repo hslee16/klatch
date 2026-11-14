@@ -84,8 +84,17 @@ impl<S: Store> Gateway<S> {
         if !valid_name(member) {
             return Err(Error::Invalid(format!("bad member name: {member}")));
         }
-        self.administer(who, ("allow", &format!("{room}/{member}")), |_| {
-            if self.store.unblock_member(room, member)? {
+        self.administer(who, ("allow", &format!("{room}/{member}")), |now| {
+            let tripped = room == "*"
+                && self
+                    .store
+                    .policy_get(&format!("trip:member:{member}"))?
+                    .is_some();
+            if tripped {
+                self.store
+                    .policy_set(&format!("trip:member:{member}"), None, now)?;
+            }
+            if self.store.unblock_member(room, member)? || tripped {
                 Ok(String::new())
             } else {
                 Err(Error::NotFound(format!(
@@ -110,5 +119,47 @@ impl<S: Store> Gateway<S> {
             },
         )?;
         self.store.audit_log(limit)
+    }
+
+    /// The stops, before any policy: a member the breaker stopped or the admin removed, a paused gateway, and a room
+    /// the admin closed or a tripwire paused (a closed room stays readable).
+    pub(super) fn check_stops(&self, who: &Principal, room: &str, op: &Operation) -> Result<()> {
+        let refuse = |rule: &str, reason: String| {
+            Err(Error::Refused {
+                rule: rule.into(),
+                reason,
+            })
+        };
+        if let Some(why) = self
+            .store
+            .policy_get(&format!("trip:member:{}", who.member))?
+        {
+            return refuse("breaker", why);
+        }
+        if self.store.is_blocked(room, &who.member)? {
+            return refuse(
+                "admin-block",
+                format!("you were removed from room {room} by the admin"),
+            );
+        }
+        if self.store.room_state("*")?.as_deref() == Some("paused") {
+            return refuse("admin-pause", "rooms are paused by the admin".into());
+        }
+        if !op.changes_a_closed_room() {
+            return Ok(());
+        }
+        match self.store.room_state(room)?.as_deref() {
+            Some("closed") => refuse(
+                "admin-close",
+                format!("room {room} is closed by the admin; it is read-only"),
+            ),
+            Some("tripped") => refuse(
+                "tripwire",
+                format!(
+                    "room {room} is paused by a tripwire; it is read-only until an admin reopens it"
+                ),
+            ),
+            _ => Ok(()),
+        }
     }
 }
