@@ -1011,3 +1011,9 @@ What Codex offers a future klatch adapter (read from the binary and `~/.codex/ho
 
 Found by the new scenario: the SessionEnd hook used the digest to learn the member's rooms, which marks unread messages as shown, so a resumed session never saw a message that arrived just before the old one ended. It now lists the rooms without reading.
 
+## 38. Peer identity from a gateway-owned socket (2026-11-13, macOS 14, experiment 14.3, ticket #29)
+
+`klatch-harness/tests/peer_identity.rs` shows it works. A gateway that owns a Unix socket can ask the kernel for the pid of the process at the other end of an accepted connection (`getsockopt` with `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux; the Linux branch is written but was not run here). That pid is the connecting process, here the script a session's shell started, not the session itself; the existing ancestry walk (`find_session`, with the same liveness checks) then maps it to the session's registry record, giving the session id, name and directory. A process with no session above it maps to nothing and stays unattributed.
+
+What this gives and does not give: the identity is as strong as the process tree and the registry, which are same-user evidence (a process can lie about its ancestry only by being the user, who can do anything anyway). It is not proof against another process of the same user that arranges to descend from a session. It needs a gateway that owns a socket, which klatch does not have yet (the CLI opens the store directly); it is the identity source for that daemon, when it exists (epic #152), where the socket's file mode also admits only its owner.
+
