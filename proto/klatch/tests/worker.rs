@@ -119,8 +119,11 @@ fn a_revoked_an_expired_and_a_borrowed_bundle_are_refused() {
 #[test]
 fn a_credential_expires_on_its_own() {
     let h = Home::new();
+    // The shortest lifetime is one second. There is deliberately no "it worked in time" post here: on a loaded runner
+    // the process can take longer than that to start, so such a post races the expiry (it failed once on CI). That a
+    // fresh credential works is shown by every other test in this file; this one shows that it stops on its own, and
+    // the message must name the reason.
     let b = issue(&h, "w-1", "internal", &["--ttl", "1"]);
-    assert!(h.worker(&b, &["post", "r", "in time"]).status.success());
     std::thread::sleep(std::time::Duration::from_millis(2200));
     let o = h.worker(&b, &["post", "r", "too late"]);
     assert!(
