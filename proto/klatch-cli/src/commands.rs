@@ -107,7 +107,13 @@ fn release(t: &dyn Transport, room: &str, path: &str, note: Option<&str>) -> Res
 
 fn read(t: &dyn Transport, room: &str, peek: bool) -> Result<()> {
     for m in t.read(room, !peek)? {
-        println!("[{} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+        println!(
+            "[{} {} {}] {}",
+            m.seq,
+            m.ts,
+            m.sender_label(),
+            flat(&m.body)
+        );
     }
     Ok(())
 }
@@ -156,7 +162,13 @@ fn wait(t: &dyn Transport, rooms: &[String], timeout: u64, filter: &Filter) -> R
         for room in rooms {
             let found = look(t, room, filter)?;
             for m in &found {
-                println!("[{room} {} {} {}] {}", m.seq, m.ts, m.sender, flat(&m.body));
+                println!(
+                    "[{room} {} {} {}] {}",
+                    m.seq,
+                    m.ts,
+                    m.sender_label(),
+                    flat(&m.body)
+                );
             }
             if !found.is_empty() {
                 return Ok(());

@@ -14,7 +14,10 @@ fn hook_with_event_prints_json_additional_context() {
     let ctx = v["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(ctx.contains("from bob: ping \"quoted\""), "got: {ctx}");
+    assert!(
+        ctx.contains("from bob (unverified): ping \"quoted\""),
+        "got: {ctx}"
+    );
 }
 
 #[test]
@@ -29,7 +32,10 @@ fn a_message_the_hook_showed_is_still_readable_once() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
     h.ok("bob", &["post", "r", "the ask"]);
-    assert!(h.ok("alice", &["hook"]).contains("from bob: the ask"));
+    assert!(
+        h.ok("alice", &["hook"])
+            .contains("from bob (unverified): the ask")
+    );
     assert!(h.ok("alice", &["read", "r"]).contains("the ask"));
     assert!(!h.ok("alice", &["read", "r"]).contains("the ask"));
 }
