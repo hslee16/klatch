@@ -68,6 +68,16 @@ impl World {
         c
     }
 
+    /// A launcher for running many workers at once from threads: it holds only what a command needs, so unlike the
+    /// world it can be shared.
+    pub fn worker_launcher(&self) -> WorkerLauncher {
+        WorkerLauncher {
+            bin: self.bin.clone(),
+            home: self.home.clone(),
+            now: self.clock.get(),
+        }
+    }
+
     /// Run `klatch <args>` as a worker holding the key bundle at `bundle`: no name and no key directory, only the
     /// path of the bundle, as a launcher would hand it.
     pub fn as_worker(&self, bundle: &Path, args: &[&str]) -> Run {
@@ -223,6 +233,41 @@ impl World {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
+    }
+}
+
+/// Runs commands as credentialed workers; cheap to clone and safe to share between threads.
+#[derive(Clone)]
+pub struct WorkerLauncher {
+    bin: PathBuf,
+    home: PathBuf,
+    now: Option<i64>,
+}
+
+impl WorkerLauncher {
+    /// Run `klatch <args>` as the worker whose key bundle is at `bundle`.
+    pub fn run(&self, bundle: &Path, args: &[&str]) -> Run {
+        let mut c = Command::new(&self.bin);
+        c.env_clear()
+            .env("KLATCH_HOME", &self.home)
+            .env("KLATCH_IDENTITY_FILE", bundle)
+            .args(args)
+            .stdin(Stdio::null());
+        if let Some(t) = self.now {
+            c.env("KLATCH_NOW", t.to_string());
+        }
+        match c.output() {
+            Ok(o) => Run {
+                ok: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("could not start {}: {e}", self.bin.display()),
+            },
+        }
     }
 }
 
