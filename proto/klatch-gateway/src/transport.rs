@@ -7,7 +7,11 @@ use std::rc::Rc;
 /// are per call, so a remote transport can take identity from the connection (DESIGN section 20 rule 11).
 pub trait Transport {
     fn join(&self, room: &str) -> Result<()>;
-    fn post(&self, room: &str, body: &str) -> Result<Posted>;
+    fn post(&self, room: &str, body: &str) -> Result<Posted> {
+        self.post_labeled(room, body, None)
+    }
+    /// Post under a label lower than the room's own (`None` for the room's).
+    fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
     /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
@@ -33,6 +37,13 @@ pub trait Transport {
     fn admin_remove_member(&self, room: &str, member: &str) -> Result<()>;
     fn admin_allow_member(&self, room: &str, member: &str) -> Result<()>;
     fn admin_audit(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>>;
+    /// Labels and clearance (epic #9): a room's label, a member's clearance, the agent cap and the label order.
+    fn admin_set_room_label(&self, room: &str, label: &str) -> Result<()>;
+    fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()>;
+    fn admin_set_cap(&self, label: &str) -> Result<()>;
+    fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
+    /// The latest refused calls, newest first.
+    fn admin_refusals(&self, limit: usize) -> Result<Vec<klatch_core::RefusalRecord>>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
     /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
@@ -79,8 +90,9 @@ impl<S: Store> Transport for Direct<S> {
     fn join(&self, room: &str) -> Result<()> {
         self.gateway.join(&self.principal, room)
     }
-    fn post(&self, room: &str, body: &str) -> Result<Posted> {
-        self.gateway.post(&self.principal, room, body)
+    fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted> {
+        self.gateway
+            .post_labeled(&self.principal, room, body, label)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
@@ -133,6 +145,23 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_audit(&self, limit: usize) -> Result<Vec<klatch_core::AuditRecord>> {
         self.gateway.admin_audit(&self.principal, limit)
+    }
+    fn admin_set_room_label(&self, room: &str, label: &str) -> Result<()> {
+        self.gateway
+            .admin_set_room_label(&self.principal, room, label)
+    }
+    fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()> {
+        self.gateway
+            .admin_set_clearance(&self.principal, member, label)
+    }
+    fn admin_set_cap(&self, label: &str) -> Result<()> {
+        self.gateway.admin_set_cap(&self.principal, label)
+    }
+    fn admin_set_label_chain(&self, names: &[&str]) -> Result<()> {
+        self.gateway.admin_set_label_chain(&self.principal, names)
+    }
+    fn admin_refusals(&self, limit: usize) -> Result<Vec<klatch_core::RefusalRecord>> {
+        self.gateway.admin_refusals(&self.principal, limit)
     }
     fn claims(&self, room: &str) -> Result<Vec<Claim>> {
         self.gateway.claims(&self.principal, room)

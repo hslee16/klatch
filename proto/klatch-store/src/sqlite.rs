@@ -1,8 +1,8 @@
 use crate::ids::new_id;
-use crate::{ClaimRequest, HookEvent, NewAudit, NewMessage, Release, Seat, Store};
+use crate::{ClaimRequest, HookEvent, NewAudit, NewMessage, NewRefusal, Release, Seat, Store};
 use klatch_core::{
     AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
-    Posted, ReleaseNote, ReleasedClaim, Result,
+    Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -677,6 +677,68 @@ impl Store for SqliteStore {
                     detail: r.get(3)?,
                 })
             },
+        )
+    }
+
+    fn policy_get(&self, key: &str) -> Result<Option<String>> {
+        self.optional("SELECT value FROM policy WHERE key=?1", params![key], |r| {
+            r.get(0)
+        })
+    }
+
+    fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        match value {
+            Some(v) => self.write(
+                "INSERT INTO policy(key,value,ts) VALUES(?1,?2,?3)
+                 ON CONFLICT(key) DO UPDATE SET value=?2, ts=?3",
+                params![key, v, now],
+            ),
+            None => self.write("DELETE FROM policy WHERE key=?1", params![key]),
+        }
+    }
+
+    fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.rows(
+            "SELECT key,value FROM policy WHERE substr(key,1,length(?1))=?1 ORDER BY key",
+            params![prefix],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+
+    fn record_refusal(&self, entry: &NewRefusal, now: i64) -> Result<()> {
+        let NewRefusal {
+            member,
+            room,
+            operation,
+            rule,
+        } = *entry;
+        self.write(
+            "INSERT INTO refusals(ts,member,room,operation,rule) VALUES(?1,?2,?3,?4,?5)",
+            params![now, member, room, operation, rule],
+        )
+    }
+
+    fn refusals(&self, limit: usize) -> Result<Vec<RefusalRecord>> {
+        self.rows(
+            "SELECT ts,member,room,operation,rule FROM refusals ORDER BY id DESC LIMIT ?1",
+            params![limit as i64],
+            |r| {
+                Ok(RefusalRecord {
+                    ts: r.get(0)?,
+                    member: r.get(1)?,
+                    room: r.get(2)?,
+                    operation: r.get(3)?,
+                    rule: r.get(4)?,
+                })
+            },
+        )
+    }
+
+    fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
+        self.rows(
+            "SELECT rule FROM refusals WHERE member=?1 AND ts>=?2 ORDER BY id",
+            params![member, since],
+            |r| r.get(0),
         )
     }
 

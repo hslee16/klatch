@@ -7,6 +7,7 @@ mod convention;
 mod credentials;
 mod error;
 mod hook;
+mod labels;
 mod model;
 mod scope;
 mod text;
@@ -27,9 +28,10 @@ pub use convention::{CONVENTION_MARKER, convention};
 pub use credentials::credential_kind;
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
+pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
-    ReleaseNote, ReleasedClaim,
+    RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{flat, mentions, norm, overlaps, secs_between, valid_name};

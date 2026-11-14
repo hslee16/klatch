@@ -56,14 +56,10 @@ fn a_verified_principal_posts_a_verified_message_and_an_unattributed_one_stays_u
 }
 
 #[test]
-fn messages_are_posted_under_the_default_label() {
+fn a_message_in_an_unlabelled_room_is_posted_under_the_lowest_label() {
     let g = open();
     g.post(&alice(), "r", "x").unwrap();
-    assert_eq!(
-        g.tail(&alice(), "r", (0, 10)).unwrap()[0].label,
-        DEFAULT_LABEL
-    );
-    assert_eq!(DEFAULT_LABEL, "public");
+    assert_eq!(g.tail(&alice(), "r", (0, 10)).unwrap()[0].label, "public");
 }
 
 #[test]

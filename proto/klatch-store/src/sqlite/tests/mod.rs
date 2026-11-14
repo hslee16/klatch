@@ -8,6 +8,7 @@ mod concurrency;
 mod members;
 mod messages;
 mod migrations;
+mod policy;
 
 pub(super) fn store() -> SqliteStore {
     SqliteStore::open_in_memory().unwrap()

@@ -23,7 +23,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             t.join(&room)?;
             println!("{} joined {room}", ctx.me);
         }
-        Cmd::Post { room, body } => post(t, &room, &body)?,
+        Cmd::Post { room, body, label } => post(t, &room, &body, label.as_deref())?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
         Cmd::Wait {
             rooms,
@@ -90,8 +90,8 @@ fn mute(t: &dyn Transport, room: &str, muted: bool) -> Result<()> {
     Ok(())
 }
 
-fn post(t: &dyn Transport, room: &str, body: &[String]) -> Result<()> {
-    t.post(room, &body.join(" "))?;
+fn post(t: &dyn Transport, room: &str, body: &[String], label: Option<&str>) -> Result<()> {
+    t.post_labeled(room, &body.join(" "), label)?;
     println!("posted (queued; not proof of read)");
     Ok(())
 }
