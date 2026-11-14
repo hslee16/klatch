@@ -83,7 +83,7 @@ fn a_database_from_before_credentials_gains_the_table_on_open() {
     {
         let c = keyed(&path);
         c.execute_batch(
-            "DROP TABLE credentials; ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; PRAGMA user_version = 19;",
+            "DROP TABLE credentials; ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; ALTER TABLE claims DROP COLUMN anchor; PRAGMA user_version = 19;",
         )
         .unwrap();
     }

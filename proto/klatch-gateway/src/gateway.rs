@@ -21,6 +21,8 @@ pub struct Refused {
 }
 
 mod admin;
+mod anchors;
+pub use anchors::{AnchorAdapter, valid_anchor};
 mod budget;
 mod dm;
 mod policy;
@@ -45,6 +47,8 @@ pub struct ClaimSpec<'a> {
     pub ttl: i64,
     pub reason: &'a str,
     pub shared: bool,
+    /// The work item this claim is for, released when the item is reported done (#125).
+    pub anchor: Option<&'a str>,
 }
 
 impl<'a> ClaimSpec<'a> {
@@ -54,6 +58,15 @@ impl<'a> ClaimSpec<'a> {
             ttl,
             reason,
             shared: false,
+            anchor: None,
+        }
+    }
+
+    /// The same claim anchored to a work item.
+    pub fn anchored(self, anchor: &'a str) -> Self {
+        Self {
+            anchor: Some(anchor),
+            ..self
         }
     }
 
@@ -420,11 +433,17 @@ impl<S: Store> Gateway<S> {
             ttl,
             reason,
             shared,
+            anchor,
         } = *spec;
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
         check_reason(reason)?;
+        if let Some(a) = anchor
+            && !valid_anchor(a)
+        {
+            return Err(Error::Invalid(format!("bad anchor: {a:?}")));
+        }
         self.refuse_text(who, (room, "claim"), reason)?;
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
@@ -440,7 +459,9 @@ impl<S: Store> Gateway<S> {
         let member_scope = self.store.member_scope(&who.member)?;
         let scope = klatch_core::claim_scope(path, shared, member_scope.as_deref());
         self.store.claim(
-            &ClaimRequest::new((room, &who.member), path, ttl, reason).scoped(&scope),
+            &ClaimRequest::new((room, &who.member), path, ttl, reason)
+                .scoped(&scope)
+                .anchored(anchor.unwrap_or("")),
             self.now(),
         )
     }

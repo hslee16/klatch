@@ -556,7 +556,7 @@ fn a_database_from_before_handoffs_gains_the_columns_and_keeps_its_messages() {
         let c = keyed(&path);
         c.execute_batch(
             "INSERT INTO messages(room,seq,mid,sender,member,body,ts,attribution,label) VALUES('r',1,'m1','a','a','old',1,'unattributed','public');
-             ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; PRAGMA user_version = 20;",
+             ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; ALTER TABLE claims DROP COLUMN anchor; PRAGMA user_version = 20;",
         )
         .unwrap();
     }
