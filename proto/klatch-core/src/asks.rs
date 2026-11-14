@@ -316,27 +316,46 @@ mod tests {
 
     #[test]
     fn an_ask_starts_with_the_prefix() {
-        assert!(is_ask("seeking: a thing"));
-        assert!(is_ask("seeking:no space"));
-        assert!(!is_ask("not seeking: a thing"));
-        assert!(!is_ask("Seeking: a thing"));
-        assert!(!is_ask(" seeking: leading space"));
-        assert!(!is_ask(""));
+        let cases = [
+            ("seeking: a thing", true),
+            ("seeking:no space", true),
+            ("not seeking: a thing", false),
+            ("Seeking: a thing", false),
+            (" seeking: leading space", false),
+            ("", false),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(is_ask(text), expected, "{text:?}");
+        }
     }
 
     #[test]
-    fn answers_and_closes_name_their_ask_by_number() {
-        assert_eq!(answer_target("answer to #3: here"), Some(3));
-        assert_eq!(answer_target("answer to #12:x"), Some(12));
-        assert_eq!(answer_target("answer to #3 here"), None);
-        assert_eq!(answer_target("answer to #: x"), None);
-        assert_eq!(answer_target("my answer to #3: x"), None);
-        assert_eq!(closed_target("closed #3"), Some(3));
-        assert_eq!(closed_target("closed #3 thanks"), Some(3));
-        assert_eq!(closed_target("closed #3."), Some(3));
-        assert_eq!(closed_target("closed #x"), None);
-        assert_eq!(closed_target("not closed #3"), None);
-        assert_eq!(closed_target("closed #"), None);
+    fn answers_name_their_ask_by_number() {
+        let cases = [
+            ("answer to #3: here", Some(3)),
+            ("answer to #12:x", Some(12)),
+            ("answer to #3 here", None),
+            ("answer to #: x", None),
+            ("my answer to #3: x", None),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(answer_target(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn closes_name_their_ask_by_number() {
+        let cases = [
+            ("closed #3", Some(3)),
+            ("closed #3 thanks", Some(3)),
+            ("closed #3.", Some(3)),
+            ("closed #x", None),
+            ("not closed #3", None),
+            ("closed #", None),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(closed_target(text), expected, "{text:?}");
+        }
     }
 
     #[test]
@@ -417,26 +436,38 @@ mod tests {
 
     #[test]
     fn outcomes_are_parsed_with_their_kind_ask_and_reason() {
-        assert_eq!(
-            parse_outcome("declined #4 busy: on LIB-2"),
-            Some((OutcomeKind::Busy, 4, "on LIB-2".into()))
-        );
-        assert_eq!(
-            parse_outcome("declined #12 cannot: not my area"),
-            Some((OutcomeKind::Cannot, 12, "not my area".into()))
-        );
-        assert_eq!(
-            parse_outcome("failed #3: the build broke"),
-            Some((OutcomeKind::Failed, 3, "the build broke".into()))
-        );
-        assert_eq!(parse_outcome("declined #4: no class"), None);
-        assert_eq!(parse_outcome("declined #x busy: r"), None);
-        assert_eq!(parse_outcome("failed #3 the build broke"), None);
-        assert_eq!(parse_outcome("I declined #4 busy: r"), None);
-        assert_eq!(
-            parse_outcome("declined #4 busy:"),
-            Some((OutcomeKind::Busy, 4, String::new()))
-        );
+        let cases = [
+            (
+                "declined #4 busy: on LIB-2",
+                Some((OutcomeKind::Busy, 4, "on LIB-2")),
+            ),
+            (
+                "declined #12 cannot: not my area",
+                Some((OutcomeKind::Cannot, 12, "not my area")),
+            ),
+            (
+                "failed #3: the build broke",
+                Some((OutcomeKind::Failed, 3, "the build broke")),
+            ),
+            ("declined #4 busy:", Some((OutcomeKind::Busy, 4, ""))),
+        ];
+        for (text, expected) in cases {
+            let expected = expected.map(|(k, n, r)| (k, n, r.to_string()));
+            assert_eq!(parse_outcome(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_outcome_is_not_parsed() {
+        let cases = [
+            "declined #4: no class",
+            "declined #x busy: r",
+            "failed #3 the build broke",
+            "I declined #4 busy: r",
+        ];
+        for text in cases {
+            assert_eq!(parse_outcome(text), None, "{text:?}");
+        }
     }
 
     fn with(kind: OutcomeKind, ask: i64, who: &str) -> Message {
@@ -502,21 +533,21 @@ mod tests {
     }
 
     #[test]
-    fn the_lease_of_an_ask_claim_is_short_by_default_and_capped_and_other_claims_keep_their_default()
-     {
-        assert_eq!(claim_ttl("ask:7", None), 90);
-        assert_eq!(claim_ttl("ask:7", Some(30)), 30);
-        assert_eq!(
-            claim_ttl("ask:7", Some(3600)),
-            300,
-            "an ask lease is capped"
-        );
+    fn the_lease_of_an_ask_claim_is_short_by_default_and_capped() {
+        let cases = [
+            (None, 90),
+            (Some(30), 30),
+            (Some(3600), 300), // an ask lease is capped
+        ];
+        for (asked, expected) in cases {
+            assert_eq!(claim_ttl("ask:7", asked), expected, "{asked:?}");
+        }
+    }
+
+    #[test]
+    fn other_claims_keep_their_default_and_are_not_capped_here() {
         assert_eq!(claim_ttl("src/lib.rs", None), 600);
-        assert_eq!(
-            claim_ttl("src/lib.rs", Some(3600)),
-            3600,
-            "other claims are not capped here"
-        );
+        assert_eq!(claim_ttl("src/lib.rs", Some(3600)), 3600);
     }
 
     #[test]
@@ -545,17 +576,20 @@ mod tests {
 
     #[test]
     fn clarification_words_are_parsed_with_their_kind_ask_and_text() {
-        assert_eq!(
-            parse_clarification("need-info #3: which format?"),
-            Some((true, 3, "which format?".into()))
-        );
-        assert_eq!(
-            parse_clarification("info #3: json"),
-            Some((false, 3, "json".into()))
-        );
-        assert_eq!(parse_clarification("info #3 json"), None);
-        assert_eq!(parse_clarification("need-info #x: q"), None);
-        assert_eq!(parse_clarification("my info #3: q"), None);
+        let cases = [
+            (
+                "need-info #3: which format?",
+                Some((true, 3, "which format?")),
+            ),
+            ("info #3: json", Some((false, 3, "json"))),
+            ("info #3 json", None),
+            ("need-info #x: q", None),
+            ("my info #3: q", None),
+        ];
+        for (text, expected) in cases {
+            let expected = expected.map(|(need, n, t)| (need, n, t.to_string()));
+            assert_eq!(parse_clarification(text), expected, "{text:?}");
+        }
     }
 
     #[test]

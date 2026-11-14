@@ -51,3 +51,22 @@ pub(super) fn rule_of(e: klatch_core::Error) -> String {
         other => panic!("not a refusal: {other}"),
     }
 }
+
+pub(super) fn is_invalid<T>(r: Result<T>) -> bool {
+    matches!(r, Err(Error::Invalid(_)))
+}
+
+pub(super) fn is_backend<T>(r: Result<T>) -> bool {
+    matches!(r, Err(Error::Backend(_)))
+}
+
+pub(super) fn is_refused<T>(r: Result<T>) -> bool {
+    matches!(r, Err(Error::Refused { .. }))
+}
+
+/// Every named outcome must be true; a false one names itself.
+pub(super) fn all_true(outcomes: &[(&str, bool)], context: &str) {
+    for (name, ok) in outcomes {
+        assert!(ok, "{name} {context}");
+    }
+}

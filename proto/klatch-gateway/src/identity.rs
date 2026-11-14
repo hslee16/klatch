@@ -52,18 +52,17 @@ impl Identity for DeclaredName {
 /// same-user evidence, so the caller is always unattributed until a stronger source exists.
 pub struct LocalIdentity;
 
+/// A character a member name may carry as it is.
+fn name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '.')
+}
+
 /// Turn a session's own name into a valid member name: every character outside the allowed set becomes `-`,
 /// the ends are trimmed and the result is cut to 40 characters. Empty results are `None`.
 fn member_name_from(raw: &str) -> Option<String> {
     let mapped: String = raw
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if name_char(c) { c } else { '-' })
         .collect();
     let cut: String = mapped.trim_matches('-').chars().take(40).collect();
     let cut = cut.trim_matches('-').to_string();
