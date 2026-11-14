@@ -55,6 +55,13 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// An administrative or cross-member act the guard decides: `action` on `target`.
+    pub fn admin(action: &str, target: &str) -> Self {
+        Operation::Admin {
+            action: action.into(),
+            target: target.into(),
+        }
+    }
     pub fn read(room: &str, advance: bool) -> Self {
         Operation::Read {
             room: room.into(),

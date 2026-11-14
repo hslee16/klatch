@@ -258,11 +258,16 @@ impl<S: Store> Gateway<S> {
         )
     }
 
-    /// The latest run of each hook event recorded for `member` (who may be the caller or anyone: metadata only).
+    /// The latest run of each hook event recorded for `member`: the caller's own freely, anyone else's through the guard.
     pub fn hook_runs(&self, who: &Principal, member: &str) -> Result<Vec<klatch_core::HookRun>> {
         check_member(who)?;
         if !valid_name(member) {
             return Err(Error::Invalid("bad member name".into()));
+        }
+        // a member reads its own record freely; another member's goes through the guard (#161)
+        if member != who.member {
+            self.guard
+                .check(who, &Operation::admin("hook_runs", member))?;
         }
         self.store.hook_runs(member)
     }
@@ -277,6 +282,8 @@ impl<S: Store> Gateway<S> {
     /// Housekeeping at session start: remove members not seen for `older_than` seconds. Returns how many.
     pub fn prune_members(&self, who: &Principal, older_than: i64) -> Result<usize> {
         check_member(who)?;
+        self.guard
+            .check(who, &Operation::admin("prune", &older_than.to_string()))?;
         self.store.prune_members(older_than, self.now())
     }
 
