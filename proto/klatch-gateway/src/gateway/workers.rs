@@ -137,6 +137,24 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// A worker's session ended: revoke its own credential. Only a verified principal can, and only its own, so a
+    /// typed name cannot end somebody else's. Returns whether a credential was revoked.
+    pub fn end_credential(&self, who: &Principal) -> Result<bool> {
+        check_member(who)?;
+        if who.attribution != klatch_core::Attribution::Verified {
+            return Ok(false);
+        }
+        let now = self.now();
+        if !self.store.revoke_credential(&who.member, now)? {
+            return Ok(false);
+        }
+        self.store.record_audit(
+            &klatch_store::NewAudit::new("end-credential", &who.member, "session ended"),
+            now,
+        )?;
+        Ok(true)
+    }
+
     /// Revoke a worker's credential: its token stops working at once.
     pub fn admin_revoke_credential(&self, who: &Principal, member: &str) -> Result<()> {
         if !valid_name(member) {
