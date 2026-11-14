@@ -10,6 +10,13 @@ name: Release
 on:
   release:
     types: [published]
+  # Re-run only the npm jobs for an existing tag, for example after a failed stage. The version in package.json must
+  # not already be on npm. Still needs the release environment approval and the approval on npmjs.com.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag the npm package belongs to (for example v0.1.0.dev1)
+        required: true
 
 permissions:
   contents: read
@@ -17,6 +24,7 @@ permissions:
 jobs:
   python-build:
     name: Build the Python package
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,6 +68,7 @@ jobs:
 
   python-publish:
     name: Publish to PyPI
+    if: github.event_name == 'release'
     needs: python-build
     runs-on: ubuntu-latest
     environment:
@@ -93,7 +102,7 @@ jobs:
 
       - name: The tag must name the version in package.json
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           version=$(node -p 'require("./package.json").version')
@@ -147,4 +156,4 @@ jobs:
       # version exists, so that `npm install @klatch/client` resolves. Once there is a stable version, pre-releases
       # must go out under another tag (for example next).
       - name: Stage via trusted publishing
-        run: npm stage publish --access public --tag latest dist/*.tgz
+        run: npm stage publish --access public --tag latest ./dist/*.tgz
