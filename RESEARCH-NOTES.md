@@ -1002,3 +1002,10 @@ One helper (owns a package with two slug variants) and one asker (needs the ASCI
 ## 36. What Claude Code exposes about a running session (2026-11-13, Claude Code 2.1.323)
 
 Hooks: no timer, heartbeat or per-tool-call tick; one idle notification. Registry record: `status` busy or idle with the time of the last change (watched for 90 s while busy: unchanged, so not a heartbeat). `claude agents --json` lists interactive and background sessions with the same status, and `blocked` states for background ones; seven sessions on this machine, two forgotten background ones. Process view: `ps` state, CPU time and child processes are readable; the transcript file grows as a session works. No progress inside a turn is reported by Claude Code. See DESIGN section 29.
+
+## 38. Peer identity from a gateway-owned socket (2026-11-13, macOS 14, experiment 14.3, ticket #29)
+
+`klatch-harness/tests/peer_identity.rs` shows it works. A gateway that owns a Unix socket can ask the kernel for the pid of the process at the other end of an accepted connection (`getsockopt` with `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux; the Linux branch is written but was not run here). That pid is the connecting process, here the script a session's shell started, not the session itself; the existing ancestry walk (`find_session`, with the same liveness checks) then maps it to the session's registry record, giving the session id, name and directory. A process with no session above it maps to nothing and stays unattributed.
+
+What this gives and does not give: the identity is as strong as the process tree and the registry, which are same-user evidence (a process can lie about its ancestry only by being the user, who can do anything anyway). It is not proof against another process of the same user that arranges to descend from a session. It needs a gateway that owns a socket, which klatch does not have yet (the CLI opens the store directly); it is the identity source for that daemon, when it exists (epic #152), where the socket's file mode also admits only its owner.
+
