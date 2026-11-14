@@ -1,0 +1,198 @@
+use super::*;
+
+#[test]
+fn join_is_idempotent_and_lists_the_member() {
+    let s = store();
+    s.join("r", "alice", 10).unwrap();
+    s.join("r", "alice", 20).unwrap();
+    let m = s.members("r").unwrap();
+    assert_eq!(
+        m,
+        vec![MemberInfo {
+            name: "alice".into(),
+            last_seen: 20,
+            status: None
+        }]
+    );
+    assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);
+}
+
+#[test]
+fn rooms_of_is_sorted_and_per_member() {
+    let s = store();
+    s.join("b", "alice", 1).unwrap();
+    s.join("a", "alice", 1).unwrap();
+    s.join("c", "bob", 1).unwrap();
+    assert_eq!(
+        s.rooms_of("alice").unwrap(),
+        vec!["a".to_string(), "b".to_string()]
+    );
+}
+
+#[test]
+fn a_status_is_stored_per_member_and_room_and_replaced_by_the_next() {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.join("r2", "alice", 1).unwrap();
+    s.set_status("r", "alice", "busy", 2).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
+    assert_eq!(s.members("r2").unwrap()[0].status, None);
+    s.set_status("r", "alice", "done leaving", 3).unwrap();
+    assert_eq!(
+        s.members("r").unwrap()[0].status.as_deref(),
+        Some("done leaving")
+    );
+}
+
+#[test]
+fn setting_a_status_joins_a_member_who_was_not_there() {
+    let s = store();
+    s.set_status("r", "bob", "done", 5).unwrap();
+    let m = s.members("r").unwrap();
+    assert_eq!(
+        (m[0].name.as_str(), m[0].status.as_deref()),
+        ("bob", Some("done"))
+    );
+}
+
+#[test]
+fn a_status_survives_reopening_the_database() {
+    let path = temp_db("status-persist");
+    {
+        let s = SqliteStore::open(&path).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.set_status("r", "alice", "busy", 2).unwrap();
+    }
+    let s = SqliteStore::open(&path).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
+}
+
+#[test]
+fn a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only() {
+    let s = store();
+    s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
+    s.record_hook_run("alice", "PostToolUse", 11, 120).unwrap();
+    s.record_hook_run("alice", "PostToolUse", 15, 0).unwrap();
+    s.record_hook_run("bob", "SessionStart", 12, 5).unwrap();
+    let r = s.hook_runs("alice").unwrap();
+    assert_eq!(r.len(), 2);
+    let post = r.iter().find(|h| h.event == "PostToolUse").unwrap();
+    assert_eq!((post.last_ts, post.runs, post.last_bytes), (15, 2, 0));
+    let start = r.iter().find(|h| h.event == "SessionStart").unwrap();
+    assert_eq!((start.last_ts, start.runs), (10, 1));
+    assert_eq!(s.hook_runs("bob").unwrap().len(), 1);
+    assert!(s.hook_runs("nobody").unwrap().is_empty());
+}
+
+#[test]
+fn hook_runs_survive_reopening_the_database() {
+    let path = temp_db("hook-runs");
+    {
+        let s = SqliteStore::open(&path).unwrap();
+        s.record_hook_run("alice", "SessionStart", 10, 0).unwrap();
+    }
+    let s = SqliteStore::open(&path).unwrap();
+    assert_eq!(s.hook_runs("alice").unwrap()[0].runs, 1);
+}
+
+#[test]
+fn a_session_is_remembered_as_its_member_and_the_last_note_wins() {
+    let s = store();
+    assert_eq!(s.member_of_session("sess-1").unwrap(), None);
+    s.note_session("sess-1", "alice", 10).unwrap();
+    s.note_session("sess-2", "bob", 11).unwrap();
+    assert_eq!(
+        s.member_of_session("sess-1").unwrap().as_deref(),
+        Some("alice")
+    );
+    s.note_session("sess-1", "alice-2", 12).unwrap();
+    assert_eq!(
+        s.member_of_session("sess-1").unwrap().as_deref(),
+        Some("alice-2")
+    );
+    assert_eq!(
+        s.member_of_session("sess-2").unwrap().as_deref(),
+        Some("bob")
+    );
+}
+
+#[test]
+fn remembered_sessions_survive_reopening_and_are_pruned_with_old_members() {
+    let path = temp_db("sessions");
+    {
+        let s = SqliteStore::open(&path).unwrap();
+        s.note_session("old", "alice", 10).unwrap();
+        s.note_session("new", "bob", 9_000).unwrap();
+    }
+    let s = SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        s.member_of_session("old").unwrap().as_deref(),
+        Some("alice")
+    );
+    s.prune_members(8_640, 9_001).unwrap();
+    assert_eq!(
+        s.member_of_session("old").unwrap(),
+        None,
+        "an old session is pruned"
+    );
+    assert_eq!(s.member_of_session("new").unwrap().as_deref(), Some("bob"));
+}
+
+#[test]
+fn the_session_that_holds_a_member_name_can_be_looked_up() {
+    let s = store();
+    assert_eq!(s.session_of_member("alice").unwrap(), None);
+    s.note_session("sess-1", "alice", 10).unwrap();
+    s.note_session("sess-2", "alice", 20).unwrap();
+    assert_eq!(
+        s.session_of_member("alice").unwrap().as_deref(),
+        Some("sess-2"),
+        "the most recent holder"
+    );
+    assert_eq!(s.session_of_member("bob").unwrap(), None);
+}
+
+#[test]
+fn room_state_pause_and_blocks_are_remembered_and_audited() {
+    let s = store();
+    assert_eq!(s.room_state("r").unwrap(), None);
+    s.set_room_state("r", Some("closed"), 5).unwrap();
+    assert_eq!(s.room_state("r").unwrap().as_deref(), Some("closed"));
+    assert_eq!(s.room_state("other").unwrap(), None);
+    s.set_room_state("r", None, 6).unwrap();
+    assert_eq!(s.room_state("r").unwrap(), None);
+    s.set_room_state("*", Some("paused"), 7).unwrap();
+    assert_eq!(s.room_state("*").unwrap().as_deref(), Some("paused"));
+    // a block is per room unless it is for every room
+    s.block_member("r", "mallory", 8).unwrap();
+    assert!(s.is_blocked("r", "mallory").unwrap());
+    assert!(!s.is_blocked("other", "mallory").unwrap());
+    assert!(!s.is_blocked("r", "alice").unwrap());
+    s.block_member("*", "eve", 9).unwrap();
+    assert!(s.is_blocked("anywhere", "eve").unwrap());
+    assert!(s.unblock_member("r", "mallory").unwrap());
+    assert!(
+        !s.unblock_member("r", "mallory").unwrap(),
+        "nothing left to allow"
+    );
+    assert!(!s.is_blocked("r", "mallory").unwrap());
+    s.record_audit("pause", "*", "", 7).unwrap();
+    s.record_audit("remove", "r/mallory", "claims released: 2", 8)
+        .unwrap();
+    let log = s.audit_log(10).unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(
+        (log[0].action.as_str(), log[0].ts),
+        ("remove", 8),
+        "newest first"
+    );
+    assert_eq!(log[1].target, "*");
+}
+
+#[test]
+fn a_late_joiner_sees_history() {
+    let s = store();
+    s.post("r", "bob", "early", 1).unwrap();
+    s.join("r", "alice", 2).unwrap();
+    assert_eq!(s.read("r", "alice", true, 3).unwrap().len(), 1);
+}
