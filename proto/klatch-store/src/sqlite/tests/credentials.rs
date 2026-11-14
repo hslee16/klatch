@@ -82,8 +82,10 @@ fn a_database_from_before_credentials_gains_the_table_on_open() {
     drop(SqliteStore::open(&path, &crate::insecure_test_key()).unwrap());
     {
         let c = keyed(&path);
-        c.execute_batch("DROP TABLE credentials; PRAGMA user_version = 19;")
-            .unwrap();
+        c.execute_batch(
+            "DROP TABLE credentials; ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; PRAGMA user_version = 19;",
+        )
+        .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     issue(&s, "w-1", 1, 10).unwrap();

@@ -256,6 +256,8 @@ mod tests {
             label: "public".into(),
             body: body.into(),
             ts,
+            kind: None,
+            payload: None,
         }
     }
 

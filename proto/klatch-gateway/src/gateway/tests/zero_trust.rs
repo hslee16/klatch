@@ -19,6 +19,18 @@ const GUARDED: &[(&str, Call)] = &[
     ("post_labeled", |g, w| {
         refused(g.post_labeled(w, "r", "x", None))
     }),
+    ("post_handoff", |g, w| {
+        refused(g.post_handoff(
+            w,
+            "r",
+            "x",
+            None,
+            &crate::Handoff {
+                kind: "k",
+                payload: None,
+            },
+        ))
+    }),
     ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
     ("read", |g, w| refused(g.read(w, "r", true))),
     ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),

@@ -63,6 +63,8 @@ pub(crate) fn message_frame(room: &str, m: &Message) -> ServerFrame {
         label: m.label.clone(),
         body: m.body.clone(),
         ts: m.ts,
+        kind: m.kind.clone(),
+        payload: m.payload.clone(),
     }
 }
 
@@ -154,12 +156,20 @@ pub(crate) fn failure(id: String, e: &Error) -> Vec<ServerFrame> {
 }
 
 pub(crate) fn message_json(m: &Message) -> Value {
-    json!({
+    let mut v = json!({
         "id": m.id, "seq": m.seq, "sender": m.sender,
         "attribution": match m.attribution {
             Who::Verified => "verified",
             Who::Unattributed => "unattributed",
         },
         "label": m.label, "body": m.body, "ts": m.ts
-    })
+    });
+    // a handoff is added when there is one, so an ordinary message looks as it always did
+    if let Some(k) = &m.kind {
+        v["kind"] = json!(k);
+    }
+    if let Some(p) = &m.payload {
+        v["payload"] = json!(p);
+    }
+    v
 }

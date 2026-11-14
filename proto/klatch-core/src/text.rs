@@ -33,6 +33,20 @@ pub fn secs_between(later: i64, earlier: i64) -> i64 {
     (later - earlier).max(0)
 }
 
+/// The longest payload a message may carry, in bytes. A payload is an opaque handoff for another member; it is not a
+/// file transfer.
+pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
+
+/// A handoff kind: 1 to 40 characters of letters, digits, dot, dash and underscore. klatch stores and delivers it and
+/// never interprets it.
+pub fn valid_kind(kind: &str) -> bool {
+    !kind.is_empty()
+        && kind.len() <= 40
+        && kind
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Collapse line breaks so one message stays on one line.
 pub fn flat(s: &str) -> String {
     s.replace(['\r', '\n'], " ")
@@ -68,6 +82,24 @@ mod tests {
         assert!(!valid_name("a/b"));
         assert!(!valid_name(&"x".repeat(41)));
         assert!(valid_name(&"x".repeat(40)));
+    }
+
+    #[test]
+    fn a_handoff_kind_is_a_short_safe_name() {
+        for ok in ["plan", "work-order.v2", "a", "Review_1", &"k".repeat(40)] {
+            assert!(valid_kind(ok), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "has space",
+            "a/b",
+            "new\nline",
+            "x:y",
+            &"k".repeat(41),
+            "é",
+        ] {
+            assert!(!valid_kind(bad), "{bad:?}");
+        }
     }
 
     #[test]

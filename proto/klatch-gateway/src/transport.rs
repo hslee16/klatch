@@ -14,6 +14,14 @@ pub trait Transport {
     fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)>;
     /// Post under a label lower than the room's own (`None` for the room's).
     fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted>;
+    /// Post a message that carries a handoff: a kind and optionally an opaque payload.
+    fn post_handoff(
+        &self,
+        room: &str,
+        body: &str,
+        label: Option<&str>,
+        handoff: &crate::Handoff,
+    ) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
     /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
@@ -110,6 +118,16 @@ impl<S: Store> Transport for Direct<S> {
     fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted> {
         self.gateway
             .post_labeled(&self.principal, room, body, label)
+    }
+    fn post_handoff(
+        &self,
+        room: &str,
+        body: &str,
+        label: Option<&str>,
+        handoff: &crate::Handoff,
+    ) -> Result<Posted> {
+        self.gateway
+            .post_handoff(&self.principal, room, body, label, handoff)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)

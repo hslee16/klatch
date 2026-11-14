@@ -30,7 +30,18 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             body,
             label,
         } => dm(t, &member, &body, label.as_deref())?,
-        Cmd::Post { room, body, label } => post(t, &room, &body, label.as_deref())?,
+        Cmd::Post {
+            room,
+            body,
+            label,
+            kind,
+            payload,
+        } => post(
+            t,
+            (&room, &body),
+            label.as_deref(),
+            kind.as_deref().map(|k| (k, payload.as_deref())),
+        )?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
         Cmd::Wait {
             rooms,
@@ -109,8 +120,22 @@ fn dm(t: &dyn Transport, member: &str, body: &[String], label: Option<&str>) -> 
     Ok(())
 }
 
-fn post(t: &dyn Transport, room: &str, body: &[String], label: Option<&str>) -> Result<()> {
-    t.post_labeled(room, &body.join(" "), label)?;
+fn post(
+    t: &dyn Transport,
+    (room, body): (&str, &[String]),
+    label: Option<&str>,
+    handoff: Option<(&str, Option<&str>)>,
+) -> Result<()> {
+    let body = body.join(" ");
+    match handoff {
+        Some((kind, payload)) => t.post_handoff(
+            room,
+            &body,
+            label,
+            &klatch_gateway::Handoff { kind, payload },
+        )?,
+        None => t.post_labeled(room, &body, label)?,
+    };
     println!("posted (queued; not proof of read)");
     Ok(())
 }
@@ -136,14 +161,36 @@ fn read(t: &dyn Transport, room: &str, peek: bool) -> Result<()> {
     }
     for m in messages {
         println!(
-            "[{} {} {}] {}",
+            "[{} {} {}] {}{}",
             m.seq,
             m.ts,
             m.sender_label(),
-            flat(&m.body)
+            flat(&m.body),
+            handoff_suffix(&m)
         );
     }
     Ok(())
+}
+
+/// A handoff as `read` and `wait` print it: the kind and the payload on the same line, folded and cut, marked as data
+/// like everything else in the line.
+fn handoff_suffix(m: &klatch_core::Message) -> String {
+    let Some(kind) = &m.kind else {
+        return String::new();
+    };
+    match &m.payload {
+        Some(p) => {
+            let flat_p = flat(p);
+            let shown: String = flat_p.chars().take(240).collect();
+            let more = if flat_p.chars().count() > 240 {
+                "..."
+            } else {
+                ""
+            };
+            format!(" [handoff {} payload={shown}{more}]", flat(kind))
+        }
+        None => format!(" [handoff {}]", flat(kind)),
+    }
 }
 
 /// What a `wait` listens for besides "anything".
@@ -191,11 +238,12 @@ fn wait(t: &dyn Transport, rooms: &[String], timeout: u64, filter: &Filter) -> R
             let found = look(t, room, filter)?;
             for m in &found {
                 println!(
-                    "[{room} {} {} {}] {}",
+                    "[{room} {} {} {}] {}{}",
                     m.seq,
                     m.ts,
                     m.sender_label(),
-                    flat(&m.body)
+                    flat(&m.body),
+                    handoff_suffix(m)
                 );
             }
             if !found.is_empty() {

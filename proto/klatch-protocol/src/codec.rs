@@ -220,6 +220,38 @@ mod tests {
     }
 
     #[test]
+    fn a_handoff_is_two_optional_fields_that_an_old_message_does_not_have() {
+        let plain = decode_server_line(SERVER.lines().nth(1).unwrap()).unwrap();
+        let handoff = SERVER
+            .lines()
+            .find(|l| l.contains("\"kind\""))
+            .map(|l| decode_server_line(l).unwrap())
+            .expect("no handoff fixture");
+        match (plain, handoff) {
+            (
+                ServerFrame::Message {
+                    kind: None,
+                    payload: None,
+                    ..
+                },
+                ServerFrame::Message {
+                    kind: Some(k),
+                    payload: Some(p),
+                    ..
+                },
+            ) => assert_eq!((k.as_str(), p.as_str()), ("work-order", "{\"id\":7}")),
+            other => panic!("{other:?}"),
+        }
+        // a message without them encodes without them, so an old consumer sees exactly what it always saw
+        let line = SERVER.lines().nth(1).unwrap();
+        let again = encode_line(&decode_server_line(line).unwrap());
+        assert!(
+            !again.contains("kind") && !again.contains("payload"),
+            "{again}"
+        );
+    }
+
+    #[test]
     fn a_message_frame_has_the_documented_fields() {
         let f = decode_server_line(SERVER.lines().nth(1).unwrap()).unwrap();
         match f {
@@ -422,7 +454,7 @@ mod tests {
             f.unwrap();
             n += 1;
         }
-        assert_eq!(n, 4);
+        assert_eq!(n, 5);
         let _ = json!(null);
     }
 

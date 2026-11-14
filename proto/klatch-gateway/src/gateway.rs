@@ -63,6 +63,37 @@ impl<'a> ClaimSpec<'a> {
     }
 }
 
+/// A handoff on a message: a short kind and an optional opaque payload. klatch never reads them.
+pub struct Handoff<'a> {
+    pub kind: &'a str,
+    pub payload: Option<&'a str>,
+}
+
+impl Handoff<'_> {
+    fn check(&self) -> Result<()> {
+        if !klatch_core::valid_kind(self.kind) {
+            return Err(Error::Invalid(
+                "a handoff kind is 1 to 40 characters of letters, digits, dot, dash and underscore"
+                    .into(),
+            ));
+        }
+        if let Some(p) = self.payload {
+            if p.is_empty() || p.contains('\u{0}') {
+                return Err(Error::Invalid(
+                    "a payload is text, not empty and without NUL".into(),
+                ));
+            }
+            if p.len() > klatch_core::MAX_PAYLOAD_BYTES {
+                return Err(Error::Invalid(format!(
+                    "a payload is at most {} bytes",
+                    klatch_core::MAX_PAYLOAD_BYTES
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct Gateway<S: Store> {
     store: S,
     clock: Box<dyn Clock>,
@@ -115,14 +146,43 @@ impl<S: Store> Gateway<S> {
         body: &str,
         label: Option<&str>,
     ) -> Result<Posted> {
+        self.post_with(who, (room, body, label), None)
+    }
+
+    /// Post a message that carries a handoff: a kind and, optionally, an opaque payload for the next member. The
+    /// payload is held to every rule the body is (credentials, canaries, private terms, the label of the room) and is
+    /// sealed with the body under a sealed label.
+    pub fn post_handoff(
+        &self,
+        who: &Principal,
+        room: &str,
+        body: &str,
+        label: Option<&str>,
+        handoff: &Handoff,
+    ) -> Result<Posted> {
+        self.post_with(who, (room, body, label), Some(handoff))
+    }
+
+    fn post_with(
+        &self,
+        who: &Principal,
+        (room, body, label): (&str, &str, Option<&str>),
+        handoff: Option<&Handoff>,
+    ) -> Result<Posted> {
         check_member(who)?;
         check_room(room)?;
+        if let Some(h) = handoff {
+            h.check()?;
+        }
         if body.trim().is_empty() {
             return Err(Error::Invalid(
                 "empty message: there is nothing to post".into(),
             ));
         }
         self.refuse_text(who, (room, "post"), body)?;
+        if let Some(payload) = handoff.and_then(|h| h.payload) {
+            self.refuse_text(who, (room, "post"), payload)?;
+        }
         self.authorize(
             who,
             &Operation::Post {
@@ -132,10 +192,19 @@ impl<S: Store> Gateway<S> {
         )?;
         let label = self.post_label(who, room, label)?;
         self.check_budget(who, room, body)?;
-        self.store.post_as(
-            &NewMessage::new((room, &who.member), who.attribution, &label, body),
-            self.now(),
-        )
+        let message = NewMessage::new((room, &who.member), who.attribution, &label, body);
+        let message = match handoff {
+            Some(Handoff {
+                kind,
+                payload: Some(p),
+            }) => message.with_handoff(kind, p),
+            Some(Handoff {
+                kind,
+                payload: None,
+            }) => message.with_kind(kind),
+            None => message,
+        };
+        self.store.post_as(&message, self.now())
     }
 
     /// Remember that the caller is a child of `parent`, the member whose session started the caller's (#24); `None`

@@ -6,3 +6,4 @@
 {"v":1,"type":"refusal","request":"r7","rule":"label.room_below_message","reason":"the message label is higher than the room label"}
 {"v":1,"type":"response","id":"r1","ok":true,"result":{"seq":3}}
 {"v":1,"type":"response","id":"r2","ok":false,"error":{"code":"conflict","message":"refused: src is claimed by bob for another 42s"}}
+{"v":1,"type":"message","room":"core","seq":3,"id":"01HZX3K9Q3ABCDEFGHJKMNPQRV","sender":"bob","attribution":"verified","label":"internal","body":"see the work order","ts":1700000002,"kind":"work-order","payload":"{\"id\":7}"}

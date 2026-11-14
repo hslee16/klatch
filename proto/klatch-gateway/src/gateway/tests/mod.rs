@@ -15,6 +15,7 @@ mod credentials;
 mod digest;
 mod dm;
 mod guarding;
+mod handoff;
 mod labels;
 mod members;
 mod mute;
