@@ -166,11 +166,8 @@ impl<S: Store> Gateway<S> {
         self.store.set_label_keys(keys);
     }
 
-    /// Set a member's clearance, at most the agent cap: `secret` is out of every agent's reach (D4).
-    pub fn admin_set_clearance(&self, who: &Principal, member: &str, label: &str) -> Result<()> {
-        if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
-        }
+    /// Whether an agent may be given `label` as its clearance: a known label no higher than the agent cap.
+    pub(super) fn check_grantable(&self, label: &str) -> Result<()> {
         let chain = self.chain()?;
         known_label(&chain, label)?;
         let cap = self.cap(&chain)?;
@@ -180,6 +177,15 @@ impl<S: Store> Gateway<S> {
                 reason: format!("no agent may hold {label}: the agent cap is {cap}"),
             });
         }
+        Ok(())
+    }
+
+    /// Set a member's clearance, at most the agent cap: `secret` is out of every agent's reach (D4).
+    pub fn admin_set_clearance(&self, who: &Principal, member: &str, label: &str) -> Result<()> {
+        if !valid_name(member) {
+            return Err(Error::Invalid(format!("bad member name: {member}")));
+        }
+        self.check_grantable(label)?;
         self.administer(who, ("clear", &format!("{member}={label}")), |now| {
             self.store
                 .policy_set(&format!("clearance:{member}"), Some(label), now)?;

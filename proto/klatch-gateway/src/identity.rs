@@ -19,6 +19,9 @@ pub enum PeerEvidence {
         session_id: String,
         name: Option<String>,
     },
+    /// A credential the gateway issued, already checked against the registry (token, expiry, revocation) by the
+    /// caller. This is the one kind of evidence that yields a verified principal.
+    Credential { member: String },
 }
 
 /// Maps evidence to a caller. Implementations must never return a verified principal on evidence that
@@ -83,6 +86,12 @@ impl Identity for LocalIdentity {
                     .ok_or_else(|| Error::Invalid("the session has no usable name or id".into()))?;
                 Ok(Principal::unattributed(&member))
             }
+            PeerEvidence::Credential { member } if valid_name(member) => {
+                Ok(Principal::verified(member))
+            }
+            PeerEvidence::Credential { .. } => Err(Error::Invalid(
+                "the credential names no valid member".into(),
+            )),
             other => DeclaredName.resolve(other),
         }
     }
@@ -112,6 +121,31 @@ mod tests {
         let p = DeclaredName.resolve(&declared("alice")).unwrap();
         assert_eq!(p.member, "alice");
         assert_eq!(p.attribution, Attribution::Unattributed);
+    }
+
+    #[test]
+    fn only_a_checked_credential_resolves_to_a_verified_principal() {
+        let p = LocalIdentity
+            .resolve(&PeerEvidence::Credential {
+                member: "w-1".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            (p.member.as_str(), p.attribution),
+            ("w-1", Attribution::Verified)
+        );
+        assert!(
+            LocalIdentity
+                .resolve(&PeerEvidence::Credential {
+                    member: "bad name".into()
+                })
+                .is_err()
+        );
+        // a typed name and a session stay unattributed
+        assert_eq!(
+            LocalIdentity.resolve(&declared("w-1")).unwrap().attribution,
+            Attribution::Unattributed
+        );
     }
 
     #[test]

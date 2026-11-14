@@ -26,6 +26,8 @@ mod dm;
 mod policy;
 mod scrub;
 mod tripwire;
+mod workers;
+pub use workers::{CredentialInfo, CredentialSpec, MAX_CREDENTIAL_TTL_SECS, check_credential};
 
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;

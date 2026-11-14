@@ -82,7 +82,11 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
                 no_join,
             },
         )?,
-        Cmd::Init { .. } | Cmd::Admin { .. } | Cmd::Serve { .. } | Cmd::Stream { .. } => {
+        Cmd::Init { .. }
+        | Cmd::Admin { .. }
+        | Cmd::Worker { .. }
+        | Cmd::Serve { .. }
+        | Cmd::Stream { .. } => {
             unreachable!("handled before dispatch")
         }
     }

@@ -28,6 +28,18 @@ pub struct SqliteStore {
     labels: std::cell::RefCell<klatch_keys::LabelKeys>,
 }
 
+fn credential_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::CredentialRecord> {
+    Ok(crate::CredentialRecord {
+        member: r.get(0)?,
+        token_hash: r.get(1)?,
+        clearance: r.get(2)?,
+        parent: r.get(3)?,
+        issued: r.get(4)?,
+        expires: r.get(5)?,
+        revoked: r.get::<_, i64>(6)? != 0,
+    })
+}
+
 fn be(e: rusqlite::Error) -> Error {
     match &e {
         rusqlite::Error::SqliteFailure(f, _)
@@ -344,6 +356,60 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn issue_credential(&self, c: &crate::NewCredential, now: i64) -> Result<()> {
+        self.immediate(|| {
+            let live: Option<(i64, i64)> = self
+                .conn
+                .query_row(
+                    "SELECT expires, revoked FROM credentials WHERE member=?1",
+                    params![c.member],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok();
+            if let Some((expires, revoked)) = live
+                && revoked == 0
+                && expires > now
+            {
+                return Err(Error::Invalid(format!(
+                    "{} already holds a live credential; revoke it first or wait for it to expire",
+                    c.member
+                )));
+            }
+            self.exec(
+                "INSERT INTO credentials(member,token_hash,clearance,parent,issued,expires,revoked) VALUES(?1,?2,?3,?4,?5,?6,0)
+                 ON CONFLICT(member) DO UPDATE SET token_hash=?2, clearance=?3, parent=?4, issued=?5, expires=?6, revoked=0",
+                params![c.member, c.token_hash, c.clearance, c.parent, now, now + c.ttl],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn credential(&self, member: &str) -> Result<Option<crate::CredentialRecord>> {
+        Ok(self
+            .rows(
+                "SELECT member,token_hash,clearance,parent,issued,expires,revoked FROM credentials WHERE member=?1",
+                params![member],
+                credential_from_row,
+            )?
+            .into_iter()
+            .next())
+    }
+
+    fn revoke_credential(&self, member: &str, _now: i64) -> Result<bool> {
+        Ok(self.exec(
+            "UPDATE credentials SET revoked=1 WHERE member=?1 AND revoked=0",
+            params![member],
+        )? > 0)
+    }
+
+    fn credentials(&self) -> Result<Vec<crate::CredentialRecord>> {
+        self.rows(
+            "SELECT member,token_hash,clearance,parent,issued,expires,revoked FROM credentials ORDER BY member",
+            params![],
+            credential_from_row,
+        )
+    }
+
     fn set_label_keys(&self, keys: klatch_keys::LabelKeys) {
         *self.labels.borrow_mut() = keys;
     }

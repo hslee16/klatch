@@ -22,6 +22,7 @@ mod scrub;
 mod stream;
 mod tripwire;
 mod wake;
+mod worker_credentials;
 mod zero_trust;
 
 pub(super) fn alice() -> Principal {

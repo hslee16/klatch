@@ -57,6 +57,21 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_allow_member(w, "r", "bob"))
     }),
     ("admin_audit", |g, w| refused(g.admin_audit(w, 5))),
+    ("admin_issue_credential", |g, w| {
+        refused(g.admin_issue_credential(
+            w,
+            &CredentialSpec {
+                member: "w-1",
+                clearance: "internal",
+                ttl: 60,
+                parent: None,
+            },
+        ))
+    }),
+    ("admin_revoke_credential", |g, w| {
+        refused(g.admin_revoke_credential(w, "w-1"))
+    }),
+    ("admin_credentials", |g, w| refused(g.admin_credentials(w))),
     ("admin_seal_label", |g, w| {
         refused(g.admin_seal_label(w, "private"))
     }),
@@ -115,6 +130,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "the same, limited to what one member's clearance reaches; takes no principal",
     ),
     (
+        "verify_credential",
+        "authentication itself: it takes proof of identity instead of a principal, and records a failure",
+    ),
+    (
         "use_label_keys",
         "the keys this process holds, in memory only",
     ),
@@ -138,6 +157,7 @@ fn public_methods() -> Vec<String> {
         include_str!("../policy.rs"),
         include_str!("../scrub.rs"),
         include_str!("../tripwire.rs"),
+        include_str!("../workers.rs"),
     ];
     let mut names = Vec::new();
     for src in files {

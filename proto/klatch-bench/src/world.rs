@@ -68,6 +68,27 @@ impl World {
         c
     }
 
+    /// Run `klatch <args>` as a worker holding the key bundle at `bundle`: no name and no key directory, only the
+    /// path of the bundle, as a launcher would hand it.
+    pub fn as_worker(&self, bundle: &Path, args: &[&str]) -> Run {
+        let mut c = self.command("unused", args);
+        c.env_remove("KLATCH_NAME")
+            .env_remove("KLATCH_KEY_DIR")
+            .env("KLATCH_IDENTITY_FILE", bundle);
+        match c.output() {
+            Ok(o) => Run {
+                ok: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("could not start {}: {e}", self.bin.display()),
+            },
+        }
+    }
+
     /// Run `klatch <args>` as member `who`.
     pub fn run(&self, who: &str, args: &[&str]) -> Run {
         match self.command(who, args).output() {

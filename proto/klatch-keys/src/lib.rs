@@ -4,6 +4,7 @@
 //! 0600 file where there is not (and for unattended workers). It never goes in the environment, on a command line,
 //! in a log or in a `Debug` print, and it is wiped from memory when dropped.
 
+mod bundle;
 mod file;
 mod key;
 mod labels;
@@ -16,6 +17,7 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+pub use bundle::{Bundle, BundleKeys, Token};
 pub use file::FileKeys;
 pub use key::{KEY_LEN, Key};
 pub use labels::{LabelKeys, label_key_name};
