@@ -318,7 +318,11 @@ jobs:
         run: |
           set -euo pipefail
           actual=$("$KLATCH_BIN" --version)
-          [ "$actual" = "klatch $VERSION" ] || { echo "version prints '$actual', wanted 'klatch $VERSION'" >&2; exit 1; }
+          # `klatch <version> (protocol <n>, store schema <n>)`
+          case "$actual" in
+            "klatch $VERSION (protocol "*", store schema "*")") ;;
+            *) echo "version prints '$actual', wanted 'klatch $VERSION (protocol N, store schema N)'" >&2; exit 1 ;;
+          esac
           clients/recipes/launcher-demo.sh
 
       - name: Install cargo-cyclonedx (pinned release, checksum verified)
