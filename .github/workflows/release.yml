@@ -383,6 +383,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # Only the installer script is taken from the repository; nothing from it is run in this job.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: install/install.sh
+          sparse-checkout-cone-mode: false
+
       - name: Download every archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -396,6 +402,8 @@ jobs:
           set -euo pipefail
           cd dist
           for f in ./*.sha256; do sha256sum -c "$f"; done
+          cp "$GITHUB_WORKSPACE/install/install.sh" install.sh
+          sha256sum install.sh > install.sh.sha256
           cat ./*.sha256 | sort -k2 > SHA256SUMS
           rm ./*.sha256
           cat SHA256SUMS

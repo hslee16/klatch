@@ -8,6 +8,15 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+# cargo-binstall: install the prebuilt release archive instead of compiling (the archives are built by release.yml).
+# The URL uses the crate version for both the tag and the file, which is right for a stable release (v0.1.0 and
+# klatch-0.1.0-...). A pre-release tag differs from its version (v0.1.0.dev1 against 0.1.0-dev.1), so binstall does not
+# find those and compiles from source.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/klatch-{ version }-{ target }.tar.gz"
+bin-dir = "klatch-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
 [lib]
 name = "klatch"
 path = "src/lib.rs"

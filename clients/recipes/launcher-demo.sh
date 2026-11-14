@@ -39,7 +39,7 @@ worker 1 claim run.demo.main src/a.rs --anchor wo:1 >/dev/null
 if worker 2 claim run.demo.main src/a.rs >/dev/null 2>&1; then fail "two workers held one path"; fi
 step "a contested path has one holder"
 
-out="$(launcher anchor done wo:1)"
+out="$(launcher anchor "done" wo:1)"
 expect "$out" "released 1" "the work item was not released"
 worker 2 claim run.demo.main src/a.rs >/dev/null;                            step "reporting the item done freed the path for the next worker"
 
