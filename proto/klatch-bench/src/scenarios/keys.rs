@@ -9,6 +9,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: lost_key,
         },
         Scenario {
+            name: "a_backup_is_encrypted_a_restore_brings_it_back_and_a_readable_export_is_audited",
+            origin: "#159, R38",
+            layer: "fault",
+            run: backup_and_export,
+        },
+        Scenario {
             name: "rotating_the_key_keeps_every_message_and_retires_the_old_key",
             origin: "#155, R34",
             layer: "fault",
@@ -110,6 +116,59 @@ fn rotation(w: &World) -> Res {
     check(
         !w.run("carol", &["read", "r"]).ok,
         "the old key still opens the store",
+    )?;
+    Ok(vec![])
+}
+
+fn backup_and_export(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok(
+        "alice",
+        &["post", "r", "kept in the backup: the code is hunter2"],
+    )?;
+    let file = w.home.join("archive.db");
+    let file_s = file.to_string_lossy().into_owned();
+    let made = w.admin(&["backup", &file_s], "");
+    check(made.ok, format!("backup failed: {}", made.stderr))?;
+    let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
+    check(
+        !bytes.windows(7).any(|x| x == b"hunter2"),
+        "the backup holds plaintext",
+    )?;
+    check(
+        !w.admin(&["backup", &file_s], "").ok,
+        "a backup overwrote a file",
+    )?;
+    w.ok("alice", &["post", "r", "posted after the backup"])?;
+    let restored = w.admin(&["restore", &file_s], "restore");
+    check(restored.ok, format!("restore failed: {}", restored.stderr))?;
+    let read = w.ok("bob", &["read", "r", "--peek"])?;
+    has(
+        &read,
+        "hunter2",
+        "the backed up message is gone after a restore",
+    )?;
+    lacks(
+        &read,
+        "posted after the backup",
+        "the restore kept a later message",
+    )?;
+    check(
+        w.home.join("rooms.db.before-restore").exists(),
+        "the replaced store was not kept",
+    )?;
+    // the readable export is the one deliberate way out, and it leaves a record
+    let export = w.admin(&["export", "r"], "r");
+    check(export.ok, format!("export failed: {}", export.stderr))?;
+    has(&export.stdout, "hunter2", "the export is not readable")?;
+    has(
+        &w.admin(&["audit"], "").stdout,
+        "export",
+        "the export is not in the audit",
+    )?;
+    check(
+        !w.admin(&["export", "r"], "wrong").ok,
+        "an export ran without the room typed back",
     )?;
     Ok(vec![])
 }

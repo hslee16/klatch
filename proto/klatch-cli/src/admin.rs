@@ -79,6 +79,13 @@ pub enum AdminCmd {
     SealLabel { label: String },
     /// Re-encrypt the store under a new key; the old key (and the old recovery code) stop working
     RotateKey,
+    /// Write an encrypted copy of the whole store to a file (never overwrites one); keep it with its recovery code
+    Backup { file: std::path::PathBuf },
+    /// Replace the store with a backup made under the same key; the store it replaces is kept beside it
+    Restore { file: std::path::PathBuf },
+    /// Print a room's messages as readable text. This is the one way plaintext leaves the store on purpose, so it is
+    /// audited and asks for the room typed back
+    Export { room: String },
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -112,6 +119,8 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
         AdminCmd::Close { room } => Some(room.clone()),
         AdminCmd::Recover { .. } => Some("recover".into()),
         AdminCmd::RotateKey => Some("rotate".into()),
+        AdminCmd::Restore { .. } => Some("restore".into()),
+        AdminCmd::Export { room } => Some(room.clone()),
         AdminCmd::Remove { member, .. } => Some(member.clone()),
         _ => None,
     }
@@ -260,7 +269,13 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         }
         AdminCmd::Refusals { limit } => refusals(t, limit)?,
         AdminCmd::Audit { limit } => audit(t, limit)?,
-        AdminCmd::Recovery | AdminCmd::Recover { .. } | AdminCmd::RotateKey => {
+        AdminCmd::Recovery
+        | AdminCmd::Recover { .. }
+        | AdminCmd::RotateKey
+        | AdminCmd::Backup { .. }
+        | AdminCmd::Restore { .. }
+        | AdminCmd::Export { .. }
+        | AdminCmd::SealLabel { .. } => {
             unreachable!("handled in run, which needs the keystore and not only the gateway")
         }
     }
@@ -281,8 +296,14 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             })?;
             note("recovery-show", "")?;
             println!("{}", klatch_keys::recovery_code(&key));
+            let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+            for label in gateway.sealed_labels()? {
+                if let Some(k) = keys::label_key(db, &label)? {
+                    println!("label {label}: {}", klatch_keys::recovery_code(&k));
+                }
+            }
             println!(
-                "Keep this code somewhere safe and private. It restores the key; it is not stored anywhere else."
+                "Keep these codes somewhere safe and private. Each restores one key; they are not stored anywhere else."
             );
         }
         AdminCmd::Recover { code, label } => {
@@ -307,6 +328,45 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
                 );
             }
         }
+        AdminCmd::Backup { file } => {
+            let key = keys::current_key(db)?
+                .ok_or_else(|| anyhow::anyhow!("this store has no key yet; nothing to back up"))?;
+            keys::open_store(db)?.backup_to(&file, &key)?;
+            note("backup", &file.to_string_lossy())?;
+            println!(
+                "wrote an encrypted backup to {} (it opens only with this store's key: keep the recovery code too)",
+                file.display()
+            );
+        }
+        AdminCmd::Restore { file } => {
+            let key = keys::current_key(db)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this store has no key; restore the key first with `klatch admin recover`"
+                )
+            })?;
+            klatch_store::encrypt::restore_backup(db, &file, &key)?;
+            note("restore", &file.to_string_lossy())?;
+            println!(
+                "restored {}; the store it replaced is kept as rooms.db.before-restore beside it",
+                file.display()
+            );
+        }
+        AdminCmd::Export { room } => {
+            let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+            gateway.use_label_keys(keys::label_ring(db, &gateway.sealed_labels()?)?);
+            // audited before anything is printed: the act is recorded even if the output is cut short
+            gateway.admin_note(&who, ("export", &room), "readable transcript printed")?;
+            for m in gateway.tail(&who, &room, (0, 1_000_000))? {
+                println!(
+                    "[{} {} {} {}] {}",
+                    m.seq,
+                    m.ts,
+                    m.sender_label(),
+                    m.label,
+                    flat(&m.body)
+                );
+            }
+        }
         AdminCmd::RotateKey => {
             let key = keys::rotate_key(db)?;
             note("rotate-key", "")?;
@@ -320,13 +380,24 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
     Ok(())
 }
 
+/// The commands that act on the key or the store file itself, and so need more than the gateway.
+fn needs_the_keystore(cmd: &AdminCmd) -> bool {
+    matches!(
+        cmd,
+        AdminCmd::Recovery
+            | AdminCmd::Recover { .. }
+            | AdminCmd::RotateKey
+            | AdminCmd::Backup { .. }
+            | AdminCmd::Restore { .. }
+            | AdminCmd::Export { .. }
+            | AdminCmd::SealLabel { .. }
+    )
+}
+
 pub fn run(cmd: AdminCmd) -> Result<()> {
     authorize(&cmd)?;
     let db = db_path()?;
-    if matches!(
-        cmd,
-        AdminCmd::Recovery | AdminCmd::Recover { .. } | AdminCmd::RotateKey
-    ) {
+    if needs_the_keystore(&cmd) {
         return key_command(&db, cmd);
     }
     let store = keys::open_store(&db)?;

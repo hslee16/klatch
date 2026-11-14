@@ -218,3 +218,99 @@ fn a_file_that_is_not_a_database_is_refused_and_left_untouched() {
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+// ---- backups: an archive is encrypted like the store (#159) ----
+
+#[test]
+fn a_backup_is_an_encrypted_copy_with_no_plaintext_and_opens_with_the_same_key() {
+    let path = temp_db("bk-copy");
+    let s = SqliteStore::open(&path, &key()).unwrap();
+    s.join("vault-room", "member-q", 1).unwrap();
+    s.post(Seat::new("vault-room", "member-q"), "backup-secret-body", 2)
+        .unwrap();
+    let out = path.with_file_name("backup.db");
+    s.backup_to(&out, &key()).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    for secret in ["backup-secret-body", "vault-room", "member-q"] {
+        assert!(!has(&bytes, secret), "{secret} is readable in the backup");
+    }
+    assert!(!bytes.starts_with(b"SQLite format 3"));
+    let copy = SqliteStore::open(&out, &key()).unwrap();
+    assert_eq!(
+        copy.tail("vault-room", 0, 10).unwrap()[0].body,
+        "backup-secret-body"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_backup_never_overwrites_a_file_and_leaves_nothing_half_written() {
+    let path = temp_db("bk-noover");
+    let s = SqliteStore::open(&path, &key()).unwrap();
+    let out = path.with_file_name("backup.db");
+    std::fs::write(&out, b"precious").unwrap();
+    assert!(s.backup_to(&out, &key()).is_err());
+    assert_eq!(std::fs::read(&out).unwrap(), b"precious");
+    let names = names(path.parent().unwrap());
+    assert!(names.iter().all(|n| !n.ends_with(".partial")), "{names:?}");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn restoring_a_backup_replaces_the_store_and_keeps_the_old_one_aside() {
+    let path = temp_db("bk-restore");
+    let s = SqliteStore::open(&path, &key()).unwrap();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "alice"), "before", 2).unwrap();
+    let out = path.with_file_name("backup.db");
+    s.backup_to(&out, &key()).unwrap();
+    s.post(Seat::new("r", "alice"), "after the backup", 3)
+        .unwrap();
+    drop(s);
+    crate::encrypt::restore_backup(&path, &out, &key()).unwrap();
+    let s = SqliteStore::open(&path, &key()).unwrap();
+    let bodies: Vec<String> = s
+        .tail("r", 0, 10)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.body)
+        .collect();
+    assert_eq!(bodies, vec!["before".to_string()]);
+    // the store it replaced is kept, still encrypted, so a mistaken restore can be undone
+    let aside = path.with_file_name("rooms.db.before-restore");
+    assert!(aside.exists());
+    assert!(!has(&std::fs::read(&aside).unwrap(), "after the backup"));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_backup_made_under_another_key_or_damaged_is_refused_and_changes_nothing() {
+    let path = temp_db("bk-bad");
+    let s = SqliteStore::open(&path, &key()).unwrap();
+    s.join("r", "alice", 1).unwrap();
+    let other = klatch_keys::Key::from_bytes([3; 32]);
+    let foreign = path.with_file_name("foreign.db");
+    SqliteStore::open(&foreign, &other)
+        .unwrap()
+        .join("x", "bob", 1)
+        .unwrap();
+    drop(s);
+    let before = std::fs::read(&path).unwrap();
+    assert!(crate::encrypt::restore_backup(&path, &foreign, &key()).is_err());
+    let junk = path.with_file_name("junk.db");
+    std::fs::write(&junk, vec![7u8; 9000]).unwrap();
+    assert!(crate::encrypt::restore_backup(&path, &junk, &key()).is_err());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "a refused restore changed the store"
+    );
+    let names = names(path.parent().unwrap());
+    assert!(
+        names
+            .iter()
+            .all(|n| !n.ends_with(".restoring") && !n.ends_with(".before-restore")),
+        "{names:?}"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
