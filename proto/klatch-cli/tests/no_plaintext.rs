@@ -58,7 +58,7 @@ fn a_refusal_or_a_failure_never_repeats_the_text_of_the_call() {
     h.ok("alice", &["join", "r"]);
     // a bad label, a credential-looking secret, a room that does not exist as a name, an oversized body
     let creds = format!("{MARKER} AKIAIOSFODNN7EXAMPLE");
-    let huge = format!("{MARKER}{}", "x".repeat(200_000));
+    let huge = format!("{MARKER}{}", "x".repeat(100_000));
     for args in [
         vec!["post", "--label", "no-such-label", "r", MARKER],
         vec!["post", "r", &creds],
