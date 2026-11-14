@@ -1,0 +1,74 @@
+name: Release
+
+# Publishes the Python package to PyPI through trusted publishing (OIDC, no token is stored). The publish job runs in
+# the protected `release` environment, which needs the maintainer's approval, and PyPI only accepts this exact
+# repository, workflow file and environment name. Binary wheels, crates and npm join this file later (#425).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  python-build:
+    name: Build the Python package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/python
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in pyproject.toml
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("pyproject.toml").read(), re.M).group(1))')
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+
+      - name: Package metadata test
+        run: python3 -m unittest -v test_package
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: The built wheel installs and imports in a clean environment
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke/bin/python" -I -c 'import klatch; assert klatch.PROTOCOL_VERSION == 1; print(klatch.__version__)'
+
+      - name: Upload built distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-dist
+          path: clients/python/dist/
+
+  python-publish:
+    name: Publish to PyPI
+    needs: python-build
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/project/klatch/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish via trusted publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

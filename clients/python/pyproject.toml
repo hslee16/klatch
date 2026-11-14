@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "klatch"
+version = "0.1.0.dev0"
+description = "A substrate for agent rooms (pre-release; the Python client)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+classifiers = ["Development Status :: 2 - Pre-Alpha"]
+
+[project.urls]
+Homepage = "https://github.com/hslee16/klatch"
+Source = "https://github.com/hslee16/klatch"
+
+# klatch_client.py stays the one source of the client; the wheel carries it as klatch/client.py.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"package/__init__.py" = "klatch/__init__.py"
+"klatch_client.py" = "klatch/client.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["package/__init__.py", "klatch_client.py", "README.md", "LICENSE", "pyproject.toml"]
