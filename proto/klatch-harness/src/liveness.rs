@@ -49,7 +49,7 @@ pub(crate) mod fake {
     pub struct FakeTable(pub HashMap<u32, ProcInfo>);
 
     impl FakeTable {
-        pub fn with(mut self, pid: u32, ppid: u32, start: &str, command: &str) -> Self {
+        pub fn with(mut self, (pid, ppid): (u32, u32), start: &str, command: &str) -> Self {
             self.0.insert(
                 pid,
                 ProcInfo {
@@ -89,13 +89,13 @@ mod tests {
 
     #[test]
     fn live_when_alive_started_then_and_is_the_harness() {
-        let t = FakeTable::default().with(10, 1, T, "claude");
+        let t = FakeTable::default().with((10, 1), T, "claude");
         assert_eq!(check(&rec(10), &t, "darwin"), Liveness::Live);
     }
 
     #[test]
     fn a_path_to_the_program_still_counts() {
-        let t = FakeTable::default().with(10, 1, T, "/usr/local/bin/claude");
+        let t = FakeTable::default().with((10, 1), T, "/usr/local/bin/claude");
         assert_eq!(check(&rec(10), &t, "darwin"), Liveness::Live);
     }
 
@@ -109,19 +109,19 @@ mod tests {
 
     #[test]
     fn reused_pid_has_a_different_start_time() {
-        let t = FakeTable::default().with(10, 1, "Sat Nov 7 09:00:00 2026", "claude");
+        let t = FakeTable::default().with((10, 1), "Sat Nov 7 09:00:00 2026", "claude");
         assert_eq!(check(&rec(10), &t, "darwin"), Liveness::Reused);
     }
 
     #[test]
     fn same_pid_and_start_but_a_different_program() {
-        let t = FakeTable::default().with(10, 1, T, "vim");
+        let t = FakeTable::default().with((10, 1), T, "vim");
         assert_eq!(check(&rec(10), &t, "darwin"), Liveness::NotHarness);
     }
 
     #[test]
     fn another_pid_domain_cannot_be_checked() {
-        let t = FakeTable::default().with(10, 1, T, "claude");
+        let t = FakeTable::default().with((10, 1), T, "claude");
         assert_eq!(check(&rec(10), &t, "linux"), Liveness::OtherDomain);
     }
 

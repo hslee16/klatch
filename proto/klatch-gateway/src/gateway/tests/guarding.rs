@@ -3,39 +3,21 @@ use super::*;
 #[test]
 fn every_operation_validates_the_room_name_before_anything_else() {
     let g = open();
+    let who = alice();
     for room in ["bad room", "a\nb", "", "x/y"] {
-        let who = alice();
-        assert!(
-            matches!(g.join(&who, room), Err(Error::Invalid(_))),
-            "join {room:?}"
-        );
-        assert!(
-            matches!(g.post(&who, room, "x"), Err(Error::Invalid(_))),
-            "post {room:?}"
-        );
-        assert!(
-            matches!(g.read(&who, room, true), Err(Error::Invalid(_))),
-            "read {room:?}"
-        );
-        assert!(
-            matches!(g.who(&who, room), Err(Error::Invalid(_))),
-            "who {room:?}"
-        );
-        assert!(
-            matches!(
-                g.claim(&who, room, &ClaimSpec::new("p", 10, "")),
-                Err(Error::Invalid(_))
+        let refused = [
+            ("join", is_invalid(g.join(&who, room))),
+            ("post", is_invalid(g.post(&who, room, "x"))),
+            ("read", is_invalid(g.read(&who, room, true))),
+            ("who", is_invalid(g.who(&who, room))),
+            (
+                "claim",
+                is_invalid(g.claim(&who, room, &ClaimSpec::new("p", 10, ""))),
             ),
-            "claim {room:?}"
-        );
-        assert!(
-            matches!(g.release(&who, room, "p"), Err(Error::Invalid(_))),
-            "release {room:?}"
-        );
-        assert!(
-            matches!(g.claims(&who, room), Err(Error::Invalid(_))),
-            "claims {room:?}"
-        );
+            ("release", is_invalid(g.release(&who, room, "p"))),
+            ("claims", is_invalid(g.claims(&who, room))),
+        ];
+        all_true(&refused, &format!("{room:?}"));
     }
     assert_eq!(
         g.store.calls.get(),
@@ -48,9 +30,12 @@ fn every_operation_validates_the_room_name_before_anything_else() {
 fn an_invalid_member_name_is_refused_everywhere() {
     let g = open();
     let bad = Principal::unattributed("bad name\nforged");
-    assert!(matches!(g.join(&bad, "r"), Err(Error::Invalid(_))));
-    assert!(matches!(g.post(&bad, "r", "x"), Err(Error::Invalid(_))));
-    assert!(matches!(g.digest(&bad), Err(Error::Invalid(_))));
+    let refused = [
+        ("join", is_invalid(g.join(&bad, "r"))),
+        ("post", is_invalid(g.post(&bad, "r", "x"))),
+        ("digest", is_invalid(g.digest(&bad))),
+    ];
+    all_true(&refused, "by a bad member name");
     assert_eq!(g.store.calls.get(), 0);
 }
 
@@ -149,23 +134,37 @@ fn the_guard_sees_the_post_body_so_a_label_check_can_judge_it() {
 }
 
 #[test]
-fn a_denied_operation_never_reaches_the_store_and_returns_the_guards_error() {
+fn a_denied_operation_returns_the_guards_error() {
+    let g = Gateway::new(
+        SpyStore::new(),
+        FixedClock(1),
+        Rc::new(SpyGuard::denying(&["locked"])),
+    );
+    let err = g.post(&alice(), "locked", "x").unwrap_err();
+    assert!(
+        matches!(err, Error::Refused { ref rule, .. } if rule == "test.deny_room"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_denied_operation_never_reaches_the_store() {
     let g = Gateway::new(
         SpyStore::new(),
         FixedClock(1),
         Rc::new(SpyGuard::denying(&["locked"])),
     );
     let who = alice();
-    let err = g.post(&who, "locked", "x").unwrap_err();
-    assert!(
-        matches!(err, Error::Refused { ref rule, .. } if rule == "test.deny_room"),
-        "{err}"
-    );
-    assert!(g.read(&who, "locked", true).is_err());
-    assert!(
-        g.claim(&who, "locked", &ClaimSpec::new("p", 10, ""))
-            .is_err()
-    );
+    let denied = [
+        ("post", g.post(&who, "locked", "x").is_err()),
+        ("read", g.read(&who, "locked", true).is_err()),
+        (
+            "claim",
+            g.claim(&who, "locked", &ClaimSpec::new("p", 10, ""))
+                .is_err(),
+        ),
+    ];
+    all_true(&denied, "in a locked room");
     assert_eq!(g.store.calls.get(), 0);
     g.post(&who, "open", "x").unwrap();
 }
@@ -175,51 +174,59 @@ fn store_failures_surface_as_errors_never_as_success() {
     let g = open();
     g.store.fail.set(true);
     let who = alice();
-    assert!(matches!(g.post(&who, "r", "x"), Err(Error::Backend(_))));
-    assert!(matches!(g.read(&who, "r", true), Err(Error::Backend(_))));
-    assert!(matches!(
-        g.claim(&who, "r", &ClaimSpec::new("p", 10, "")),
-        Err(Error::Backend(_))
-    ));
-    assert!(matches!(g.claims(&who, "r"), Err(Error::Backend(_))));
-    assert!(matches!(g.digest(&who), Err(Error::Backend(_))));
+    let failed = [
+        ("post", is_backend(g.post(&who, "r", "x"))),
+        ("read", is_backend(g.read(&who, "r", true))),
+        (
+            "claim",
+            is_backend(g.claim(&who, "r", &ClaimSpec::new("p", 10, ""))),
+        ),
+        ("claims", is_backend(g.claims(&who, "r"))),
+        ("digest", is_backend(g.digest(&who))),
+    ];
+    all_true(&failed, "must fail when the store does");
 }
 
 #[test]
-fn tail_head_and_ack_validate_before_the_store_and_go_through_the_guard() {
+fn tail_head_and_ack_validate_before_the_store_and_the_guard() {
     let guard = Rc::new(SpyGuard::allowing());
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
     let who = alice();
     for room in ["bad room", "a\nb", ""] {
-        assert!(matches!(
-            g.tail(&who, room, (0, 10)),
-            Err(Error::Invalid(_))
-        ));
-        assert!(matches!(g.head(&who, room), Err(Error::Invalid(_))));
-        assert!(matches!(g.ack(&who, room, 1), Err(Error::Invalid(_))));
+        let refused = [
+            ("tail", is_invalid(g.tail(&who, room, (0, 10)))),
+            ("head", is_invalid(g.head(&who, room))),
+            ("ack", is_invalid(g.ack(&who, room, 1))),
+        ];
+        all_true(&refused, &format!("{room:?}"));
     }
-    assert!(matches!(
-        g.tail(&who, "r", (-1, 10)),
-        Err(Error::Invalid(_))
-    ));
-    assert!(matches!(g.tail(&who, "r", (0, 0)), Err(Error::Invalid(_))));
-    assert!(matches!(g.ack(&who, "r", -1), Err(Error::Invalid(_))));
+    let bad_ranges = [
+        ("negative start", is_invalid(g.tail(&who, "r", (-1, 10)))),
+        ("empty limit", is_invalid(g.tail(&who, "r", (0, 0)))),
+        ("negative ack", is_invalid(g.ack(&who, "r", -1))),
+    ];
+    all_true(&bad_ranges, "must be refused");
     assert_eq!(g.store.calls.get(), 0);
     assert!(
         guard.seen.borrow().is_empty(),
         "invalid requests never reach the guard"
     );
+}
+
+#[test]
+fn tail_head_and_ack_go_through_the_guard() {
+    let guard = Rc::new(SpyGuard::allowing());
+    let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
+    let who = alice();
     g.tail(&who, "r", (0, 10)).unwrap();
     g.head(&who, "r").unwrap();
     g.ack(&who, "r", 0).unwrap();
-    assert_eq!(
-        *guard.seen.borrow(),
-        vec![
-            Operation::Subscribe { room: "r".into() },
-            Operation::Subscribe { room: "r".into() },
-            Operation::Ack { room: "r".into() },
-        ]
-    );
+    let seen = vec![
+        Operation::Subscribe { room: "r".into() },
+        Operation::Subscribe { room: "r".into() },
+        Operation::Ack { room: "r".into() },
+    ];
+    assert_eq!(*guard.seen.borrow(), seen);
 }
 
 #[test]
@@ -229,14 +236,11 @@ fn a_denied_tail_never_reaches_the_store() {
         FixedClock(1),
         Rc::new(SpyGuard::denying(&["locked"])),
     );
-    assert!(matches!(
-        g.tail(&alice(), "locked", (0, 10)),
-        Err(Error::Refused { .. })
-    ));
-    assert!(matches!(
-        g.ack(&alice(), "locked", 1),
-        Err(Error::Refused { .. })
-    ));
+    let denied = [
+        ("tail", is_refused(g.tail(&alice(), "locked", (0, 10)))),
+        ("ack", is_refused(g.ack(&alice(), "locked", 1))),
+    ];
+    all_true(&denied, "in a locked room");
     assert_eq!(g.store.calls.get(), 0);
 }
 
@@ -304,25 +308,19 @@ fn a_bad_event_or_member_name_is_rejected_before_the_store() {
 }
 
 #[test]
-fn a_bad_session_id_is_rejected_before_the_store() {
+fn a_bad_session_id_or_scope_is_rejected_before_the_store() {
     let g = open();
-    for bad in ["", "a b", "x\ny", &"s".repeat(81)] {
-        assert!(
-            matches!(g.note_session(&alice(), bad), Err(Error::Invalid(_))),
-            "{bad:?}"
-        );
-    }
-    assert_eq!(g.store.calls.get(), 0);
-}
-
-#[test]
-fn a_bad_scope_is_rejected_before_the_store() {
-    let g = open();
-    for bad in ["", "has space", "*", "new\nline", &"s".repeat(81)] {
-        assert!(
-            matches!(g.set_scope(&alice(), bad), Err(Error::Invalid(_))),
-            "{bad:?}"
-        );
-    }
+    let sessions = ["", "a b", "x\ny", &"s".repeat(81)];
+    let scopes = ["", "has space", "*", "new\nline", &"s".repeat(81)];
+    let refused: Vec<(&str, bool)> = sessions
+        .iter()
+        .map(|bad| ("session id", is_invalid(g.note_session(&alice(), bad))))
+        .chain(
+            scopes
+                .iter()
+                .map(|bad| ("scope", is_invalid(g.set_scope(&alice(), bad)))),
+        )
+        .collect();
+    all_true(&refused, "must be refused");
     assert_eq!(g.store.calls.get(), 0);
 }

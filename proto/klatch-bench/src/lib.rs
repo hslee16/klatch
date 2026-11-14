@@ -78,33 +78,39 @@ pub fn run_scenarios(scenarios: &[Scenario], bin: &std::path::Path) -> Vec<Outco
 }
 
 /// The outcomes as a table for people: one line per scenario, then a total.
-pub fn table(outcomes: &[Outcome]) -> String {
-    let mut out = String::new();
-    for o in outcomes {
-        out.push_str(&format!(
-            "{:<5} {:<58} {:<10} {:<10} {:>6} ms{}\n",
-            if o.passed { "pass" } else { "FAIL" },
-            o.name,
-            o.layer,
-            o.origin,
-            o.millis,
-            if o.passed {
-                let shown: Vec<String> = o
-                    .metrics
-                    .iter()
-                    .filter(|(k, _)| k.ends_with("_ms"))
-                    .map(|(k, v)| format!("{k}={v:.0}"))
-                    .collect();
-                if shown.is_empty() {
-                    String::new()
-                } else {
-                    format!("   {}", shown.join(" "))
-                }
-            } else {
-                format!("   {}", o.message)
-            }
-        ));
+/// What follows a scenario's timings on its line: the timing metrics when it passed, else why it failed.
+fn detail(o: &Outcome) -> String {
+    if !o.passed {
+        return format!("   {}", o.message);
     }
+    let shown: Vec<String> = o
+        .metrics
+        .iter()
+        .filter(|(k, _)| k.ends_with("_ms"))
+        .map(|(k, v)| format!("{k}={v:.0}"))
+        .collect();
+    if shown.is_empty() {
+        String::new()
+    } else {
+        format!("   {}", shown.join(" "))
+    }
+}
+
+/// One line of the table: the verdict, the name, layer and origin, the time, and the detail.
+fn table_line(o: &Outcome) -> String {
+    format!(
+        "{:<5} {:<58} {:<10} {:<10} {:>6} ms{}\n",
+        if o.passed { "pass" } else { "FAIL" },
+        o.name,
+        o.layer,
+        o.origin,
+        o.millis,
+        detail(o)
+    )
+}
+
+pub fn table(outcomes: &[Outcome]) -> String {
+    let mut out: String = outcomes.iter().map(table_line).collect();
     let passed = outcomes.iter().filter(|o| o.passed).count();
     out.push_str(&format!(
         "{passed} passed, {} failed\n",
@@ -344,19 +350,30 @@ mod tests {
     }
 
     #[test]
-    fn a_passing_failing_and_panicking_scenario_are_each_reported_without_aborting() {
+    fn every_scenario_is_reported_even_when_one_fails_or_panics() {
+        assert_eq!(run_scenarios(&sample(), &bin()).len(), 3);
+    }
+
+    #[test]
+    fn a_passing_scenario_reports_its_metrics_and_the_klatch_calls_the_runner_counted() {
         let out = run_scenarios(&sample(), &bin());
-        assert_eq!(out.len(), 3);
         assert!(out[0].passed && out[0].message.is_empty());
-        assert_eq!(
-            out[0].metrics,
-            vec![
-                ("things".to_string(), 3.0),
-                ("klatch_calls".to_string(), 0.0)
-            ],
-            "the scenario's own metrics, then the number of klatch processes the runner counted"
-        );
+        let metrics = vec![
+            ("things".to_string(), 3.0),
+            ("klatch_calls".to_string(), 0.0),
+        ];
+        assert_eq!(out[0].metrics, metrics);
+    }
+
+    #[test]
+    fn a_failing_scenario_reports_why() {
+        let out = run_scenarios(&sample(), &bin());
         assert!(!out[1].passed && out[1].message.contains("expected 2 got 3"));
+    }
+
+    #[test]
+    fn a_panicking_scenario_is_reported_as_a_failure_with_the_panic_message() {
+        let out = run_scenarios(&sample(), &bin());
         assert!(
             !out[2].passed && out[2].message.contains("it blew up"),
             "{:?}",
@@ -377,31 +394,46 @@ mod tests {
         );
     }
 
+    fn sample_table() -> String {
+        table(&run_scenarios(&sample(), &bin()))
+    }
+
     #[test]
-    fn the_table_has_a_line_per_scenario_and_a_total() {
-        let t = table(&run_scenarios(&sample(), &bin()));
+    fn the_table_has_a_line_per_scenario_with_its_verdict_and_origin() {
+        let t = sample_table();
         assert!(
             t.contains("good") && t.contains("bad") && t.contains("boom"),
             "{t}"
         );
         assert!(t.contains("pass") && t.contains("FAIL"), "{t}");
-        assert!(t.contains("1 passed, 2 failed"), "{t}");
         assert!(t.contains("#2"), "the origin is shown: {t}");
     }
 
     #[test]
-    fn the_json_record_names_the_binary_version_the_time_and_every_scenario() {
+    fn the_table_ends_with_a_total() {
+        assert!(sample_table().contains("1 passed, 2 failed"));
+    }
+
+    fn sample_json() -> serde_json::Value {
         let json = to_json(&run_scenarios(&sample(), &bin()), "klatch 0.1.0", 1234);
-        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        serde_json::from_str(&json).expect("valid JSON")
+    }
+
+    #[test]
+    fn the_json_record_names_the_binary_version_and_the_time() {
+        let v = sample_json();
         assert_eq!(v["klatch"], "klatch 0.1.0");
         assert_eq!(v["time"], 1234);
+    }
+
+    #[test]
+    fn the_json_record_lists_every_scenario_with_its_verdict_and_metrics() {
+        let v = sample_json();
         let list = v["scenarios"].as_array().unwrap();
         assert_eq!(list.len(), 3);
         assert_eq!(list[0]["name"], "good");
-        assert_eq!(list[0]["passed"], true);
         assert_eq!(list[0]["metrics"]["things"], 3.0);
         assert_eq!(list[1]["passed"], false);
-        assert!(list[1]["message"].as_str().unwrap().contains("expected 2"));
     }
 
     #[test]

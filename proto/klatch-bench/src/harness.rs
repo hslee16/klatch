@@ -70,6 +70,14 @@ fn wait_for(path: &Path, what: &str) -> Result<(), String> {
     Err(format!("timed out waiting for {what} ({})", path.display()))
 }
 
+/// Who a fake session is: the id and name its registry record carries and the directory it started in.
+#[derive(Clone, Copy)]
+struct Identity<'a> {
+    session_id: &'a str,
+    name: &'a str,
+    cwd: &'a Path,
+}
+
 impl FakeHarness {
     pub fn new(world: &World) -> Result<FakeHarness, String> {
         let root = world
@@ -131,7 +139,12 @@ done"#,
             .stderr(Stdio::null());
     }
 
-    fn register(&self, pid: u32, session_id: &str, name: &str, cwd: &Path) -> Result<(), String> {
+    fn register(&self, pid: u32, who: &Identity) -> Result<(), String> {
+        let Identity {
+            session_id,
+            name,
+            cwd,
+        } = *who;
         let start =
             ps(pid, "lstart=").ok_or("could not read the start time of the fake session")?;
         let record = serde_json::json!({
@@ -166,16 +179,22 @@ done"#,
             .spawn()
             .map_err(|e| format!("start a fake session: {e}"))?;
         self.roots.borrow_mut().push(child);
-        self.attach(id, session_id, name, cwd)
+        self.attach(
+            id,
+            &Identity {
+                session_id,
+                name,
+                cwd,
+            },
+        )
     }
 
-    fn attach(
-        &self,
-        id: u64,
-        session_id: &str,
-        name: &str,
-        cwd: &Path,
-    ) -> Result<Session<'_>, String> {
+    fn attach(&self, id: u64, who: &Identity) -> Result<Session<'_>, String> {
+        let Identity {
+            session_id,
+            name,
+            cwd,
+        } = *who;
         let pidfile = self.root.join("run").join(format!("pid-{id}"));
         wait_for(&pidfile, "the fake session to start")?;
         let pid: u32 = std::fs::read_to_string(&pidfile)
@@ -183,7 +202,7 @@ done"#,
             .trim()
             .parse()
             .map_err(|_| "bad pid file")?;
-        self.register(pid, session_id, name, cwd)?;
+        self.register(pid, who)?;
         self.sessions.borrow_mut().push(pid);
         Ok(Session {
             harness: self,
@@ -284,7 +303,12 @@ impl Session<'_> {
         let id = NEXT.fetch_add(1, Ordering::SeqCst);
         let script = self.harness.loop_script(id).replace('\'', "'\\''");
         self.run(&format!("\"$FAKE_CLAUDE\" -c '{script}' &"))?;
-        self.harness.attach(id, session_id, name, &self.cwd)
+        let who = Identity {
+            session_id,
+            name,
+            cwd: &self.cwd,
+        };
+        self.harness.attach(id, &who)
     }
 
     /// The harness removing this session's registry record (what happens as a real session exits).
@@ -294,8 +318,12 @@ impl Session<'_> {
 
     /// The harness giving this session a new name in its record.
     pub fn rename(&self, name: &str) -> Result<(), String> {
-        self.harness
-            .register(self.pid, &self.session_id, name, &self.cwd)
+        let who = Identity {
+            session_id: &self.session_id,
+            name,
+            cwd: &self.cwd,
+        };
+        self.harness.register(self.pid, &who)
     }
 }
 

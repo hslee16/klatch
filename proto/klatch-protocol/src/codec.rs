@@ -88,9 +88,43 @@ pub struct FrameReader<R: BufRead> {
     done: bool,
 }
 
+/// What one look at the input's buffer found.
+enum Chunk {
+    /// The input ended.
+    Eof,
+    /// Part of a line; the newline has not arrived.
+    Partial,
+    /// The rest of a line, up to its newline.
+    Ended,
+}
+
 impl<R: BufRead> FrameReader<R> {
     pub fn new(inner: R) -> Self {
         Self { inner, done: false }
+    }
+
+    /// Read what the input has buffered, up to the next newline, into `line` (kept only while the line is within the
+    /// limit; `total` counts every byte, so an oversize line can be reported without being stored).
+    fn take_chunk(&mut self, line: &mut Vec<u8>, total: &mut usize) -> Result<Chunk, DecodeError> {
+        let buf = self
+            .inner
+            .fill_buf()
+            .map_err(|e| DecodeError::Io(e.to_string()))?;
+        if buf.is_empty() {
+            return Ok(Chunk::Eof);
+        }
+        let newline = buf.iter().position(|b| *b == b'\n');
+        let chunk = &buf[..newline.unwrap_or(buf.len())];
+        *total += chunk.len();
+        if *total <= MAX_LINE_BYTES {
+            line.extend_from_slice(chunk);
+        }
+        let consumed = newline.map_or(chunk.len(), |i| i + 1);
+        self.inner.consume(consumed);
+        Ok(match newline {
+            Some(_) => Chunk::Ended,
+            None => Chunk::Partial,
+        })
     }
 
     /// The next non-blank line, or `None` at the end of input. An oversize line is consumed to its end
@@ -99,37 +133,22 @@ impl<R: BufRead> FrameReader<R> {
         if self.done {
             return None;
         }
-        let mut line: Vec<u8> = Vec::new();
-        let mut total = 0usize;
-        let mut saw_any = false;
+        let (mut line, mut total, mut saw_any) = (Vec::new(), 0usize, false);
         loop {
-            let buf = match self.inner.fill_buf() {
-                Ok(b) => b,
+            match self.take_chunk(&mut line, &mut total) {
                 Err(e) => {
                     self.done = true;
-                    return Some(Err(DecodeError::Io(e.to_string())));
+                    return Some(Err(e));
                 }
-            };
-            if buf.is_empty() {
-                self.done = true;
-                if !saw_any {
-                    return None;
+                Ok(Chunk::Eof) => {
+                    self.done = true;
+                    if !saw_any {
+                        return None;
+                    }
+                    break;
                 }
-                break;
-            }
-            saw_any = true;
-            let (chunk, ended) = match buf.iter().position(|b| *b == b'\n') {
-                Some(i) => (&buf[..i], Some(i + 1)),
-                None => (buf, None),
-            };
-            total += chunk.len();
-            if total <= MAX_LINE_BYTES {
-                line.extend_from_slice(chunk);
-            }
-            let consumed = ended.unwrap_or(chunk.len());
-            self.inner.consume(consumed);
-            if ended.is_some() {
-                break;
+                Ok(Chunk::Ended) => break,
+                Ok(Chunk::Partial) => saw_any = true,
             }
         }
         if total > MAX_LINE_BYTES {

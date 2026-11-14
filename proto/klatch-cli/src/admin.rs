@@ -81,27 +81,52 @@ fn typed_back(expected: &str, line: &str) -> bool {
     line.trim() == expected
 }
 
-pub fn run(cmd: AdminCmd) -> Result<()> {
+/// The room an admin act is about: every room (`*`) when asked, else the one named.
+fn room_of(room: Option<String>, all_rooms: bool) -> String {
+    if all_rooms {
+        "*".to_string()
+    } else {
+        room.unwrap_or_default()
+    }
+}
+
+/// Refuse unless this is a person at a terminal, and ask for the target typed back when the act is destructive.
+fn authorize(cmd: &AdminCmd) -> Result<()> {
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     // a test build can stand in for the terminal; a normal build never does
     #[cfg(feature = "test-clock")]
     let terminal = terminal || std::env::var("KLATCH_ADMIN_TEST_TERMINAL").is_ok_and(|v| v == "1");
-    let agent_above = discover_session().is_ok();
-    if let Err(why) = gate(terminal, agent_above) {
+    if let Err(why) = gate(terminal, discover_session().is_ok()) {
         bail!("{why}");
     }
-    if let Some(expected) = confirmation(&cmd) {
-        print!("type {expected} to confirm: ");
-        std::io::stdout().flush()?;
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line)?;
-        if !typed_back(&expected, &line) {
-            bail!("not confirmed; nothing was changed");
-        }
+    let Some(expected) = confirmation(cmd) else {
+        return Ok(());
+    };
+    print!("type {expected} to confirm: ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    if !typed_back(&expected, &line) {
+        bail!("not confirmed; nothing was changed");
     }
-    let store = SqliteStore::open(&db_path()?)?;
-    let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
-    let t = Direct::new(gateway, Principal::unattributed("admin"));
+    Ok(())
+}
+
+fn audit(t: &dyn Transport, limit: usize) -> Result<()> {
+    let now = now();
+    for a in t.admin_audit(limit)? {
+        println!(
+            "{}s ago\t{}\t{}\t{}",
+            klatch_core::secs_between(now, a.ts),
+            a.action,
+            flat(&a.target),
+            flat(&a.detail)
+        );
+    }
+    Ok(())
+}
+
+fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
     match cmd {
         AdminCmd::Pause => {
             t.admin_pause(true)?;
@@ -126,11 +151,7 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
             room,
             all_rooms,
         } => {
-            let room = if all_rooms {
-                "*".to_string()
-            } else {
-                room.unwrap_or_default()
-            };
+            let room = room_of(room, all_rooms);
             t.admin_remove_member(&room, &member)?;
             println!(
                 "{member} is removed from {room} and refused there until `klatch admin allow`"
@@ -141,28 +162,20 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
             room,
             all_rooms,
         } => {
-            let room = if all_rooms {
-                "*".to_string()
-            } else {
-                room.unwrap_or_default()
-            };
+            let room = room_of(room, all_rooms);
             t.admin_allow_member(&room, &member)?;
             println!("{member} is allowed in {room} again");
         }
-        AdminCmd::Audit { limit } => {
-            let now = now();
-            for a in t.admin_audit(limit)? {
-                println!(
-                    "{}s ago\t{}\t{}\t{}",
-                    klatch_core::secs_between(now, a.ts),
-                    a.action,
-                    flat(&a.target),
-                    flat(&a.detail)
-                );
-            }
-        }
+        AdminCmd::Audit { limit } => audit(t, limit)?,
     }
     Ok(())
+}
+
+pub fn run(cmd: AdminCmd) -> Result<()> {
+    authorize(&cmd)?;
+    let store = SqliteStore::open(&db_path()?)?;
+    let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+    execute(&Direct::new(gateway, Principal::unattributed("admin")), cmd)
 }
 
 #[cfg(test)]
