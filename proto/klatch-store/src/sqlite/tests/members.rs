@@ -11,7 +11,8 @@ fn join_is_idempotent_and_lists_the_member() {
         vec![MemberInfo {
             name: "alice".into(),
             last_seen: 20,
-            status: None
+            status: None,
+            parent: None
         }]
     );
     assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);
@@ -220,4 +221,22 @@ fn a_mute_is_kept_per_member_and_room_and_can_be_lifted() {
     s.set_muted(Seat::new("r", "alice"), false, 3).unwrap();
     assert!(!s.is_muted(Seat::new("r", "alice")).unwrap());
     assert!(!s.is_muted(Seat::new("nowhere", "ghost")).unwrap());
+}
+
+#[test]
+fn the_first_parent_noted_for_a_member_is_kept_and_listed_with_it() {
+    let s = store();
+    s.join("r", "lead", 1).unwrap();
+    s.join("r", "worker", 1).unwrap();
+    s.note_parent("worker", "lead", 2).unwrap();
+    s.note_parent("worker", "someone-else", 3).unwrap();
+    let members = s.members("r").unwrap();
+    let parent_of = |name: &str| {
+        members
+            .iter()
+            .find(|m| m.name == name)
+            .and_then(|m| m.parent.clone())
+    };
+    assert_eq!(parent_of("worker").as_deref(), Some("lead"));
+    assert_eq!(parent_of("lead"), None);
 }

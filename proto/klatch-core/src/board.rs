@@ -45,6 +45,8 @@ pub struct BoardMember {
     pub last_seen: i64,
     /// The member's latest announced status text, if it ever announced one.
     pub status: Option<String>,
+    /// The member whose session started this one, if known.
+    pub parent: Option<String>,
 }
 
 /// The current state of a room derived from its log: open asks, current offers and members.
@@ -73,6 +75,9 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
             flat(&m.name),
             crate::secs_between(now, m.last_seen)
         ));
+        if let Some(parent) = &m.parent {
+            out.push_str(&format!("\tchild of {}", flat(parent)));
+        }
         if let Some(status) = &m.status {
             out.push_str(&format!("\tstatus: {}", flat(status)));
         }
@@ -137,8 +142,13 @@ fn render_members(board: &Board, now: i64, out: &mut String) {
             .as_deref()
             .map(|s| format!(", status: {}", clip(s)))
             .unwrap_or_default();
+        let parent = m
+            .parent
+            .as_deref()
+            .map(|p| format!(", child of {}", flat(p)))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "  {} last seen {}s ago{status}\n",
+            "  {} last seen {}s ago{parent}{status}\n",
             flat(&m.name),
             crate::secs_between(now, m.last_seen)
         ));
@@ -386,11 +396,13 @@ mod tests {
                     name: "lib-1".into(),
                     last_seen: 98,
                     status: None,
+                    parent: None,
                 },
                 BoardMember {
                     name: "api-1".into(),
                     last_seen: 40,
                     status: Some("done leaving".into()),
+                    parent: None,
                 },
             ],
             stale_members: 0,
@@ -508,6 +520,7 @@ mod tests {
             name: name.into(),
             last_seen,
             status: status.map(String::from),
+            parent: None,
         }
     }
 
@@ -557,6 +570,7 @@ mod tests {
                 name: "alice".into(),
                 last_seen: 1500,
                 status: Some("busy".into()),
+                parent: None,
             }],
             ..Default::default()
         };
@@ -565,6 +579,34 @@ mod tests {
         assert!(
             out.contains("unclaimed 0s") && out.contains("(0s ago)"),
             "{out}"
+        );
+    }
+
+    #[test]
+    fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
+        let mut child = member("worker", 990, None);
+        child.parent = Some("lead".into());
+        let who = render_who(&[child, member("lead", 990, None)], 1000, false);
+        assert!(
+            who.contains("worker\tlast seen 10s ago (liveness, not progress)\tchild of lead"),
+            "{who}"
+        );
+        let line = who.lines().find(|l| l.starts_with("lead")).unwrap();
+        assert!(!line.contains("child of"), "{line}");
+        let board = Board {
+            room: "lobby".into(),
+            members: vec![BoardMember {
+                name: "worker".into(),
+                last_seen: 990,
+                status: None,
+                parent: Some("lead".into()),
+            }],
+            ..Default::default()
+        };
+        let text = render_board(&board, 1000);
+        assert!(
+            text.contains("worker last seen 10s ago, child of lead"),
+            "{text}"
         );
     }
 

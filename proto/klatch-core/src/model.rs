@@ -26,6 +26,8 @@ pub struct MemberInfo {
     pub last_seen: i64,
     /// The status the member set with the `status` operation (for example `done`), if any.
     pub status: Option<String>,
+    /// The member whose session started this one (a headless worker started from an interactive session), if known.
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

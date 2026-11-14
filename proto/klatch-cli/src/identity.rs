@@ -150,9 +150,15 @@ pub(crate) fn stdin_session_id() -> Option<String> {
 /// Look for the session above this process, using the real process table and the harness registry
 /// (`$HOME/.claude/sessions`). Reads nothing but the registry's .json files and never the environment.
 pub(crate) fn discover_session() -> Result<Found, Miss> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some((registry, domain)) = registry_and_domain() else {
         return Err(Miss::NoSession);
     };
+    find_session(std::process::id(), &PsTable, &registry, domain)
+}
+
+/// The harness registry under `$HOME` and the pid domain of this machine, if there is a home.
+fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
+    let home = std::env::var_os("HOME")?;
     let registry = FsRegistry {
         dir: PathBuf::from(home).join(".claude").join("sessions"),
     };
@@ -161,7 +167,34 @@ pub(crate) fn discover_session() -> Result<Found, Miss> {
     } else {
         std::env::consts::OS
     };
-    find_session(std::process::id(), &PsTable, &registry, domain)
+    Some((registry, domain))
+}
+
+/// The session above `session`, with the real process table and registry.
+fn discover_parent(session: &Found) -> Option<Found> {
+    let (registry, domain) = registry_and_domain()?;
+    find_parent(session, &PsTable, &registry, domain)
+}
+
+/// The member of a session, named and remembered if it had none (it may never have run klatch itself).
+fn member_of(store: &SqliteStore, session: &Found) -> Option<String> {
+    ensure_session_member(store, &session.session_id, session.name.as_deref(), now()).ok()
+}
+
+/// What to note about the caller's parent: `None` when it was already looked for, else `Some(parent)` where the
+/// parent is the member of the session above the caller's, or `None` for a caller with no session above it. A walk
+/// up the process tree is made once per member, and a top level session records that it has no parent.
+pub(crate) fn pending_parent(store: &SqliteStore, caller: &Caller) -> Option<Option<String>> {
+    let session = caller.session.as_ref()?;
+    if store
+        .parent_of(&caller.principal.member)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return None;
+    }
+    Some(discover_parent(session).and_then(|p| member_of(store, &p)))
 }
 
 /// The caller, decided by the identity from what the transport knows. The CLI knows only a typed name (a
@@ -176,6 +209,8 @@ pub(crate) fn resolve_principal(
 /// The caller of this process: who it acts as, where its session started and the session id a hook was given.
 pub(crate) struct Caller {
     pub principal: Principal,
+    /// The coding-agent session found above this process, when there is one.
+    pub session: Option<Found>,
     pub session_dir: Option<String>,
     pub stdin_session: Option<String>,
 }
@@ -196,10 +231,8 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let stdin_session = if is_hook { stdin_session_id() } else { None };
     // What the walk up the process tree found, once: it gives the identity and, for a coding session, its directory.
     let found = (declared.is_none() && discover).then(discover_session);
-    let session_dir = found
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .map(|f| f.cwd.clone());
+    let session = found.as_ref().and_then(|r| r.as_ref().ok()).cloned();
+    let session_dir = session.as_ref().map(|f| f.cwd.clone());
     let probe = Probe {
         declared,
         found,
@@ -218,6 +251,7 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let evidence = settle_name(evidence, store)?;
     Ok(Some(Caller {
         principal: resolve_principal(&LocalIdentity, &evidence)?,
+        session,
         session_dir,
         stdin_session,
     }))

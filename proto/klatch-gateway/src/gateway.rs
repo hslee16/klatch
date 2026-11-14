@@ -122,6 +122,17 @@ impl<S: Store> Gateway<S> {
         )
     }
 
+    /// Remember that the caller is a child of `parent`, the member whose session started the caller's (#24); `None`
+    /// records that a parent was looked for and there is none, so it is not looked for again. The first answer noted
+    /// is kept.
+    pub fn note_parent(&self, who: &Principal, parent: Option<&str>) -> Result<()> {
+        check_member(who)?;
+        let parent = parent.unwrap_or("");
+        let acceptable = parent.is_empty() || (valid_name(parent) && parent != who.member);
+        invalid(acceptable, "bad parent member".into())?;
+        self.store.note_parent(&who.member, parent, self.now())
+    }
+
     /// Mute or unmute a room for the caller: its digest then shows only messages that mention it (#20). An explicit
     /// `read` still returns everything.
     pub fn set_muted(&self, who: &Principal, room: &str, muted: bool) -> Result<()> {
@@ -247,6 +258,7 @@ impl<S: Store> Gateway<S> {
                 }),
                 name: m.name,
                 last_seen: m.last_seen,
+                parent: m.parent,
             })
             .collect();
         Ok(klatch_core::Board {

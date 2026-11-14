@@ -218,6 +218,15 @@ pub trait Store {
     fn room_state(&self, _room: &str) -> Result<Option<String>> {
         Ok(None)
     }
+    /// Remember that `parent` is the member whose session started `member`'s; an empty `parent` records that it was
+    /// looked for and there is none. The first one noted is kept. The default stores nothing.
+    fn note_parent(&self, _member: &str, _parent: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// What was noted for `member`: `None` if nothing, `Some("")` if it was looked for and there is no parent.
+    fn parent_of(&self, _member: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// Mute or unmute a room for a member: a muted member's hook shows only messages that mention it (#20). The
     /// default stores nothing.
     fn set_muted(&self, _at: Seat, _muted: bool, _now: i64) -> Result<()> {
