@@ -169,16 +169,10 @@ jobs:
       - name: Stage via trusted publishing
         run: npm stage publish --access public --tag latest ./dist/*.tgz
 
-  crates-publish:
-    name: Publish to crates.io
+  crates-build:
+    name: Build the Rust package
     if: github.event_name == 'release' || inputs.target == 'crates'
     runs-on: ubuntu-latest
-    environment:
-      name: release
-      url: https://crates.io/crates/klatch
-    permissions:
-      id-token: write
-      contents: read
     defaults:
       run:
         working-directory: proto
@@ -199,15 +193,68 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-      - name: Dry run, which also builds the packaged crate
-        run: cargo publish --dry-run --locked -p klatch
+      # The only compilation of the release. It runs here, where there is no token, because a dependency's build script
+      # runs on whatever machine compiles it. The packaged crate is built exactly as crates.io users will build it.
+      - name: Package and verify by building the packaged crate
+        run: |
+          set -euo pipefail
+          # the registry-side checks (metadata, dependencies), then the package itself: `cargo package` builds the
+          # packaged crate to verify it and, unlike a publish dry run, keeps the .crate file
+          cargo publish --dry-run --locked -p klatch
+          cargo package --locked -p klatch
+
+      - name: Record the package checksum
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/crate"
+          cp target/package/klatch-*.crate "$RUNNER_TEMP/crate/"
+          (cd "$RUNNER_TEMP/crate" && sha256sum klatch-*.crate | tee SHA256SUMS)
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crate-dist
+          path: ${{ runner.temp }}/crate/
+
+  crates-publish:
+    name: Publish to crates.io
+    needs: crates-build
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://crates.io/crates/klatch
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: proto
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Download the verified package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: crate-dist
+          path: ${{ runner.temp }}/crate-verified
+
+      # Nothing is compiled in this job (--no-verify). The crate is packaged again from the same commit and must match
+      # the package that was built and verified without the token, byte for byte; if it does not, nothing is published.
+      - name: Package again and compare with the verified package
+        run: |
+          set -euo pipefail
+          cargo package --no-verify --locked -p klatch
+          (cd target/package && sha256sum klatch-*.crate) > "$RUNNER_TEMP/again.sums"
+          diff "$RUNNER_TEMP/again.sums" "$RUNNER_TEMP/crate-verified/SHA256SUMS"
 
       # A short-lived token from crates.io trusted publishing; the action revokes it when the job ends.
       - name: Get a crates.io token
         id: auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
-      - name: Publish
+      - name: Publish (no compilation here)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish --locked -p klatch
+        run: cargo publish --no-verify --locked -p klatch
