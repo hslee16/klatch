@@ -60,6 +60,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release(room, owner, path)
     }
+    fn note_parent(&self, member: &str, parent: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.note_parent(member, parent, now)
+    }
+    fn parent_of(&self, member: &str) -> Result<Option<String>> {
+        self.gate()?;
+        self.inner.parent_of(member)
+    }
     fn set_muted(&self, at: Seat, muted: bool, now: i64) -> Result<()> {
         self.inner.set_muted(at, muted, now)
     }

@@ -469,13 +469,15 @@ impl Store for SqliteStore {
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.rows(
-            "SELECT name,last_seen,status FROM members WHERE room=?1 ORDER BY name",
+            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,'') FROM members m
+             LEFT JOIN member_parent p ON p.member=m.name WHERE m.room=?1 ORDER BY m.name",
             params![room],
             |r| {
                 Ok(MemberInfo {
                     name: r.get(0)?,
                     last_seen: r.get(1)?,
                     status: r.get(2)?,
+                    parent: r.get(3)?,
                 })
             },
         )
@@ -564,6 +566,21 @@ impl Store for SqliteStore {
         self.optional(
             "SELECT state FROM room_state WHERE room=?1",
             params![room],
+            |r| r.get(0),
+        )
+    }
+
+    fn note_parent(&self, member: &str, parent: &str, now: i64) -> Result<()> {
+        self.write(
+            "INSERT OR IGNORE INTO member_parent(member,parent,ts) VALUES(?1,?2,?3)",
+            params![member, parent, now],
+        )
+    }
+
+    fn parent_of(&self, member: &str) -> Result<Option<String>> {
+        self.optional(
+            "SELECT parent FROM member_parent WHERE member=?1",
+            params![member],
             |r| r.get(0),
         )
     }

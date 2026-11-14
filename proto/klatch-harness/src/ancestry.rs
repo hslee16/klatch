@@ -66,6 +66,18 @@ pub fn find_session(
     Err(stale.map_or(Miss::NoSession, Miss::Stale))
 }
 
+/// The session above `session`: the nearest live harness record above the process that session was found at. A
+/// headless worker started from an interactive session has its own record and, above it, the session that started it.
+pub fn find_parent(
+    session: &Found,
+    procs: &dyn ProcessTable,
+    registry: &dyn Registry,
+    domain: &str,
+) -> Option<Found> {
+    let above = procs.info(session.pid)?.ppid;
+    find_session(above, procs, registry, domain).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +185,36 @@ mod tests {
             find_session(30, &t, &reg, "darwin").unwrap().session_id,
             "inner"
         );
+    }
+
+    #[test]
+    fn the_session_above_a_nested_session_is_its_parent() {
+        let t = tree().with((20, 10), T, "claude");
+        let reg = FakeRegistry::default()
+            .with((20, "inner"), Some("child"), T)
+            .with((10, "outer"), Some("lead"), T);
+        let inner = find_session(30, &t, &reg, "darwin").unwrap();
+        let parent = find_parent(&inner, &t, &reg, "darwin").unwrap();
+        assert_eq!((parent.session_id.as_str(), parent.pid), ("outer", 10));
+    }
+
+    #[test]
+    fn a_session_with_no_session_above_it_has_no_parent() {
+        let reg = FakeRegistry::default().with((10, "only"), None, T);
+        let only = find_session(30, &tree(), &reg, "darwin").unwrap();
+        assert!(find_parent(&only, &tree(), &reg, "darwin").is_none());
+    }
+
+    #[test]
+    fn a_stale_record_above_a_session_is_not_its_parent() {
+        let t = tree().with((20, 10), T, "claude");
+        let reg = FakeRegistry::default().with((20, "inner"), None, T).with(
+            (10, "outer"),
+            None,
+            "Mon Jan 1 00:00:00 2001",
+        );
+        let inner = find_session(30, &t, &reg, "darwin").unwrap();
+        assert!(find_parent(&inner, &t, &reg, "darwin").is_none());
     }
 
     #[test]

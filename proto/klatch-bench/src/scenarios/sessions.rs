@@ -256,8 +256,16 @@ fn nested_sessions(w: &World) -> Res {
         "joined lobby as kid",
         "the child joins as itself",
     )?;
-    who_line(w, "par")?;
-    who_line(w, "kid")?;
+    lacks(
+        &who_line(w, "par")?,
+        "child of",
+        "a top level session has no parent",
+    )?;
+    has(
+        &who_line(w, "kid")?,
+        "child of par",
+        "the child is shown with the session that started it",
+    )?;
     let runs = w.ok("observer", &["hooks", "--of", "kid"])?;
     has(
         &runs,

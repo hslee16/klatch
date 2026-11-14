@@ -6,7 +6,7 @@ use crate::ids::new_id;
 use klatch_core::Result;
 use rusqlite::{Connection, params};
 
-pub(super) const SCHEMA_VERSION: i64 = 16;
+pub(super) const SCHEMA_VERSION: i64 = 17;
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -23,6 +23,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE ask_leases(room TEXT NOT NULL, seq INTEGER NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,seq));
  CREATE TABLE asks_lapse_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,seq,expires));
  CREATE TABLE claim_notes(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, note TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,path));
+ CREATE TABLE member_parent(member TEXT PRIMARY KEY, parent TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE room_state(room TEXT PRIMARY KEY, state TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_blocks(room TEXT NOT NULL, member TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member));
  CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);";
@@ -214,11 +215,19 @@ pub(super) fn migrate_v15(conn: &Connection) -> Result<()> {
         .map_err(be)
 }
 
+/// Version 16 to 17: which member's session started a member's (ticket #24).
+pub(super) fn migrate_v16(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE member_parent(member TEXT PRIMARY KEY, parent TEXT NOT NULL, ts INTEGER NOT NULL);",
+    )
+    .map_err(be)
+}
+
 type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 16] = [
+const MIGRATIONS: [Step; 17] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -235,6 +244,7 @@ const MIGRATIONS: [Step; 16] = [
     migrate_v13,
     migrate_v14,
     migrate_v15,
+    migrate_v16,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

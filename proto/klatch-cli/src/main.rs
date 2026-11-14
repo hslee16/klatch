@@ -15,7 +15,7 @@ use klatch_core::{
 use klatch_gateway::{
     AllowAll, ClaimSpec, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport,
 };
-use klatch_harness::{Found, FsRegistry, Miss, PsTable, find_session};
+use klatch_harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
 use klatch_store::{SqliteStore, Store};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -320,7 +320,12 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         (declared_scope.as_deref(), caller.session_dir.as_deref()),
         now(),
     )?;
+    let parent = pending_parent(&store, &caller);
     let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+    if let Some(parent) = parent {
+        // a failure to note it must never stop the command
+        let _ = gateway.note_parent(&caller.principal, parent.as_deref());
+    }
     match cmd {
         Cmd::Serve { stdio } => serve_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
