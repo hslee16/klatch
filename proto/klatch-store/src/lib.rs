@@ -1,6 +1,7 @@
 //! klatch-store: the storage seam. Everything above this crate talks to `Store`, never to a database,
 //! so SQLite can later be swapped (DESIGN.md D2, R31). Time is passed in so behaviour is testable.
 
+pub mod encrypt;
 mod ids;
 mod sqlite;
 
@@ -417,4 +418,11 @@ pub trait Store {
     fn head(&self, room: &str) -> Result<i64>;
     /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
     fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()>;
+}
+
+/// A fixed key for tests that need a file-backed store. It is public and therefore worthless as a secret: never use
+/// it outside tests.
+#[doc(hidden)]
+pub fn insecure_test_key() -> klatch_keys::Key {
+    klatch_keys::Key::from_bytes([0x5A; 32])
 }

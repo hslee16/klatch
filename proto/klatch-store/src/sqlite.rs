@@ -4,6 +4,7 @@ use klatch_core::{
     AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
     Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
 };
+use klatch_keys::Key;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::time::Duration;
@@ -48,21 +49,22 @@ impl SqliteStore {
             .map(|n| n.note))
     }
 
-    /// Open with the default five second wait for another writer.
-    pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_timeout(path, Duration::from_secs(5))
+    /// Open the encrypted store at `path` with `key`, with the default five second wait for another writer. There
+    /// is no way to open a file without a key: the store is encrypted at rest (R32).
+    pub fn open(path: &Path, key: &Key) -> Result<Self> {
+        Self::open_with_timeout(path, key, Duration::from_secs(5))
     }
 
     /// Open with an explicit limit on how long a write waits for another writer. Past the limit the
     /// write fails with `Error::Backend` and leaves nothing behind; it never hangs.
-    pub fn open_with_timeout(path: &Path, busy: Duration) -> Result<Self> {
+    pub fn open_with_timeout(path: &Path, key: &Key, busy: Duration) -> Result<Self> {
         // Switching a fresh database to WAL and creating its schema can collide with other first-time
         // openers in a way SQLite's own busy handler does not cover, so the whole open is retried on
         // contention, with a small backoff, until the limit.
         let deadline = std::time::Instant::now() + busy;
         let mut attempt: u64 = 0;
         loop {
-            match Self::try_open(path, busy) {
+            match Self::try_open(path, key, busy) {
                 Err(Error::Busy(_)) if std::time::Instant::now() < deadline => {
                     let step = (2u64 << attempt.min(4)).min(50);
                     let jitter = (u64::from(std::process::id()) * 7 + attempt * 13) % 5;
@@ -74,8 +76,9 @@ impl SqliteStore {
         }
     }
 
-    fn try_open(path: &Path, busy: Duration) -> Result<Self> {
+    fn try_open(path: &Path, key: &Key, busy: Duration) -> Result<Self> {
         let conn = Connection::open(path).map_err(be)?;
+        Self::unlock(&conn, key)?;
         conn.busy_timeout(busy).map_err(be)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(be)?;
@@ -84,6 +87,51 @@ impl SqliteStore {
         Self::init(conn)
     }
 
+    /// Apply the key and check it: this must be the first thing done on a connection. Refuses a build that has no
+    /// SQLCipher (the key pragma would be ignored and the file would be plaintext) and a key that does not open the
+    /// file, without changing anything and without putting the key in the message.
+    fn unlock(conn: &Connection, key: &Key) -> Result<()> {
+        conn.pragma_update(None, "key", key.sqlcipher_pragma().as_str())
+            .map_err(be)?;
+        let version: String = conn
+            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
+            .unwrap_or_default();
+        if version.is_empty() {
+            return Err(Error::Backend(
+                "this build has no SQLCipher, so it cannot keep a store encrypted".into(),
+            ));
+        }
+        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
+            .map(|_| ())
+            .map_err(|e| match &e {
+                rusqlite::Error::SqliteFailure(f, _)
+                    if matches!(f.code, rusqlite::ErrorCode::NotADatabase) =>
+                {
+                    Error::Backend(
+                        "cannot open the store: wrong key, or the file is not an encrypted klatch store"
+                            .into(),
+                    )
+                }
+                _ => be(e),
+            })
+    }
+
+    /// Re-encrypt the whole store under `new`, in place. The old key stops working. Other open connections keep their
+    /// old key and fail until they reopen, so rotate when nothing else is using the store.
+    pub fn rekey(&self, new: &Key) -> Result<()> {
+        self.conn
+            .pragma_update(None, "rekey", new.sqlcipher_pragma().as_str())
+            .map_err(be)
+    }
+
+    /// The SQLCipher version this store runs on.
+    pub fn cipher_version(&self) -> Result<String> {
+        self.conn
+            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
+            .map_err(be)
+    }
+
+    /// An unencrypted in-memory store, for tests: it is never written to disk.
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory().map_err(be)?)
     }

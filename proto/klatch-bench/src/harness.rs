@@ -131,6 +131,7 @@ done"#,
         c.env_clear()
             .env("HOME", &self.home)
             .env("KLATCH_HOME", &self.klatch_home)
+            .env("KLATCH_KEY_DIR", self.klatch_home.join("keys"))
             .env("KLATCH", &self.klatch)
             .env("FAKE_CLAUDE", &self.fake_claude)
             .env("PATH", "/usr/bin:/bin")

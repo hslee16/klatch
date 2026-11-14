@@ -5,9 +5,11 @@ use super::*;
 mod asks;
 mod claims;
 mod concurrency;
+mod encryption;
 mod members;
 mod messages;
 mod migrations;
+mod plaintext;
 mod policy;
 
 pub(super) fn store() -> SqliteStore {
@@ -39,4 +41,16 @@ pub(super) fn temp_db(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("klatch-store-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("rooms.db")
+}
+
+/// A plain connection to a file, unlocked with the test key: for building an old-schema database or holding a lock.
+pub(super) fn keyed(path: &std::path::Path) -> Connection {
+    let c = Connection::open(path).unwrap();
+    c.pragma_update(
+        None,
+        "key",
+        crate::insecure_test_key().sqlcipher_pragma().as_str(),
+    )
+    .unwrap();
+    c
 }

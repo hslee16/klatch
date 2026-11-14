@@ -61,11 +61,11 @@ fn setting_a_status_joins_a_member_who_was_not_there() {
 fn a_status_survives_reopening_the_database() {
     let path = temp_db("status-persist");
     {
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         s.join("r", "alice", 1).unwrap();
         s.set_status(Seat::new("r", "alice"), "busy", 2).unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
 }
 
@@ -94,11 +94,11 @@ fn a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only() 
 fn hook_runs_survive_reopening_the_database() {
     let path = temp_db("hook-runs");
     {
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         s.record_hook_run(&HookEvent::new("alice", "SessionStart", 0), 10)
             .unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(s.hook_runs("alice").unwrap()[0].runs, 1);
 }
 
@@ -127,11 +127,11 @@ fn a_session_is_remembered_as_its_member_and_the_last_note_wins() {
 fn remembered_sessions_survive_reopening_and_are_pruned_with_old_members() {
     let path = temp_db("sessions");
     {
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         s.note_session("old", "alice", 10).unwrap();
         s.note_session("new", "bob", 9_000).unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(
         s.member_of_session("old").unwrap().as_deref(),
         Some("alice")

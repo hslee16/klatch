@@ -57,6 +57,9 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_allow_member(w, "r", "bob"))
     }),
     ("admin_audit", |g, w| refused(g.admin_audit(w, 5))),
+    ("admin_note", |g, w| {
+        refused(g.admin_note(w, ("key-test", "x"), "y"))
+    }),
     ("admin_set_room_label", |g, w| {
         refused(g.admin_set_room_label(w, "r", "private"))
     }),

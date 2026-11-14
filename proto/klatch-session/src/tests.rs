@@ -704,12 +704,12 @@ impl Live {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("rooms.db");
-        Sqlite::open(&path).unwrap();
+        Sqlite::open(&path, &klatch_store::insecure_test_key()).unwrap();
         let (tx, rx) = channel();
         let out = SharedOut(Arc::new(Mutex::new(Vec::new())));
         let (o2, p2) = (out.clone(), path.clone());
         let handle = std::thread::spawn(move || {
-            let store = Sqlite::open(&p2).unwrap();
+            let store = Sqlite::open(&p2, &klatch_store::insecure_test_key()).unwrap();
             let input = BufReader::new(ChanReader {
                 rx,
                 pending: Vec::new(),
@@ -767,7 +767,7 @@ impl Live {
     /// A second connection to the same database, as another agent would have.
     fn other(&self) -> Gateway<Sqlite> {
         Gateway::new(
-            Sqlite::open(&self.path).unwrap(),
+            Sqlite::open(&self.path, &klatch_store::insecure_test_key()).unwrap(),
             FixedClock(2_000),
             AllowAll,
         )

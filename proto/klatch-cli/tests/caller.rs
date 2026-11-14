@@ -82,6 +82,7 @@ fn an_empty_environment_name_is_fine_when_the_flag_supplies_one() {
     let h = Home::new();
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env("KLATCH_HOME", &h.0)
+        .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", "")
         .args(["--as-member", "carol", "join", "r"])
         .output()
@@ -141,6 +142,7 @@ fn the_environment_switch_turns_discovery_on() {
     let home = Home::new();
     let o = Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env("KLATCH_HOME", &home.0)
+        .env("KLATCH_KEY_DIR", home.0.join("keys"))
         .env_remove("KLATCH_NAME")
         .env("KLATCH_DISCOVER", "1")
         .env("HOME", &home.0)

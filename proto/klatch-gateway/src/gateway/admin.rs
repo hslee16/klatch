@@ -104,6 +104,17 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// Record an administrative act that was carried out outside the gateway (a key was shown, restored or rotated), so
+    /// it is in the audit like every other. It asks the guard like any admin act.
+    pub fn admin_note(
+        &self,
+        who: &Principal,
+        (action, target): (&str, &str),
+        outcome: &str,
+    ) -> Result<()> {
+        self.administer(who, (action, target), |_| Ok(outcome.to_string()))
+    }
+
     /// The latest administrative acts, newest first.
     pub fn admin_audit(
         &self,

@@ -10,12 +10,12 @@ fn percentile(sorted: &[u128], p: f64) -> u128 {
 #[test]
 fn concurrent_posters_get_dense_unique_seqs() {
     let path = temp_db("conc");
-    SqliteStore::open(&path).unwrap(); // create the schema once
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap(); // create the schema once
     let handles: Vec<_> = (0..8)
         .map(|t| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let s = SqliteStore::open(&path).unwrap();
+                let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                 (0..25)
                     .map(|i| {
                         s.post(Seat::new("r", &format!("w{t}")), "x", i)
@@ -45,7 +45,7 @@ fn many_connections_opening_a_fresh_database_at_once_all_succeed() {
                 let (path, gate) = (path.clone(), gate.clone());
                 std::thread::spawn(move || {
                     gate.wait();
-                    SqliteStore::open(&path).map(|_| ())
+                    SqliteStore::open(&path, &crate::insecure_test_key()).map(|_| ())
                 })
             })
             .collect();
@@ -61,12 +61,12 @@ fn many_connections_opening_a_fresh_database_at_once_all_succeed() {
 #[test]
 fn concurrent_claims_on_one_path_have_exactly_one_winner() {
     let path = temp_db("claimrace");
-    SqliteStore::open(&path).unwrap();
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     let handles: Vec<_> = (0..8)
         .map(|t| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let s = SqliteStore::open(&path).unwrap();
+                let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                 s.claim(
                     &ClaimRequest::new(("r", &format!("w{t}")), "src", 100, ""),
                     0,
@@ -88,12 +88,12 @@ fn concurrent_claims_on_one_path_have_exactly_one_winner() {
 #[test]
 fn concurrent_claims_on_disjoint_paths_all_succeed() {
     let path = temp_db("claimdisjoint");
-    SqliteStore::open(&path).unwrap();
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     let handles: Vec<_> = (0..8)
         .map(|t| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let s = SqliteStore::open(&path).unwrap();
+                let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                 s.claim(
                     &ClaimRequest::new(("r", &format!("w{t}")), &format!("src/f{t}"), 100, ""),
                     0,
@@ -105,7 +105,7 @@ fn concurrent_claims_on_disjoint_paths_all_succeed() {
         h.join().unwrap().unwrap();
     }
     assert_eq!(
-        SqliteStore::open(&path)
+        SqliteStore::open(&path, &crate::insecure_test_key())
             .unwrap()
             .claims("r", 1)
             .unwrap()
@@ -118,12 +118,12 @@ fn concurrent_claims_on_disjoint_paths_all_succeed() {
 #[test]
 fn readers_and_writers_together_lose_and_duplicate_nothing() {
     let path = temp_db("rw");
-    SqliteStore::open(&path).unwrap();
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     let writers: Vec<_> = (0..4)
         .map(|t| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let s = SqliteStore::open(&path).unwrap();
+                let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                 for i in 0..25 {
                     s.post(Seat::new("r", &format!("w{t}")), "x", i).unwrap();
                 }
@@ -134,7 +134,7 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
         .map(|t| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let s = SqliteStore::open(&path).unwrap();
+                let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                 let me = format!("reader{t}");
                 let mut seen = Vec::new();
                 let deadline = Instant::now() + Duration::from_secs(30);
@@ -167,9 +167,14 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
 #[test]
 fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
     let path = temp_db("locked");
-    SqliteStore::open(&path).unwrap();
-    let s = SqliteStore::open_with_timeout(&path, Duration::from_millis(100)).unwrap();
-    let holder = Connection::open(&path).unwrap();
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
+    let s = SqliteStore::open_with_timeout(
+        &path,
+        &crate::insecure_test_key(),
+        Duration::from_millis(100),
+    )
+    .unwrap();
+    let holder = keyed(&path);
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     let started = Instant::now();
     let err = s.post(Seat::new("r", "bob"), "x", 1).unwrap_err();
@@ -191,10 +196,15 @@ fn a_held_write_lock_fails_a_write_after_the_timeout_and_never_hangs() {
 #[test]
 fn pure_reads_proceed_while_another_connection_holds_the_write_lock() {
     let path = temp_db("readsok");
-    let s = SqliteStore::open_with_timeout(&path, Duration::from_millis(100)).unwrap();
+    let s = SqliteStore::open_with_timeout(
+        &path,
+        &crate::insecure_test_key(),
+        Duration::from_millis(100),
+    )
+    .unwrap();
     s.claim(&ClaimRequest::new(("r", "bob"), "src", 100, ""), 0)
         .unwrap();
-    let holder = Connection::open(&path).unwrap();
+    let holder = keyed(&path);
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
     assert_eq!(s.claims("r", 1).unwrap().len(), 1);
     assert_eq!(s.members("r").unwrap().len(), 0);
@@ -209,14 +219,14 @@ fn measure_hook_path_latency_under_write_load() {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     for pause_us in [0u64, 1_000, 10_000, 100_000] {
         let path = temp_db(&format!("bench{pause_us}"));
-        SqliteStore::open(&path).unwrap();
+        SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let posted = std::sync::Arc::new(AtomicU64::new(0));
         let writers: Vec<_> = (0..4)
             .map(|t| {
                 let (path, stop, posted) = (path.clone(), stop.clone(), posted.clone());
                 std::thread::spawn(move || {
-                    let s = SqliteStore::open(&path).unwrap();
+                    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
                     while !stop.load(Ordering::Relaxed) {
                         s.post(Seat::new("r", &format!("w{t}")), "x", 0).unwrap();
                         posted.fetch_add(1, Ordering::Relaxed);
@@ -225,7 +235,7 @@ fn measure_hook_path_latency_under_write_load() {
                 })
             })
             .collect();
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         let (mut read_us, mut claims_us) = (Vec::new(), Vec::new());
         let end = Instant::now() + Duration::from_secs(5);
         while Instant::now() < end {

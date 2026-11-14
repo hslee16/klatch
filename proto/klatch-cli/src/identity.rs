@@ -489,7 +489,7 @@ mod member_name_tests {
                 .unwrap()
                 .as_nanos()
         ));
-        SqliteStore::open(&p).unwrap()
+        SqliteStore::open(&p, &klatch_store::insecure_test_key()).unwrap()
     }
 
     #[test]

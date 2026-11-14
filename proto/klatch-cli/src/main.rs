@@ -6,6 +6,7 @@ mod admin;
 mod commands;
 mod identity;
 mod init;
+mod keys;
 mod scope;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -374,7 +375,7 @@ fn run_init(options: &init::Options) -> Result<()> {
 
 /// Every command that acts as a member: find out which, settle its scope, then serve, stream or run the command.
 fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
-    let store = SqliteStore::open(&db_path()?)?;
+    let store = keys::open_store(&db_path()?)?;
     let Some(caller) = identify(who, &cmd, &store)? else {
         return Ok(());
     };

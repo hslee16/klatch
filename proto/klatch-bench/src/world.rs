@@ -58,6 +58,7 @@ impl World {
         let mut c = Command::new(&self.bin);
         c.env_clear()
             .env("KLATCH_HOME", &self.home)
+            .env("KLATCH_KEY_DIR", self.home.join("keys"))
             .env("KLATCH_NAME", who)
             .args(args)
             .stdin(Stdio::null());

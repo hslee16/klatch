@@ -22,6 +22,7 @@ klatch-gateway.workspace = true
 klatch-harness.workspace = true
 klatch-session.workspace = true
 klatch-store.workspace = true
+klatch-keys.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
