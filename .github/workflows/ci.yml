@@ -62,6 +62,22 @@ jobs:
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)
         run: cargo test -p klatch --features test-clock --test no_plaintext --locked
+      - name: Install cargo-about (pinned release, checksum verified)
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ABOUT_VERSION: "0.9.3"
+          ABOUT_SHA256: 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+        run: |
+          set -euo pipefail
+          name="cargo-about-${ABOUT_VERSION}-x86_64-unknown-linux-musl"
+          gh release download "$ABOUT_VERSION" -R EmbarkStudios/cargo-about -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "${ABOUT_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP" "$name/cargo-about"
+          install -m 0755 "$RUNNER_TEMP/$name/cargo-about" "$HOME/.cargo/bin/cargo-about"
+      - name: Third-party licence notices are current and complete (SQLCipher, OpenSSL, libtomcrypt)
+        if: runner.os == 'Linux'
+        run: ./check-notices.sh
       # A Docker action, which only runs on Linux; the policy does not depend on the operating system.
       - name: Dependency policy (licences, advisories, sources, refused crypto crates)
         if: runner.os == 'Linux'
