@@ -50,6 +50,7 @@ jobs:
           export KLATCH_BIN="$PWD/target/debug/klatch"
           (cd ../clients/python && python3 -m unittest discover -v)
           (cd ../clients/typescript && node --experimental-strip-types --test conformance.test.ts)
+          (cd ../clients/typescript && npm ci --ignore-scripts && node --experimental-strip-types --test package.test.ts)
       - name: The launcher recipe, a whole run against the real binary (FACTORY.md)
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
       - name: Tests that need the test-clock build (a panic never prints what it carried)

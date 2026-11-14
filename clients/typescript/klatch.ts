@@ -2,8 +2,9 @@
 // `klatch serve --stdio`, using only Node's standard library. Who you are is decided by the environment of the
 // process, never by a request parameter. A frame type or field this version does not know is ignored.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -67,7 +68,7 @@ export class Client {
   attribution = "";
   clearance = "";
   refusals: Frame[] = [];
-  private proc: ChildProcessWithoutNullStreams;
+  private proc: ChildProcessByStdio<Writable, Readable, null>;
   private frames: (Frame | null)[] = [];
   private waiters: Waiter[] = [];
   private nextId = 0;
@@ -76,7 +77,7 @@ export class Client {
   private exited: Promise<number>;
 
   private constructor(binary: string, env: NodeJS.ProcessEnv, args: string[]) {
-    this.proc = spawn(binary, args, { env, stdio: ["pipe", "pipe", "ignore"] }) as ChildProcessWithoutNullStreams;
+    this.proc = spawn(binary, args, { env, stdio: ["pipe", "pipe", "ignore"] });
     createInterface({ input: this.proc.stdout }).on("line", (line) => {
       let frame: Frame | null;
       try {
