@@ -92,6 +92,24 @@ impl Store for SpyStore {
     fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
         self.inner.remove_member(room, member, now)
     }
+    fn policy_get(&self, key: &str) -> Result<Option<String>> {
+        self.inner.policy_get(key)
+    }
+    fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        self.inner.policy_set(key, value, now)
+    }
+    fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.inner.policy_list(prefix)
+    }
+    fn record_refusal(&self, entry: &klatch_store::NewRefusal, now: i64) -> Result<()> {
+        self.inner.record_refusal(entry, now)
+    }
+    fn refusals(&self, limit: usize) -> Result<Vec<klatch_core::RefusalRecord>> {
+        self.inner.refusals(limit)
+    }
+    fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
+        self.inner.refusal_rules_since(member, since)
+    }
     fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
         self.inner.record_audit(entry, now)
     }

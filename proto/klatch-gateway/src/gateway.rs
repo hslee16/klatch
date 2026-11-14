@@ -20,11 +20,9 @@ pub struct Refused {
     pub reason: String,
 }
 
-/// The label every message is posted under until rooms have labels (DESIGN D3, the label tickets).
-pub const DEFAULT_LABEL: &str = "public";
-
 mod admin;
 mod budget;
+mod policy;
 
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;
@@ -101,6 +99,17 @@ impl<S: Store> Gateway<S> {
     }
 
     pub fn post(&self, who: &Principal, room: &str, body: &str) -> Result<Posted> {
+        self.post_labeled(who, room, body, None)
+    }
+
+    /// Post under a label: the room's own unless `label` says a lower one.
+    pub fn post_labeled(
+        &self,
+        who: &Principal,
+        room: &str,
+        body: &str,
+        label: Option<&str>,
+    ) -> Result<Posted> {
         check_member(who)?;
         check_room(room)?;
         if body.trim().is_empty() {
@@ -108,7 +117,7 @@ impl<S: Store> Gateway<S> {
                 "empty message: there is nothing to post".into(),
             ));
         }
-        check_no_credentials(body)?;
+        self.refuse_credentials(who, (room, "post"), body)?;
         self.authorize(
             who,
             &Operation::Post {
@@ -116,9 +125,10 @@ impl<S: Store> Gateway<S> {
                 body: body.into(),
             },
         )?;
+        let label = self.post_label(who, room, label)?;
         self.check_budget(who, room, body)?;
         self.store.post_as(
-            &NewMessage::new((room, &who.member), who.attribution, DEFAULT_LABEL, body),
+            &NewMessage::new((room, &who.member), who.attribution, &label, body),
             self.now(),
         )
     }
@@ -194,7 +204,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_status(status)?;
-        check_no_credentials(status)?;
+        self.refuse_credentials(who, (room, "status"), status)?;
         self.authorize(
             who,
             &Operation::Status {
@@ -305,7 +315,7 @@ impl<S: Store> Gateway<S> {
         check_room(room)?;
         check_path(path)?;
         check_reason(reason)?;
-        check_no_credentials(reason)?;
+        self.refuse_credentials(who, (room, "claim"), reason)?;
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
@@ -362,7 +372,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
-        check_no_credentials(note)?;
+        self.refuse_credentials(who, (room, "release"), note)?;
         let note = klatch_core::flat(note);
         if note.chars().count() > 300 {
             return Err(Error::Invalid(
@@ -453,7 +463,7 @@ impl<S: Store> Gateway<S> {
                 room: room.clone(),
                 advance: true,
             };
-            if let Err(e) = self.authorize(who, &op) {
+            if let Err(e) = self.authorize_quietly(who, &op) {
                 refused.push(Refused {
                     room,
                     reason: e.to_string(),
@@ -497,6 +507,14 @@ impl<S: Store> Gateway<S> {
     /// The administrative rules (`klatch admin`, R11) and then the guard, before the store is touched: a member
     /// removed from a room, a paused gateway and a closed room each refuse with the rule that did.
     fn authorize(&self, who: &Principal, op: &Operation) -> Result<()> {
+        self.authorize_quietly(who, op).inspect_err(|e| {
+            self.note_refusal(who, op.room().unwrap_or(""), op.name(), e);
+        })
+    }
+
+    /// `authorize` without a refusal record, for the hook digest: it reports a room it cannot show on every run, and
+    /// that is not an attempt by the member.
+    fn authorize_quietly(&self, who: &Principal, op: &Operation) -> Result<()> {
         if let Some(room) = op.room() {
             if self.store.is_blocked(room, &who.member)? {
                 return Err(Error::Refused {
@@ -517,6 +535,9 @@ impl<S: Store> Gateway<S> {
                     rule: "admin-close".into(),
                     reason: format!("room {room} is closed by the admin; it is read-only"),
                 });
+            }
+            if !matches!(op, Operation::Release { .. }) {
+                self.check_clearance(who, room)?;
             }
         }
         self.guard.check(who, op)

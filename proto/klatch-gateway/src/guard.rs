@@ -73,6 +73,24 @@ impl Operation {
         }
     }
 
+    /// What the operation is called in the record of refusals.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Operation::Join { .. } => "join",
+            Operation::Post { .. } => "post",
+            Operation::Read { .. } => "read",
+            Operation::Who { .. } => "who",
+            Operation::Claim { .. } => "claim",
+            Operation::Release { .. } => "release",
+            Operation::Claims { .. } => "claims",
+            Operation::Subscribe { .. } => "subscribe",
+            Operation::Status { .. } => "status",
+            Operation::Ack { .. } => "ack",
+            Operation::Mute { .. } => "mute",
+            Operation::Admin { .. } => "admin",
+        }
+    }
+
     /// The room the operation is about, if it is about one.
     pub fn room(&self) -> Option<&str> {
         match self {

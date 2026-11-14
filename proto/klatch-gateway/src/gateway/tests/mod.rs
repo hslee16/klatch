@@ -14,6 +14,7 @@ mod claims;
 mod credentials;
 mod digest;
 mod guarding;
+mod labels;
 mod members;
 mod mute;
 mod stream;

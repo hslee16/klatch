@@ -46,6 +46,19 @@ pub enum AdminCmd {
         #[arg(long)]
         all_rooms: bool,
     },
+    /// Set a room's label (public, internal, private, secret by default); members below it are refused in it
+    Label { room: String, label: String },
+    /// Set a member's clearance, at most the agent cap
+    Clear { member: String, label: String },
+    /// Set the highest clearance any agent may hold; it must be below the top level
+    Cap { label: String },
+    /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
+    Chain { levels: String },
+    /// Show the latest refused calls: who, where, which operation and the rule, never the text
+    Refusals {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Show the latest administrative acts, newest first
     Audit {
         #[arg(long, default_value_t = 20)]
@@ -126,6 +139,21 @@ fn audit(t: &dyn Transport, limit: usize) -> Result<()> {
     Ok(())
 }
 
+fn refusals(t: &dyn Transport, limit: usize) -> Result<()> {
+    let now = now();
+    for r in t.admin_refusals(limit)? {
+        println!(
+            "{}s ago\t{}\t{}\t{}\t{}",
+            klatch_core::secs_between(now, r.ts),
+            flat(&r.member),
+            flat(&r.room),
+            r.operation,
+            r.rule
+        );
+    }
+    Ok(())
+}
+
 fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
     match cmd {
         AdminCmd::Pause => {
@@ -166,6 +194,27 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             t.admin_allow_member(&room, &member)?;
             println!("{member} is allowed in {room} again");
         }
+        AdminCmd::Label { room, label } => {
+            t.admin_set_room_label(&room, &label)?;
+            println!("room {room} is labelled {label}");
+        }
+        AdminCmd::Clear { member, label } => {
+            t.admin_set_clearance(&member, &label)?;
+            println!("{member} is cleared to {label}");
+        }
+        AdminCmd::Cap { label } => {
+            t.admin_set_cap(&label)?;
+            println!("the agent cap is {label}");
+        }
+        AdminCmd::Chain { levels } => {
+            let names: Vec<&str> = levels.split(',').map(str::trim).collect();
+            t.admin_set_label_chain(&names)?;
+            println!(
+                "label order is {}; the agent cap is back to its default",
+                names.join(" < ")
+            );
+        }
+        AdminCmd::Refusals { limit } => refusals(t, limit)?,
         AdminCmd::Audit { limit } => audit(t, limit)?,
     }
     Ok(())

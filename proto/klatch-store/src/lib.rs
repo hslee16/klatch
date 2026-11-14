@@ -141,6 +141,26 @@ impl<'a> NewAudit<'a> {
     }
 }
 
+/// A refused call to keep a record of: who, where, which operation and the rule. Never the refused text.
+#[derive(Debug, Clone, Copy)]
+pub struct NewRefusal<'a> {
+    pub member: &'a str,
+    pub room: &'a str,
+    pub operation: &'a str,
+    pub rule: &'a str,
+}
+
+impl<'a> NewRefusal<'a> {
+    pub fn new(member: &'a str, room: &'a str, operation: &'a str, rule: &'a str) -> Self {
+        Self {
+            member,
+            room,
+            operation,
+            rule,
+        }
+    }
+}
+
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
@@ -257,6 +277,29 @@ pub trait Store {
         Ok(())
     }
     fn audit_log(&self, _limit: usize) -> Result<Vec<AuditRecord>> {
+        Ok(Vec::new())
+    }
+    /// Policy the administrator set: room labels, clearances, the label chain, scrub terms, tripwires (epic #9). One
+    /// key and one value each; `None` clears a key. The default remembers nothing.
+    fn policy_get(&self, _key: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    fn policy_set(&self, _key: &str, _value: Option<&str>, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// Every policy entry whose key starts with `prefix`, in key order.
+    fn policy_list(&self, _prefix: &str) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+    /// Keep a record of a refused call, and read the latest ones (newest first) or the rules one member was refused
+    /// under since a time.
+    fn record_refusal(&self, _entry: &NewRefusal, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    fn refusals(&self, _limit: usize) -> Result<Vec<klatch_core::RefusalRecord>> {
+        Ok(Vec::new())
+    }
+    fn refusal_rules_since(&self, _member: &str, _since: i64) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
     /// Release every claim `member` holds in every room, as when its session ends (#277): a member that has ended

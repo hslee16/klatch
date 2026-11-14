@@ -71,6 +71,17 @@ pub struct AuditRecord {
     pub detail: String,
 }
 
+/// One refused call, kept so the refusal can be seen and counted (R27). It holds the rule that refused and never the
+/// text that triggered it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusalRecord {
+    pub ts: i64,
+    pub member: String,
+    pub room: String,
+    pub operation: String,
+    pub rule: String,
+}
+
 /// The latest release of a path that carried a note: who released it, what they said, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseNote {

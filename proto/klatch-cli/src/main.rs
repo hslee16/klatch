@@ -55,7 +55,13 @@ enum Cmd {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     Join { room: String },
     /// Post a message to a room
-    Post { room: String, body: Vec<String> },
+    Post {
+        room: String,
+        body: Vec<String>,
+        /// A label lower than the room's own, for a message that is less sensitive than the room
+        #[arg(long)]
+        label: Option<String>,
+    },
     /// Read unread messages in a room and advance the cursor
     Read {
         room: String,

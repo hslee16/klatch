@@ -25,6 +25,8 @@ pub(crate) struct RoomParams {
 struct PostParams {
     room: String,
     body: String,
+    #[serde(default)]
+    label: Option<String>,
 }
 #[derive(Deserialize)]
 struct ReadParams {
@@ -118,7 +120,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
     let empty = |()| json!({});
     match call.method.clone().as_str() {
         "post" => call.run(
-            |p: PostParams| g.post(who, &p.room, &p.body),
+            |p: PostParams| g.post_labeled(who, &p.room, &p.body, p.label.as_deref()),
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
         ),
         "read" => call.run(

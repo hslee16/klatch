@@ -106,6 +106,8 @@ A `refusal` frame's `rule` names what refused. Rules the session itself emits:
 
 Administrative rules (`klatch admin`, DESIGN section 28 item 10) refuse any room operation: `admin-pause` (every room is paused), `admin-close` (a post, claim or status in a closed room) and `admin-block` (the member was removed from the room). Their reasons are safe to show. The administrative acts themselves are not wire methods: a client cannot pause, close or remove.
 
+The label rules refuse a call by label (DESIGN section 30): `clearance` (the member's clearance is below the room's label) and `label` (a post labelled above its room). `agent-cap` refuses an administrative act, not a wire call. `post` takes an optional `label`, never above the room's. Reasons name labels and rooms, never text.
+
 The credential rule `credentials` refuses a post, claim reason, release note or status that carries a well known credential shape (a private key, an AWS, GitHub, Slack, Stripe or Google key, an `sk-` API key, a bearer token, a JSON web token); its reason names the kind and never the text.
 
 Policy rules (labels, the scrubber, and so on) use their own names, for example `label.room_below_message`, and

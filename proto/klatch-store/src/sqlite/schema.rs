@@ -6,7 +6,7 @@ use crate::ids::new_id;
 use klatch_core::Result;
 use rusqlite::{Connection, params};
 
-pub(super) const SCHEMA_VERSION: i64 = 17;
+pub(super) const SCHEMA_VERSION: i64 = 18;
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public');
@@ -26,7 +26,9 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE member_parent(member TEXT PRIMARY KEY, parent TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE room_state(room TEXT PRIMARY KEY, state TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_blocks(room TEXT NOT NULL, member TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member));
- CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);";
+ CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);
+ CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
+ CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL);";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -223,11 +225,20 @@ pub(super) fn migrate_v16(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 17 to 18: the administrator's policy and the record of refused calls (epic #9).
+pub(super) fn migrate_v17(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
+         CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL);",
+    )
+    .map_err(be)
+}
+
 type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 17] = [
+const MIGRATIONS: [Step; 18] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -245,6 +256,7 @@ const MIGRATIONS: [Step; 17] = [
     migrate_v14,
     migrate_v15,
     migrate_v16,
+    migrate_v17,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

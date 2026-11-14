@@ -8,7 +8,7 @@ use klatch_store::NewAudit;
 impl<S: Store> Gateway<S> {
     /// One administrative act: ask the guard, do it, and keep a record. Who may administer is decided by the
     /// caller (the CLI today: a real terminal with no agent session above it) and later by a guard and roles.
-    fn administer(
+    pub(super) fn administer(
         &self,
         who: &Principal,
         (action, target): (&str, &str),
