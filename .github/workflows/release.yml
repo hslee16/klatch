@@ -6,7 +6,9 @@ name: Release
 #
 # The release also attaches the klatch binary, as archives with checksums, to the GitHub release: macOS arm64 and
 # x86_64, Linux x86_64 and aarch64 (glibc 2.35 or later, built on Ubuntu 22.04). Each archive holds the binary, LICENSE
-# and THIRD-PARTY-LICENSES.txt (SQLCipher's BSD licence requires its notice in a binary distribution).
+# and THIRD-PARTY-LICENSES.txt (SQLCipher's BSD licence requires its notice in a binary distribution). Beside each
+# archive go a CycloneDX SBOM, and for the whole release SHA256SUMS, its Sigstore signature, and GitHub build
+# provenance attestations for every file.
 #
 # One release tag publishes all three: PyPI, npm and crates.io, which must carry the same pre-release number (Python
 # 0.1.0.dev1, npm 0.1.0-dev.1 and the crate 0.1.0-dev.1 are one release). Bump the three versions together before
@@ -272,10 +274,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: aarch64-apple-darwin, runner: macos-latest }
-          - { target: x86_64-apple-darwin, runner: macos-15-intel }
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm }
+          # cdx_* is the pinned cargo-cyclonedx 0.5.9 release for the runner and its published SHA-256
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            cdx: cargo-cyclonedx-aarch64-apple-darwin
+            cdx_sha256: 4c53dfa21e70b65bf7f8d2592aadde3bcb02c1a40b6ec63b877e5ca65a29e180
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            cdx: cargo-cyclonedx-x86_64-apple-darwin
+            cdx_sha256: 59d2a583fa632f8759456c1b531340331255b277386d23c598a3dbbc916fde63
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            cdx: cargo-cyclonedx-x86_64-unknown-linux-gnu
+            cdx_sha256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
+            cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -306,7 +321,25 @@ jobs:
           [ "$actual" = "klatch $VERSION" ] || { echo "version prints '$actual', wanted 'klatch $VERSION'" >&2; exit 1; }
           clients/recipes/launcher-demo.sh
 
-      - name: Archive with the licences and a checksum
+      - name: Install cargo-cyclonedx (pinned release, checksum verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CDX: ${{ matrix.cdx }}
+          CDX_SHA256: ${{ matrix.cdx_sha256 }}
+        run: |
+          set -euo pipefail
+          gh release download cargo-cyclonedx-0.5.9 -R CycloneDX/cyclonedx-rust-cargo -p "$CDX.tar.xz" -D "$RUNNER_TEMP"
+          python3 - "$RUNNER_TEMP/$CDX.tar.xz" "$CDX_SHA256" <<'PY'
+          import hashlib, sys
+          got = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+          if got != sys.argv[2]:
+              sys.exit("cargo-cyclonedx checksum mismatch: " + got)
+          PY
+          tar xJf "$RUNNER_TEMP/$CDX.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.cargo/bin"
+          install -m 0755 "$RUNNER_TEMP/$CDX/cargo-cyclonedx" "$HOME/.cargo/bin/cargo-cyclonedx"
+
+      - name: Archive with the licences and an SBOM, each with a checksum
         env:
           TARGET: ${{ matrix.target }}
         run: |
@@ -318,12 +351,19 @@ jobs:
           cp LICENSE proto/THIRD-PARTY-LICENSES.txt "dist/$name/"
           tar -czf "dist/$name.tar.gz" -C dist "$name"
           rm -rf "dist/$name"
-          python3 - "dist/$name.tar.gz" <<'PY' > "dist/$name.tar.gz.sha256"
+          # the SBOM (CycloneDX 1.5, this target's dependencies, the vendored SQLCipher and OpenSSL included); the
+          # tool writes one file per binary in the workspace and only klatch's is kept
+          (cd proto/klatch && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) cargo cyclonedx --manifest-path Cargo.toml \
+            --format json --describe binaries --target "$TARGET" --spec-version 1.5)
+          cp proto/klatch/klatch_bin.cdx.json "dist/$name.cdx.json"
+          for f in "dist/$name.tar.gz" "dist/$name.cdx.json"; do
+            python3 - "$f" <<'PY' > "$f.sha256"
           import hashlib, os, sys
           p = sys.argv[1]
           print(hashlib.sha256(open(p, "rb").read()).hexdigest() + "  " + os.path.basename(p))
           PY
-          cat "dist/$name.tar.gz.sha256"
+            cat "$f.sha256"
+          done
           tar -tzf "dist/$name.tar.gz"
 
       - name: Upload the archive
@@ -340,6 +380,8 @@ jobs:
       name: release
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download every archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -348,15 +390,38 @@ jobs:
           merge-multiple: true
           path: dist/
 
+      # Nothing is compiled in this job. First the files must still be what the build jobs checksummed.
+      - name: Check the files against the build jobs' checksums and write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in ./*.sha256; do sha256sum -c "$f"; done
+          cat ./*.sha256 | sort -k2 > SHA256SUMS
+          rm ./*.sha256
+          cat SHA256SUMS
+
+      # GitHub build provenance: a signed statement, kept by GitHub, that these files were built by this workflow
+      # from this commit. Verify with `gh attestation verify`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      # A second, independent way to check the downloads without the GitHub CLI: SHA256SUMS signed keylessly with
+      # the workflow's identity (Sigstore).
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      - name: Sign SHA256SUMS
+        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+
       - name: Attach to the release (an existing asset is never replaced)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
-          cd dist
-          ls -l
-          cat ./*.sha256 > SHA256SUMS
-          cat SHA256SUMS
-          rm ./*.sha256
-          gh release upload "$TAG" ./* --repo "$GITHUB_REPOSITORY"
+          ls -l dist
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"
