@@ -1,4 +1,4 @@
-use super::{SessionConfig, serve, serve_with};
+use super::{Session, SessionConfig, serve};
 use klatch_core::{Claim, Error, MemberInfo, Message, Posted, Principal, Result};
 use klatch_gateway::{AllowAll, FixedClock, Gateway, Guard, Operation};
 use klatch_protocol::{Attribution, ServerFrame, decode_server_line};
@@ -723,27 +723,18 @@ impl Live {
                 pending: Vec::new(),
             });
             match flaky {
-                Some(f) => serve_with(
-                    &Gateway::new(
-                        FlakyStore {
-                            inner: store,
-                            flags: f,
-                        },
-                        FixedClock(1_000),
-                        AllowAll,
-                    ),
-                    &who,
-                    input,
-                    o2,
-                    &config,
-                ),
-                None => serve_with(
-                    &Gateway::new(store, FixedClock(1_000), AllowAll),
-                    &who,
-                    input,
-                    o2,
-                    &config,
-                ),
+                Some(f) => {
+                    let store = FlakyStore {
+                        inner: store,
+                        flags: f,
+                    };
+                    let gateway = Gateway::new(store, FixedClock(1_000), AllowAll);
+                    Session::new(&gateway, &who, &config).serve(input, o2)
+                }
+                None => {
+                    let gateway = Gateway::new(store, FixedClock(1_000), AllowAll);
+                    Session::new(&gateway, &who, &config).serve(input, o2)
+                }
             }
         });
         Live {

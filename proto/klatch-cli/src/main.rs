@@ -328,15 +328,14 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
                 ..Default::default()
             };
             // stdout carries protocol frames only
-            Ok(klatch_session::stream(
-                &gateway,
-                &caller.principal,
-                &room,
+            let request = klatch_session::StreamRequest {
+                room: &room,
                 from_seq,
                 follow,
-                std::io::stdout().lock(),
-                &config,
-            )?)
+            };
+            klatch_session::Session::new(&gateway, &caller.principal, &config)
+                .stream(&request, std::io::stdout().lock())
+                .map_err(Into::into)
         }
         cmd => {
             let me = caller.principal.member.clone();
