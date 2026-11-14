@@ -7,6 +7,7 @@ use std::time::Instant;
 mod admin;
 mod asks;
 mod claims;
+mod factory;
 mod faults;
 mod hooks;
 mod keys;
@@ -68,6 +69,7 @@ pub fn all() -> Vec<Scenario> {
         sessions::all(),
         faults::all(),
         scale::all(),
+        factory::all(),
         admin::all(),
         labels::all(),
         hooks::all(),
