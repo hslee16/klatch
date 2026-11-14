@@ -133,6 +133,13 @@ impl<S: Store> Gateway<S> {
         self.store.note_parent(&who.member, parent, self.now())
     }
 
+    /// The rooms the caller has joined, without reading anything: a hook that only needs to act on each room (a
+    /// session ending) must not use up the messages a digest would show the member's next session.
+    pub fn rooms(&self, who: &Principal) -> Result<Vec<String>> {
+        check_member(who)?;
+        self.store.rooms_of(&who.member)
+    }
+
     /// Mute or unmute a room for the caller: its digest then shows only messages that mention it (#20). An explicit
     /// `read` still returns everything.
     pub fn set_muted(&self, who: &Principal, room: &str, muted: bool) -> Result<()> {

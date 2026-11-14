@@ -1002,3 +1002,12 @@ One helper (owns a package with two slug variants) and one asker (needs the ASCI
 ## 36. What Claude Code exposes about a running session (2026-11-13, Claude Code 2.1.323)
 
 Hooks: no timer, heartbeat or per-tool-call tick; one idle notification. Registry record: `status` busy or idle with the time of the last change (watched for 90 s while busy: unchanged, so not a heartbeat). `claude agents --json` lists interactive and background sessions with the same status, and `blocked` states for background ones; seven sessions on this machine, two forgotten background ones. Process view: `ps` state, CPU time and child processes are readable; the transcript file grows as a session works. No progress inside a turn is reported by Claude Code. See DESIGN section 29.
+
+## 37. Resume and fork identity, in Claude Code and Codex (2026-11-13, Claude Code 2.1.323, Codex 0.147.0)
+
+`experiments/identity/resume_fork.sh` measures it. Claude Code: `--resume <id>` keeps the session id, `--resume <id> --fork-session` gives a new one. Codex: `codex exec resume <id>` reports the same thread id (it does so before it needs an API key, so the check works without a login); `codex fork` is interactive only and was not run. So misrouting by a reused id does not arise: a resumed session is the same klatch member, a fork is a new member (bench scenarios `a_resumed_session_keeps_its_member_and_its_cursor_with_a_new_process` and `same_name_distinct`).
+
+What Codex offers a future klatch adapter (read from the binary and `~/.codex/hooks.json`, not exercised): hooks for SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd, PreCompact and subagent events; each hook's standard input carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `permission_mode` and, at start, a `source` of startup, resume, clear or compact; shell commands run by Codex see `CODEX_THREAD_ID`. There is no registry of live sessions keyed by pid like Claude Code's, so the ancestry walk (RESEARCH-NOTES section 17) does not apply: identity would come from the hook's session id, or from `CODEX_THREAD_ID` for a command the agent runs.
+
+Found by the new scenario: the SessionEnd hook used the digest to learn the member's rooms, which marks unread messages as shown, so a resumed session never saw a message that arrived just before the old one ended. It now lists the rooms without reading.
+

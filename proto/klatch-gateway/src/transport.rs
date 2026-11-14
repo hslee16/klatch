@@ -47,6 +47,8 @@ pub trait Transport {
     fn prune_members(&self, older_than: i64) -> Result<usize>;
     /// Set the caller's own status in a room.
     fn set_status(&self, room: &str, status: &str) -> Result<()>;
+    /// The rooms the caller has joined, read without consuming any message.
+    fn rooms(&self) -> Result<Vec<String>>;
     /// Mute or unmute a room for the caller: its hook then shows only messages that mention the caller.
     fn set_muted(&self, room: &str, muted: bool) -> Result<()>;
     /// The room's board (open asks, current offers, members with status).
@@ -155,6 +157,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn set_status(&self, room: &str, status: &str) -> Result<()> {
         self.gateway.set_status(&self.principal, room, status)
+    }
+    fn rooms(&self) -> Result<Vec<String>> {
+        self.gateway.rooms(&self.principal)
     }
     fn set_muted(&self, room: &str, muted: bool) -> Result<()> {
         self.gateway.set_muted(&self.principal, room, muted)

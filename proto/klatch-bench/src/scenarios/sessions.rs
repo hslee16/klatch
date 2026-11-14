@@ -3,6 +3,12 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "a_resumed_session_keeps_its_member_and_its_cursor_with_a_new_process",
+            origin: "#30, #132, Q26",
+            layer: "functional",
+            run: resumed_session,
+        },
+        Scenario {
             name: "a_muted_room_shows_only_mentions_and_read_shows_all",
             origin: "#20, R14",
             layer: "functional",
@@ -423,6 +429,35 @@ fn muted_room(w: &World) -> Res {
         &w.ok("alice", &["hook", "--event", "UserPromptSubmit"])?,
         "chatter two",
         "an unmuted room shows everything again",
+    )?;
+    Ok(vec![])
+}
+
+/// A resumed session has the same session id and a new process: it must come back as the same member, with the
+/// messages it had not read still unread, and not as a second member.
+fn resumed_session(w: &World) -> Res {
+    let h = FakeHarness::new(w)?;
+    let first = h.start("resume-sid-0001", "res")?;
+    first.hook("SessionStart")?;
+    w.ok("poster", &["post", "lobby", "left for later"])?;
+    first.drop_record();
+    first.hook("SessionEnd")?;
+    let second = h.start("resume-sid-0001", "res")?;
+    let out = second.hook("SessionStart")?;
+    has(
+        &out,
+        "back in lobby as res ",
+        "the resumed session is the same member",
+    )?;
+    has(
+        &out,
+        "left for later",
+        "the message it had not read is still delivered",
+    )?;
+    let who = w.ok("observer", &["who", "lobby", "--all"])?;
+    check(
+        who.lines().filter(|l| l.starts_with("res\t")).count() == 1,
+        format!("expected one member, not two:\n{who}"),
     )?;
     Ok(vec![])
 }
