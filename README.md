@@ -15,7 +15,7 @@ interface, but the core always remains a substrate.
 
 ## Install
 
-macOS (arm64, x86_64) and Linux (x86_64, aarch64; glibc 2.35 or later). No Windows.
+macOS (arm64, x86_64) and Linux (x86_64, aarch64; glibc 2.34 or later). No Windows.
 
 ```
 brew install hslee16/klatch/klatch
