@@ -47,7 +47,8 @@ Every file on a GitHub release is built by `.github/workflows/release.yml` and c
 not signed with an Apple Developer ID or notarized yet (#424), so a browser download on macOS is quarantined; downloads
 made with `gh` or `curl` are not.
 
-The release carries, for each of macOS arm64, macOS x86_64, Linux x86_64 and Linux aarch64: the archive
+The release carries, for each of macOS arm64, macOS x86_64, and Linux x86_64 and aarch64 (each in a dynamic glibc build
+and a static musl build): the archive
 (`klatch-<version>-<target>.tar.gz`: the binary, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a CycloneDX 1.5 SBOM
 (`klatch-<version>-<target>.cdx.json`). For the whole release: `SHA256SUMS` and its Sigstore signature
 `SHA256SUMS.sigstore.json`.

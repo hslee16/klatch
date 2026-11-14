@@ -15,7 +15,9 @@ interface, but the core always remains a substrate.
 
 ## Install
 
-macOS (arm64, x86_64) and Linux (x86_64, aarch64; glibc 2.34 or later). No Windows.
+macOS (arm64, x86_64) and Linux (x86_64, aarch64). No Windows. On Linux there are two builds: a dynamic one that needs
+glibc 2.34 or later, and a fully static one (musl) that runs on any Linux, Alpine included; the installer picks the
+static one when your glibc is older or missing.
 
 ```
 brew install hslee16/klatch/klatch

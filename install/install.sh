@@ -40,11 +40,40 @@ sha256_of() {
 }
 
 # --- which archive -----------------------------------------------------------------------------------------------
+# On Linux there are two builds: a dynamic one that needs glibc 2.34 or later (gnu), and a fully static one that runs
+# on any Linux (musl). The static one is chosen when glibc is older, when the system is not glibc (Alpine) and when it
+# cannot be told; KLATCH_LIBC=gnu or musl chooses by hand.
+linux_libc() {
+  case "${KLATCH_LIBC:-}" in
+    gnu | musl) printf '%s' "$KLATCH_LIBC"; return ;;
+  esac
+  info="${KLATCH_LDD_OUTPUT-$(ldd --version 2>&1 || true)}"
+  case "$info" in
+    *musl*) printf musl ;;
+    *GLIBC* | *glibc* | *"GNU libc"*)
+      # the last number of the first line is the glibc version, for example 2.35
+      ver=$(printf '%s\n' "$info" | head -n 1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n 1)
+      major=${ver%%.*}
+      minor=${ver#*.}
+      if [ -n "$ver" ] && { [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 34 ]; }; }; then
+        printf gnu
+      else
+        printf musl
+      fi
+      ;;
+    *) printf musl ;;
+  esac
+}
+
 os="${KLATCH_OS:-$(uname -s)}"
 arch="${KLATCH_ARCH:-$(uname -m)}"
+case "${KLATCH_LIBC:-}" in
+  "" | gnu | musl) ;;
+  *) die "KLATCH_LIBC must be gnu or musl, not ${KLATCH_LIBC}" ;;
+esac
 case "$os" in
   Darwin) os_part="apple-darwin" ;;
-  Linux) os_part="unknown-linux-gnu" ;;
+  Linux) os_part="unknown-linux-$(linux_libc)" ;;
   *) die "unsupported platform: $os $arch (supported: macOS and Linux, on arm64 and x86_64)" ;;
 esac
 case "$arch" in
@@ -67,6 +96,9 @@ name="klatch-$version-$target"
 archive="$name.tar.gz"
 
 say "klatch $version for $target"
+case "$target" in
+  *-linux-musl) say "(the static build: it runs on any Linux; the dynamic build needs glibc 2.34 or later)" ;;
+esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/klatch-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT INT TERM

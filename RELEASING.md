@@ -35,7 +35,7 @@ version is not republished: bump to the next number.
 
 - PyPI shows the version; `pip install klatch==<version>` imports.
 - npm shows it as `latest` with provenance; crates.io shows it with the trusted publishing data.
-- The release has the four archives, four SBOMs, `install.sh`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Check one
+- The release has the six archives, six SBOMs, `install.sh`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Check one
   with the commands in [SECURITY.md](SECURITY.md) ("Verifying a download").
 
 ## 4. Homebrew
