@@ -42,6 +42,12 @@ jobs:
         run: cargo build --workspace --locked
       - name: Unit and integration tests
         run: cargo test --workspace --locked
+      - name: The client feature and the bare build compile on their own
+        run: |
+          cargo build -p klatch --no-default-features --features client --locked
+          cargo build -p klatch --no-default-features --locked
+      - name: The package is publishable to crates.io (dry run, nothing is uploaded)
+        run: cargo publish --dry-run --locked -p klatch
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
