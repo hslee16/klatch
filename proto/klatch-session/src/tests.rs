@@ -2,7 +2,7 @@ use super::{Session, SessionConfig, serve};
 use klatch_core::{Claim, Error, MemberInfo, Message, Posted, Principal, Result};
 use klatch_gateway::{AllowAll, FixedClock, Gateway, Guard, Operation};
 use klatch_protocol::{Attribution, ServerFrame, decode_server_line};
-use klatch_store::{SqliteStore, Store};
+use klatch_store::{ClaimRequest, NewMessage, Seat, SqliteStore, Store};
 use serde_json::{Value, json};
 use std::io::Cursor;
 
@@ -380,24 +380,16 @@ impl Store for DownStore {
     fn join(&self, _: &str, _: &str, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
-    fn post_as(
-        &self,
-        _: &str,
-        _: &str,
-        _: klatch_core::Attribution,
-        _: &str,
-        _: &str,
-        _: i64,
-    ) -> Result<Posted> {
+    fn post_as(&self, _: &NewMessage, _: i64) -> Result<Posted> {
         Err(Error::Backend("down".into()))
     }
-    fn read(&self, _: &str, _: &str, _: bool, _: i64) -> Result<Vec<Message>> {
+    fn read(&self, _: Seat, _: bool, _: i64) -> Result<Vec<Message>> {
         Err(Error::Busy("locked".into()))
     }
     fn members(&self, _: &str) -> Result<Vec<MemberInfo>> {
         Err(Error::Backend("down".into()))
     }
-    fn claim(&self, _: &str, _: &str, _: &str, _: i64, _: &str, _: i64) -> Result<()> {
+    fn claim(&self, _: &ClaimRequest, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
     fn release(&self, _: &str, _: &str, _: &str) -> Result<()> {
@@ -415,7 +407,7 @@ impl Store for DownStore {
     fn head(&self, _: &str) -> Result<i64> {
         Err(Error::Backend("down".into()))
     }
-    fn advance_cursor(&self, _: &str, _: &str, _: i64, _: i64) -> Result<()> {
+    fn advance_cursor(&self, _: Seat, _: i64, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
 }
@@ -961,25 +953,17 @@ impl Store for FlakyStore {
     fn join(&self, r: &str, m: &str, n: i64) -> Result<()> {
         self.inner.join(r, m, n)
     }
-    fn post_as(
-        &self,
-        r: &str,
-        s: &str,
-        a: klatch_core::Attribution,
-        l: &str,
-        b: &str,
-        n: i64,
-    ) -> Result<Posted> {
-        self.inner.post_as(r, s, a, l, b, n)
+    fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
+        self.inner.post_as(message, now)
     }
-    fn read(&self, r: &str, m: &str, a: bool, n: i64) -> Result<Vec<Message>> {
-        self.inner.read(r, m, a, n)
+    fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
+        self.inner.read(at, advance, now)
     }
     fn members(&self, r: &str) -> Result<Vec<MemberInfo>> {
         self.inner.members(r)
     }
-    fn claim(&self, r: &str, o: &str, p: &str, t: i64, why: &str, n: i64) -> Result<()> {
-        self.inner.claim(r, o, p, t, why, n)
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        self.inner.claim(request, now)
     }
     fn release(&self, r: &str, o: &str, p: &str) -> Result<()> {
         self.inner.release(r, o, p)
@@ -997,8 +981,8 @@ impl Store for FlakyStore {
     fn head(&self, r: &str) -> Result<i64> {
         self.inner.head(r)
     }
-    fn advance_cursor(&self, r: &str, m: &str, s: i64, n: i64) -> Result<()> {
-        self.inner.advance_cursor(r, m, s, n)
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        self.inner.advance_cursor(at, seq, now)
     }
 }
 
@@ -1060,21 +1044,23 @@ fn read_and_the_stream_report_the_stored_attribution_and_label() {
     let store = SqliteStore::open_in_memory().unwrap();
     store
         .post_as(
-            "r",
-            "carol",
-            klatch_core::Attribution::Verified,
-            "internal",
-            "proven",
+            &NewMessage::new(
+                ("r", "carol"),
+                klatch_core::Attribution::Verified,
+                "internal",
+                "proven",
+            ),
             1,
         )
         .unwrap();
     store
         .post_as(
-            "r",
-            "eve",
-            klatch_core::Attribution::Unattributed,
-            "public",
-            "unproven",
+            &NewMessage::new(
+                ("r", "eve"),
+                klatch_core::Attribution::Unattributed,
+                "public",
+                "unproven",
+            ),
             2,
         )
         .unwrap();

@@ -4,9 +4,15 @@ use super::*;
 fn the_board_combines_asks_offers_members_and_status() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "bob", "seeking: slugify", 90).unwrap();
-    g.store.post("r", "alice", "offering: helpers", 95).unwrap();
-    g.store.post("r", "bob", "status: busy", 96).unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "seeking: slugify", 90)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "offering: helpers", 95)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "status: busy", 96)
+        .unwrap();
     let b = g.board(&alice(), "r").unwrap();
     assert_eq!(b.room, "r");
     assert_eq!(b.asks.len(), 1);
@@ -68,7 +74,9 @@ fn a_status_goes_through_the_guard_and_shows_in_who() {
 fn the_board_prefers_the_status_fact_and_drops_the_offers_of_a_member_who_is_done() {
     let g = open();
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "bob", "offering: helpers", 90).unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "offering: helpers", 90)
+        .unwrap();
     g.set_status(&bob(), "r", "done leaving").unwrap();
     let b = g.board(&alice(), "r").unwrap();
     let bob = b.members.iter().find(|m| m.name == "bob").unwrap();
@@ -83,9 +91,11 @@ fn the_board_prefers_the_status_fact_and_drops_the_offers_of_a_member_who_is_don
 fn an_offer_goes_when_its_sender_has_not_been_seen_for_a_while() {
     let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "ghost", "offering: old help", 1).unwrap();
     g.store
-        .post("r", "bob", "offering: fresh help", 999)
+        .post(Seat::new("r", "ghost"), "offering: old help", 1)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "offering: fresh help", 999)
         .unwrap();
     let b = g.board(&alice(), "r").unwrap();
     let who: Vec<_> = b.offers.iter().map(|o| o.sender.as_str()).collect();
@@ -96,7 +106,9 @@ fn an_offer_goes_when_its_sender_has_not_been_seen_for_a_while() {
 fn a_present_member_keeps_its_offer_without_renewing_it() {
     let g = Gateway::new(SpyStore::new(), FixedClock(5000), AllowAll);
     g.join(&alice(), "r").unwrap();
-    g.store.post("r", "bob", "offering: help", 100).unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "offering: help", 100)
+        .unwrap();
     g.store.wait_poll("r", "bob", 4990).unwrap();
     let b = g.board(&alice(), "r").unwrap();
     assert_eq!(

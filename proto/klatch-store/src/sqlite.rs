@@ -1,5 +1,5 @@
-use crate::Store;
 use crate::ids::new_id;
+use crate::{ClaimRequest, HookEvent, NewAudit, NewMessage, Release, Seat, Store};
 use klatch_core::{
     AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
     Posted, ReleaseNote, ReleasedClaim, Result,
@@ -10,7 +10,9 @@ use std::time::Duration;
 
 mod asks;
 mod claims;
+mod rows;
 mod schema;
+use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
 use schema::{SCHEMA, SCHEMA_VERSION, WAIT_WINDOW_SECS, has_table, user_version};
 
 /// SQLite in WAL mode. Many readers, one writer at a time; a claim check-and-insert and a post are each one
@@ -35,37 +37,6 @@ fn be(e: rusqlite::Error) -> Error {
         }
         _ => Error::Backend(e.to_string()),
     }
-}
-
-fn attribution_text(a: klatch_core::Attribution) -> &'static str {
-    match a {
-        klatch_core::Attribution::Verified => "verified",
-        klatch_core::Attribution::Unattributed => "unattributed",
-    }
-}
-
-/// Anything other than `verified` reads as unattributed: an unknown value must never look proven.
-fn attribution_from(text: &str) -> klatch_core::Attribution {
-    if text == "verified" {
-        klatch_core::Attribution::Verified
-    } else {
-        klatch_core::Attribution::Unattributed
-    }
-}
-
-/// The columns every message query selects, in the order `message_from_row` reads them.
-const MESSAGE_COLUMNS: &str = "mid,seq,sender,attribution,label,body,ts";
-
-fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
-    Ok(Message {
-        id: r.get(0)?,
-        seq: r.get(1)?,
-        sender: r.get(2)?,
-        attribution: attribution_from(&r.get::<_, String>(3)?),
-        label: r.get(4)?,
-        body: r.get(5)?,
-        ts: r.get(6)?,
-    })
 }
 
 impl SqliteStore {
@@ -224,15 +195,14 @@ impl Store for SqliteStore {
         self.touch(room, member, now)
     }
 
-    fn post_as(
-        &self,
-        room: &str,
-        sender: &str,
-        attribution: klatch_core::Attribution,
-        label: &str,
-        body: &str,
-        now: i64,
-    ) -> Result<Posted> {
+    fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
+        let NewMessage {
+            room,
+            sender,
+            attribution,
+            label,
+            body,
+        } = *message;
         self.immediate(|| {
             let seq: i64 = self
                 .conn
@@ -252,7 +222,8 @@ impl Store for SqliteStore {
         })
     }
 
-    fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>> {
+    fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
+        let Seat { room, member } = at;
         self.touch(room, member, now)?;
         let last: i64 = self
             .conn
@@ -352,9 +323,9 @@ impl Store for SqliteStore {
         )
     }
 
-    fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
+    fn set_status(&self, at: Seat, status: &str, now: i64) -> Result<()> {
         self.update_member(
-            (room, member, now),
+            (at.room, at.member, now),
             "UPDATE members SET status=?3 WHERE room=?1 AND name=?2",
             &status,
         )
@@ -375,9 +346,9 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
-    fn wait_seen(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+    fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.update_member(
-            (room, member, now),
+            (at.room, at.member, now),
             "UPDATE members SET wait_seq=MAX(wait_seq,?3) WHERE room=?1 AND name=?2",
             &seq,
         )
@@ -422,7 +393,8 @@ impl Store for SqliteStore {
         })
     }
 
-    fn stale_asks(&self, room: &str, member: &str, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
+    fn stale_asks(&self, at: Seat, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
+        let Seat { room, member } = at;
         self.immediate(|| {
             let stale = self
                 .open_asks(room, now)?
@@ -444,7 +416,12 @@ impl Store for SqliteStore {
         })
     }
 
-    fn record_hook_run(&self, member: &str, event: &str, now: i64, bytes: i64) -> Result<()> {
+    fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
+        let HookEvent {
+            member,
+            event,
+            bytes,
+        } = *run;
         self.write(
             "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES(?1,?2,?3,1,?4)
              ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4",
@@ -504,37 +481,8 @@ impl Store for SqliteStore {
         )
     }
 
-    fn claim(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()> {
-        self.claim_in(room, owner, "", path, ttl, reason, now)
-    }
-
-    fn claim_in(
-        &self,
-        room: &str,
-        owner: &str,
-        scope: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()> {
-        self.take_claim(&claims::ClaimRequest {
-            room,
-            owner,
-            scope,
-            path,
-            ttl,
-            reason,
-            now,
-        })
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        self.take_claim(request, now)
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
@@ -558,14 +506,13 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn release_with(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        note: &str,
-        now: i64,
-    ) -> Result<()> {
+    fn release_with(&self, release: &Release, now: i64) -> Result<()> {
+        let Release {
+            room,
+            owner,
+            path,
+            note,
+        } = *release;
         self.immediate(|| {
             self.release(room, owner, path)?;
             if note.is_empty() {
@@ -671,7 +618,12 @@ impl Store for SqliteStore {
         })
     }
 
-    fn record_audit(&self, action: &str, target: &str, detail: &str, now: i64) -> Result<()> {
+    fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
+        let NewAudit {
+            action,
+            target,
+            detail,
+        } = *entry;
         self.exec(
             "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)",
             params![now, action, target, detail],
@@ -808,7 +760,8 @@ impl Store for SqliteStore {
             .map_err(be)
     }
 
-    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        let Seat { room, member } = at;
         // One statement, so it is atomic: forward only, and clamped to the room's head so an
         // acknowledgement can never skip a message that has not arrived yet.
         self.exec(

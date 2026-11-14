@@ -11,28 +11,156 @@ use klatch_core::{
     Posted, ReleaseNote, Result, open_asks,
 };
 
+/// A member in a room: who is asking, and where.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seat<'a> {
+    pub room: &'a str,
+    pub member: &'a str,
+}
+
+impl<'a> Seat<'a> {
+    pub fn new(room: &'a str, member: &'a str) -> Self {
+        Self { room, member }
+    }
+}
+
+/// A message to append: the room, who sent it, whether the sender was proven, the label it goes under and its text.
+#[derive(Debug, Clone, Copy)]
+pub struct NewMessage<'a> {
+    pub room: &'a str,
+    pub sender: &'a str,
+    pub attribution: Attribution,
+    pub label: &'a str,
+    pub body: &'a str,
+}
+
+impl<'a> NewMessage<'a> {
+    pub fn new(
+        (room, sender): (&'a str, &'a str),
+        attribution: Attribution,
+        label: &'a str,
+        body: &'a str,
+    ) -> Self {
+        Self {
+            room,
+            sender,
+            attribution,
+            label,
+            body,
+        }
+    }
+}
+
+/// A request to take a claim. `scope` is empty for a member with none (DESIGN section 27).
+#[derive(Debug, Clone, Copy)]
+pub struct ClaimRequest<'a> {
+    pub room: &'a str,
+    pub owner: &'a str,
+    pub scope: &'a str,
+    pub path: &'a str,
+    pub ttl: i64,
+    pub reason: &'a str,
+}
+
+impl<'a> ClaimRequest<'a> {
+    pub fn new(
+        (room, owner): (&'a str, &'a str),
+        path: &'a str,
+        ttl: i64,
+        reason: &'a str,
+    ) -> Self {
+        Self {
+            room,
+            owner,
+            scope: "",
+            path,
+            ttl,
+            reason,
+        }
+    }
+
+    /// The same request inside a scope.
+    pub fn scoped(self, scope: &'a str) -> Self {
+        Self { scope, ..self }
+    }
+}
+
+/// A claim being released, with a note on what the holder changed (empty for none).
+#[derive(Debug, Clone, Copy)]
+pub struct Release<'a> {
+    pub room: &'a str,
+    pub owner: &'a str,
+    pub path: &'a str,
+    pub note: &'a str,
+}
+
+impl<'a> Release<'a> {
+    pub fn new((room, owner): (&'a str, &'a str), path: &'a str, note: &'a str) -> Self {
+        Self {
+            room,
+            owner,
+            path,
+            note,
+        }
+    }
+}
+
+/// A hook event that ran for a member, and how many bytes it printed (never the content).
+#[derive(Debug, Clone, Copy)]
+pub struct HookEvent<'a> {
+    pub member: &'a str,
+    pub event: &'a str,
+    pub bytes: i64,
+}
+
+impl<'a> HookEvent<'a> {
+    pub fn new(member: &'a str, event: &'a str, bytes: i64) -> Self {
+        Self {
+            member,
+            event,
+            bytes,
+        }
+    }
+}
+
+/// An administrative act to keep a record of.
+#[derive(Debug, Clone, Copy)]
+pub struct NewAudit<'a> {
+    pub action: &'a str,
+    pub target: &'a str,
+    pub detail: &'a str,
+}
+
+impl<'a> NewAudit<'a> {
+    pub fn new(action: &'a str, target: &'a str, detail: &'a str) -> Self {
+        Self {
+            action,
+            target,
+            detail,
+        }
+    }
+}
+
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
     /// Append a message, recording whether its sender was proven and the label it is posted under; also marks
     /// the sender as present. Returns its unique id and its per-room `seq` (dense, starting at 1).
-    fn post_as(
-        &self,
-        room: &str,
-        sender: &str,
-        attribution: Attribution,
-        label: &str,
-        body: &str,
-        now: i64,
-    ) -> Result<Posted>;
+    fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted>;
 
     /// `post_as` for a sender that is not proven, under the lowest label: the cautious default. The gateway
     /// never uses this; it passes the caller's real attribution.
-    fn post(&self, room: &str, sender: &str, body: &str, now: i64) -> Result<Posted> {
-        self.post_as(room, sender, Attribution::Unattributed, "public", body, now)
+    fn post(&self, at: Seat, body: &str, now: i64) -> Result<Posted> {
+        let message = NewMessage::new(
+            (at.room, at.member),
+            Attribution::Unattributed,
+            "public",
+            body,
+        );
+        self.post_as(&message, now)
     }
     /// Messages from others after the member's cursor. `advance` moves the cursor to the room's end.
-    fn read(&self, room: &str, member: &str, advance: bool, now: i64) -> Result<Vec<Message>>;
+    fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>>;
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>>;
     /// Remember that harness session `session_id` is member `member` (replacing an earlier entry), so a hook that
     /// runs after the harness has dropped its own record can still find its member. The default remembers nothing.
@@ -55,35 +183,14 @@ pub trait Store {
     }
     /// Record the member's status in a room (replacing any earlier one); joins the member if needed. The default
     /// stores nothing.
-    fn set_status(&self, _room: &str, _member: &str, _status: &str, _now: i64) -> Result<()> {
+    fn set_status(&self, _at: Seat, _status: &str, _now: i64) -> Result<()> {
         Ok(())
     }
     /// Take an advisory claim; refuse with `Error::Conflict` if another member holds an overlapping one.
-    /// Expired claims are purged first. Re-claiming your own path replaces it.
-    fn claim(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()>;
-    /// `claim` inside a scope (DESIGN section 27): a claim conflicts only with overlapping claims in the same scope
-    /// or in the shared scope `*`, and a shared claim conflicts with every scope. The default ignores the scope.
-    #[allow(clippy::too_many_arguments)]
-    fn claim_in(
-        &self,
-        room: &str,
-        owner: &str,
-        _scope: &str,
-        path: &str,
-        ttl: i64,
-        reason: &str,
-        now: i64,
-    ) -> Result<()> {
-        self.claim(room, owner, path, ttl, reason, now)
-    }
+    /// Expired claims are purged first. Re-claiming your own path replaces it. A claim conflicts only with overlapping
+    /// claims in the same scope or in the shared scope `*`, and a shared claim conflicts with every scope (DESIGN
+    /// section 27).
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()>;
     /// The scope a member declared or was given, if any. The default knows none.
     fn member_scope(&self, _member: &str) -> Result<Option<String>> {
         Ok(None)
@@ -96,15 +203,8 @@ pub trait Store {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
     /// `release` with a note on what the holder changed (#272), kept for those who saw the claim and for the next
     /// claimant of the path; an empty note clears an older one. The default drops the note.
-    fn release_with(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        _note: &str,
-        _now: i64,
-    ) -> Result<()> {
-        self.release(room, owner, path)
+    fn release_with(&self, release: &Release, _now: i64) -> Result<()> {
+        self.release(release.room, release.owner, release.path)
     }
     /// The latest release of `path` that carried a note, if any. The default knows none.
     fn last_release(&self, _room: &str, _path: &str) -> Result<Option<ReleaseNote>> {
@@ -135,7 +235,7 @@ pub trait Store {
         Ok(0)
     }
     /// Keep a record of an administrative act, and read the latest ones, newest first.
-    fn record_audit(&self, _action: &str, _target: &str, _detail: &str, _now: i64) -> Result<()> {
+    fn record_audit(&self, _entry: &NewAudit, _now: i64) -> Result<()> {
         Ok(())
     }
     fn audit_log(&self, _limit: usize) -> Result<Vec<AuditRecord>> {
@@ -176,12 +276,12 @@ pub trait Store {
     }
     /// `member`'s own open asks that have had no claim for at least `after` seconds and were not reported to
     /// it before; remembers what it returned. The default remembers nothing and reports them every time.
-    fn stale_asks(&self, room: &str, member: &str, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
+    fn stale_asks(&self, at: Seat, now: i64, after: i64) -> Result<Vec<OpenAsk>> {
         Ok(self
-            .open_asks(room, now)?
+            .open_asks(at.room, now)?
             .into_iter()
             .filter(|a| {
-                a.sender == member
+                a.sender == at.member
                     && !a.claimed
                     && a.waiting_on_asker.is_none()
                     && !a.room_active(now)
@@ -193,11 +293,11 @@ pub trait Store {
     /// refreshes the member's presence, as a read does.
     /// The default is `read` without advancing, which has no wait position.
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
-        self.read(room, member, false, now)
+        self.read(Seat::new(room, member), false, now)
     }
     /// Remember that a wait has looked at the room up to `seq` (forward only), so the next wait does not wake for
     /// the same messages. The read cursor is untouched: the messages stay unread. The default remembers nothing.
-    fn wait_seen(&self, _room: &str, _member: &str, _seq: i64, _now: i64) -> Result<()> {
+    fn wait_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
         Ok(())
     }
     /// `member`'s own open asks that enough helpers declined as `cannot` (none busy or failed), not reported to it
@@ -211,7 +311,7 @@ pub trait Store {
     }
     /// Record that a hook event ran for `member`: the time, and how many bytes it printed (never the content).
     /// The default records nothing.
-    fn record_hook_run(&self, _member: &str, _event: &str, _now: i64, _bytes: i64) -> Result<()> {
+    fn record_hook_run(&self, _run: &HookEvent, _now: i64) -> Result<()> {
         Ok(())
     }
     /// The latest run of each hook event recorded for `member`, ordered by event name.
@@ -222,7 +322,7 @@ pub trait Store {
     /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a
     /// message a hook showed can still be read once with `read` (#198). The default advances the read cursor.
     fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
-        self.read(room, member, true, now)
+        self.read(Seat::new(room, member), true, now)
     }
     /// Other members' claims in a room that `member` has not been shown yet, and claims it was shown that are
     /// gone; remembers what it returned so the next call reports only what changed. A claim renewed with a new
@@ -246,5 +346,5 @@ pub trait Store {
     /// The highest `seq` in a room, 0 when it is empty.
     fn head(&self, room: &str) -> Result<i64>;
     /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
-    fn advance_cursor(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()>;
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()>;
 }

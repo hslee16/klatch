@@ -3,6 +3,7 @@
 //! a record of each act.
 
 use super::*;
+use klatch_store::NewAudit;
 
 impl<S: Store> Gateway<S> {
     /// One administrative act: ask the guard, do it, and keep a record. Who may administer is decided by the
@@ -23,7 +24,8 @@ impl<S: Store> Gateway<S> {
         )?;
         let now = self.now();
         let outcome = act(now)?;
-        self.store.record_audit(action, target, &outcome, now)
+        self.store
+            .record_audit(&NewAudit::new(action, target, &outcome), now)
     }
 
     /// Make a room read-only, or open it again.
