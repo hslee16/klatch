@@ -42,6 +42,14 @@ jobs:
         run: cargo build --workspace --locked
       - name: Unit and integration tests
         run: cargo test --workspace --locked
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Client library conformance, Python and TypeScript (the Rust client runs in the workspace tests)
+        run: |
+          export KLATCH_BIN="$PWD/target/debug/klatch"
+          (cd ../clients/python && python3 -m unittest discover -v)
+          (cd ../clients/typescript && node --experimental-strip-types --test conformance.test.ts)
       - name: Tests that need the test-clock build (a panic never prints what it carried)
         run: cargo test -p klatch-cli --features test-clock --test no_plaintext --locked
       - name: Dependency policy (licences, advisories, sources, refused crypto crates)
