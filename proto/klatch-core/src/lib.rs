@@ -4,6 +4,7 @@
 mod asks;
 mod board;
 mod convention;
+mod credentials;
 mod error;
 mod hook;
 mod model;
@@ -23,6 +24,7 @@ pub use board::{
 };
 pub mod budget;
 pub use convention::{CONVENTION_MARKER, convention};
+pub use credentials::credential_kind;
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
 pub use model::{

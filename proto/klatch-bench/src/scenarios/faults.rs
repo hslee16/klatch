@@ -3,6 +3,12 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "a_credential_is_refused_by_kind_and_never_echoed",
+            origin: "#31, R20",
+            layer: "fault",
+            run: credential_refused,
+        },
+        Scenario {
             name: "a_killed_poster_leaves_a_consistent_history",
             origin: "#262",
             layer: "fault",
@@ -365,5 +371,20 @@ fn clock_back(w: &World) -> Res {
             format!("klatch {args:?} printed a negative age with the clock set back: {text}"),
         )?;
     }
+    Ok(vec![])
+}
+
+fn credential_refused(w: &World) -> Res {
+    let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    w.ok("reader", &["join", "r"])?;
+    let said = w.refused("poster", &["post", "r", &format!("here you go {token}")])?;
+    has(&said, "a GitHub token", "the refusal names the kind")?;
+    lacks(&said, token, "the refusal must not echo the credential")?;
+    lacks(
+        &w.ok("reader", &["read", "r", "--peek"])?,
+        "ghp_",
+        "the credential was never stored",
+    )?;
+    w.ok("poster", &["post", "r", "a normal message"])?;
     Ok(vec![])
 }

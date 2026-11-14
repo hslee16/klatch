@@ -108,6 +108,7 @@ impl<S: Store> Gateway<S> {
                 "empty message: there is nothing to post".into(),
             ));
         }
+        check_no_credentials(body)?;
         self.authorize(
             who,
             &Operation::Post {
@@ -193,6 +194,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_status(status)?;
+        check_no_credentials(status)?;
         self.authorize(
             who,
             &Operation::Status {
@@ -303,6 +305,7 @@ impl<S: Store> Gateway<S> {
         check_room(room)?;
         check_path(path)?;
         check_reason(reason)?;
+        check_no_credentials(reason)?;
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
@@ -359,6 +362,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
+        check_no_credentials(note)?;
         let note = klatch_core::flat(note);
         if note.chars().count() > 300 {
             return Err(Error::Invalid(
@@ -562,6 +566,20 @@ fn invalid(unless: bool, what: String) -> Result<()> {
         Ok(())
     } else {
         Err(Error::Invalid(what))
+    }
+}
+
+/// Refuse text that carries a credential (R20): a room is a log other agents and people read, not a place for secrets.
+/// The refusal names the kind of credential and never the text.
+fn check_no_credentials(text: &str) -> Result<()> {
+    match klatch_core::credential_kind(text) {
+        None => Ok(()),
+        Some(kind) => Err(Error::Refused {
+            rule: "credentials".into(),
+            reason: format!(
+                "the text looks like it contains {kind}; do not post secrets to a room, keep them in a secret store and say where"
+            ),
+        }),
     }
 }
 

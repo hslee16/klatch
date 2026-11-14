@@ -11,6 +11,7 @@ mod asks;
 mod board;
 mod budget;
 mod claims;
+mod credentials;
 mod digest;
 mod guarding;
 mod members;
