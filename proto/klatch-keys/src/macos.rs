@@ -1,4 +1,12 @@
-//! The macOS Keychain, through the Security framework (no command line, so the key is never an argument).
+//! The macOS Keychain. Reading goes through the Security framework. Writing goes through the `security` tool in its
+//! interactive mode, with the command on standard input, so the key is never on a command line.
+//!
+//! The item is created with "allow all applications". A Keychain item is otherwise tied to the program that made it,
+//! and an unsigned program that is rebuilt is a different program every time: each rebuild would make the Keychain
+//! ask, and a hook has nobody to answer (measured: a different binary reading such an item hung). This is the same
+//! protection as a key file readable only by you, against another user or a stolen disk; it does not stop another
+//! program of yours. Signing klatch with a stable identity and binding the item to it is the later step
+//! (DESIGN section 32 item 3).
 
 use crate::source::check_name;
 use crate::{Error, KEY_LEN, Key, KeySource};

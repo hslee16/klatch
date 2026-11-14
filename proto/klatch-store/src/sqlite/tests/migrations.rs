@@ -20,7 +20,7 @@ const RELEASE_V2: &[u8] = include_bytes!("../../../fixtures/prototype-v2.db");
 fn an_old_database_is_migrated_in_place() {
     let path = temp_db("migrate");
     {
-        let c = Connection::open(&path).unwrap();
+        let c = keyed(&path);
         c.execute_batch(
             "CREATE TABLE members(room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_id INTEGER DEFAULT 0, PRIMARY KEY(room,name));
              CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, sender TEXT, body TEXT, ts INTEGER);
@@ -31,7 +31,7 @@ fn an_old_database_is_migrated_in_place() {
         )
         .unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     let unread = s.read(Seat::new("r", "alice"), false, 5).unwrap();
     assert_eq!(unread.len(), 1, "cursor must survive the migration");
     assert_eq!((unread[0].body.as_str(), unread[0].seq), ("m4", 3));
@@ -48,7 +48,7 @@ fn an_old_database_is_migrated_in_place() {
         .unwrap();
     assert_eq!(local, 5);
     drop(s);
-    SqliteStore::open(&path).unwrap(); // reopening a migrated database is a no-op
+    SqliteStore::open(&path, &crate::insecure_test_key()).unwrap(); // reopening a migrated database is a no-op
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -61,7 +61,7 @@ fn a_fresh_database_is_at_schema_version_19() {
 fn a_version_1_database_is_migrated_to_19_and_keeps_its_messages() {
     let path = temp_db("migrate-v1");
     {
-        let c = Connection::open(&path).unwrap();
+        let c = keyed(&path);
         c.execute_batch(
             "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, PRIMARY KEY(room,name));
              CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER);
@@ -73,7 +73,7 @@ fn a_version_1_database_is_migrated_to_19_and_keeps_its_messages() {
         )
         .unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(version(&s), 19);
     let old = s.tail("r", 0, 10).unwrap();
     assert_eq!(old.len(), 2);
@@ -95,7 +95,7 @@ fn a_version_1_database_is_migrated_to_19_and_keeps_its_messages() {
         Attribution::Verified
     );
     drop(s);
-    let again = SqliteStore::open(&path).unwrap();
+    let again = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(
         version(&again),
         19,
@@ -108,7 +108,7 @@ fn a_version_1_database_is_migrated_to_19_and_keeps_its_messages() {
 fn a_version_0_database_now_migrates_all_the_way_to_19() {
     let path = temp_db("migrate-v0-to-2");
     {
-        let c = Connection::open(&path).unwrap();
+        let c = keyed(&path);
         c.execute_batch(
             "CREATE TABLE members(room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_id INTEGER DEFAULT 0, PRIMARY KEY(room,name));
              CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT, sender TEXT, body TEXT, ts INTEGER);
@@ -117,7 +117,7 @@ fn a_version_0_database_now_migrates_all_the_way_to_19() {
         )
         .unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(version(&s), 19);
     let m = &s.tail("r", 0, 10).unwrap()[0];
     assert_eq!(
@@ -131,7 +131,8 @@ fn a_version_0_database_now_migrates_all_the_way_to_19() {
 fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
     let path = temp_db("real-v2");
     std::fs::write(&path, RELEASE_V2).unwrap();
-    let s = SqliteStore::open(&path).unwrap();
+    crate::encrypt::ensure_encrypted(&path, &crate::insecure_test_key()).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(version(&s), 19);
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(core.len(), 1);
@@ -149,7 +150,8 @@ fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
 fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
     let path = temp_db("real-v0");
     std::fs::write(&path, PROTOTYPE_V0).unwrap();
-    let s = SqliteStore::open(&path).unwrap();
+    crate::encrypt::ensure_encrypted(&path, &crate::insecure_test_key()).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(version(&s), 19);
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();

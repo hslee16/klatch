@@ -199,10 +199,10 @@ fn data_persists_across_connections_on_disk() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("rooms.db");
     {
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         s.post(Seat::new("r", "bob"), "kept", 1).unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     s.join("r", "alice", 2).unwrap();
     assert_eq!(
         s.read(Seat::new("r", "alice"), true, 3).unwrap()[0].body,

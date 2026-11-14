@@ -64,6 +64,13 @@ pub enum AdminCmd {
     ScrubRemove { name: String },
     /// Show the scrub rules and their terms
     ScrubList,
+    /// Show the recovery code of this store's encryption key (audited). Keep it somewhere safe: with it the key can
+    /// be restored, and without both it and the keystore entry the data is gone
+    Recovery,
+    /// Restore this store's key from its recovery code, when the keystore entry is missing
+    Recover { code: Vec<String> },
+    /// Re-encrypt the store under a new key; the old key (and the old recovery code) stop working
+    RotateKey,
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -95,6 +102,8 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
     match cmd {
         AdminCmd::Pause => Some("pause".into()),
         AdminCmd::Close { room } => Some(room.clone()),
+        AdminCmd::Recover { .. } => Some("recover".into()),
+        AdminCmd::RotateKey => Some("rotate".into()),
         AdminCmd::Remove { member, .. } => Some(member.clone()),
         _ => None,
     }
@@ -243,13 +252,60 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         }
         AdminCmd::Refusals { limit } => refusals(t, limit)?,
         AdminCmd::Audit { limit } => audit(t, limit)?,
+        AdminCmd::Recovery | AdminCmd::Recover { .. } | AdminCmd::RotateKey => {
+            unreachable!("handled in run, which needs the keystore and not only the gateway")
+        }
+    }
+    Ok(())
+}
+
+/// The commands about the key: they need the keystore as well as the gateway, and each one is in the audit.
+fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
+    let who = Principal::unattributed("admin");
+    let note = |action: &str, outcome: &str| -> Result<()> {
+        let gateway = Gateway::new(keys::open_store(db)?, CliClock, AllowAll);
+        Ok(gateway.admin_note(&who, (action, ""), outcome)?)
+    };
+    match cmd {
+        AdminCmd::Recovery => {
+            let key = keys::current_key(db)?.ok_or_else(|| {
+                anyhow::anyhow!("this store has no key yet; run any klatch command to make one")
+            })?;
+            note("recovery-show", "")?;
+            println!("{}", klatch_keys::recovery_code(&key));
+            println!(
+                "Keep this code somewhere safe and private. It restores the key; it is not stored anywhere else."
+            );
+        }
+        AdminCmd::Recover { code } => {
+            let key = klatch_keys::restore(&code.join(" ")).map_err(|e| anyhow::anyhow!("{e}"))?;
+            keys::restore_key(db, &key)?;
+            note("recover-key", "")?;
+            println!("the key is back in place");
+        }
+        AdminCmd::RotateKey => {
+            let key = keys::rotate_key(db)?;
+            note("rotate-key", "")?;
+            println!(
+                "the store is now encrypted under a new key. The old key and the old recovery code no longer work."
+            );
+            println!("New recovery code: {}", klatch_keys::recovery_code(&key));
+        }
+        _ => unreachable!("not a key command"),
     }
     Ok(())
 }
 
 pub fn run(cmd: AdminCmd) -> Result<()> {
     authorize(&cmd)?;
-    let store = SqliteStore::open(&db_path()?)?;
+    let db = db_path()?;
+    if matches!(
+        cmd,
+        AdminCmd::Recovery | AdminCmd::Recover { .. } | AdminCmd::RotateKey
+    ) {
+        return key_command(&db, cmd);
+    }
+    let store = keys::open_store(&db)?;
     let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
     execute(&Direct::new(gateway, Principal::unattributed("admin")), cmd)
 }

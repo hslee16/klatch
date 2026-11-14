@@ -163,7 +163,7 @@ mod scope_dir_tests {
     #[test]
     fn an_explicit_scope_wins_and_is_kept_and_a_bad_one_is_refused() {
         let dir = tmp("store");
-        let s = SqliteStore::open(&dir.join("t.db")).unwrap();
+        let s = SqliteStore::open(&dir.join("t.db"), &klatch_store::insecure_test_key()).unwrap();
         ensure_member_scope(&s, "alice", (None, Some(&dir.to_string_lossy())), 1).unwrap();
         let derived = s.member_scope("alice").unwrap().unwrap();
         ensure_member_scope(&s, "alice", (None, Some("/other")), 2).unwrap();

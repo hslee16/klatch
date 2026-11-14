@@ -198,13 +198,13 @@ fn an_empty_scope_behaves_as_claims_always_did_and_the_listing_shows_each_scope(
 fn a_members_scope_is_remembered_and_the_last_one_wins() {
     let path = temp_db("member-scope");
     {
-        let s = SqliteStore::open(&path).unwrap();
+        let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
         assert_eq!(s.member_scope("alice").unwrap(), None);
         s.set_member_scope("alice", "git:a", 1).unwrap();
         s.set_member_scope("alice", "bot:grok", 2).unwrap();
         s.set_member_scope("bob", "git:b", 3).unwrap();
     }
-    let s = SqliteStore::open(&path).unwrap();
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
     assert_eq!(
         s.member_scope("alice").unwrap().as_deref(),
         Some("bot:grok")

@@ -24,6 +24,7 @@ impl Home {
     pub fn run(&self, who: &str, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_KEY_DIR", self.0.join("keys"))
             .env("KLATCH_NAME", who)
             .args(args)
             .output()
@@ -43,6 +44,7 @@ impl Home {
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_KEY_DIR", self.0.join("keys"))
             .env("KLATCH_NAME", who)
             .args(args)
             .stdin(Stdio::piped())
@@ -141,6 +143,7 @@ pub fn seqs_of(f: &[ServerFrame]) -> Vec<u64> {
 pub fn without_a_name(home: &Home, fake_home: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env("KLATCH_HOME", &home.0)
+        .env("KLATCH_KEY_DIR", home.0.join("keys"))
         .env_remove("KLATCH_NAME")
         .env_remove("KLATCH_DISCOVER")
         .env("HOME", fake_home)
@@ -233,6 +236,7 @@ pub fn hook_as_session(h: &Home, name: Option<&str>, sid: &str, args: &[&str]) -
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
     c.env_clear()
         .env("KLATCH_HOME", &h.0)
+        .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("HOME", &h.0)
         .args(args)
         .stdin(std::process::Stdio::piped())
@@ -256,6 +260,8 @@ pub fn who_age_with_now(h: &Home, now: Option<&str>) -> String {
     h.ok("alice", &["join", "r"]);
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
     c.env("KLATCH_HOME", &h.0)
+        .env("KLATCH_KEY_DIR", h.0.join("keys"))
+        .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", "bob")
         .args(["who", "r", "--all"]);
     if let Some(n) = now {
@@ -267,6 +273,7 @@ pub fn who_age_with_now(h: &Home, now: Option<&str>) -> String {
 pub fn as_scope(h: &Home, who: &str, scope: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env("KLATCH_HOME", &h.0)
+        .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", who)
         .args(["--member-scope", scope])
         .args(args)

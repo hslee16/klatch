@@ -9,6 +9,7 @@ mod asks;
 mod claims;
 mod faults;
 mod hooks;
+mod keys;
 mod labels;
 mod scale;
 mod sessions;
@@ -70,6 +71,7 @@ pub fn all() -> Vec<Scenario> {
         admin::all(),
         labels::all(),
         hooks::all(),
+        keys::all(),
     ]
     .into_iter()
     .flatten()

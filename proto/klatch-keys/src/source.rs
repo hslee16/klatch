@@ -88,6 +88,15 @@ pub fn open_or_create(source: &dyn KeySource, name: &str) -> Result<(Key, Option
     }
 }
 
+/// The name of the key for the store in `home`: one key per store, so two stores on one machine never share a key.
+pub fn store_key_name(home: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let d = Sha256::digest(canonical.to_string_lossy().as_bytes());
+    let hex: String = d.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    format!("store-{hex}")
+}
+
 /// The source this machine uses by default: the keystore of the operating system when there is one, else a 0600
 /// file under `dir`. `Ok` carries a warning when the file had to stand in for a keystore.
 pub fn default_source(dir: &std::path::Path) -> (Box<dyn KeySource>, Option<String>) {
@@ -134,6 +143,15 @@ mod tests {
         let (b, second) = open_or_create(&src, "store").unwrap();
         assert!(first.is_some() && second.is_none());
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn each_store_directory_has_its_own_key_name_and_the_name_is_safe() {
+        let a = store_key_name(std::path::Path::new("/tmp/klatch-a"));
+        let b = store_key_name(std::path::Path::new("/tmp/klatch-b"));
+        assert_ne!(a, b);
+        assert_eq!(a, store_key_name(std::path::Path::new("/tmp/klatch-a")));
+        assert!(check_name(&a).is_ok(), "{a}");
     }
 
     #[test]
