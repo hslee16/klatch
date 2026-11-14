@@ -218,6 +218,15 @@ pub trait Store {
     fn room_state(&self, _room: &str) -> Result<Option<String>> {
         Ok(None)
     }
+    /// Mute or unmute a room for a member: a muted member's hook shows only messages that mention it (#20). The
+    /// default stores nothing.
+    fn set_muted(&self, _at: Seat, _muted: bool, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// Whether the member muted the room. The default says no.
+    fn is_muted(&self, _at: Seat) -> Result<bool> {
+        Ok(false)
+    }
     /// Refuse every operation of `member` in `room` (or in every room for `*`) until it is allowed again.
     fn block_member(&self, _room: &str, _member: &str, _now: i64) -> Result<()> {
         Ok(())

@@ -205,3 +205,19 @@ fn a_late_joiner_sees_history() {
     s.join("r", "alice", 2).unwrap();
     assert_eq!(s.read(Seat::new("r", "alice"), true, 3).unwrap().len(), 1);
 }
+
+#[test]
+fn a_mute_is_kept_per_member_and_room_and_can_be_lifted() {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.join("side", "alice", 1).unwrap();
+    s.join("r", "bob", 1).unwrap();
+    assert!(!s.is_muted(Seat::new("r", "alice")).unwrap());
+    s.set_muted(Seat::new("r", "alice"), true, 2).unwrap();
+    assert!(s.is_muted(Seat::new("r", "alice")).unwrap());
+    assert!(!s.is_muted(Seat::new("side", "alice")).unwrap());
+    assert!(!s.is_muted(Seat::new("r", "bob")).unwrap());
+    s.set_muted(Seat::new("r", "alice"), false, 3).unwrap();
+    assert!(!s.is_muted(Seat::new("r", "alice")).unwrap());
+    assert!(!s.is_muted(Seat::new("nowhere", "ghost")).unwrap());
+}

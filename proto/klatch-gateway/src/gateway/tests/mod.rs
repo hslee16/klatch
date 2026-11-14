@@ -14,6 +14,7 @@ mod claims;
 mod digest;
 mod guarding;
 mod members;
+mod mute;
 mod stream;
 
 pub(super) fn alice() -> Principal {

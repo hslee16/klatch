@@ -122,6 +122,22 @@ impl<S: Store> Gateway<S> {
         )
     }
 
+    /// Mute or unmute a room for the caller: its digest then shows only messages that mention it (#20). An explicit
+    /// `read` still returns everything.
+    pub fn set_muted(&self, who: &Principal, room: &str, muted: bool) -> Result<()> {
+        check_member(who)?;
+        check_room(room)?;
+        self.authorize(
+            who,
+            &Operation::Mute {
+                room: room.into(),
+                muted,
+            },
+        )?;
+        self.store
+            .set_muted(Seat::new(room, &who.member), muted, self.now())
+    }
+
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, advance))?;
         self.store
@@ -139,6 +155,19 @@ impl<S: Store> Gateway<S> {
         self.admit(who, room, Operation::read(room, false))?;
         self.store
             .wait_seen(Seat::new(room, &who.member), seq, self.now())
+    }
+
+    /// The messages a hook shows for a room: all of them, or only those that mention the caller when it muted the
+    /// room. A hook shows each message once and leaves the read cursor alone, so a muted-out message stays readable.
+    fn digest_messages(&self, who: &Principal, room: &str, now: i64) -> Result<Vec<Message>> {
+        let messages = self.store.hook_read(room, &who.member, now)?;
+        if !self.store.is_muted(Seat::new(room, &who.member))? {
+            return Ok(messages);
+        }
+        Ok(messages
+            .into_iter()
+            .filter(|m| klatch_core::mentions(&m.body, &who.member))
+            .collect())
     }
 
     /// Set the caller's own status in a room (for example `done`). Short, one line, no control characters.
@@ -408,7 +437,7 @@ impl<S: Store> Gateway<S> {
                 });
                 continue;
             }
-            let messages = self.store.hook_read(&room, &who.member, now)?;
+            let messages = self.digest_messages(who, &room, now)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             let stale =
                 self.store

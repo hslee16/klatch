@@ -60,6 +60,12 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release(room, owner, path)
     }
+    fn set_muted(&self, at: Seat, muted: bool, now: i64) -> Result<()> {
+        self.inner.set_muted(at, muted, now)
+    }
+    fn is_muted(&self, at: Seat) -> Result<bool> {
+        self.inner.is_muted(at)
+    }
     fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
         self.inner.set_room_state(room, state, now)
     }

@@ -3,6 +3,12 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "a_muted_room_shows_only_mentions_and_read_shows_all",
+            origin: "#20, R14",
+            layer: "functional",
+            run: muted_room,
+        },
+        Scenario {
             name: "a_hook_message_stays_readable_once",
             origin: "#198",
             layer: "functional",
@@ -384,6 +390,31 @@ fn offers_presence(w: &World) -> Res {
         &w.ok("bob", &["board", "lobby"])?,
         "no current offers",
         "it goes when alice has not been seen for ten minutes",
+    )?;
+    Ok(vec![])
+}
+
+fn muted_room(w: &World) -> Res {
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("bob", &["post", "lobby", "chatter one"])?;
+    w.ok("bob", &["post", "lobby", "@alice please look"])?;
+    w.ok("bob", &["post", "lobby", "@alicia not for alice"])?;
+    w.ok("alice", &["mute", "lobby"])?;
+    let hook = w.ok("alice", &["hook", "--event", "UserPromptSubmit"])?;
+    has(&hook, "@alice please look", "a mention gets through a mute")?;
+    lacks(&hook, "chatter one", "ordinary chatter is held back")?;
+    lacks(&hook, "@alicia", "a different name is not a mention")?;
+    has(
+        &w.ok("alice", &["read", "lobby", "--peek"])?,
+        "chatter one",
+        "read still shows everything",
+    )?;
+    w.ok("alice", &["unmute", "lobby"])?;
+    w.ok("bob", &["post", "lobby", "chatter two"])?;
+    has(
+        &w.ok("alice", &["hook", "--event", "UserPromptSubmit"])?,
+        "chatter two",
+        "an unmuted room shows everything again",
     )?;
     Ok(vec![])
 }

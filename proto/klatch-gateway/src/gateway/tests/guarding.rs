@@ -110,6 +110,7 @@ fn the_guard_runs_once_per_operation_in_order_before_the_store() {
             Operation::Subscribe { .. } => "subscribe",
             Operation::Status { .. } => "status",
             Operation::Ack { .. } => "ack",
+            Operation::Mute { .. } => "mute",
             Operation::Admin { .. } => "admin",
         })
         .collect();

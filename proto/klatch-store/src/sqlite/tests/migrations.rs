@@ -53,12 +53,12 @@ fn an_old_database_is_migrated_in_place() {
 }
 
 #[test]
-fn a_fresh_database_is_at_schema_version_15() {
-    assert_eq!(version(&store()), 15);
+fn a_fresh_database_is_at_schema_version_16() {
+    assert_eq!(version(&store()), 16);
 }
 
 #[test]
-fn a_version_1_database_is_migrated_to_15_and_keeps_its_messages() {
+fn a_version_1_database_is_migrated_to_16_and_keeps_its_messages() {
     let path = temp_db("migrate-v1");
     {
         let c = Connection::open(&path).unwrap();
@@ -74,7 +74,7 @@ fn a_version_1_database_is_migrated_to_15_and_keeps_its_messages() {
         .unwrap();
     }
     let s = SqliteStore::open(&path).unwrap();
-    assert_eq!(version(&s), 15);
+    assert_eq!(version(&s), 16);
     let old = s.tail("r", 0, 10).unwrap();
     assert_eq!(old.len(), 2);
     assert!(
@@ -98,14 +98,14 @@ fn a_version_1_database_is_migrated_to_15_and_keeps_its_messages() {
     let again = SqliteStore::open(&path).unwrap();
     assert_eq!(
         version(&again),
-        15,
+        16,
         "reopening a migrated database is a no-op"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
-fn a_version_0_database_now_migrates_all_the_way_to_15() {
+fn a_version_0_database_now_migrates_all_the_way_to_16() {
     let path = temp_db("migrate-v0-to-2");
     {
         let c = Connection::open(&path).unwrap();
@@ -118,7 +118,7 @@ fn a_version_0_database_now_migrates_all_the_way_to_15() {
         .unwrap();
     }
     let s = SqliteStore::open(&path).unwrap();
-    assert_eq!(version(&s), 15);
+    assert_eq!(version(&s), 16);
     let m = &s.tail("r", 0, 10).unwrap()[0];
     assert_eq!(
         (m.attribution, m.label.as_str()),
@@ -128,11 +128,11 @@ fn a_version_0_database_now_migrates_all_the_way_to_15() {
 }
 
 #[test]
-fn a_version_two_database_migrates_to_fifteen_with_everything_intact() {
+fn a_version_two_database_migrates_to_sixteen_with_everything_intact() {
     let path = temp_db("real-v2");
     std::fs::write(&path, RELEASE_V2).unwrap();
     let s = SqliteStore::open(&path).unwrap();
-    assert_eq!(version(&s), 15);
+    assert_eq!(version(&s), 16);
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(core.len(), 1);
     assert_eq!(core[0].body, "hello from v2");
@@ -150,7 +150,7 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
     let path = temp_db("real-v0");
     std::fs::write(&path, PROTOTYPE_V0).unwrap();
     let s = SqliteStore::open(&path).unwrap();
-    assert_eq!(version(&s), 15);
+    assert_eq!(version(&s), 16);
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(
