@@ -153,6 +153,24 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Run one write statement in its own transaction.
+    fn write(&self, sql: &str, params: impl rusqlite::Params) -> Result<()> {
+        self.immediate(|| self.exec(sql, params).map(|_| ()))
+    }
+
+    /// Mark the member present in the room, then update its row: `sql` takes the room, the member and `value`.
+    fn update_member(
+        &self,
+        (room, member, now): (&str, &str, i64),
+        sql: &str,
+        value: &dyn rusqlite::ToSql,
+    ) -> Result<()> {
+        self.immediate(|| {
+            self.touch(room, member, now)?;
+            self.exec(sql, params![room, member, value]).map(|_| ())
+        })
+    }
+
     /// Run one statement; how many rows it changed.
     fn exec(&self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
         self.conn.execute(sql, params).map_err(be)
@@ -259,14 +277,11 @@ impl Store for SqliteStore {
     }
 
     fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
-        self.immediate(|| {
-            self.exec(
-                "INSERT INTO sessions(session_id,member,ts) VALUES(?1,?2,?3)
-                     ON CONFLICT(session_id) DO UPDATE SET member=?2, ts=?3",
-                params![session_id, member, now],
-            )?;
-            Ok(())
-        })
+        self.write(
+            "INSERT INTO sessions(session_id,member,ts) VALUES(?1,?2,?3)
+             ON CONFLICT(session_id) DO UPDATE SET member=?2, ts=?3",
+            params![session_id, member, now],
+        )
     }
 
     fn session_of_member(&self, member: &str) -> Result<Option<String>> {
@@ -330,25 +345,19 @@ impl Store for SqliteStore {
     }
 
     fn set_member_scope(&self, member: &str, scope: &str, now: i64) -> Result<()> {
-        self.immediate(|| {
-            self.exec(
-                "INSERT INTO member_scope(member,scope,ts) VALUES(?1,?2,?3)
-                     ON CONFLICT(member) DO UPDATE SET scope=?2, ts=?3",
-                params![member, scope, now],
-            )?;
-            Ok(())
-        })
+        self.write(
+            "INSERT INTO member_scope(member,scope,ts) VALUES(?1,?2,?3)
+             ON CONFLICT(member) DO UPDATE SET scope=?2, ts=?3",
+            params![member, scope, now],
+        )
     }
 
     fn set_status(&self, room: &str, member: &str, status: &str, now: i64) -> Result<()> {
-        self.immediate(|| {
-            self.touch(room, member, now)?;
-            self.exec(
-                "UPDATE members SET status=?3 WHERE room=?1 AND name=?2",
-                params![room, member, status],
-            )?;
-            Ok(())
-        })
+        self.update_member(
+            (room, member, now),
+            "UPDATE members SET status=?3 WHERE room=?1 AND name=?2",
+            &status,
+        )
     }
 
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
@@ -367,14 +376,11 @@ impl Store for SqliteStore {
     }
 
     fn wait_seen(&self, room: &str, member: &str, seq: i64, now: i64) -> Result<()> {
-        self.immediate(|| {
-            self.touch(room, member, now)?;
-            self.exec(
-                "UPDATE members SET wait_seq=MAX(wait_seq,?3) WHERE room=?1 AND name=?2",
-                params![room, member, seq],
-            )?;
-            Ok(())
-        })
+        self.update_member(
+            (room, member, now),
+            "UPDATE members SET wait_seq=MAX(wait_seq,?3) WHERE room=?1 AND name=?2",
+            &seq,
+        )
     }
 
     fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<AskRoom>> {
@@ -439,14 +445,11 @@ impl Store for SqliteStore {
     }
 
     fn record_hook_run(&self, member: &str, event: &str, now: i64, bytes: i64) -> Result<()> {
-        self.immediate(|| {
-            self.exec(
-                    "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES(?1,?2,?3,1,?4)
-                     ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4",
-                    params![member, event, now, bytes],
-                )?;
-            Ok(())
-        })
+        self.write(
+            "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES(?1,?2,?3,1,?4)
+             ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4",
+            params![member, event, now, bytes],
+        )
     }
 
     fn hook_runs(&self, member: &str) -> Result<Vec<HookRun>> {
@@ -669,13 +672,11 @@ impl Store for SqliteStore {
     }
 
     fn record_audit(&self, action: &str, target: &str, detail: &str, now: i64) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)",
-                params![now, action, target, detail],
-            )
-            .map(|_| ())
-            .map_err(be)
+        self.exec(
+            "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)",
+            params![now, action, target, detail],
+        )
+        .map(|_| ())
     }
 
     fn audit_log(&self, limit: usize) -> Result<Vec<AuditRecord>> {
