@@ -58,3 +58,17 @@ fn counting_refreshes_presence_so_a_waiting_session_is_not_taken_for_gone() {
         "last seen should be the count's time"
     );
 }
+
+#[test]
+fn a_wake_mark_stops_the_next_wake_but_not_a_wait_or_a_read() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.post(&bob(), "r", "one").unwrap();
+    assert_eq!(g.wakeable(&alice(), "r").unwrap(), 1);
+    g.wake_mark(&alice(), "r").unwrap();
+    assert_eq!(g.wakeable(&alice(), "r").unwrap(), 0);
+    assert_eq!(g.wait_poll(&alice(), "r").unwrap().len(), 1);
+    g.post(&bob(), "r", "two").unwrap();
+    assert_eq!(g.wakeable(&alice(), "r").unwrap(), 1);
+    assert_eq!(g.read(&alice(), "r", false).unwrap().len(), 2);
+}

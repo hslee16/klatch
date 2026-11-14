@@ -57,16 +57,36 @@ pub fn patch_targets(patch: &str) -> Vec<String> {
         .collect()
 }
 
-fn absolute(path: &str, cwd: &str) -> String {
-    if path.starts_with('/') || cwd.is_empty() {
+/// `path` as an absolute path with `.`, `..` and repeated slashes resolved, taken from `cwd` when relative. Purely
+/// textual: it does not look at the file system (a symlink is the caller's to resolve, since the file may not exist).
+pub fn clean_path(path: &str, cwd: &str) -> String {
+    let joined = if path.starts_with('/') {
         path.to_string()
     } else {
-        format!(
-            "{}/{}",
-            cwd.trim_end_matches('/'),
-            path.trim_start_matches("./")
-        )
+        format!("{cwd}/{path}")
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
     }
+    format!("/{}", parts.join("/"))
+}
+
+/// The paths a shell command names: its words, split at quotes, redirections, separators and `=` or `:`.
+fn words(command: &str) -> impl Iterator<Item = &str> {
+    command
+        .split(|c: char| c.is_whitespace() || "'\"`;|&<>()=:,".contains(c))
+        .filter(|w| !w.is_empty())
+}
+
+fn under(claim: &str, path: &str) -> bool {
+    path == claim || path.starts_with(&format!("{}/", claim.trim_end_matches('/')))
 }
 
 /// A claim on a path, not on a ticket or an ask.
@@ -111,8 +131,8 @@ pub fn judge_tool(call: &ToolCall, who: &Asker, held: &[Held]) -> ToolVerdict {
     let live = || held.iter().filter(|h| !mine_or_unrelated(h, who));
     if EDIT_TOOLS.contains(&call.tool) {
         for target in call.targets {
-            let t = absolute(target, call.cwd);
-            if let Some(h) = live().find(|h| overlaps(&absolute(&h.claim.path, call.cwd), &t)) {
+            let t = clean_path(target, call.cwd);
+            if let Some(h) = live().find(|h| overlaps(&clean_path(&h.claim.path, call.cwd), &t)) {
                 return ToolVerdict::Block(format!(
                     "klatch: {}. Do not edit it. Ask the holder in the room, or wait for the claim to be released or to lapse.",
                     describe(h, who.now)
@@ -125,7 +145,9 @@ pub fn judge_tool(call: &ToolCall, who: &Asker, held: &[Held]) -> ToolVerdict {
         let mentioned: Vec<String> = live()
             .filter(|h| {
                 let p = h.claim.path.trim_end_matches('/');
-                call.command.contains(p) || call.command.contains(&absolute(p, call.cwd))
+                let claim = clean_path(p, call.cwd);
+                call.command.contains(p)
+                    || words(call.command).any(|w| under(&claim, &clean_path(w, call.cwd)))
             })
             .map(|h| describe(h, who.now))
             .collect();
@@ -295,5 +317,74 @@ mod tests {
         let t = ["src/api.rs".to_string()];
         let v = judge_tool(&edit(&t), &asker(), &[held("/w/src/api.rs", "bob", "")]);
         assert!(matches!(v, ToolVerdict::Block(_)));
+    }
+    #[test]
+    fn dot_segments_double_slashes_and_dot_dot_do_not_hide_a_claimed_path() {
+        for target in [
+            "/w/src/../src/api.rs",
+            "/w/./src//api.rs",
+            "/w/other/../src/api.rs",
+            "src/./api.rs",
+        ] {
+            let t = [target.to_string()];
+            let v = judge_tool(&edit(&t), &asker(), &[held("src/api.rs", "bob", "")]);
+            assert!(matches!(v, ToolVerdict::Block(_)), "{target}");
+        }
+        let t = ["/w/src/api.rs".to_string()];
+        let v = judge_tool(&edit(&t), &asker(), &[held("src/x/../api.rs", "bob", "")]);
+        assert!(matches!(v, ToolVerdict::Block(_)), "an unclean claim path");
+        let up = ["/w/../etc/api.rs".to_string()];
+        let v = judge_tool(&edit(&up), &asker(), &[held("src/api.rs", "bob", "")]);
+        assert_eq!(
+            v,
+            ToolVerdict::Allow,
+            "a path that leaves the tree is not under the claim"
+        );
+    }
+
+    #[test]
+    fn a_shell_command_is_warned_about_by_the_paths_it_names_however_they_are_spelled() {
+        let c = [held("src/api.rs", "bob", "")];
+        for command in [
+            "sed -i s/a/b/ ./src/../src/api.rs",
+            "echo x >src/api.rs",
+            "echo x > '/w/src//api.rs'",
+            "cp a.rs /w/src/api.rs && ls",
+            "tee src/api.rs",
+        ] {
+            let v = judge_tool(&bash(command), &asker(), &c);
+            assert!(matches!(v, ToolVerdict::Warn(_)), "{command}");
+        }
+    }
+
+    #[test]
+    fn a_command_that_names_a_parent_directory_or_the_current_one_is_not_warned_about() {
+        let c = [held("src/api.rs", "bob", "")];
+        for command in ["ls .", "ls /w", "cd .. && ls", "cargo build"] {
+            assert_eq!(
+                judge_tool(&bash(command), &asker(), &c),
+                ToolVerdict::Allow,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_under_a_claimed_directory_in_a_command_is_warned_about() {
+        let v = judge_tool(
+            &bash("rm -rf src/old/thing.rs"),
+            &asker(),
+            &[held("src", "bob", "")],
+        );
+        assert!(matches!(v, ToolVerdict::Warn(_)));
+    }
+
+    #[test]
+    fn cleaning_a_path_makes_it_absolute_and_removes_dots() {
+        assert_eq!(clean_path("a/./b/../c", "/w"), "/w/a/c");
+        assert_eq!(clean_path("/a//b/", "/w"), "/a/b");
+        assert_eq!(clean_path("../x", "/w/y"), "/w/x");
+        assert_eq!(clean_path("../../../x", "/w"), "/x");
+        assert_eq!(clean_path("", "/w"), "/w");
     }
 }

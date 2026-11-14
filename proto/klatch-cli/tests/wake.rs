@@ -143,3 +143,16 @@ fn watchers_of_different_members_do_not_replace_each_other() {
     assert_eq!(a.wait_with_output().unwrap().status.code(), Some(2));
     assert_eq!(c.wait_with_output().unwrap().status.code(), Some(2));
 }
+
+#[test]
+fn a_message_the_watcher_announced_is_still_returned_by_a_later_wait() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "announced"]);
+    assert_eq!(
+        h.run("alice", &["wake", "--timeout", "5"]).status.code(),
+        Some(2)
+    );
+    let waited = h.ok("alice", &["wait", "r", "--peek", "--timeout", "3"]);
+    assert!(waited.contains("announced"), "{waited}");
+}
