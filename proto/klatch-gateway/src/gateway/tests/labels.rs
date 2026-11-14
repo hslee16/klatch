@@ -21,21 +21,26 @@ fn with_no_policy_every_room_and_member_is_at_the_lowest_level() {
 
 #[test]
 fn a_member_below_the_room_label_is_refused_everywhere_in_it() {
-    let g = vault();
-    let refused = [
-        ("join", g.join(&bob(), "vault").err()),
-        ("post", g.post(&bob(), "vault", "hi").err()),
-        ("read", g.read(&bob(), "vault", false).err()),
-        ("who", g.who(&bob(), "vault").err()),
+    // time moves between calls so the breaker (five safety refusals in five minutes) stays out of it
+    let (g, t) = timed();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    type Attempt<'a> = Box<dyn Fn() -> Option<Error> + 'a>;
+    let attempts: Vec<(&str, Attempt)> = vec![
+        ("join", Box::new(|| g.join(&bob(), "vault").err())),
+        ("post", Box::new(|| g.post(&bob(), "vault", "hi").err())),
+        ("read", Box::new(|| g.read(&bob(), "vault", false).err())),
+        ("who", Box::new(|| g.who(&bob(), "vault").err())),
         (
             "claim",
-            g.claim(&bob(), "vault", &ClaimSpec::new("p", 10, "")).err(),
+            Box::new(|| g.claim(&bob(), "vault", &ClaimSpec::new("p", 10, "")).err()),
         ),
-        ("claims", g.claims(&bob(), "vault").err()),
-        ("board", g.board(&bob(), "vault").err()),
+        ("claims", Box::new(|| g.claims(&bob(), "vault").err())),
+        ("board", Box::new(|| g.board(&bob(), "vault").err())),
     ];
-    for (name, err) in refused {
-        let rule = rule_of(err.unwrap_or_else(|| panic!("{name} was allowed")));
+    for (name, attempt) in attempts {
+        t.set(t.get() + 100);
+        let rule = rule_of(attempt().unwrap_or_else(|| panic!("{name} was allowed")));
         assert_eq!(rule, "clearance", "{name}");
     }
 }

@@ -54,6 +54,9 @@ pub enum AdminCmd {
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
     Chain { levels: String },
+    /// Plant a canary (a fake credential) in a room; text carrying it into any other room is refused and pauses
+    /// that room until `admin reopen`
+    Canary { room: String },
     /// Refuse posts, claim reasons, release notes and statuses that contain a private term, in rooms below the
     /// agent cap; matching ignores case and a refusal never repeats the term
     ScrubAdd { name: String, term: Vec<String> },
@@ -220,6 +223,10 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 "label order is {}; the agent cap is back to its default",
                 names.join(" < ")
             );
+        }
+        AdminCmd::Canary { room } => {
+            t.admin_plant_canary(&room)?;
+            println!("a canary is planted in {room}; a copy of it anywhere else pauses that room");
         }
         AdminCmd::ScrubAdd { name, term } => {
             t.admin_add_scrub_term(&name, &term.join(" "))?;

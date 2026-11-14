@@ -42,6 +42,7 @@ fn the_label_commands_need_a_real_terminal_like_every_admin_command() {
         vec!["admin", "scrub-add", "hosts", "quokka"],
         vec!["admin", "scrub-remove", "hosts"],
         vec!["admin", "scrub-list"],
+        vec!["admin", "canary", "lobby"],
     ] {
         let err = h.fail("alice", &args);
         assert!(

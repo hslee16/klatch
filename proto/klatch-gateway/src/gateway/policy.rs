@@ -88,10 +88,11 @@ impl<S: Store> Gateway<S> {
     pub(super) fn note_refusal(&self, who: &Principal, room: &str, operation: &str, e: &Error) {
         if let Error::Refused { rule, .. } = e {
             // a refused call stays refused whether or not the record could be kept
-            let _ = self.store.record_refusal(
-                &NewRefusal::new(&who.member, room, operation, rule),
-                self.now(),
-            );
+            let now = self.now();
+            let _ = self
+                .store
+                .record_refusal(&NewRefusal::new(&who.member, room, operation, rule), now);
+            let _ = self.check_breaker(who, now);
         }
     }
 
@@ -103,6 +104,7 @@ impl<S: Store> Gateway<S> {
         text: &str,
     ) -> Result<()> {
         check_no_credentials(text)
+            .and_then(|()| self.check_canary(who, room, text))
             .and_then(|()| self.check_scrub(room, text))
             .inspect_err(|e| self.note_refusal(who, room, operation, e))
     }

@@ -20,6 +20,7 @@ mod members;
 mod mute;
 mod scrub;
 mod stream;
+mod tripwire;
 
 pub(super) fn alice() -> Principal {
     Principal::unattributed("alice")

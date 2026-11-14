@@ -25,6 +25,7 @@ mod budget;
 mod dm;
 mod policy;
 mod scrub;
+mod tripwire;
 
 const MAX_PATH_BYTES: usize = 1024;
 const MAX_REASON_BYTES: usize = 500;
@@ -518,26 +519,7 @@ impl<S: Store> Gateway<S> {
     /// that is not an attempt by the member.
     fn authorize_quietly(&self, who: &Principal, op: &Operation) -> Result<()> {
         if let Some(room) = op.room() {
-            if self.store.is_blocked(room, &who.member)? {
-                return Err(Error::Refused {
-                    rule: "admin-block".into(),
-                    reason: format!("you were removed from room {room} by the admin"),
-                });
-            }
-            if self.store.room_state("*")?.as_deref() == Some("paused") {
-                return Err(Error::Refused {
-                    rule: "admin-pause".into(),
-                    reason: "rooms are paused by the admin".into(),
-                });
-            }
-            if op.changes_a_closed_room()
-                && self.store.room_state(room)?.as_deref() == Some("closed")
-            {
-                return Err(Error::Refused {
-                    rule: "admin-close".into(),
-                    reason: format!("room {room} is closed by the admin; it is read-only"),
-                });
-            }
+            self.check_stops(who, room, op)?;
             self.check_dm(who, room)?;
             if !matches!(op, Operation::Release { .. }) {
                 self.check_clearance(who, room)?;
