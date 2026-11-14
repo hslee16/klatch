@@ -295,11 +295,12 @@ impl HookArgs {
 /// A session that ends is marked done in every room it joined, so it leaves the board at once instead of aging out
 /// (DESIGN section 25.13). It prints nothing: the session is over.
 fn session_end(t: &dyn Transport) -> Result<()> {
-    let d = t.digest_with(false)?;
+    // Only the rooms are needed: a digest would mark unread messages as shown, and a resumed session would never
+    // be shown them (#30).
+    let rooms = t.rooms()?;
     // a member that has ended cannot be working: free what it held (#277)
     let _ = t.release_all();
-    let rooms = d.rooms.iter().map(|r| &r.room);
-    for room in rooms.chain(d.refused.iter().map(|r| &r.room)) {
+    for room in &rooms {
         let _ = t.set_status(room, "done session ended");
     }
     let _ = t.record_hook_run("SessionEnd", 0);

@@ -108,6 +108,7 @@ impl<S: Store> Gateway<S> {
                 "empty message: there is nothing to post".into(),
             ));
         }
+        check_no_credentials(body)?;
         self.authorize(
             who,
             &Operation::Post {
@@ -131,6 +132,13 @@ impl<S: Store> Gateway<S> {
         let acceptable = parent.is_empty() || (valid_name(parent) && parent != who.member);
         invalid(acceptable, "bad parent member".into())?;
         self.store.note_parent(&who.member, parent, self.now())
+    }
+
+    /// The rooms the caller has joined, without reading anything: a hook that only needs to act on each room (a
+    /// session ending) must not use up the messages a digest would show the member's next session.
+    pub fn rooms(&self, who: &Principal) -> Result<Vec<String>> {
+        check_member(who)?;
+        self.store.rooms_of(&who.member)
     }
 
     /// Mute or unmute a room for the caller: its digest then shows only messages that mention it (#20). An explicit
@@ -186,6 +194,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_status(status)?;
+        check_no_credentials(status)?;
         self.authorize(
             who,
             &Operation::Status {
@@ -296,6 +305,7 @@ impl<S: Store> Gateway<S> {
         check_room(room)?;
         check_path(path)?;
         check_reason(reason)?;
+        check_no_credentials(reason)?;
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
@@ -352,6 +362,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
+        check_no_credentials(note)?;
         let note = klatch_core::flat(note);
         if note.chars().count() > 300 {
             return Err(Error::Invalid(
@@ -555,6 +566,20 @@ fn invalid(unless: bool, what: String) -> Result<()> {
         Ok(())
     } else {
         Err(Error::Invalid(what))
+    }
+}
+
+/// Refuse text that carries a credential (R20): a room is a log other agents and people read, not a place for secrets.
+/// The refusal names the kind of credential and never the text.
+fn check_no_credentials(text: &str) -> Result<()> {
+    match klatch_core::credential_kind(text) {
+        None => Ok(()),
+        Some(kind) => Err(Error::Refused {
+            rule: "credentials".into(),
+            reason: format!(
+                "the text looks like it contains {kind}; do not post secrets to a room, keep them in a secret store and say where"
+            ),
+        }),
     }
 }
 

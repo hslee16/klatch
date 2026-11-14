@@ -72,3 +72,16 @@ fn muting_validates_the_room_and_goes_through_the_guard() {
         }
     );
 }
+
+#[test]
+fn listing_the_rooms_of_a_member_consumes_no_message() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.join(&alice(), "side").unwrap();
+    g.post(&bob(), "r", "still unread").unwrap();
+    assert_eq!(
+        g.rooms(&alice()).unwrap(),
+        vec!["r".to_string(), "side".to_string()]
+    );
+    assert_eq!(bodies(&g.digest(&alice()).unwrap()), vec!["still unread"]);
+}
