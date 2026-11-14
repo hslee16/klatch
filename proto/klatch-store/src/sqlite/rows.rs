@@ -20,7 +20,7 @@ pub(super) fn attribution_from(text: &str) -> klatch_core::Attribution {
 }
 
 /// The columns every message query selects, in the order `message_from_row` reads them.
-pub(super) const MESSAGE_COLUMNS: &str = "mid,seq,sender,attribution,label,body,ts";
+pub(super) const MESSAGE_COLUMNS: &str = "mid,seq,sender,attribution,label,body,ts,kind,payload";
 
 pub(super) fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     Ok(Message {
@@ -31,5 +31,7 @@ pub(super) fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Messag
         label: r.get(4)?,
         body: r.get(5)?,
         ts: r.get(6)?,
+        kind: r.get(7)?,
+        payload: r.get(8)?,
     })
 }

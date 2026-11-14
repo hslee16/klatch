@@ -35,6 +35,12 @@ pub enum ServerFrame {
         label: String,
         body: String,
         ts: i64,
+        /// A handoff, added within protocol version 1: absent on an ordinary message, so a consumer that does not
+        /// know them sees what it always saw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        payload: Option<String>,
     },
     CaughtUp {
         v: u32,

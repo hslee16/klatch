@@ -489,3 +489,56 @@ fn a_plain_message_cannot_pose_as_sealed_text() {
         .unwrap_err();
     assert!(matches!(err, Error::Invalid(_)), "{err}");
 }
+
+#[test]
+fn a_sealed_label_seals_the_payload_too_and_a_body_and_payload_swapped_do_not_open() {
+    let path = temp_db("lk-payload");
+    let s = SqliteStore::open(&path, &key(7)).unwrap();
+    seal_label(&s, "secret");
+    s.set_label_keys(secret_ring(0x33));
+    s.post_as(
+        &NewMessage::new(
+            ("r", "alice"),
+            Attribution::Unattributed,
+            "secret",
+            "body-text-one",
+        )
+        .with_handoff("plan", "payload-text-two"),
+        2,
+    )
+    .unwrap();
+    let m = s.tail("r", 0, 10).unwrap().remove(0);
+    assert_eq!(
+        (m.body.as_str(), m.payload.as_deref(), m.kind.as_deref()),
+        ("body-text-one", Some("payload-text-two"), Some("plan"))
+    );
+    // in the database neither is readable, the kind is
+    let (body, payload, kind): (String, String, String) = keyed_with(&path, &key(7))
+        .query_row("SELECT body,payload,kind FROM messages", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+    assert!(
+        !body.contains("body-text-one") && !payload.contains("payload-text-two"),
+        "{body} {payload}"
+    );
+    assert_eq!(kind, "plan");
+    // without the key both are notes
+    let few = SqliteStore::open(&path, &key(7)).unwrap();
+    few.set_label_keys(LabelKeys::new());
+    let m = few.tail("r", 0, 10).unwrap().remove(0);
+    assert!(m.body.contains("sealed") && m.payload.unwrap().contains("sealed"));
+    // swap the two columns: each is bound to its own field
+    {
+        let c = keyed_with(&path, &key(7));
+        c.execute("UPDATE messages SET body=?1, payload=?2", [&payload, &body])
+            .unwrap();
+    }
+    let m = s.tail("r", 0, 10).unwrap().remove(0);
+    assert!(
+        !m.body.contains("payload-text-two") && !m.body.contains("body-text-one"),
+        "{}",
+        m.body
+    );
+    assert!(m.body.contains("sealed"));
+}

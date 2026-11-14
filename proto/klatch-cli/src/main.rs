@@ -72,6 +72,13 @@ enum Cmd {
         /// A label lower than the room's own, for a message that is less sensitive than the room
         #[arg(long)]
         label: Option<String>,
+        /// Make this a handoff: a short kind (letters, digits, dot, dash, underscore) that klatch stores and
+        /// delivers and never interprets
+        #[arg(long)]
+        kind: Option<String>,
+        /// An opaque payload for the next member (at most 16 KiB; needs --kind); held to the same rules as the body
+        #[arg(long, requires = "kind")]
+        payload: Option<String>,
     },
     /// Read unread messages in a room and advance the cursor
     Read {

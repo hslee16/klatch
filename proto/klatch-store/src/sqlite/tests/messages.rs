@@ -492,3 +492,78 @@ fn a_wake_poll_refreshes_presence_like_a_wait_poll() {
     s.wake_poll("r", "alice", 500).unwrap();
     assert_eq!(s.members("r").unwrap()[0].last_seen, 500);
 }
+
+// ---- typed handoffs: an optional kind and payload (#123) ----
+
+#[test]
+fn a_message_with_no_handoff_has_none() {
+    let s = store();
+    s.post(Seat::new("r", "alice"), "plain", 1).unwrap();
+    let m = &s.tail("r", 0, 10).unwrap()[0];
+    assert_eq!((m.kind.as_deref(), m.payload.as_deref()), (None, None));
+}
+
+#[test]
+fn a_kind_and_payload_are_stored_and_come_back_by_every_read_path() {
+    let s = store();
+    s.join("r", "bob", 1).unwrap();
+    s.post_as(
+        &NewMessage::new(
+            ("r", "alice"),
+            Attribution::Unattributed,
+            "public",
+            "see attached",
+        )
+        .with_handoff("work-order", "{\"id\":7,\"files\":[\"a.rs\"]}"),
+        2,
+    )
+    .unwrap();
+    let want = (
+        Some("work-order".to_string()),
+        Some("{\"id\":7,\"files\":[\"a.rs\"]}".to_string()),
+    );
+    let got = |mut v: Vec<Message>| {
+        let m = v.remove(0);
+        (m.kind, m.payload)
+    };
+    assert_eq!(got(s.tail("r", 0, 10).unwrap()), want);
+    assert_eq!(got(s.read(Seat::new("r", "bob"), false, 3).unwrap()), want);
+    assert_eq!(got(s.hook_read("r", "bob", 4).unwrap()), want);
+    assert_eq!(got(s.wait_poll("r", "bob", 5).unwrap()), want);
+}
+
+#[test]
+fn a_kind_without_a_payload_is_a_label_on_the_message_alone() {
+    let s = store();
+    s.post_as(
+        &NewMessage::new(("r", "alice"), Attribution::Unattributed, "public", "done")
+            .with_kind("result"),
+        1,
+    )
+    .unwrap();
+    let m = &s.tail("r", 0, 10).unwrap()[0];
+    assert_eq!(
+        (m.kind.as_deref(), m.payload.as_deref()),
+        (Some("result"), None)
+    );
+}
+
+#[test]
+fn a_database_from_before_handoffs_gains_the_columns_and_keeps_its_messages() {
+    let path = temp_db("handoff-migrate");
+    drop(SqliteStore::open(&path, &crate::insecure_test_key()).unwrap());
+    {
+        let c = keyed(&path);
+        c.execute_batch(
+            "INSERT INTO messages(room,seq,mid,sender,member,body,ts,attribution,label) VALUES('r',1,'m1','a','a','old',1,'unattributed','public');
+             ALTER TABLE messages DROP COLUMN kind; ALTER TABLE messages DROP COLUMN payload; PRAGMA user_version = 20;",
+        )
+        .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::insecure_test_key()).unwrap();
+    let m = &s.tail("r", 0, 10).unwrap()[0];
+    assert_eq!(
+        (m.body.as_str(), m.kind.as_deref(), m.payload.as_deref()),
+        ("old", None, None)
+    );
+}

@@ -11,6 +11,10 @@ pub struct Message {
     pub label: String,
     pub body: String,
     pub ts: i64,
+    /// An optional handoff: a short kind and an opaque payload for the next member. klatch stores, labels, delivers
+    /// and audits them and never interprets them.
+    pub kind: Option<String>,
+    pub payload: Option<String>,
 }
 
 impl Message {

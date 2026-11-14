@@ -1233,3 +1233,110 @@ fn a_bad_scope_is_an_invalid_error_over_the_wire() {
     assert!(!ok);
     assert_eq!(err.unwrap().0, "invalid");
 }
+
+// ---- typed handoffs on the wire (#123) ----
+
+#[test]
+fn a_post_with_a_kind_and_payload_reaches_a_subscriber_with_both_and_a_plain_post_without() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &bob(),
+        &[
+            req(
+                "a",
+                "post",
+                json!({"room":"r","body":"see the order","kind":"work-order","payload":"{\"id\":7}"}),
+            ),
+            req("b", "post", json!({"room":"r","body":"just words"})),
+        ],
+    );
+    assert!(response(&f, "a").0 && response(&f, "b").0);
+    let f = run(
+        &g,
+        &alice(),
+        &[req("s", "subscribe", json!({"room":"r","from_seq":0}))],
+    );
+    let handoffs: Vec<(Option<String>, Option<String>)> = f
+        .iter()
+        .filter_map(|x| match x {
+            ServerFrame::Message { kind, payload, .. } => Some((kind.clone(), payload.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        handoffs,
+        vec![
+            (
+                Some("work-order".to_string()),
+                Some("{\"id\":7}".to_string())
+            ),
+            (None, None)
+        ]
+    );
+}
+
+#[test]
+fn a_payload_without_a_kind_a_bad_kind_and_a_payload_the_rules_refuse_are_all_failed_responses() {
+    let g = gateway();
+    let f = run(
+        &g,
+        &bob(),
+        &[
+            req(
+                "nokind",
+                "post",
+                json!({"room":"r","body":"b","payload":"x"}),
+            ),
+            req(
+                "badkind",
+                "post",
+                json!({"room":"r","body":"b","kind":"has space","payload":"x"}),
+            ),
+            req(
+                "secret",
+                "post",
+                json!({"room":"r","body":"b","kind":"plan","payload":"ghp_abcdefghijklmnopqrstuvwxyz0123456789"}),
+            ),
+        ],
+    );
+    for id in ["nokind", "badkind", "secret"] {
+        assert!(!response(&f, id).0, "{id} was accepted");
+    }
+    let text = format!("{f:?}");
+    assert!(!text.contains("ghp_abc"), "a refusal repeated the payload");
+    assert!(g.tail(&alice(), "r", (0, 10)).unwrap().is_empty());
+}
+
+#[test]
+fn read_over_the_wire_carries_a_handoff_and_leaves_an_ordinary_message_as_it_was() {
+    let g = gateway();
+    g.post_handoff(
+        &bob(),
+        "r",
+        "see",
+        None,
+        &klatch_gateway::Handoff {
+            kind: "plan",
+            payload: Some("P"),
+        },
+    )
+    .unwrap();
+    g.post(&bob(), "r", "plain").unwrap();
+    let f = run(
+        &g,
+        &alice(),
+        &[req("rd", "read", json!({"room":"r","peek":true}))],
+    );
+    let result = response(&f, "rd").1.unwrap();
+    let ms = result["messages"].as_array().unwrap();
+    assert_eq!(
+        (ms[0]["kind"].as_str(), ms[0]["payload"].as_str()),
+        (Some("plan"), Some("P"))
+    );
+    assert!(
+        ms[1].get("kind").is_none() && ms[1].get("payload").is_none(),
+        "{}",
+        ms[1]
+    );
+}

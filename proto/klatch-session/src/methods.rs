@@ -27,6 +27,11 @@ struct PostParams {
     body: String,
     #[serde(default)]
     label: Option<String>,
+    /// A handoff: a kind, and optionally an opaque payload (which needs a kind).
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    payload: Option<String>,
 }
 #[derive(Deserialize)]
 struct ReadParams {
@@ -120,7 +125,19 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
     let empty = |()| json!({});
     match call.method.clone().as_str() {
         "post" => call.run(
-            |p: PostParams| g.post_labeled(who, &p.room, &p.body, p.label.as_deref()),
+            |p: PostParams| match (p.kind.as_deref(), p.payload.as_deref()) {
+                (None, None) => g.post_labeled(who, &p.room, &p.body, p.label.as_deref()),
+                (None, Some(_)) => Err(klatch_core::Error::Invalid(
+                    "a payload needs a kind".into(),
+                )),
+                (Some(kind), payload) => g.post_handoff(
+                    who,
+                    &p.room,
+                    &p.body,
+                    p.label.as_deref(),
+                    &klatch_gateway::Handoff { kind, payload },
+                ),
+            },
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
         ),
         "read" => call.run(

@@ -28,6 +28,8 @@ impl<'a> Seat<'a> {
 /// A message to append: the room, who sent it, whether the sender was proven, the label it goes under and its text.
 #[derive(Debug, Clone, Copy)]
 pub struct NewMessage<'a> {
+    pub kind: Option<&'a str>,
+    pub payload: Option<&'a str>,
     pub room: &'a str,
     pub sender: &'a str,
     pub attribution: Attribution,
@@ -43,11 +45,30 @@ impl<'a> NewMessage<'a> {
         body: &'a str,
     ) -> Self {
         Self {
+            kind: None,
+            payload: None,
             room,
             sender,
             attribution,
             label,
             body,
+        }
+    }
+
+    /// The same message carrying a handoff: a kind and an opaque payload.
+    pub fn with_handoff(self, kind: &'a str, payload: &'a str) -> Self {
+        Self {
+            kind: Some(kind),
+            payload: Some(payload),
+            ..self
+        }
+    }
+
+    /// The same message with a kind and no payload.
+    pub fn with_kind(self, kind: &'a str) -> Self {
+        Self {
+            kind: Some(kind),
+            ..self
         }
     }
 }

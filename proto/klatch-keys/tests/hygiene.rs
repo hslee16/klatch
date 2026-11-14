@@ -84,9 +84,9 @@ fn nothing_defines_its_own_cipher_hash_mac_or_key_derivation() {
         "pbkdf",
         "derive_key",
     ];
-    // helpers that only call the audited crates: they ask SQLCipher its version, and seal a message body through
-    // `klatch_keys::protect_text`
-    let reviewed = ["cipher_version", "seal_body"];
+    // helpers that only call the audited crates: they ask SQLCipher its version, and seal a message body or payload
+    // through `klatch_keys::protect_text`
+    let reviewed = ["cipher_version", "seal_body", "seal_text"];
     let mut found = Vec::new();
     for (path, text) in sources() {
         for (n, line) in code_only(&text).lines().enumerate() {
