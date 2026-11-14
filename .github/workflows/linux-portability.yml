@@ -1,0 +1,82 @@
+name: Linux portability
+
+# What the Linux binaries depend on (#435): the glibc version the gnu build needs, and whether a musl build links
+# statically and still works. Run by hand or when this file changes; the result is in each job's summary.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/linux-portability.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }} on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04, musl: false }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-22.04, musl: true }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm, musl: false }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-22.04-arm, musl: true }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+
+      - name: Build
+        working-directory: proto
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked -p klatch --target "$TARGET"
+
+      - name: What it links and what it needs
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          bin="proto/target/$TARGET/release/klatch"
+          {
+            echo "### $TARGET"
+            echo '```'
+            file "$bin"
+            echo "--- ldd"
+            ldd "$bin" 2>&1 || true
+            echo "--- newest glibc symbol version the binary needs"
+            objdump -T "$bin" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1 || true
+            echo "--- size"
+            ls -l "$bin" | awk '{print $5 " bytes"}'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test (a whole launcher flow against this binary, key files only)
+        env:
+          KLATCH_BIN: ${{ github.workspace }}/proto/target/${{ matrix.target }}/release/klatch
+        run: clients/recipes/launcher-demo.sh
+
+      - name: The key file fallback works with no keystore and no key directory given
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bin="$PWD/proto/target/$TARGET/release/klatch"
+          home="$(mktemp -d)"
+          export HOME="$home" KLATCH_HOME="$home/rooms" XDG_STATE_HOME="$home/state" KLATCH_NAME=alice
+          unset KLATCH_KEY_DIR DBUS_SESSION_BUS_ADDRESS
+          "$bin" join lobby
+          "$bin" post lobby "from the key file fallback"
+          test -d "$home/state/klatch/keys"
+          ls -l "$home/state/klatch/keys" | tail -n +2
+          KLATCH_NAME=bob "$bin" join lobby
+          KLATCH_NAME=bob "$bin" read lobby --peek 2>/dev/null | grep -q "from the key file fallback"
+          echo "key file fallback ok" | tee -a "$GITHUB_STEP_SUMMARY"
