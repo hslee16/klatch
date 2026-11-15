@@ -206,13 +206,25 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
 #[hegel::test]
 fn the_hook_output_is_always_valid_json_within_its_byte_budget(tc: TestCase) {
     use klatch::domain::{budget, hook_output_json, printed_len, render_hook, render_hook_within};
-    let rooms = tc.draw(gs::integers::<u8>().max_value(5)) as usize;
-    let digests: Vec<_> = (0..rooms)
+    // up to hundreds of rooms: past about 45 the headers alone outgrew the budget (#599)
+    let rooms = tc.draw(gs::integers::<u16>().max_value(300)) as usize;
+    // only the first few rooms are drawn afresh; the rest are copies under other names, so the case stays cheap to
+    // generate and to shrink however many rooms it has
+    let fresh: Vec<_> = (0..rooms.min(5))
         .map(|i| {
             digest_for(
                 &tc,
                 ROOM_NAMES[(i + tc.draw(gs::integers::<u8>().max_value(4)) as usize) % 5],
             )
+        })
+        .collect();
+    let digests: Vec<_> = (0..rooms)
+        .map(|i| {
+            let mut d = fresh[i % fresh.len()].clone();
+            if i >= fresh.len() {
+                d.room = format!("{}{i}", d.room).chars().take(40).collect();
+            }
+            d
         })
         .collect();
     let text = render_hook(&digests, 1_500);

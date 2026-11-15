@@ -457,9 +457,8 @@ fn flood(w: &World, names: &[String]) -> Result<(), String> {
     all_ok(&w.serve("y", &posts)?, names.len() * 3)
 }
 
-/// Up to 40 rooms with news fit the digest budget. Past that the per-room header and the reserved "N more" lines alone
-/// outgrow it (#599, found by this scenario), so 100 rooms only have to stay under a sanity ceiling and the overshoot
-/// is recorded; tighten the ceiling to the budget when #599 is fixed.
+/// Forty rooms with news fit the digest budget; 100 do not, and the rooms that do not fit collapse into one counted
+/// line, so the whole output stays inside the hook budget (#599).
 fn hook_hundred_rooms(w: &World) -> Res {
     let rooms = 100;
     let names: Vec<String> = (0..rooms).map(|i| format!("room{i}")).collect();
@@ -490,11 +489,17 @@ fn hook_hundred_rooms(w: &World) -> Res {
     let hook_ms = ms(t);
     check(out.contains("[room "), "no room was shown at all")?;
     check(
-        out.len() < 20_000,
+        // the real budget: HOOK_MAX_BYTES in klatch/src/domain/budget.rs
+        out.len() <= 9_400,
         format!(
             "the digest is {} bytes across {rooms} rooms with news",
             out.len()
         ),
+    )?;
+    has(
+        &out,
+        "more rooms have news",
+        "the rooms that did not fit are not counted",
     )?;
     Ok(vec![
         ("rooms".into(), rooms as f64),
