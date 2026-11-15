@@ -1113,3 +1113,7 @@ per overlapping path in a scope, release only by the holder, expiry frees, a con
 (each other member's message is delivered once, one's own never, acknowledgement only moves forward), anchored claims
 released by the work item's `done`. Not worth it: SQLite or SQLCipher behaviour, whole CLI flows, anything on the real
 clock.
+
+## 43. A second Store, in memory, as a spike (2026-11-14, tickets #73, #74, #485)
+
+Question: is the `Store` trait shaped by SQLite? Method: the 90 store tests that use only the trait became a conformance suite (`src/store/conformance.rs`, #74); a test-only in-memory store (`src/store/memory_spike.rs`) implements only the 11 required methods and runs the whole suite. Result: **44 of 90 pass**. The core passes (post and read with cursors, members, claims with scopes and expiry, tail, head, advance_cursor); the 46 that fail all need optional methods: hook and wake positions, status, sessions, room state, mute, parent, deadlock detection, asks, anchors, credentials, policy. The trait therefore does not leak SQLite for the core, and the optional methods are where a backend has work to do. The finding that matters: those optional methods default to silent success (`Ok(())` or empty), so a backend can skip them and still compile and run (#485). A real second backend is not built; this spike stays test-only.
