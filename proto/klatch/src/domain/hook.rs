@@ -375,8 +375,13 @@ pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
 }
 
 /// `render_hook` with a smaller budget: a session start shares the hook cap with the convention and the boards.
+/// The output never exceeds `budget`. Below `DIGEST_MIN_BYTES` (#602) it is empty: not even the line that counts the
+/// rooms with news fits.
 pub fn render_hook_within(digests: &[RoomDigest], now: i64, budget: usize) -> String {
     let mut out = String::new();
+    if budget < crate::domain::budget::DIGEST_MIN_BYTES {
+        return out;
+    }
     let (plans, collapsed) = plan_rooms(digests, now, budget);
     for p in plans {
         out.push_str(&room_header(p.room));
@@ -1175,5 +1180,35 @@ mod tests {
         let out = render_hook(&[d], 0);
         assert_eq!(out.matches(" from bob").count(), 3);
         assert!(!out.contains("not shown"), "{out}");
+    }
+
+    #[test]
+    fn no_budget_is_overshot_however_small_and_however_many_rooms() {
+        // #602: below the reserve for one room the collapsed line was printed whatever the budget
+        for n in 1..8 {
+            let rooms: Vec<RoomDigest> = (0..n)
+                .map(|i| room_with_news(&format!("{}{i}", "r".repeat(39)), i as i64))
+                .collect();
+            for budget in (0..3000).step_by(7) {
+                let out = render_hook_within(&rooms, 0, budget);
+                assert!(
+                    printed_len(&out) <= budget,
+                    "{n} rooms, budget {budget}: {} bytes",
+                    printed_len(&out)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_budget_below_the_floor_prints_nothing_and_at_the_floor_still_says_rooms_have_news() {
+        use crate::domain::budget::DIGEST_MIN_BYTES;
+        assert!(printed_len(&collapsed_line(usize::MAX)) <= DIGEST_MIN_BYTES);
+        let rooms: Vec<RoomDigest> = (0..5)
+            .map(|i| room_with_news(&format!("room{i}"), i))
+            .collect();
+        assert_eq!(render_hook_within(&rooms, 0, DIGEST_MIN_BYTES - 1), "");
+        let out = render_hook_within(&rooms, 0, DIGEST_MIN_BYTES);
+        assert!(out.contains("5 more rooms have news"), "{out}");
     }
 }

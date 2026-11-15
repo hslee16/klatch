@@ -1,0 +1,1 @@
+- A hook digest given a budget below `DIGEST_MIN_BYTES` (100 bytes) prints nothing instead of overshooting it with the line that counts rooms with news (#602).
