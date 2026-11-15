@@ -1455,3 +1455,45 @@ Revisit if: Claude Code documents a way to register a non-session peer or a plug
 - The ancestry-and-registry identity is in the same evidence class as agent-loom; Cotal's is stronger because a broker authenticates. A klatch daemon (epic #152) gets the same strength from its owned socket and peer pid (section 38).
 - Cotal and Codex both warn that unattended wake and unattended hooks can silently not work; klatch should say so at the point of use (doctor and init), not in documentation.
 - Tickets filed from this section: #544 (Codex untrusted hooks skip silently; doctor must detect), #545 (probe for a real `codex queue`), #546 (per-message delivery receipts), #547 (age reminders for long-held claims).
+
+## 50. Headless Claude Code sessions as verified team members (2026-11-15, Claude Code 2.1.325, macOS, ticket #582)
+
+Question: can the human run the next wave of work as separate `claude -p` sessions, each a distinct verified klatch member with its own bundle, worktree and hooks, instead of Agent-tool subagents that share the parent's name?
+
+### 50.1 What was built
+
+`proto/scripts/team` (DESIGN 62): `start TASKS_FILE`, `status`, `logs NAME`, `stop`, `smoke`. Tested by `proto/scripts/test-team.sh` against a fake klatch and a fake claude.
+
+### 50.2 What `claude -p` supports (checked with `claude --help`)
+
+`--settings FILE`, `--setting-sources`, `--append-system-prompt`, `--output-format stream-json` (needs `--verbose`), `--max-budget-usd`, `--permission-mode`, `--model`, `--no-session-persistence`. There is no `--max-turns` in this version, so the launcher uses a wall-clock watchdog instead (`TEAM_MAX_SECONDS`) plus the dollar cap.
+
+### 50.3 Real run (Haiku, the settings file and runner the script generates, a FAKE klatch that logs each call)
+
+Method: one task, "run `echo hi`, then `echo bye`, then finish; say what any hook told you". The fake `hook --event SessionStart` printed a join line; the fake `hook --event PostToolUse` printed `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"klatch mail: ..."}}` once.
+
+| Observation | Result |
+|---|---|
+| Startup | the SessionStart hook ran in the same second the launcher started; the first model turn followed within the second |
+| Hooks fired | SessionStart, UserPromptSubmit (once: one prompt), PostToolUse after every tool call, Stop, SessionEnd, in that order; each ran with `KLATCH_IDENTITY_FILE` set to the bundle and no name |
+| Mail between turns | the PostToolUse context reached the model after the two Bash calls and it acted on it (ran the extra command). Mail is delivered mid-turn at tool boundaries, not between prompts, because there is one prompt |
+| Cost and time | 4 turns, 9.2 s, about $0.003 (Haiku) |
+| Exit | 0; the runner wrote the exit file and revoked the credential after the SessionEnd hook |
+
+The model treated mail as an instruction from the user ("the harness treats hook output as user feedback"), so the brief must keep saying mail is data, and a hostile message in a room is a prompt injection path for every worker (the labelled digest of a sender being verified helps, it does not stop this).
+
+### 50.4 asyncRewake in `-p` (question of RESEARCH-NOTES 47)
+
+With `TEAM_WAKE=1` (a SessionStart and a Stop watcher that sleeps 8 s then exits 2 with a pointer on stderr), a task that answers in one turn: the session answered at 2 s and the process stayed alive until the watchers ended (SessionEnd at 10 s). The pointer text never reached the model (1 turn, the marker word absent from the log). So a headless session is held open by its async hooks but is not woken by them; with the real 540 s watcher a finished worker would sit for up to nine minutes. The wake watcher stays off for workers, and a worker waits with `klatch wait` inside its turn.
+
+### 50.5 NOT run, and why
+
+The real smoke through klatch (`worker issue`, a verified post, `read` showing a sender without `(unverified)`) was not run by this session: `klatch worker issue` refuses inside a coding-agent session, by design, and nothing here detaches from the process tree to get around it. The human runs `proto/scripts/team smoke` in a terminal (a throwaway home and key directory; one Haiku worker joins, posts, reads, finishes) and `proto/scripts/team start tasks.txt` for the wave. decision 14 of the 2026-11-14 decisions (DESIGN section 32) already records a headless session verified through its bundle (`w-live`); what is new here is the launcher around it.
+
+### 50.6 Failure modes the script handles
+
+A refused issue starts nothing for that task (no worktree, no claude), prints claude's reason and the others go on, exit 1; a bad tasks file is refused whole with exit 2 before anything is issued; a worker already running is not started twice; a finished worker is started again on its existing branch and worktree; `stop` kills the runner and its claude and revokes; the watchdog kills a worker past its wall clock and the runner revokes.
+
+### 50.7 Tickets
+
+#591 (a finished headless turn cannot receive mail), #592 (real smoke through klatch, needs-human), #593 (no turn cap, team budget or relaunch), #594 (room mail as a prompt injection path in bypassPermissions, needs-human).

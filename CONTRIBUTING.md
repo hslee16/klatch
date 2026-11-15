@@ -92,6 +92,24 @@ and does not call this script. To run the gate automatically before every push, 
 `--uninstall` removes it; `git push --no-verify` skips it). Nothing installs the hook for you.
 `proto/scripts/test-scripts.sh` tests the gate and the installer themselves.
 
+### Running a team of headless workers
+
+`proto/scripts/team` runs each task of a tasks file as its own headless Claude Code session (`claude -p`), a distinct verified klatch member with its own credential, git worktree and branch (`alee/<name>`) and hooks. Run it yourself, in your own terminal: issuing credentials refuses inside a coding-agent session by design.
+
+```
+cat > tasks.txt <<'EOF'
+# name | ticket | prompt
+alpha | 101 | Build the thing described in the ticket; open a PR.
+EOF
+! proto/scripts/team start tasks.txt     # from a Claude Code prompt; or without the ! in a plain terminal
+proto/scripts/team status                # running, done, stopped or failed; exit code; cost
+proto/scripts/team logs alpha            # tail of the stream-json log
+proto/scripts/team stop                  # kill all workers and revoke their credentials
+proto/scripts/team smoke                 # one tiny Haiku worker in a throwaway home first
+```
+
+Settings are environment variables listed at the top of the script (budget `TEAM_MAX_BUDGET`, wall clock `TEAM_MAX_SECONDS`, `TEAM_MODEL`, `TEAM_ROOM`, `TEAM_LAUNCHER`). `proto/scripts/test-team.sh` tests it with a fake klatch and a fake claude.
+
 ## Working on klatch
 
 - Run `proto/scripts/gate` before you open a pull request. Branch and open a pull request; never push to `main`. Merge only
