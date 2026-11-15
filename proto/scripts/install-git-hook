@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Install (or remove) a git pre-push hook that runs proto/scripts/gate (#403). It is opt in: nothing installs it for
+# you. It will not touch a pre-push hook it did not write, and `git push --no-verify` skips it as for any hook.
+#
+#   proto/scripts/install-git-hook
+#   proto/scripts/install-git-hook --uninstall
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+hook="$(git -C "$root" rev-parse --git-path hooks/pre-push)"
+case "$hook" in /*) ;; *) hook="$root/$hook" ;; esac
+marker="# klatch gate hook"
+
+ours() { [ -f "$hook" ] && grep -q "$marker" "$hook"; }
+
+if [ "${1:-}" = "--uninstall" ]; then
+  if ours; then rm -f "$hook"; echo "removed $hook"; elif [ -e "$hook" ]; then echo "$hook is not klatch's; left alone"; else echo "no pre-push hook to remove"; fi
+  exit 0
+fi
+
+if [ -e "$hook" ] && ! ours; then
+  echo "a pre-push hook already exists at $hook and is not klatch's; not touching it" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$hook")"
+cat > "$hook" <<HOOK
+#!/bin/sh
+$marker (installed by proto/scripts/install-git-hook; remove it with: proto/scripts/install-git-hook --uninstall)
+exec "\$(git rev-parse --show-toplevel)/proto/scripts/gate"
+HOOK
+chmod +x "$hook"
+echo "installed $hook: a push now runs the gate first (git push --no-verify skips it)"

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# The local gate (#403): run this before you open a pull request. It is stricter than CI on purpose (CI stays light):
+# the same checks CI runs, plus the property tests and the models with a bigger budget, one fixed seed, and the
+# test-clock and dependency checks. It stops at the first failure and says how to replay it.
+#
+#   proto/scripts/gate            the usual gate
+#   proto/scripts/gate --long     the same with many more property cases (5000 each, by hand, takes minutes)
+#
+# The Hegel seed is taken from the commit you are on, so a failure repeats exactly and each commit tries different
+# cases. Set HEGEL_SEED yourself to use another. `proto/scripts/install-git-hook` makes a pre-push hook that runs this
+# (opt in; never installed by default).
+set -uo pipefail
+
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/gate [--long]"; }
+long=0
+for arg in "$@"; do
+  case "$arg" in
+    --long) long=1 ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "gate: unknown option $arg" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+# rustup puts cargo in ~/.cargo/bin; add it only if cargo is not already on the PATH (so the one you chose wins)
+command -v cargo > /dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+
+sha="$(git -C "$root" rev-parse --short=8 HEAD 2>/dev/null || echo 00000000)"
+export HEGEL_SEED="${HEGEL_SEED:-$((16#$sha))}"
+cases=500
+[ "$long" -eq 1 ] && cases=5000
+log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
+trap 'rm -f "$log"' EXIT
+
+total=7
+n=0
+started=$SECONDS
+replay_hint() {
+  echo
+  echo "To replay the property tests exactly:"
+  echo "    cd proto && HEGEL_SEED=$HEGEL_SEED HEGEL_TEST_CASES=$cases cargo test -p klatch --test properties --test models"
+  echo "A failing property also prints its shrunk input and a line #[hegel::reproduce_failure(\"...\")]: add it under"
+  echo "#[hegel::test] to replay that one failure from the blob alone (CONTRIBUTING.md, \"Property tests\")."
+}
+# step <name> <hegel?> <dir> <command...>
+step() {
+  local name="$1" hegel="$2" dir="$3"
+  shift 3
+  n=$((n + 1))
+  local t0=$SECONDS
+  if (cd "$dir" && "$@") > "$log" 2>&1; then
+    printf '[%d/%d] %-34s ok (%ds)\n' "$n" "$total" "$name" $((SECONDS - t0))
+  else
+    printf '[%d/%d] %-34s FAILED\n' "$n" "$total" "$name"
+    echo
+    echo "FAILED at step $n: $name"
+    echo "----- last lines of its output -----"
+    tail -n 40 "$log"
+    echo "-------------------------------------"
+    [ "$hegel" = "hegel" ] && replay_hint
+    exit 1
+  fi
+}
+
+proto="$root/proto"
+step "fmt"                          no    "$proto" cargo fmt --all --check
+step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --all-targets --locked -- -D warnings
+step "workspace tests"              hegel "$proto" cargo test --workspace --locked
+# cargo-deny reads the advisory database and the licence policy; a machine without it skips the step and says so
+if cargo deny --version > /dev/null 2>&1; then
+  step "cargo deny"                 no    "$proto" cargo deny --manifest-path Cargo.toml check
+else
+  n=$((n + 1)); printf '[%d/%d] %-34s skipped (cargo-deny is not installed; CI runs it)\n' "$n" "$total" "cargo deny"
+fi
+step "test-clock build tests"       no    "$proto" cargo test -p klatch --features test-clock --test no_plaintext --locked
+step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases" cargo test -p klatch --locked --test properties --test models
+# the repository's own scripts: the release number agrees everywhere, the installer, the README quickstart, shellcheck
+repo_checks() {
+  cargo build -p klatch --locked --manifest-path "$proto/Cargo.toml" > /dev/null 2>&1 || true
+  release/check-versions.sh \
+    && release/test-check-versions.sh > /dev/null \
+    && sh install/test-install.sh > /dev/null \
+    && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
+    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh; }
+}
+step "release and shell checks"     no    "$root" repo_checks
+
+echo
+echo "GATE PASSED in $((SECONDS - started))s (Hegel seed $HEGEL_SEED, $cases cases each)"

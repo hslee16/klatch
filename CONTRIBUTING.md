@@ -72,9 +72,29 @@ to forget them. Remove the attribute once the bug is fixed.
 `cargo build` of its engine at build time, which resolves dependencies outside our lockfile where `--locked` and
 `cargo-deny` cannot see them. Keep the feature on. (RESEARCH-NOTES section 42 has the measurements.)
 
+## Before you open a pull request: the local gate
+
+```
+proto/scripts/gate            # about a minute; stops at the first failure and says how to replay it
+proto/scripts/gate --long     # 5000 property cases and sequences each, by hand, takes minutes
+```
+
+It runs, in order: `cargo fmt --check`, clippy with warnings as errors, the workspace tests, `cargo deny` (skipped, with
+a note, if it is not installed), the test-clock tests, the property tests and models with a bigger budget (500 cases
+each, one fixed seed), and the repository's own checks (release numbers agree, the installer, the README quickstart,
+shellcheck). The Hegel seed comes from the commit you are on, so a failure repeats exactly and each commit tries
+different cases; when a Hegel step fails the gate prints the exact `HEGEL_SEED=... cargo test` command to replay it.
+
+It is stricter than CI on purpose, because CI stays light (see above): CI runs the cheap subset on every pull request
+and does not call this script. To run the gate automatically before every push, opt in with
+`proto/scripts/install-git-hook` (it writes a pre-push hook, never touches a hook it did not write, and
+`--uninstall` removes it; `git push --no-verify` skips it). Nothing installs the hook for you.
+`proto/scripts/test-scripts.sh` tests the gate and the installer themselves.
+
 ## Working on klatch
 
-- Branch and open a pull request; never push to `main`. Merge only after every check is confirmed green.
+- Run `proto/scripts/gate` before you open a pull request. Branch and open a pull request; never push to `main`. Merge only
+  after every check is confirmed green.
 - Write the test first and watch it fail; say so in the pull request if a test was not red first.
 - `cd proto && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` before you
   push (CI fails on a formatting difference).
