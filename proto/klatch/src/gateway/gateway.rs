@@ -450,6 +450,12 @@ impl<S: Store> Gateway<S> {
         if ttl <= 0 {
             return Err(Error::Invalid("ttl must be positive".into()));
         }
+        if ttl > crate::domain::CLAIM_MAX_SECS {
+            return Err(Error::Invalid(format!(
+                "ttl is at most {} seconds (24 hours); claim again to renew",
+                crate::domain::CLAIM_MAX_SECS
+            )));
+        }
         self.authorize(
             who,
             &Operation::Claim {

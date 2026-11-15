@@ -16,8 +16,8 @@ mod toolguard;
 
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
-    Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind, ROOM_ACTIVE_SECS,
-    STALE_AFTER_SECS, answer_target, claim_ttl, closed_target, is_ask, open_asks,
+    CLAIM_MAX_SECS, Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,
+    ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, closed_target, is_ask, open_asks,
     parse_clarification, parse_outcome,
 };
 pub use board::{
