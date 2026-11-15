@@ -2,7 +2,9 @@
 
 klatch keeps four kinds of things on your machine, and removing one does not remove the others: the **hooks** in your
 Claude Code settings, the **binary**, your **rooms** (the encrypted store), and the **key** that opens the store. There
-is no telemetry and no update check: klatch never contacts anyone, so an upgrade is something you do.
+is no telemetry and no update check, so an upgrade is something you do. That is checked by inspection, not by watching
+the network: `proto/klatch/tests/no_telemetry.rs` fails if klatch gains a networking dependency, opens a socket, runs a
+program it is not known to run, or if a document tells you to pipe a download into a shell.
 
 ## Remove the hooks
 

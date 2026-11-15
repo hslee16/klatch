@@ -36,6 +36,12 @@ reviewed by an outside person before release (#167).
 - **The first release of a store** on a machine with a running older klatch: see #373.
 - **Claims** are advisory to every route into a file other than the claim hook.
 
+- **No telemetry, no update check, no outbound calls from the binary.** klatch depends on no networking crate, opens no
+  socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A test
+  (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
+  of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
+  package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
+
 ## Reporting a problem
 
 Use **Report a vulnerability** on the Security tab of https://github.com/hslee16/klatch (GitHub private vulnerability
