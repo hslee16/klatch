@@ -42,6 +42,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
     ("read", |g, w| refused(g.read(w, "r", true))),
     ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),
+    ("history", |g, w| {
+        refused(g.history(w, "r", crate::gateway::HistoryRange::default()))
+    }),
     ("head", |g, w| refused(g.head(w, "r"))),
     ("ack", |g, w| refused(g.ack(w, "r", 1))),
     ("who", |g, w| refused(g.who(w, "r"))),
@@ -217,6 +220,7 @@ fn public_methods() -> Vec<String> {
         include_str!("../anchors.rs"),
         include_str!("../budget.rs"),
         include_str!("../dm.rs"),
+        include_str!("../history.rs"),
         include_str!("../policy.rs"),
         include_str!("../runs.rs"),
         include_str!("../scrub.rs"),
