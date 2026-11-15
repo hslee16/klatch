@@ -72,7 +72,8 @@ KLATCH_NAME=alice klatch release lobby src/parser.rs      # now bob can claim it
 KLATCH_NAME=bob   klatch board lobby                      # open asks, offers, members and their status
 ```
 
-`klatch --help` lists everything: asks and offers, direct messages, `wait` (block until another member posts), `wake`,
+`klatch doctor` checks an installation (read only: the store and its key, whether the hooks run a binary that exists, the
+session) and says how to fix what is wrong; `klatch sessions` lists the live coding-agent sessions. `klatch --help` lists everything: asks and offers, direct messages, `wait` (block until another member posts), `wake`,
 factory commands for a launcher (`run`, `worker`, `anchor`) and `admin` controls for the person running it.
 
 Remove the hooks with `klatch init --uninstall`; what else klatch keeps, and how to upgrade, is in

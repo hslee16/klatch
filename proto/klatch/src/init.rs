@@ -442,6 +442,58 @@ fn is_ours(hook: &Value) -> bool {
         .is_some_and(is_klatch_command)
 }
 
+/// Which klatch hook a settings entry is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookKind {
+    /// SessionStart, UserPromptSubmit, PostToolUse and SessionEnd.
+    Base,
+    /// The PreToolUse hook that blocks an edit of a claimed path (`--enforce`).
+    Enforce,
+    /// The asyncRewake watcher (`--wake`).
+    Wake,
+}
+
+/// Every hook klatch installed in a settings value: its event, its command and which one it is. Read only.
+pub fn installed_hooks(settings: &Value) -> Vec<(String, String, HookKind)> {
+    let mut found = Vec::new();
+    let Some(events) = settings.get("hooks").and_then(Value::as_object) else {
+        return found;
+    };
+    for (event, list) in events {
+        for matcher in list.as_array().into_iter().flatten() {
+            for hook in matcher
+                .get("hooks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(cmd) = hook.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                let kind = if is_wake(hook) {
+                    HookKind::Wake
+                } else if is_ours(hook) && event == "PreToolUse" {
+                    HookKind::Enforce
+                } else if is_ours(hook) {
+                    HookKind::Base
+                } else {
+                    continue;
+                };
+                found.push((event.clone(), cmd.to_string(), kind));
+            }
+        }
+    }
+    found
+}
+
+/// The program a hook command runs: its first word, unquoted when `init` quoted it.
+pub fn hook_program(command: &str) -> &str {
+    match command.strip_prefix('\'') {
+        Some(rest) => rest.split('\'').next().unwrap_or(rest),
+        None => command.split(' ').next().unwrap_or(command),
+    }
+}
+
 /// Make the list of hook matchers hold exactly one klatch entry running `cmd` (`keep`) or none (`!keep`), leaving
 /// every other entry as it was. A matcher left with no hooks is dropped. Returns whether an entry of klatch's
 /// stayed in place, so the caller knows whether to add one.

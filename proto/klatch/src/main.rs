@@ -6,6 +6,7 @@ mod admin;
 mod anchor;
 mod commands;
 mod custody;
+mod doctor;
 mod identity;
 mod init;
 mod run;
@@ -228,6 +229,8 @@ enum Cmd {
         )]
         uninstall: bool,
     },
+    /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates nothing)
+    Doctor,
     /// List the live coding-agent sessions on this machine from the harness registry (read only; never a key file)
     Sessions {
         /// Also list the records that are not live, with the reason, and how many files could not be read
@@ -304,7 +307,7 @@ impl klatch::gateway::Clock for CliClock {
 /// The version text: the package version, then the wire protocol and the store schema this binary speaks (a store
 /// written by a newer schema is refused, so this says whether the binary can open yours). A test build says so too,
 /// which is how the bench knows it has the right binary.
-fn version_text() -> &'static str {
+pub(crate) fn version_text() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TEXT.get_or_init(|| {
         let test_build = if cfg!(feature = "test-clock") {
@@ -440,12 +443,28 @@ fn run_cli(cli: Cli) -> Result<()> {
             uninstall,
         }),
         Cmd::Sessions { all } => run_sessions(all),
+        Cmd::Doctor => run_doctor(),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
+}
+
+/// `klatch doctor`: exit 1 when a probe fails.
+fn run_doctor() -> Result<()> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let healthy = doctor::run(
+        &std::env::current_dir()?,
+        home.as_deref(),
+        &std::env::current_exe()?,
+        &mut std::io::stdout().lock(),
+    )?;
+    if !healthy {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// `klatch sessions`: one tab separated line per live session (pid, name, directory, session id); with `--all` also the

@@ -68,6 +68,8 @@ Install the new binary the same way you installed the old one; hooks keep pointi
 - **The store is migrated the first time the new binary opens it**, and the migration is one way. An older binary
   refuses a store written by a newer schema. To keep the option of going back, take `klatch admin backup` before
   upgrading. `klatch --version` shows the store schema a binary understands (see [VERSIONING.md](VERSIONING.md)).
-- **On macOS the first run of a newly built or newly installed binary can take about five seconds** while the login
-  keychain decides whether to let it read the key (#372); later runs are fast. Binaries are not Apple-signed yet (#424).
+- **On macOS the first run of a newly built or newly installed binary can take about five seconds, or wait for you**: the
+  login keychain decides whether to let it read the key (#372), and on one machine a freshly built binary blocked on
+  a dialog (choose Always Allow) until it was answered (#480). `klatch doctor` reports this after 5 seconds instead of
+  hanging. Later runs are fast. Binaries are not Apple-signed yet (#424).
 - Pre-releases are replaced, not patched: the next number is the fix.
