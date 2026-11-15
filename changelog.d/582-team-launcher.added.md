@@ -1,0 +1,1 @@
+- `proto/scripts/team`: run each task of a tasks file as a separate headless `claude -p` session that is a verified klatch member (own credential, worktree, branch and hooks), with `start`, `status`, `logs`, `stop` and `smoke` (#582).
