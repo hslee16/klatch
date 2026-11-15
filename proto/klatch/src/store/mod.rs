@@ -1,6 +1,8 @@
 //! The store module (the `klatch-store` crate before the crates became modules): the storage seam. Everything above this crate talks to `Store`, never to a database,
 //! so SQLite can later be swapped (DESIGN.md D2, R31). Time is passed in so behaviour is testable.
 
+#[cfg(test)]
+pub mod conformance;
 pub mod encrypt;
 mod ids;
 mod sqlite;
