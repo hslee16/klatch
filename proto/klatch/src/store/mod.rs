@@ -5,6 +5,8 @@
 pub mod conformance;
 pub mod encrypt;
 mod ids;
+#[cfg(test)]
+mod memory_spike;
 mod sqlite;
 
 pub use sqlite::{SCHEMA_VERSION, SqliteStore};
