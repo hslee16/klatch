@@ -12,7 +12,8 @@ One release is one number, spelled three ways (`0.1.0-dev.2` for the crate and n
 - `proto/Cargo.toml` (the workspace version) and `proto/Cargo.lock` (`cargo build` updates it)
 - `clients/python/pyproject.toml` and `clients/python/package/wheel_init.py`
 - `clients/typescript/package.json` and `clients/typescript/package-lock.json`
-- `CHANGELOG.md`: move the Unreleased entries under the new version and date
+- `CHANGELOG.md`: put the entries under the new version and date: the Unreleased entries, plus what
+  `release/changelog-fragments.sh collect` prints (then delete the files in `changelog.d/`)
 - `README.md`: the version in the `cargo install` line and the pre-release notice
 - `VERSIONING.md`, if the protocol or store schema version changed
 
