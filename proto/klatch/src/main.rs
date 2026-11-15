@@ -236,6 +236,12 @@ enum Cmd {
         )]
         uninstall: bool,
     },
+    /// Print the klatch convention for any agent, to paste into a subagent's brief (needs no store and no name)
+    Convention {
+        /// The member name the child will use (letters, digits, - _ .); without one the text asks the child to pick
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates nothing)
     Doctor,
     /// List the live coding-agent sessions on this machine from the harness registry (read only; never a key file)
@@ -451,6 +457,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         }),
         Cmd::Sessions { all } => run_sessions(all),
         Cmd::Doctor => run_doctor(),
+        Cmd::Convention { name } => run_convention(name.as_deref()),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
         Cmd::Anchor { cmd } => anchor::run(cmd),
@@ -458,6 +465,19 @@ fn run_cli(cli: Cli) -> Result<()> {
         Cmd::Judge { cmd } => judge::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
+}
+
+/// `klatch convention`: the brief for a child agent, with this binary's own path.
+fn run_convention(name: Option<&str>) -> Result<()> {
+    if let Some(n) = name.filter(|n| !klatch::domain::valid_name(n)) {
+        bail!("the name '{n}' is not a member name (1 to 40 letters, digits, - _ .)");
+    }
+    let bin = std::env::current_exe()?;
+    print!(
+        "{}",
+        klatch::domain::subagent_brief(&bin.to_string_lossy(), name)
+    );
+    Ok(())
 }
 
 /// `klatch doctor`: exit 1 when a probe fails.

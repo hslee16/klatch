@@ -4,6 +4,12 @@ use std::io::Write;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "convention_prints_a_brief_a_parent_can_paste_for_a_child",
+            origin: "#491",
+            layer: "functional",
+            run: convention_brief,
+        },
+        Scenario {
             name: "a_claimed_path_stops_a_second_editor_and_a_broken_store_never_stops_anyone",
             origin: "#33, #34, R19, DESIGN D5",
             layer: "fault",
@@ -109,5 +115,13 @@ fn wake(w: &World) -> Res {
         "hunter2",
         "the watcher consumed the message",
     )?;
+    Ok(vec![])
+}
+
+fn convention_brief(w: &World) -> Res {
+    let t = w.ok("parent", &["convention", "--name", "kid"])?;
+    has(&t, "KLATCH_NAME=kid", "the child's name is on its commands")?;
+    has(&t, "--discover join lobby", "the brief says how to join")?;
+    has(&t, "[klatch convention v1]", "the convention is included")?;
     Ok(vec![])
 }
