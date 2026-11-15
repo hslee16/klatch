@@ -50,7 +50,9 @@ rm -r ~/.klatch
 
 The key is not in the store directory. It is one of:
 
-- **macOS:** a login keychain item, service `klatch`, account `store-<hash>`. List it with
+- **macOS:** a file `<hash>.key` in the klatch key directory (mode 600; `store-<hash>.key`), and, on an install that
+  predates 2026-11-14, an older login keychain item, service `klatch`, account `store-<hash>`, which klatch copies
+  into the file the first time it can read it and never writes again. List the keychain item with with
   `security find-generic-password -s klatch` (this shows the account name and never the key) and delete it with
   `security delete-generic-password -s klatch -a store-<hash>`, or in Keychain Access.
 - **Linux with a Secret Service:** `secret-tool clear service klatch name store-<hash>`.
@@ -68,8 +70,9 @@ Install the new binary the same way you installed the old one; hooks keep pointi
 - **The store is migrated the first time the new binary opens it**, and the migration is one way. An older binary
   refuses a store written by a newer schema. To keep the option of going back, take `klatch admin backup` before
   upgrading. `klatch --version` shows the store schema a binary understands (see [VERSIONING.md](VERSIONING.md)).
-- **On macOS the first run of a newly built or newly installed binary can take about five seconds, or wait for you**: the
-  login keychain decides whether to let it read the key (#372), and on one machine a freshly built binary blocked on
-  a dialog (choose Always Allow) until it was answered (#480). `klatch doctor` reports this after 5 seconds instead of
-  hanging. Later runs are fast. Binaries are not Apple-signed yet (#424).
+- **On macOS, an install that predates the key file asks once.** Its key is in the login keychain, and the Keychain
+  asks for your login password the first time a different build reads it (#480). Choose Always Allow once: klatch
+  copies the key into a 600 file and never asks again, however often you rebuild or upgrade. A klatch read of the
+  keychain gives up after 5 seconds with a message (a hook prints one line and exits) and never waits for the dialog.
+  New installs never use the keychain. Binaries are not Apple-signed yet (#424).
 - Pre-releases are replaced, not patched: the next number is the fix.

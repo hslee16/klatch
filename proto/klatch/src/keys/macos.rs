@@ -1,18 +1,31 @@
-//! The macOS Keychain. Reading goes through the Security framework. Writing goes through the `security` tool in its
-//! interactive mode, with the command on standard input, so the key is never on a command line.
-//!
-//! The item is created with "allow all applications". A Keychain item is otherwise tied to the program that made it,
-//! and an unsigned program that is rebuilt is a different program every time: each rebuild would make the Keychain
-//! ask, and a hook has nobody to answer (measured: a different binary reading such an item hung). This is the same
-//! protection as a key file readable only by you, against another user or a stolen disk; it does not stop another
-//! program of yours. Signing klatch with a stable identity and binding the item to it is the later step
-//! (DESIGN section 32 item 3).
+//! The macOS Keychain, now only the place an older install kept its key (see `FileFirst`). A Keychain item is tied
+//! to the program that made it, and the Keychain also keeps a partition list keyed to that program's code hash, so
+//! a rebuilt unsigned program is a stranger and the Keychain asks for the login password (#480). Allowing every
+//! program on the item (the `security` tool's `-A`) does not lift the partition list; only a stable signing
+//! identity does (#371, #424). So a read here is time-limited: a hook must fail in a few seconds with the reason,
+//! never wait for a dialog nobody answers.
 
 use crate::keys::source::check_name;
 use crate::keys::{Error, KEY_LEN, Key, KeySource};
 use security_framework::passwords::{
     delete_generic_password, get_generic_password, set_generic_password,
 };
+
+/// How long a Keychain read may take before it is given up as waiting for a dialog.
+const READ_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs `f` on a thread and waits at most `limit` for it. A thread stuck in the Keychain is left behind; the
+/// process is about to exit with an error anyway.
+fn within<T: Send + 'static>(
+    limit: std::time::Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(limit).ok()
+}
 
 /// "item not found" in the Security framework.
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
@@ -33,7 +46,16 @@ impl Keychain {
 impl KeySource for Keychain {
     fn get(&self, name: &str) -> Result<Option<Key>, Error> {
         check_name(name)?;
-        match get_generic_password(&self.service, name) {
+        let (service, account) = (self.service.clone(), name.to_string());
+        let read = within(READ_LIMIT, move || get_generic_password(&service, &account));
+        let Some(read) = read else {
+            return Err(Error::Store(format!(
+                "keychain: no answer in {} s; macOS is probably waiting for a password dialog. Answer it with Always \
+                 Allow, or run klatch from the build that stored the key (see UNINSTALL.md)",
+                READ_LIMIT.as_secs()
+            )));
+        };
+        match read {
             Ok(bytes) => {
                 let arr: [u8; KEY_LEN] = bytes.as_slice().try_into().map_err(|_| {
                     Error::Bad(format!("keychain item {name} is not a {KEY_LEN}-byte key"))
@@ -84,6 +106,18 @@ mod tests {
         kc.delete("store").unwrap();
         assert!(kc.get("store").unwrap().is_none());
         kc.delete("store").unwrap();
+    }
+
+    #[test]
+    fn a_stuck_call_is_given_up_on_and_a_quick_one_returns() {
+        let t = std::time::Instant::now();
+        let stuck = within(std::time::Duration::from_millis(200), || {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            1
+        });
+        assert!(stuck.is_none());
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(within(std::time::Duration::from_secs(5), || 7), Some(7));
     }
 
     /// Prints how long a fetch takes; not an assertion, since machines differ. Run with `-- --ignored --nocapture`.
