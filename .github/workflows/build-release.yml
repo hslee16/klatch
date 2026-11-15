@@ -1,0 +1,344 @@
+name: Build the release files
+
+# The build half of a release (#437), shared by two callers so they cannot drift apart: release.yml (which then
+# publishes) and release-dry-run.yml (which runs on pull requests and publishes nothing). Nothing here holds a
+# publishing credential or writes to a registry or a release. Which parts run is decided by the caller's flags.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag these files belong to (every job checks it against its package's version)
+        required: true
+        type: string
+      python:
+        description: Build the Python package and the platform wheels (needs binaries)
+        type: boolean
+        default: true
+      npm:
+        description: Build the npm package
+        type: boolean
+        default: true
+      crates:
+        description: Build and verify the crates.io package
+        type: boolean
+        default: true
+      binaries:
+        description: Build the klatch binaries for every target
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  python-build:
+    name: Build the Python package
+    if: inputs.python
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/python
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in pyproject.toml
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("pyproject.toml").read(), re.M).group(1))')
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+
+      - name: Package metadata test
+        run: python3 -m unittest -v test_package
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: The built wheel installs and imports in a clean environment
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke/bin/python" -I -c 'import klatch; assert klatch.PROTOCOL_VERSION == 1; print(klatch.__version__)'
+
+      - name: Upload built distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-dist
+          path: clients/python/dist/
+
+  # The platform wheels (#431): the klatch command and the Python client for macOS and Linux, built from the very
+  # archives this release publishes (the static musl builds serve every Linux). No compilation happens here.
+  python-wheels:
+    name: Build the platform wheels
+    if: inputs.python
+    needs: binaries-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in pyproject.toml, and the archives the version in Cargo.toml
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          pypi=$(sed -n 's/^version = "\(.*\)"$/\1/p' clients/python/pyproject.toml | head -1)
+          cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
+          [ "$TAG" = "v$pypi" ] || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
+          echo "PYPI_VERSION=$pypi" >> "$GITHUB_ENV"
+          echo "CARGO_VERSION=$cargo" >> "$GITHUB_ENV"
+
+      - name: Download the release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bin-*
+          merge-multiple: true
+          path: archives/
+
+      - name: Check the archives against the build jobs' checksums, then build one wheel per platform
+        run: |
+          set -euo pipefail
+          (cd archives && for f in ./*.tar.gz.sha256; do sha256sum -c "$f"; done)
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            python3 clients/python/build_wheels.py --version "$PYPI_VERSION" --target "$target" \
+              --archive "archives/klatch-${CARGO_VERSION}-${target}.tar.gz" --out-dir wheels
+          done
+          ls -l wheels
+
+      # What PyPI would reject at upload (broken metadata, a bad description) fails here instead.
+      - name: Check the wheels' metadata the way PyPI does
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/twine"
+          "$RUNNER_TEMP/twine/bin/pip" install --quiet twine==7.0.0
+          "$RUNNER_TEMP/twine/bin/twine" check wheels/*
+
+      - name: Upload the wheels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-wheels
+          path: wheels/
+
+  npm-build:
+    name: Build the npm package
+    if: inputs.npm
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: The tag must name the version in package.json
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package.json").version')
+          # the Python pre-release 0.1.0.dev0 and the npm pre-release 0.1.0-dev.0 are the same release
+          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+
+      - name: Install, build, pack and import the tarball in a clean directory
+        run: |
+          npm ci --ignore-scripts
+          node --experimental-strip-types --test package.test.ts
+          mkdir -p "$RUNNER_TEMP/npm-dist"
+          npm pack --pack-destination "$RUNNER_TEMP/npm-dist"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-dist
+          path: ${{ runner.temp }}/npm-dist/
+
+  crates-build:
+    name: Build the Rust package
+    if: inputs.crates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proto
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in Cargo.toml
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          # the Python pre-release 0.1.0.dev1 and the crate pre-release 0.1.0-dev.1 are the same release
+          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      # The only compilation of the release. It runs here, where there is no token, because a dependency's build script
+      # runs on whatever machine compiles it. The packaged crate is built exactly as crates.io users will build it.
+      - name: Package and verify by building the packaged crate
+        run: |
+          set -euo pipefail
+          # the registry-side checks (metadata, dependencies), then the package itself: `cargo package` builds the
+          # packaged crate to verify it and, unlike a publish dry run, keeps the .crate file
+          cargo publish --dry-run --locked -p klatch
+          cargo package --locked -p klatch
+
+      - name: Record the package checksum
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/crate"
+          cp target/package/klatch-*.crate "$RUNNER_TEMP/crate/"
+          (cd "$RUNNER_TEMP/crate" && sha256sum klatch-*.crate | tee SHA256SUMS)
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crate-dist
+          path: ${{ runner.temp }}/crate/
+
+  binaries-build:
+    name: Build klatch (${{ matrix.target }})
+    if: inputs.binaries
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # cdx_* is the pinned cargo-cyclonedx 0.5.9 release for the runner and its published SHA-256
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            cdx: cargo-cyclonedx-aarch64-apple-darwin
+            cdx_sha256: 4c53dfa21e70b65bf7f8d2592aadde3bcb02c1a40b6ec63b877e5ca65a29e180
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            cdx: cargo-cyclonedx-x86_64-apple-darwin
+            cdx_sha256: 59d2a583fa632f8759456c1b531340331255b277386d23c598a3dbbc916fde63
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            cdx: cargo-cyclonedx-x86_64-unknown-linux-gnu
+            cdx_sha256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
+            cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
+          # the static builds (#435): no glibc or other system library needed. The SBOM tool is the runner's own gnu build.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+            musl: true
+            cdx: cargo-cyclonedx-x86_64-unknown-linux-gnu
+            cdx_sha256: fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-22.04-arm
+            musl: true
+            cdx: cargo-cyclonedx-aarch64-unknown-linux-gnu
+            cdx_sha256: 7bf131ca5389b07a4f10c182bcf8a5ad339d64408b6f0d8f6834a0bd6120a06a
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: The tag must name the version in Cargo.toml
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
+          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+            echo "tag $TAG does not match version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+
+      - name: Build the release binary
+        working-directory: proto
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked -p klatch --target "$TARGET"
+
+      - name: Smoke test the built binary (version, then a whole launcher flow)
+        env:
+          KLATCH_BIN: ${{ github.workspace }}/proto/target/${{ matrix.target }}/release/klatch
+        run: |
+          set -euo pipefail
+          actual=$("$KLATCH_BIN" --version)
+          # `klatch <version> (protocol <n>, store schema <n>)`
+          case "$actual" in
+            "klatch $VERSION (protocol "*", store schema "*")") ;;
+            *) echo "version prints '$actual', wanted 'klatch $VERSION (protocol N, store schema N)'" >&2; exit 1 ;;
+          esac
+          clients/recipes/launcher-demo.sh
+
+      - name: Install cargo-cyclonedx (pinned release, checksum verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CDX: ${{ matrix.cdx }}
+          CDX_SHA256: ${{ matrix.cdx_sha256 }}
+        run: |
+          set -euo pipefail
+          gh release download cargo-cyclonedx-0.5.9 -R CycloneDX/cyclonedx-rust-cargo -p "$CDX.tar.xz" -D "$RUNNER_TEMP"
+          python3 - "$RUNNER_TEMP/$CDX.tar.xz" "$CDX_SHA256" <<'PY'
+          import hashlib, sys
+          got = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+          if got != sys.argv[2]:
+              sys.exit("cargo-cyclonedx checksum mismatch: " + got)
+          PY
+          tar xJf "$RUNNER_TEMP/$CDX.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.cargo/bin"
+          install -m 0755 "$RUNNER_TEMP/$CDX/cargo-cyclonedx" "$HOME/.cargo/bin/cargo-cyclonedx"
+
+      - name: Archive with the licences and an SBOM, each with a checksum
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          name="klatch-${VERSION}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch"
+          strip "dist/$name/klatch"
+          cp LICENSE proto/THIRD-PARTY-LICENSES.txt "dist/$name/"
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          rm -rf "dist/$name"
+          # the SBOM (CycloneDX 1.5, this target's dependencies, the vendored SQLCipher and OpenSSL included); the
+          # tool writes one file per binary in the workspace and only klatch's is kept
+          (cd proto/klatch && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) cargo cyclonedx --manifest-path Cargo.toml \
+            --format json --describe binaries --target "$TARGET" --spec-version 1.5)
+          cp proto/klatch/klatch_bin.cdx.json "dist/$name.cdx.json"
+          for f in "dist/$name.tar.gz" "dist/$name.cdx.json"; do
+            python3 - "$f" <<'PY' > "$f.sha256"
+          import hashlib, os, sys
+          p = sys.argv[1]
+          print(hashlib.sha256(open(p, "rb").read()).hexdigest() + "  " + os.path.basename(p))
+          PY
+            cat "$f.sha256"
+          done
+          tar -tzf "dist/$name.tar.gz"
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bin-${{ matrix.target }}
+          path: dist/

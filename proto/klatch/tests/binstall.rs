@@ -35,10 +35,10 @@ fn the_binstall_url_is_the_release_archive() {
         "{ repo }/releases/download/v{ version }/klatch-{ version }-{ target }.tar.gz"
     );
     // the workflow builds exactly that name for the same four targets
-    let release = read("../../.github/workflows/release.yml");
+    let release = read("../../.github/workflows/build-release.yml");
     assert!(
         release.contains(r#"name="klatch-${VERSION}-${TARGET}""#),
-        "release.yml no longer names archives klatch-<version>-<target>"
+        "build-release.yml no longer names archives klatch-<version>-<target>"
     );
     for target in [
         "aarch64-apple-darwin",
@@ -60,7 +60,7 @@ fn the_binary_sits_in_the_archives_top_directory() {
         metadata_value(&manifest, "bin-dir"),
         "klatch-{ version }-{ target }/{ bin }{ binary-ext }"
     );
-    let release = read("../../.github/workflows/release.yml");
+    let release = read("../../.github/workflows/build-release.yml");
     assert!(
         release.contains(r#"cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch""#),
         "the archive layout changed"

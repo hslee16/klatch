@@ -1,0 +1,42 @@
+name: Release dry run
+
+# Run by hand: Actions, Release dry run, Run workflow. Before a release, or after changing how one is built, this runs
+# the whole build half of a release (#437): the same build-release.yml that release.yml calls, with the tag the version
+# files name. It publishes nothing and holds no credential.
+#
+# It is NOT run on pull requests: CI is kept light on purpose (the human's rule, 2026-11-14; see CONTRIBUTING.md), and
+# this builds six binaries, the wheels and the packages. To make it automatic later, add under `on:` a `pull_request:`
+# trigger with a `paths:` list of the release files (the workflows, clients/python, clients/typescript, proto/Cargo.*,
+# install, release).
+#
+# What it cannot rehearse, because it needs the real release and the maintainer: the uploads to PyPI, npm and
+# crates.io, the build provenance attestations and the cosign signature (they need the release workflow's identity),
+# and attaching files to a GitHub release. Those jobs only run in release.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Which tag this would be
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # the tag the release would carry: v and the Python spelling of the version
+      - id: tag
+        run: |
+          set -euo pipefail
+          pypi=$(sed -n 's/^version = "\(.*\)"$/\1/p' clients/python/pyproject.toml | head -1)
+          echo "tag=v$pypi" >> "$GITHUB_OUTPUT"
+          echo "A release now would be tagged v$pypi"
+
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
