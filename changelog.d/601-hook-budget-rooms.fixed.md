@@ -1,0 +1,1 @@
+- The hook digest no longer overshoots its byte budget when the first of several active rooms has a flood of claims and asks: every active room's header and "more" lines are reserved before any room's items are fitted (#601, found by a new property test).

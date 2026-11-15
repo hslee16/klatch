@@ -418,7 +418,8 @@ fn paging_through_tail_and_history_returns_the_whole_log_once_and_moves_no_curso
     // tail pages
     let size = tc.draw(gs::integers::<usize>().min_value(1).max_value(9));
     let (mut paged, mut after) = (Vec::new(), 0);
-    loop {
+    for _ in 0..=n + 1 {
+        // bounded, so a pager that never advances fails the property instead of hanging it
         let page = gw.tail(&bob, "r", (after, size)).unwrap();
         if page.is_empty() {
             break;
@@ -434,7 +435,8 @@ fn paging_through_tail_and_history_returns_the_whole_log_once_and_moves_no_curso
     assert_eq!(paged, full, "the tail pages are not the log");
     // history pages forward from `since`; `more` counts what follows
     let (mut paged, mut since) = (Vec::new(), 0);
-    loop {
+    for _ in 0..=n + 1 {
+        // bounded, so a pager that never advances fails the property instead of hanging it
         let h = gw
             .history(
                 &bob,

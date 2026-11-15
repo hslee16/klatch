@@ -31,9 +31,9 @@ minutes? If not, make it manual and say how to run it here.
 klatch uses [Hegel](https://hegel.dev) (the `hegeltest` crate, a dev-dependency, pinned exactly because it is beta
 software) for property tests: instead of one example, a test states something that must hold for every input and Hegel
 generates cases to try to break it. They live in `proto/klatch/tests/properties.rs` (pure functions) and
-`proto/klatch/tests/models.rs` (model-based: a random sequence of claims, releases, posts, reads and acknowledgements
-is run against the real gateway and a tiny separate model, which must agree after every step). They run inside the
-normal `cargo test`: the properties take well under a second, the models about a second (100 sequences each). **A pass is evidence, not proof**: it means no
+`proto/klatch/tests/models.rs` (model-based: a random sequence of claims, releases, posts, parks, reads and acknowledgements
+is run against the real gateway and a tiny separate model, which must agree after every step; also the exhaustive role table). They run inside the
+normal `cargo test`: the properties and the models take a few seconds together (100 cases each; about 10 s in the gate at 500). **A pass is evidence, not proof**: it means no
 counterexample was found in the cases tried. Do not call anything property tested "proven".
 
 **Run**
@@ -62,6 +62,14 @@ compiler will tell you so). Generate *structured* inputs on purpose (path segmen
 not arbitrary text, which almost never produces them). Use `tc.assume(condition)` to discard cases that do not apply.
 Make the property strong enough to notice a bug: a property that a wrong implementation also satisfies proves nothing.
 A good check is to plant the bug in the real code temporarily and watch the property fail.
+
+**The planted-bug rule.** A property is kept only if you have shown it can fail: for each new property or model rule,
+break the real code on purpose (one changed operator or dropped condition in the code it covers), run the test with a
+fixed seed (`HEGEL_SEED=12345 HEGEL_TEST_CASES=500`), see it fail, then revert, and record the plant and the result in
+RESEARCH-NOTES (section 42.8 has the table). A plant that is not caught means the property is too weak or the model
+cannot reach the state: strengthen it (a model with no park or lease could never see a lease being shortened). Bound
+every loop in a property (a bug that stops a pager advancing must fail the test, not hang it). Keep the whole property
+run in the gate under about 15 seconds; slower properties belong in `--long` only.
 
 **Replay a failure.** A failing property prints the smallest input it found and a line like
 `#[hegel::reproduce_failure("AAUAAAAB...")]`. Add that attribute under `#[hegel::test]` and the failure replays from the
