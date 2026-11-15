@@ -78,7 +78,8 @@ step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases"
 # the repository's own scripts: the release number agrees everywhere, the installer, the README quickstart, shellcheck
 repo_checks() {
   cargo build -p klatch --locked --manifest-path "$proto/Cargo.toml" > /dev/null 2>&1 || true
-  release/check-versions.sh \
+  release/check-timeouts.sh > /dev/null \
+    && release/check-versions.sh \
     && release/test-check-versions.sh > /dev/null \
     && release/changelog-fragments.sh check \
     && release/test-changelog-fragments.sh > /dev/null \

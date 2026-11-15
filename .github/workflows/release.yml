@@ -58,6 +58,7 @@ jobs:
     if: github.event_name == 'release' || inputs.target == 'python'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: release
       url: https://pypi.org/project/klatch/
@@ -80,6 +81,7 @@ jobs:
     if: vars.NPM_TRUSTED_PUBLISHING == 'true' && (github.event_name == 'release' || inputs.target == 'npm')
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: release
       url: https://www.npmjs.com/package/@klatch/client
@@ -114,6 +116,7 @@ jobs:
     if: github.event_name == 'release' || inputs.target == 'crates'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: release
       url: https://crates.io/crates/klatch
@@ -158,6 +161,7 @@ jobs:
     if: github.event_name == 'release' || inputs.target == 'binaries'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: release
     permissions:

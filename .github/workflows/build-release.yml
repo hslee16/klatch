@@ -35,6 +35,7 @@ jobs:
     name: Build the Python package
     if: inputs.python
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: clients/python
@@ -82,6 +83,7 @@ jobs:
     if: inputs.python
     needs: binaries-build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -131,6 +133,7 @@ jobs:
     name: Build the npm package
     if: inputs.npm
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: clients/typescript
@@ -170,6 +173,7 @@ jobs:
     name: Build the Rust package
     if: inputs.crates
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: proto
