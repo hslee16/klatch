@@ -84,13 +84,24 @@ fn hook_many_rooms(w: &World) -> Res {
     let t = Instant::now();
     let out = w.ok("x", &["hook"])?;
     let hook_ms = ms(t);
-    for r in &names {
-        has(
-            &out,
-            &format!("[room {r}]"),
-            "every room with news is shown",
-        )?;
-    }
+    // The digest has a byte budget (#599): every room with news is either shown whole or counted in the one closing
+    // line, so shown + counted must be all of them.
+    let shown = names
+        .iter()
+        .filter(|r| out.contains(&format!("[room {r}]")))
+        .count();
+    let counted = out
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix('[')
+                .and_then(|l| l.split(" more rooms have news").next())
+                .and_then(|n| n.parse::<usize>().ok())
+        })
+        .unwrap_or(0);
+    check(
+        shown + counted == rooms,
+        format!("{shown} rooms shown and {counted} counted, but {rooms} have news"),
+    )?;
     Ok(vec![
         ("rooms".into(), rooms as f64),
         ("hook_ms".into(), hook_ms),
