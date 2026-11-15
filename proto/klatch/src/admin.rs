@@ -56,6 +56,12 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Make a member a quarantined reviewer (reads queued items and records verdicts, nothing else), or with --off an ordinary member
+    Reviewer {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Make a member the admin agent: it may do the non-floor admin acts (rooms, members, clearances inside the cap,
     /// room labels, upkeep) and is refused and audited on anything else, floors included; --off removes the role
     AdminAgent {
@@ -306,6 +312,13 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             t.admin_set_librarian(&member, !off)?;
             println!(
                 "{member} is {} a librarian",
+                if off { "no longer" } else { "now" }
+            );
+        }
+        AdminCmd::Reviewer { member, off } => {
+            t.admin_set_reviewer(&member, !off)?;
+            println!(
+                "{member} is {} a reviewer",
                 if off { "no longer" } else { "now" }
             );
         }

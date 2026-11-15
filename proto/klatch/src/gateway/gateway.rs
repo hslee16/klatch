@@ -27,6 +27,7 @@ mod budget;
 mod dm;
 mod librarian;
 mod policy;
+mod reviewer;
 mod roles;
 pub use roles::Role;
 mod runs;

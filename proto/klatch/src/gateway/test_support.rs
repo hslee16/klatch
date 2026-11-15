@@ -113,6 +113,15 @@ impl Store for SpyStore {
     fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
         self.inner.record_audit(entry, now)
     }
+    fn enqueue_review(&self, item: &crate::store::NewReview, now: i64) -> Result<i64> {
+        self.inner.enqueue_review(item, now)
+    }
+    fn pending_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.pending_reviews(limit)
+    }
+    fn resolve_review(&self, id: i64, verdict: &str, detail: &str, now: i64) -> Result<bool> {
+        self.inner.resolve_review(id, verdict, detail, now)
+    }
     fn audit_log(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
         self.inner.audit_log(limit)
     }

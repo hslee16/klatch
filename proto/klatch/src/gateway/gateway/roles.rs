@@ -4,6 +4,8 @@
 //! `Guard` is asked and no guard configuration can widen it.
 //!
 //! - the librarian may only look (R30, rule `read-only`);
+//! - the quarantined reviewer (#51) may only review: read the queue and record a verdict (rule `reviewer`), and only
+//!   a reviewer may do that;
 //! - the admin agent (R30, #50) does the non-floor admin acts inside the floors: an act outside its list is refused
 //!   (`admin-scope`), a floor act is refused (`floors`), and every refusal is audited.
 
@@ -15,6 +17,7 @@ use crate::store::NewAudit;
 pub enum Role {
     Librarian,
     Admin,
+    Reviewer,
 }
 
 impl Role {
@@ -22,11 +25,12 @@ impl Role {
         match self {
             Role::Librarian => "librarian",
             Role::Admin => "admin",
+            Role::Reviewer => "reviewer",
         }
     }
 
     fn parse(text: &str) -> Option<Role> {
-        [Role::Librarian, Role::Admin]
+        [Role::Librarian, Role::Admin, Role::Reviewer]
             .into_iter()
             .find(|r| r.word() == text)
     }
@@ -104,7 +108,11 @@ impl<S: Store> Gateway<S> {
     }
 
     fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
-        match self.role_of(&who.member)? {
+        let role = self.role_of(&who.member)?;
+        if let Some(e) = reviewer_refusal(role, who, op) {
+            return Err(e);
+        }
+        match role {
             Some(Role::Librarian) if !op.is_query() => Err(Error::Refused {
                 rule: "read-only".into(),
                 reason: format!("{} is a librarian, which may only look", who.member),
@@ -139,6 +147,7 @@ fn role_action(role: Role) -> &'static str {
     match role {
         Role::Librarian => "librarian",
         Role::Admin => "admin-agent",
+        Role::Reviewer => "reviewer",
     }
 }
 
@@ -154,4 +163,17 @@ fn admin_agent_refusal(action: &str) -> Option<(&'static str, &'static str)> {
     } else {
         None
     }
+}
+
+/// A reviewer may only review and only a reviewer may review; None when the operation is fine for the role.
+fn reviewer_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Option<Error> {
+    let reason = match (role == Some(Role::Reviewer), op.is_review()) {
+        (true, false) => format!("{} is a reviewer, which may only review", who.member),
+        (false, true) => format!("{} is not a reviewer", who.member),
+        _ => return None,
+    };
+    Some(Error::Refused {
+        rule: "reviewer".into(),
+        reason,
+    })
 }

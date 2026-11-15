@@ -24,6 +24,7 @@ mod librarian;
 mod members;
 mod mute;
 mod notify;
+mod reviewer;
 mod runs;
 mod scrub;
 mod stream;

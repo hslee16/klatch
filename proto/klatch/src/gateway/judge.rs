@@ -26,7 +26,7 @@ impl Drained {
 
 /// The item as the judge sees it, or `None` when the message is no longer there (archived rows keep a tombstone, a
 /// deleted room keeps nothing).
-fn load<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<ReviewItem>> {
+pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<ReviewItem>> {
     let found = store.tail(&q.room, q.seq - 1, 1)?;
     Ok(found
         .into_iter()
@@ -45,7 +45,7 @@ fn load<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<ReviewItem>> {
 pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained> {
     let mut out = Drained::default();
     for q in store.pending_reviews(DRAIN_LIMIT)? {
-        let (verdict, detail) = match load(store, &q)? {
+        let (verdict, detail) = match load_item(store, &q)? {
             Some(item) => (judge.judge(&item), String::new()),
             None => (
                 Verdict::Deny("message missing".into()),
@@ -59,18 +59,18 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
             Verdict::Deny(_) => out.denied += 1,
         }
         if verdict != Verdict::Defer {
-            record(store, &q, &verdict, &detail, now)?;
+            record(store, &q, (&verdict, &detail), "judge", now)?;
         }
     }
     Ok(out)
 }
 
-/// Keep the verdict word and a reason; never the text, which the audit must not hold.
-fn record<S: Store>(
+/// Keep the verdict word and a reason; never the text, which the audit must not hold. `action` says who ruled.
+pub(crate) fn record<S: Store>(
     store: &S,
     q: &QueuedReview,
-    v: &Verdict,
-    detail: &str,
+    (v, detail): (&Verdict, &str),
+    action: &str,
     now: i64,
 ) -> Result<()> {
     let reason = match v {
@@ -81,7 +81,7 @@ fn record<S: Store>(
     let target = format!("{}#{}", q.room, q.seq);
     let note = format!("{} to {}: {}", v.word(), q.to_label, reason);
     store.record_audit(
-        &NewAudit::new("judge", &target, note.trim_end_matches(": ")),
+        &NewAudit::new(action, &target, note.trim_end_matches(": ")),
         now,
     )
 }
