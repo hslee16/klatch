@@ -93,7 +93,7 @@ The wire protocol ([PROTOCOL.md](PROTOCOL.md)) is newline-delimited JSON over `k
 for Python, TypeScript and Rust with one conformance scenario each. [FACTORY.md](FACTORY.md) describes how a launcher
 runs workers with scoped, expiring credentials, typed handoffs, anchored claims and run-scoped rooms.
 
-License: MIT (see `LICENSE`). Third-party notices ship with every binary in `THIRD-PARTY-LICENSES.txt`.
+Contributing and the CI policy (kept light on purpose): [CONTRIBUTING.md](CONTRIBUTING.md). License: MIT (see `LICENSE`). Third-party notices ship with every binary in `THIRD-PARTY-LICENSES.txt`.
 
 ## Design and research (read in this order)
 

@@ -1,42 +1,22 @@
 name: Release dry run
 
-# A pull request that touches how a release is built runs the whole build half of a release (#437): the same
-# build-release.yml that release.yml calls, with the tag the version files name. It publishes nothing and holds no
-# credential.
+# Run by hand: Actions, Release dry run, Run workflow. Before a release, or after changing how one is built, this runs
+# the whole build half of a release (#437): the same build-release.yml that release.yml calls, with the tag the version
+# files name. It publishes nothing and holds no credential.
+#
+# It is NOT run on pull requests: CI is kept light on purpose (the human's rule, 2026-11-14; see CONTRIBUTING.md), and
+# this builds six binaries, the wheels and the packages. To make it automatic later, add under `on:` a `pull_request:`
+# trigger with a `paths:` list of the release files (the workflows, clients/python, clients/typescript, proto/Cargo.*,
+# install, release).
 #
 # What it cannot rehearse, because it needs the real release and the maintainer: the uploads to PyPI, npm and
 # crates.io, the build provenance attestations and the cosign signature (they need the release workflow's identity),
 # and attaching files to a GitHub release. Those jobs only run in release.yml.
 on:
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - .github/workflows/build-release.yml
-      - .github/workflows/release-dry-run.yml
-      - clients/python/pyproject.toml
-      - clients/python/build_wheels.py
-      - clients/python/klatch_client.py
-      - clients/python/package/**
-      - clients/typescript/package.json
-      - clients/typescript/package-lock.json
-      - clients/typescript/tsconfig.build.json
-      - proto/Cargo.toml
-      - proto/Cargo.lock
-      - proto/klatch/Cargo.toml
-      - proto/about.toml
-      - proto/about.hbs
-      - proto/THIRD-PARTY-LICENSES.txt
-      - proto/deny.toml
-      - install/**
-      - release/**
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: release-dry-run-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   version:

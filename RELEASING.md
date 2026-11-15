@@ -76,12 +76,13 @@ pre-release before relying on it.
 
 ## The dry run
 
-A pull request that touches how a release is built (the release workflows, the Python, npm and crate packaging, the
-installer and the release scripts; the exact list is in `release-dry-run.yml`) runs the whole build half of a release:
-the same `build-release.yml` that `release.yml` calls, for the tag the version files name. It builds the Python
-package and the four platform wheels (and runs `twine check` on them), the npm package (packed and installed in a clean
-directory), the crates.io package (verified by building the packaged crate) and the binaries for all six targets with
-their SBOMs. It publishes nothing and holds no credential.
+Run by hand: **Actions, Release dry run, Run workflow**, before a release or after changing how one is built. It runs
+the whole build half of a release: the same `build-release.yml` that `release.yml` calls, for the tag the version files
+name. It builds the Python package and the four platform wheels (and runs `twine check` on them), the npm package
+(packed and installed in a clean directory), the crates.io package (verified by building the packaged crate) and the
+binaries for all six targets with their SBOMs. It publishes nothing and holds no credential.
+
+It does not run on pull requests: CI is kept light on purpose (see CONTRIBUTING.md).
 
 **It cannot rehearse** the uploads to PyPI, npm and crates.io, the build provenance attestations, the cosign signature
 and attaching files to the release: those need the real release and the maintainer, and run only in `release.yml`.
