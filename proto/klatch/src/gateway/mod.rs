@@ -8,6 +8,7 @@ mod clock;
 mod gateway;
 mod guard;
 mod identity;
+mod notifier;
 mod subscription;
 mod transport;
 
@@ -18,6 +19,7 @@ pub use gateway::{
 };
 pub use guard::{AllowAll, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
+pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use transport::{Direct, Transport};
 

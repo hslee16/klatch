@@ -65,6 +65,26 @@ fn retention_archive(w: &World) -> Res {
         "the restored message is not back",
     )?;
     check(files[0].exists(), "the archive was removed by a restore")?;
+    // the derived transcript regenerates identically from the store, one JSON object per line (#71)
+    let json_lines = |run: &crate::world::Run| -> Vec<String> {
+        run.stdout
+            .lines()
+            .filter_map(|l| l.find('{').map(|i| l[i..].to_string()))
+            .collect()
+    };
+    let j1 = w.admin(&["export", "r", "--json"], "r");
+    let j2 = w.admin(&["export", "r", "--json"], "r");
+    let (l1, l2) = (json_lines(&j1), json_lines(&j2));
+    check(j1.ok && l1 == l2, "the json export is not repeatable")?;
+    check(
+        l1.len() == 2 && l1.iter().all(|l| l.contains("\"room\":\"r\"")),
+        format!("unexpected json export:\n{}", j1.stdout),
+    )?;
+    has(
+        &j1.stdout,
+        "\"seq\":1",
+        "seq 1 missing from the json export",
+    )?;
     has(
         &w.admin(&["audit"], "").stdout,
         "restore-archive",

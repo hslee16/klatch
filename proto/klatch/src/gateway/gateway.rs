@@ -113,6 +113,7 @@ pub struct Gateway<S: Store> {
     store: S,
     clock: Box<dyn Clock>,
     guard: Box<dyn Guard>,
+    notifier: Box<dyn crate::gateway::Notifier>,
 }
 
 impl<S: Store> Gateway<S> {
@@ -121,7 +122,14 @@ impl<S: Store> Gateway<S> {
             store,
             clock: Box::new(clock),
             guard: Box::new(guard),
+            notifier: Box::new(crate::gateway::NoNotifier),
         }
+    }
+
+    /// Tell `notifier` about every post that is stored (#72). Replaces the default, which tells nobody.
+    pub fn with_notifier(mut self, notifier: impl crate::gateway::Notifier + 'static) -> Self {
+        self.notifier = Box::new(notifier);
+        self
     }
 
     pub fn now(&self) -> i64 {
@@ -219,7 +227,9 @@ impl<S: Store> Gateway<S> {
             }) => message.with_kind(kind),
             None => message,
         };
-        self.store.post_as(&message, self.now())
+        let posted = self.store.post_as(&message, self.now())?;
+        self.notifier.posted(room, posted.seq, &who.member);
+        Ok(posted)
     }
 
     /// Remember that the caller is a child of `parent`, the member whose session started the caller's (#24); `None`

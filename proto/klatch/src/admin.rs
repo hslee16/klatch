@@ -110,7 +110,12 @@ pub enum AdminCmd {
     RestoreArchive { file: std::path::PathBuf },
     /// Print a room's messages as readable text. This is the one way plaintext leaves the store on purpose, so it is
     /// audited and asks for the room typed back
-    Export { room: String },
+    Export {
+        room: String,
+        /// One JSON object per line, with every field, instead of the readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -145,11 +150,31 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
         AdminCmd::Recover { .. } => Some("recover".into()),
         AdminCmd::RotateKey => Some("rotate".into()),
         AdminCmd::Restore { .. } => Some("restore".into()),
-        AdminCmd::Export { room } => Some(room.clone()),
+        AdminCmd::Export { room, .. } => Some(room.clone()),
         AdminCmd::RunArchive { run, .. } => Some(run.clone()),
         AdminCmd::Remove { member, .. } => Some(member.clone()),
         _ => None,
     }
+}
+
+/// One message as a line of JSON: the derived, regenerable transcript form (#71). Every field the store keeps.
+fn export_json_line(room: &str, m: &klatch::domain::Message) -> String {
+    serde_json::json!({
+        "room": room,
+        "id": m.id,
+        "seq": m.seq,
+        "sender": m.sender,
+        "attribution": match m.attribution {
+            klatch::domain::Attribution::Verified => "verified",
+            klatch::domain::Attribution::Unattributed => "unattributed",
+        },
+        "label": m.label,
+        "ts": m.ts,
+        "body": m.body,
+        "kind": m.kind,
+        "payload": m.payload,
+    })
+    .to_string()
 }
 
 fn typed_back(expected: &str, line: &str) -> bool {
@@ -467,12 +492,16 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             note("restore-archive", &file.to_string_lossy())?;
             println!("restored {n} messages from {}", file.display());
         }
-        AdminCmd::Export { room } => {
+        AdminCmd::Export { room, json } => {
             let gateway = Gateway::new(custody::open_store(db)?, CliClock, AllowAll);
             gateway.use_label_keys(custody::label_ring(db, &gateway.sealed_labels()?)?);
             // audited before anything is printed: the act is recorded even if the output is cut short
             gateway.admin_note(&who, ("export", &room), "readable transcript printed")?;
             for m in gateway.tail(&who, &room, (0, 1_000_000))? {
+                if json {
+                    println!("{}", export_json_line(&room, &m));
+                    continue;
+                }
                 println!(
                     "[{} {} {} {}] {}",
                     m.seq,
@@ -530,6 +559,31 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_json_export_line_is_one_line_with_every_field() {
+        let m = klatch::domain::Message {
+            id: "01ID".into(),
+            seq: 7,
+            sender: "alice".into(),
+            attribution: klatch::domain::Attribution::Verified,
+            label: "public".into(),
+            body: "two\nlines \"quoted\"".into(),
+            ts: 99,
+            kind: Some("note".into()),
+            payload: Some("p".into()),
+        };
+        let line = export_json_line("lobby", &m);
+        assert!(!line.contains('\n'));
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["room"], "lobby");
+        assert_eq!(v["seq"], 7);
+        assert_eq!(v["body"], "two\nlines \"quoted\"");
+        assert_eq!(v["attribution"], "verified");
+        assert_eq!(v["kind"], "note");
+        assert_eq!(v["payload"], "p");
+        assert_eq!(v["id"], "01ID");
+    }
 
     #[test]
     fn only_a_real_terminal_with_no_agent_session_above_may_administer() {

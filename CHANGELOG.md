@@ -14,6 +14,7 @@ These are early pre-releases with no outside security review.
 
 - `klatch doctor`: a read-only health check of the binary, the store and its key, the hooks (does each point at a binary that exists, and at this one?), the session and the harness registry, with the reason and the fix for each problem; exits 1 on a failure. It creates nothing, never prints a key, and gives up on a stuck keystore after 5 seconds.
 - Retention and archive: `klatch admin retention`, `klatch admin archive` and `klatch admin restore-archive`. Old messages move into an encrypted archive file and leave a tombstone (the `seq` stays), and come back on restore. Nothing is archived unless a retention is set.
+- `klatch admin export <room> --json`: the transcript as one JSON object per line with every field, regenerated from the store each time (still audited and typed back).
 - `klatch sessions`: the live coding-agent sessions on this machine, from the harness registry (pid, name, directory, session id); `--all` adds the records that are not live and why. Read only; never opens a key file.
 - A claim may last at most 24 hours (DESIGN D5); a longer request is refused with the limit. Claim again to renew.
 - `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
