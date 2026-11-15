@@ -1,0 +1,15 @@
+[package]
+name = "hegel-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# A scratch crate for epic #396: it measures Hegel against klatch code and is not part of the workspace.
+[dependencies]
+klatch = { path = "../../proto/klatch", default-features = false, features = ["client"] }
+
+[dev-dependencies]
+hegeltest = { version = "=0.52.6", features = ["static-engine"] }
+
+[workspace]

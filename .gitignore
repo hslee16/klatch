@@ -3,3 +3,7 @@ target/
 __pycache__/
 *.pyc
 dist/
+
+# Hegel failure database (property tests): a replay aid, not source
+.hegel/
+experiments/hegel-bench/target/
