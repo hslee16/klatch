@@ -2,7 +2,7 @@
 //! verdict through the review queue, and can do nothing else. It has no tools and no write path to any room: every
 //! operation but the two review ones is refused before the guard is asked, so no guard can be configured to let it
 //! post, claim or change policy. It holds one role in the same `role:<member>` policy entry the librarian uses, so
-//! a member is never two roles at once.
+//! a member is never two roles at once (`roles.rs`).
 
 use super::*;
 use crate::domain::{ReviewItem, Verdict};
@@ -14,58 +14,7 @@ const REVIEWER: &str = "reviewer";
 impl<S: Store> Gateway<S> {
     /// Give a member the reviewer role, or take it away.
     pub fn admin_set_reviewer(&self, who: &Principal, member: &str, on: bool) -> Result<()> {
-        self.admin_set_role(who, member, REVIEWER, on)
-    }
-
-    /// The member's role, if the human gave it one.
-    pub(super) fn role_of(&self, member: &str) -> Result<Option<String>> {
-        self.store.policy_get(&format!("role:{member}"))
-    }
-
-    /// Set a role, or clear it when it is the one the member holds; clearing a role the member does not hold
-    /// leaves the one it has.
-    pub(super) fn admin_set_role(
-        &self,
-        who: &Principal,
-        member: &str,
-        role: &str,
-        on: bool,
-    ) -> Result<()> {
-        if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
-        }
-        self.administer(who, (role, &format!("{member}={on}")), |now| {
-            let held = self.role_of(member)?;
-            if on || held.as_deref() == Some(role) {
-                self.store
-                    .policy_set(&format!("role:{member}"), on.then_some(role), now)?;
-            }
-            Ok(String::new())
-        })
-    }
-
-    /// The role rules: a reviewer may only review, a librarian may only look, and only a reviewer may review.
-    pub(super) fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
-        let role = self.role_of(&who.member)?;
-        let refuse = |rule: &str, reason: String| {
-            Err(Error::Refused {
-                rule: rule.into(),
-                reason,
-            })
-        };
-        match (role.as_deref(), op.is_review()) {
-            (Some(REVIEWER), true) => Ok(()),
-            (Some(REVIEWER), false) => refuse(
-                REVIEWER,
-                format!("{} is a reviewer, which may only review", who.member),
-            ),
-            (_, true) => refuse(REVIEWER, format!("{} is not a reviewer", who.member)),
-            (Some("librarian"), false) if !op.is_query() => refuse(
-                "read-only",
-                format!("{} is a librarian, which may only look", who.member),
-            ),
-            _ => Ok(()),
-        }
+        self.set_role(who, member, Role::Reviewer, on)
     }
 
     /// The review operations' own entry: the member check, the role and guard, and a record of a refusal.

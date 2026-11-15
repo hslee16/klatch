@@ -489,6 +489,14 @@ fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Option<String>)>
     Ok((text, notice))
 }
 
+/// Claude Code puts `agent_id` in a hook's input only when the tool call was made inside a subagent.
+fn inside_subagent(input: &serde_json::Value) -> bool {
+    input
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|id| !id.is_empty())
+}
+
 fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
@@ -496,6 +504,12 @@ fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     }
     if args.is("PreToolUse") {
         return pre_tool_use(ctx);
+    }
+    // A tool call made by a subagent fires this hook as the parent session, whose member did not make the call. The
+    // subagent speaks under its own typed name, so showing it mail here echoes its own posts and claims back and eats
+    // the parent's unread mail (#493). Stay silent and leave every cursor where it is.
+    if ctx.stdin.is_some_and(inside_subagent) {
+        return Ok(());
     }
     // Remember which member this session is, so a hook that runs after the harness dropped its own record (the
     // SessionEnd hook) can still find it.

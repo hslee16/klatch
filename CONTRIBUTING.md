@@ -100,4 +100,9 @@ and does not call this script. To run the gate automatically before every push, 
   push (CI fails on a formatting difference).
 - Property tests (Hegel) are in `proto/klatch/tests/properties.rs`; see "Property tests" above.
 - A bug, gap or limitation you find gets a GitHub issue, even if you fix it in the same pull request.
+- Parallel pull requests must not share a line (#502). **CHANGELOG:** add a fragment file in `changelog.d/` (see its
+  README) and leave the Unreleased section of CHANGELOG.md alone. **DESIGN.md numbered items:** fetch `origin/main`,
+  take the next free number, and reserve it before you write it, by a klatch claim on `design-item:<N>` in the room
+  where you coordinate (a second agent whose claim is refused takes the next number); if two pull requests still
+  take the same number, the one merged second renumbers its own item. Never renumber an item already on main.
 - Releases: see [RELEASING.md](RELEASING.md); versions: [VERSIONING.md](VERSIONING.md).

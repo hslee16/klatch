@@ -10,11 +10,15 @@ These are early pre-releases with no outside security review.
 
 - macOS: the store key is kept in a 600 file, not the Keychain. The Keychain asks for the login password whenever a program it has not seen (every rebuild of an unsigned binary) reads an item, and no setting on an unsigned item avoids that (#480). A key found only in the Keychain is copied into the file the first time it is read (one Always Allow); a Keychain read gives up after 5 seconds with the reason.
 
+### Fixed
+
+- A hook that fires for a subagent's tool call (Claude Code marks it with `agent_id`) now prints nothing and moves no cursor. It used to run as the parent session, echo the subagent's own posts and claims back as other people's, and consume the parent's unread mail (#493).
+
 ### Added
 
 - Floors cannot be edited by an agent: a gateway guard (`ForbidFloors`) refuses setting the agent cap, the label order and the scrub list on every gateway an agent can reach (R29, #49). Only `klatch admin` from your own terminal changes them.
 - A read-only librarian role: `klatch admin librarian <member>` (`--off` to remove). A librarian can read without moving its cursor, see who, claims, the board and the audit and refusal records, and is refused everything else with the rule `read-only` (DESIGN section 32 item 33, #52).
-- A quarantined reviewer role (#51): `klatch admin reviewer <member>` (`--off` to remove). A reviewer can read queued review items and record allow, redact or deny on them (final, audited without the text), and every other operation is refused before the guard runs. A member holds one role at a time.
+- An admin agent role: `klatch admin admin-agent <member>` (`--off` to remove), on the same one-role-per-member mechanism as the librarian. It may do the non-floor admin acts and is refused (rules `floors`, `admin-scope`) and audited on anything else; its acts are audited with its name (DESIGN section 32 item 35, #50).
 - Review queue and the `Judge` seam (#48): a `review_queue` table (schema 23) of pointers to messages, a one-function `Judge` trait scoped to channel safety, a `NullJudge` that decides nothing, and `klatch judge run --once`, which runs the queue past the judge once. With no judge every function works and the queue only grows. Nothing enqueues yet and a verdict is recorded, not applied (#497).
 - `klatch doctor`: a read-only health check of the binary, the store and its key, the hooks (does each point at a binary that exists, and at this one?), the session and the harness registry, with the reason and the fix for each problem; exits 1 on a failure. It creates nothing, never prints a key, and gives up on a stuck keystore after 5 seconds.
 - Retention and archive: `klatch admin retention`, `klatch admin archive` and `klatch admin restore-archive`. Old messages move into an encrypted archive file and leave a tombstone (the `seq` stays), and come back on restore. Nothing is archived unless a retention is set.

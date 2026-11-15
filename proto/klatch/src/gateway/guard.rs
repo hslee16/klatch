@@ -175,6 +175,11 @@ impl Guard for AllowAll {
 /// listed act stops being refused.
 const FLOOR_ACTIONS: [&str; 4] = ["cap", "chain", "scrub-add", "scrub-remove"];
 
+/// Whether the admin act edits a floor.
+pub(crate) fn is_floor_act(action: &str) -> bool {
+    FLOOR_ACTIONS.contains(&action)
+}
+
 /// Refuses every act that edits a floor, whoever asks, and leaves every other decision to the guard it wraps.
 /// Every gateway an agent can reach uses it; only the terminal-gated `klatch admin` gateway does not, because a
 /// person typing at a terminal is the one party allowed to set the floors. Defence in depth: the wire protocol

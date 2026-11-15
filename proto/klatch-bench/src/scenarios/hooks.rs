@@ -15,6 +15,12 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "fault",
             run: wake,
         },
+        Scenario {
+            name: "a_hook_inside_a_subagent_prints_nothing_and_keeps_the_parents_mail",
+            origin: "#493",
+            layer: "fault",
+            run: subagent_hook,
+        },
     ]
 }
 
@@ -108,6 +114,42 @@ fn wake(w: &World) -> Res {
         &w.ok("sleeper", &["read", "r"])?,
         "hunter2",
         "the watcher consumed the message",
+    )?;
+    Ok(vec![])
+}
+
+/// A `PostToolUse` hook as `who`, with the session id and, for a subagent's tool call, an agent id.
+fn post_tool_use(w: &World, who: &str, agent: Option<&str>) -> Result<String, String> {
+    let mut input = serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse"});
+    if let Some(a) = agent {
+        input["agent_id"] = a.into();
+    }
+    let mut child = w
+        .spawn_piped(who, &["hook", "--event", "PostToolUse"])
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(input.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+fn subagent_hook(w: &World) -> Res {
+    w.set_clock(T0);
+    for who in ["parent", "peer"] {
+        w.ok(who, &["join", "r"])?;
+    }
+    w.ok("peer", &["post", "r", "for the parent"])?;
+    let sub = post_tool_use(w, "parent", Some("agent-1"))?;
+    check(sub.is_empty(), "a subagent's hook printed mail")?;
+    let own = post_tool_use(w, "parent", None)?;
+    has(
+        &own,
+        "for the parent",
+        "the subagent's hook ate the parent's mail",
     )?;
     Ok(vec![])
 }
