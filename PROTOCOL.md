@@ -74,6 +74,14 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 | `release` | `room`, `path`, optional `note` (one line, at most 300 characters: what you changed; shown to members who saw the claim and returned to the next claimant) | `{}`, or fails with `not_found` if you hold no claim on that path |
 | `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires", "scope" }] }`: unexpired claims in the room; `scope` is present when the claim has one (`*` for a shared claim) |
 
+Three more methods exist for members that hold a role (DESIGN section 32 item 41). Any other caller is refused by the gateway (`refused`, rules `admin-scope`, `floors`, `reviewer`):
+
+| Method | Params | Result |
+|---|---|---|
+| `role_act` | `act` (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit` or `refusals`), and what the act needs: `room`, `member`, `label`; `limit` for the records | `{}`, or `{ "records": [...] }` for `audit` and `refusals`; an act not in that list answers `unknown_act` |
+| `review_next` | none | `{ "item": null }` or `{ "item": { "id", "room", "seq", "to_label", "reason", "text" } }` |
+| `review_verdict` | `id`, `verdict` (`allow`, `redact` with `text`, or `deny` with optional `reason`) | `{}` |
+
 The list results are named for what they hold: `messages`, `members` and `claims`.
 
 Each message's `attribution` and `label` are stored with the message when it is posted, so a message posted by a proven
@@ -104,7 +112,7 @@ A `refusal` frame's `rule` names what refused. Rules the session itself emits:
 - `protocol.decode`: a line could not be read (not JSON, wrong shape, or longer than `MAX_LINE_BYTES`). `request` is absent; the session carries on with the next line.
 - `protocol.version`: the frame has no `"v"` or a different major version. `request` is absent; the session carries on.
 
-Administrative rules (`klatch admin`, DESIGN section 28 item 10) refuse any room operation: `admin-pause` (every room is paused), `admin-close` (a post, claim or status in a closed room) and `admin-block` (the member was removed from the room). Their reasons are safe to show. The administrative acts themselves are not wire methods: a client cannot pause, close or remove.
+Administrative rules (`klatch admin`, DESIGN section 28 item 10) refuse any room operation: `admin-pause` (every room is paused), `admin-close` (a post, claim or status in a closed room) and `admin-block` (the member was removed from the room). Their reasons are safe to show. The administrative acts themselves are not wire methods, except the few a role may call through `role_act`: a client cannot pause, and only the admin agent can close or remove.
 
 The label rules refuse a call by label (DESIGN section 30): `clearance` (the member's clearance is below the room's label) and `label` (a post labelled above its room). `scrub:<rule>` (the text matches a private term the administrator listed), `dm-members` and `dm-reserved` (a direct message room that is not the caller's, or a reserved name). `canary` (text carrying a planted canary out of its room), `tripwire` (a room paused after a canary reached it) and `breaker` (the member was stopped after repeated safety refusals). `agent-cap` refuses an administrative act, not a wire call. `post` takes an optional `label`, never above the room's. Reasons name labels and rooms, never text.
 

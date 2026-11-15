@@ -69,6 +69,9 @@ pub trait Transport {
     fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>>;
     /// The latest refused calls, newest first.
     fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
+    /// The reviewer's two calls (#509): the oldest waiting item it may read, and a verdict on a waiting item.
+    fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>>;
+    fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()>;
     fn claims(&self, room: &str) -> Result<Vec<Claim>>;
     fn digest(&self) -> Result<Digest>;
     /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
@@ -237,6 +240,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
         self.gateway.admin_refusals(&self.principal, limit)
+    }
+    fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>> {
+        self.gateway.review_next(&self.principal)
+    }
+    fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()> {
+        self.gateway.review_verdict(&self.principal, id, verdict)
     }
     fn claims(&self, room: &str) -> Result<Vec<Claim>> {
         self.gateway.claims(&self.principal, room)

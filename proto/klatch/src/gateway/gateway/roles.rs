@@ -112,6 +112,9 @@ impl<S: Store> Gateway<S> {
         if let Some(e) = reviewer_refusal(role, who, op) {
             return Err(e);
         }
+        if self.for_members {
+            self.check_member_admin(who, op, role)?;
+        }
         match role {
             Some(Role::Librarian) if !op.is_query() => Err(Error::Refused {
                 rule: "read-only".into(),
@@ -122,14 +125,53 @@ impl<S: Store> Gateway<S> {
         }
     }
 
-    /// An admin agent's act is refused unless it is on the list; a refusal is kept in the refusals and in the audit.
+    /// On a members' gateway an admin act needs a role that has it: the admin agent (further limited by its list),
+    /// or the librarian (whose own rule limits it to the records it may look at). Session-start housekeeping (`prune`) is every member's.
+    /// A floor act is refused as a floor whoever asks.
+    fn check_member_admin(
+        &self,
+        who: &Principal,
+        op: &Operation,
+        role: Option<Role>,
+    ) -> Result<()> {
+        let Operation::Admin { action, .. } = op else {
+            return Ok(());
+        };
+        let floor = admin_agent_refusal(action).filter(|(rule, _)| *rule == "floors");
+        // `hook_runs` (content-free, any member's) stays open until the human decides otherwise
+        let allowed = matches!(action.as_str(), "prune" | "hook_runs")
+            || role == Some(Role::Admin)
+            // the librarian arm of `check_role` refuses what is not a query, under its own rule
+            || role == Some(Role::Librarian);
+        let refusal = match (floor, allowed) {
+            (Some(f), _) => f,
+            (None, true) => return Ok(()),
+            (None, false) => (
+                "admin-scope",
+                "that act is for the admin agent, not for a member",
+            ),
+        };
+        self.refuse_admin(who, action, refusal)
+    }
+
+    /// An admin agent's act is refused unless it is on the list.
     fn check_admin_scope(&self, who: &Principal, op: &Operation) -> Result<()> {
         let Operation::Admin { action, .. } = op else {
             return Ok(());
         };
-        let Some((rule, reason)) = admin_agent_refusal(action) else {
-            return Ok(());
-        };
+        match admin_agent_refusal(action) {
+            Some(refusal) => self.refuse_admin(who, action, refusal),
+            None => Ok(()),
+        }
+    }
+
+    /// Refuse an admin act; the refusal is kept in the refusals and in the audit, never with text.
+    fn refuse_admin(
+        &self,
+        who: &Principal,
+        action: &str,
+        (rule, reason): (&str, &str),
+    ) -> Result<()> {
         let e = Error::Refused {
             rule: rule.into(),
             reason: reason.into(),
