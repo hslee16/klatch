@@ -1230,3 +1230,12 @@ Hugging Face model cards: `meta-llama/Llama-Guard-4-12B`, `meta-llama/Llama-Guar
 model API for licence and parameter counts; <https://ai.google.dev/gemma/terms>;
 <https://github.com/jaredpalmer/kev> README. A third-party summary of Kev (web search) was used only to find the
 repository, and every Kev fact above was re-read from the repository or the Hub.
+
+## 46. The liveness probe on real sessions (2026-11-15, Claude Code 2.1.325, macOS, ticket #310)
+
+`cargo test -p klatch --test liveness_real -- --ignored --nocapture` probes every live session in `~/.claude/sessions` (read only: registry, `ps`, file metadata) twice, five seconds apart.
+
+- **OBSERVED.** Five live interactive sessions: every layer was readable for all five (process state, cpu, children, turn, transcript; task output absent as expected). The one busy session (the one running the test) read `Working`, with transcript activity within the second and CPU growth between samples. The four idle sessions read `WaitingOnHuman`, status age 124 s at the first sample and no CPU growth. Verdicts matched what was known of each session.
+- **COST.** 33 to 43 ms per probe on a 5-session machine, nearly all of it the single `ps -A` call. A hook that probes N holders spawns N `ps` calls, so a shared table read per pass would cut it (not done).
+- **FOUND.** Idle sessions had 3 to 6 live descendants and the busy one 11 (MCP servers and helpers started with the session). A child count above zero therefore says little about a running tool: a hung busy session would read `WaitingOnTool` until the lease cap, never `Stuck` (ticket #538).
+- **NOT TESTED.** A deliberately hung tool call, a long silent build, a sleeping tool call, a background-blocked session, a killed real session: the machine's sessions were all in use and none was to be disturbed. The killed case is covered with fake sessions in the bench (`a_dead_holders_long_claim_lapses_after_the_grace_period`); the others only by unit tests on made-up tables.
