@@ -114,9 +114,15 @@ fn many_waiters(w: &World) -> Res {
     for i in 0..n {
         w.ok(&format!("w{i}"), &["join", "r"])?;
     }
+    // `klatch wait` polls every 200 ms (#607). Waiters spawned together poll in lockstep, so the wake time
+    // depended on where the post fell in that shared cycle and came out as about 28 or about 208 ms from run
+    // to run. Spreading the starts over one poll period puts some waiter just past its poll whenever the post
+    // lands, so wake_ms measures the worst case (one full period plus the read) on every run.
+    let period_ms = 200;
     let t = Instant::now();
     let waiters: Vec<_> = (0..n)
         .map(|i| {
+            std::thread::sleep(std::time::Duration::from_millis(period_ms / n as u64));
             w.spawn(&format!("w{i}"), &["wait", "r", "--timeout", "30"])
                 .map_err(|e| e.to_string())
         })
@@ -143,9 +149,14 @@ fn many_waiters(w: &World) -> Res {
             failed.len()
         ),
     )?;
+    let wake_ms = ms(posted);
+    check(
+        wake_ms < (2 * period_ms) as f64,
+        format!("the last waiter woke {wake_ms} ms after the post, more than two poll periods"),
+    )?;
     Ok(vec![
         ("waiters".into(), n as f64),
-        ("wake_ms".into(), ms(posted)),
+        ("wake_ms".into(), wake_ms),
         ("total_ms".into(), ms(t)),
     ])
 }
