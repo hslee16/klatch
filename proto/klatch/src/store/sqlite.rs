@@ -156,6 +156,32 @@ impl SqliteStore {
         }
     }
 
+    /// Every member's last reported permission mode, read from the file without opening it for writing: no migration,
+    /// no journal switch, nothing created (`klatch doctor` must change nothing). A store from before the table
+    /// existed has no modes yet.
+    pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(be)?;
+        Self::unlock(&conn, key)?;
+        let has_table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='member_mode'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        if has_table == 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = conn
+            .prepare("SELECT member,mode,ts FROM member_mode ORDER BY member")
+            .map_err(be)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(be)?;
+        rows.collect::<std::result::Result<_, _>>().map_err(be)
+    }
+
     fn try_open(path: &Path, key: &Key, busy: Duration) -> Result<Self> {
         let conn = Connection::open(path).map_err(be)?;
         Self::unlock(&conn, key)?;
@@ -738,6 +764,7 @@ impl Store for SqliteStore {
                     "DELETE FROM asks_reported WHERE member=?1",
                     "DELETE FROM asks_escalated WHERE member=?1",
                     "DELETE FROM hook_runs WHERE member=?1",
+                    "DELETE FROM member_mode WHERE member=?1",
                     "DELETE FROM claim_waits WHERE member=?1",
                     "DELETE FROM member_parked WHERE member=?1",
                 ] {
@@ -903,6 +930,22 @@ impl Store for SqliteStore {
                     last_bytes: r.get(3)?,
                 })
             },
+        )
+    }
+
+    fn note_member_mode(&self, member: &str, mode: &str, now: i64) -> Result<()> {
+        self.write(
+            "INSERT INTO member_mode(member,mode,ts) VALUES(?1,?2,?3)
+             ON CONFLICT(member) DO UPDATE SET mode=?2, ts=?3",
+            params![member, mode, now],
+        )
+    }
+
+    fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
+        self.rows(
+            "SELECT member,mode,ts FROM member_mode ORDER BY member",
+            params![],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
     }
 

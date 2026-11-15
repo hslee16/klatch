@@ -34,12 +34,66 @@ pub(super) fn all() -> Vec<Scenario> {
             run: claim_age,
         },
         Scenario {
+            name: "a_session_start_with_a_big_board_stays_under_the_cap_and_counts_the_board_lines_it_cuts",
+            origin: "#557, DESIGN section 32 item 56",
+            layer: "functional",
+            run: session_start_budget,
+        },
+        Scenario {
             name: "a_hook_inside_a_subagent_prints_nothing_and_keeps_the_parents_mail",
             origin: "#493",
             layer: "fault",
             run: subagent_hook,
         },
+        Scenario {
+            name: "doctor_warns_that_a_bypassing_member_has_its_socket_nudge_held",
+            origin: "#553, RESEARCH-NOTES 47.2",
+            layer: "functional",
+            run: bypass_warning,
+        },
     ]
+}
+
+/// A hook that reports the session's permission mode, as every Claude Code hook input does.
+fn hook_in_mode(w: &World, who: &str, mode: &str) -> Result<(), String> {
+    let input = serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse", "permission_mode": mode});
+    let mut child = w
+        .spawn_piped(who, &["hook", "--event", "PostToolUse"])
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(input.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn bypass_warning(w: &World) -> Res {
+    w.set_clock(T0);
+    for who in ["fast", "careful"] {
+        w.ok(who, &["join", "r"])?;
+    }
+    hook_in_mode(w, "fast", "bypassPermissions")?;
+    hook_in_mode(w, "careful", "default")?;
+    let report = w.ok("fast", &["doctor"])?;
+    let line = |member: &str| {
+        report
+            .lines()
+            .find(|l| l.contains(&format!("member {member}, permission mode")))
+            .unwrap_or_default()
+            .to_string()
+    };
+    check(
+        line("fast").starts_with("warn"),
+        "a bypassing member was not warned about",
+    )?;
+    check(
+        line("careful").starts_with("ok"),
+        "a prompting member was warned about",
+    )?;
+    Ok(vec![])
 }
 
 /// A tool call as Claude Code hands it to a `PreToolUse` hook.
@@ -177,6 +231,47 @@ fn convention_brief(w: &World) -> Res {
     has(&t, "KLATCH_NAME=kid", "the child's name is on its commands")?;
     has(&t, "--discover join lobby", "the brief says how to join")?;
     has(&t, "[klatch convention v1]", "the convention is included")?;
+    Ok(vec![])
+}
+
+/// A session start prints digest, convention and boards; together they stay under the cap (#557).
+fn session_start_budget(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("reader", &["join", "lobby"])?;
+    for i in 0..25 {
+        w.ok(&format!("{}{i:02}", "m".repeat(36)), &["join", "lobby"])?;
+    }
+    // many short messages, so the digest uses nearly all it is given and the board has only its floor
+    for i in 0..40 {
+        w.ok(
+            "talker",
+            &["post", "lobby", &format!("{i:02} {}", "z".repeat(250))],
+        )?;
+    }
+    let mut child = w
+        .spawn_piped(
+            "reader",
+            &["hook", "--event", "SessionStart", "--board", "lobby"],
+        )
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(br#"{"session_id":"s","hook_event_name":"SessionStart"}"#)
+        .map_err(|e| e.to_string())?;
+    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    check(
+        out.len() < 9_700,
+        format!("the hook printed {} bytes", out.len()),
+    )?;
+    has(&out, "[board lobby]", "the board header is missing")?;
+    has(
+        &out,
+        "more board lines not shown; run `klatch board lobby`",
+        "the cut board lines are not counted",
+    )?;
     Ok(vec![])
 }
 

@@ -82,6 +82,8 @@ pub trait Transport {
     fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()>;
     /// The latest run of each hook event recorded for `member`.
     fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>>;
+    /// Remember the permission mode the caller's session reported in a hook input (#553).
+    fn note_member_mode(&self, mode: &str) -> Result<()>;
     /// Remember that the caller is the member of harness session `session_id`.
     fn note_session(&self, session_id: &str) -> Result<()>;
     /// The Stop hook: end any park, then park the caller if background tasks or crons still run.
@@ -270,6 +272,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>> {
         self.gateway.hook_runs(&self.principal, member)
+    }
+    fn note_member_mode(&self, mode: &str) -> Result<()> {
+        self.gateway.note_member_mode(&self.principal, mode)
     }
     fn note_session(&self, session_id: &str) -> Result<()> {
         self.gateway.note_session(&self.principal, session_id)

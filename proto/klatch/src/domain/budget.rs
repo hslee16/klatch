@@ -18,3 +18,9 @@ pub const DIGEST_MESSAGE_CHARS: usize = 1000;
 /// only a 2 KB preview of hook output of about 9.8 KB or more (RESEARCH-NOTES 48.2, #549); this leaves room for the
 /// convention and notice a session start adds.
 pub const DIGEST_MAX_BYTES: usize = 8000;
+/// The most bytes of text one hook prints in all, digest, convention and boards together, measured escaped. The
+/// 9.7 KB measured safe less the JSON wrapper and the notice around the text (#557).
+pub const HOOK_MAX_BYTES: usize = 9400;
+/// What a session start keeps for the boards before the digest takes the rest: a board is cut line by line before
+/// messages are, but never to nothing.
+pub const BOARD_FLOOR_BYTES: usize = 1000;

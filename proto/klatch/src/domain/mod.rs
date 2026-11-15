@@ -40,7 +40,10 @@ pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
 pub use credentials::credential_kind;
 pub use dm::{DM_PREFIX, dm_room};
 pub use error::{Error, Result};
-pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
+pub use hook::{
+    RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, printed_len, render_hook,
+    render_hook_within,
+};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{

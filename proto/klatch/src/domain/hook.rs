@@ -234,8 +234,30 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
 }
 
 /// Bytes `s` takes once escaped into the JSON a hook prints; that is what Claude Code's output cap measures.
-fn printed_len(s: &str) -> usize {
+pub fn printed_len(s: &str) -> usize {
     json_escape(s).len()
+}
+
+/// The leading whole lines of `text` that fit in `budget` printed bytes, then `trailer(n)` for the `n` lines cut. A
+/// cut keeps every line start intact (a fence line stays a fence line); the trailer is always printed, so the caller
+/// reserves room for it by passing `budget` less its size (#557).
+pub fn cut_lines_to_fit(text: &str, budget: usize, trailer: impl Fn(usize) -> String) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut left = budget;
+    let mut kept = 0;
+    for l in &lines {
+        let need = printed_len(l);
+        if need > left {
+            break;
+        }
+        left -= need;
+        kept += 1;
+    }
+    let mut out: String = lines[..kept].concat();
+    if kept < lines.len() {
+        out.push_str(&trailer(lines.len() - kept));
+    }
+    out
 }
 
 /// How many leading units fit in `budget` bytes; the budget shrinks by what they take. Never splits a unit.
@@ -269,12 +291,11 @@ fn room_header(room: &str) -> String {
 
 /// Room by room, within one budget for all rooms (#549). Headers and the non-message items go first, so a flood of
 /// messages cannot push a claim or an ask of the member out; the messages share what remains, oldest first.
-fn plan_rooms(digests: &[RoomDigest], now: i64) -> Vec<RoomPlan<'_>> {
-    use crate::domain::budget::DIGEST_MAX_BYTES;
+fn plan_rooms(digests: &[RoomDigest], now: i64, budget: usize) -> Vec<RoomPlan<'_>> {
     // the "N more" lines are small and always printed; keep room for them
     const TRAILER_RESERVE: usize = 200;
     let active: Vec<&RoomDigest> = digests.iter().filter(|d| !d.is_quiet()).collect();
-    let mut left = DIGEST_MAX_BYTES;
+    let mut left = budget;
     let mut plans: Vec<RoomPlan> = Vec::new();
     for d in &active {
         left = left.saturating_sub(printed_len(&room_header(&d.room)) + 2 * TRAILER_RESERVE);
@@ -301,8 +322,13 @@ fn plan_rooms(digests: &[RoomDigest], now: i64) -> Vec<RoomPlan<'_>> {
 /// stays within `DIGEST_MAX_BYTES` once escaped: past that Claude Code shows the model only a 2 KB preview. What does
 /// not fit is counted, never cut mid-line, and the trailer says how to read it.
 pub fn render_hook(digests: &[RoomDigest], now: i64) -> String {
+    render_hook_within(digests, now, crate::domain::budget::DIGEST_MAX_BYTES)
+}
+
+/// `render_hook` with a smaller budget: a session start shares the hook cap with the convention and the boards.
+pub fn render_hook_within(digests: &[RoomDigest], now: i64, budget: usize) -> String {
     let mut out = String::new();
-    for p in plan_rooms(digests, now) {
+    for p in plan_rooms(digests, now, budget) {
         out.push_str(&room_header(p.room));
         out.extend(p.messages.iter().map(String::as_str));
         if p.messages_left_out > 0 {
