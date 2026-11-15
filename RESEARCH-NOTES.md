@@ -1114,6 +1114,72 @@ per overlapping path in a scope, release only by the holder, expiry frees, a con
 released by the work item's `done`. Not worth it: SQLite or SQLCipher behaviour, whole CLI flows, anything on the real
 clock.
 
+### 42.8 Second round: properties for the stateful features (2026-11-15, tickets #601, #602, #603)
+
+Since the two models and four properties of 42.1 to 42.7 were written the code gained claim renewal (#494), parked
+state, archive and restore with tombstones, roles and refusal tables, history paging and a hook byte budget. This round
+picked the invariants where a generated search beats example tests, wrote each, ran it, and then **planted a bug in the
+real code for each property to prove it can fail** (a property that cannot fail is not kept). Same setup as before:
+`hegeltest =0.52.6`, `static-engine`, no new dependency.
+
+**What was added** (all in `proto/klatch/tests/properties.rs` and `models.rs`):
+
+| Property | File | What it checks |
+|---|---|---|
+| `archive_then_restore_is_the_identity_...` | properties | Up to 14 generated messages (unicode and escaped bodies, handoffs, both attributions), two generated cutoffs archived into two files, restored in either order: after every step `seq` is exactly 1..n, tombstones are exactly the messages older than the later cutoff, a live message never changes, no member's `read` (advancing or not) is handed a tombstone, the second archive moves only what the first left, and after the restores `tail` equals the original log (id, sender, ts, body, kind, payload). |
+| `claims_agree_with_the_model_...` (extended) | models | The existing claims model gained a `post` rule (activity renews a live claim to its OWN ttl, counted from now, never shorter, never a lapsed claim), a `park` rule (a `parked:` post holds live claims to the return time) and the unpark cut-back of the next ordinary post, a 24 h ttl and a 90 000 s clock step, and an invariant that no listed claim outlives `CLAIM_MAX_SECS`. The model says renewal in one line (`max(expires, now + ttl)`). |
+| `the_hook_output_is_always_valid_json_within_its_byte_budget` | properties | Up to 5 rooms (valid names up to 40 characters) of messages, claims, releases, stale asks, backlog and aged claims whose text holds quotes, backslashes, newlines, control characters, emoji and generated text, repeated: the printed text is within `DIGEST_MAX_BYTES`, the JSON envelope is within `HOOK_MAX_BYTES`, `serde_json` parses it and `additionalContext` equals the text, and `render_hook_within` honours any budget from 4000 up. |
+| `the_role_layer_decides_every_operation_...` | models | **Exhaustive**, not sampled: 4 roles (none, librarian, admin agent, reviewer) times 16 gateway operations and 33 admin action names (the allowlist, the four floors, every other act the gateway builds, and unknown ones, which an allowlist must refuse), each on a fresh members' gateway. The expected refusal (rule `reviewer`, `read-only`, `admin-scope`, `floors`, or none) comes from a spec table written separately in the test, not from the gateway's lists. |
+| `no_sequence_of_operations_by_a_member_ever_changes_...role` | models | Random attempts, role-granting calls included (own and another's, on and off), by each kind of member on a members' gateway: nobody's role changes. |
+| `paging_through_tail_and_history_...` | properties | Up to 48 messages from two senders: `tail` pages of a generated size and `history` pages forward concatenate to exactly the full log (no gap, no duplicate), no page is over its limit, `more` equals the messages after the page, `history --last k` is the end of the log, and every member's unread mail is the same before and after (no cursor moved). The page loops are bounded, so a pager that never advances fails instead of hanging. |
+
+**Planted bugs** (500 cases, `HEGEL_SEED=12345`, each reverted; "caught" means the named test failed):
+
+| # | Planted bug in the real code | Caught by |
+|---|---|---|
+| A1 | restore leaves `kind` as `archived` | archive property |
+| A2 | restore drops the payload | archive property |
+| A3 | archive cutoff `ts<=` instead of `ts<` | archive property |
+| A4 | `read` delivers tombstones (filter removed) | archive property |
+| A5 | archive, its count and its tombstone update lose the tombstone filter (a tombstone is archived again) | archive property |
+| B1 | renewal revives a lapsed claim (`expires>now-5`) | claims model |
+| B2 | renewal can shorten a lease (drops `expires<now+ttl`) | claims model, only after the `park` rule was added: without a park or a liveness lease no lease ever exceeds `now+ttl`, so shortening cannot be seen |
+| B3 | renewal to twice the claim's own ttl | claims model |
+| B4 | renewal renews other members' claims | claims model |
+| B5 | unpark does not cut the lease back | claims model |
+| C1 | hook reserves nothing per room (the real bug of #601, reverted) | hook property |
+| C2 | hook JSON does not escape quotes | hook property |
+| C3 | hook counts characters instead of bytes | hook property |
+| D1 | admin allowlist gains a floor act (`cap`) | role table |
+| D2 | librarian may claim (`is_query` widened) | role table |
+| D3 | non-reviewers may review | role table |
+| D4 | an admin agent skips its scope check | role table |
+| E1 | `tail` returns `seq >= after` | paging property (after bounding the loop: first run it hung) |
+| E2 | history forward page starts one late | paging property |
+| E3 | history `more` off by one | paging property |
+| E4 | history advances the cursor | paging property |
+
+Every property caught every plant it was matched with; none was dropped. Two of the plants taught something: B2 showed
+the first claims model **could not fail** on renewal shortening (so the park rule was added), and E1 showed a
+`loop { ... }` over pages turns a bug into a hang (so the loops are bounded).
+
+**Bugs found.** One real, fixed in the same pull request: **#601**, `plan_rooms` subtracted each room's header and trailer
+reserve one room at a time, but a room first spent everything left on its claims and asks, so the headers and "more"
+lines of the rooms after it were printed on top of the budget (5 rooms with a flood of claims printed 9205 bytes against
+8000; Hegel found it at 8016 with 4 rooms). The unit test was red first, then the reserve for all active rooms is taken
+before any unit is fitted. One low-priority limit, **#602**: a budget smaller than the reserve of all active rooms (about
+2.6 KB for five rooms) is overshot by a few bytes per room; unreachable today because the session start budget leaves
+several KB, so the property draws budgets of 4000 and up.
+
+**Not done, and why.** Candidate (6), migration from every older schema version, needs a fixture of each old schema; the
+migrations are private and building version N by running migrations 0 to N would test them against themselves. Filed as
+**#603** with options. Also not generated: crossing queue and durable tasks (their refusal rules are inside the role
+table through `review_next` and `review_verdict`; the queue's own ordering was not modelled), liveness leases (they need
+a system probe), and the convention text (a constant: an example test is the right tool).
+
+**Cost.** The gate runs 500 cases of each: the properties binary 5.5 s and the models binary 4.5 s on this machine,
+about 10 s together (the hook property is the heaviest at about 3 s). Nothing needed the `--long` mode.
+
 ## 43. A second Store, in memory, as a spike (2026-11-14, tickets #73, #74, #485)
 
 Question: is the `Store` trait shaped by SQLite? Method: the 90 store tests that use only the trait became a conformance suite (`src/store/conformance.rs`, #74); a test-only in-memory store (`src/store/memory_spike.rs`) implements only the 11 required methods and runs the whole suite. Result: **44 of 90 pass**. The core passes (post and read with cursors, members, claims with scopes and expiry, tail, head, advance_cursor); the 46 that fail all need optional methods: hook and wake positions, status, sessions, room state, mute, parent, deadlock detection, asks, anchors, credentials, policy. The trait therefore does not leak SQLite for the core, and the optional methods are where a backend has work to do. The finding that matters: those optional methods default to silent success (`Ok(())` or empty), so a backend can skip them and still compile and run (#485). A real second backend is not built; this spike stays test-only.
