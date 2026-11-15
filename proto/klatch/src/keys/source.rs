@@ -74,11 +74,13 @@ impl KeySource for MemoryKeys {
 /// copied into the file the first time it is read. A rebuilt unsigned program is a stranger to the macOS Keychain
 /// and would make it ask for a password (#480), so new keys never go there; the file is the same protection
 /// against other users and stolen disks. Signed releases may use the Keychain again (#371, #424).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct FileFirst {
     file: crate::keys::FileKeys,
     legacy: Box<dyn KeySource>,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl FileFirst {
     pub fn new(file: crate::keys::FileKeys, legacy: Box<dyn KeySource>) -> Self {
         Self { file, legacy }
