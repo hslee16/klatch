@@ -29,8 +29,10 @@ minutes? If not, make it manual and say how to run it here.
 
 klatch uses [Hegel](https://hegel.dev) (the `hegeltest` crate, a dev-dependency, pinned exactly because it is beta
 software) for property tests: instead of one example, a test states something that must hold for every input and Hegel
-generates cases to try to break it. They live in `proto/klatch/tests/properties.rs`, run inside the normal
-`cargo test`, and take well under a second (100 cases each). **A pass is evidence, not proof**: it means no
+generates cases to try to break it. They live in `proto/klatch/tests/properties.rs` (pure functions) and
+`proto/klatch/tests/models.rs` (model-based: a random sequence of claims, releases, posts, reads and acknowledgements
+is run against the real gateway and a tiny separate model, which must agree after every step). They run inside the
+normal `cargo test`: the properties take well under a second, the models about a second (100 sequences each). **A pass is evidence, not proof**: it means no
 counterexample was found in the cases tried. Do not call anything property tested "proven".
 
 **Run**
@@ -38,6 +40,7 @@ counterexample was found in the cases tried. Do not call anything property teste
 ```
 cargo test -p klatch --test properties                                  # the default 100 cases each
 HEGEL_TEST_CASES=100000 cargo test -p klatch --test properties          # a long run, by hand (not in CI)
+HEGEL_TEST_CASES=3000 cargo test -p klatch --test models                # 3000 sequences each: about half a minute
 HEGEL_SEED=7 cargo test -p klatch --test properties                     # a fixed seed, to repeat a run exactly
 ```
 
