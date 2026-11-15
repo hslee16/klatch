@@ -261,6 +261,12 @@ pub fn notice_of(out: &str) -> Option<String> {
 }
 
 pub fn hook_as_session(h: &Home, name: Option<&str>, sid: &str, args: &[&str]) -> Output {
+    let payload = format!(r#"{{"session_id":"{sid}","hook_event_name":"x"}}"#);
+    hook_with_payload(h, name, &payload, args)
+}
+
+/// Run the hook with an exact JSON payload on standard input, as Claude Code does.
+pub fn hook_with_payload(h: &Home, name: Option<&str>, payload: &str, args: &[&str]) -> Output {
     use std::io::Write;
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
     c.env_clear()
@@ -275,7 +281,6 @@ pub fn hook_as_session(h: &Home, name: Option<&str>, sid: &str, args: &[&str]) -
         c.env("KLATCH_NAME", n);
     }
     let mut child = c.spawn().unwrap();
-    let payload = format!(r#"{{"session_id":"{sid}","hook_event_name":"x"}}"#);
     child
         .stdin
         .take()
