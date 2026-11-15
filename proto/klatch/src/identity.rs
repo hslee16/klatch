@@ -161,7 +161,7 @@ pub(crate) fn discover_session() -> Result<Found, Miss> {
 }
 
 /// The harness registry under `$HOME` and the pid domain of this machine, if there is a home.
-fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
+pub(crate) fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
     let home = std::env::var_os("HOME")?;
     let registry = FsRegistry {
         dir: PathBuf::from(home).join(".claude").join("sessions"),
