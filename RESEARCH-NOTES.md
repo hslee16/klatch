@@ -1240,6 +1240,66 @@ repository, and every Kev fact above was re-read from the repository or the Hub.
 - **FOUND.** Idle sessions had 3 to 6 live descendants and the busy one 11 (MCP servers and helpers started with the session). A child count above zero therefore says little about a running tool: a hung busy session would read `WaitingOnTool` until the lease cap, never `Stuck` (ticket #538).
 - **NOT TESTED.** A deliberately hung tool call, a long silent build, a sleeping tool call, a background-blocked session, a killed real session: the machine's sessions were all in use and none was to be disturbed. The killed case is covered with fake sessions in the bench (`a_dead_holders_long_claim_lapses_after_the_grace_period`); the others only by unit tests on made-up tables.
 
+## 48. Hook output, nudge latency and detached watchers, run live (2026-11-15, Claude Code 2.1.325, macOS, Darwin 23.3.0, tickets #83, #84, #88, #89)
+
+Method: headless `claude -p --model haiku --setting-sources local` with a throwaway `--settings` file per case and `--include-hook-events --output-format stream-json --verbose` (the stream carries each hook's raw stdout, stderr and exit code). Scratch directory only; the klatch case used the binary built in a worktree with `KLATCH_HOME` and `KLATCH_KEY_DIR` pointing at a temp directory (no Keychain, no live store). The real login was used. Each result is OBSERVED on one version and one machine. Scripts are not committed; the commands are described per case.
+
+### 48.1 PreToolUse: warn without blocking (#84)
+
+Five hooks on `PreToolUse` with matcher `Bash`, all exit 0, run on one `echo hi`; the model was asked to list every `PRE-` token it saw outside the prompt. Two runs.
+
+| Hook output | Reached the model? | Notes |
+|---|---|---|
+| plain stdout, exit 0 | no | not in the model's answer in either run |
+| stderr, exit 0 | no | same |
+| JSON `hookSpecificOutput.additionalContext` | **yes** | quoted in both runs |
+| JSON `permissionDecision: "allow"` with `permissionDecisionReason` | no | the reason is for the user |
+| JSON `systemMessage` | no | printed to the user as `PreToolUse:Bash says: ...` (a stream event of level notice) |
+
+The command ran in every case (the tool result `hi` came back), so a warning does not block. Conclusion: to warn the model on `PreToolUse` without blocking, print JSON with `additionalContext`; plain text works on `SessionStart` and `UserPromptSubmit` only. Exit 2 (blocking) is in 14.1. Not tested: `permissionDecision: "ask"` (no human in a headless run).
+
+### 48.2 Output limits (#84)
+
+A hook printed numbered 50 byte lines then an end marker; the model reported the highest line and whether the marker was visible, and quoted any notice.
+
+- **Limit.** Whole text delivered at 9000, 9300, 9500 and 9700 bytes. At 9900 bytes and above (10000, 11000, 30000, 100000, 500000 tested) the model gets this instead: a notice `Output too large (<size>). Full output saved to: ~/.claude/projects/<project>/<session>/tool-results/hook-<id>...txt` and a preview of the first 2 KB (about 39 lines). So the cap is between 9.7 and 9.9 KB (the documented figure is 10,000 characters; the gap is probably a wrapper).
+- **Not silent.** The notice appears; the model can read the file with Bash (it did in several runs, one turn more) and could not without a tool.
+- **Same cap everywhere.** `SessionStart`, `UserPromptSubmit` (plain), `PreToolUse` and `PostToolUse` (JSON `additionalContext`) all behaved the same at 11 KB and 100 KB.
+- **Klatch exceeds it.** 15 posts of about 900 characters, the real `klatch hook --event UserPromptSubmit`: stdout 14296 bytes; the model saw the first message only and quoted `Output too large (13.9KB)`. The digest limit is 20 messages by 1000 characters (about 20 KB). Ticket #549.
+
+### 48.3 PostToolUse injection on 2.1.325 (#83)
+
+Recorded in section 21 (2.1.323) and confirmed interactively in #199. Repeated here on 2.1.325: two runs with plain stdout, stderr and JSON `additionalContext` on `PostToolUse`. Only the JSON token reached the model, both runs. #83 is complete; no change.
+
+### 48.4 Nudge size and latency (#88)
+
+A Python process (not a child of the session) connected to the session's `messagingSocketPath` from its registry record and wrote one line `{"type":"user","message":{...},"priority":"now","uuid":...}` with no auth line (not needed in this run; see #86). The session was `claude -p --input-format stream-json --replay-user-messages`. Times are from the send to the model's reply.
+
+- **Idle peer, latency.** 94 bytes: 1.1 to 2.3 s (first turn after a warm-up 1.9 to 2.3 s, later 1.1 to 1.3 s). 1 KB: 1.3 s. 10 KB: 1.3 s. 100 KB: 2.0 s. 300 KB: 5.3 s. This is model time; the socket write took 1 to 6 ms and returns no acknowledgement. The wake-watcher path (hook, section 39) measured 1.7 s to a new turn, the same order.
+- **Size.** Delivered intact up to 300 KB (the model counted the last numbered line correctly: 198, 1998, 5998). Claude Code wraps the text as `Another Claude session sent a message: <text>`, about 580 characters of overhead, and shows no sender. Over 300 KB was not tried (about 75k tokens each; documented limit about 1,000,000 characters).
+- **Busy peer.** A foreground tool call (python sleeping 25 s; a plain `sleep` is blocked by the harness and runs in the background, so it is not a busy test). The nudge sent 5 s in was not delivered during the tool: it was processed 1.7 s after the tool returned (22.6 s after the post) as a turn of its own, and the model answered it and the original task. So a busy peer sees the nudge at the next idle moment, late by the remaining tool time; this agrees with the 39 result for the hook path.
+- **A bug in the plan (ticket #550).** Six identical 94 byte posts about 2.5 s apart to an idle session: only the first and the fourth produced a turn; the others were dropped with no error and no event. The same six with a changing nonce at 1 s and at 4 s gaps: all six delivered. Each had a distinct uuid, so the drop keys on the text. A constant nudge text can vanish; include the unread count or last seq.
+- **Recommendation.** Keep nudges short (under 1 KB; the nudge carries a pointer, the content is read from klatch), never repeat identical text, and treat the wake as late by up to the length of the current tool call. Not measured: the interactive terminal, and `priority` values other than `now`.
+
+### 48.5 Does a watcher survive the hook timeout? (#89)
+
+A `SessionStart` hook started a watcher that logged one line a second for 45 s with its parent and ancestor chain; the session ran one 12 s tool call (about 16 to 18 s in all). Five cases:
+
+| Case | Hook | Watcher | Result |
+|---|---|---|---|
+| a | sync, default timeout, returns at once | background child, same process group | **survived** all 45 s, past the end of the session; parent became pid 1 straight away (not a descendant of claude) |
+| b | sync, timeout 2, hook waits 10 s | same process group | **killed** at the timeout: 2 heartbeats; the hook never finished |
+| c | `async` + `asyncRewake`, timeout 3 | the watcher is the hook (foreground) | **killed** at 3 s: 3 heartbeats |
+| d | sync, timeout 2, hook waits 10 s | child in its own session (`start_new_session`) | **survived** all 45 s, past session exit; parent pid 1 |
+| e | `async` + `asyncRewake`, timeout 3, hook waits 30 s | same process group | **killed** at 3 s |
+
+Findings. (1) A hook timeout kills the hook's whole process group, so a child that stays in it dies with the hook. (2) A child in its own session survives the timeout and the end of the session, but it is then an orphan of pid 1: it is no longer an own child of the session, so the documented own-child exemption for posting into the session's socket cannot apply to it, and it cannot wake the session by exit code (that needs a live hook process). While the hook is alive the chain does reach claude (`sh, sh, claude`). (3) A watcher that is not detached ends at the hook timeout, so the wake path must either raise the timeout (section 39: 900 s worked, 660 s idle then woke in 2.5 s) or re-arm from a `Stop` hook (section 39, done). A detached watcher would outlive its session; it must end itself (klatch wake has its own timeout and a lock, and the member's `SessionEnd` is not a kill signal for it).
+- **Recommendation.** Do not detach. Keep the foreground `asyncRewake` watcher with a hook timeout above the watcher's own timeout, and re-arm on `Stop`. Not tested: interactive TUI, an `async` hook without `asyncRewake`, a longer hold than 45 s, `kill -9` of the session (an orphaned detached child would remain).
+
+### 48.6 Tickets
+
+#549 (hook digest can exceed the output cap), #550 (identical nudge text dropped). #83, #84, #88 and #89 have their result here.
+
 ## 49. Cotal and agent-loom read in full, Codex queue and hooks, the channels preview, native peers (2026-11-15, Claude Code 2.1.325, Codex 0.147.0 installed, tickets #90 to #93)
 
 Sources were fetched on 2026-11-15 and are named per item. Each item says what was read, what was run and what could not be verified. Licence terms are quoted from the repository only where the page states them; nothing here is legal advice.
