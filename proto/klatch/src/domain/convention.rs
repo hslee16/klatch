@@ -24,6 +24,7 @@ pub fn convention(bin: &str) -> String {
   - Claim: claim what you will change (a file, a document, a ticket) before you start. Claims live in your scope, so another scope's claim of the same name does not conflict; add --shared to a claim on something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
   - To reach one member, write @its-name in your message; a member who muted the room (`{bin} --discover mute lobby`) is still shown it.\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
+  - A long wait (a build, a review, a night): post \"parked: <why>, back by <time>\" (2h, 3d or 2026-11-20 14:30 UTC); your claims hold until then. Any post of yours ends it.\n\
   - When you leave, post \"status: done\" and run the status command.\n"
     )
 }
@@ -59,6 +60,13 @@ mod tests {
             t.contains("/opt/klatch/klatch --discover wait lobby --timeout 60"),
             "{t}"
         );
+    }
+
+    #[test]
+    fn the_text_teaches_the_parked_word_and_stays_within_its_bound() {
+        let t = convention(BIN);
+        assert!(t.contains("parked: <why>, back by <time>"), "{t}");
+        assert!(t.len() < 2800, "{} bytes", t.len());
     }
 
     #[test]

@@ -530,6 +530,18 @@ fn inside_subagent(input: &serde_json::Value) -> bool {
         .is_some_and(|id| !id.is_empty())
 }
 
+/// How many background tasks and crons a `Stop` hook input lists. The fields are not documented by Claude Code, so a
+/// list counts its entries, a number counts as itself, and anything else counts as none; only counts are kept, never
+/// what the entries say.
+fn background_counts(input: &serde_json::Value) -> (usize, usize) {
+    let count = |key: &str| match input.get(key) {
+        Some(serde_json::Value::Array(a)) => a.len(),
+        Some(serde_json::Value::Number(n)) => n.as_u64().map_or(0, |n| n as usize),
+        _ => 0,
+    };
+    (count("background_tasks"), count("session_crons"))
+}
+
 fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
@@ -549,6 +561,16 @@ fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     if let Some(sid) = ctx.stdin_session {
         let _ = t.note_session(sid);
     }
+    // The end of a turn records what still runs in the background (a declared long wait) and prints nothing: the
+    // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
+    if args.is("Stop") {
+        let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
+        let _ = t.record_stop(tasks, crons);
+        let _ = t.record_hook_run("Stop", 0);
+        return Ok(());
+    }
+    // Any other hook is a sign of life: it ends a park.
+    let _ = t.sign_of_life();
     let (text, notice) = if args.is("SessionStart") {
         session_start(ctx, args)?
     } else {
@@ -809,6 +831,22 @@ mod hint_tests {
     #[test]
     fn a_typed_name_needs_no_hint() {
         assert_eq!(join_hint("alice", false), None);
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_stop_input_is_counted_whatever_shape_the_lists_have() {
+        let lists = json!({"background_tasks": [{"id": "a"}, {"id": "b"}], "session_crons": [1]});
+        assert_eq!(background_counts(&lists), (2, 1));
+        let numbers = json!({"background_tasks": 3, "session_crons": 0});
+        assert_eq!(background_counts(&numbers), (3, 0));
+        assert_eq!(background_counts(&json!({"background_tasks": "x"})), (0, 0));
+        assert_eq!(background_counts(&json!({})), (0, 0));
     }
 }
 

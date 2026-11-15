@@ -26,6 +26,7 @@ mod member_surface;
 mod members;
 mod mute;
 mod notify;
+mod parked;
 mod reviewer;
 mod runs;
 mod scrub;

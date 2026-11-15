@@ -14,6 +14,12 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "functional",
             run: ask_deadline_by_clock,
         },
+        Scenario {
+            name: "a_parked_member_keeps_its_claims_and_its_place_past_the_hide_and_prune_windows",
+            origin: "#305, DESIGN s32 item 45",
+            layer: "functional",
+            run: parked_holds_by_clock,
+        },
     ]
 }
 
@@ -137,6 +143,80 @@ fn ask_deadline_by_clock(w: &World) -> Res {
         &w.ok("bob", &["asks", "lobby"])?,
         "overdue",
         "the ask shows as overdue",
+    )?;
+    Ok(vec![])
+}
+
+fn stop_hook(w: &World, who: &str, input: &str) -> Res {
+    use std::io::Write;
+    let mut child = w
+        .spawn_piped(who, &["hook", "--event", "Stop"])
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(input.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    check(out.status.success(), "the Stop hook failed")?;
+    check(out.stdout.is_empty(), "the Stop hook printed something")?;
+    Ok(vec![])
+}
+
+fn parked_holds_by_clock(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("bob", &["join", "lobby"])?;
+    w.ok("alice", &["claim", "lobby", "build.log", "--ttl", "600"])?;
+    w.ok(
+        "alice",
+        &["post", "lobby", "parked: nightly build, back by 3d"],
+    )?;
+    w.advance(2 * 86_400);
+    // alice has been silent for two days: past the ten minute hide window and the one day prune window
+    w.ok("bob", &["hook", "--event", "SessionStart", "--no-join"])?;
+    let who = w.ok("bob", &["who", "lobby"])?;
+    has(&who, "alice", "a parked member is still listed")?;
+    has(
+        &who,
+        "parked, back in 1d: nightly build",
+        "with its return time",
+    )?;
+    has(
+        &w.ok("bob", &["claims", "lobby"])?,
+        "build.log",
+        "its claim holds past its lease",
+    )?;
+    w.advance(86_400 + 60);
+    w.ok("bob", &["hook", "--event", "SessionStart", "--no-join"])?;
+    lacks(
+        &w.ok("bob", &["claims", "lobby"])?,
+        "build.log",
+        "after the return time the claim has run out",
+    )?;
+    lacks(
+        &w.ok("bob", &["who", "lobby", "--all"])?,
+        "alice",
+        "and the silent member is pruned",
+    )?;
+    // the Stop hook records background work, prints nothing, and a post ends the park
+    w.ok("carol", &["join", "lobby"])?;
+    stop_hook(
+        w,
+        "carol",
+        r#"{"background_tasks":[{"id":"t1"}],"session_crons":[]}"#,
+    )?;
+    has(
+        &w.ok("bob", &["who", "lobby"])?,
+        "parked, back in 1h: 1 background task",
+        "background work parks the member",
+    )?;
+    w.ok("carol", &["post", "lobby", "back"])?;
+    lacks(
+        &w.ok("bob", &["who", "lobby"])?,
+        "parked",
+        "a post ends the park",
     )?;
     Ok(vec![])
 }
