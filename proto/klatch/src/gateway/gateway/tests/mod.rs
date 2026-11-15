@@ -21,6 +21,7 @@ mod floors;
 mod guarding;
 mod handoff;
 mod labels;
+mod lease;
 mod librarian;
 mod member_surface;
 mod members;

@@ -596,7 +596,14 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         now(),
     )?;
     let parent = pending_parent(&store, &caller);
-    let gateway = Rc::new(Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members());
+    let mut gateway = Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
+    // claims follow their holder's liveness (DESIGN section 29, #304); no home means no registry to probe
+    if let Some(home) = std::env::var_os("HOME") {
+        gateway = gateway.with_leases(klatch::gateway::SysLeaseSource::under_home(
+            std::path::Path::new(&home),
+        ));
+    }
+    let gateway = Rc::new(gateway);
     // the keys of the sealed labels this member's clearance reaches, and no others (#160)
     let labels = gateway.sealed_labels_within(&caller.principal.member)?;
     if !labels.is_empty() {

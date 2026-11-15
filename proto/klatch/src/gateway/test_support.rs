@@ -149,6 +149,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.release_member_claims(member, now)
     }
+    fn claim_owners(&self) -> Result<Vec<String>> {
+        self.gate()?;
+        self.inner.claim_owners()
+    }
+    fn retime_member_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
+        self.gate()?;
+        self.inner.retime_member_claims(member, until, extend)
+    }
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
         self.gate()?;
         self.inner.claims(room, now)
