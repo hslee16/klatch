@@ -37,6 +37,19 @@ pub fn parse_record(json: &str) -> Option<Record> {
 pub trait Registry {
     /// The record filed under this pid, if there is a well formed one.
     fn record_for(&self, pid: u32) -> Option<Record>;
+
+    /// Every well formed record, ordered by pid, and how many files looked like records but did not parse. A registry
+    /// that cannot be listed (a fake, a missing directory) has none.
+    fn records(&self) -> (Vec<Record>, usize) {
+        (Vec::new(), 0)
+    }
+}
+
+/// Whether a file name is exactly `<pid>.json`. Nothing else in the registry directory is ever opened: the
+/// `<pid>.<hash>.key` files hold secrets.
+pub fn is_record_file(name: &str) -> bool {
+    name.strip_suffix(".json")
+        .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The registry directory on disk (Claude Code: `~/.claude/sessions`).
@@ -45,6 +58,30 @@ pub struct FsRegistry {
 }
 
 impl Registry for FsRegistry {
+    fn records(&self) -> (Vec<Record>, usize) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return (Vec::new(), 0);
+        };
+        let mut records = Vec::new();
+        let mut malformed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|n| is_record_file(n)) else {
+                continue;
+            };
+            let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
+            match std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|t| parse_record(&t))
+            {
+                Some(rec) if rec.pid == filed_under => records.push(rec),
+                _ => malformed += 1,
+            }
+        }
+        records.sort_by_key(|r| r.pid);
+        (records, malformed)
+    }
+
     fn record_for(&self, pid: u32) -> Option<Record> {
         // only `<pid>.json`; the `<pid>.<hash>.key` files are never opened
         let text = std::fs::read_to_string(self.dir.join(format!("{pid}.json"))).ok()?;

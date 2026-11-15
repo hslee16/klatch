@@ -8,6 +8,7 @@ These are early pre-releases with no outside security review.
 
 ### Added
 
+- `klatch sessions`: the live coding-agent sessions on this machine, from the harness registry (pid, name, directory, session id); `--all` adds the records that are not live and why. Read only; never opens a key file.
 - A claim may last at most 24 hours (DESIGN D5); a longer request is refused with the limit. Claim again to renew.
 - `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
 - Static Linux builds (musl, x86_64 and aarch64): no glibc or other system library needed (tested in containers on Alpine 3.20, Debian 11 and Ubuntu 22.04, arm64 only). The installer chooses them when

@@ -96,6 +96,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             },
         )?,
         Cmd::Init { .. }
+        | Cmd::Sessions { .. }
         | Cmd::Admin { .. }
         | Cmd::Worker { .. }
         | Cmd::Anchor { .. }

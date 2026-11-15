@@ -228,6 +228,12 @@ enum Cmd {
         )]
         uninstall: bool,
     },
+    /// List the live coding-agent sessions on this machine from the harness registry (read only; never a key file)
+    Sessions {
+        /// Also list the records that are not live, with the reason, and how many files could not be read
+        #[arg(long)]
+        all: bool,
+    },
     /// Show a room's board: open asks, current offers and members with their status
     Board { room: String },
     /// List the asks in a room nobody has answered or closed
@@ -433,12 +439,60 @@ fn run_cli(cli: Cli) -> Result<()> {
             wake: init::Switch::from_flags(wake, no_wake),
             uninstall,
         }),
+        Cmd::Sessions { all } => run_sessions(all),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
+}
+
+/// `klatch sessions`: one tab separated line per live session (pid, name, directory, session id); with `--all` also the
+/// records that are not live and why.
+fn run_sessions(all: bool) -> Result<()> {
+    use klatch::harness::Liveness;
+    let Some((registry, domain)) = identity::registry_and_domain() else {
+        bail!("HOME is not set, so the harness registry cannot be found");
+    };
+    let found = klatch::harness::list(&registry, &PsTable, domain);
+    for r in &found.live {
+        println!(
+            "{}\t{}\t{}\t{}",
+            r.pid,
+            r.name.as_deref().unwrap_or("-"),
+            r.cwd,
+            r.session_id
+        );
+    }
+    if found.live.is_empty() {
+        eprintln!("no live sessions");
+    }
+    if all {
+        for (r, why) in &found.ignored {
+            let why = match why {
+                Liveness::Dead => "not running",
+                Liveness::Reused => "pid reused by another process",
+                Liveness::NotHarness => "running, but not the harness",
+                Liveness::OtherDomain => "recorded on another machine",
+                Liveness::Live => "live",
+            };
+            println!(
+                "ignored\t{}\t{why}\t{}\t{}",
+                r.pid,
+                r.name.as_deref().unwrap_or("-"),
+                r.cwd
+            );
+        }
+        println!("unreadable\t{}", found.malformed);
+    } else if !found.ignored.is_empty() || found.malformed > 0 {
+        eprintln!(
+            "{} other record(s) ignored (not running, a reused pid, not the harness or another machine) and {} unreadable; --all lists them",
+            found.ignored.len(),
+            found.malformed
+        );
+    }
+    Ok(())
 }
 
 fn run_init(options: &init::Options) -> Result<()> {
