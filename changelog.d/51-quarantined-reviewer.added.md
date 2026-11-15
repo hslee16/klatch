@@ -1,1 +1,0 @@
-- A quarantined reviewer role (#51): `klatch admin reviewer <member>` (`--off` to remove). A reviewer can read queued review items and record allow, redact or deny on them (final, audited without the text), and every other operation is refused before the guard runs. A member holds one role at a time.
