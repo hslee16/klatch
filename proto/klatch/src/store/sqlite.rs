@@ -63,14 +63,60 @@ fn be(e: rusqlite::Error) -> Error {
 
 impl SqliteStore {
     /// Members pruning must spare because they may come back to work they hold: those with a live claim in any
-    /// room (DESIGN section 32 item 44). Parked members join them; open tasks will add their own rows here (#307).
+    /// room (DESIGN section 32 item 44), a park that holds (item 46) and an open task with a word in the last
+    /// `TASK_HOLD_SECS` (item 48).
     fn members_that_may_return(&self, now: i64) -> Result<Vec<String>> {
-        self.rows(
+        let mut keep: Vec<String> = self.rows(
             "SELECT DISTINCT owner FROM claims WHERE expires>?1
              UNION SELECT member FROM member_parked WHERE back_by>?1",
             params![now],
             |r| r.get(0),
-        )
+        )?;
+        keep.extend(self.task_owners(now)?);
+        Ok(keep)
+    }
+
+    /// Owners of open tasks that had a word within `TASK_HOLD_SECS`. Only the task words are loaded, per room, and
+    /// folded with the same rules the board uses.
+    fn task_owners(&self, now: i64) -> Result<Vec<String>> {
+        let sql = "SELECT room,seq,sender,body,ts FROM messages WHERE body LIKE 'working:%' OR body LIKE 'checkpoint%'
+             OR body LIKE 'handoff:%' OR body LIKE 'finished%' ORDER BY room,seq";
+        let rows: Vec<(String, Message)> = self.rows(sql, [], |r| {
+            Ok((
+                r.get(0)?,
+                Message {
+                    id: String::new(),
+                    seq: r.get(1)?,
+                    sender: r.get(2)?,
+                    attribution: crate::domain::Attribution::Unattributed,
+                    label: String::new(),
+                    body: r.get(3)?,
+                    ts: r.get(4)?,
+                    kind: None,
+                    payload: None,
+                },
+            ))
+        })?;
+        let mut owners = Vec::new();
+        let mut room_msgs: Vec<Message> = Vec::new();
+        let mut room = String::new();
+        let mut flush = |msgs: &mut Vec<Message>| {
+            for t in crate::domain::open_tasks(msgs) {
+                if now - t.last <= crate::domain::TASK_HOLD_SECS {
+                    owners.push(t.owner);
+                }
+            }
+            msgs.clear();
+        };
+        for (r, m) in rows {
+            if r != room {
+                flush(&mut room_msgs);
+                room = r;
+            }
+            room_msgs.push(m);
+        }
+        flush(&mut room_msgs);
+        Ok(owners)
     }
 
     /// The note `owner` left when it released `path`, if it was the latest release of that path (#272).

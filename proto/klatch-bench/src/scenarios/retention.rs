@@ -20,6 +20,12 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "functional",
             run: parked_holds_by_clock,
         },
+        Scenario {
+            name: "a_task_outlives_its_session_shows_orphaned_with_its_checkpoint_and_can_be_handed_over",
+            origin: "#307, DESIGN s32 item 48",
+            layer: "functional",
+            run: durable_task_by_clock,
+        },
     ]
 }
 
@@ -217,6 +223,57 @@ fn parked_holds_by_clock(w: &World) -> Res {
         &w.ok("bob", &["who", "lobby"])?,
         "parked",
         "a post ends the park",
+    )?;
+    Ok(vec![])
+}
+
+fn durable_task_by_clock(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok(
+        "alice",
+        &[
+            "post",
+            "lobby",
+            "working: nightly build: watching the pipeline",
+        ],
+    )?;
+    w.ok(
+        "alice",
+        &[
+            "post",
+            "lobby",
+            "checkpoint: build 41 green, resume at step 4",
+        ],
+    )?;
+    w.advance(3 * 86_400);
+    // alice's session is long gone; a different helper finds the task and where it stood
+    w.ok("bob", &["join", "lobby"])?;
+    let board = w.ok("bob", &["board", "lobby"])?;
+    has(&board, "tasks:", "the board lists tasks")?;
+    has(
+        &board,
+        "alice: nightly build (orphaned",
+        "orphaned, not gone",
+    )?;
+    let full = w.ok("bob", &["tasks", "lobby"])?;
+    has(
+        &full,
+        "resume at step 4",
+        "the checkpoint is readable in full",
+    )?;
+    w.ok("alice", &["post", "lobby", "handoff: nightly build to bob"])?;
+    let mine = w.ok("bob", &["tasks", "lobby"])?;
+    has(&mine, "bob: nightly build", "bob owns it after the handoff")?;
+    has(
+        &mine,
+        "handed over by alice",
+        "and it says who handed it over",
+    )?;
+    w.ok("bob", &["post", "lobby", "finished: nightly build"])?;
+    check(
+        w.ok("bob", &["tasks", "lobby"])?.trim().is_empty(),
+        "a finished task is gone",
     )?;
     Ok(vec![])
 }

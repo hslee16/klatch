@@ -273,6 +273,8 @@ enum Cmd {
     Board { room: String },
     /// List the asks in a room nobody has answered or closed
     Asks { room: String },
+    /// List the open durable tasks in a room with their full latest checkpoint (working, checkpoint, handoff)
+    Tasks { room: String },
     /// List active claims in a room
     Claims { room: String },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
