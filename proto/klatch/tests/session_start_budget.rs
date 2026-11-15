@@ -64,7 +64,8 @@ fn the_board_shrinks_before_the_messages_do() {
     }
     let out = start(&h);
     assert!(out.len() < HOOK_CAP, "{} bytes", out.len());
-    assert!(out.contains("more board lines not shown"), "{out}");
+    // the member list is capped by the board itself (a line says how many more), so this board may fit whole; what
+    // matters here is that the messages keep their room (the first test covers a board that has to be cut)
     let shown = out.matches("note ").count();
     assert!(shown >= 4, "only {shown} messages shown: {out}");
 }
