@@ -53,12 +53,12 @@ fn an_old_database_is_migrated_in_place() {
 }
 
 #[test]
-fn a_fresh_database_is_at_schema_version_23() {
-    assert_eq!(version(&store()), 23);
+fn a_fresh_database_is_at_schema_version_24() {
+    assert_eq!(version(&store()), 24);
 }
 
 #[test]
-fn a_version_1_database_is_migrated_to_23_and_keeps_its_messages() {
+fn a_version_1_database_is_migrated_to_24_and_keeps_its_messages() {
     let path = temp_db("migrate-v1");
     {
         let c = keyed(&path);
@@ -74,7 +74,7 @@ fn a_version_1_database_is_migrated_to_23_and_keeps_its_messages() {
         .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 23);
+    assert_eq!(version(&s), 24);
     let old = s.tail("r", 0, 10).unwrap();
     assert_eq!(old.len(), 2);
     assert!(
@@ -98,7 +98,7 @@ fn a_version_1_database_is_migrated_to_23_and_keeps_its_messages() {
     let again = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(
         version(&again),
-        23,
+        24,
         "reopening a migrated database is a no-op"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -118,7 +118,7 @@ fn a_version_0_database_now_migrates_all_the_way_to_23() {
         .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 23);
+    assert_eq!(version(&s), 24);
     let m = &s.tail("r", 0, 10).unwrap()[0];
     assert_eq!(
         (m.attribution, m.label.as_str()),
@@ -133,7 +133,7 @@ fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
     std::fs::write(&path, RELEASE_V2).unwrap();
     crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 23);
+    assert_eq!(version(&s), 24);
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(core.len(), 1);
     assert_eq!(core[0].body, "hello from v2");
@@ -152,7 +152,7 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
     std::fs::write(&path, PROTOTYPE_V0).unwrap();
     crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 23);
+    assert_eq!(version(&s), 24);
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(

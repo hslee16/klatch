@@ -77,6 +77,10 @@ pub(crate) fn record<S: Store>(
         Verdict::Deny(why) if detail.is_empty() => why.as_str(),
         _ => detail,
     };
+    if let Verdict::Redact(text) = v {
+        // kept on the item so a crossing can release the redaction; the audit never holds it
+        store.set_review_text(q.id, text)?;
+    }
     store.resolve_review(q.id, v.word(), reason, now)?;
     let target = format!("{}#{}", q.room, q.seq);
     let note = format!("{} to {}: {}", v.word(), q.to_label, reason);

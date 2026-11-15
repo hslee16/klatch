@@ -233,6 +233,9 @@ pub struct NewReview<'a> {
     pub seq: i64,
     pub to_label: &'a str,
     pub reason: &'a str,
+    /// For a crossing (#497): the room the text would be copied into and the member who asked. Empty otherwise.
+    pub to_room: &'a str,
+    pub requester: &'a str,
 }
 
 impl<'a> NewReview<'a> {
@@ -242,12 +245,23 @@ impl<'a> NewReview<'a> {
             seq,
             to_label,
             reason,
+            to_room: "",
+            requester: "",
+        }
+    }
+
+    /// Make this item a crossing into `to_room`, asked for by `requester`.
+    pub fn crossing(self, to_room: &'a str, requester: &'a str) -> Self {
+        Self {
+            to_room,
+            requester,
+            ..self
         }
     }
 }
 
 /// An item waiting in the review queue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueuedReview {
     pub id: i64,
     pub room: String,
@@ -255,6 +269,26 @@ pub struct QueuedReview {
     pub to_label: String,
     pub reason: String,
     pub ts: i64,
+    pub to_room: String,
+    pub requester: String,
+    /// The verdict word once there is one, else empty.
+    pub verdict: String,
+    pub detail: String,
+    /// The text a `redact` verdict supplied: the only text a queue row ever holds.
+    pub redacted: String,
+    /// What became of the verdict: `released` or `blocked` for a crossing, else empty.
+    pub applied: String,
+}
+
+impl QueuedReview {
+    /// A pointer at a message, with no queue id: enough to load the message's text.
+    pub fn pointer(room: &str, seq: i64) -> Self {
+        Self {
+            room: room.into(),
+            seq,
+            ..Self::default()
+        }
+    }
 }
 
 pub trait Store {
@@ -389,6 +423,22 @@ pub trait Store {
     /// Record the verdict word and a short detail for a pending item; false when it was not pending.
     fn resolve_review(&self, _id: i64, _verdict: &str, _detail: &str, _now: i64) -> Result<bool> {
         Ok(false)
+    }
+    /// Keep the text a `redact` verdict supplied, on a waiting item (#497).
+    fn set_review_text(&self, _id: i64, _text: &str) -> Result<()> {
+        Ok(())
+    }
+    /// Every item, newest first, resolved or not: what a listing shows.
+    fn reviews(&self, _limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(Vec::new())
+    }
+    /// Crossings whose verdict is allow or redact and has not been applied yet, oldest first.
+    fn unapplied_reviews(&self, _limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(Vec::new())
+    }
+    /// Record that a verdict was applied (`released`) or stopped by a floor (`blocked`).
+    fn mark_review_applied(&self, _id: i64, _outcome: &str) -> Result<()> {
+        Ok(())
     }
     /// Policy the administrator set: room labels, clearances, the label chain, scrub terms, tripwires (epic #9). One
     /// key and one value each; `None` clears a key. The default remembers nothing.

@@ -17,28 +17,63 @@ impl SqliteStore {
                 return Ok(id);
             }
             self.exec(
-                "INSERT INTO review_queue(room,seq,to_label,reason,ts) VALUES(?1,?2,?3,?4,?5)",
-                params![item.room, item.seq, item.to_label, item.reason, now],
+                "INSERT INTO review_queue(room,seq,to_label,reason,ts,to_room,requester) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![
+                    item.room,
+                    item.seq,
+                    item.to_label,
+                    item.reason,
+                    now,
+                    item.to_room,
+                    item.requester
+                ],
             )?;
             Ok(self.conn.last_insert_rowid())
         })
     }
 
     pub(super) fn pending_review_rows(&self, limit: usize) -> Result<Vec<QueuedReview>> {
-        self.rows(
-            "SELECT id,room,seq,to_label,reason,ts FROM review_queue WHERE resolved IS NULL ORDER BY id LIMIT ?1",
-            params![limit as i64],
-            |r| {
-                Ok(QueuedReview {
-                    id: r.get(0)?,
-                    room: r.get(1)?,
-                    seq: r.get(2)?,
-                    to_label: r.get(3)?,
-                    reason: r.get(4)?,
-                    ts: r.get(5)?,
-                })
-            },
+        self.review_rows("resolved IS NULL ORDER BY id", limit)
+    }
+
+    /// Rows matching a fixed `WHERE ... ORDER BY` tail (never built from input).
+    pub(super) fn review_rows(&self, tail: &str, limit: usize) -> Result<Vec<QueuedReview>> {
+        let sql = format!(
+            "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied \
+             FROM review_queue WHERE {tail} LIMIT ?1"
+        );
+        self.rows(&sql, params![limit as i64], |r| {
+            Ok(QueuedReview {
+                id: r.get(0)?,
+                room: r.get(1)?,
+                seq: r.get(2)?,
+                to_label: r.get(3)?,
+                reason: r.get(4)?,
+                ts: r.get(5)?,
+                to_room: r.get(6)?,
+                requester: r.get(7)?,
+                verdict: r.get(8)?,
+                detail: r.get(9)?,
+                redacted: r.get(10)?,
+                applied: r.get(11)?,
+            })
+        })
+    }
+
+    pub(super) fn set_review_text_row(&self, id: i64, text: &str) -> Result<()> {
+        self.exec(
+            "UPDATE review_queue SET redacted=?2 WHERE id=?1 AND resolved IS NULL",
+            params![id, text],
         )
+        .map(|_| ())
+    }
+
+    pub(super) fn mark_review_applied_row(&self, id: i64, outcome: &str) -> Result<()> {
+        self.exec(
+            "UPDATE review_queue SET applied=?2 WHERE id=?1",
+            params![id, outcome],
+        )
+        .map(|_| ())
     }
 
     pub(super) fn resolve_review_row(

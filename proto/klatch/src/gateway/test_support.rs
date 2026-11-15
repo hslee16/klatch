@@ -119,6 +119,18 @@ impl Store for SpyStore {
     fn pending_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
         self.inner.pending_reviews(limit)
     }
+    fn set_review_text(&self, id: i64, text: &str) -> Result<()> {
+        self.inner.set_review_text(id, text)
+    }
+    fn reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.reviews(limit)
+    }
+    fn unapplied_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.unapplied_reviews(limit)
+    }
+    fn mark_review_applied(&self, id: i64, outcome: &str) -> Result<()> {
+        self.inner.mark_review_applied(id, outcome)
+    }
     fn resolve_review(&self, id: i64, verdict: &str, detail: &str, now: i64) -> Result<bool> {
         self.inner.resolve_review(id, verdict, detail, now)
     }

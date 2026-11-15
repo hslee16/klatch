@@ -68,3 +68,38 @@ fn a_database_from_before_the_queue_gains_the_table() {
     assert!(s.pending_reviews(10).unwrap().is_empty());
     s.enqueue_review(&item("r", 1), 1).unwrap();
 }
+
+#[test]
+fn a_crossing_item_keeps_its_target_requester_and_outcome() {
+    let s = store();
+    let it = NewReview::new("r", 1, "public", "crossing").crossing("open", "alice");
+    let id = s.enqueue_review(&it, 10).unwrap();
+    let q = &s.pending_reviews(10).unwrap()[0];
+    assert_eq!(
+        (q.to_room.as_str(), q.requester.as_str()),
+        ("open", "alice")
+    );
+    s.set_review_text(id, "[x]").unwrap();
+    assert!(s.resolve_review(id, "redact", "", 20).unwrap());
+    let due = s.unapplied_reviews(10).unwrap();
+    assert_eq!((due.len(), due[0].redacted.as_str()), (1, "[x]"));
+    s.mark_review_applied(id, "released").unwrap();
+    assert!(s.unapplied_reviews(10).unwrap().is_empty());
+    assert_eq!(s.reviews(10).unwrap()[0].applied, "released");
+}
+
+#[test]
+fn a_version_23_queue_gains_the_crossing_columns() {
+    let path = temp_db("review-migrate-23");
+    drop(SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap());
+    {
+        let c = keyed(&path);
+        c.execute_batch(
+            "DROP TABLE review_queue; CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER); INSERT INTO review_queue(room,seq,to_label,reason,ts) VALUES('r',1,'public','old',1); PRAGMA user_version = 23;",
+        )
+        .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    let q = &s.pending_reviews(10).unwrap()[0];
+    assert_eq!((q.reason.as_str(), q.to_room.as_str()), ("old", ""));
+}

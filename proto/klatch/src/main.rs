@@ -191,6 +191,14 @@ enum Cmd {
     Mute { room: String },
     /// Unmute a room
     Unmute { room: String },
+    /// Ask for message SEQ of ROOM to be copied into a lower-labelled room. It waits for a verdict from the judge or
+    /// the reviewer; nothing crosses until it is allowed (or redacted), and floors are checked again then
+    Cross {
+        room: String,
+        seq: i64,
+        #[arg(long)]
+        to: String,
+    },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
     /// Show when each hook event last ran for you (or for another member with --of), without any content

@@ -14,6 +14,7 @@ mod board;
 mod budget;
 mod claims;
 mod credentials;
+mod crossing;
 mod digest;
 mod dm;
 mod floors;
