@@ -22,6 +22,7 @@ mod guarding;
 mod handoff;
 mod labels;
 mod librarian;
+mod member_surface;
 mod members;
 mod mute;
 mod notify;

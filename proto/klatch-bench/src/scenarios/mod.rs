@@ -18,6 +18,7 @@ mod labels;
 mod librarian;
 mod retention;
 mod reviewer;
+mod roles_path;
 mod scale;
 mod sessions;
 
@@ -81,6 +82,7 @@ pub fn all() -> Vec<Scenario> {
         librarian::all(),
         reviewer::all(),
         admin_role::all(),
+        roles_path::all(),
         hooks::all(),
         identity::all(),
         keys::all(),

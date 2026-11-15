@@ -162,6 +162,9 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             empty,
         ),
         "claims" => call.run(|p: RoomParams| g.claims(who, &p.room), |cs| claims_json(&cs)),
+        "role_act" | "review_next" | "review_verdict" => {
+            crate::session::role_methods::handle(g, who, call)
+        }
         other => vec![fail_with(
             call.id,
             "unknown_method",

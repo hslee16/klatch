@@ -104,6 +104,8 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
                 no_join,
             },
         )?,
+        Cmd::Act { cmd } => roles::act(t, cmd)?,
+        Cmd::Review { cmd } => roles::review(t, cmd)?,
         Cmd::Init { .. }
         | Cmd::Sessions { .. }
         | Cmd::Doctor

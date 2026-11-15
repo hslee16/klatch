@@ -143,6 +143,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "with_notifier",
         "builds the gateway: who is told of a stored post",
     ),
+    (
+        "for_members",
+        "builds the gateway: members' admin acts need the admin agent role",
+    ),
     ("now", "the clock"),
     (
         "digest",
