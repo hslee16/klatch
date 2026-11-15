@@ -140,8 +140,10 @@ impl SqliteStore {
                 out.display()
             )));
         }
+        // one partial file per process: two archivers that share a target name (the name carries only seconds) must
+        // not remove or reuse each other's file (#598)
         let mut partial = out.as_os_str().to_owned();
-        partial.push(".partial");
+        partial.push(format!(".{}.partial", std::process::id()));
         let partial = std::path::PathBuf::from(partial);
         let _ = std::fs::remove_file(&partial);
         let copied = (|| -> Result<usize> {
@@ -165,8 +167,19 @@ impl SqliteStore {
                 .map_err(be)?;
             self.conn.execute_batch("DETACH DATABASE ar").map_err(be)?;
             crate::store::encrypt::check_opens(&partial, key)?;
-            std::fs::rename(&partial, out)
-                .map_err(|e| Error::Backend(format!("putting the archive in place: {e}")))?;
+            // a hard link fails when the target exists, where a rename would silently replace another archiver's file
+            let linked = std::fs::hard_link(&partial, out);
+            let _ = std::fs::remove_file(&partial);
+            linked.map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    Error::Invalid(format!(
+                        "{} already exists; an archive never overwrites a file",
+                        out.display()
+                    ))
+                } else {
+                    Error::Backend(format!("putting the archive in place: {e}"))
+                }
+            })?;
             Ok(n)
         })();
         let copied = match copied {
