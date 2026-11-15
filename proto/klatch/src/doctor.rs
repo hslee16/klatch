@@ -134,6 +134,65 @@ fn check_store(r: &mut Report, home: Option<&Path>) {
     }
 }
 
+/// The archive files `klatch admin archive` made (#487): each must open with the store key and pass SQLCipher's page
+/// check, because a message moved into one is only a tombstone in the live store. Says nothing when there are none.
+fn check_archives(r: &mut Report, home: Option<&Path>) {
+    use klatch::store::{ArchiveState, list_archives};
+    let Some(db) = store_path(home) else { return };
+    let dir = db.with_file_name("archive");
+    if !dir.is_dir() {
+        return;
+    }
+    let asked = db.clone();
+    let key = within(KEYSTORE_PATIENCE, move || {
+        crate::custody::current_key(&asked).ok().flatten()
+    })
+    .flatten();
+    let Some(key) = key else {
+        r.add(
+            Status::Warn,
+            format!("archives: {} exists but the store key could not be read, so the files were not checked", dir.display()),
+            Some("fix the store line above first; archives open only with the store key"),
+        );
+        return;
+    };
+    let Ok(found) = list_archives(&dir, &key) else {
+        r.add(
+            Status::Warn,
+            format!("archives: {} could not be listed", dir.display()),
+            None,
+        );
+        return;
+    };
+    let (mut files, mut messages, mut bytes) = (0, 0, 0);
+    for a in &found {
+        match &a.state {
+            ArchiveState::Ok { messages: n, .. } => {
+                files += 1;
+                messages += n;
+                bytes += a.bytes;
+            }
+            ArchiveState::Unreadable(why) => r.add(
+                Status::Fail,
+                format!("archives: {} is unusable: {why}", a.path.display()),
+                Some("restore this file from a backup; messages archived into it stay tombstones in the live store until a good copy can be restored, and nothing else is affected"),
+            ),
+            ArchiveState::Partial => r.add(
+                Status::Warn,
+                format!("archives: {} was left by an interrupted `klatch admin archive`", a.path.display()),
+                Some("remove it; the live messages were not changed (an archive is put in place before any message becomes a tombstone)"),
+            ),
+        }
+    }
+    if files > 0 {
+        r.add(
+            Status::Ok,
+            format!("archives: {files} file{}, {messages} messages, {bytes} bytes in {}; each opens with the store key and passes the page check", if files == 1 { "" } else { "s" }, dir.display()),
+            None,
+        );
+    }
+}
+
 fn check_hooks(r: &mut Report, project_dir: &Path, home: Option<&Path>, exe: &Path) {
     let mut places = vec![(
         "project",
@@ -343,6 +402,7 @@ pub fn run(
         None,
     );
     check_store(&mut r, home);
+    check_archives(&mut r, home);
     check_hooks(&mut r, project_dir, home, exe);
     check_session(&mut r);
     check_registry(&mut r);

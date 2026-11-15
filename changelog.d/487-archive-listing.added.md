@@ -1,0 +1,1 @@
+- `klatch admin archives` lists the archive files with rooms, message counts, ages and size, opening each with the store key and checking it for damage (exit status 1 if any is unusable); `klatch doctor` checks them too and warns about a file left by an interrupted `admin archive`. Archives are still never pruned (#487, #568).

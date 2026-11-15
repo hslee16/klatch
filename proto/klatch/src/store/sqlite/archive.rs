@@ -8,7 +8,101 @@ use super::{SqliteStore, be};
 use crate::domain::{Error, Result};
 use crate::keys::Key;
 use rusqlite::params;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// What a check of one file under the archive directory found (#487).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArchiveState {
+    /// Opens with the store key, every page passes SQLCipher's check, and holds an `archived` table.
+    Ok {
+        rooms: Vec<String>,
+        messages: usize,
+        oldest: i64,
+        newest: i64,
+    },
+    /// Present but not usable, with why (wrong key, damaged pages, not encrypted, not an archive).
+    Unreadable(String),
+    /// A `.db.partial` left by an `archive` that was interrupted; never part of a restore, safe to remove.
+    Partial,
+}
+
+/// One file under the archive directory: counts only, never message text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveInfo {
+    pub path: PathBuf,
+    pub bytes: u64,
+    /// Last modification, unix seconds.
+    pub modified: Option<i64>,
+    pub state: ArchiveState,
+}
+
+/// The archive files in `dir` in name order, each opened with `key` and checked. A missing directory has none. Files
+/// that are neither `*.db` nor `*.db.partial` are not ours and are left out. Reads nothing but counts, changes nothing.
+pub fn list_archives(dir: &Path, key: &Key) -> Result<Vec<ArchiveInfo>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::Backend(format!("{}: {e}", dir.display()))),
+    };
+    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    let mut found = Vec::new();
+    for path in paths {
+        let name = path.to_string_lossy();
+        let state = if name.ends_with(".db.partial") {
+            ArchiveState::Partial
+        } else if name.ends_with(".db") {
+            inspect(&path, key)
+        } else {
+            continue;
+        };
+        let meta = std::fs::metadata(&path).ok();
+        found.push(ArchiveInfo {
+            bytes: meta.as_ref().map_or(0, |m| m.len()),
+            modified: meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64),
+            path,
+            state,
+        });
+    }
+    Ok(found)
+}
+
+fn inspect(path: &Path, key: &Key) -> ArchiveState {
+    if crate::store::encrypt::is_plaintext(path) {
+        return ArchiveState::Unreadable(
+            "not encrypted (an archive always is; this file does not belong here)".to_string(),
+        );
+    }
+    if let Err(e) = crate::store::encrypt::check_opens(path, key) {
+        return ArchiveState::Unreadable(e.to_string());
+    }
+    summarize(path, key)
+        .unwrap_or_else(|e| ArchiveState::Unreadable(format!("not an archive: {e}")))
+}
+
+/// Rooms, count and the oldest and newest message time of a file that already opened and passed the page check.
+fn summarize(path: &Path, key: &Key) -> rusqlite::Result<ArchiveState> {
+    let c =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    c.pragma_update(None, "key", key.sqlcipher_pragma().as_str())?;
+    let (messages, oldest, newest): (i64, Option<i64>, Option<i64>) =
+        c.query_row("SELECT count(*), min(ts), max(ts) FROM archived", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+    let rooms = c
+        .prepare("SELECT DISTINCT room FROM archived ORDER BY room")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(ArchiveState::Ok {
+        rooms,
+        messages: messages as usize,
+        oldest: oldest.unwrap_or(0),
+        newest: newest.unwrap_or(0),
+    })
+}
 
 /// What a tombstone says in place of the text.
 pub const TOMBSTONE: &str = "[archived: restore it with `klatch admin restore-archive`]";
