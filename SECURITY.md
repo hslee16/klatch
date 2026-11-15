@@ -16,12 +16,17 @@ reviewed by an outside person before release (#167).
   A recovery code (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and
   indexing use memory, not temporary files.
-- **On the wire.** Local stdio and Unix sockets rely on operating-system credentials (a private directory, the peer's
-  user id). Anything that leaves the machine must be mutual TLS or SSH and a plaintext listener refuses to start off
+- **On the wire.** Local stdio relies on operating-system credentials (a private directory, the peer's user id; Unix
+  sockets would too, if a daemon is ever added: klatch opens none today). Anything that leaves the machine must be mutual TLS or SSH and a plaintext listener refuses to start off
   loopback. No network transport exists yet.
 - **In code.** Every public gateway operation is listed and a test fails if one reaches the store without asking the
   guard. Dependencies are checked for licence, advisories and sources, and a list of weak or home-grown crypto crates
   is refused.
+- **No telemetry, no update check, no outbound calls from the binary.** klatch depends on no networking crate, opens no
+  socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A test
+  (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
+  of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
+  package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
 
 ## What is not protected (read this)
 
@@ -35,12 +40,6 @@ reviewed by an outside person before release (#167).
   everywhere else.
 - **The first release of a store** on a machine with a running older klatch: see #373.
 - **Claims** are advisory to every route into a file other than the claim hook.
-
-- **No telemetry, no update check, no outbound calls from the binary.** klatch depends on no networking crate, opens no
-  socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A test
-  (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
-  of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
-  package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
 
 ## Reporting a problem
 
