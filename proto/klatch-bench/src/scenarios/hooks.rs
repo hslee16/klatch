@@ -22,6 +22,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: wake,
         },
         Scenario {
+            name: "a_long_digest_stays_under_claude_codes_hook_output_cap_and_counts_what_it_cuts",
+            origin: "#549, RESEARCH-NOTES 48.2",
+            layer: "functional",
+            run: digest_budget,
+        },
+        Scenario {
             name: "a_hook_inside_a_subagent_prints_nothing_and_keeps_the_parents_mail",
             origin: "#493",
             layer: "fault",
@@ -165,5 +171,44 @@ fn convention_brief(w: &World) -> Res {
     has(&t, "KLATCH_NAME=kid", "the child's name is on its commands")?;
     has(&t, "--discover join lobby", "the brief says how to join")?;
     has(&t, "[klatch convention v1]", "the convention is included")?;
+    Ok(vec![])
+}
+
+/// Claude Code keeps only a 2 KB preview of hook output near 9.8 KB (measured); a digest must stay well under it.
+fn digest_budget(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("reader", &["join", "r"])?;
+    for i in 0..15 {
+        // distinct bodies: an identical repeat from one member is refused
+        w.ok(
+            "peer",
+            &["post", "r", &format!("{i:02} {}", "z".repeat(900))],
+        )?;
+    }
+    let mut child = w
+        .spawn_piped("reader", &["hook", "--event", "UserPromptSubmit"])
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(br#"{"session_id":"s","hook_event_name":"UserPromptSubmit"}"#)
+        .map_err(|e| e.to_string())?;
+    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    check(
+        out.len() < 9_000,
+        format!("the hook printed {} bytes", out.len()),
+    )?;
+    has(
+        &out,
+        "more messages not shown",
+        "the cut messages are not counted",
+    )?;
+    has(
+        &out,
+        "klatch read r --peek",
+        "the line does not say how to read them",
+    )?;
     Ok(vec![])
 }

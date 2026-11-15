@@ -14,3 +14,7 @@ pub const RECENT_LOOKBACK: i64 = 500;
 pub const DIGEST_MAX_MESSAGES: usize = 20;
 /// Characters of one message a hook digest shows; `klatch read` shows all of it.
 pub const DIGEST_MESSAGE_CHARS: usize = 1000;
+/// The most bytes one hook digest prints, measured as the JSON the hook prints (escapes count). Claude Code keeps
+/// only a 2 KB preview of hook output of about 9.8 KB or more (RESEARCH-NOTES 48.2, #549); this leaves room for the
+/// convention and notice a session start adds.
+pub const DIGEST_MAX_BYTES: usize = 8000;
