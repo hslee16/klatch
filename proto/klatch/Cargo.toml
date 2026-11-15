@@ -71,3 +71,7 @@ security-framework = { version = "3", optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+# Property tests (epic #396, RESEARCH-NOTES section 42). Pinned exactly (it is beta software), and static-engine so
+# the engine is an ordinary dependency that --locked and cargo-deny can see; the default build compiles the engine in
+# a nested cargo build outside the lockfile.
+hegeltest = { version = "=0.52.6", features = ["static-engine"] }
