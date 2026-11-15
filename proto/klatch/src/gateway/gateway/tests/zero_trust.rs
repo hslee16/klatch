@@ -163,6 +163,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ("note_parent", "the caller's own parent link"),
     ("note_session", "the caller's own session id"),
     (
+        "note_member_mode",
+        "the caller's own permission mode, a short word with no content",
+    ),
+    (
         "record_stop",
         "the caller's own park, from the end of its own turn",
     ),

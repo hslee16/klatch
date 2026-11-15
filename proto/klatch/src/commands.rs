@@ -582,11 +582,24 @@ fn background_counts(input: &serde_json::Value) -> (usize, usize) {
     (count("background_tasks"), count("session_crons"))
 }
 
+/// Remember the permission mode this session reports (#553): it is the only place Claude Code says it, and `klatch
+/// doctor` needs it to warn that a bypassing member's socket nudge is held. A subagent's tool call carries the
+/// subagent's mode, which says nothing about this session, and a failure to record must not stop the hook.
+fn note_permission_mode(ctx: &Ctx) {
+    let Some(input) = ctx.stdin.filter(|i| !inside_subagent(i)) else {
+        return;
+    };
+    if let Some(mode) = input.get("permission_mode").and_then(|m| m.as_str()) {
+        let _ = ctx.t.note_member_mode(mode);
+    }
+}
+
 fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
         return session_end(t);
     }
+    note_permission_mode(ctx);
     if args.is("PreToolUse") {
         return pre_tool_use(ctx);
     }

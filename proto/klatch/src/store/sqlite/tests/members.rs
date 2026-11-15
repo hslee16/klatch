@@ -43,3 +43,24 @@ fn remembered_sessions_survive_reopening_and_are_pruned_with_old_members() {
     );
     assert_eq!(s.member_of_session("new").unwrap().as_deref(), Some("bob"));
 }
+#[test]
+fn a_member_mode_is_kept_per_member_the_last_report_wins_and_pruning_takes_it() {
+    let s = store();
+    s.join("r", "alice", 950).unwrap();
+    s.join("r", "bob", 1).unwrap();
+    s.note_member_mode("alice", "bypassPermissions", 10)
+        .unwrap();
+    s.note_member_mode("bob", "default", 11).unwrap();
+    s.note_member_mode("alice", "plan", 12).unwrap();
+    assert_eq!(
+        s.member_modes().unwrap(),
+        vec![
+            ("alice".to_string(), "plan".to_string(), 12),
+            ("bob".to_string(), "default".to_string(), 11)
+        ]
+    );
+    // bob has been gone past the grace period, alice has not
+    s.prune_members(100, 1000).unwrap();
+    let left: Vec<String> = s.member_modes().unwrap().into_iter().map(|m| m.0).collect();
+    assert_eq!(left, vec!["alice".to_string()]);
+}

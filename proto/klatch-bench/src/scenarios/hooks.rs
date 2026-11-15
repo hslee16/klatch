@@ -39,7 +39,55 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "fault",
             run: subagent_hook,
         },
+        Scenario {
+            name: "doctor_warns_that_a_bypassing_member_has_its_socket_nudge_held",
+            origin: "#553, RESEARCH-NOTES 47.2",
+            layer: "functional",
+            run: bypass_warning,
+        },
     ]
+}
+
+/// A hook that reports the session's permission mode, as every Claude Code hook input does.
+fn hook_in_mode(w: &World, who: &str, mode: &str) -> Result<(), String> {
+    let input = serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse", "permission_mode": mode});
+    let mut child = w
+        .spawn_piped(who, &["hook", "--event", "PostToolUse"])
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(input.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn bypass_warning(w: &World) -> Res {
+    w.set_clock(T0);
+    for who in ["fast", "careful"] {
+        w.ok(who, &["join", "r"])?;
+    }
+    hook_in_mode(w, "fast", "bypassPermissions")?;
+    hook_in_mode(w, "careful", "default")?;
+    let report = w.ok("fast", &["doctor"])?;
+    let line = |member: &str| {
+        report
+            .lines()
+            .find(|l| l.contains(&format!("member {member}, permission mode")))
+            .unwrap_or_default()
+            .to_string()
+    };
+    check(
+        line("fast").starts_with("warn"),
+        "a bypassing member was not warned about",
+    )?;
+    check(
+        line("careful").starts_with("ok"),
+        "a prompting member was warned about",
+    )?;
+    Ok(vec![])
 }
 
 /// A tool call as Claude Code hands it to a `PreToolUse` hook.
