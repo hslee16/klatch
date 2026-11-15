@@ -11,18 +11,22 @@ mod identity;
 mod judge;
 mod notifier;
 mod subscription;
+mod sys_lease;
 mod transport;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{
-    AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, Digest, Gateway, Handoff,
-    MAX_CREDENTIAL_TTL_SECS, Refused, RunInfo, check_credential, run_prefix, valid_run_id,
+    AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, DEFAULT_CAP_SECS,
+    DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, Digest, Gateway, Handoff, LeaseAction, LeasePolicy,
+    LeaseSource, MAX_CREDENTIAL_TTL_SECS, Observed, Refused, RunInfo, check_credential,
+    lease_action, run_prefix, valid_run_id,
 };
 pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
 pub use judge::{DRAIN_LIMIT, Drained, drain};
 pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
+pub use sys_lease::SysLeaseSource;
 pub use transport::{Direct, Transport};
 
 #[cfg(test)]

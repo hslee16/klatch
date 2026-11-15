@@ -28,6 +28,11 @@ use github_anchor::{normalize_anchor, parse_events};
 mod budget;
 mod crossing;
 mod dm;
+mod lease;
+pub use lease::{
+    DEFAULT_CAP_SECS, DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, LeaseAction, LeasePolicy,
+    LeaseSource, Observed, lease_action,
+};
 mod librarian;
 mod policy;
 mod reviewer;
@@ -123,6 +128,8 @@ pub struct Gateway<S: Store> {
     notifier: Box<dyn crate::gateway::Notifier>,
     /// Built for members (#507): an admin act needs the admin agent role. See `roles.rs`.
     for_members: bool,
+    /// Where the lease rules learn whether a holder is alive (#304); none means claims keep only their TTL.
+    leases: Option<Box<dyn LeaseSource>>,
 }
 
 impl<S: Store> Gateway<S> {
@@ -133,6 +140,7 @@ impl<S: Store> Gateway<S> {
             guard: Box::new(guard),
             notifier: Box::new(crate::gateway::NoNotifier),
             for_members: false,
+            leases: None,
         }
     }
 
@@ -457,6 +465,7 @@ impl<S: Store> Gateway<S> {
 
     pub fn who(&self, who: &Principal, room: &str) -> Result<Vec<MemberInfo>> {
         self.admit(who, room, Operation::Who { room: room.into() })?;
+        self.settle_leases(&who.member)?;
         self.store.members(room)
     }
 
@@ -496,6 +505,8 @@ impl<S: Store> Gateway<S> {
             },
         )?;
         let ttl = crate::domain::claim_ttl(path, Some(ttl));
+        // before the attempt deletes expired rows: a holder the probe finds alive keeps its claim (#304)
+        self.settle_leases(&who.member)?;
         let member_scope = self.store.member_scope(&who.member)?;
         let scope = crate::domain::claim_scope(path, shared, member_scope.as_deref());
         let anchor = normalize_anchor(anchor.unwrap_or(""));
@@ -578,6 +589,7 @@ impl<S: Store> Gateway<S> {
 
     pub fn claims(&self, who: &Principal, room: &str) -> Result<Vec<Claim>> {
         self.admit(who, room, Operation::claims(room))?;
+        self.settle_leases(&who.member)?;
         self.store.claims(room, self.now())
     }
 
