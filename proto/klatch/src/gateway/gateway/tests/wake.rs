@@ -72,3 +72,13 @@ fn a_wake_mark_stops_the_next_wake_but_not_a_wait_or_a_read() {
     assert_eq!(g.wakeable(&alice(), "r").unwrap(), 1);
     assert_eq!(g.read(&alice(), "r", false).unwrap().len(), 2);
 }
+
+#[test]
+fn a_wake_summary_gives_the_count_and_the_newest_seq_and_zero_when_nothing_is_unread() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    assert_eq!(g.wake_summary(&alice(), "r").unwrap(), (0, 0));
+    g.post(&bob(), "r", "one").unwrap();
+    let last = g.post(&bob(), "r", "two").unwrap().seq;
+    assert_eq!(g.wake_summary(&alice(), "r").unwrap(), (2, last));
+}

@@ -62,6 +62,7 @@ const GUARDED: &[(&str, Call)] = &[
     ("wait_seen", |g, w| refused(g.wait_seen(w, "r", 1))),
     ("wake_mark", |g, w| refused(g.wake_mark(w, "r"))),
     ("wakeable", |g, w| refused(g.wakeable(w, "r"))),
+    ("wake_summary", |g, w| refused(g.wake_summary(w, "r"))),
     // another member's data, and housekeeping that deletes other members
     ("hook_runs", |g, w| refused(g.hook_runs(w, "bob"))),
     ("prune_members", |g, w| refused(g.prune_members(w, 0))),

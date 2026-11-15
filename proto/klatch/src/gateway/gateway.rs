@@ -360,15 +360,19 @@ impl<S: Store> Gateway<S> {
     /// that mention the caller when it muted the room. Moves no cursor; refreshes presence, so a session that sits
     /// in a watcher is not taken for gone (#37, #39).
     pub fn wakeable(&self, who: &Principal, room: &str) -> Result<usize> {
+        Ok(self.wake_summary(who, room)?.0)
+    }
+
+    /// `wakeable` plus the newest wakeable seq (0 when none), so a watcher can word a pointer that differs every
+    /// time (Claude Code drops a nudge identical to a recent one, #550).
+    pub fn wake_summary(&self, who: &Principal, room: &str) -> Result<(usize, i64)> {
         self.admit(who, room, Operation::read(room, false))?;
         let unread = self.store.wake_poll(room, &who.member, self.now())?;
-        if !self.store.is_muted(Seat::new(room, &who.member))? {
-            return Ok(unread.len());
-        }
-        Ok(unread
+        let muted = self.store.is_muted(Seat::new(room, &who.member))?;
+        let counted = unread
             .iter()
-            .filter(|m| crate::domain::mentions(&m.body, &who.member))
-            .count())
+            .filter(|m| !muted || crate::domain::mentions(&m.body, &who.member));
+        Ok(counted.fold((0, 0), |(n, last), m| (n + 1, last.max(m.seq))))
     }
 
     /// Record that a watcher pointed at everything unread in the room, so it does not wake the caller for those
