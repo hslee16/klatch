@@ -553,6 +553,7 @@ mod tests {
     fn member(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
         MemberInfo {
             name: name.into(),
+            joined: 0,
             last_seen,
             status: status.map(String::from),
             parent: None,

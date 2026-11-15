@@ -1,0 +1,1 @@
+- `klatch receipt ROOM SEQ`: for a message you sent, one content-free state per recipient (parked, seen active after the post, not seen since), from liveness only. Shown and read state are not reported; that is a human decision (#546, #585).

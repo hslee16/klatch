@@ -477,11 +477,18 @@ pub mod members {
         let s = make();
         s.join("r", "alice", 10).unwrap();
         s.join("r", "alice", 20).unwrap();
-        let m = s.members("r").unwrap();
+        // `joined` is optional (0 is unknown); the SQLite store reports it and its own test checks the value
+        let m: Vec<MemberInfo> = s
+            .members("r")
+            .unwrap()
+            .into_iter()
+            .map(|m| MemberInfo { joined: 0, ..m })
+            .collect();
         assert_eq!(
             m,
             vec![MemberInfo {
                 name: "alice".into(),
+                joined: 0,
                 last_seen: 20,
                 status: None,
                 parent: None,

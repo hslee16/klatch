@@ -974,7 +974,7 @@ impl Store for SqliteStore {
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.rows(
-            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by FROM members m
+            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by,m.joined FROM members m
              LEFT JOIN member_parent p ON p.member=m.name
              LEFT JOIN member_parked k ON k.member=m.name WHERE m.room=?1 ORDER BY m.name",
             params![room],
@@ -983,6 +983,7 @@ impl Store for SqliteStore {
                 let back_by: Option<i64> = r.get(5)?;
                 Ok(MemberInfo {
                     name: r.get(0)?,
+                    joined: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
                     last_seen: r.get(1)?,
                     status: r.get(2)?,
                     parent: r.get(3)?,

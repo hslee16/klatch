@@ -58,6 +58,10 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         } => wait(t, &rooms, timeout, &Filter { only, from, peek })?,
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
+        Cmd::Receipt { room, seq } => print!(
+            "{}",
+            klatch::domain::render_receipts(&t.receipt(&room, seq)?, ctx.now)
+        ),
         Cmd::Who { room, all } => print!("{}", render_who(&t.who(&room)?, ctx.now, all)),
         Cmd::Claim {
             room,

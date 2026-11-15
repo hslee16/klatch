@@ -84,6 +84,7 @@ impl Store for MemoryStore {
                     .iter()
                     .map(|(n, (seen, _))| MemberInfo {
                         name: n.clone(),
+                        joined: 0,
                         last_seen: *seen,
                         status: None,
                         parent: None,
