@@ -144,8 +144,8 @@ impl SqliteStore {
             params![req.room, req.owner, req.path],
         )?;
         self.exec(
-            "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor) VALUES(?1,?2,?3,?3,?4,?5,?6,?7)",
-            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor],
+            "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor,ttl) VALUES(?1,?2,?3,?3,?4,?5,?6,?7,?8)",
+            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor, req.ttl],
         )?;
         if let Some(seq) = ask_number(req.path) {
             self.exec(

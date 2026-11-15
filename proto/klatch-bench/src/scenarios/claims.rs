@@ -3,6 +3,12 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "a_claim_is_renewed_to_its_own_ttl_while_its_owner_is_active",
+            origin: "#494",
+            layer: "functional",
+            run: claim_renewal,
+        },
+        Scenario {
             name: "deadlock_two_and_three_parties",
             origin: "#246, run 15",
             layer: "functional",
@@ -358,5 +364,28 @@ fn bot_scope(w: &World) -> Res {
         "#1",
         "a non-coding member asks and is answered like any other",
     )?;
+    Ok(vec![])
+}
+
+fn claim_renewal(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("holder", &["join", "r"])?;
+    w.ok("holder", &["claim", "r", "src/a.rs", "--ttl", "60"])?;
+    for step in 0..3 {
+        w.advance(50);
+        w.ok(
+            "holder",
+            &["post", "r", &format!("still working, step {step}")],
+        )?;
+    }
+    // 150 s in, far past the 60 s it was made with: the owner kept working.
+    has(
+        &w.refused("other", &["claim", "r", "src/a.rs"])?,
+        "holder",
+        "an active owner's claim outlived its own ttl",
+    )?;
+    // Silent for longer than its own 60 s (not a 600 s floor): it lapses.
+    w.advance(61);
+    w.ok("other", &["claim", "r", "src/a.rs"])?;
     Ok(vec![])
 }

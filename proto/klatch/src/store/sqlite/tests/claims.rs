@@ -1,6 +1,53 @@
 use super::*;
 use crate::domain::Error;
 
+fn expiry_of(s: &SqliteStore, path: &str) -> i64 {
+    s.conn
+        .query_row("SELECT expires FROM claims WHERE path=?1", [path], |r| {
+            r.get(0)
+        })
+        .unwrap()
+}
+
+#[test]
+fn the_ttl_a_claim_was_made_with_is_stored_with_it() {
+    let s = store();
+    s.claim(&ClaimRequest::new(("r", "alice"), "a", 77, ""), 5)
+        .unwrap();
+    let ttl: i64 = s
+        .conn
+        .query_row("SELECT ttl FROM claims WHERE path='a'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ttl, 77);
+}
+
+#[test]
+fn renewing_on_activity_never_shortens_a_stretched_lease() {
+    let s = store();
+    s.claim(&ClaimRequest::new(("r", "alice"), "a", 60, ""), 0)
+        .unwrap();
+    // A park or a liveness lease stretched it far past its own ttl.
+    s.retime_member_claims("alice", 5_000, true).unwrap();
+    s.touch("r", "alice", 10).unwrap();
+    assert_eq!(expiry_of(&s, "a"), 5_000);
+    s.touch("r", "alice", 4_990).unwrap();
+    assert_eq!(
+        expiry_of(&s, "a"),
+        5_050,
+        "past the stretch it follows its own ttl"
+    );
+}
+
+#[test]
+fn a_claim_from_before_the_ttl_was_stored_is_not_renewed() {
+    let s = store();
+    s.claim(&ClaimRequest::new(("r", "alice"), "a", 60, ""), 0)
+        .unwrap();
+    s.conn.execute_batch("UPDATE claims SET ttl=0").unwrap();
+    s.touch("r", "alice", 30).unwrap();
+    assert_eq!(expiry_of(&s, "a"), 60);
+}
+
 #[test]
 fn claims_in_different_scopes_do_not_collide_but_the_same_scope_does() {
     let s = store();
