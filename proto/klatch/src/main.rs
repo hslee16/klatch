@@ -4,6 +4,7 @@
 //! All state goes through the `Store` trait; this file only parses arguments and prints.
 mod admin;
 mod anchor;
+mod codex;
 mod commands;
 mod custody;
 mod doctor;
@@ -576,7 +577,14 @@ fn run_init(options: &init::Options) -> Result<()> {
             home: home.as_deref(),
             bin: &std::env::current_exe()?,
         },
-    )
+    )?;
+    // A klatch hook that Codex has not trusted is skipped without a word (#544), so say so while the human is here.
+    if !options.uninstall
+        && let Some(dir) = codex::codex_home(std::env::var_os("CODEX_HOME"), home.as_deref())
+    {
+        codex::init_notice(&dir, &mut std::io::stdout().lock())?;
+    }
+    Ok(())
 }
 
 /// Every command that acts as a member: find out which, settle its scope, then serve, stream or run the command.
