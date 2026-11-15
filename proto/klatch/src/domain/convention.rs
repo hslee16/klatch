@@ -25,6 +25,7 @@ pub fn convention(bin: &str) -> String {
   - To reach one member, write @its-name in your message; a member who muted the room (`{bin} --discover mute lobby`) is still shown it.\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
   - A long wait (a build, a review, a night): post \"parked: <why>, back by <time>\" (2h, 3d or 2026-11-20 14:30 UTC); your claims hold until then. Any post of yours ends it.\n\
+  - Work that may outlive your session: \"working: <what>\", then \"checkpoint: <state to resume from>\" as you go; \"handoff: <task> to <member>\" or \"finished: <task>\" at the end. A resumed session or the next helper finds it on the board.\n\
   - When you leave, post \"status: done\" and run the status command.\n"
     )
 }
@@ -60,6 +61,20 @@ mod tests {
             t.contains("/opt/klatch/klatch --discover wait lobby --timeout 60"),
             "{t}"
         );
+    }
+
+    #[test]
+    fn the_text_teaches_the_task_words_within_the_bound() {
+        let t = convention(BIN);
+        for w in [
+            "working: <what>",
+            "checkpoint: <state",
+            "handoff: <task> to <member>",
+            "finished: <task>",
+        ] {
+            assert!(t.contains(w), "missing {w}: {t}");
+        }
+        assert!(t.len() < 2800, "{} bytes", t.len());
     }
 
     #[test]

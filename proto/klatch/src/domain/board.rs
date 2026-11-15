@@ -60,6 +60,8 @@ pub struct Board {
     pub members: Vec<BoardMember>,
     /// Members not seen for over `MEMBER_ACTIVE_SECS`, counted instead of listed.
     pub stale_members: usize,
+    /// Open durable tasks (working, checkpoint, handoff), with owners that are gone marked orphaned.
+    pub tasks: Vec<crate::domain::Task>,
 }
 
 /// `klatch who` as text: each member with last seen and status. Unless `all`, members not seen for
@@ -144,6 +146,17 @@ fn render_offers(board: &Board, now: i64, out: &mut String) {
     more(out, board.offers.len(), "offers");
 }
 
+fn render_tasks(board: &Board, now: i64, out: &mut String) {
+    if board.tasks.is_empty() {
+        return;
+    }
+    section(out, "tasks:", None);
+    for t in board.tasks.iter().take(BOARD_LIST_LIMIT) {
+        out.push_str(&format!("  {}\n", t.line(now, false)));
+    }
+    more(out, board.tasks.len(), "tasks");
+}
+
 fn render_members(board: &Board, now: i64, out: &mut String) {
     section(out, "members:", None);
     for m in board.members.iter().take(BOARD_LIST_LIMIT) {
@@ -183,6 +196,7 @@ pub fn render_board(board: &Board, now: i64) -> String {
     let mut out = format!("[board {}]\n", flat(&board.room));
     render_asks(board, now, &mut out);
     render_offers(board, now, &mut out);
+    render_tasks(board, now, &mut out);
     render_members(board, now, &mut out);
     out
 }
@@ -426,6 +440,7 @@ mod tests {
                 },
             ],
             stale_members: 0,
+            tasks: vec![],
         }
     }
 
@@ -659,5 +674,36 @@ mod tests {
     fn who_text_cannot_forge_a_line() {
         let out = render_who(&[member("x\nforged line", 999, Some("a\nb"))], 1000, true);
         assert_eq!(out.lines().count(), 1, "{out}");
+    }
+
+    #[test]
+    fn open_tasks_show_on_the_board_with_their_checkpoint_and_an_empty_board_has_no_tasks_section()
+    {
+        let task = crate::domain::Task {
+            owner: "alice".into(),
+            title: "nightly build".into(),
+            what: "nightly build".into(),
+            started: 100,
+            last: 200,
+            checkpoint: Some(crate::domain::Checkpoint {
+                text: "resume at step 4".into(),
+                ts: 200,
+            }),
+            from: None,
+            orphaned: true,
+        };
+        let board = Board {
+            room: "lobby".into(),
+            tasks: vec![task],
+            ..Default::default()
+        };
+        let out = render_board(&board, 200 + 86_400);
+        assert!(
+            out.contains("tasks:\n  alice: nightly build (orphaned")
+                && out.contains("checkpoint 1d ago: resume at step 4"),
+            "{out}"
+        );
+        let empty = render_board(&Board::default(), 10);
+        assert!(!empty.contains("tasks:"), "{empty}");
     }
 }

@@ -1,0 +1,1 @@
+- Durable tasks (#307): `working:`, `checkpoint:`, `handoff: <task> to <member>` and `finished:` give a derived task view on the board and in `klatch tasks`; a task whose owner is gone stays visible as orphaned with its last checkpoint, and an owner with an open task is spared by pruning for a week.

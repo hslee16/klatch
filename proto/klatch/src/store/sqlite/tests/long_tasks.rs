@@ -5,6 +5,31 @@ use super::*;
 const DAY: i64 = 86_400;
 
 #[test]
+fn a_member_with_an_open_task_is_spared_by_pruning_for_a_week_and_a_finished_task_does_not_count() {
+    let s = store();
+    for who in ["alice", "bob", "carol"] {
+        s.join("r", who, 10).unwrap();
+    }
+    s.post(Seat::new("r", "alice"), "working: migration", 20)
+        .unwrap();
+    s.post(Seat::new("r", "bob"), "working: docs", 20).unwrap();
+    s.post(Seat::new("r", "bob"), "finished: docs", 30).unwrap();
+    assert_eq!(s.prune_members(DAY, 2 * DAY).unwrap(), 2, "bob and carol");
+    let names: Vec<_> = s
+        .members("r")
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert_eq!(names, ["alice"]);
+    assert_eq!(
+        s.prune_members(DAY, 20 + 7 * DAY + 1).unwrap(),
+        1,
+        "a task silent for a week no longer holds its owner; the task stays in the log"
+    );
+}
+
+#[test]
 fn a_member_that_holds_a_live_claim_is_not_pruned_and_keeps_its_cursor() {
     let s = store();
     s.join("r", "alice", 10).unwrap();

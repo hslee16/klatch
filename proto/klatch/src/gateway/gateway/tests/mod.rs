@@ -32,6 +32,7 @@ mod reviewer;
 mod runs;
 mod scrub;
 mod stream;
+mod tasks;
 mod tripwire;
 mod wake;
 mod worker_credentials;

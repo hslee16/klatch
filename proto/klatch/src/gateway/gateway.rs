@@ -492,9 +492,25 @@ impl<S: Store> Gateway<S> {
                 parent: m.parent,
                 parked: m.parked.filter(|p| p.holds(now)),
             })
+            .collect::<Vec<crate::domain::BoardMember>>();
+        // A task whose owner is not present (hidden, ended, pruned), not parked and holds no live claim is orphaned:
+        // it stays visible with its last checkpoint for the next helper.
+        let holders: Vec<String> = self
+            .store
+            .claims(room, now)?
+            .into_iter()
+            .map(|c| c.owner)
             .collect();
+        let mut tasks = crate::domain::open_tasks(&messages);
+        for t in &mut tasks {
+            let present = members.iter().any(|m| {
+                m.name == t.owner && !m.status.as_deref().is_some_and(|s| s.starts_with("done"))
+            });
+            t.orphaned = !present && !holders.contains(&t.owner);
+        }
         Ok(crate::domain::Board {
             room: room.into(),
+            tasks,
             asks: self.store.open_asks(room, now)?,
             offers: crate::domain::current_offers(&messages, now, crate::domain::OFFER_TTL_SECS)
                 .into_iter()
