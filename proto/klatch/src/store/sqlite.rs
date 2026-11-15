@@ -1,6 +1,7 @@
+use crate::domain::{ASK_LEASE_DEFAULT_SECS, CLAIM_DEFAULT_SECS};
 use crate::domain::{
     AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
-    Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
+    Parked, Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
 };
 use crate::keys::Key;
 use crate::store::ids::new_id;
@@ -63,10 +64,11 @@ fn be(e: rusqlite::Error) -> Error {
 
 impl SqliteStore {
     /// Members pruning must spare because they may come back to work they hold: those with a live claim in any
-    /// room (DESIGN section 32 item 44). Parked members and open tasks add their own rows here later.
+    /// room (DESIGN section 32 item 44). Parked members join them; open tasks will add their own rows here (#307).
     fn members_that_may_return(&self, now: i64) -> Result<Vec<String>> {
         self.rows(
-            "SELECT DISTINCT owner FROM claims WHERE expires>?1",
+            "SELECT DISTINCT owner FROM claims WHERE expires>?1
+             UNION SELECT member FROM member_parked WHERE back_by>?1",
             params![now],
             |r| r.get(0),
         )
@@ -664,6 +666,7 @@ impl Store for SqliteStore {
                     "DELETE FROM asks_escalated WHERE member=?1",
                     "DELETE FROM hook_runs WHERE member=?1",
                     "DELETE FROM claim_waits WHERE member=?1",
+                    "DELETE FROM member_parked WHERE member=?1",
                 ] {
                     self.exec(sql, params![name])?;
                 }
@@ -855,18 +858,66 @@ impl Store for SqliteStore {
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.rows(
-            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,'') FROM members m
-             LEFT JOIN member_parent p ON p.member=m.name WHERE m.room=?1 ORDER BY m.name",
+            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by FROM members m
+             LEFT JOIN member_parent p ON p.member=m.name
+             LEFT JOIN member_parked k ON k.member=m.name WHERE m.room=?1 ORDER BY m.name",
             params![room],
             |r| {
+                let why: Option<String> = r.get(4)?;
+                let back_by: Option<i64> = r.get(5)?;
                 Ok(MemberInfo {
                     name: r.get(0)?,
                     last_seen: r.get(1)?,
                     status: r.get(2)?,
                     parent: r.get(3)?,
+                    parked: back_by.map(|back_by| Parked {
+                        why: why.unwrap_or_default(),
+                        back_by,
+                    }),
                 })
             },
         )
+    }
+
+    fn park(&self, member: &str, parked: &Parked, now: i64) -> Result<()> {
+        self.immediate(|| {
+            self.exec(
+                "INSERT INTO member_parked(member,why,since,back_by) VALUES(?1,?2,?3,?4)
+                 ON CONFLICT(member) DO UPDATE SET why=?2, since=?3, back_by=?4",
+                params![member, parked.why, now, parked.back_by],
+            )?;
+            // Only what is live now is held: a claim that already ran out stays gone.
+            self.exec(
+                "UPDATE claims SET expires=?3 WHERE owner=?1 AND expires>?2 AND expires<?3",
+                params![member, now, parked.back_by],
+            )?;
+            self.exec(
+                "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?2 AND expires<?3",
+                params![member, now, parked.back_by],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn unpark(&self, member: &str, now: i64) -> Result<()> {
+        self.immediate(|| {
+            if self.exec("DELETE FROM member_parked WHERE member=?1", params![member])? == 0 {
+                return Ok(());
+            }
+            // A member that is active again renews for itself: what the park stretched is cut back to a normal
+            // lease, short for an ask.
+            let (plain, ask) = (now + CLAIM_DEFAULT_SECS, now + ASK_LEASE_DEFAULT_SECS);
+            self.exec(
+                "UPDATE claims SET expires=CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END
+                 WHERE owner=?1 AND expires>CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END",
+                params![member, plain, ask],
+            )?;
+            self.exec(
+                "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?3",
+                params![member, plain, ask],
+            )?;
+            Ok(())
+        })
     }
 
     fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {

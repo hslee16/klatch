@@ -82,6 +82,10 @@ pub trait Transport {
     fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>>;
     /// Remember that the caller is the member of harness session `session_id`.
     fn note_session(&self, session_id: &str) -> Result<()>;
+    /// The Stop hook: end any park, then park the caller if background tasks or crons still run.
+    fn record_stop(&self, background_tasks: usize, crons: usize) -> Result<()>;
+    /// Any other hook ran: a sign of life, which ends a park.
+    fn sign_of_life(&self) -> Result<()>;
     /// Housekeeping: remove members not seen for `older_than` seconds; returns how many.
     fn prune_members(&self, older_than: i64) -> Result<usize>;
     /// Set the caller's own status in a room.
@@ -264,6 +268,13 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn note_session(&self, session_id: &str) -> Result<()> {
         self.gateway.note_session(&self.principal, session_id)
+    }
+    fn record_stop(&self, background_tasks: usize, crons: usize) -> Result<()> {
+        self.gateway
+            .record_stop(&self.principal, background_tasks, crons)
+    }
+    fn sign_of_life(&self) -> Result<()> {
+        self.gateway.sign_of_life(&self.principal)
     }
     fn prune_members(&self, older_than: i64) -> Result<usize> {
         self.gateway.prune_members(&self.principal, older_than)

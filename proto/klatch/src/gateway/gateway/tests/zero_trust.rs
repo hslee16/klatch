@@ -161,6 +161,14 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ("digest_with", "the same, with the backlog"),
     ("note_parent", "the caller's own parent link"),
     ("note_session", "the caller's own session id"),
+    (
+        "record_stop",
+        "the caller's own park, from the end of its own turn",
+    ),
+    (
+        "sign_of_life",
+        "the caller's own park, ended by its own hook",
+    ),
     ("scope_of", "the caller's own scope"),
     ("set_scope", "the caller's own scope"),
     ("record_hook_run", "the caller's own hook run record"),

@@ -207,9 +207,14 @@ fn deadline_phrase(deadline: i64, now: i64) -> String {
 pub fn ask_deadline(text: &str) -> Option<i64> {
     let start = text.rfind("(by ")? + 4;
     let end = start + text[start..].find(')')?;
-    let (date, time) = match text[start..end].split_once(' ') {
+    parse_utc(&text[start..end])
+}
+
+/// A UTC moment written `YYYY-MM-DD` (the end of that day) or `YYYY-MM-DD HH:MM`, as Unix seconds.
+pub(crate) fn parse_utc(s: &str) -> Option<i64> {
+    let (date, time) = match s.split_once(' ') {
         Some((d, t)) => (d, Some(t)),
-        None => (&text[start..end], None),
+        None => (s, None),
     };
     let secs_in_day = match time {
         Some(t) => {

@@ -11,6 +11,7 @@ mod hook;
 mod judge;
 mod labels;
 mod model;
+mod parked;
 mod scope;
 mod text;
 mod toolguard;
@@ -26,6 +27,7 @@ pub use board::{
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, current_offers, is_offer,
     render_board, render_who, statuses,
 };
+pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
 pub mod budget;
 pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
 pub use credentials::credential_kind;

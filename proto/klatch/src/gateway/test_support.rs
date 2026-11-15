@@ -224,6 +224,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.prune_members(older_than, now)
     }
+    fn park(&self, member: &str, parked: &crate::domain::Parked, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.park(member, parked, now)
+    }
+    fn unpark(&self, member: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.unpark(member, now)
+    }
     fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.note_session(session_id, member, now)
