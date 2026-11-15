@@ -139,6 +139,10 @@ const GUARDED: &[(&str, Call)] = &[
 /// lookup of policy that the gateway itself uses. Each has a reason; a new one needs one.
 const OWN_RECORD: &[(&str, &str)] = &[
     ("new", "builds the gateway"),
+    (
+        "with_notifier",
+        "builds the gateway: who is told of a stored post",
+    ),
     ("now", "the clock"),
     (
         "digest",
