@@ -503,6 +503,16 @@ pub trait Store {
     fn release_member_claims(&self, _member: &str, _now: i64) -> Result<usize> {
         Ok(0)
     }
+    /// Every member that holds a claim row, expired or not (an expired row stays until a claim attempt deletes it),
+    /// ordered by name. For the lease rules (#304). The default knows none.
+    fn claim_owners(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    /// Move the expiry of `member`'s claims to `until`: later when `extend`, earlier otherwise, never the other
+    /// way. `ask:<N>` claims keep their own lease. Returns how many rows changed. The default changes nothing.
+    fn retime_member_claims(&self, _member: &str, _until: i64, _extend: bool) -> Result<usize> {
+        Ok(0)
+    }
     /// Unexpired claims in a room, ordered by path.
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>>;
     /// Rooms whose name starts with `prefix`, with their member count and latest activity (a member seen or a

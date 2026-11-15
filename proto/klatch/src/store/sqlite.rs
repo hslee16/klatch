@@ -15,6 +15,7 @@ use std::time::Duration;
 mod archive;
 mod asks;
 mod claims;
+mod leases;
 mod review;
 mod rows;
 mod schema;
@@ -1152,6 +1153,14 @@ impl Store for SqliteStore {
             }
             Ok(released)
         })
+    }
+
+    fn claim_owners(&self) -> Result<Vec<String>> {
+        self.claim_owners_all()
+    }
+
+    fn retime_member_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
+        self.retime_claims(member, until, extend)
     }
 
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {

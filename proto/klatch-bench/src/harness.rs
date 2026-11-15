@@ -312,6 +312,36 @@ impl Session<'_> {
         self.harness.attach(id, &who)
     }
 
+    /// Set the clock every later klatch command of this session sees (the test-clock binary reads `KLATCH_NOW`).
+    pub fn at(&self, t: i64) -> Result<(), String> {
+        self.run(&format!("export KLATCH_NOW={t}"))
+    }
+
+    /// The harness updating the turn state in this session's record: `status` is `busy` or `idle`, changed at
+    /// `updated_at` (unix seconds), as Claude Code does with `status` and `statusUpdatedAt`.
+    pub fn set_turn(&self, status: &str, updated_at: i64) -> Result<(), String> {
+        let path = self.harness.registry().join(format!("{}.json", self.pid));
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut record: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        record["status"] = status.into();
+        record["statusUpdatedAt"] = (updated_at * 1000).into();
+        std::fs::write(&path, record.to_string()).map_err(|e| e.to_string())
+    }
+
+    /// Kill the session's process and reap it, so it is gone from the process table (not a zombie).
+    pub fn die(&self) -> Result<(), String> {
+        let mut roots = self.harness.roots.borrow_mut();
+        let at = roots.iter().position(|c| c.id() == self.pid);
+        let mut child = match at {
+            Some(i) => roots.remove(i),
+            None => return Err("only a top level session can be reaped".into()),
+        };
+        child.kill().map_err(|e| e.to_string())?;
+        child.wait().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// The harness removing this session's registry record (what happens as a real session exits).
     pub fn drop_record(&self) {
         std::fs::remove_file(self.harness.registry().join(format!("{}.json", self.pid))).ok();
