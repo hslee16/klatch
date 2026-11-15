@@ -97,3 +97,26 @@ paths. A post is slower than the 6 ms of a lone command because 50 processes con
 each pays process start, key read and open. **Not covered:** memory for a slow consumer. A consumer that stops reading
 a stream still blocks its whole session (ticket #147), so "bounded memory for slow consumers" is not met and stays a
 known limit.
+
+## Linux: the Secret Service and the key file (ticket #384, 2026-11-15)
+
+`proto/linux-keys/run.sh bus nobus --bench` (DESIGN section 32 item 51). Docker 29.8 on an Apple M-series Mac: an
+aarch64 Debian 12 VM (Linux 7.0, 12 cores), gnome-keyring 42.1 with an unlocked login collection on a private session
+bus, a release build, a store of 300 messages in 5 rooms, 150 runs of each command one after another as a hook runs.
+The container is a VM on the Mac, so these are not bare-metal Linux figures.
+
+| Command | Key in a file p50 / p99 | Key in the Secret Service p50 / p99 |
+|---|---|---|
+| `secret-tool lookup` alone | not applicable | 8.1 / 8.5 ms |
+| `hook` (nothing to show) | 6.0 / 9.1 ms | 24.8 / 28.4 ms |
+| `who` | 2.8 / 3.4 ms | 21.3 / 22.7 ms |
+| `post` | 2.9 / 3.5 ms | 21.9 / 33.5 ms |
+
+A second run in a container with no bus gave the same key-file figures (hook 5.9 / 8.1 ms).
+
+**Budget (50 ms at p99 over the hook's own work).** Met: the keyring adds about 19 ms at p50 and 19 ms at p99 to a
+hook (28.4 against 9.1 ms), and the worst single `post` seen was 82 ms in one run of 150 (p99 33.5 ms), so a rare
+outlier can pass 50 ms. The keyring cost is two `secret-tool` runs per command, a probe that the service answers
+(added for #560, so a dead bus falls back to the file) and the lookup; the probe is about 8 ms of the 19 and #562 is
+to remove it. No miss, so no budget ticket. Not measured: a keyring that is slow to answer (a locked collection fails
+in about 25 ms), x86_64, and a desktop session under load.

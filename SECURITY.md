@@ -13,7 +13,12 @@ reviewed by an outside person before release (#167).
 - **Keys.** The key is kept in a file readable only by you on macOS (the Keychain asks for a password whenever a
   program it has not seen reads an item, and an unsigned build is a new program each time, so it is used again only
   with signed releases), by the Linux Secret Service where there is one, or in a file readable only by you
-  (unattended workers, and machines without a keystore). It is never put in
+  (unattended workers, and machines without a keystore). On Linux, what was tested (in containers, Debian 12, aarch64,
+  `proto/linux-keys/run.sh`): GNOME Keyring through `secret-tool` on a session bus works, including replacing and
+  deleting a key, and the key never appears on a command line; with no session bus, or an address that points
+  nowhere, klatch keeps the key in a file in a 0700 directory with mode 0600 and warns (`klatch doctor` shows the
+  warning); a locked keyring with no display to unlock it fails within seconds with a reason and writes no key
+  file. Not tested: KWallet, KeePassXC, x86_64, a graphical unlock prompt (#563). It is never put in
   the environment, on a command line, in a log or in a crash report, and it is wiped from memory when dropped.
   A recovery code (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and

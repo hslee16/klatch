@@ -19,6 +19,11 @@ macOS (arm64, x86_64) and Linux (x86_64, aarch64). No Windows. On Linux there ar
 glibc 2.34 or later, and a fully static one (musl) that needs no system libraries (tested in containers on Alpine 3.20, Debian 11 and Ubuntu 22.04, arm64 only); the installer
 picks the static one when your glibc is older or missing.
 
+**Linux key custody.** The store's encryption key goes in the Secret Service (GNOME Keyring, through `secret-tool`)
+when a session bus and that command are there, and otherwise in a file readable only by you with a warning, which is
+what a server or an ssh login gets. Tested in containers against GNOME Keyring on Debian 12 (aarch64) and on boxes with
+no bus (`proto/linux-keys/run.sh`); KWallet, KeePassXC and x86_64 are not tested yet. See SECURITY.md.
+
 ```
 brew install hslee16/klatch/klatch
 ```
