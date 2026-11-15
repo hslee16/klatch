@@ -205,3 +205,32 @@ fn closing_the_input_ends_the_session_cleanly() {
     a.post("r", "x", None, None).unwrap();
     assert_eq!(a.close().unwrap(), 0);
 }
+
+#[test]
+fn history_looks_back_without_moving_the_cursor_and_pages_with_since() {
+    let h = Home::new();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    for i in 1..=5 {
+        a.post("r", &format!("m{i}"), None, None).unwrap();
+    }
+    let bodies = |ms: &[klatch::client::Message]| -> Vec<String> {
+        ms.iter().map(|m| m.body.clone()).collect()
+    };
+    let all = b.history("r", None, None).unwrap();
+    assert_eq!(bodies(&all.messages), vec!["m1", "m2", "m3", "m4", "m5"]);
+    assert_eq!(all.more, 0);
+    let last2 = b.history("r", Some(2), None).unwrap();
+    assert_eq!(bodies(&last2.messages), vec!["m4", "m5"]);
+    let since = all.messages[1].seq;
+    let page = b.history("r", Some(2), Some(since)).unwrap();
+    assert_eq!(bodies(&page.messages), vec!["m4", "m5"]);
+    let next = b.history("r", None, Some(since)).unwrap();
+    assert_eq!(bodies(&next.messages), vec!["m3", "m4", "m5"]);
+    let own = a.history("r", Some(1), None).unwrap();
+    assert_eq!(bodies(&own.messages), vec!["m5"]);
+    assert_eq!(b.read("r", false).unwrap().len(), 5);
+    assert_eq!(
+        api(b.history("r", Some(0), None).unwrap_err()).code,
+        "invalid"
+    );
+}
