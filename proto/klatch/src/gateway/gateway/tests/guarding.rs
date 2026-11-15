@@ -84,6 +84,28 @@ fn a_claim_needs_a_positive_ttl() {
 }
 
 #[test]
+fn a_claim_cannot_last_longer_than_a_day_and_the_refusal_says_so() {
+    use crate::domain::CLAIM_MAX_SECS;
+    let g = open();
+    let refused = g
+        .claim(
+            &alice(),
+            "r",
+            &ClaimSpec::new("src", CLAIM_MAX_SECS + 1, ""),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&refused, Error::Invalid(m) if m.contains("86400") && m.contains("claim again")),
+        "{refused}"
+    );
+    // refused before the store: nothing was written, and nothing else was asked of it either
+    assert_eq!(g.store.calls.get(), 0);
+    // exactly a day is allowed
+    g.claim(&alice(), "r", &ClaimSpec::new("src", CLAIM_MAX_SECS, ""))
+        .unwrap();
+}
+
+#[test]
 fn the_guard_runs_once_per_operation_in_order_before_the_store() {
     let guard = Rc::new(SpyGuard::allowing());
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());

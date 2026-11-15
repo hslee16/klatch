@@ -260,3 +260,22 @@ fn a_claim_path_cannot_carry_a_newline_into_the_hook_output() {
     assert!(err.contains("path"), "got: {err}");
     assert_eq!(h.ok("alice", &["hook"]), "");
 }
+
+#[test]
+fn a_claim_for_more_than_a_day_is_refused_with_the_limit_and_a_day_is_allowed() {
+    let h = Home::new();
+    h.run("alice", &["join", "lobby"]);
+    let refused = h.run("alice", &["claim", "lobby", "src", "--ttl", "86401"]);
+    assert!(!refused.status.success());
+    let said = String::from_utf8_lossy(&refused.stderr).to_string() + &out(&refused);
+    assert!(
+        said.contains("86400") && said.contains("24 hours"),
+        "{said}"
+    );
+    let day = h.run("alice", &["claim", "lobby", "src", "--ttl", "86400"]);
+    assert!(
+        day.status.success(),
+        "{}",
+        String::from_utf8_lossy(&day.stderr)
+    );
+}

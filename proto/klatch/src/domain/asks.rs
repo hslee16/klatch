@@ -21,6 +21,9 @@ pub const ASK_LEASE_DEFAULT_SECS: i64 = 90;
 pub const ASK_LEASE_MAX_SECS: i64 = 300;
 /// The lease of any other claim when none is asked for.
 pub const CLAIM_DEFAULT_SECS: i64 = 600;
+/// The longest a claim may last: 24 hours (DESIGN D5). A longer request is refused, not shortened, so the claimant
+/// learns the limit; a claim that must last longer is renewed by claiming again.
+pub const CLAIM_MAX_SECS: i64 = 86_400;
 /// A working room with news this recently keeps its ask from being reported stale.
 pub const ROOM_ACTIVE_SECS: i64 = 120;
 
