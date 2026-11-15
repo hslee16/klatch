@@ -2,7 +2,7 @@
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
 use super::{SqliteStore, WAIT_WINDOW_SECS};
-use crate::domain::{Error, Result, overlaps, scopes_collide};
+use crate::domain::{AgedClaim, Error, Result, due_milestone, overlaps, scopes_collide};
 use crate::store::ClaimRequest;
 use rusqlite::params;
 
@@ -24,6 +24,8 @@ struct Held {
     owner: String,
     expires: i64,
     scope: String,
+    /// When it was first held; 0 when unknown (#547).
+    since: i64,
 }
 
 /// A member's refused claim attempt, remembered as a wait.
@@ -62,6 +64,11 @@ fn reaches(start: &str, target: &str, waits: &[Wait], held: &[Held]) -> bool {
     false
 }
 
+/// Seconds a claim has been held, 0 when its start is unknown.
+fn held_for(since: i64, now: i64) -> i64 {
+    if since > 0 { (now - since).max(0) } else { 0 }
+}
+
 /// The ask number in an `ask:<N>` claim path.
 fn ask_number(path: &str) -> Option<i64> {
     path.strip_prefix("ask:").and_then(|n| n.parse().ok())
@@ -70,7 +77,7 @@ fn ask_number(path: &str) -> Option<i64> {
 impl SqliteStore {
     fn live_claims(&self, room: &str) -> Result<Vec<Held>> {
         self.rows(
-            "SELECT path,owner,expires,scope FROM claims WHERE room=?1",
+            "SELECT path,owner,expires,scope,since FROM claims WHERE room=?1",
             params![room],
             |r| {
                 Ok(Held {
@@ -78,6 +85,7 @@ impl SqliteStore {
                     owner: r.get(1)?,
                     expires: r.get(2)?,
                     scope: r.get(3)?,
+                    since: r.get(4)?,
                 })
             },
         )
@@ -118,6 +126,7 @@ impl SqliteStore {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
             secs_left: crate::domain::secs_between(blocker.expires, req.now),
+            held_secs: held_for(blocker.since, req.now),
             deadlock: self.closes_cycle(req.room, parties, held)?,
         })
     }
@@ -138,14 +147,29 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// When the owner's live claim on this path began and the milestone it was last told about: a claim taken again
+    /// while it is still held keeps its age (expired rows were deleted by `attempt`, so a lapse starts afresh).
+    fn prior_age(&self, req: &Attempt) -> Result<(i64, i64)> {
+        let prior = self.optional(
+            "SELECT since,age_noted FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
+            params![req.room, req.owner, req.path],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+        Ok(match prior {
+            Some((since, noted)) if since > 0 => (since, noted),
+            _ => (req.now, 0),
+        })
+    }
+
     fn insert_claim(&self, req: &Attempt) -> Result<()> {
+        let (since, noted) = self.prior_age(req)?;
         self.exec(
             "DELETE FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
             params![req.room, req.owner, req.path],
         )?;
         self.exec(
-            "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor,ttl) VALUES(?1,?2,?3,?3,?4,?5,?6,?7,?8)",
-            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor, req.ttl],
+            "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor,ttl,since,age_noted) VALUES(?1,?2,?3,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor, req.ttl, since, noted],
         )?;
         if let Some(seq) = ask_number(req.path) {
             self.exec(
@@ -192,5 +216,35 @@ impl SqliteStore {
             now,
         };
         self.immediate(|| self.attempt(&attempt))?
+    }
+}
+
+impl SqliteStore {
+    /// The owner's live claims in the room that passed an age milestone since it was last told; marks each as told.
+    /// Asks are left out: their leases are capped and have their own reminders.
+    pub(super) fn aged_claims(&self, room: &str, owner: &str, now: i64) -> Result<Vec<AgedClaim>> {
+        self.immediate(|| {
+            let rows: Vec<(String, i64, i64)> = self.rows(
+                "SELECT path,since,age_noted FROM claims WHERE room=?1 AND owner=?2 AND expires>?3
+                     AND since>0 AND path NOT LIKE 'ask:%' ORDER BY path",
+                params![room, owner, now],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            let mut aged = Vec::new();
+            for (path, since, noted) in rows {
+                let Some(milestone) = due_milestone(since, noted, now) else {
+                    continue;
+                };
+                self.exec(
+                    "UPDATE claims SET age_noted=?4 WHERE room=?1 AND owner=?2 AND path=?3",
+                    params![room, owner, path, milestone],
+                )?;
+                aged.push(AgedClaim {
+                    path,
+                    held_secs: held_for(since, now),
+                });
+            }
+            Ok(aged)
+        })
     }
 }

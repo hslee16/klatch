@@ -290,6 +290,15 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claim_changes(room, member, now)
     }
+    fn claim_ages(
+        &self,
+        room: &str,
+        owner: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::AgedClaim>> {
+        self.gate()?;
+        self.inner.claim_ages(room, owner, now)
+    }
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.gate()?;
         self.inner.rooms_of(member)

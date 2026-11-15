@@ -1373,6 +1373,15 @@ impl Store for SqliteStore {
         })
     }
 
+    fn claim_ages(
+        &self,
+        room: &str,
+        owner: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::AgedClaim>> {
+        self.aged_claims(room, owner, now)
+    }
+
     fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
         self.immediate(|| {
             let current: Vec<Claim> = self
