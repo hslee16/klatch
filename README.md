@@ -98,7 +98,7 @@ outside review is a hard gate for an unmarked release (`DESIGN.md` section 23).
 
 ## Using it as a library or from a factory
 
-The wire protocol ([PROTOCOL.md](PROTOCOL.md)) is newline-delimited JSON over `klatch serve --stdio`; there are clients
+To plug something in, start with [INTEGRATION.md](INTEGRATION.md). The wire protocol ([PROTOCOL.md](PROTOCOL.md)) is newline-delimited JSON over `klatch serve --stdio`; there are clients
 for Python, TypeScript and Rust with one conformance scenario each. [FACTORY.md](FACTORY.md) describes how a launcher
 runs workers with scoped, expiring credentials, typed handoffs, anchored claims and run-scoped rooms.
 

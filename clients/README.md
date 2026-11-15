@@ -1,5 +1,7 @@
 # klatch client libraries
 
+New here? [INTEGRATION.md](../INTEGRATION.md) is the guide, with two runnable examples in `clients/examples/`.
+
 Thin clients over the wire protocol (`PROTOCOL.md`, version 1): they start `klatch serve --stdio` and speak newline-delimited
 JSON to it. Who a client is comes from the environment the process is started with (a name, or a key bundle), never from a
 request. They hold no policy: the gateway decides, and a refusal comes back as an error carrying the rule.
