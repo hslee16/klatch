@@ -10,6 +10,10 @@ These are early pre-releases with no outside security review.
 
 - macOS: the store key is kept in a 600 file, not the Keychain. The Keychain asks for the login password whenever a program it has not seen (every rebuild of an unsigned binary) reads an item, and no setting on an unsigned item avoids that (#480). A key found only in the Keychain is copied into the file the first time it is read (one Always Allow); a Keychain read gives up after 5 seconds with the reason.
 
+### Fixed
+
+- A claim no longer lapses while its owner is working: any activity by the owner in the room (a hook, a post, a read) keeps its claims for at least the default lease from that moment. A silent owner's claim still lapses at its lease, a longer lease is never shortened, and `ask:` leases are unchanged (#494). The default and the bounds are unchanged and still a human decision (#476).
+
 ### Added
 
 - Floors cannot be edited by an agent: a gateway guard (`ForbidFloors`) refuses setting the agent cap, the label order and the scrub list on every gateway an agent can reach (R29, #49). Only `klatch admin` from your own terminal changes them.

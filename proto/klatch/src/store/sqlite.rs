@@ -1,6 +1,6 @@
 use crate::domain::{
-    AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
-    Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
+    AskRoom, AuditRecord, CLAIM_DEFAULT_SECS, Claim, ClaimChanges, Error, HookRun, MemberInfo,
+    Message, OpenAsk, Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
 };
 use crate::keys::Key;
 use crate::store::ids::new_id;
@@ -298,6 +298,25 @@ impl SqliteStore {
             "INSERT INTO members(room,name,joined,last_seen) VALUES(?1,?2,?3,?3)
                  ON CONFLICT(room,name) DO UPDATE SET last_seen=?3",
             params![room, me, now],
+        )?;
+        self.renew_claims(room, me, now)
+    }
+
+    /// A member that is active keeps its live claims in the room for at least the default lease from now, so a
+    /// claim does not lapse mid-task (#494). Only a heartbeat: it never shortens a lease, never revives a lapsed
+    /// claim, and leaves `ask:` leases to their own cap.
+    fn renew_claims(&self, room: &str, me: &str, now: i64) -> Result<()> {
+        // What others were shown is renewed with the claim: a heartbeat is not news, and a digest reports a claim
+        // whose expiry differs from the one a member saw.
+        self.exec(
+            "UPDATE claims_seen SET expires=?3 WHERE room=?1 AND owner=?2 AND expires<?3 AND expires>?4
+                 AND path NOT LIKE 'ask:%'",
+            params![room, me, now + CLAIM_DEFAULT_SECS, now],
+        )?;
+        self.exec(
+            "UPDATE claims SET expires=?3 WHERE room=?1 AND owner=?2 AND expires>?4 AND expires<?3
+                 AND path NOT LIKE 'ask:%'",
+            params![room, me, now + CLAIM_DEFAULT_SECS, now],
         )?;
         Ok(())
     }

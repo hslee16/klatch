@@ -25,3 +25,46 @@ fn members_with_no_scope_still_collide_as_before() {
         .unwrap();
     assert!(g.claim(&bob(), "r", &ClaimSpec::new("p", 100, "")).is_err());
 }
+
+fn held_by_anyone(g: &Gateway<SpyStore>, path: &str) -> bool {
+    g.claims(&bob(), "r")
+        .unwrap()
+        .iter()
+        .any(|c| c.path == path)
+}
+
+#[test]
+fn a_claim_lives_on_while_its_owner_stays_active() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("p", 600, ""))
+        .unwrap();
+    for _ in 0..3 {
+        t.set(t.get() + 500);
+        g.digest(&alice()).unwrap();
+    }
+    // 1500 s after the claim, longer than its lease, the owner kept working (#494).
+    assert!(held_by_anyone(&g, "p"));
+    assert!(g.claim(&bob(), "r", &ClaimSpec::new("p", 100, "")).is_err());
+}
+
+#[test]
+fn a_claim_of_a_silent_owner_still_lapses_at_its_lease() {
+    let (g, t) = timed();
+    g.claim(&alice(), "r", &ClaimSpec::new("p", 600, ""))
+        .unwrap();
+    t.set(t.get() + 601);
+    assert!(!held_by_anyone(&g, "p"));
+}
+
+#[test]
+fn activity_never_shortens_a_longer_lease() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("long", 7_200, ""))
+        .unwrap();
+    t.set(t.get() + 100);
+    g.digest(&alice()).unwrap();
+    t.set(t.get() + 7_000);
+    assert!(held_by_anyone(&g, "long"));
+}
