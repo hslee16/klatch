@@ -17,7 +17,7 @@ request. They hold no policy: the gateway decides, and a refusal comes back as a
 ## What every client does
 
 Connect and read `hello` (member, attribution, clearance); `request` (any method, a result or an error with its code and any
-refusal frames); `post` (with optional label, kind and payload), `read`, `claim`, `release`, `claims`, `who`; `subscribe` with
+refusal frames); `post` (with optional label, kind and payload), `read`, `history` (look back with optional `last` and `since`, no cursor moved; the Rust client has it, #586; Python and TypeScript do not yet, #611), `claim`, `release`, `claims`, `who`; `subscribe` with
 resume from a sequence number, then messages, `caught_up` and live pushes, and `ack`; close, which ends the session by closing
 its input. A frame type or field the client does not know is ignored; a frame that is not `"v":1` is a protocol error.
 

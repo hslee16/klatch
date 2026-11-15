@@ -62,6 +62,13 @@ pub struct Collected {
     pub caught_up: Option<u64>,
 }
 
+/// What `history` returns: the messages, oldest first, and how many follow the last one returned.
+#[derive(Debug, Default)]
+pub struct History {
+    pub messages: Vec<Message>,
+    pub more: u64,
+}
+
 /// One session with the gateway. Not shared between threads: use one client per thread.
 pub struct Client {
     pub member: String,
@@ -266,6 +273,32 @@ impl Client {
             .as_array()
             .map(|a| a.iter().map(message_of).collect())
             .unwrap_or_default())
+    }
+
+    /// Look back in a room without moving any cursor. No `last` and no `since`: the newest 20. `last`
+    /// alone: the newest `last` (1 to 200). `since` alone: the next 20 after that `seq`. Both: the newest
+    /// `last` after `since`. Page a long room by passing the last `seq` returned as the next `since`.
+    pub fn history(
+        &mut self,
+        room: &str,
+        last: Option<u32>,
+        since: Option<u64>,
+    ) -> Result<History> {
+        let mut p = json!({"room": room});
+        if let Some(n) = last {
+            p["last"] = json!(n);
+        }
+        if let Some(s) = since {
+            p["since"] = json!(s);
+        }
+        let r = self.request("history", p)?;
+        Ok(History {
+            messages: r["messages"]
+                .as_array()
+                .map(|a| a.iter().map(message_of).collect())
+                .unwrap_or_default(),
+            more: r["more"].as_u64().unwrap_or(0),
+        })
     }
 
     pub fn claim(
