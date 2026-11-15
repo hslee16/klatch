@@ -27,6 +27,8 @@ mod budget;
 mod dm;
 mod librarian;
 mod policy;
+mod roles;
+pub use roles::Role;
 mod runs;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
