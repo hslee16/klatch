@@ -295,10 +295,15 @@ fn plan_rooms(digests: &[RoomDigest], now: i64, budget: usize) -> Vec<RoomPlan<'
     // the "N more" lines are small and always printed; keep room for them
     const TRAILER_RESERVE: usize = 200;
     let active: Vec<&RoomDigest> = digests.iter().filter(|d| !d.is_quiet()).collect();
-    let mut left = budget;
+    // every room's header and "more" lines are paid for first: otherwise the first room's claims use the whole budget
+    // and the rooms after it print their headers on top of it
+    let reserved: usize = active
+        .iter()
+        .map(|d| printed_len(&room_header(&d.room)) + 2 * TRAILER_RESERVE)
+        .sum();
+    let mut left = budget.saturating_sub(reserved);
     let mut plans: Vec<RoomPlan> = Vec::new();
     for d in &active {
-        left = left.saturating_sub(printed_len(&room_header(&d.room)) + 2 * TRAILER_RESERVE);
         let units = other_units(d, now);
         let kept = fit(&units, &mut left);
         plans.push(RoomPlan {
@@ -1007,6 +1012,38 @@ mod tests {
         for r in ["a", "b", "c"] {
             assert!(out.contains(&format!("[room {r}]")), "{out}");
         }
+    }
+
+    #[test]
+    fn a_flood_of_claims_in_the_first_room_leaves_later_rooms_their_header_and_counts() {
+        // found by the property test (RESEARCH-NOTES 42.8): the first room's claims used the whole budget, so the
+        // headers and "more" lines of the rooms after it were printed on top of it
+        use crate::domain::budget::DIGEST_MAX_BYTES;
+        let claims: Vec<Claim> = (0..200)
+            .map(|i| Claim {
+                path: format!("src/some/long/path/number/{i}/file.rs"),
+                owner: "carol".into(),
+                reason: String::new(),
+                expires: 100,
+                scope: String::new(),
+            })
+            .collect();
+        let long = "r".repeat(40);
+        let rooms: Vec<RoomDigest> = (0..5)
+            .map(|i| RoomDigest {
+                room: format!("{long}{i}").chars().take(40).collect(),
+                claims: claims.clone(),
+                messages: many(20, 900),
+                ..Default::default()
+            })
+            .collect();
+        let out = render_hook(&rooms, 0);
+        assert!(
+            printed_bytes(&out) <= DIGEST_MAX_BYTES,
+            "{} bytes",
+            printed_bytes(&out)
+        );
+        assert_eq!(out.matches("[room ").count(), 5, "every room keeps a header");
     }
 
     #[test]
