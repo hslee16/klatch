@@ -28,6 +28,19 @@ pub fn convention(bin: &str) -> String {
     )
 }
 
+/// The convention for a child agent a parent starts: the parent pastes this into the child's brief (#491). Every
+/// command carries `KLATCH_NAME=<name>` because a child that shares its parent's name shares its mailbox and its
+/// claims, and the path is of a binary that already has its key (a freshly built one may wait on a keystore).
+pub fn subagent_brief(bin: &str, name: Option<&str>) -> String {
+    let name = name.map_or("<your-unique-name>".to_string(), str::to_string);
+    let prefixed = format!("KLATCH_NAME={name} {bin}");
+    format!(
+        "To work with the other agents on this task, use klatch from this binary only, not a freshly built one. \
+Put KLATCH_NAME={name} in front of every klatch command. Join first: {prefixed} --discover join lobby\n{}",
+        convention(&prefixed)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

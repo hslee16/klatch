@@ -16,6 +16,8 @@ These are early pre-releases with no outside security review.
 
 ### Added
 
+- `klatch convention [--name N]` prints the convention for any agent, with this binary's own path and `KLATCH_NAME=<name>` in front of every command, so a parent can paste it into a subagent's brief (#491). It needs no store, key or name.
+
 - Floors cannot be edited by an agent: a gateway guard (`ForbidFloors`) refuses setting the agent cap, the label order and the scrub list on every gateway an agent can reach (R29, #49). Only `klatch admin` from your own terminal changes them.
 - A read-only librarian role: `klatch admin librarian <member>` (`--off` to remove). A librarian can read without moving its cursor, see who, claims, the board and the audit and refusal records, and is refused everything else with the rule `read-only` (DESIGN section 32 item 33, #52).
 - An admin agent role: `klatch admin admin-agent <member>` (`--off` to remove), on the same one-role-per-member mechanism as the librarian. It may do the non-floor admin acts and is refused (rules `floors`, `admin-scope`) and audited on anything else; its acts are audited with its name (DESIGN section 32 item 35, #50).

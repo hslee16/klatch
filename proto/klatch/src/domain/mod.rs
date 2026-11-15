@@ -27,7 +27,7 @@ pub use board::{
     render_board, render_who, statuses,
 };
 pub mod budget;
-pub use convention::{CONVENTION_MARKER, convention};
+pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
 pub use credentials::credential_kind;
 pub use dm::{DM_PREFIX, dm_room};
 pub use error::{Error, Result};
