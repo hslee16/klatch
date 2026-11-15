@@ -542,3 +542,16 @@ Tools and primitives found while researching Codex CLI and the socket; none was 
 **Still true after this pass:** none of these is reported to have sensitivity labels, clearance or a scrubber.
 Before relying on any row, read the project. They are leads for the M0.5 idea harvest and for the harness
 abstraction (`DESIGN.md` section 20), not findings.
+
+## 12. Added 2026-11-15 (tickets #90 to #92; details in `RESEARCH-NOTES.md` section 49)
+
+V-PAGE, fetched 2026-11-15; source code not read for either project.
+
+| Topic | Cotal (docs.cotal.ai) | agent-loom (README) |
+|---|---|---|
+| Identity | Principal `owner.actor`; the broker pins sender tokens in subjects to the authenticated connection and receivers re-check `from.id`. JWT auth is the default (`cotal up`); `--open` is outside the security guarantees. A session it did not start joins through a human-approved `cotal_connect` request. | Sender stamped only when the registered session's host process is proved an ancestor of the CLI; a free-form `--from` is tagged `[label; not a reply address]` (tag text from the earlier pass). Unattributed reads leave mail unread. Daemon on 127.0.0.1: "any process running as the local user can submit text". |
+| Expiry | Not found on the pages read beyond connection requests and held names; presence is a heartbeat. | No per-claim TTL: "Session claims survive a disconnect for 15 minutes"; reminders to the owning session after 2 and 8 hours, then daily from 24 hours; work leases carry explicit activity; forced recovery needs an audited `authority` and `reason`. |
+| Push | Native Claude Code delivery through hooks; idle wake only through channels, and Cotal flags a seat without it (`no idle wake`, a refused `once` launch). Codex through `codex app-server`, private `CODEX_HOME`, hooks not loaded. | Channel push needs the plugin, managed `channelsEnabled` plus `allowedChannelPlugins`, and `--channels` at every launch; otherwise a pull `check_inbox` with hook-injected unread counts. Receipts: spooled, pending, held, pushed, push-unreachable, read, refused, expired. |
+| Labels | None found. | None found. |
+
+Open after this pass: the Cotal wire specification and the agent-loom architecture and spec files were not read; whether agent-loom push works under `-p`; what a model sees for an unattributed sender; `codex queue` on any binary that has it (the installed 0.147.0 does not). The `codex queue` row in section 11 is now DOCUMENTED on OpenAI's CLI reference (UUID or exact name, text only, no sender or acknowledgement documented), no longer only a third-party REPORT.
