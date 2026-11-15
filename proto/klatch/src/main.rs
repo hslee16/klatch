@@ -10,6 +10,7 @@ mod doctor;
 mod identity;
 mod init;
 mod judge;
+mod roles;
 mod run;
 mod scope;
 mod worker;
@@ -176,6 +177,16 @@ enum Cmd {
     Judge {
         #[command(subcommand)]
         cmd: judge::JudgeCmd,
+    },
+    /// Call the acts your role allows, as yourself (admin agent; not `klatch admin`, which stays the person's)
+    Act {
+        #[command(subcommand)]
+        cmd: roles::ActCmd,
+    },
+    /// Read the review queue and record verdicts (reviewer only)
+    Review {
+        #[command(subcommand)]
+        cmd: roles::ReviewCmd,
     },
     /// Show the scope you work in, or set it
     Scope { scope: Option<String> },
@@ -577,7 +588,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         now(),
     )?;
     let parent = pending_parent(&store, &caller);
-    let gateway = Rc::new(Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)));
+    let gateway = Rc::new(Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members());
     // the keys of the sealed labels this member's clearance reaches, and no others (#160)
     let labels = gateway.sealed_labels_within(&caller.principal.member)?;
     if !labels.is_empty() {

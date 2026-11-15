@@ -4,6 +4,7 @@
 mod frames;
 mod methods;
 pub mod policy;
+mod role_methods;
 
 use crate::domain::Principal;
 use crate::gateway::{Gateway, Subscription};
@@ -319,5 +320,7 @@ fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> Vec<Item> {
     items
 }
 
+#[cfg(test)]
+mod role_tests;
 #[cfg(test)]
 mod tests;

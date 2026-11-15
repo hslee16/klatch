@@ -118,6 +118,8 @@ pub struct Gateway<S: Store> {
     clock: Box<dyn Clock>,
     guard: Box<dyn Guard>,
     notifier: Box<dyn crate::gateway::Notifier>,
+    /// Built for members (#507): an admin act needs the admin agent role. See `roles.rs`.
+    for_members: bool,
 }
 
 impl<S: Store> Gateway<S> {
@@ -127,7 +129,16 @@ impl<S: Store> Gateway<S> {
             clock: Box::new(clock),
             guard: Box::new(guard),
             notifier: Box::new(crate::gateway::NoNotifier),
+            for_members: false,
         }
+    }
+
+    /// Mark this gateway as the one members act through (`klatch act`, `review`, `serve` and the hooks): an admin
+    /// act is then refused to any member that does not hold the admin agent role. The terminal and launcher
+    /// gateways (the human's) are not built this way.
+    pub fn for_members(mut self) -> Self {
+        self.for_members = true;
+        self
     }
 
     /// Tell `notifier` about every post that is stored (#72). Replaces the default, which tells nobody.
@@ -138,6 +149,12 @@ impl<S: Store> Gateway<S> {
 
     pub fn now(&self) -> i64 {
         self.clock.now()
+    }
+
+    /// The store, for a test in another module that has to stage what no public call can yet.
+    #[cfg(test)]
+    pub(crate) fn store_for_tests(&self) -> &S {
+        &self.store
     }
 
     #[cfg(test)]
