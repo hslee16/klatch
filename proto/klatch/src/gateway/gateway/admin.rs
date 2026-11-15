@@ -24,6 +24,11 @@ impl<S: Store> Gateway<S> {
         )?;
         let now = self.now();
         let outcome = act(now)?;
+        // an act of an admin agent says whose it was; the human's acts (no role) stay as they were
+        let outcome = match self.is_admin_agent(&who.member)? {
+            true => format!("by {}; {outcome}", who.member),
+            false => outcome,
+        };
         self.store
             .record_audit(&NewAudit::new(action, target, &outcome), now)
     }

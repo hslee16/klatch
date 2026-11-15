@@ -56,6 +56,13 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Make a member the admin agent: it may do the non-floor admin acts (rooms, members, clearances inside the cap,
+    /// room labels, upkeep) and is refused and audited on anything else, floors included; --off removes the role
+    AdminAgent {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
@@ -299,6 +306,13 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             t.admin_set_librarian(&member, !off)?;
             println!(
                 "{member} is {} a librarian",
+                if off { "no longer" } else { "now" }
+            );
+        }
+        AdminCmd::AdminAgent { member, off } => {
+            t.admin_set_admin_agent(&member, !off)?;
+            println!(
+                "{member} is {} the admin agent",
                 if off { "no longer" } else { "now" }
             );
         }
