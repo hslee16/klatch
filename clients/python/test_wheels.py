@@ -4,6 +4,7 @@ check them the way an installer would, then install one with pip and run the ins
 import base64
 import hashlib
 import os
+import re
 import stat
 import struct
 import subprocess
@@ -156,7 +157,9 @@ class Installing(unittest.TestCase):
             [py, "-I", "-c", "import klatch; print(klatch.__version__, klatch.PROTOCOL_VERSION)"],
             capture_output=True, text=True, check=True, cwd=tempfile.gettempdir(),
         )
-        self.assertEqual(client.stdout.split(), ["0.1.0.dev1", "1"])
+        # the wheel ships package/wheel_init.py, so the version it reports is the one in that file, whatever the release
+        shipped = re.search(r'__version__ = "(.*)"', open(os.path.join(HERE, "package", "wheel_init.py")).read()).group(1)
+        self.assertEqual(client.stdout.split(), [shipped, "1"])
 
 
 class Tags(unittest.TestCase):
