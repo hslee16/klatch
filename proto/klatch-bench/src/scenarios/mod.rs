@@ -12,6 +12,7 @@ mod faults;
 mod hooks;
 mod keys;
 mod labels;
+mod librarian;
 mod retention;
 mod scale;
 mod sessions;
@@ -73,6 +74,7 @@ pub fn all() -> Vec<Scenario> {
         factory::all(),
         admin::all(),
         labels::all(),
+        librarian::all(),
         hooks::all(),
         keys::all(),
         retention::all(),

@@ -25,6 +25,7 @@ mod anchors;
 pub use anchors::{AnchorAdapter, valid_anchor};
 mod budget;
 mod dm;
+mod librarian;
 mod policy;
 mod runs;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
@@ -362,8 +363,7 @@ impl<S: Store> Gateway<S> {
         }
         // a member reads its own record freely; another member's goes through the guard (#161)
         if member != who.member {
-            self.guard
-                .check(who, &Operation::admin("hook_runs", member))?;
+            self.check_guard(who, &Operation::admin("hook_runs", member))?;
         }
         self.store.hook_runs(member)
     }
@@ -378,8 +378,7 @@ impl<S: Store> Gateway<S> {
     /// Housekeeping at session start: remove members not seen for `older_than` seconds. Returns how many.
     pub fn prune_members(&self, who: &Principal, older_than: i64) -> Result<usize> {
         check_member(who)?;
-        self.guard
-            .check(who, &Operation::admin("prune", &older_than.to_string()))?;
+        self.check_guard(who, &Operation::admin("prune", &older_than.to_string()))?;
         self.store.prune_members(older_than, self.now())
     }
 
@@ -571,8 +570,7 @@ impl<S: Store> Gateway<S> {
         if after_seq < 0 || limit == 0 {
             return Err(Error::Invalid("bad tail range".into()));
         }
-        self.guard
-            .check(who, &Operation::Subscribe { room: room.into() })?;
+        self.check_guard(who, &Operation::Subscribe { room: room.into() })?;
         self.store.tail(room, after_seq, limit)
     }
 
@@ -589,8 +587,7 @@ impl<S: Store> Gateway<S> {
         if seq < 0 {
             return Err(Error::Invalid("bad acknowledgement".into()));
         }
-        self.guard
-            .check(who, &Operation::Ack { room: room.into() })?;
+        self.check_guard(who, &Operation::Ack { room: room.into() })?;
         self.store
             .advance_cursor(Seat::new(room, &who.member), seq, self.now())
     }
@@ -672,7 +669,7 @@ impl<S: Store> Gateway<S> {
                 self.check_clearance(who, room)?;
             }
         }
-        self.guard.check(who, op)
+        self.check_guard(who, op)
     }
 
     /// Validate the caller and the room, then ask the guard. Runs before the store is touched.

@@ -57,6 +57,7 @@ pub trait Transport {
     fn admin_set_room_label(&self, room: &str, label: &str) -> Result<()>;
     fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()>;
     fn admin_set_cap(&self, label: &str) -> Result<()>;
+    fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
     /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
     fn admin_plant_canary(&self, room: &str) -> Result<()>;
@@ -197,6 +198,10 @@ impl<S: Store> Transport for Direct<S> {
     fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()> {
         self.gateway
             .admin_set_clearance(&self.principal, member, label)
+    }
+    fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()> {
+        self.gateway
+            .admin_set_librarian(&self.principal, member, on)
     }
     fn admin_set_cap(&self, label: &str) -> Result<()> {
         self.gateway.admin_set_cap(&self.principal, label)

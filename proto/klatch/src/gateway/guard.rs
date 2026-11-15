@@ -116,6 +116,18 @@ impl Operation {
         }
     }
 
+    /// Whether the operation only looks and changes nothing the members could see: what a librarian may do. A read
+    /// that moves the cursor is not one, and neither is anything administrative except the two records of what
+    /// happened (the audit and the refusals).
+    pub fn is_query(&self) -> bool {
+        match self {
+            Operation::Read { advance, .. } => !advance,
+            Operation::Who { .. } | Operation::Claims { .. } | Operation::Subscribe { .. } => true,
+            Operation::Admin { action, .. } => matches!(action.as_str(), "audit" | "refusals"),
+            _ => false,
+        }
+    }
+
     /// Whether a closed room refuses it: posting, claiming and setting a status. A closed room stays readable.
     pub fn changes_a_closed_room(&self) -> bool {
         matches!(

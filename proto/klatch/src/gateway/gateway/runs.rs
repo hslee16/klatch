@@ -124,7 +124,7 @@ impl<S: Store> Gateway<S> {
     /// Every open run and how many rooms it has.
     pub fn admin_runs(&self, who: &Principal) -> Result<Vec<RunInfo>> {
         check_member(who)?;
-        self.guard.check(who, &Operation::admin("runs", ""))?;
+        self.check_guard(who, &Operation::admin("runs", ""))?;
         let mut out = Vec::new();
         for (key, value) in self.store.policy_list("run:")? {
             let id = key.trim_start_matches("run:").to_string();

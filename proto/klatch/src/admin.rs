@@ -50,6 +50,12 @@ pub enum AdminCmd {
     Label { room: String, label: String },
     /// Set a member's clearance, at most the agent cap
     Clear { member: String, label: String },
+    /// Make a member a read-only librarian (the interface for asking what happened), or with --off an ordinary member
+    Librarian {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
@@ -288,6 +294,13 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         AdminCmd::Clear { member, label } => {
             t.admin_set_clearance(&member, &label)?;
             println!("{member} is cleared to {label}");
+        }
+        AdminCmd::Librarian { member, off } => {
+            t.admin_set_librarian(&member, !off)?;
+            println!(
+                "{member} is {} a librarian",
+                if off { "no longer" } else { "now" }
+            );
         }
         AdminCmd::Cap { label } => {
             t.admin_set_cap(&label)?;

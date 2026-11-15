@@ -15,7 +15,7 @@ impl<S: Store> Gateway<S> {
         act: impl FnOnce(i64) -> Result<String>,
     ) -> Result<()> {
         check_member(who)?;
-        self.guard.check(
+        self.check_guard(
             who,
             &Operation::Admin {
                 action: action.into(),
@@ -122,7 +122,7 @@ impl<S: Store> Gateway<S> {
         limit: usize,
     ) -> Result<Vec<crate::domain::AuditRecord>> {
         check_member(who)?;
-        self.guard.check(
+        self.check_guard(
             who,
             &Operation::Admin {
                 action: "audit".into(),
