@@ -8,6 +8,7 @@ These are early pre-releases with no outside security review.
 
 ### Added
 
+- `klatch doctor`: a read-only health check of the binary, the store and its key, the hooks (does each point at a binary that exists, and at this one?), the session and the harness registry, with the reason and the fix for each problem; exits 1 on a failure. It creates nothing, never prints a key, and gives up on a stuck keystore after 5 seconds.
 - `klatch sessions`: the live coding-agent sessions on this machine, from the harness registry (pid, name, directory, session id); `--all` adds the records that are not live and why. Read only; never opens a key file.
 - A claim may last at most 24 hours (DESIGN D5); a longer request is refused with the limit. Claim again to renew.
 - `klatch init --uninstall`: removes every hook klatch installed and nothing else, with a diff and a question per scope.
