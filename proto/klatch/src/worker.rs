@@ -169,7 +169,11 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
         bail!("{why}");
     }
     let db = db_path()?;
-    let gateway = Gateway::new(custody::open_store(&db)?, CliClock, AllowAll);
+    let gateway = Gateway::new(
+        custody::open_store(&db)?,
+        CliClock,
+        ForbidFloors::new(AllowAll),
+    );
     let launcher = Principal::unattributed("admin");
     match cmd {
         WorkerCmd::Issue {

@@ -19,7 +19,8 @@ use klatch::domain::{
     judge_tool, patch_targets, render_board, render_hook, render_who,
 };
 use klatch::gateway::{
-    AllowAll, ClaimSpec, Direct, Gateway, Identity, LocalIdentity, PeerEvidence, Transport,
+    AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, Identity, LocalIdentity, PeerEvidence,
+    Transport,
 };
 use klatch::harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
 use klatch::store::{SqliteStore, Store};
@@ -549,7 +550,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         now(),
     )?;
     let parent = pending_parent(&store, &caller);
-    let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+    let gateway = Rc::new(Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)));
     // the keys of the sealed labels this member's clearance reaches, and no others (#160)
     let labels = gateway.sealed_labels_within(&caller.principal.member)?;
     if !labels.is_empty() {

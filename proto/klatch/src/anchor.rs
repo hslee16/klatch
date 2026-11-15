@@ -64,7 +64,11 @@ pub fn run(cmd: AnchorCmd) -> Result<()> {
     ) {
         bail!("{why}");
     }
-    let gateway = Gateway::new(custody::open_store(&db_path()?)?, CliClock, AllowAll);
+    let gateway = Gateway::new(
+        custody::open_store(&db_path()?)?,
+        CliClock,
+        ForbidFloors::new(AllowAll),
+    );
     let launcher = Principal::unattributed("admin");
     let released = match cmd {
         AnchorCmd::Done { anchor } => gateway.anchor_done(&launcher, &anchor)?,
