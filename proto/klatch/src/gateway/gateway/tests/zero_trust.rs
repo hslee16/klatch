@@ -100,6 +100,12 @@ const GUARDED: &[(&str, Call)] = &[
     }),
     ("admin_runs", |g, w| refused(g.admin_runs(w))),
     ("anchor_done", |g, w| refused(g.anchor_done(w, "wo:1"))),
+    ("github_events", |g, w| {
+        refused(g.github_events(
+            w,
+            r#"{"number":1,"state":"closed","repository":{"full_name":"a/b"}}"#,
+        ))
+    }),
     ("reap_anchors", |g, w| {
         refused(g.reap_anchors(w, &NoFactory))
     }),

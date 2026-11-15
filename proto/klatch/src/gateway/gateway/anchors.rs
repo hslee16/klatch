@@ -30,6 +30,7 @@ impl<S: Store> Gateway<S> {
         if !valid_anchor(anchor) {
             return Err(Error::Invalid(format!("bad anchor: {anchor:?}")));
         }
+        let anchor = &normalize_anchor(anchor);
         let mut released = 0;
         self.administer(who, ("anchor-done", anchor), |now| {
             released = self.release_anchor(anchor, now)?;
@@ -44,7 +45,7 @@ impl<S: Store> Gateway<S> {
         let mut total = 0;
         self.administer(who, ("reap-anchors", ""), |now| {
             for anchor in self.store.anchors_in_use(now)? {
-                if matches!(adapter.is_done(&anchor), Ok(true)) {
+                if self.adapter_says_done(adapter, &anchor) {
                     let n = self.release_anchor(&anchor, now)?;
                     total += n;
                     self.store.record_audit(
@@ -60,6 +61,48 @@ impl<S: Store> Gateway<S> {
             Ok(format!("released {total} claim(s)"))
         })?;
         Ok(total)
+    }
+
+    /// GitHub says (`json`: `gh api` output, a webhook payload or an array of them, see `github_anchor`) that pull
+    /// requests or issues are merged or closed: release the claims anchored to each one that is. Returns how many
+    /// claims were released. The gateway reads nothing from GitHub itself; a payload that is not clearly an item is
+    /// refused whole, before anything is released.
+    pub fn github_events(&self, who: &Principal, json: &str) -> Result<usize> {
+        let mut released = 0;
+        for item in parse_events(json)?.into_iter().filter(|i| i.done) {
+            released += self.anchor_done(who, &item.anchor)?;
+        }
+        Ok(released)
+    }
+
+    /// A session anchor (`session:<id>`) is done when the member of that session has been marked done in every room
+    /// it is in (the SessionEnd hook does that). A session the store does not know, or one still live anywhere, is
+    /// not done: the lease still ends the claim of a session that vanished without a word.
+    fn session_done(&self, session_id: &str) -> Result<bool> {
+        let Some(member) = self.store.member_of_session(session_id)? else {
+            return Ok(false);
+        };
+        let rooms = self.store.rooms_of(&member)?;
+        for room in &rooms {
+            let status = self
+                .store
+                .members(room)?
+                .into_iter()
+                .find(|m| m.name == member)
+                .and_then(|m| m.status);
+            if !status.is_some_and(|s| s == "done" || s.starts_with("done ")) {
+                return Ok(false);
+            }
+        }
+        Ok(!rooms.is_empty())
+    }
+
+    fn adapter_says_done(&self, adapter: &dyn AnchorAdapter, anchor: &str) -> bool {
+        let answer = match anchor.strip_prefix("session:") {
+            Some(id) => self.session_done(id),
+            None => adapter.is_done(anchor),
+        };
+        matches!(answer, Ok(true))
     }
 
     fn release_anchor(&self, anchor: &str, now: i64) -> Result<usize> {
