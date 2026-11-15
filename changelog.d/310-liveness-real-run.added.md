@@ -1,0 +1,1 @@
+- An ignored test, `liveness_real`, runs the liveness probe against the real Claude Code sessions on a machine and prints verdicts, evidence and cost; RESEARCH-NOTES section 46 records the first run (#310).
