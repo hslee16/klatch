@@ -1,0 +1,1 @@
+- Every job in the release workflows now has a time limit (builds 30 minutes, publishing 15 to 20, the binaries build 45), and `release/check-timeouts.sh` fails the gate and CI if one is missing.
