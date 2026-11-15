@@ -56,6 +56,12 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Make a member a quarantined reviewer (reads queued items and records verdicts, nothing else), or with --off an ordinary member
+    Reviewer {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
@@ -299,6 +305,13 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             t.admin_set_librarian(&member, !off)?;
             println!(
                 "{member} is {} a librarian",
+                if off { "no longer" } else { "now" }
+            );
+        }
+        AdminCmd::Reviewer { member, off } => {
+            t.admin_set_reviewer(&member, !off)?;
+            println!(
+                "{member} is {} a reviewer",
                 if off { "no longer" } else { "now" }
             );
         }

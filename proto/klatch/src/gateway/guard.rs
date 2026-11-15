@@ -52,6 +52,12 @@ pub enum Operation {
         action: String,
         target: String,
     },
+    /// A reviewer taking the next queued item to read (#51).
+    ReviewNext,
+    /// A reviewer recording its verdict on queued item `id` (#51).
+    ReviewVerdict {
+        id: i64,
+    },
 }
 
 impl Operation {
@@ -95,6 +101,8 @@ impl Operation {
             Operation::Ack { .. } => "ack",
             Operation::Mute { .. } => "mute",
             Operation::Admin { .. } => "admin",
+            Operation::ReviewNext => "review_next",
+            Operation::ReviewVerdict { .. } => "review_verdict",
         }
     }
 
@@ -112,7 +120,9 @@ impl Operation {
             | Operation::Status { room, .. }
             | Operation::Mute { room, .. }
             | Operation::Ack { room } => Some(room),
-            Operation::Admin { .. } => None,
+            Operation::Admin { .. } | Operation::ReviewNext | Operation::ReviewVerdict { .. } => {
+                None
+            }
         }
     }
 
@@ -126,6 +136,14 @@ impl Operation {
             Operation::Admin { action, .. } => matches!(action.as_str(), "audit" | "refusals"),
             _ => false,
         }
+    }
+
+    /// Whether it is one of the two things a reviewer may do: read the queue and record a verdict.
+    pub fn is_review(&self) -> bool {
+        matches!(
+            self,
+            Operation::ReviewNext | Operation::ReviewVerdict { .. }
+        )
     }
 
     /// Whether a closed room refuses it: posting, claiming and setting a status. A closed room stays readable.

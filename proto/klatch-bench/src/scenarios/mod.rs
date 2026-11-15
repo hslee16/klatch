@@ -15,6 +15,7 @@ mod keys;
 mod labels;
 mod librarian;
 mod retention;
+mod reviewer;
 mod scale;
 mod sessions;
 
@@ -76,6 +77,7 @@ pub fn all() -> Vec<Scenario> {
         admin::all(),
         labels::all(),
         librarian::all(),
+        reviewer::all(),
         hooks::all(),
         keys::all(),
         judge::all(),
