@@ -6,13 +6,13 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 25;
+pub const SCHEMA_VERSION: i64 = 26;
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public', kind TEXT, payload TEXT);
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
- CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER, scope TEXT NOT NULL DEFAULT '', anchor TEXT NOT NULL DEFAULT '');
+ CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER, scope TEXT NOT NULL DEFAULT '', anchor TEXT NOT NULL DEFAULT '', ttl INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
@@ -292,6 +292,16 @@ pub(super) fn migrate_v24(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 25 to 26: the ttl a claim was made with (#494), so activity can renew it to its own ttl. An existing claim
+/// gets 0, which means unknown and is never renewed.
+pub(super) fn migrate_v25(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "claims", "ttl")? {
+        conn.execute_batch("ALTER TABLE claims ADD COLUMN ttl INTEGER NOT NULL DEFAULT 0;")
+            .map_err(be)?;
+    }
+    Ok(())
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -308,7 +318,7 @@ type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 25] = [
+const MIGRATIONS: [Step; 26] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -334,6 +344,7 @@ const MIGRATIONS: [Step; 25] = [
     migrate_v22,
     migrate_v23,
     migrate_v24,
+    migrate_v25,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

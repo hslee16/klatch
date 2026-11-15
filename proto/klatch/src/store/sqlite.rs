@@ -358,6 +358,32 @@ impl SqliteStore {
                  ON CONFLICT(room,name) DO UPDATE SET last_seen=?3",
             params![room, me, now],
         )?;
+        self.renew_claims(room, me, now)
+    }
+
+    /// A member that is active keeps each live claim in the room alive for the ttl that claim was made with, counted
+    /// from now, so a claim does not lapse mid-task (#494). Never a floor: a 60 s claim stays 60 s. It never shortens
+    /// a lease (a liveness lease or a park may have stretched it), never revives a lapsed claim, leaves `ask:`
+    /// leases to their own cap, and skips a claim whose ttl is unknown (stored 0, made before the column existed).
+    fn renew_claims(&self, room: &str, me: &str, now: i64) -> Result<()> {
+        let due: Vec<(String, i64)> = self.rows(
+            "SELECT path, ?3+ttl FROM claims WHERE room=?1 AND owner=?2 AND ttl>0 AND expires>?3
+                 AND expires<?3+ttl AND path NOT LIKE 'ask:%'",
+            params![room, me, now],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        for (path, expires) in due {
+            self.exec(
+                "UPDATE claims SET expires=?4 WHERE room=?1 AND owner=?2 AND path=?3",
+                params![room, me, path, expires],
+            )?;
+            // What others were shown moves with the claim: a heartbeat is not news, and a digest reports a claim
+            // whose expiry differs from the one a member saw.
+            self.exec(
+                "UPDATE claims_seen SET expires=?4 WHERE room=?1 AND owner=?2 AND path=?3 AND expires<?4",
+                params![room, me, path, expires],
+            )?;
+        }
         Ok(())
     }
 
