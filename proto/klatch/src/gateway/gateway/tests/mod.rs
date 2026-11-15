@@ -30,6 +30,7 @@ mod members;
 mod mute;
 mod notify;
 mod parked;
+mod receipt;
 mod reviewer;
 mod runs;
 mod scrub;

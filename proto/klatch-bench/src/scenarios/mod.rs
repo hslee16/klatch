@@ -18,6 +18,7 @@ mod keys;
 mod labels;
 mod librarian;
 mod liveness;
+mod receipts;
 mod retention;
 mod reviewer;
 mod roles_path;
@@ -88,6 +89,7 @@ pub fn all() -> Vec<Scenario> {
         anchors::all(),
         roles_path::all(),
         hooks::all(),
+        receipts::all(),
         identity::all(),
         keys::all(),
         judge::all(),

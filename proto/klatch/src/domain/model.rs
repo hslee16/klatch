@@ -38,6 +38,8 @@ pub struct Posted {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberInfo {
     pub name: String,
+    /// When the member joined the room; 0 when unknown.
+    pub joined: i64,
     pub last_seen: i64,
     /// The status the member set with the `status` operation (for example `done`), if any.
     pub status: Option<String>,
