@@ -30,6 +30,7 @@ impl Box_ {
     /// to the environment (a stale bus address, for example).
     fn run(&self, who: &str, args: &[&str], extra: &[(&str, &str)]) -> (bool, String, String) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_klatch"));
+        cmd.env_remove("KLATCH_IDENTITY_FILE");
         cmd.env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env_remove("KLATCH_KEY_DIR")
             .env_remove("KLATCH_IDENTITY_FILE")

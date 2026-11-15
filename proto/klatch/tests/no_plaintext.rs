@@ -24,6 +24,7 @@ fn temp_dir_of(h: &Home) -> std::path::PathBuf {
 
 fn run_with_tmp(h: &Home, who: &str, args: &[&str], tmp: &std::path::Path) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", who)
@@ -158,6 +159,7 @@ fn the_store_directory_holds_no_plaintext_after_every_kind_of_call() {
 fn a_panic_prints_a_generic_line_and_never_the_message_it_carried() {
     let h = Home::new();
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", "alice")

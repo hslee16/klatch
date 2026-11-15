@@ -152,7 +152,11 @@ enum Cmd {
     /// Claim a path prefix (advisory lease with TTL)
     Claim {
         room: String,
+        /// ONE target: a path (quote it if it has spaces) or a name like `ticket:602`
         path: String,
+        /// Extra words are refused with the form that works, never dropped (#610)
+        #[arg(hide = true)]
+        more: Vec<String>,
         /// Seconds the claim lasts (default 600; an `ask:<N>` claim defaults to 90 and is capped at 300, so a helper
         /// that fails frees the ask in about a minute: renew by claiming again)
         #[arg(long)]

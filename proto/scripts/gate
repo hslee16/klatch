@@ -33,7 +33,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=7
+total=8
 n=0
 started=$SECONDS
 replay_hint() {
@@ -67,6 +67,9 @@ proto="$root/proto"
 step "fmt"                          no    "$proto" cargo fmt --all --check
 step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --all-targets --locked -- -D warnings
 step "workspace tests"              hegel "$proto" cargo test --workspace --locked
+# a credentialed worker runs this gate with KLATCH_IDENTITY_FILE set (#613); set a throwaway one on purpose and run
+# the suites that build their own homes, to prove they are immune to it
+step "immune to an inherited bundle" no   "$proto" env KLATCH_IDENTITY_FILE=/nonexistent/gate-bogus.bundle cargo test -p klatch --locked --test caller --test anchor --test board --test lobby --test claim_target --test clarify
 # cargo-deny reads the advisory database and the licence policy; a machine without it skips the step and says so
 if cargo deny --version > /dev/null 2>&1; then
   step "cargo deny"                 no    "$proto" cargo deny --manifest-path Cargo.toml check

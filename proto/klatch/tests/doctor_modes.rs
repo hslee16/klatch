@@ -16,6 +16,7 @@ fn hook_in_mode(h: &Home, name: &str, mode: Option<&str>, extra: &str) {
 
 fn doctor(h: &Home) -> String {
     let o = Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .current_dir(&h.0)
         .env_clear()
         .env("HOME", &h.0)

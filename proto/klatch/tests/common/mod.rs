@@ -23,6 +23,7 @@ impl Home {
     }
     pub fn run(&self, who: &str, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_KEY_DIR", self.0.join("keys"))
             .env("KLATCH_NAME", who)
@@ -72,6 +73,7 @@ impl Home {
     }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_KEY_DIR", self.0.join("keys"))
             .env("KLATCH_NAME", who)
@@ -171,6 +173,7 @@ pub fn seqs_of(f: &[ServerFrame]) -> Vec<u64> {
 
 pub fn without_a_name(home: &Home, fake_home: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &home.0)
         .env("KLATCH_KEY_DIR", home.0.join("keys"))
         .env_remove("KLATCH_NAME")
@@ -212,6 +215,7 @@ impl Setup {
     pub fn init(&self, args: &[&str], stdin: &str) -> std::process::Output {
         use std::io::Write;
         let mut child = Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .current_dir(self.project())
             .env_clear()
             .env("HOME", self.home())
@@ -269,6 +273,7 @@ pub fn hook_as_session(h: &Home, name: Option<&str>, sid: &str, args: &[&str]) -
 pub fn hook_with_payload(h: &Home, name: Option<&str>, payload: &str, args: &[&str]) -> Output {
     use std::io::Write;
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_remove("KLATCH_IDENTITY_FILE");
     c.env_clear()
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
@@ -293,6 +298,7 @@ pub fn hook_with_payload(h: &Home, name: Option<&str>, payload: &str, args: &[&s
 pub fn who_age_with_now(h: &Home, now: Option<&str>) -> String {
     h.ok("alice", &["join", "r"]);
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_remove("KLATCH_IDENTITY_FILE");
     c.env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
@@ -306,6 +312,7 @@ pub fn who_age_with_now(h: &Home, now: Option<&str>) -> String {
 
 pub fn as_scope(h: &Home, who: &str, scope: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", who)

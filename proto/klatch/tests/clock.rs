@@ -16,6 +16,7 @@ fn the_real_build_ignores_klatch_now_so_nobody_can_move_its_clock() {
     );
     let version = String::from_utf8_lossy(
         &Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .arg("--version")
             .output()
             .unwrap()
@@ -43,6 +44,7 @@ fn the_test_build_honours_klatch_now_and_says_it_is_a_test_build() {
     );
     let version = String::from_utf8_lossy(
         &Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .arg("--version")
             .output()
             .unwrap()

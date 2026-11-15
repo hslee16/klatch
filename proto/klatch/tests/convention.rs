@@ -6,6 +6,7 @@ use std::process::{Command, Output};
 fn run(args: &[&str]) -> Output {
     // No store, no home and no name: the command must work for a parent that has not joined anything.
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env_clear()
         .args(args)
         .output()

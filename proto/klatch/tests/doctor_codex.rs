@@ -37,6 +37,7 @@ fn fake_codex(s: &Setup, queue_help: &str) -> PathBuf {
 
 fn doctor(s: &Setup, path: Option<&Path>, codex_home: Option<&Path>) -> String {
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_remove("KLATCH_IDENTITY_FILE");
     c.current_dir(s.project())
         .env_clear()
         .env("HOME", s.home())
