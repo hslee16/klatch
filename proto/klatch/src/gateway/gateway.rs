@@ -449,6 +449,14 @@ impl<S: Store> Gateway<S> {
         self.store.hook_runs(member)
     }
 
+    /// Remember the permission mode the caller's session reported (#553). A mode is a short word, so anything else
+    /// is refused rather than stored.
+    pub fn note_member_mode(&self, who: &Principal, mode: &str) -> Result<()> {
+        check_member(who)?;
+        invalid(identifier(mode, 40, ""), "bad permission mode".into())?;
+        self.store.note_member_mode(&who.member, mode, self.now())
+    }
+
     /// Remember that the caller is the member of harness session `session_id`.
     pub fn note_session(&self, who: &Principal, session_id: &str) -> Result<()> {
         check_member(who)?;

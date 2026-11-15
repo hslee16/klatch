@@ -604,6 +604,15 @@ pub trait Store {
     fn hook_runs(&self, _member: &str) -> Result<Vec<HookRun>> {
         Ok(Vec::new())
     }
+    /// Remember the permission mode a member's session last reported in a hook input (#553); the last report wins.
+    /// The default remembers nothing.
+    fn note_member_mode(&self, _member: &str, _mode: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// Every member's last reported permission mode as (member, mode, time), ordered by member.
+    fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
+        Ok(Vec::new())
+    }
     /// Messages from others that a hook has not shown yet, for the member's hook only. Remembers what it
     /// returned so the next hook call does not repeat it, but leaves the member's read cursor alone, so a
     /// message a hook showed can still be read once with `read` (#198). The default advances the read cursor.
