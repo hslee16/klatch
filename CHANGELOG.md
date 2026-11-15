@@ -12,6 +12,7 @@ These are early pre-releases with no outside security review.
 
 ### Added
 
+- A read-only librarian role: `klatch admin librarian <member>` (`--off` to remove). A librarian can read without moving its cursor, see who, claims, the board and the audit and refusal records, and is refused everything else with the rule `read-only` (DESIGN section 32 item 33, #52).
 - `klatch doctor`: a read-only health check of the binary, the store and its key, the hooks (does each point at a binary that exists, and at this one?), the session and the harness registry, with the reason and the fix for each problem; exits 1 on a failure. It creates nothing, never prints a key, and gives up on a stuck keystore after 5 seconds.
 - Retention and archive: `klatch admin retention`, `klatch admin archive` and `klatch admin restore-archive`. Old messages move into an encrypted archive file and leave a tombstone (the `seq` stays), and come back on restore. Nothing is archived unless a retention is set.
 - `klatch admin export <room> --json`: the transcript as one JSON object per line with every field, regenerated from the store each time (still audited and typed back).

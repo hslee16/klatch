@@ -223,7 +223,7 @@ impl<S: Store> Gateway<S> {
     /// The latest refused calls, newest first.
     pub fn admin_refusals(&self, who: &Principal, limit: usize) -> Result<Vec<RefusalRecord>> {
         check_member(who)?;
-        self.guard.check(
+        self.check_guard(
             who,
             &Operation::Admin {
                 action: "refusals".into(),

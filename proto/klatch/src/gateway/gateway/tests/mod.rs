@@ -18,6 +18,7 @@ mod dm;
 mod guarding;
 mod handoff;
 mod labels;
+mod librarian;
 mod members;
 mod mute;
 mod notify;
