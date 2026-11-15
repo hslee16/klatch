@@ -10,8 +10,10 @@ reviewed by an outside person before release (#167).
   copied file, a leaked backup or a synced folder shows no message, room name, sender name or time, and a changed page
   is detected. A database from an earlier release is converted in place on first use, checked, and the plaintext copy
   is overwritten and removed.
-- **Keys.** The key is kept by the operating-system keystore (macOS Keychain; Linux Secret Service where there is
-  one), or in a file readable only by you (unattended workers, and machines without a keystore). It is never put in
+- **Keys.** The key is kept in a file readable only by you on macOS (the Keychain asks for a password whenever a
+  program it has not seen reads an item, and an unsigned build is a new program each time, so it is used again only
+  with signed releases), by the Linux Secret Service where there is one, or in a file readable only by you
+  (unattended workers, and machines without a keystore). It is never put in
   the environment, on a command line, in a log or in a crash report, and it is wiped from memory when dropped.
   A recovery code (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and

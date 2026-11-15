@@ -70,6 +70,46 @@ impl KeySource for MemoryKeys {
     }
 }
 
+/// Keys live in a file readable only by you; a key found only in `legacy` (the keystore of an older install) is
+/// copied into the file the first time it is read. A rebuilt unsigned program is a stranger to the macOS Keychain
+/// and would make it ask for a password (#480), so new keys never go there; the file is the same protection
+/// against other users and stolen disks. Signed releases may use the Keychain again (#371, #424).
+pub struct FileFirst {
+    file: crate::keys::FileKeys,
+    legacy: Box<dyn KeySource>,
+}
+
+impl FileFirst {
+    pub fn new(file: crate::keys::FileKeys, legacy: Box<dyn KeySource>) -> Self {
+        Self { file, legacy }
+    }
+}
+
+impl KeySource for FileFirst {
+    fn get(&self, name: &str) -> Result<Option<Key>, Error> {
+        if let Some(key) = self.file.get(name)? {
+            return Ok(Some(key));
+        }
+        let Some(key) = self.legacy.get(name)? else {
+            return Ok(None);
+        };
+        self.file.put(name, &key)?;
+        Ok(Some(key))
+    }
+    fn put(&self, name: &str, key: &Key) -> Result<(), Error> {
+        self.file.put(name, key)
+    }
+    fn delete(&self, name: &str) -> Result<(), Error> {
+        self.file.delete(name)?;
+        // an older keystore copy must not outlive a revoked key, but a stuck keystore must not block the revoke
+        let _ = self.legacy.delete(name);
+        Ok(())
+    }
+    fn describe(&self) -> &'static str {
+        "key file"
+    }
+}
+
 /// Make a new key named `name`, store it, and return it with its recovery code. Replaces an existing key: rotate
 /// by calling this and then re-encrypting under the new key.
 pub fn create(source: &dyn KeySource, name: &str) -> Result<(Key, String), Error> {
@@ -102,8 +142,13 @@ pub fn store_key_name(home: &std::path::Path) -> String {
 pub fn default_source(dir: &std::path::Path) -> (Box<dyn KeySource>, Option<String>) {
     #[cfg(target_os = "macos")]
     {
-        let _ = dir;
-        (Box::new(crate::keys::Keychain::new("klatch")), None)
+        (
+            Box::new(FileFirst::new(
+                crate::keys::FileKeys::new(dir),
+                Box::new(crate::keys::Keychain::new("klatch")),
+            )),
+            None,
+        )
     }
     #[cfg(target_os = "linux")]
     {
@@ -127,6 +172,42 @@ pub fn default_source(dir: &std::path::Path) -> (Box<dyn KeySource>, Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_first_copies_an_older_keystore_key_into_the_file_once() {
+        let dir = std::env::temp_dir().join(format!("klatch-ff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let legacy = MemoryKeys::default();
+        let key = Key::from_bytes([9; 32]);
+        legacy.put("store", &key).unwrap();
+        let src = FileFirst::new(crate::keys::FileKeys::new(&dir), Box::new(legacy));
+        assert_eq!(src.get("store").unwrap().unwrap(), key);
+        // the file now holds it, so a keystore that is gone or stuck is not asked again
+        let only_file = crate::keys::FileKeys::new(&dir);
+        assert_eq!(only_file.get("store").unwrap().unwrap(), key);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_first_writes_new_keys_to_the_file_not_the_keystore() {
+        let dir = std::env::temp_dir().join(format!("klatch-ff2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = FileFirst::new(
+            crate::keys::FileKeys::new(&dir),
+            Box::new(MemoryKeys::default()),
+        );
+        let (key, _) = create(&src, "store").unwrap();
+        assert_eq!(
+            crate::keys::FileKeys::new(&dir)
+                .get("store")
+                .unwrap()
+                .unwrap(),
+            key
+        );
+        src.delete("store").unwrap();
+        assert!(src.get("store").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn create_stores_a_key_and_returns_its_recovery_code() {
