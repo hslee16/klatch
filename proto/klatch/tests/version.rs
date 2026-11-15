@@ -6,6 +6,7 @@ use std::process::Command;
 #[test]
 fn the_version_line_names_the_protocol_and_the_store_schema() {
     let out = Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .arg("--version")
         .output()
         .unwrap();

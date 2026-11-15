@@ -58,6 +58,7 @@ fn wait_wakes_when_another_member_posts() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
         .env("KLATCH_NAME", "alice")

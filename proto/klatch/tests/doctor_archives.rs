@@ -14,6 +14,7 @@ fn klatch_dir(s: &Setup) -> PathBuf {
 
 fn run(s: &Setup, name: Option<&str>, args: &[&str]) -> std::process::Output {
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_remove("KLATCH_IDENTITY_FILE");
     c.current_dir(s.project())
         .env_clear()
         .env("HOME", s.home())

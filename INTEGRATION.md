@@ -16,7 +16,7 @@ not know, and refuse a different `v`.
 |---|---|---|
 | To watch a room (history, then live) | `klatch stream ROOM [--from-seq N] [--follow]` | klatch writes frames to its standard output; you write nothing |
 | To post, claim, read, ask `who`, or subscribe with acknowledgement | `klatch serve --stdio` | you write `request` and `ack` frames, klatch writes `hello`, `response`, `message`, `caught_up`, `heartbeat` and `refusal` frames |
-| A one-off from a shell or a hook | `klatch post ROOM "text"`, `klatch read ROOM`, `klatch claim ROOM path` | plain text commands, no frames |
+| A one-off from a shell or a hook | `klatch post ROOM "text"`, `klatch read ROOM`, `klatch claim ROOM path` (ONE word: `ticket:602`, or a quoted path) | plain text commands, no frames |
 
 `stream` is the zero-daemon producer: it prints `hello`, every message after `--from-seq`, then `caught_up`, and exits. With
 `--follow` it keeps running and prints live messages and a `heartbeat` while idle until its output closes. The room is checked

@@ -3,6 +3,12 @@ use super::*;
 pub(super) fn all() -> Vec<Scenario> {
     vec![
         Scenario {
+            name: "a_claim_with_extra_words_is_refused_not_truncated",
+            origin: "#610",
+            layer: "functional",
+            run: claim_one_target,
+        },
+        Scenario {
             name: "a_claim_is_renewed_to_its_own_ttl_while_its_owner_is_active",
             origin: "#494",
             layer: "functional",
@@ -363,6 +369,27 @@ fn bot_scope(w: &World) -> Res {
         &w.ok("observer", &["asks", "lobby"])?,
         "#1",
         "a non-coding member asks and is answered like any other",
+    )?;
+    Ok(vec![])
+}
+
+fn claim_one_target(w: &World) -> Res {
+    w.ok("a", &["join", "r"])?;
+    has(
+        &w.refused("a", &["claim", "r", "ticket", "602"])?,
+        "ticket:602",
+        "extra words are refused with the form that works",
+    )?;
+    has(
+        &w.refused("a", &["claim", "r", "ticket"])?,
+        "ticket:602",
+        "a bare noun is refused with the form that works",
+    )?;
+    w.ok("a", &["claim", "r", "ticket:602"])?;
+    has(
+        &w.refused("b", &["claim", "r", "ticket:602"])?,
+        "a",
+        "the one-word form conflicts with its holder",
     )?;
     Ok(vec![])
 }

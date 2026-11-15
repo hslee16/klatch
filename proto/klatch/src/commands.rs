@@ -66,6 +66,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         Cmd::Claim {
             room,
             path,
+            more,
             ttl,
             reason,
             shared,
@@ -74,7 +75,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             ctx,
             &ClaimArgs {
                 room,
-                path,
+                path: claim_target(path, &more)?,
                 reason,
                 ttl,
                 shared,
@@ -353,6 +354,26 @@ struct ClaimArgs {
     ttl: Option<i64>,
     shared: bool,
     anchor: Option<String>,
+}
+
+/// Nouns that are never a target on their own: `claim lobby ticket #602` reaches us as just `ticket` because the
+/// shell drops the comment, and would conflict every worker on the word (#610).
+const BARE_NOUNS: [&str; 6] = ["ticket", "issue", "pr", "task", "item", "design-item"];
+
+/// The one target of a claim. Extra words and a bare noun are refused (never truncated, never joined: a joined
+/// "ticket 602" would still not match another member's `ticket:602`) with the form that works.
+fn claim_target(path: String, more: &[String]) -> Result<String> {
+    let noun = path.to_lowercase();
+    if !more.is_empty() || BARE_NOUNS.contains(&noun.as_str()) {
+        let words = std::iter::once(path.as_str())
+            .chain(more.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        bail!(
+            "a claim names one target, and `{words}` is more than one word or only a noun. Write it as one word, like `ticket:602`, or quote a path that has spaces: `\"my dir/file.md\"`. (A `#` starts a shell comment, so `ticket #602` is just `ticket`.)"
+        );
+    }
+    Ok(path)
 }
 
 fn claim(ctx: &Ctx, a: &ClaimArgs) -> Result<()> {

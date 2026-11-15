@@ -8,6 +8,7 @@ use std::process::Command;
 /// Run `klatch doctor` in the setup's project directory, with a key directory of its own so no real keystore is touched.
 fn doctor(s: &Setup) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .current_dir(s.project())
         .env_clear()
         .env("HOME", s.home())
@@ -170,6 +171,7 @@ fn an_encrypted_store_with_its_key_is_ok_and_without_it_is_a_failure_that_names_
     let home = s.home();
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .env_remove("KLATCH_IDENTITY_FILE")
             .env_clear()
             .env("HOME", &home)
             .env("KLATCH_KEY_DIR", home.join("keys"))
@@ -200,6 +202,7 @@ fn doctor_never_prints_a_key() {
     let s = Setup::new();
     let home = s.home();
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env_clear()
         .env("HOME", &home)
         .env("KLATCH_KEY_DIR", home.join("keys"))

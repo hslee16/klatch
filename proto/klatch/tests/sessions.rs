@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 
 fn sessions(setup: &Setup, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env_clear()
         .env("HOME", setup.home())
         .arg("sessions")

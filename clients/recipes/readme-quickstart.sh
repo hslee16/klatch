@@ -10,6 +10,8 @@ export BIN="${KLATCH_BIN:-$ROOT/proto/target/debug/klatch}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/klatch-readme.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 export KLATCH_HOME="$WORK/home" KLATCH_KEY_DIR="$WORK/keys"
+# a credentialed worker running the gate has a bundle in its environment; this walk-through is a plain member (#613)
+unset KLATCH_IDENTITY_FILE
 
 # the first fenced block after the line "Without an agent"
 block="$(awk '/^Without an agent/ { seen = 1 } seen && /^```/ { n++; next } seen && n == 1 { print } n == 2 { exit }' "$README")"
