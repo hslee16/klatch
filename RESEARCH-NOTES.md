@@ -1497,3 +1497,7 @@ A refused issue starts nothing for that task (no worktree, no claude), prints cl
 ### 50.7 Tickets
 
 #591 (a finished headless turn cannot receive mail), #592 (real smoke through klatch, needs-human), #593 (no turn cap, team budget or relaunch), #594 (room mail as a prompt injection path in bypassPermissions, needs-human).
+
+### 50.8 The real smoke run through klatch (2026-11-15, ticket #592)
+
+Run by the human in their own terminal: `TEAM_KLATCH=<this checkout's debug build, 0.1.0-dev.2, schema 28> proto/scripts/team smoke`. One Haiku session, throwaway home and repo. Result: done, exit 0, 4 turns, 9.2 s, $0.0035. The worker joined the room, read it, posted a hello line and `status: done`. The launcher's view of the room showed both worker posts **without** the `(unverified)` tag, so a headless session started by the launcher acts as a **verified** member through its worker credential. Not checked in this run: that its credential was revoked afterwards (the log shows the session ended; the revoke was not read back), and mail delivery between turns through a real klatch (only the fake-klatch run in 50.3 showed that).
