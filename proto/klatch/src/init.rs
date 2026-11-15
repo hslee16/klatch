@@ -432,7 +432,7 @@ pub fn hook_command(
 }
 
 /// A hook command klatch wrote (or a hand-written one of the same form).
-fn is_klatch_command(cmd: &str) -> bool {
+pub(crate) fn is_klatch_command(cmd: &str) -> bool {
     cmd.contains(" hook --event ") && cmd.contains("klatch")
 }
 
