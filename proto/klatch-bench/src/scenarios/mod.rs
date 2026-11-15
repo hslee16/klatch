@@ -8,6 +8,7 @@ mod admin;
 mod admin_role;
 mod anchors;
 mod asks;
+mod bigstore;
 mod claims;
 mod factory;
 mod faults;
@@ -75,6 +76,7 @@ pub(super) fn no_panic(text: &str, what: &str) -> Result<(), String> {
 pub fn all() -> Vec<Scenario> {
     [
         asks::all(),
+        bigstore::all(),
         claims::all(),
         sessions::all(),
         faults::all(),

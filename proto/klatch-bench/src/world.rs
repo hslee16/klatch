@@ -218,6 +218,25 @@ impl World {
         .to_string()
     }
 
+    /// Start `klatch admin <args>` at the test terminal without waiting, for scenarios that run several at once. The
+    /// confirmation line is already typed.
+    pub fn spawn_admin(&self, args: &[&str]) -> std::io::Result<std::process::Child> {
+        use std::io::Write;
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        let mut child = self
+            .command("admin", &full)
+            .env("KLATCH_ADMIN_TEST_TERMINAL", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin);
+        }
+        Ok(child)
+    }
+
     /// Start a klatch process with a piped standard input, for scenarios that feed it by hand or kill it.
     pub fn spawn_piped(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
         self.command(who, args)
