@@ -66,6 +66,8 @@ jobs:
         run: |
           release/check-versions.sh
           release/test-check-versions.sh
+          release/changelog-fragments.sh check
+          release/test-changelog-fragments.sh
       # The workflows are code too: this checks their expressions, their job graph and the shell inside them.
       - name: Install actionlint (pinned release, checksum verified)
         if: runner.os == 'Linux'
@@ -86,7 +88,7 @@ jobs:
       - name: Shell scripts pass shellcheck
         if: runner.os == 'Linux'
         working-directory: .
-        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh release/check-versions.sh release/test-check-versions.sh
+        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh release/check-versions.sh release/test-check-versions.sh release/changelog-fragments.sh release/test-changelog-fragments.sh
       - name: The README quickstart runs against the real binary
         run: |
           export KLATCH_BIN="$PWD/target/debug/klatch"

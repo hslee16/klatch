@@ -7,6 +7,7 @@ use crate::gateway::{AllowAll, FixedClock, Operation};
 use std::rc::Rc;
 
 mod admin_acts;
+mod admin_role;
 mod anchors;
 mod asks;
 mod board;

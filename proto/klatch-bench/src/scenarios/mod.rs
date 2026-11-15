@@ -5,6 +5,7 @@ use crate::{FakeHarness, Scenario, World};
 use std::time::Instant;
 
 mod admin;
+mod admin_role;
 mod asks;
 mod claims;
 mod factory;
@@ -77,6 +78,7 @@ pub fn all() -> Vec<Scenario> {
         admin::all(),
         labels::all(),
         librarian::all(),
+        admin_role::all(),
         hooks::all(),
         identity::all(),
         keys::all(),
