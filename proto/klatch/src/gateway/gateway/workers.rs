@@ -172,8 +172,7 @@ impl<S: Store> Gateway<S> {
     /// Every credential and where it stands.
     pub fn admin_credentials(&self, who: &Principal) -> Result<Vec<CredentialInfo>> {
         check_member(who)?;
-        self.guard
-            .check(who, &Operation::admin("credentials", ""))?;
+        self.check_guard(who, &Operation::admin("credentials", ""))?;
         let now = self.now();
         Ok(self
             .store

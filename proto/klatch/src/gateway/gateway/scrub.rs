@@ -73,7 +73,7 @@ impl<S: Store> Gateway<S> {
     /// The listed rules and their terms, by name.
     pub fn admin_scrub_terms(&self, who: &Principal) -> Result<Vec<(String, String)>> {
         check_member(who)?;
-        self.guard.check(
+        self.check_guard(
             who,
             &Operation::Admin {
                 action: "scrub-list".into(),
