@@ -1,0 +1,1 @@
+- The review queue is now real (#497): `klatch cross ROOM SEQ --to ROOM` queues a crossing into a lower-labelled room, an allow or redact verdict from the judge or the reviewer releases the text (floors checked again), a deny releases nothing, and `klatch admin review-queue` lists the queue without text. Store schema is now 24.

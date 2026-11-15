@@ -85,6 +85,10 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         }
         Cmd::Mute { room } => mute(t, &room, true)?,
         Cmd::Unmute { room } => mute(t, &room, false)?,
+        Cmd::Cross { room, seq, to } => {
+            let id = t.request_crossing(&room, seq, &to)?;
+            println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
+        }
         Cmd::Board { room } => print!("{}", render_board(&t.board(&room)?, ctx.now)),
         Cmd::Asks { room } => asks(ctx, &room)?,
         Cmd::Claims { room } => claims(ctx, &room)?,

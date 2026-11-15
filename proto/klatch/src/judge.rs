@@ -44,6 +44,9 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
     }
     let store = custody::open_store(&db_path()?)?;
     let out = drain(&store, &NullJudge, now())?;
+    // a verdict recorded by the judge (or by a reviewer earlier) is applied here, with the floors checked again
+    let gateway = Gateway::new(store, CliClock, AllowAll);
+    let released = gateway.release_crossings()?;
     println!(
         "judged {} item(s): {} allowed, {} redacted, {} denied; {} left queued",
         out.decided(),
@@ -52,6 +55,7 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
         out.denied,
         out.deferred
     );
+    println!("applied {} crossing verdict(s)", released.len());
     Ok(())
 }
 

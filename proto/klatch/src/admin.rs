@@ -140,6 +140,11 @@ pub enum AdminCmd {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// List the review queue: crossings waiting, and what each verdict did (pointers and outcomes, never text)
+    ReviewQueue {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Show the latest administrative acts, newest first
     Audit {
         #[arg(long, default_value_t = 20)]
@@ -240,6 +245,38 @@ fn audit(t: &dyn Transport, limit: usize) -> Result<()> {
             a.action,
             flat(&a.target),
             flat(&a.detail)
+        );
+    }
+    Ok(())
+}
+
+fn review_queue(t: &dyn Transport, limit: usize) -> Result<()> {
+    let now = now();
+    for r in t.review_queue(limit)? {
+        let state = if r.verdict.is_empty() {
+            "waiting"
+        } else {
+            &r.verdict
+        };
+        let applied = if r.applied.is_empty() {
+            "-"
+        } else {
+            &r.applied
+        };
+        println!(
+            "{}\t{}s ago\t{}#{}\t{}\t{}\t{}\t{}",
+            r.id,
+            klatch::domain::secs_between(now, r.ts),
+            flat(&r.room),
+            r.seq,
+            if r.to_room.is_empty() {
+                r.to_label.as_str()
+            } else {
+                r.to_room.as_str()
+            },
+            state,
+            applied,
+            flat(&r.requester)
         );
     }
     Ok(())
@@ -360,6 +397,7 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         }
         AdminCmd::Refusals { limit } => refusals(t, limit)?,
         AdminCmd::Audit { limit } => audit(t, limit)?,
+        AdminCmd::ReviewQueue { limit } => review_queue(t, limit)?,
         AdminCmd::Recovery
         | AdminCmd::Recover { .. }
         | AdminCmd::RotateKey
