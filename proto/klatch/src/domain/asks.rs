@@ -142,8 +142,11 @@ impl OpenAsk {
 
     /// Everything to know about the ask at a glance, for display: how helpers answered it, whether it waits on the
     /// asker, and its working room: `[busy 1, needs info, room ask-7 3 members]`, or empty.
-    pub fn summary(&self, _now: i64) -> String {
+    pub fn summary(&self, now: i64) -> String {
         let mut parts = self.outcome_parts();
+        if let Some(d) = self.deadline() {
+            parts.push(deadline_phrase(d, now));
+        }
         if self.waiting_on_asker.is_some() {
             parts.push("needs info".into());
         }
@@ -160,6 +163,19 @@ impl OpenAsk {
             .is_some_and(|r| now - r.last_activity <= ROOM_ACTIVE_SECS)
     }
 
+    /// When the asker needs this by, if the text says `(by YYYY-MM-DD)` or `(by YYYY-MM-DD HH:MM)` (UTC).
+    pub fn deadline(&self) -> Option<i64> {
+        ask_deadline(&self.text)
+    }
+
+    /// How long this ask may go unclaimed before its asker is told: the room default, or until its deadline
+    /// when it names one later than that. A long task needs no hurry, and a deadline in the past of the ask never
+    /// lowers the default (#306).
+    pub fn stale_after(&self, default: i64) -> i64 {
+        self.deadline()
+            .map_or(default, |d| (d - self.ts).max(default))
+    }
+
     /// Enough helpers said `cannot` and none said `busy` or `failed`: nobody here may be able to do this.
     pub fn no_capable_member(&self) -> bool {
         self.distinct(OutcomeKind::Cannot) >= NO_CAPABLE_AFTER
@@ -167,6 +183,81 @@ impl OpenAsk {
             && self.distinct(OutcomeKind::Failed) == 0
             && self.distinct(OutcomeKind::Partial) == 0
     }
+}
+
+/// `due in 3d` or `overdue 2h`, in the largest whole unit (days, hours, minutes).
+fn deadline_phrase(deadline: i64, now: i64) -> String {
+    let left = deadline - now;
+    let n = left.abs();
+    let (v, unit) = if n >= 86_400 {
+        (n / 86_400, "d")
+    } else if n >= 3600 {
+        (n / 3600, "h")
+    } else {
+        (n / 60, "m")
+    };
+    if left >= 0 {
+        format!("due in {v}{unit}")
+    } else {
+        format!("overdue {v}{unit}")
+    }
+}
+
+/// The last `(by ...)` deadline in an ask's text, as Unix seconds. A bare date means the end of that day.
+pub fn ask_deadline(text: &str) -> Option<i64> {
+    let start = text.rfind("(by ")? + 4;
+    let end = start + text[start..].find(')')?;
+    let (date, time) = match text[start..end].split_once(' ') {
+        Some((d, t)) => (d, Some(t)),
+        None => (&text[start..end], None),
+    };
+    let secs_in_day = match time {
+        Some(t) => {
+            let (h, m) = t.split_once(':')?;
+            let (h, m): (i64, i64) = (h.parse().ok()?, m.parse().ok()?);
+            if h > 23 || m > 59 {
+                return None;
+            }
+            h * 3600 + m * 60
+        }
+        None => 86_399,
+    };
+    Some(civil_days(date)? * 86_400 + secs_in_day)
+}
+
+/// Days since 1970-01-01 of a `YYYY-MM-DD` date, or none when it is not a real calendar day.
+fn civil_days(date: &str) -> Option<i64> {
+    let mut parts = date.split('-');
+    let (y, m, d): (i64, i64, i64) = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if parts.next().is_some() || !(1..=12).contains(&m) || d < 1 || d > month_days[m as usize - 1] {
+        return None;
+    }
+    // days from civil, after Howard Hinnant
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
 }
 
 fn bracket(parts: Vec<String>) -> String {
@@ -674,5 +765,76 @@ mod tests {
             "news within two minutes"
         );
         assert!(!a.room_active(211), "a quiet room is not activity");
+    }
+    #[test]
+    fn a_deadline_in_the_ask_text_is_read_as_utc() {
+        // 2026-11-20 is 20777 days after the epoch
+        let day = 20_777 * 86_400;
+        let cases = [
+            ("seeking: a review (by 2026-11-20)", Some(day + 86_399)),
+            (
+                "seeking: a review (by 2026-11-20 14:30)",
+                Some(day + 14 * 3600 + 30 * 60),
+            ),
+            (
+                "seeking: a (by 2026-11-19) b (by 2026-11-20)",
+                Some(day + 86_399),
+            ),
+            ("seeking: a review by 2026-11-20", None),
+            ("seeking: a review (by tomorrow)", None),
+            ("seeking: a review (by 2026-13-40)", None),
+            ("seeking: a review (by 2026-11-20 25:00)", None),
+            ("seeking: nothing", None),
+        ];
+        for (text, want) in cases {
+            assert_eq!(ask_deadline(text), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_deadline_moves_the_stale_threshold_and_shows_on_the_summary() {
+        let day = 20_777 * 86_400;
+        let a = open_asks(
+            &[msg(
+                3,
+                "asker",
+                "seeking: x (by 2026-11-20)",
+                day - 3 * 86_400,
+            )],
+            &[],
+        )
+        .remove(0);
+        assert_eq!(
+            a.stale_after(60),
+            3 * 86_400 + 86_399,
+            "the deadline replaces the room default"
+        );
+        assert!(
+            a.summary(day - 86_400).contains("due in 1d"),
+            "{}",
+            a.summary(day - 86_400)
+        );
+        assert!(
+            a.summary(day + 86_400 + 3600).contains("overdue 1h"),
+            "{}",
+            a.summary(day + 86_400 + 3600)
+        );
+        let plain = open_asks(&[msg(4, "asker", "seeking: y", 0)], &[]).remove(0);
+        assert_eq!(plain.stale_after(60), 60);
+        let past = open_asks(
+            &[msg(
+                5,
+                "asker",
+                "seeking: z (by 2026-11-20)",
+                day + 86_400 * 2,
+            )],
+            &[],
+        )
+        .remove(0);
+        assert_eq!(
+            past.stale_after(60),
+            60,
+            "a deadline before the ask was posted never lowers the default"
+        );
     }
 }

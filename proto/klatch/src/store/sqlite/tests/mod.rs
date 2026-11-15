@@ -9,6 +9,7 @@ mod concurrency;
 mod conformance;
 mod credentials;
 mod encryption;
+mod long_tasks;
 mod members;
 mod messages;
 mod migrations;
