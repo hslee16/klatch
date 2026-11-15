@@ -1047,3 +1047,69 @@ Researched on the day from each tool's repository, crates.io and docs; a note ma
 - **Concurrency and harnesses:** Shuttle and Loom for std threads; bolero runs one harness as a fuzz target, a property test and a Kani proof (its Kani support was not verified); proptest and cargo-fuzz for volume; cargo-mutants measures whether tests would catch changes.
 - **For klatch:** provable or boundedly provable: path cleaning (idempotent, never escapes the root), the listener policy, label-chain dominance (an order), claim overlap (symmetric), the recovery-code and sealed-value round trips with the crypto calls opaque, and the decoder's "never panics" within a bound. Best use of a model checker: the claim and lease protocol (overlap, expiry, deadlock), as a model. Not provable end to end: SQLite, SQLCipher and OpenSSL are C, opaque to Rust verifiers, so the store is checked against a model with property tests.
 - **Layers, as recommended:** (1) Kani under bolero harnesses for the pure functions, in a separate CI job, escalating only the critical few to Verus if unbounded proof is wanted; (2) a Quint model of the claim and lease protocol checked with Apalache, invariants named; (3) fuzz and Hegel or proptest for the decoder, with a Kani never-panics harness; (4) Shuttle or Loom for the thread parts; (5) Hegel with model-based tests against an in-memory model for the store, and cargo-mutants nightly to check the tests; (6) leave Aeneas, Prusti, MIRAI and any end-to-end proof through SQLCipher alone. Each layer states what it does not cover, and nothing property tested is called proven.
+
+## 42. Hegel measured on klatch code (2026-11-14, tickets #388 to #391)
+
+Section 41 read about Hegel; this one ran it. The scratch crate `experiments/hegel-bench` (outside the workspace, with
+its own lockfile) depends on `hegeltest =0.52.6` with the `static-engine` feature and on klatch with only the `client`
+feature, so its properties test the real `klatch::domain` and `klatch::protocol` code. macOS arm64 only; the Linux
+build was not run.
+
+**Build and supply chain.**
+- The default build of `hegeltest` has a `build.rs` that runs a nested `cargo build` of the engine crate `hegeltest-c`
+  at build time, resolving that crate's own dependencies from crates.io **outside our `Cargo.lock`**, so neither
+  `--locked` nor `cargo-deny` sees them and the build needs the network. This run's nested lockfile happened to match
+  ours exactly (no divergence observed), but nothing guarantees that later.
+- The `static-engine` feature links the engine as an ordinary dependency instead. Then all of it is in our lockfile:
+  **26 crates beyond klatch's own** (hegeltest, hegeltest-c, hegeltest-macros, dashu-base and dashu-int for big
+  numbers, parking_lot, rand, toml and its parts, rustix, miniz_oxide and others). Use this feature, always.
+- klatch's own `proto/deny.toml` run over that tree: **advisories, bans, licences and sources all pass** (the one
+  failure was the scratch crate lacking a licence field). `hegeltest` is MIT.
+- Cold build of the test binaries: **10 s wall (30 s CPU) with `static-engine`, 28 s wall (99 s CPU) with the default**;
+  target directory 430 MB against 349 MB. `hegeltest` needs Rust 1.86, which klatch (edition 2024) already needs.
+- The engine crate has 594 `unsafe` occurrences in about 57,000 lines (and `hegeltest` 172): a count, not an audit. It
+  is a dev-dependency, so it is never in the shipped binary or the published crate's dependency tree for users.
+
+**Using it.**
+- Properties are `#[hegel::test] fn name(tc: TestCase)` with `tc.draw(generator)` and `tc.assume(..)`; `cargo test`
+  runs 100 cases by default. Four properties on real klatch code (clean_path is absolute, normalised, idempotent and
+  independent of the directory; `scopes_collide` is symmetric and reflexive; `overlaps` is symmetric; the decoders
+  never panic and refuse anything that is not a version 1 frame) ran 400 cases in **0.02 s** and passed. They found no
+  real bug.
+- Friction: `draw` needs a *printable* generator so it can show the counterexample; a `-> impl Generator` helper or a
+  `.map` closure is not one (the compiler's messages name the fix: `print_as_call`, `boxed_printable`, or
+  `draw_silent`). Drawing plain integers and mapping them to values inside the test is the simple path. Hegel's plain
+  `text()` generator is weak for structured input: it never produced a `..` path segment in 5,000 cases.
+- Compared with a hand-rolled xorshift loop in the style of `protocol_fuzz.rs`, on two planted bugs in a copy of
+  `clean_path` (a `..` at the root kept; a `..` under exactly three directories ignored): Hegel with a structured
+  generator failed at case 3 and 9 and **shrank the first to the minimal input `".."`**; the xorshift loop failed at
+  try 57 and 1. So time to find is not where Hegel wins when a person picks a good alphabet; shrinking, replay and the
+  failure database are. Also learned: a property must be strong enough (bug 2 left no `..` behind, so "no `..` segment"
+  could not see it; "appending `/x/..` changes nothing" did).
+- Reproducibility: with `seed(Some(7))` three runs gave identical results; a failure prints
+  `#[hegel::reproduce_failure("<blob>")]` that replays it from the blob alone (so a CI failure replays locally);
+  `.hegel/examples/` is the failure database and replayed the failure in 0.00 s on the next run (it is now gitignored).
+  Settings come from the builder or from `HEGEL_TEST_CASES`, `HEGEL_SEED`, `HEGEL_DERANDOMIZE`, `HEGEL_DATABASE`.
+- Stateful testing exists (`#[hegel::state_machine]` with `#[rule]`, `#[invariant]` and a `Pool`), which fits the model
+  based claims and cursor tests. The documentation and examples were read; no state machine was run yet.
+
+**Go or no-go: go**, as a dev-dependency with these conditions. Exact version pin (`=0.52.6`; the README says breaking
+changes may come in beta, and 0.52.6 was released the day before this was written). `static-engine` always. Default
+budget of 100 cases in the normal `cargo test`, which adds well under a second; long runs by hand with
+`HEGEL_TEST_CASES`, not in CI (CI stays light). Target pure functions and the gateway over a store, not the CLI process
+(each case would spawn processes). Nothing a property test passes is called proven.
+
+**Open risks.** Beta software with fast release cadence. 26 more crates in the lockfile for `cargo-deny` to watch, and an
+unaudited engine with a lot of `unsafe` (dev-only). Not tested: the Linux build, Intel macOS (section 41 says it builds
+from source there), async and multi-process use, and the stateful API.
+
+**Candidate properties (#389), best first.** Pure and cheap: path cleaning (done), scope and path overlap (done), the
+decoders never panic (done; the xorshift fuzz stays), label chain dominance is a preorder and an unknown label
+dominates nothing, `valid_name`, `valid_kind` and `valid_scope` accept no control characters or newlines for any input,
+`norm` and `flat` are idempotent, the recovery code round trips and any single changed character is detected, a sealed
+value opens with its key and context and with nothing else (the crypto is opaque), `judge_tool` agrees with a plain
+reference implementation. Model based (state machine against an in-memory model, with a fake clock): claims (one holder
+per overlapping path in a scope, release only by the holder, expiry frees, a conflict names the holder), read cursors
+(each other member's message is delivered once, one's own never, acknowledgement only moves forward), anchored claims
+released by the work item's `done`. Not worth it: SQLite or SQLCipher behaviour, whole CLI flows, anything on the real
+clock.
