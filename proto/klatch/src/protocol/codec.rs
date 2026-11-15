@@ -564,6 +564,7 @@ mod tests {
             "unsubscribe",
             "post",
             "read",
+            "history",
             "who",
             "claim",
             "release",

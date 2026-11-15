@@ -48,6 +48,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             kind.as_deref().map(|k| (k, payload.as_deref())),
         )?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
+        Cmd::History { room, last, since } => history(t, &room, since, last)?,
         Cmd::Wait {
             rooms,
             timeout,
@@ -205,14 +206,47 @@ fn read(t: &dyn Transport, room: &str, peek: bool) -> Result<()> {
         eprintln!("{DATA_RULE}");
     }
     for m in messages {
-        println!(
-            "[{} {} {}] {}{}",
-            m.seq,
-            m.ts,
-            m.sender_label(),
-            flat(&m.body),
-            handoff_suffix(&m)
-        );
+        println!("{}", message_row(&m));
+    }
+    Ok(())
+}
+
+/// One message as `read` and `history` print it: marked, one line, handoff folded in.
+fn message_row(m: &klatch::domain::Message) -> String {
+    format!(
+        "[{} {} {}] {}{}",
+        m.seq,
+        m.ts,
+        m.sender_label(),
+        flat(&m.body),
+        handoff_suffix(m)
+    )
+}
+
+/// `klatch history`: look back without moving a cursor (#518). The output is whole messages up to
+/// `HISTORY_MAX_BYTES` (the first is always shown); what is left is counted and the line says where to resume.
+fn history(t: &dyn Transport, room: &str, since: Option<i64>, last: Option<usize>) -> Result<()> {
+    let found = t.history(room, klatch::gateway::HistoryRange { since, last })?;
+    if found.messages.is_empty() {
+        eprintln!("klatch: no messages in that range.");
+        return Ok(());
+    }
+    eprintln!("{DATA_RULE}");
+    let mut used = 0;
+    let mut shown = 0;
+    for m in &found.messages {
+        let row = message_row(m);
+        if shown > 0 && used + row.len() + 1 > klatch::domain::budget::HISTORY_MAX_BYTES {
+            break;
+        }
+        used += row.len() + 1;
+        shown += 1;
+        println!("{row}");
+    }
+    let left = found.messages.len() - shown + found.more;
+    if left > 0 {
+        let resume = found.messages[shown - 1].seq;
+        println!("[{left} more messages not shown; run `klatch history {room} --since {resume}`]");
     }
     Ok(())
 }
