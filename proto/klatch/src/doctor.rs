@@ -284,6 +284,45 @@ fn check_registry(r: &mut Report) {
         ),
         None,
     );
+    check_liveness(r, &found.live, domain);
+}
+
+/// Which layers of the liveness probe (DESIGN section 43) can be read on this machine, tried on the live sessions.
+fn check_liveness(r: &mut Report, live: &[klatch::harness::Record], domain: &str) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let host = klatch::harness::SysHost::standard(Path::new(&home));
+    let test = klatch::harness::self_test(live, &PsTable, domain, &host);
+    if test.sessions == 0 {
+        r.add(
+            Status::Ok,
+            "liveness: no live session to try the probe on",
+            None,
+        );
+        return;
+    }
+    let works: Vec<String> = test
+        .layers
+        .iter()
+        .map(|l| format!("{} {}/{}", l.layer, l.readable, test.sessions))
+        .collect();
+    let line = format!("liveness probe layers readable: {}", works.join(", "));
+    let broken = test.broken();
+    if broken.is_empty() {
+        r.add(Status::Ok, line, None);
+        return;
+    }
+    r.add(
+        Status::Warn,
+        format!(
+            "{line}; unreadable for every session: {} (a Claude Code change to the registry or transcript layout?)",
+            broken.join(", ")
+        ),
+        Some(
+            "nothing breaks: an unreadable layer counts as unknown, never as a dead session, and leases fall back on their time limits; report the layer on the klatch tracker (#311)",
+        ),
+    );
 }
 
 /// Run every probe, print the report and return whether nothing failed.

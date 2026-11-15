@@ -269,16 +269,31 @@ impl Progress {
     }
 }
 
+/// The layers after identity, by the names `Evidence::unknown` uses.
+pub const LAYERS: [&str; 6] = [
+    "process-state",
+    "cpu",
+    "children",
+    "turn",
+    "transcript",
+    "task-output",
+];
+
 fn unknown_layers(ev: &Evidence) -> Vec<&'static str> {
-    let layers = [
-        ("process-state", ev.proc_state.is_none()),
-        ("cpu", ev.cpu_ms.is_none()),
-        ("children", ev.children.is_none()),
-        ("turn", ev.turn.status.is_none()),
-        ("transcript", ev.transcript.is_none()),
-        ("task-output", ev.task_output.is_none()),
+    let missing = [
+        ev.proc_state.is_none(),
+        ev.cpu_ms.is_none(),
+        ev.children.is_none(),
+        ev.turn.status.is_none(),
+        ev.transcript.is_none(),
+        ev.task_output.is_none(),
     ];
-    layers.into_iter().filter(|l| l.1).map(|l| l.0).collect()
+    LAYERS
+        .into_iter()
+        .zip(missing)
+        .filter(|l| l.1)
+        .map(|l| l.0)
+        .collect()
 }
 
 fn decide(ev: &Evidence, t: &Thresholds) -> Verdict {
