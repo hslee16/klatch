@@ -9,6 +9,9 @@ mod gateway;
 mod guard;
 mod identity;
 mod judge;
+mod listener;
+#[cfg(test)]
+mod listener_tests;
 mod notifier;
 mod subscription;
 mod sys_lease;
@@ -22,8 +25,9 @@ pub use gateway::{
     lease_action, run_prefix, valid_run_id,
 };
 pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
-pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
+pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence, Secret};
 pub use judge::{DRAIN_LIMIT, Drained, drain};
+pub use listener::{Connection, Connector, EvidenceTable, Listener};
 pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use sys_lease::SysLeaseSource;
