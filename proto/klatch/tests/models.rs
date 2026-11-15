@@ -82,6 +82,9 @@ struct ClaimsRoom {
     /// Every claim row the store holds, expired or not: expired rows are purged only when a claim is attempted.
     model: Vec<Held>,
     posts: usize,
+    /// Members whose last post said `parked:`: a park stretches their live claims to the return time, and the next
+    /// ordinary post cuts them back to a normal lease (DESIGN 45).
+    parked: [bool; 3],
 }
 
 impl ClaimsRoom {
@@ -92,6 +95,7 @@ impl ClaimsRoom {
             now,
             model: Vec::new(),
             posts: 0,
+            parked: [false; 3],
         }
     }
     fn now(&self) -> i64 {
@@ -176,7 +180,8 @@ impl ClaimsRoom {
 
     /// Activity renews: a member that posts keeps each live claim it holds for the lifetime that claim was made with,
     /// counted from now. Never shorter than what the claim has, never a claim that already lapsed (RESEARCH-NOTES
-    /// 42.8, #494). The model says it in one line; the real thing is a SQL update.
+    /// 42.8, #494). A park stretched a lease, so the first ordinary post after it cuts the lease back to a normal
+    /// one (but never below what renewal gave it). The model says it in a few lines; the real thing is SQL.
     #[rule]
     fn activity(&mut self, tc: TestCase) {
         let who = tc.draw(member_index());
@@ -186,12 +191,46 @@ impl ClaimsRoom {
         self.gw
             .post(&principal(who), ROOM, &format!("note {}", self.posts))
             .unwrap();
+        let cut = now + klatch::domain::CLAIM_DEFAULT_SECS;
+        let was_parked = std::mem::replace(&mut self.parked[who as usize], false);
         for c in self
             .model
             .iter_mut()
             .filter(|c| c.owner == me && c.expires > now)
         {
             c.expires = c.expires.max(now + c.ttl);
+        }
+        if was_parked {
+            for c in self.model.iter_mut().filter(|c| c.owner == me) {
+                c.expires = c.expires.min(cut);
+            }
+        }
+    }
+
+    /// A `parked:` post: the member renews as for any post, then every live claim it holds is held until it is due
+    /// back (a claim already past it keeps its own time).
+    #[rule]
+    fn park(&mut self, tc: TestCase) {
+        let who = tc.draw(member_index());
+        let hours = [1, 3][tc.draw(gs::integers::<u8>().max_value(1)) as usize];
+        let (me, now) = (MEMBERS[who as usize], self.now());
+        self.posts += 1;
+        tc.note(&format!("t={now}: {me} parks for {hours}h"));
+        self.gw
+            .post(
+                &principal(who),
+                ROOM,
+                &format!("parked: waiting {}, back by {hours}h", self.posts),
+            )
+            .unwrap();
+        self.parked[who as usize] = true;
+        let back_by = now + hours * 3600;
+        for c in self
+            .model
+            .iter_mut()
+            .filter(|c| c.owner == me && c.expires > now)
+        {
+            c.expires = c.expires.max(now + c.ttl).max(back_by);
         }
     }
 

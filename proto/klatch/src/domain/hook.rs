@@ -1043,7 +1043,11 @@ mod tests {
             "{} bytes",
             printed_bytes(&out)
         );
-        assert_eq!(out.matches("[room ").count(), 5, "every room keeps a header");
+        assert_eq!(
+            out.matches("[room ").count(),
+            5,
+            "every room keeps a header"
+        );
     }
 
     #[test]
