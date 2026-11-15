@@ -11,6 +11,7 @@ mod claims;
 mod factory;
 mod faults;
 mod hooks;
+mod identity;
 mod judge;
 mod keys;
 mod labels;
@@ -81,6 +82,7 @@ pub fn all() -> Vec<Scenario> {
         reviewer::all(),
         admin_role::all(),
         hooks::all(),
+        identity::all(),
         keys::all(),
         judge::all(),
         retention::all(),
