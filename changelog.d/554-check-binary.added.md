@@ -1,0 +1,1 @@
+- `experiments/gates/check-binary.sh` reads the inbound token expression, the hold causes and the dialog default out of a Claude Code binary and exits non-zero when the expression changed (manual, not CI) (#554).
