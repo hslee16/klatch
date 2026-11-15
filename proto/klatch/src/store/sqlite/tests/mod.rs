@@ -13,6 +13,7 @@ mod members;
 mod messages;
 mod migrations;
 mod plaintext;
+mod review;
 mod runs;
 
 pub(super) fn store() -> SqliteStore {

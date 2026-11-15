@@ -8,6 +8,7 @@ mod credentials;
 mod dm;
 mod error;
 mod hook;
+mod judge;
 mod labels;
 mod model;
 mod scope;
@@ -31,6 +32,7 @@ pub use credentials::credential_kind;
 pub use dm::{DM_PREFIX, dm_room};
 pub use error::{Error, Result};
 pub use hook::{RoomDigest, hook_context_json, hook_output_json, render_hook};
+pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,

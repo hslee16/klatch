@@ -12,6 +12,7 @@ These are early pre-releases with no outside security review.
 
 ### Added
 
+- Review queue and the `Judge` seam (#48): a `review_queue` table (schema 23) of pointers to messages, a one-function `Judge` trait scoped to channel safety, a `NullJudge` that decides nothing, and `klatch judge run --once`, which runs the queue past the judge once. With no judge every function works and the queue only grows. Nothing enqueues yet and a verdict is recorded, not applied (#497).
 - `klatch doctor`: a read-only health check of the binary, the store and its key, the hooks (does each point at a binary that exists, and at this one?), the session and the harness registry, with the reason and the fix for each problem; exits 1 on a failure. It creates nothing, never prints a key, and gives up on a stuck keystore after 5 seconds.
 - Retention and archive: `klatch admin retention`, `klatch admin archive` and `klatch admin restore-archive`. Old messages move into an encrypted archive file and leave a tombstone (the `seq` stays), and come back on restore. Nothing is archived unless a retention is set.
 - `klatch admin export <room> --json`: the transcript as one JSON object per line with every field, regenerated from the store each time (still audited and typed back).

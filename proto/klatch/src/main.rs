@@ -9,6 +9,7 @@ mod custody;
 mod doctor;
 mod identity;
 mod init;
+mod judge;
 mod run;
 mod scope;
 mod worker;
@@ -169,6 +170,11 @@ enum Cmd {
     Admin {
         #[command(subcommand)]
         cmd: admin::AdminCmd,
+    },
+    /// Run the review queue through the judge (for a launcher; see `klatch judge --help`)
+    Judge {
+        #[command(subcommand)]
+        cmd: judge::JudgeCmd,
     },
     /// Show the scope you work in, or set it
     Scope { scope: Option<String> },
@@ -448,6 +454,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         Cmd::Worker { cmd } => worker::run(cmd),
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
+        Cmd::Judge { cmd } => judge::run(cmd),
         cmd => run_as_member(&cli.who, cmd),
     }
 }

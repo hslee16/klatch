@@ -10,6 +10,7 @@ mod claims;
 mod factory;
 mod faults;
 mod hooks;
+mod judge;
 mod keys;
 mod labels;
 mod retention;
@@ -75,6 +76,7 @@ pub fn all() -> Vec<Scenario> {
         labels::all(),
         hooks::all(),
         keys::all(),
+        judge::all(),
         retention::all(),
     ]
     .into_iter()
