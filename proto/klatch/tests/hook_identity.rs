@@ -56,3 +56,25 @@ fn session_end_for_a_session_nobody_remembers_changes_nothing_and_does_not_fail(
         "someone was marked done: {who}"
     );
 }
+
+fn hook_payload(agent: Option<&str>) -> String {
+    let agent = agent.map_or(String::new(), |a| format!(r#","agent_id":"{a}""#));
+    format!(r#"{{"session_id":"sess-9","hook_event_name":"PostToolUse"{agent}}}"#)
+}
+
+#[test]
+fn a_hook_inside_a_subagent_prints_nothing_and_leaves_the_parents_mail_unread() {
+    let h = Home::new();
+    h.ok("parent", &["join", "lobby"]);
+    h.ok("bob", &["join", "lobby"]);
+    let args = ["hook", "--event", "PostToolUse"];
+    hook_with_payload(&h, Some("parent"), &hook_payload(None), &args);
+    // A subagent posts under its own typed name; its tool call fires the hook as the parent session.
+    h.ok("bob", &["post", "lobby", "for the parent"]);
+    let sub = hook_with_payload(&h, Some("parent"), &hook_payload(Some("agent-1")), &args);
+    assert!(sub.status.success());
+    assert_eq!(out(&sub).trim(), "", "a subagent's hook must stay quiet");
+    // The parent's own next hook still delivers what the subagent's tool call did not consume.
+    let parent = hook_with_payload(&h, Some("parent"), &hook_payload(None), &args);
+    assert!(out(&parent).contains("for the parent"), "{}", out(&parent));
+}

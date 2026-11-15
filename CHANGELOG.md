@@ -10,6 +10,10 @@ These are early pre-releases with no outside security review.
 
 - macOS: the store key is kept in a 600 file, not the Keychain. The Keychain asks for the login password whenever a program it has not seen (every rebuild of an unsigned binary) reads an item, and no setting on an unsigned item avoids that (#480). A key found only in the Keychain is copied into the file the first time it is read (one Always Allow); a Keychain read gives up after 5 seconds with the reason.
 
+### Fixed
+
+- A hook that fires for a subagent's tool call (Claude Code marks it with `agent_id`) now prints nothing and moves no cursor. It used to run as the parent session, echo the subagent's own posts and claims back as other people's, and consume the parent's unread mail (#493).
+
 ### Added
 
 - Floors cannot be edited by an agent: a gateway guard (`ForbidFloors`) refuses setting the agent cap, the label order and the scrub list on every gateway an agent can reach (R29, #49). Only `klatch admin` from your own terminal changes them.
