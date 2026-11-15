@@ -91,6 +91,23 @@ pub enum AdminCmd {
         #[arg(long)]
         run: String,
     },
+    /// Keep a room's messages (`*` for every room without its own setting) for this many days before `admin archive`
+    /// moves them out; `off` removes the setting. Nothing is archived for a room with no retention
+    Retention { room: String, days: String },
+    /// Move messages older than their room's retention into an encrypted archive file under the klatch directory,
+    /// leaving a tombstone for each (the seq stays). Run it from cron to make it regular; there is no background process
+    Archive {
+        #[arg(
+            long,
+            conflicts_with = "all_rooms",
+            required_unless_present = "all_rooms"
+        )]
+        room: Option<String>,
+        #[arg(long)]
+        all_rooms: bool,
+    },
+    /// Put archived messages back from an archive file (made by `admin archive`); the file is kept
+    RestoreArchive { file: std::path::PathBuf },
     /// Print a room's messages as readable text. This is the one way plaintext leaves the store on purpose, so it is
     /// audited and asks for the room typed back
     Export { room: String },
@@ -283,6 +300,9 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         | AdminCmd::RotateKey
         | AdminCmd::Backup { .. }
         | AdminCmd::Restore { .. }
+        | AdminCmd::Retention { .. }
+        | AdminCmd::Archive { .. }
+        | AdminCmd::RestoreArchive { .. }
         | AdminCmd::Export { .. }
         | AdminCmd::SealLabel { .. }
         | AdminCmd::RunArchive { .. } => {
@@ -369,6 +389,84 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
                 file.display()
             );
         }
+        AdminCmd::Retention { room, days } => {
+            let store = custody::open_store(db)?;
+            let key = format!("retention:{room}");
+            if days == "off" {
+                store.policy_set(&key, None, now())?;
+                note("retention", &format!("{room} off"))?;
+                println!("retention for {room} removed");
+            } else {
+                let n: i64 = days.parse().ok().filter(|n| *n >= 1).ok_or_else(|| {
+                    anyhow::anyhow!("days must be a whole number of at least 1, or off")
+                })?;
+                store.policy_set(&key, Some(&n.to_string()), now())?;
+                note("retention", &format!("{room} {n} days"))?;
+                println!(
+                    "messages of {room} older than {n} days will be archived by `klatch admin archive`"
+                );
+            }
+        }
+        AdminCmd::Archive { room, all_rooms } => {
+            let store = custody::open_store(db)?;
+            let key = custody::current_key(db)?
+                .ok_or_else(|| anyhow::anyhow!("this store has no key yet; nothing to archive"))?;
+            let rooms = if all_rooms {
+                store.message_rooms()?
+            } else {
+                vec![room.unwrap_or_default()]
+            };
+            let dir = db.with_file_name("archive");
+            let at = now();
+            let mut total = 0;
+            for r in rooms {
+                let days = match store.policy_get(&format!("retention:{r}"))? {
+                    Some(d) => Some(d),
+                    None => store.policy_get("retention:*")?,
+                };
+                let Some(days) = days.and_then(|d| d.parse::<i64>().ok()) else {
+                    if !all_rooms {
+                        bail!(
+                            "{r} has no retention; set one first: klatch admin retention {r} <days>"
+                        );
+                    }
+                    continue;
+                };
+                std::fs::create_dir_all(&dir)?;
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+                }
+                let safe: String = r
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let file = dir.join(format!("{safe}-{at}.db"));
+                let n = store.archive_before(&r, at - days * 86_400, &file, &key)?;
+                if n > 0 {
+                    println!("{r}: archived {n} messages to {}", file.display());
+                    total += n;
+                }
+            }
+            note("archive", &format!("{total} messages"))?;
+            if total == 0 {
+                println!("nothing is older than its retention");
+            }
+        }
+        AdminCmd::RestoreArchive { file } => {
+            let store = custody::open_store(db)?;
+            let key = custody::current_key(db)?
+                .ok_or_else(|| anyhow::anyhow!("this store has no key; nothing to restore into"))?;
+            let n = store.restore_archive(&file, &key)?;
+            note("restore-archive", &file.to_string_lossy())?;
+            println!("restored {n} messages from {}", file.display());
+        }
         AdminCmd::Export { room } => {
             let gateway = Gateway::new(custody::open_store(db)?, CliClock, AllowAll);
             gateway.use_label_keys(custody::label_ring(db, &gateway.sealed_labels()?)?);
@@ -407,6 +505,9 @@ fn needs_the_keystore(cmd: &AdminCmd) -> bool {
             | AdminCmd::RotateKey
             | AdminCmd::Backup { .. }
             | AdminCmd::Restore { .. }
+            | AdminCmd::Retention { .. }
+            | AdminCmd::Archive { .. }
+            | AdminCmd::RestoreArchive { .. }
             | AdminCmd::Export { .. }
             | AdminCmd::SealLabel { .. }
             | AdminCmd::RunArchive { .. }

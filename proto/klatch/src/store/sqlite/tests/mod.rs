@@ -3,6 +3,7 @@
 use super::*;
 
 mod anchors;
+mod archive;
 mod claims;
 mod concurrency;
 mod conformance;

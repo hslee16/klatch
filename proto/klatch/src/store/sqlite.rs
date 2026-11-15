@@ -11,6 +11,7 @@ use rusqlite::{Connection, params};
 use std::path::Path;
 use std::time::Duration;
 
+mod archive;
 mod asks;
 mod claims;
 mod rows;
@@ -563,7 +564,7 @@ impl Store for SqliteStore {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
+        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
         if advance {
             // Advance to the last message actually returned, never to the room's current maximum:
             // a message posted between the select above and this update would otherwise be skipped
@@ -672,7 +673,7 @@ impl Store for SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))?;
+        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))?;
         Ok(rows)
     }
 
@@ -694,7 +695,7 @@ impl Store for SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))
+        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))
     }
 
     fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
@@ -807,7 +808,7 @@ impl Store for SqliteStore {
                 )
                 .map_err(be)?;
             let from = read.max(shown);
-            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 ORDER BY seq"), params![room, from, member], |r| self.open_message(r))?;
+            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, from, member], |r| self.open_message(r))?;
             if let Some(last) = rows.last() {
                 self.exec(
                         "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
