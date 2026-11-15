@@ -226,6 +226,37 @@ impl<'a> NewRefusal<'a> {
     }
 }
 
+/// A message that needs review before it crosses to `to_label`: a pointer, not a copy, so the queue holds no text.
+#[derive(Debug, Clone, Copy)]
+pub struct NewReview<'a> {
+    pub room: &'a str,
+    pub seq: i64,
+    pub to_label: &'a str,
+    pub reason: &'a str,
+}
+
+impl<'a> NewReview<'a> {
+    pub fn new(room: &'a str, seq: i64, to_label: &'a str, reason: &'a str) -> Self {
+        Self {
+            room,
+            seq,
+            to_label,
+            reason,
+        }
+    }
+}
+
+/// An item waiting in the review queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedReview {
+    pub id: i64,
+    pub room: String,
+    pub seq: i64,
+    pub to_label: String,
+    pub reason: String,
+    pub ts: i64,
+}
+
 pub trait Store {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
@@ -343,6 +374,21 @@ pub trait Store {
     }
     fn audit_log(&self, _limit: usize) -> Result<Vec<AuditRecord>> {
         Ok(Vec::new())
+    }
+    /// The review queue (#48). Queue a message for a judge, oldest first back out, and record one verdict per item.
+    /// A message already waiting for the same label is not queued twice (the existing id is returned). The default
+    /// store has no queue, and says so rather than dropping the item.
+    fn enqueue_review(&self, _item: &NewReview, _now: i64) -> Result<i64> {
+        Err(crate::domain::Error::Backend(
+            "this store has no review queue".into(),
+        ))
+    }
+    fn pending_reviews(&self, _limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(Vec::new())
+    }
+    /// Record the verdict word and a short detail for a pending item; false when it was not pending.
+    fn resolve_review(&self, _id: i64, _verdict: &str, _detail: &str, _now: i64) -> Result<bool> {
+        Ok(false)
     }
     /// Policy the administrator set: room labels, clearances, the label chain, scrub terms, tripwires (epic #9). One
     /// key and one value each; `None` clears a key. The default remembers nothing.

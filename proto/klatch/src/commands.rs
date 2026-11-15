@@ -101,6 +101,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         | Cmd::Admin { .. }
         | Cmd::Worker { .. }
         | Cmd::Anchor { .. }
+        | Cmd::Judge { .. }
         | Cmd::Run { .. }
         | Cmd::Serve { .. }
         | Cmd::Stream { .. } => {

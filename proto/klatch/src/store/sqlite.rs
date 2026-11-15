@@ -5,7 +5,8 @@ use crate::domain::{
 use crate::keys::Key;
 use crate::store::ids::new_id;
 use crate::store::{
-    ClaimRequest, HookEvent, NewAudit, NewMessage, NewRefusal, Release, Seat, Store,
+    ClaimRequest, HookEvent, NewAudit, NewMessage, NewRefusal, NewReview, QueuedReview, Release,
+    Seat, Store,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -14,6 +15,7 @@ use std::time::Duration;
 mod archive;
 mod asks;
 mod claims;
+mod review;
 mod rows;
 mod schema;
 use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
@@ -1002,6 +1004,18 @@ impl Store for SqliteStore {
             }
             Ok(released)
         })
+    }
+
+    fn enqueue_review(&self, item: &NewReview, now: i64) -> Result<i64> {
+        self.enqueue_review_row(item, now)
+    }
+
+    fn pending_reviews(&self, limit: usize) -> Result<Vec<QueuedReview>> {
+        self.pending_review_rows(limit)
+    }
+
+    fn resolve_review(&self, id: i64, verdict: &str, detail: &str, now: i64) -> Result<bool> {
+        self.resolve_review_row(id, verdict, detail, now)
     }
 
     fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
