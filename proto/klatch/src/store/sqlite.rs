@@ -61,6 +61,16 @@ fn be(e: rusqlite::Error) -> Error {
 }
 
 impl SqliteStore {
+    /// Members pruning must spare because they may come back to work they hold: those with a live claim in any
+    /// room (DESIGN section 32 item 44). Parked members and open tasks add their own rows here later.
+    fn members_that_may_return(&self, now: i64) -> Result<Vec<String>> {
+        self.rows(
+            "SELECT DISTINCT owner FROM claims WHERE expires>?1",
+            params![now],
+            |r| r.get(0),
+        )
+    }
+
     /// The note `owner` left when it released `path`, if it was the latest release of that path (#272).
     fn note_of(&self, room: &str, owner: &str, path: &str) -> Result<Option<String>> {
         Ok(self
@@ -607,13 +617,34 @@ impl Store for SqliteStore {
     fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
         self.immediate(|| {
             let cutoff = now - older_than;
-            self.exec("DELETE FROM sessions WHERE ts<?1", params![cutoff])?;
-            let names: Vec<String> = self.rows(
-                "SELECT DISTINCT name FROM members WHERE last_seen<?1",
+            // A member that may return (it holds a live claim) keeps its rows, so a session resumed after days
+            // finds its read cursor; later sources of "may return" (parked, open task) join this list.
+            let keep = self.members_that_may_return(now)?;
+            let kept = |name: &str| keep.iter().any(|k| k == name);
+            let old_sessions: Vec<(String, String)> = self.rows(
+                "SELECT session_id,member FROM sessions WHERE ts<?1",
                 params![cutoff],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            let removed = self.exec("DELETE FROM members WHERE last_seen<?1", params![cutoff])?;
+            for (id, _) in old_sessions.iter().filter(|(_, m)| !kept(m)) {
+                self.exec("DELETE FROM sessions WHERE session_id=?1", params![id])?;
+            }
+            let old: Vec<(String, String)> = self.rows(
+                "SELECT room,name FROM members WHERE last_seen<?1",
+                params![cutoff],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            let mut names: Vec<String> = Vec::new();
+            let mut removed = 0;
+            for (room, name) in old.iter().filter(|(_, n)| !kept(n)) {
+                removed += self.exec(
+                    "DELETE FROM members WHERE room=?1 AND name=?2",
+                    params![room, name],
+                )?;
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
             for name in names {
                 let still: i64 = self
                     .conn

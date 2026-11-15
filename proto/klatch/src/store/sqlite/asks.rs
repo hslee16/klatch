@@ -9,7 +9,7 @@ use rusqlite::params;
 /// else (its asker owing an answer, or a working room in use).
 pub(super) fn is_stale(a: &OpenAsk, member: &str, now: i64, after: i64) -> bool {
     let waiting = a.claimed || a.waiting_on_asker.is_some() || a.room_active(now);
-    a.sender == member && !waiting && now - a.ts >= after
+    a.sender == member && !waiting && now - a.ts >= a.stale_after(after)
 }
 
 impl SqliteStore {
