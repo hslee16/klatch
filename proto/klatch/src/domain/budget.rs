@@ -30,3 +30,7 @@ pub const HOOK_MAX_BYTES: usize = 9400;
 /// What a session start keeps for the boards before the digest takes the rest: a board is cut line by line before
 /// messages are, but never to nothing.
 pub const BOARD_FLOOR_BYTES: usize = 1000;
+/// The smallest budget a hook digest prints within (#602): room for the one line that says how many rooms have news.
+/// Below it the digest prints nothing rather than overshoot. No caller reaches it with the constants of today; the
+/// session start budget is `HOOK_MAX_BYTES` less the convention, the board floor and one line per refused room.
+pub const DIGEST_MIN_BYTES: usize = 100;
