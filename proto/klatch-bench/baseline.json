@@ -1,20 +1,24 @@
 {
   "a_long_history_reads_and_streams_whole": {
-    "read_ms": 13.067708000000001,
-    "stream_ms": 33.179166
+    "read_ms": 19.7925,
+    "stream_ms": 44.07425
   },
   "board_with_many_members_and_asks": {
-    "asks_ms": 15.126333,
-    "board_ms": 14.913124999999999
+    "asks_ms": 26.628625,
+    "board_ms": 27.793125
+  },
+  "fifty_credentialed_workers_post_claim_and_read_at_once": {
+    "post_p50_ms": 29.704749999999997,
+    "post_p99_ms": 281.082458
   },
   "hook_across_many_rooms": {
-    "hook_ms": 10.7215
+    "hook_ms": 29.349957999999997
   },
   "many_claimants_one_wins": {
-    "claim_ms": 54.225375
+    "claim_ms": 54.985541
   },
   "many_waiters_wake_together": {
-    "total_ms": 817.023834,
-    "wake_ms": 201.868375
+    "total_ms": 732.317542,
+    "wake_ms": 99.2405
   }
 }
