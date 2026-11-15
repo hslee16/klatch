@@ -541,7 +541,7 @@ pub trait Store {
                     && !a.claimed
                     && a.waiting_on_asker.is_none()
                     && !a.room_active(now)
-                    && now - a.ts >= after
+                    && now - a.ts >= a.stale_after(after)
             })
             .collect())
     }

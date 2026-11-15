@@ -1,12 +1,20 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
-    vec![Scenario {
-        name: "old_messages_are_archived_encrypted_by_retention_and_a_restore_brings_them_back",
-        origin: "#69, #70, D2, R32",
-        layer: "fault",
-        run: retention_archive,
-    }]
+    vec![
+        Scenario {
+            name: "old_messages_are_archived_encrypted_by_retention_and_a_restore_brings_them_back",
+            origin: "#69, #70, D2, R32",
+            layer: "fault",
+            run: retention_archive,
+        },
+        Scenario {
+            name: "an_ask_with_a_deadline_is_not_reported_stale_before_it_and_shows_how_long_is_left",
+            origin: "#306, DESIGN s32 item 44",
+            layer: "functional",
+            run: ask_deadline_by_clock,
+        },
+    ]
 }
 
 fn archive_files(w: &World) -> Vec<std::path::PathBuf> {
@@ -89,6 +97,46 @@ fn retention_archive(w: &World) -> Res {
         &w.admin(&["audit"], "").stdout,
         "restore-archive",
         "the restore is not in the audit",
+    )?;
+    Ok(vec![])
+}
+
+// T0 is 2027-01-15 08:00 UTC, so the end of 2027-01-20 is a little over five days away.
+fn ask_deadline_by_clock(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok(
+        "alice",
+        &["post", "lobby", "seeking: a slow review (by 2027-01-20)"],
+    )?;
+    w.ok("alice", &["post", "lobby", "seeking: a quick thing"])?;
+    has(
+        &w.ok("bob", &["board", "lobby"])?,
+        "due in 5d",
+        "the deadline shows on the board",
+    )?;
+    w.advance(2 * 86_400);
+    let told = w.ok("alice", &["hook"])?;
+    has(
+        &told,
+        "your ask #2 has had no claim",
+        "the undated ask is reported",
+    )?;
+    lacks(
+        &told,
+        "your ask #1 has had no claim",
+        "the dated ask waits for its deadline",
+    )?;
+    w.advance(4 * 86_400);
+    has(
+        &w.ok("alice", &["hook"])?,
+        "your ask #1 has had no claim",
+        "past the deadline the dated ask is reported",
+    )?;
+    has(
+        &w.ok("bob", &["asks", "lobby"])?,
+        "overdue",
+        "the ask shows as overdue",
     )?;
     Ok(vec![])
 }
