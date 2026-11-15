@@ -452,6 +452,10 @@ The sender's mode is **self-declared**, so this gate is a convenience, not a sec
 
 ### 10.1 The model
 
+> **Superseded in part (#79).** Decision D4 (section 19) replaced the human-only rules below: a clearance may be raised
+> and a message declassified by an admin agent **inside floors the human sets once at onboarding**, never above the cap
+> and never into `secret`; R7 is amended to match (section 22). The text below is kept as the original model.
+
 - Every room has a **label**. Every message carries a label. Every member has a **clearance**.
 - A member may **read** a room only if its clearance is at least the room's label, and may
   **post** a message only if the message's label is **no higher than the room's label** (so a

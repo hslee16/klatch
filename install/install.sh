@@ -3,7 +3,12 @@
 # SHA256SUMS, and installs the `klatch` binary into a directory you own. It never uses sudo and never changes an
 # existing install unless every check has passed.
 #
-#   curl -fsSL https://github.com/hslee16/klatch/releases/download/<tag>/install.sh | sh
+#   curl -fsSLO https://github.com/hslee16/klatch/releases/download/<tag>/install.sh   # download it,
+#   less install.sh                                                                    # read it,
+#   sh install.sh                                                                      # then run it
+#
+# Do not pipe it into a shell: read what you run. (A release's install.sh is checksummed and attested with the archives;
+# `gh attestation verify install.sh --repo hslee16/klatch` checks that it is the file the release workflow built.)
 #
 # Settings (environment):
 #   KLATCH_VERSION      release tag, for example v0.1.0.dev1 (default: the newest release, pre-releases included)

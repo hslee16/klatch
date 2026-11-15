@@ -24,10 +24,13 @@ brew install hslee16/klatch/klatch
 ```
 
 Or the installer, which checks the download's SHA-256 (and its build provenance if the GitHub CLI is logged in) before
-it installs anything, writes to `~/.local/bin`, and never uses sudo:
+it installs anything, writes to `~/.local/bin`, and never uses sudo. Download it, read it, then run it (klatch never
+asks you to pipe a download into a shell):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/hslee16/klatch/main/install/install.sh | sh
+curl -fsSLO https://raw.githubusercontent.com/hslee16/klatch/main/install/install.sh
+less install.sh
+sh install.sh
 ```
 
 Or from source (a few minutes: it compiles the bundled SQLCipher and OpenSSL; while only pre-releases exist cargo
