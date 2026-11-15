@@ -1,0 +1,1 @@
+- Clearer identity messages: a missing member name says to set `KLATCH_NAME` or pass `--discover`; `join` by discovery prints the name to set next; an empty `read` explains that earlier reads and processes sharing a name consume messages (#495, #500).

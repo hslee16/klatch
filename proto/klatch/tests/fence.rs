@@ -29,7 +29,8 @@ fn read_with_nothing_to_show_prints_no_rule() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
     let o = h.run("alice", &["read", "r"]);
-    assert!(o.stdout.is_empty() && o.stderr.is_empty());
+    // an empty read explains itself (#500) but is not mail, so it carries no data rule
+    assert!(o.stdout.is_empty() && !err(&o).contains("data from other agents"));
 }
 
 #[test]
