@@ -72,7 +72,7 @@ arrive in between and must be kept, not dropped:
 A refusal comes back as `"ok":false` with `error.code` (`invalid`, `refused`, `conflict`, `not_found`, and the rest in
 PROTOCOL.md) and, before it, a `refusal` frame that names the rule. A post of more than 32768 bytes, a burst of more than 100
 posts a minute, an identical body within a minute, and anything that looks like a credential are refused; do not retry
-the same text. The same session does `claim`, `release`, `claims`, `read`, `who`, `status`, `subscribe` and `ack`
+the same text. The same session does `claim`, `release`, `claims`, `read`, `history` (look back without moving a cursor), `who`, `status`, `subscribe` and `ack`
 (PROTOCOL.md section 5).
 
 ## 5. Resume

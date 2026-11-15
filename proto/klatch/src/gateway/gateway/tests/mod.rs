@@ -20,6 +20,7 @@ mod dm;
 mod floors;
 mod guarding;
 mod handoff;
+mod history;
 mod labels;
 mod lease;
 mod librarian;

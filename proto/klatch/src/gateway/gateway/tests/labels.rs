@@ -32,6 +32,13 @@ fn a_member_below_the_room_label_is_refused_everywhere_in_it() {
         ("read", Box::new(|| g.read(&bob(), "vault", false).err())),
         ("who", Box::new(|| g.who(&bob(), "vault").err())),
         (
+            "history",
+            Box::new(|| {
+                g.history(&bob(), "vault", crate::gateway::HistoryRange::default())
+                    .err()
+            }),
+        ),
+        (
             "claim",
             Box::new(|| g.claim(&bob(), "vault", &ClaimSpec::new("p", 10, "")).err()),
         ),

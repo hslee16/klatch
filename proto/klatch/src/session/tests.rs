@@ -174,6 +174,48 @@ fn read_advances_the_cursor_and_peek_does_not() {
 }
 
 #[test]
+fn history_returns_the_newest_messages_and_how_many_more_follow_and_moves_no_cursor() {
+    let g = gateway();
+    let posts: Vec<Value> = (1..=5)
+        .map(|i| req("p", "post", json!({"room":"r","body":format!("m{i}")})))
+        .collect();
+    run(&g, &alice(), &posts);
+    let f = run(
+        &g,
+        &bob(),
+        &[
+            req("h", "history", json!({"room":"r","last":2})),
+            req("s", "history", json!({"room":"r","since":1,"last":2})),
+            req("f", "history", json!({"room":"r","since":0})),
+            req("bad", "history", json!({"room":"r","last":0})),
+            req("u", "read", json!({"room":"r","peek":true})),
+        ],
+    );
+    let h = response(&f, "h").1.unwrap();
+    assert_eq!(h["messages"][0]["body"], "m4");
+    assert_eq!(h["messages"][1]["body"], "m5");
+    assert_eq!(h["more"], 0);
+    assert_eq!(h["messages"][0]["attribution"], "unattributed");
+    assert_eq!(response(&f, "s").1.unwrap()["messages"][0]["body"], "m4");
+    assert_eq!(
+        response(&f, "f").1.unwrap()["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert!(!response(&f, "bad").0, "last 0 is refused");
+    assert_eq!(
+        response(&f, "u").1.unwrap()["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5,
+        "history left every message unread"
+    );
+}
+
+#[test]
 fn who_lists_members_with_last_seen() {
     let g = gateway();
     run(

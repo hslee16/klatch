@@ -1,5 +1,7 @@
 use crate::domain::{Claim, MemberInfo, Message, Posted, Principal, Result};
-use crate::gateway::{Batch, ClaimSpec, DEFAULT_WINDOW, Digest, Gateway, Subscription};
+use crate::gateway::{
+    Batch, ClaimSpec, DEFAULT_WINDOW, Digest, Gateway, History, HistoryRange, Subscription,
+};
 use crate::store::Store;
 use std::rc::Rc;
 
@@ -23,6 +25,8 @@ pub trait Transport {
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
+    /// Look back in a room: everyone's messages in `range`, moving no cursor (#518).
+    fn history(&self, room: &str, range: HistoryRange) -> Result<History>;
     /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
     /// How many unread messages would wake the caller in a room (mute aware); moves no cursor.
@@ -147,6 +151,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
+    }
+    fn history(&self, room: &str, range: HistoryRange) -> Result<History> {
+        self.gateway.history(&self.principal, room, range)
     }
     fn wake_mark(&self, room: &str) -> Result<()> {
         self.gateway.wake_mark(&self.principal, room)

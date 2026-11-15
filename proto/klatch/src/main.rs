@@ -93,6 +93,17 @@ enum Cmd {
         #[arg(long)]
         peek: bool,
     },
+    /// Look back in a room: the newest 20 messages, or `--last N`, or the next 20 after `--since SEQ`. Prints
+    /// everyone's messages as `read` does and moves no read cursor.
+    History {
+        room: String,
+        /// The newest N messages (at most 200); with `--since`, the newest N after it
+        #[arg(long)]
+        last: Option<usize>,
+        /// Only messages after this seq; alone, the next 20, so a long room can be paged
+        #[arg(long)]
+        since: Option<i64>,
+    },
     /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
     Wait {
         /// Rooms to wait on; wakes on the first with a matching message

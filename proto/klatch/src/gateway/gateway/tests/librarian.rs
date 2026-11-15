@@ -20,6 +20,10 @@ fn a_librarian_can_look_but_not_touch() {
     let msgs = g.read(&lib(), "r", false).unwrap();
     assert_eq!(msgs.len(), 1);
     assert!(g.who(&lib(), "r").is_ok());
+    let history = g
+        .history(&lib(), "r", crate::gateway::HistoryRange::default())
+        .unwrap();
+    assert_eq!(history.messages.len(), 1, "history is a query (#518)");
     assert!(g.claims(&lib(), "r").is_ok());
     assert!(g.board(&lib(), "r").is_ok());
     assert!(g.digest(&lib()).is_ok());

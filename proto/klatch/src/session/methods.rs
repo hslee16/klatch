@@ -40,6 +40,14 @@ struct ReadParams {
     peek: bool,
 }
 #[derive(Deserialize)]
+struct HistoryParams {
+    room: String,
+    #[serde(default)]
+    since: Option<i64>,
+    #[serde(default)]
+    last: Option<usize>,
+}
+#[derive(Deserialize)]
 struct ClaimParams {
     room: String,
     path: String,
@@ -143,6 +151,18 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         "read" => call.run(
             |p: ReadParams| g.read(who, &p.room, !p.peek),
             |ms: Vec<Message>| json!({ "messages": ms.iter().map(message_json).collect::<Vec<_>>() }),
+        ),
+        "history" => call.run(
+            |p: HistoryParams| {
+                let range = crate::gateway::HistoryRange {
+                    since: p.since,
+                    last: p.last,
+                };
+                g.history(who, &p.room, range)
+            },
+            |h: crate::gateway::History| {
+                json!({ "messages": h.messages.iter().map(message_json).collect::<Vec<_>>(), "more": h.more })
+            },
         ),
         "who" => call.run(|p: RoomParams| g.who(who, &p.room), |ms| members_json(&ms)),
         "status" => call.run(|p: StatusParams| g.set_status(who, &p.room, &p.status), empty),
