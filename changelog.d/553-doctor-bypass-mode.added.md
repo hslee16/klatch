@@ -1,0 +1,1 @@
+- `klatch doctor` warns when a member runs in bypassPermissions, because Claude Code holds a socket nudge sent to it (the hooks still deliver); a member's hook now remembers its permission mode (store schema 27) (#553).

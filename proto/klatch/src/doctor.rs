@@ -193,6 +193,55 @@ fn check_archives(r: &mut Report, home: Option<&Path>) {
     }
 }
 
+/// What a socket nudge does to a member in permission mode `mode` (RESEARCH-NOTES 47.2, #553). A raw socket sender
+/// cannot attest a mode, so Claude Code holds its message for a session that bypasses prompts and accepts it for one
+/// that prompts. Only modes that were measured are called prompting; anything else is unknown, never fine.
+fn nudge_effect(mode: &str) -> Status {
+    match mode {
+        "bypassPermissions" => Status::Warn,
+        "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" => Status::Ok,
+        _ => Status::Warn,
+    }
+}
+
+/// Members whose last hook input said they bypass permission prompts: a socket nudge to them is held (#553). Reads
+/// the modes the hooks recorded, read-only, and writes nothing, settings included (the choice is #552, the human's).
+fn check_modes(r: &mut Report, home: Option<&Path>) {
+    let Some(db) = store_path(home).filter(|d| d.exists()) else {
+        return;
+    };
+    if klatch::store::encrypt::is_plaintext(&db) {
+        return;
+    }
+    let asked = db.clone();
+    let modes = within(KEYSTORE_PATIENCE, move || {
+        let key = crate::custody::current_key(&asked).ok().flatten()?;
+        klatch::store::SqliteStore::read_member_modes(&asked, &key).ok()
+    })
+    .flatten();
+    // an unreadable store or key is already reported by the store line
+    let Some(modes) = modes else { return };
+    for (member, mode, _) in &modes {
+        match nudge_effect(mode) {
+            Status::Ok => r.add(
+                Status::Ok,
+                format!("member {member}, permission mode {mode}: a socket nudge reaches it"),
+                None,
+            ),
+            _ if mode == "bypassPermissions" => r.add(
+                Status::Warn,
+                format!("member {member}, permission mode {mode}: a socket nudge to it is held by Claude Code (no-mode-asserted) and dropped after about 5 minutes unless a human answers its dialog; the hooks still deliver, so mail is not lost"),
+                Some("nothing is broken. Setting crossSessionInbound to \"accept\" in the user settings would let nudges through, but it widens what any process of yours can put before a model that bypasses prompts, so only you can decide that (#552); klatch never writes it"),
+            ),
+            _ => r.add(
+                Status::Warn,
+                format!("member {member}, permission mode {mode} is unknown to klatch: it cannot say whether a socket nudge to this member is held"),
+                Some("the hooks still deliver; report the mode on the klatch tracker so it can be classed"),
+            ),
+        }
+    }
+}
+
 fn check_hooks(r: &mut Report, project_dir: &Path, home: Option<&Path>, exe: &Path) {
     let mut places = vec![(
         "project",
@@ -403,6 +452,7 @@ pub fn run(
     );
     check_store(&mut r, home);
     check_archives(&mut r, home);
+    check_modes(&mut r, home);
     check_hooks(&mut r, project_dir, home, exe);
     check_session(&mut r);
     check_registry(&mut r);

@@ -232,6 +232,14 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.unpark(member, now)
     }
+    fn note_member_mode(&self, member: &str, mode: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.note_member_mode(member, mode, now)
+    }
+    fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
+        self.gate()?;
+        self.inner.member_modes()
+    }
     fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.note_session(session_id, member, now)
