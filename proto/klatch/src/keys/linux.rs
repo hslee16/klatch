@@ -193,8 +193,28 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("klatch-fake-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("secret-tool");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        // The probe line lets the helper run the script once and return at once: see below.
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\n[ -n \"$KLATCH_FAKE_PROBE\" ] && exit 0\n{body}\n"),
+        )
+        .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Another test thread may fork while the file is open for writing, and a child briefly holds that handle:
+        // executing the script then fails with "Text file busy". Wait until it can be executed (CI flake, #570).
+        // (sh execs the script and reports exit code 126 for "Text file busy".)
+        for _ in 0..200 {
+            let status = std::process::Command::new("sh")
+                .args(["-c", "exec \"$0\""])
+                .arg(&path)
+                .env("KLATCH_FAKE_PROBE", "1")
+                .stderr(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.code() == Some(126) => std::thread::sleep(Duration::from_millis(10)),
+                _ => break,
+            }
+        }
         (format!("{}:/usr/bin:/bin", dir.display()).into(), dir)
     }
 
