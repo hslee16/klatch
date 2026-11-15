@@ -1,0 +1,1 @@
+- `klatch doctor` now tries each liveness probe layer on the live sessions and says which are readable on this machine, warning when the registry status or the transcript layout stopped being readable for every session (a Claude Code change). An unreadable layer is unknown, never a dead session (#311).
