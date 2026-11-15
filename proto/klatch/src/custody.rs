@@ -89,27 +89,42 @@ fn has_data(db: &Path) -> bool {
 /// Open the encrypted store at `db`: get its key (making one for a new store, never for an existing encrypted store
 /// whose key is missing), convert a plaintext database first, and finish a rotation a crash interrupted.
 pub(crate) fn open_store(db: &Path) -> Result<SqliteStore> {
-    let kh = key_home(db);
-    let (key, created) = match kh.source.get(&kh.name)? {
-        Some(k) => (k, false),
-        None => {
-            if has_data(db) && !is_plaintext(db) {
-                bail!(
-                    "the store's key is missing from the {}; `klatch admin recover <recovery code>` restores it",
-                    kh.source.describe()
-                );
-            }
-            // Many processes can start on a new store at once. Whoever holds the directory lock makes the key; the
-            // others wait, look again, and find it. Without this each would make its own and all but one would be
-            // locked out of the store.
-            let _lock = klatch::store::encrypt::lock_dir(db)?;
-            match kh.source.get(&kh.name)? {
-                Some(k) => (k, false),
-                None => (klatch::keys::create(kh.source.as_ref(), &kh.name)?.0, true),
-            }
-        }
+    open_store_in(db, key_home(db))
+}
+
+/// Make the key of a store that has none, as one step with making the store. The directory lock is taken before
+/// anything is decided and, for a store that does not exist yet, handed back so the caller keeps it until the store
+/// file exists. Without that, a process that looked before the key was made and checked the file after it was
+/// made saw an encrypted store with no key and called it lost (#596). Many processes starting at once each make
+/// no key of their own: the others wait here, look again, and find it.
+fn make_key_under_lock(db: &Path, kh: &KeyHome) -> Result<(Key, bool, Option<std::fs::File>)> {
+    let lock = klatch::store::encrypt::lock_dir(db)?;
+    // another process may have made both the key and the store while this one waited for the lock
+    if let Some(k) = kh.source.get(&kh.name)? {
+        return Ok((k, false, None));
+    }
+    if has_data(db) && !is_plaintext(db) {
+        bail!(
+            "the store's key is missing from the {}; `klatch admin recover <recovery code>` restores it",
+            kh.source.describe()
+        );
+    }
+    let key = klatch::keys::create(kh.source.as_ref(), &kh.name)?.0;
+    // A plaintext database is converted by `ensure_encrypted`, which takes this lock itself, so the lock is kept
+    // only when the store file is about to be created fresh.
+    let keep = (!db.exists()).then_some(lock);
+    Ok((key, true, keep))
+}
+
+fn open_store_in(db: &Path, kh: KeyHome) -> Result<SqliteStore> {
+    let (key, created, guard) = match kh.source.get(&kh.name)? {
+        Some(k) => (k, false, None),
+        None => make_key_under_lock(db, &kh)?,
     };
-    ensure_encrypted(db, &key)?;
+    // `ensure_encrypted` locks the directory itself, and there is nothing to convert in a store made just now
+    if guard.is_none() {
+        ensure_encrypted(db, &key)?;
+    }
     let store = match SqliteStore::open(db, &key) {
         Ok(s) => s,
         Err(first) => {
@@ -125,6 +140,7 @@ pub(crate) fn open_store(db: &Path) -> Result<SqliteStore> {
             }
         }
     };
+    drop(guard);
     if created && std::io::stderr().is_terminal() {
         eprintln!(
             "klatch: made an encryption key for this store in the {}; `klatch admin recovery` shows the code that restores it",
@@ -221,4 +237,107 @@ pub(crate) fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()>
     }
     kh.source.put(&name, key)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Condvar, Mutex};
+
+    /// A file key source whose first `get` reports what it found and then stalls until told to go: the moment in
+    /// #596 when one process has looked and found no key while another makes the key and the store.
+    struct Stalled {
+        inner: klatch::keys::FileKeys,
+        state: Arc<(Mutex<(bool, bool)>, Condvar)>, // (first get done, released)
+        first: std::sync::atomic::AtomicBool,
+    }
+
+    impl KeySource for Stalled {
+        fn get(&self, name: &str) -> Result<Option<Key>, klatch::keys::Error> {
+            let found = self.inner.get(name)?;
+            if !self.first.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let (m, cv) = &*self.state;
+                let mut g = m.lock().unwrap();
+                g.0 = true;
+                cv.notify_all();
+                let _ = cv
+                    .wait_timeout_while(g, std::time::Duration::from_secs(20), |g| !g.1)
+                    .unwrap();
+            }
+            Ok(found)
+        }
+        fn put(&self, name: &str, key: &Key) -> Result<(), klatch::keys::Error> {
+            self.inner.put(name, key)
+        }
+        fn delete(&self, name: &str) -> Result<(), klatch::keys::Error> {
+            self.inner.delete(name)
+        }
+        fn describe(&self) -> &'static str {
+            "file"
+        }
+    }
+
+    fn home(source: Box<dyn KeySource>) -> KeyHome {
+        KeyHome {
+            source,
+            name: "store-test".into(),
+            warning: None,
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("klatch-custody-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_process_that_looked_before_the_key_was_made_still_opens_the_new_store() {
+        let d = scratch("race");
+        let db = d.join("klatch.db");
+        let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        let late = {
+            let (db, keys, state) = (db.clone(), d.join("keys"), state.clone());
+            std::thread::spawn(move || {
+                let src = Stalled {
+                    inner: klatch::keys::FileKeys::new(&keys),
+                    state,
+                    first: false.into(),
+                };
+                open_store_in(&db, home(Box::new(src))).map(|_| ())
+            })
+        };
+        // wait until the late process has looked and found no key
+        {
+            let (m, cv) = &*state;
+            drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
+        }
+        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        open_store_in(&db, home(Box::new(keys))).unwrap();
+        {
+            let (m, cv) = &*state;
+            m.lock().unwrap().1 = true;
+            cv.notify_all();
+        }
+        let r = late.join().unwrap();
+        assert!(r.is_ok(), "{:?}", r.err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_encrypted_store_without_a_key_still_says_how_to_recover() {
+        let d = scratch("lost");
+        let db = d.join("klatch.db");
+        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        open_store_in(&db, home(Box::new(keys))).unwrap();
+        std::fs::remove_dir_all(d.join("keys")).unwrap();
+        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        let err = open_store_in(&db, home(Box::new(keys)))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("admin recover"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
