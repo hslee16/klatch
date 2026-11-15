@@ -17,6 +17,8 @@ pub struct RoomDigest {
     pub escalated: Vec<OpenAsk>,
     /// The member's own open asks whose claim lapsed without an answer, with the holder (reported once).
     pub lapsed: Vec<(OpenAsk, String)>,
+    /// The member's own claims that passed an age milestone, reported once each (#547).
+    pub aged: Vec<crate::domain::AgedClaim>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -78,6 +80,7 @@ impl RoomDigest {
             && self.backlog.is_empty()
             && self.escalated.is_empty()
             && self.lapsed.is_empty()
+            && self.aged.is_empty()
     }
 }
 
@@ -138,6 +141,17 @@ fn render_claims(d: &RoomDigest, now: i64, out: &mut String) {
             out.push_str(&format!(": {} (re-read it before you edit)", clip(note)));
         }
         out.push('\n');
+    }
+}
+
+/// The member's own claims held past an age milestone: one line each, a path and a length of time, nothing else.
+fn render_aged_claims(d: &RoomDigest, out: &mut String) {
+    for a in &d.aged {
+        out.push_str(&format!(
+            "  your claim on {} has been held for {}; release it if you are done, or ignore this to keep it\n",
+            flat(&a.path),
+            crate::domain::parked::span(a.held_secs)
+        ));
     }
 }
 
@@ -203,6 +217,7 @@ fn render_backlog_ask(a: &OpenAsk, out: &mut String) {
 fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     let mut text = String::new();
     render_claims(d, now, &mut text);
+    render_aged_claims(d, &mut text);
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
@@ -806,6 +821,10 @@ mod tests {
             backlog: vec![a.clone()],
             escalated: vec![a.clone()],
             lapsed: vec![(a, "eve".into())],
+            aged: vec![crate::domain::AgedClaim {
+                path: evil.into(),
+                held_secs: 8 * 3600,
+            }],
         };
         let out = render_hook(
             &[
@@ -830,6 +849,59 @@ mod tests {
             2,
             "one header per room, the text cannot add one at a line start"
         );
+    }
+
+    #[test]
+    fn an_aged_claim_is_one_content_free_line_for_its_owner() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            aged: vec![crate::domain::AgedClaim {
+                path: "src/a.rs".into(),
+                held_secs: 2 * 3600 + 40,
+            }],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            out.contains("  your claim on src/a.rs has been held for 2h; release it if you are done, or ignore this to keep it\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_flood_of_aged_claims_stays_within_the_budget_and_is_counted() {
+        let aged = (0..400)
+            .map(|i| crate::domain::AgedClaim {
+                path: format!("src/some/deep/path/file_{i}.rs"),
+                held_secs: 8 * 3600,
+            })
+            .collect();
+        let d = RoomDigest {
+            room: "lobby".into(),
+            aged,
+            messages: vec![msg(1, "bob", "hi")],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            printed_bytes(&out) <= crate::domain::budget::DIGEST_MAX_BYTES + 100,
+            "{}",
+            out.len()
+        );
+        assert!(out.contains("more claims and asks not shown"), "{out}");
+    }
+
+    #[test]
+    fn a_digest_with_only_an_aged_claim_is_not_quiet() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            aged: vec![crate::domain::AgedClaim {
+                path: "p".into(),
+                held_secs: 7_200,
+            }],
+            ..Default::default()
+        };
+        assert!(!d.is_quiet());
     }
 
     /// What the hook prints is the JSON form; that is what Claude Code measures against its cap (#549).

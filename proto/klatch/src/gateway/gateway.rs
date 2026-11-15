@@ -737,6 +737,7 @@ impl<S: Store> Gateway<S> {
                     .stale_asks(Seat::new(&room, &who.member), now, STALE_AFTER_SECS)?;
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
+            let aged = self.store.claim_ages(&room, &who.member, now)?;
             let backlog = if backlog {
                 self.store
                     .open_asks(&room, now)?
@@ -755,6 +756,7 @@ impl<S: Store> Gateway<S> {
                 backlog,
                 escalated,
                 lapsed,
+                aged,
             });
         }
         Ok(Digest {

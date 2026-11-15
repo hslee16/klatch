@@ -11,6 +11,8 @@ pub enum Error {
         path: String,
         owner: String,
         secs_left: i64,
+        /// How long the holder has held the claim, 0 when unknown (#547).
+        held_secs: i64,
         /// The holder is itself waiting, directly or through others, for something the requester holds, and the
         /// requester's attempt closed that cycle: the requester yields (DESIGN section 25.12).
         deadlock: bool,
@@ -37,12 +39,20 @@ impl fmt::Display for Error {
                 path,
                 owner,
                 secs_left,
+                held_secs,
                 deadlock,
             } => {
                 write!(
                     f,
                     "refused: {path} is claimed by {owner} for another {secs_left}s"
                 )?;
+                if *held_secs >= crate::domain::FIRST_MILESTONE_SECS {
+                    write!(
+                        f,
+                        " (held for {}; ask {owner} whether it is still needed)",
+                        crate::domain::parked::span(*held_secs)
+                    )?;
+                }
                 if *deadlock {
                     write!(
                         f,
@@ -67,6 +77,7 @@ mod tests {
             path: "src/a".into(),
             owner: "bob".into(),
             secs_left: 42,
+            held_secs: 0,
             deadlock: false,
         };
         assert_eq!(
@@ -81,6 +92,7 @@ mod tests {
             path: "src/a".into(),
             owner: "bob".into(),
             secs_left: 42,
+            held_secs: 0,
             deadlock: true,
         };
         let m = e.to_string();

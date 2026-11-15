@@ -106,6 +106,7 @@ impl Store for MemoryStore {
                     path: c.path.clone(),
                     owner: c.owner.clone(),
                     secs_left: exp - now,
+                    held_secs: 0,
                     deadlock: false,
                 });
             }

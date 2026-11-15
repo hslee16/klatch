@@ -633,6 +633,16 @@ pub trait Store {
             released: Vec::new(),
         })
     }
+    /// The member's own live claims in a room that passed an age milestone (2 h, 8 h, then daily) since it was last
+    /// told, each reported once (#547). The default reports nothing.
+    fn claim_ages(
+        &self,
+        _room: &str,
+        _owner: &str,
+        _now: i64,
+    ) -> Result<Vec<crate::domain::AgedClaim>> {
+        Ok(Vec::new())
+    }
     /// Rooms a member has joined, ordered by name.
     fn rooms_of(&self, member: &str) -> Result<Vec<String>>;
     /// Messages with `seq` greater than `after_seq`, oldest first, at most `limit`, from every sender
