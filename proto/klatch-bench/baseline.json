@@ -1,24 +1,51 @@
 {
+  "a_hundred_rooms_with_news_still_print_a_digest_inside_the_byte_budget": {
+    "hook_ms": 77.038375
+  },
   "a_long_history_reads_and_streams_whole": {
-    "read_ms": 19.7925,
-    "stream_ms": 44.07425
+    "read_ms": 19.953834,
+    "stream_ms": 44.144625
+  },
+  "a_receipt_for_a_room_of_three_hundred_members_answers_fast_and_prints_no_text": {
+    "receipt_ms": 9.001875
+  },
+  "archiving_fifty_thousand_messages_leaves_the_live_store_usable_and_restores_whole": {
+    "archive_ms": 296.75174999999996,
+    "archives_ms": 53.891542,
+    "doctor_ms": 54.407125,
+    "live_post_max_ms": 123.790416,
+    "restore_ms": 478.15774999999996
   },
   "board_with_many_members_and_asks": {
-    "asks_ms": 26.628625,
-    "board_ms": 27.793125
+    "asks_ms": 26.483542,
+    "board_ms": 26.756542
   },
   "fifty_credentialed_workers_post_claim_and_read_at_once": {
-    "post_p50_ms": 29.704749999999997,
-    "post_p99_ms": 281.082458
+    "post_p50_ms": 26.200417,
+    "post_p99_ms": 382.796083
+  },
+  "fifty_members_renew_their_claims_by_activity_and_all_lapse_together_when_silent": {
+    "claims_list_ms": 7.946666
   },
   "hook_across_many_rooms": {
-    "hook_ms": 29.349957999999997
+    "hook_ms": 29.325208
   },
   "many_claimants_one_wins": {
-    "claim_ms": 54.985541
+    "claim_ms": 64.31675
   },
   "many_waiters_wake_together": {
-    "total_ms": 732.317542,
-    "wake_ms": 99.2405
+    "total_ms": 653.926875,
+    "wake_ms": 28.3125
+  },
+  "paging_a_hundred_thousand_message_room_costs_the_same_at_the_head_and_the_tail": {
+    "head_ms": 8.454959,
+    "middle_ms": 8.11925,
+    "newest200_ms": 8.967709000000001,
+    "tail_ms": 7.95825
+  },
+  "the_board_renders_five_hundred_parked_members_and_two_hundred_tasks_in_bounded_text": {
+    "board_ms": 13.663083,
+    "tasks_ms": 13.997333000000001,
+    "who_ms": 10.921709
   }
 }
