@@ -134,6 +134,9 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Show what you can learn about each recipient of your message SEQ in ROOM: parked, seen active after the post,
+    /// or not seen since. Liveness only (what `who` already shows); not proof anyone was shown or read it
+    Receipt { room: String, seq: i64 },
     /// Claim a path prefix (advisory lease with TTL)
     Claim {
         room: String,

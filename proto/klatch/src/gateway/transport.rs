@@ -34,6 +34,8 @@ pub trait Transport {
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
+    /// Per-recipient liveness states for a message the caller sent (#546); no text, no read state.
+    fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts>;
     /// Take a claim (optionally shared with every scope).
     fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()>;
     /// Declare the scope the caller works in.
@@ -162,6 +164,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()> {
         self.gateway.wait_seen(&self.principal, room, seq)
+    }
+    fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts> {
+        self.gateway.receipt(&self.principal, room, seq)
     }
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.gateway.who(&self.principal, room)

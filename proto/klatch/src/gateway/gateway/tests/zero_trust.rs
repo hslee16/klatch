@@ -45,6 +45,7 @@ const GUARDED: &[(&str, Call)] = &[
     ("head", |g, w| refused(g.head(w, "r"))),
     ("ack", |g, w| refused(g.ack(w, "r", 1))),
     ("who", |g, w| refused(g.who(w, "r"))),
+    ("receipt", |g, w| refused(g.receipt(w, "r", 1))),
     ("board", |g, w| refused(g.board(w, "r"))),
     ("open_asks", |g, w| refused(g.open_asks(w, "r"))),
     ("claim", |g, w| {

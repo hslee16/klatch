@@ -12,6 +12,7 @@ mod judge;
 mod labels;
 mod model;
 pub(crate) mod parked;
+mod receipt;
 mod scope;
 mod tasks;
 mod text;
@@ -45,6 +46,7 @@ pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
     RefusalRecord, ReleaseNote, ReleasedClaim,
 };
+pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{
     MAX_PAYLOAD_BYTES, flat, mentions, norm, overlaps, secs_between, valid_kind, valid_name,
