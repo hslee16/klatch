@@ -31,3 +31,6 @@ pub use source::{
 
 #[cfg(target_os = "macos")]
 pub use macos::Keychain;
+
+#[cfg(target_os = "linux")]
+pub use linux::SecretService;

@@ -1,0 +1,41 @@
+name: Linux keys
+
+# The Linux Secret Service backend against a real gnome-keyring, and the headless fallbacks, in Docker (epic #387,
+# #385). Run by hand: it builds Rust in a container, which is more than every pull request should pay for (the human's
+# rule, 2026-11-14: CI stays lightweight). Run it after changing proto/klatch/src/keys, custody.rs or proto/linux-keys.
+# The same command runs on a laptop with Docker: proto/linux-keys/run.sh
+on:
+  workflow_dispatch:
+    inputs:
+      bench:
+        description: Also measure key fetch and hook latency (the numbers go to the job summary)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  keys:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Key tests in four containers (bus, locked, nobus, bare)
+        env:
+          BENCH: ${{ inputs.bench && '--bench' || '' }}
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2086
+          proto/linux-keys/run.sh all $BENCH 2>&1 | tee "$RUNNER_TEMP/keys.log"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Linux key tests'
+            echo '```'
+            grep -E '^(===|---|test result|secret-tool|hook|who|post)' "$RUNNER_TEMP/keys.log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
