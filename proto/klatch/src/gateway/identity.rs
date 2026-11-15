@@ -35,7 +35,8 @@ pub trait Identity {
 pub struct DeclaredName;
 
 /// What to tell a human whose name was missing or refused. It never repeats the name that was typed.
-const NAME_HINT: &str = "set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-]";
+const NAME_HINT: &str = "set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-], \
+     or pass --discover (or KLATCH_DISCOVER=1) to act as this coding session";
 
 impl Identity for DeclaredName {
     fn resolve(&self, evidence: &PeerEvidence) -> Result<Principal> {

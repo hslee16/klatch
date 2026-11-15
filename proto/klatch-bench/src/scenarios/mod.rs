@@ -10,6 +10,7 @@ mod claims;
 mod factory;
 mod faults;
 mod hooks;
+mod identity;
 mod judge;
 mod keys;
 mod labels;
@@ -77,6 +78,7 @@ pub fn all() -> Vec<Scenario> {
         labels::all(),
         librarian::all(),
         hooks::all(),
+        identity::all(),
         keys::all(),
         judge::all(),
         retention::all(),

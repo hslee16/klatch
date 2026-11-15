@@ -597,6 +597,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
                 me: &me,
                 now: now(),
                 stdin_session: caller.stdin_session.as_deref(),
+                discovered: caller.session.is_some(),
                 stdin: caller.stdin.as_ref(),
             };
             run(&ctx, cmd)
