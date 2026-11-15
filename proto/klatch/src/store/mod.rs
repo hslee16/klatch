@@ -9,7 +9,7 @@ mod ids;
 mod memory_spike;
 mod sqlite;
 
-pub use sqlite::{SCHEMA_VERSION, SqliteStore};
+pub use sqlite::{ArchiveInfo, ArchiveState, SCHEMA_VERSION, SqliteStore, list_archives};
 
 use crate::domain::{
     AskRoom, Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk,

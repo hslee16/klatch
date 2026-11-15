@@ -4,6 +4,7 @@ use super::*;
 
 mod anchors;
 mod archive;
+mod archive_files;
 mod claims;
 mod concurrency;
 mod conformance;

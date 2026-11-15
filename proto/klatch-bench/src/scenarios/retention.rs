@@ -9,6 +9,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: retention_archive,
         },
         Scenario {
+            name: "admin_archives_lists_each_archive_with_counts_and_reports_a_damaged_one_without_stopping",
+            origin: "#487, DESIGN s32 item 55",
+            layer: "fault",
+            run: archives_listing,
+        },
+        Scenario {
             name: "an_ask_with_a_deadline_is_not_reported_stale_before_it_and_shows_how_long_is_left",
             origin: "#306, DESIGN s32 item 44",
             layer: "functional",
@@ -110,6 +116,61 @@ fn retention_archive(w: &World) -> Res {
         "restore-archive",
         "the restore is not in the audit",
     )?;
+    Ok(vec![])
+}
+
+/// `klatch admin archives` (#487): a listing that never prints text, flags a file that does not open or was changed, and
+/// still lists the good ones; the exit status says whether every file was usable.
+fn archives_listing(w: &World) -> Res {
+    w.set_clock(T0);
+    let none = w.admin(&["archives"], "");
+    check(
+        none.ok,
+        format!("listing with no archives failed: {}", none.stderr),
+    )?;
+    has(
+        &none.stdout,
+        "no archives",
+        "an empty directory is not said to be empty",
+    )?;
+    w.ok("alice", &["post", "r", "old message with the code hunter2"])?;
+    w.advance(10 * 86_400);
+    w.ok("alice", &["post", "r", "recent message"])?;
+    check(
+        w.admin(&["retention", "r", "7"], "").ok,
+        "setting retention failed",
+    )?;
+    check(
+        w.admin(&["archive", "--room", "r"], "").ok,
+        "archive failed",
+    )?;
+    let listed = w.admin(&["archives"], "");
+    check(listed.ok, format!("listing failed: {}", listed.stderr))?;
+    has(&listed.stdout, "ok", "a good archive is not shown as ok")?;
+    has(&listed.stdout, "1 messages", "the message count is missing")?;
+    has(&listed.stdout, "1 archive, 1 messages", "no total line")?;
+    lacks(
+        &listed.stdout,
+        "hunter2",
+        "the listing printed message text",
+    )?;
+    // a damaged file is named, the exit status says so, and the listing still ends with its total
+    let files = archive_files(w);
+    let mut bytes = std::fs::read(&files[0]).map_err(|e| e.to_string())?;
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 0xff;
+    std::fs::write(&files[0], bytes).map_err(|e| e.to_string())?;
+    let damaged = w.admin(&["archives"], "");
+    check(
+        !damaged.ok,
+        "a damaged archive left the exit status at success",
+    )?;
+    has(
+        &damaged.stdout,
+        "UNUSABLE",
+        "a damaged archive is not flagged",
+    )?;
+    has(&damaged.stdout, "1 unusable", "no unusable count")?;
     Ok(vec![])
 }
 
