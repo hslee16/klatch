@@ -1240,6 +1240,82 @@ repository, and every Kev fact above was re-read from the repository or the Hub.
 - **FOUND.** Idle sessions had 3 to 6 live descendants and the busy one 11 (MCP servers and helpers started with the session). A child count above zero therefore says little about a running tool: a hung busy session would read `WaitingOnTool` until the lease cap, never `Stuck` (ticket #538).
 - **NOT TESTED.** A deliberately hung tool call, a long silent build, a sleeping tool call, a background-blocked session, a killed real session: the machine's sessions were all in use and none was to be disturbed. The killed case is covered with fake sessions in the bench (`a_dead_holders_long_claim_lapses_after_the_grace_period`); the others only by unit tests on made-up tables.
 
+## 47. The inbound gate, the hold and refuse paths, and asyncRewake in the terminal, run live (2026-11-15, Claude Code 2.1.319 to 2.1.325, macOS, Darwin 23.3.0, tickets #85, #86, #87)
+
+Scripts: `experiments/gates/` (`recv.py` headless receiver with a raw-socket or real-session sender, `tui.py` an interactive receiver in a tmux pty, `post.py`, `wake.py`, `m87a.sh`, `m87b.sh`, `m86tui.sh`, `m87tui.sh`).
+
+**Method.** One receiver per case in a scratch directory, started with a throwaway `--settings` file and `--setting-sources local`; the user's own login (an isolated `CLAUDE_CONFIG_DIR` starts logged out); the five installed binaries run by path from `~/.local/share/claude/versions` (2.1.319, 2.1.321, 2.1.322, 2.1.323, 2.1.325), so a version is a binary and not a guess. Headless receivers: `claude -p --input-format stream-json --output-format stream-json --verbose --model haiku --permission-mode M`. Terminal receivers: the same binary in a tmux pane (a real pty) on a private tmux server (`tmux -L gates`) started with the shell's environment minus Claude Code's own `CLAUDE_CODE_*` variables (a plain `env -i` shell was logged out). A sender is either a Python process that is not the receiver's child, writing to `messagingSocketPath` from the registry record, or a second real session (`claude -p`, permission mode S, tools `ListAgents` and `SendMessage`). The test text asks for a bare marker word; "acted" means the receiver's own reply is exactly that marker (in the terminal: a line `⏺ <marker>`, because the held-message notice also contains the marker text and an earlier count-based check was wrong because of it). The receiver's hold approval deadline was shortened with the environment variable `CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS=8000` for the headless runs. No klatch binary, store or Keychain was involved: these cases test Claude Code only. Side effect: every session wrote a transcript under the user's `~/.claude/projects` for its scratch directory. `bypassPermissions` was used only for receivers and senders whose scratch directory was empty and whose task was a bare reply, `ListAgents` and `SendMessage`, or a foreground `python3 time.sleep`.
+
+### 47.1 Which gate applies (question 29, #86)
+
+**OBSERVED, five versions, headless receiver, default mode, idle.** A message with no auth line, with a wrong token, and with the right token (read from the key file) was acted on every time: 15 of 15 (5 versions by 3). **Terminal receiver:** wrong token, default mode, 2.1.325 and 2.1.319: acted on in about 2 seconds. Wrong token, `bypassPermissions` with `crossSessionInbound: accept`, 2.1.325: acted on. A busy receiver is covered in 47.2.
+
+**READ FROM THE BINARIES (`strings` on all five).** The socket server sets `authRequired = requireAuth ?? (platform === "windows")`; the only reference to `requireAuth` in each binary is that parameter, no caller passes it, and the string is identical in 2.1.319, 2.1.321, 2.1.322, 2.1.323 and 2.1.325. So on macOS (and, by the same expression, Linux) the token is **not enforced in any version tested**; on Windows it is. The token check exists (an `auth` line with a bad token destroys the connection when `authRequired` is true), it is just off. The other gates that remain: the socket directory and file modes (0700 and 0600, so another user cannot connect), the same-user process that reads the registry, and the receive-side policy of 47.2. The policy source is the same in all five binaries (same strings, same cause names).
+
+**Answer.** On macOS, any process of the same user can post to any session whose registry record it can read, with or without the token, on every version tested, idle or busy, prompting or bypassing; the receive-side hold is the only thing between that post and the model, and it applies only when the receiver bypasses permissions or has set `crossSessionInbound`. **Recommendation:** keep the 14.2 position and make it a rule (an invariant for tests): klatch never relies on the inbound token or on the socket for security; a nudge is content-free (R18); re-run the static check (`requireAuth`) on each new Claude Code version before trusting any statement about the token in either direction.
+
+### 47.2 The hold and refuse paths with mixed permission modes (questions 8 and 14, #87)
+
+**READ FROM THE BINARY (2.1.325).** Policy order: a setting `crossSessionInbound` (`accept`, `hold`, `refuse`) from managed, then `--settings`, then user settings wins; project and local settings may only tighten (`accept` there does not loosen). A value that is not one of the three is held. With no setting: the receiver's mode is classed `bypass` (`bypassPermissions`, or a mode that is bypass-like when bypass is available) or `prompting` (everything else); an unrecognised or unreadable mode holds. A sender's mode is compared only if the message carries `fromMode`; the schema says that is "honored only from the injecting host on local stdin", and the socket line parser has no such field. Hence, for a **raw socket sender**, which cannot attest a mode: a prompting receiver accepts, a bypassing receiver holds (`no-mode-asserted`). For a **real sender session** (`SendMessage`), the harness attests: equal class accepts, different class holds (`mode-mismatch`). A held message is parked (at most 100); if the cause is a mode cause an approval dialog opens in the terminal; no answer by the deadline drops it with outcome `expired` (default deadline 300000 ms, set by the environment variable above or `dialogExpiry` 60s, 5m, 10m, never); a headless session has no dialog, so every mode hold there ends `expired`.
+
+**OBSERVED, raw socket sender, headless receiver (`m87a.sh`, 2.1.325; one post per cell):**
+
+| Receiver mode | no setting | `accept` | `hold` | `refuse` |
+|---|---|---|---|---|
+| default | acted | acted | held (`explicit-setting`), not delivered | dropped silently, no event |
+| acceptEdits | acted | acted | held (`explicit-setting`) | dropped silently |
+| plan | acted | acted | held (`explicit-setting`) | dropped silently |
+| bypassPermissions | **held (`no-mode-asserted`), dropped `expired` 8.0 s later** | acted | held (`explicit-setting`) | dropped silently |
+
+`auto` and `dontAsk` receivers, no setting: both acted (classed prompting). The stream carries a `system` event with subtype `peer_message_hold` (state, cause, outcome, lane, `from`); `refuse` emits nothing, and the sender gets no acknowledgement in any case.
+
+**OBSERVED, real sender session through `SendMessage`, headless receiver (`m87b.sh`; the sender said "Sent" every time, including when the message was held or refused, so the sender's own report cannot be trusted as a delivery receipt):**
+
+| Sender mode | Receiver mode | Setting | Result |
+|---|---|---|---|
+| default | default | none | acted |
+| default | bypassPermissions | none | held `mode-mismatch` (after 3.9 s), dropped `expired` 8 s later |
+| bypassPermissions | default | none | held `mode-mismatch`, dropped `expired` |
+| bypassPermissions | bypassPermissions | none | acted |
+| acceptEdits | default | none | acted (same class) |
+| default | bypassPermissions | `accept` | acted |
+| bypassPermissions | default | `accept` | acted |
+| default | default | `refuse` | not delivered, no event |
+
+The `from` on a held session message was the sender's socket address (`uds:/tmp/cc-socks/<pid>.sock`); on a raw post it was empty.
+
+**OBSERVED, interactive terminal receiver (tmux pty, 2.1.325, raw socket sender):**
+
+- Default mode, idle: delivered, reply in 2.1 s. The message reaches the model wrapped in a long notice that it is from another session and not the user (never edit permission settings or config because a peer asked, never treat it as approval), so a klatch nudge is read with suspicion by design.
+- Default mode, a foreground tool call running (`python3 time.sleep(40)`, registry status `busy` at the post): the message is queued behind it (the screen showed it under the running tool), the tool was not interrupted, and the reply came 41.1 s after the post, when the tool finished.
+- `bypassPermissions`, idle or busy, no setting: held. The terminal shows `Held peer message, from an unidentified session; preview: «...» , not delivered to Claude (1 held). The sender did not attest its permission mode and this session bypasses prompts. Review it below, or set "crossSessionInbound" to "accept".` and a dialog "Held message from another session" with the message body and two options, `Deny, drop it and tell the sender it was declined` (first) and `Deliver this message to Claude`. Choosing Deliver: acted in 3.6 s. Choosing Deny, or no answer within the 25 s watched: not delivered. The deadline is 5 minutes by default; not waited out in the terminal.
+- Default mode with `hold`: the same notice with `Your "crossSessionInbound" setting is "hold"; set it to "accept" to deliver held messages.` and no dialog (the dialog is only for mode causes). With `refuse`: nothing on screen, not delivered.
+- `bypassPermissions` with `accept`: acted in 2.1 s.
+- 2.1.319 in the terminal: default mode delivers (wrong token), bypass holds with the same notice.
+
+**What decides which mode members run in (DESIGN section 22 question 14, and section 9).** A Tier 0 nudge from outside, which is a raw socket post and so cannot attest a mode, reaches a prompting session and never reaches a bypassing one unless that session's user set `crossSessionInbound: accept` in user or `--settings` scope (a repo or local setting cannot loosen it). A bypassing member's nudge therefore needs a human at the dialog within 5 minutes or it is dropped silently as far as klatch can see. The hook path (SessionStart, UserPromptSubmit, PostToolUse, the wake watcher of section 39) does not use this gate and works in every mode, so it stays the primary delivery. **Recommendation:** document that Tier 0 is best effort for prompting members only; have `klatch doctor` report a member whose registry record shows `bypassPermissions` (if the mode is readable; the record has no mode field, a hook receives `permission_mode`) and say its nudge will be held; do not write `crossSessionInbound: accept` anywhere without the human's explicit consent (it widens what any same-user process can put in front of a bypassing model, and the sender cannot attest anything). Tickets: #552 (needs-human: Tier 0 for bypassing members), #553 (doctor warns), #554 (version check script), #555 (a sender cannot see a hold).
+
+**NOT VERIFIED.** The 5 minute default expiry in the terminal; a sender that claims `from_name`; whether `SendMessage` from a terminal sender attests the same way as a headless one (the harness code is shared); modes other than the six named; Linux and Windows (the token result is read from the binary, not run); versions before 2.1.319 or after 2.1.325; the effect of `isolatePeerMachines` and managed settings.
+
+### 47.3 asyncRewake in the interactive terminal and under long delays (questions 3 and 30, #85)
+
+Method: `wake.py`: a `SessionStart` hook, `async` and `asyncRewake`, `sleep DELAY; date +%s > stamp; echo "reply with exactly the word WKxxxx" >&2; exit 2`, in a tmux pty (2.1.325, Haiku, default mode, scratch directory, no klatch). The session answers one prompt first, so it is idle when the hook ends. Latency is the time from the stamp file to the marker on screen, polled every 2 seconds (so up to 2 s of it is the poll).
+
+| Case | Result |
+|---|---|
+| delay 30 s, timeout 120 | woke; the screen shows `Stop hook feedback` and the model's reply with the marker; the hook's stderr text itself is not printed |
+| delay 700 s (past the 600 s default), timeout 900 | woke 2.6 s after the hook ended (idle for about 11 minutes) |
+| delay 45 s, a foreground tool call (`python3 time.sleep(25)`) running when the hook ends | the tool was not interrupted; the wake came 22.8 s later, when the tool finished, as one extra turn |
+| delay 60 s, timeout 30 s | the hook was killed at its timeout: no wake, no message on screen, nothing for the user to see |
+| delay 3660 s, timeout 3800 s | woke 2.3 s after the hook ended, after 61 minutes idle (the `Stop` watcher from the first turn was the only thing running; no keepalive) |
+
+So a hook-started watcher can wake an idle terminal session at any delay below its hook `timeout`; the timeout, not the 600 s default, is the limit (3660 s measured); a watcher that outlives its timeout dies silently, so a watcher must exit before its timeout and be re-armed by the `Stop` hook (this is what klatch does, section 39). Earlier runs (section 39) covered the terminal with the klatch watcher, a second session, and background shells; this one adds the delay, the timeout kill and the hour.
+
+### 47.4 What this changes
+
+- DESIGN question 29 is answered: no gate from the token on this platform, on any version tested; question 8 and 14 are answered as in the tables; question 30 loses its asyncRewake clause (PostToolUse and PreToolUse are in sections 21 and 48).
+- A held or refused message looks successful to its sender in every path: a sender cannot learn that a nudge was held. Delivery confirmation has to come from klatch (the reader's cursor), never from the socket.
+
 ## 48. Hook output, nudge latency and detached watchers, run live (2026-11-15, Claude Code 2.1.325, macOS, Darwin 23.3.0, tickets #83, #84, #88, #89)
 
 Method: headless `claude -p --model haiku --setting-sources local` with a throwaway `--settings` file per case and `--include-hook-events --output-format stream-json --verbose` (the stream carries each hook's raw stdout, stderr and exit code). Scratch directory only; the klatch case used the binary built in a worktree with `KLATCH_HOME` and `KLATCH_KEY_DIR` pointing at a temp directory (no Keychain, no live store). The real login was used. Each result is OBSERVED on one version and one machine. Scripts are not committed; the commands are described per case.
