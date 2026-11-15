@@ -33,7 +33,32 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "fault",
             run: subagent_hook,
         },
+        Scenario {
+            name: "doctor_reports_codex_without_a_login_and_without_writing_anything",
+            origin: "#544, #545, RESEARCH-NOTES 49.3",
+            layer: "functional",
+            run: codex_report,
+        },
     ]
+}
+
+/// A world has no PATH and no HOME, so doctor finds no Codex: it must say so as a plain line, not fail. The cases
+/// with a Codex that has or lacks `queue`, and a trusted or untrusted hook, are in tests/doctor_codex.rs.
+fn codex_report(w: &World) -> Res {
+    let report = w.ok("anyone", &["doctor"])?;
+    let line = report
+        .lines()
+        .find(|l| l.contains("codex:"))
+        .ok_or("doctor said nothing about Codex")?;
+    check(
+        line.starts_with("ok"),
+        "a machine without Codex got a warning",
+    )?;
+    check(
+        !report.contains("codex hooks:"),
+        "a hooks line without any Codex hooks",
+    )?;
+    Ok(vec![])
 }
 
 /// A tool call as Claude Code hands it to a `PreToolUse` hook.

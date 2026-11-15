@@ -48,7 +48,7 @@ fn store_path(home: Option<&Path>) -> Option<PathBuf> {
 /// Run `probe` on its own thread and wait up to `limit` for its answer; `None` when it does not come. A keystore can
 /// block for ever on a dialog nobody is there to answer, and a health check must not hang with it. The abandoned thread
 /// ends with the process.
-fn within<T: Send + 'static>(
+pub(crate) fn within<T: Send + 'static>(
     limit: std::time::Duration,
     probe: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
@@ -190,6 +190,20 @@ fn check_archives(r: &mut Report, home: Option<&Path>) {
             format!("archives: {files} file{}, {messages} messages, {bytes} bytes in {}; each opens with the store key and passes the page check", if files == 1 { "" } else { "s" }, dir.display()),
             None,
         );
+    }
+}
+
+/// Codex: whether klatch's hooks in its config are trusted (an untrusted hook is skipped silently, #544) and whether
+/// `codex queue` exists (#545). Reads the Codex files and runs `codex --version` and `codex queue --help`, which need
+/// no login; writes nothing.
+fn check_codex(r: &mut Report, home: Option<&Path>) {
+    let found = crate::codex::codex_home(std::env::var_os("CODEX_HOME"), home)
+        .and_then(|dir| crate::codex::hook_findings(&dir))
+        .into_iter()
+        .chain(std::iter::once(crate::codex::queue_finding()));
+    for f in found {
+        let status = if f.ok { Status::Ok } else { Status::Warn };
+        r.add(status, f.line, f.fix.as_deref());
     }
 }
 
@@ -403,6 +417,7 @@ pub fn run(
     );
     check_store(&mut r, home);
     check_archives(&mut r, home);
+    check_codex(&mut r, home);
     check_hooks(&mut r, project_dir, home, exe);
     check_session(&mut r);
     check_registry(&mut r);
