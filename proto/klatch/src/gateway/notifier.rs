@@ -4,6 +4,9 @@
 //! seam is where push delivery (#214) and webhooks will attach.
 
 /// Told after a post is stored. It must not block or fail the post: it returns nothing, so there is nothing to refuse.
+/// What a notifier does is an attempt, never a delivery: a socket write succeeds for messages the receiver holds,
+/// refuses or lets expire (RESEARCH-NOTES 47.2), so only the reader's cursor or hook shown-mark may say delivered
+/// (#555). A notifier must not move either.
 pub trait Notifier {
     fn posted(&self, room: &str, seq: i64, sender: &str);
 }

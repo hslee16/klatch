@@ -1,0 +1,1 @@
+- Tests and a rule on the notifier seam: a wake pointer or a notifier call is an attempt, never delivery; only the reader cursor or hook shown-mark counts (#555).
