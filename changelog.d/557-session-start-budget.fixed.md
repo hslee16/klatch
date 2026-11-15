@@ -1,0 +1,1 @@
+- A session start keeps the convention and the boards inside the hook byte budget with the digest (#557): the convention is whole, the digest leaves a floor for the boards, and a board is cut by whole lines with a "N more board lines not shown" line; the digest shrinks only after the board has.
