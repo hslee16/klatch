@@ -43,6 +43,9 @@ pub struct MemberInfo {
     pub status: Option<String>,
     /// The member whose session started this one (a headless worker started from an interactive session), if known.
     pub parent: Option<String>,
+    /// A declared long wait (a `parked:` post or the Stop hook). It holds only while its return time is ahead
+    /// (`Parked::holds`); an expired one is still returned so a reader can say the return time has passed.
+    pub parked: Option<crate::domain::Parked>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

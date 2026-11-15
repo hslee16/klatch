@@ -484,7 +484,8 @@ pub mod members {
                 name: "alice".into(),
                 last_seen: 20,
                 status: None,
-                parent: None
+                parent: None,
+                parked: None
             }]
         );
         assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);

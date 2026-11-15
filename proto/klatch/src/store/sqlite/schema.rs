@@ -6,7 +6,7 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public', kind TEXT, payload TEXT);
@@ -29,7 +29,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);
  CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL); CREATE TABLE credentials(member TEXT PRIMARY KEY, token_hash BLOB NOT NULL, clearance TEXT NOT NULL, parent TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '');";
+ CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '');
+ CREATE TABLE member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -283,6 +284,14 @@ pub(super) fn migrate_v23(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 24 to 25: parked members (#305), one row per member: why, since when, and the return time.
+pub(super) fn migrate_v24(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);",
+    )
+    .map_err(be)
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -299,7 +308,7 @@ type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 24] = [
+const MIGRATIONS: [Step; 25] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -324,6 +333,7 @@ const MIGRATIONS: [Step; 24] = [
     migrate_v21,
     migrate_v22,
     migrate_v23,
+    migrate_v24,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

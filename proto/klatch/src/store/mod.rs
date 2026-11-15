@@ -13,7 +13,7 @@ pub use sqlite::{SCHEMA_VERSION, SqliteStore};
 
 use crate::domain::{
     AskRoom, Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, OpenAsk,
-    Posted, ReleaseNote, Result, open_asks,
+    Parked, Posted, ReleaseNote, Result, open_asks,
 };
 
 /// A member in a room: who is asking, and where.
@@ -330,6 +330,17 @@ pub trait Store {
     /// removes nothing.
     fn prune_members(&self, _older_than: i64, _now: i64) -> Result<usize> {
         Ok(0)
+    }
+    /// Park a member (DESIGN section 32 item 45): until `parked.back_by` its live claims and ask leases run at
+    /// least that long, it stays on the board however long since it was seen, and pruning spares it. Replaces an
+    /// earlier park. The default stores nothing.
+    fn park(&self, _member: &str, _parked: &Parked, _now: i64) -> Result<()> {
+        Ok(())
+    }
+    /// End a member's park on a sign of life: claims and leases it held that run past a normal lease are cut back
+    /// to one from `now`. Does nothing for a member that is not parked.
+    fn unpark(&self, _member: &str, _now: i64) -> Result<()> {
+        Ok(())
     }
     /// Record the member's status in a room (replacing any earlier one); joins the member if needed. The default
     /// stores nothing.

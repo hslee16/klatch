@@ -87,6 +87,7 @@ impl Store for MemoryStore {
                         last_seen: *seen,
                         status: None,
                         parent: None,
+                        parked: None,
                     })
                     .collect()
             })

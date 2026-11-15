@@ -1,6 +1,6 @@
 use crate::domain::{
-    Claim, Error, MemberInfo, Message, Posted, Principal, Result, RoomDigest, STALE_AFTER_SECS,
-    valid_name,
+    Claim, Error, MemberInfo, Message, PARKED_DEFAULT_SECS, Parked, Posted, Principal, Result,
+    RoomDigest, STALE_AFTER_SECS, parse_parked, valid_name,
 };
 use crate::gateway::{Clock, Guard, Operation};
 use crate::store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Store};
@@ -261,7 +261,53 @@ impl<S: Store> Gateway<S> {
         };
         let posted = self.store.post_as(&message, self.now())?;
         self.notifier.posted(room, posted.seq, &who.member);
+        self.park_by_post(who, body);
         Ok(posted)
+    }
+
+    /// A `parked:` post parks its sender; any other post is a sign of life and ends a park (DESIGN section 32 item
+    /// 45). The post already happened, so a failure here is not the post's failure.
+    fn park_by_post(&self, who: &Principal, body: &str) {
+        let now = self.now();
+        let _ = match parse_parked(body, now) {
+            Some(p) => self.store.park(&who.member, &p, now),
+            None => self.store.unpark(&who.member, now),
+        };
+    }
+
+    /// The Stop hook at the end of a turn: the turn was a sign of life, and background tasks or crons still
+    /// running mean the member now waits on them (parked until it next speaks or the default horizon passes).
+    pub fn record_stop(
+        &self,
+        who: &Principal,
+        background_tasks: usize,
+        crons: usize,
+    ) -> Result<()> {
+        check_member(who)?;
+        let now = self.now();
+        self.store.unpark(&who.member, now)?;
+        if background_tasks + crons == 0 {
+            return Ok(());
+        }
+        let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+        let mut parts = Vec::new();
+        if background_tasks > 0 {
+            parts.push(plural(background_tasks, "background task"));
+        }
+        if crons > 0 {
+            parts.push(plural(crons, "cron"));
+        }
+        let parked = Parked {
+            why: parts.join(", "),
+            back_by: now + PARKED_DEFAULT_SECS,
+        };
+        self.store.park(&who.member, &parked, now)
+    }
+
+    /// Any hook that runs is a sign of life: it ends a park.
+    pub fn sign_of_life(&self, who: &Principal) -> Result<()> {
+        check_member(who)?;
+        self.store.unpark(&who.member, self.now())
     }
 
     /// Remember that the caller is a child of `parent`, the member whose session started the caller's (#24); `None`
@@ -425,9 +471,10 @@ impl<S: Store> Gateway<S> {
             .filter(|m| m.status.as_deref().is_some_and(|s| s.starts_with("done")))
             .map(|m| m.name.clone())
             .collect();
-        let (recent, gone): (Vec<_>, Vec<_>) = all
-            .into_iter()
-            .partition(|m| now - m.last_seen <= crate::domain::MEMBER_ACTIVE_SECS);
+        let (recent, gone): (Vec<_>, Vec<_>) = all.into_iter().partition(|m| {
+            now - m.last_seen <= crate::domain::MEMBER_ACTIVE_SECS
+                || m.parked.as_ref().is_some_and(|p| p.holds(now))
+        });
         // An offer follows its sender's presence: a member that has gone quiet is not available, and a member
         // that keeps waiting (which refreshes presence) keeps its offer with no renewal.
         let absent: Vec<String> = gone.iter().map(|m| m.name.clone()).collect();
@@ -443,6 +490,7 @@ impl<S: Store> Gateway<S> {
                 name: m.name,
                 last_seen: m.last_seen,
                 parent: m.parent,
+                parked: m.parked.filter(|p| p.holds(now)),
             })
             .collect();
         Ok(crate::domain::Board {

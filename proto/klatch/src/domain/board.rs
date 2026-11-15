@@ -4,7 +4,7 @@
 //! not been seen for a while (DESIGN section 25.8).
 
 use crate::domain::hook::clip;
-use crate::domain::{MemberInfo, Message, OpenAsk, flat};
+use crate::domain::{MemberInfo, Message, OpenAsk, Parked, flat};
 
 /// A message whose body starts with this text is an offer.
 pub const OFFER_PREFIX: &str = "offering:";
@@ -47,6 +47,8 @@ pub struct BoardMember {
     pub status: Option<String>,
     /// The member whose session started this one, if known.
     pub parent: Option<String>,
+    /// A declared long wait that still holds.
+    pub parked: Option<Parked>,
 }
 
 /// The current state of a room derived from its log: open asks, current offers and members.
@@ -66,7 +68,7 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
     let mut out = String::new();
     let mut gone = 0;
     for m in members {
-        if !all && now - m.last_seen > MEMBER_ACTIVE_SECS {
+        if !all && now - m.last_seen > MEMBER_ACTIVE_SECS && !holds_park(m.parked.as_ref(), now) {
             gone += 1;
             continue;
         }
@@ -81,6 +83,9 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
         if let Some(status) = &m.status {
             out.push_str(&format!("\tstatus: {}", flat(status)));
         }
+        if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now)) {
+            out.push_str(&format!("\t{}", flat(&p.phrase(now))));
+        }
         out.push('\n');
     }
     match gone {
@@ -91,6 +96,11 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
         )),
     }
     out
+}
+
+/// A parked member whose return time has not come stays listed however long since it was seen.
+fn holds_park(parked: Option<&Parked>, now: i64) -> bool {
+    parked.is_some_and(|p| p.holds(now))
 }
 
 /// A section heading, with a line naming the section when it is empty so a reader can see there is nothing.
@@ -142,13 +152,19 @@ fn render_members(board: &Board, now: i64, out: &mut String) {
             .as_deref()
             .map(|s| format!(", status: {}", clip(s)))
             .unwrap_or_default();
+        let parked = m
+            .parked
+            .as_ref()
+            .filter(|p| p.holds(now))
+            .map(|p| format!(", {}", clip(&p.phrase(now))))
+            .unwrap_or_default();
         let parent = m
             .parent
             .as_deref()
             .map(|p| format!(", child of {}", flat(p)))
             .unwrap_or_default();
         out.push_str(&format!(
-            "  {} last seen {}s ago{parent}{status}\n",
+            "  {} last seen {}s ago{parent}{status}{parked}\n",
             flat(&m.name),
             crate::domain::secs_between(now, m.last_seen)
         ));
@@ -399,12 +415,14 @@ mod tests {
                     last_seen: 98,
                     status: None,
                     parent: None,
+                    parked: None,
                 },
                 BoardMember {
                     name: "api-1".into(),
                     last_seen: 40,
                     status: Some("done leaving".into()),
                     parent: None,
+                    parked: None,
                 },
             ],
             stale_members: 0,
@@ -523,6 +541,7 @@ mod tests {
             last_seen,
             status: status.map(String::from),
             parent: None,
+            parked: None,
         }
     }
 
@@ -573,6 +592,7 @@ mod tests {
                 last_seen: 1500,
                 status: Some("busy".into()),
                 parent: None,
+                parked: None,
             }],
             ..Default::default()
         };
@@ -602,6 +622,7 @@ mod tests {
                 last_seen: 990,
                 status: None,
                 parent: Some("lead".into()),
+                parked: None,
             }],
             ..Default::default()
         };
