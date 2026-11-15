@@ -22,7 +22,63 @@ pub enum PeerEvidence {
     /// A credential the gateway issued, already checked against the registry (token, expiry, revocation) by the
     /// caller. This is the one kind of evidence that yields a verified principal.
     Credential { member: String },
+    /// An SSH login: the key's fingerprint and, when the key's `command=` forces `klatch serve`, the member that
+    /// command names. Evidence only once an `EvidenceTable` maps it; the forced member must agree with the table.
+    SshKey {
+        fingerprint: String,
+        forced_member: Option<String>,
+    },
+    /// The process on the other end of a local socket, as the kernel reports it. Same-host evidence, not proof.
+    Process { pid: u32, uid: u32 },
+    /// The subject of a client certificate the transport already validated against its trust roots.
+    Certificate { subject: String },
+    /// A bearer token the peer presented. Its text never appears in debug output.
+    Bearer { token: Secret },
 }
+
+impl PeerEvidence {
+    /// Bearer evidence from a token's text.
+    pub fn bearer(token: &str) -> Self {
+        Self::Bearer {
+            token: Secret(token.into()),
+        }
+    }
+
+    /// A short word for the kind of evidence, safe to put in a name or a log (never the evidence itself).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::DeclaredName(_) => "declared",
+            Self::Session { .. } => "session",
+            Self::Credential { .. } => "credential",
+            Self::SshKey { .. } => "ssh",
+            Self::Process { .. } => "process",
+            Self::Certificate { .. } => "certificate",
+            Self::Bearer { .. } => "bearer",
+        }
+    }
+}
+
+/// A secret string: compared in constant time and printed as `<redacted>`.
+#[derive(Clone)]
+pub struct Secret(String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        let (a, b) = (self.0.as_bytes(), other.0.as_bytes());
+        let diff = a.len() ^ b.len();
+        let fold = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+        diff == 0 && fold == 0
+    }
+}
+
+impl Eq for Secret {}
 
 /// Maps evidence to a caller. Implementations must never return a verified principal on evidence that
 /// does not prove who the peer is.

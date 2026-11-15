@@ -1,0 +1,1 @@
+- Transport seam for later network transports: Connector and Listener traits, new PeerEvidence kinds (SSH key and forced-command member, pid and uid, certificate subject, bearer token), an EvidenceTable identity and `serve_connection`; unmapped peers are unattributed (#105). No socket transport yet.

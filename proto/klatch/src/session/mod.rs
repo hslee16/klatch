@@ -7,7 +7,7 @@ pub mod policy;
 mod role_methods;
 
 use crate::domain::Principal;
-use crate::gateway::{Gateway, Subscription};
+use crate::gateway::{Connection, Gateway, Identity, Subscription};
 use crate::protocol::{ClientFrame, DecodeError, FrameReader, PROTOCOL_VERSION, ServerFrame};
 use crate::store::Store;
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
@@ -53,6 +53,20 @@ pub fn serve<S: Store, R: BufRead + Send + 'static, W: Write>(
     output: W,
 ) -> io::Result<()> {
     Session::new(gateway, who, &SessionConfig::default()).serve(input, output)
+}
+
+/// Serve one transport connection: the identity maps the peer's evidence to a principal (an unmapped peer comes
+/// out unattributed, R23) and the session loop runs over the connection's stream. The peer never names itself.
+pub fn serve_connection<S: Store>(
+    gateway: &Gateway<S>,
+    identity: &dyn Identity,
+    connection: Connection,
+    config: &SessionConfig,
+) -> io::Result<()> {
+    let who = identity
+        .resolve(&connection.evidence)
+        .map_err(io::Error::other)?;
+    Session::new(gateway, &who, config).serve(connection.input, connection.output)
 }
 
 /// What `Session::stream` writes: the history of one room after `from_seq`, and with `follow` its live messages.
