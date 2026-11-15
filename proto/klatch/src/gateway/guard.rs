@@ -1,4 +1,4 @@
-use crate::domain::{Principal, Result};
+use crate::domain::{Error, Principal, Result};
 
 /// What a caller is trying to do, as seen by the guard.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,5 +137,40 @@ pub struct AllowAll;
 impl Guard for AllowAll {
     fn check(&self, _who: &Principal, _op: &Operation) -> Result<()> {
         Ok(())
+    }
+}
+
+/// The admin acts that edit a floor (R29, D4): the agent cap, the label order, and the scrub and deny list.
+/// Keep this list in step with the `administer` calls that write those policies; the floors tests fail when a
+/// listed act stops being refused.
+const FLOOR_ACTIONS: [&str; 4] = ["cap", "chain", "scrub-add", "scrub-remove"];
+
+/// Refuses every act that edits a floor, whoever asks, and leaves every other decision to the guard it wraps.
+/// Every gateway an agent can reach uses it; only the terminal-gated `klatch admin` gateway does not, because a
+/// person typing at a terminal is the one party allowed to set the floors. Defence in depth: the wire protocol
+/// has no admin method at all, so this holds even if one is added or a caller embeds the gateway.
+pub struct ForbidFloors<G: Guard> {
+    inner: G,
+}
+
+impl<G: Guard> ForbidFloors<G> {
+    pub fn new(inner: G) -> Self {
+        Self { inner }
+    }
+}
+
+impl<G: Guard> Guard for ForbidFloors<G> {
+    fn check(&self, who: &Principal, op: &Operation) -> Result<()> {
+        if let Operation::Admin { action, .. } = op
+            && FLOOR_ACTIONS.contains(&action.as_str())
+        {
+            return Err(Error::Refused {
+                rule: "floors".into(),
+                reason: format!(
+                    "{action} edits a floor; floors are set by the person at a terminal (klatch admin), never by an agent"
+                ),
+            });
+        }
+        self.inner.check(who, op)
     }
 }

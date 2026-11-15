@@ -97,7 +97,11 @@ pub fn run(cmd: RunCmd) -> Result<()> {
         bail!("{why}");
     }
     let db = db_path()?;
-    let gateway = Gateway::new(custody::open_store(&db)?, CliClock, AllowAll);
+    let gateway = Gateway::new(
+        custody::open_store(&db)?,
+        CliClock,
+        ForbidFloors::new(AllowAll),
+    );
     // the person running the run holds every label key, so the archive holds what the rooms held
     gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
     let launcher = Principal::unattributed("admin");

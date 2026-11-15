@@ -17,7 +17,7 @@ pub use gateway::{
     AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, Digest, Gateway, Handoff,
     MAX_CREDENTIAL_TTL_SECS, Refused, RunInfo, check_credential, run_prefix, valid_run_id,
 };
-pub use guard::{AllowAll, Guard, Operation};
+pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence};
 pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};

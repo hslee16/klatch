@@ -138,3 +138,31 @@ fn serve_stdio_keeps_going_after_a_bad_line() {
             .any(|x| matches!(x, ServerFrame::Response { id, ok: true, .. } if id == "w"))
     );
 }
+
+#[test]
+fn no_wire_method_reaches_a_floor() {
+    // R29: an agent on the wire cannot set the cap, the label order or a scrub term, whatever it names the method
+    let h = Home::new();
+    let names = [
+        "admin_set_cap",
+        "set_cap",
+        "cap",
+        "admin.cap",
+        "admin_set_label_chain",
+        "admin_add_scrub_term",
+        "admin_remove_scrub_term",
+    ];
+    let calls: Vec<String> = names
+        .iter()
+        .map(|n| request(n, n, r#"{"label":"internal","term":"x","name":"r"}"#))
+        .collect();
+    let refs: Vec<&str> = calls.iter().map(String::as_str).collect();
+    let f = h.serve("alice", &refs);
+    for n in names {
+        assert!(
+            f.iter()
+                .any(|x| matches!(x, ServerFrame::Response { id, ok: false, .. } if id == n)),
+            "{n} must be refused as unknown"
+        );
+    }
+}

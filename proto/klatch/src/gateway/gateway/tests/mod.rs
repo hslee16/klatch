@@ -15,6 +15,7 @@ mod claims;
 mod credentials;
 mod digest;
 mod dm;
+mod floors;
 mod guarding;
 mod handoff;
 mod labels;
