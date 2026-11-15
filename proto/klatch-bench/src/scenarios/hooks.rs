@@ -28,6 +28,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: digest_budget,
         },
         Scenario {
+            name: "a_claim_held_two_hours_reminds_its_owner_once_and_tells_a_peer_its_age",
+            origin: "#547, RESEARCH-NOTES 49.2",
+            layer: "functional",
+            run: claim_age,
+        },
+        Scenario {
             name: "a_hook_inside_a_subagent_prints_nothing_and_keeps_the_parents_mail",
             origin: "#493",
             layer: "fault",
@@ -209,6 +215,38 @@ fn digest_budget(w: &World) -> Res {
         &out,
         "klatch read r --peek",
         "the line does not say how to read them",
+    )?;
+    Ok(vec![])
+}
+
+/// An owner that keeps working renews its claim forever; at two hours the hook says so, once, and a peer refused
+/// by the claim is told how long it has been held.
+fn claim_age(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("holder", &["join", "r"])?;
+    w.ok("other", &["join", "r"])?;
+    w.ok("holder", &["claim", "r", "src/a.rs", "--ttl", "3600"])?;
+    for _ in 0..11 {
+        w.advance(600);
+        let early = post_tool_use(w, "holder", None)?;
+        check(
+            !early.contains("has been held"),
+            "reminded before two hours",
+        )?;
+    }
+    w.advance(600);
+    let at_two = post_tool_use(w, "holder", None)?;
+    has(
+        &at_two,
+        "your claim on src/a.rs has been held for 2h",
+        "no reminder at two hours",
+    )?;
+    let again = post_tool_use(w, "holder", None)?;
+    check(!again.contains("has been held"), "the reminder repeated")?;
+    has(
+        &w.refused("other", &["claim", "r", "src/a.rs"])?,
+        "held for 2h",
+        "the peer was not told the age",
     )?;
     Ok(vec![])
 }

@@ -103,6 +103,7 @@ fn claim_conflicts_with_an_overlapping_claim_by_another() {
             path: "src".into(),
             owner: "bob".into(),
             secs_left: 90,
+            held_secs: 0, // taken at time 0, which reads as unknown
             deadlock: false
         }
     );

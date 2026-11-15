@@ -3,6 +3,7 @@
 
 mod asks;
 mod board;
+mod claim_age;
 mod convention;
 mod credentials;
 mod dm;
@@ -34,6 +35,7 @@ pub use tasks::{
     WORKING_PREFIX, open_tasks,
 };
 pub mod budget;
+pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
 pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
 pub use credentials::credential_kind;
 pub use dm::{DM_PREFIX, dm_room};
