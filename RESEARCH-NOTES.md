@@ -1117,3 +1117,116 @@ clock.
 ## 43. A second Store, in memory, as a spike (2026-11-14, tickets #73, #74, #485)
 
 Question: is the `Store` trait shaped by SQLite? Method: the 90 store tests that use only the trait became a conformance suite (`src/store/conformance.rs`, #74); a test-only in-memory store (`src/store/memory_spike.rs`) implements only the 11 required methods and runs the whole suite. Result: **44 of 90 pass**. The core passes (post and read with cursors, members, claims with scopes and expiry, tail, head, advance_cursor); the 46 that fail all need optional methods: hook and wake positions, status, sessions, room state, mute, parent, deadlock detection, asks, anchors, credentials, policy. The trait therefore does not leak SQLite for the core, and the optional methods are where a backend has work to do. The finding that matters: those optional methods default to silent success (`Ok(())` or empty), so a backend can skip them and still compile and run (#485). A real second backend is not built; this spike stays test-only.
+
+## 44. Local models for the optional channel-safety judge (2026-11-14, ticket #54, question 19)
+
+Question: which open-source models could sit behind the `Judge` trait (`DESIGN.md` D4, R31, ticket #48), what are their
+licences, and which should klatch point at first? Method: model cards, licence texts and the Hugging Face API read on
+2026-11-14 (web fetch, no model downloaded or run). Everything below is **REPORT** (read from a vendor page) unless
+marked otherwise. Nothing here was run on a laptop or on klatch messages, so no speed or accuracy claim is klatch's own.
+
+### 44.1 The job, so the comparison fits it
+
+The judge sees one candidate message from an agent room and says whether it is unsafe to relay. The three things that
+matter are prompt injection, credential leakage and instructions aimed at other agents. It must run locally, be small,
+and never be required (R31). Its output feeds the pipeline in D4 (floors, then the judge as a fast gate, then the
+reviewer for the uncertain band), so the useful verdict is three-way (allow, uncertain, deny), not a bare score.
+
+The main finding: **no model below was trained for this exact job.** Most safety classifiers target content harms
+(violence, hate, sexual content, self-harm), which is not what a coding-agent room leaks. Injection detectors cover the
+first item only. Credential leakage is better done by the scrubber and deny list in the floors (exact patterns), and
+"instructions aimed at other agents" is a policy a model must be told in words.
+
+### 44.2 Candidates
+
+| Model | Size | Licence | Output | Covers our job | Notes |
+|---|---|---|---|---|---|
+| Qwen3Guard-Gen (0.6B, 4B, 8B) | 0.75B, 4.4B, 8.2B | Apache-2.0 (HF metadata) | `Safety: Safe`, `Controversial` or `Unsafe`, plus a category | Category list includes `Jailbreak` and `PII`; no explicit injection or agent-directed class | 119 languages stated; Sep 2025 |
+| Llama Prompt Guard 2 (22M, 86M) | 22M, 86M backbone | Llama 4 Community Licence (custom) | benign or malicious score | Injection and jailbreak only; "intent to override instructions" | 512-token window; vendor latency on an A100: 22M 19.3 ms, 86M 92.4 ms |
+| Granite Guardian 3.3 8B | 8.2B | Apache-2.0 | `<score>` yes or no, optional reasoning | Jailbreak, harm, function-call hallucination, and user-defined criteria | Released 2025-08-01; custom criteria can express agent-directed instructions |
+| gpt-oss-safeguard-20b | 21B total, 3.6B active | Apache-2.0 | reasoned verdict against a policy you write | Whatever policy is written, including klatch's three items | Card says it fits 16 GB of VRAM; harmony format required; reasoning effort low, medium or high |
+| Llama Guard 3 1B | 1.5B | Llama 3.2 Community Licence | `safe` or `unsafe` plus hazard codes | Content harms (MLCommons taxonomy) | Pruned and quantised variants aimed at mobile |
+| Llama Guard 4 12B | 12B | Llama 4 Community Licence | `safe` or `unsafe` plus codes | Content harms; adds "Code Interpreter Abuse" | Multimodal; card says single GPU |
+| ShieldGemma (2B, 9B, 27B) | 2.6B and up | Gemma Terms of Use (custom) | Yes probability per policy you write | Four harms (dangerous, harassment, hate, sexual); policy text is editable | English only; "highly sensitive" to policy wording per its card |
+| Kev (0.8B, 4B, 9B, 27B) | 0.8B to 27B | Apache-2.0, base models Apache-2.0 | probabilities per typed question | General decision model, not safety trained | 0.8B stated to run on any Apple Silicon Mac; see 44.4 |
+| A small general model (for example Qwen3-4B-Instruct-2507) | 4.0B | Apache-2.0 | whatever the klatch prompt asks | Anything, but untuned | The fallback; weakest against being talked round |
+
+### 44.3 Licence notes (read from the texts, not guessed)
+
+- **Apache-2.0** (Qwen3Guard, Granite Guardian, gpt-oss-safeguard, Kev, Qwen3 base): read from the Hugging Face model
+  metadata and, for Granite and Kev, the card text. Permissive; the full Apache text was not re-read here.
+- **Llama 4 Community Licence** (Prompt Guard 2, Llama Guard 4; effective 2025-04-05): read in full on the Llama Guard 4
+  page. A non-exclusive royalty-free licence with conditions: copy of the agreement and a "Notice" attribution line
+  must go with anything klatch redistributes; use is bound to Meta's acceptable use policy; a licensee whose products
+  had more than 700 million monthly active users in the month before the release date must ask Meta for a licence.
+  It is a custom licence, not an OSI open-source licence. Not checked: whether the Llama 4 text carries the EU
+  multimodal restriction (the Llama 3.2 text does, for multimodal models only; Prompt Guard 2 is text only, Llama Guard
+  4 is multimodal).
+- **Llama 3.2 Community Licence** (Llama Guard 3 1B): same shape, "Built with Llama" display and a "Llama" model-name
+  prefix for derived models, plus the EU multimodal clause (not relevant to a text model).
+- **Gemma Terms of Use** (ShieldGemma): custom. Use must follow Google's Prohibited Use Policy (incorporated by
+  reference), and Google reserves the right to restrict use "remotely or otherwise" of its services it believes
+  violate the terms. Outputs are not claimed by Google. Pass-along conditions for redistribution were not read in detail.
+- Practical point: if klatch only tells a user how to download a model into their own cache, klatch redistributes
+  nothing and the licence binds the user. If klatch ever bundles weights or a derivative in its release, the custom
+  licences above add notice and attribution duties and Apache-2.0 models are the clean choice. This is a reading of the
+  texts, not legal advice; the human should confirm before any bundling.
+
+### 44.4 Kev, as question 19 asked
+
+Kev (Jared Palmer, `jaredpalmer/kev`) is an open, Jev-like family: state in, typed questions in, a probability per
+option out in one forward pass. Hub metadata and the repository README both say Apache-2.0, built on Qwen3.5 (0.8B, 4B,
+9B base) and Qwen3.8 (27B), published 2026-09-19 to 2026-10-01 (HF creation and update dates). The README says the 0.8B
+runs on any Apple Silicon Mac through MLX and the 4B on a 32 GB Mac. It is a **general** decision model: its published
+numbers are on decision benchmarks, none on safety or injection. A model that answers "is this message safe to relay?"
+from the text it is judging inherits the steering problem already recorded for Jev (section 13.3). It would fit the
+trait's typed-answer shape well but is unproven for this job. Not verified: README latency figures are for a hosted
+deployment (one example shows 495 ms), not a laptop.
+
+### 44.5 What fits the verdict
+
+- A three-tier label maps straight onto allow, uncertain and deny: Qwen3Guard's Safe, Controversial and Unsafe. Yes or
+  no scores (Granite, ShieldGemma, Prompt Guard) need two thresholds chosen by klatch, ideally in the floors.
+- Vendor latency is available only for Prompt Guard 2 (A100, 512 tokens). For the 0.6B to 8B generative models no
+  latency figure was found on the cards, and no laptop number was measured here. Design the trait for a call that may
+  take seconds, with a timeout that fails closed to the queue (as ticket #48 already specifies).
+- Input limits: Prompt Guard 2 takes 512 tokens and wants longer text split into segments; the others were not checked.
+
+### 44.6 Recommendation
+
+1. **Ship nothing model-based by default.** Rules-only stays the default (R31). The judge is an opt-in, and klatch
+   should not bundle weights.
+2. **First local model to try: Qwen3Guard-Gen-0.6B, with 4B as the step up.** Apache-2.0, smallest of the safety
+   classifiers with a three-tier verdict that matches the pipeline, and a `Jailbreak` category. Honest limit: its
+   categories are content harms, so it will miss credential leakage and agent-directed instructions that look polite.
+3. **For the injection item, Prompt Guard 2 (86M, or 22M for speed) is the purpose-built piece**, with the custom
+   licence caveat above; it is a second signal, not a replacement for the first.
+4. **For the policy that is really ours (injection, credentials, instructions to other agents), a bring-your-own-policy
+   model is the better fit:** Granite Guardian 3.3 8B (custom criteria, Apache-2.0) or gpt-oss-safeguard-20b (written
+   policy, Apache-2.0, heavier). Put these in the "uncertain band" slot, not the fast gate.
+5. **Fallback with no safety model:** a small general instruct model with a klatch prompt (Apache-2.0 Qwen3-4B class).
+   Treat it as weakest against adversarial text.
+6. **Kev: park it** as a candidate for typed-verdict experiments, not a safety judge, until someone measures it.
+7. **Skip** Llama Guard 3 1B and 4 and ShieldGemma for this job: content-harm taxonomies, custom licences, little
+   overlap with the three risks.
+
+Whatever is chosen, the same caveat as D4 stands: every model here can be fooled by crafted text, and the floors
+(scrubber, deny list, label order) stay the guarantee. Before any model is wired in, build a klatch evaluation set of
+real room messages with injected, credential-bearing and agent-directed examples, and run candidates on it.
+
+### 44.7 Not verified
+
+No model was downloaded or run. Memory, quantised size and laptop latency for every model except the vendor lines
+quoted. Whether Granite Guardian or gpt-oss-safeguard follows a klatch-specific policy reliably. Llama 4 licence EU
+clause and ShieldGemma redistribution terms in full. The Apache-2.0 text itself. Kev's behaviour on safety questions.
+Protect AI's deberta injection classifier was seen but its repository is marked archived, so it was left out. Models
+released after 2026-11-14 are not covered.
+
+### 44.8 Sources (all read 2026-11-14)
+
+Hugging Face model cards: `meta-llama/Llama-Guard-4-12B`, `meta-llama/Llama-Guard-3-1B`,
+`meta-llama/Llama-Prompt-Guard-2-86M`, `google/shieldgemma-2b`, `ibm-granite/granite-guardian-3.3-8b`,
+`Qwen/Qwen3Guard-Gen-0.6B`, `openai/gpt-oss-safeguard-20b`, `jaredpalmer/kev-0.8b` to `kev-27b`; the Hugging Face
+model API for licence and parameter counts; <https://ai.google.dev/gemma/terms>;
+<https://github.com/jaredpalmer/kev> README. A third-party summary of Kev (web search) was used only to find the
+repository, and every Kev fact above was re-read from the repository or the Hub.
