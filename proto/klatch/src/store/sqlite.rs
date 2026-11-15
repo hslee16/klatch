@@ -20,6 +20,7 @@ mod leases;
 mod review;
 mod rows;
 mod schema;
+pub use archive::{ArchiveInfo, ArchiveState, list_archives};
 use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
 pub use schema::SCHEMA_VERSION;
 use schema::{SCHEMA, WAIT_WINDOW_SECS, has_table, user_version};

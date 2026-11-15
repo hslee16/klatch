@@ -127,6 +127,9 @@ pub enum AdminCmd {
     },
     /// Put archived messages back from an archive file (made by `admin archive`); the file is kept
     RestoreArchive { file: std::path::PathBuf },
+    /// List the archive files under the klatch directory with their rooms, message counts, ages and size, each opened
+    /// with the store key and checked for damage. Prints counts, never text; exits with an error if any file is unusable
+    Archives,
     /// Print a room's messages as readable text. This is the one way plaintext leaves the store on purpose, so it is
     /// audited and asks for the room typed back
     Export {
@@ -406,11 +409,65 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
         | AdminCmd::Retention { .. }
         | AdminCmd::Archive { .. }
         | AdminCmd::RestoreArchive { .. }
+        | AdminCmd::Archives
         | AdminCmd::Export { .. }
         | AdminCmd::SealLabel { .. }
         | AdminCmd::RunArchive { .. } => {
             unreachable!("handled in run, which needs the keystore and not only the gateway")
         }
+    }
+    Ok(())
+}
+
+/// `admin archives` (#487): one tab-separated line per file, then a total. Counts and ages only, never text. A file
+/// that does not open, or whose pages fail the check, is shown as UNUSABLE with why and makes the exit status an error,
+/// so a cron job notices; the listing still covers every other file first.
+fn list_archive_files(dir: &std::path::Path, key: &klatch::keys::Key) -> Result<()> {
+    use klatch::store::{ArchiveState, list_archives};
+    let found = list_archives(dir, key)?;
+    if found.is_empty() {
+        println!("no archives in {}", dir.display());
+        return Ok(());
+    }
+    let at = now();
+    let days = |t: i64| format!("{}d ago", (at - t).max(0) / 86_400);
+    let (mut files, mut messages, mut bytes, mut unusable) = (0, 0, 0, 0);
+    for a in &found {
+        let size = format!("{} bytes", a.bytes);
+        match &a.state {
+            ArchiveState::Ok {
+                rooms,
+                messages: n,
+                oldest,
+                newest,
+            } => {
+                files += 1;
+                messages += n;
+                bytes += a.bytes;
+                println!(
+                    "{}\tok\t{}\t{n} messages\toldest {}, newest {}\t{size}",
+                    a.path.display(),
+                    rooms.join(","),
+                    days(*oldest),
+                    days(*newest)
+                );
+            }
+            ArchiveState::Unreadable(why) => {
+                unusable += 1;
+                println!("{}\tUNUSABLE\t{why}\t{size}", a.path.display());
+            }
+            ArchiveState::Partial => println!(
+                "{}\tpartial\tleft by an interrupted archive; safe to remove\t{size}",
+                a.path.display()
+            ),
+        }
+    }
+    println!(
+        "{files} archive{}, {messages} messages, {bytes} bytes, {unusable} unusable; nothing is pruned automatically",
+        if files == 1 { "" } else { "s" }
+    );
+    if unusable > 0 {
+        bail!("{unusable} archive file(s) cannot be used; restore them from a backup");
     }
     Ok(())
 }
@@ -570,6 +627,17 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             note("restore-archive", &file.to_string_lossy())?;
             println!("restored {n} messages from {}", file.display());
         }
+        AdminCmd::Archives => {
+            let dir = db.with_file_name("archive");
+            match custody::current_key(db)? {
+                Some(key) => list_archive_files(&dir, &key)?,
+                None if !dir.exists() => println!("no archives in {}", dir.display()),
+                None => bail!(
+                    "{} exists but the store key is missing, so no file can be checked; see `klatch admin recover`",
+                    dir.display()
+                ),
+            }
+        }
         AdminCmd::Export { room, json } => {
             let gateway = Gateway::new(custody::open_store(db)?, CliClock, AllowAll);
             gateway.use_label_keys(custody::label_ring(db, &gateway.sealed_labels()?)?);
@@ -615,6 +683,7 @@ fn needs_the_keystore(cmd: &AdminCmd) -> bool {
             | AdminCmd::Retention { .. }
             | AdminCmd::Archive { .. }
             | AdminCmd::RestoreArchive { .. }
+            | AdminCmd::Archives
             | AdminCmd::Export { .. }
             | AdminCmd::SealLabel { .. }
             | AdminCmd::RunArchive { .. }
