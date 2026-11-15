@@ -6,6 +6,7 @@ use std::time::Instant;
 
 mod admin;
 mod admin_role;
+mod anchors;
 mod asks;
 mod claims;
 mod factory;
@@ -82,6 +83,7 @@ pub fn all() -> Vec<Scenario> {
         librarian::all(),
         reviewer::all(),
         admin_role::all(),
+        anchors::all(),
         roles_path::all(),
         hooks::all(),
         identity::all(),

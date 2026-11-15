@@ -22,7 +22,9 @@ pub struct Refused {
 
 mod admin;
 mod anchors;
+mod github_anchor;
 pub use anchors::{AnchorAdapter, valid_anchor};
+use github_anchor::{normalize_anchor, parse_events};
 mod budget;
 mod crossing;
 mod dm;
@@ -496,10 +498,11 @@ impl<S: Store> Gateway<S> {
         let ttl = crate::domain::claim_ttl(path, Some(ttl));
         let member_scope = self.store.member_scope(&who.member)?;
         let scope = crate::domain::claim_scope(path, shared, member_scope.as_deref());
+        let anchor = normalize_anchor(anchor.unwrap_or(""));
         self.store.claim(
             &ClaimRequest::new((room, &who.member), path, ttl, reason)
                 .scoped(&scope)
-                .anchored(anchor.unwrap_or("")),
+                .anchored(&anchor),
             self.now(),
         )
     }
