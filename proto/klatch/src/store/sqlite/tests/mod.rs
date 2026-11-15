@@ -3,27 +3,19 @@
 use super::*;
 
 mod anchors;
-mod asks;
 mod claims;
 mod concurrency;
+mod conformance;
 mod credentials;
 mod encryption;
 mod members;
 mod messages;
 mod migrations;
 mod plaintext;
-mod policy;
 mod runs;
 
 pub(super) fn store() -> SqliteStore {
     SqliteStore::open_in_memory().unwrap()
-}
-
-pub(super) fn deadlocked(r: Result<()>) -> Option<bool> {
-    match r {
-        Err(Error::Conflict { deadlock, .. }) => Some(deadlock),
-        _ => None,
-    }
 }
 
 pub(super) type Pairs = Vec<(String, String)>;
