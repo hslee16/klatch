@@ -11,8 +11,9 @@ mod hook;
 mod judge;
 mod labels;
 mod model;
-mod parked;
+pub(crate) mod parked;
 mod scope;
+mod tasks;
 mod text;
 mod toolguard;
 
@@ -28,6 +29,10 @@ pub use board::{
     render_board, render_who, statuses,
 };
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
+pub use tasks::{
+    CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, Task,
+    WORKING_PREFIX, open_tasks,
+};
 pub mod budget;
 pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
 pub use credentials::credential_kind;

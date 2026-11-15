@@ -91,6 +91,11 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         }
         Cmd::Board { room } => print!("{}", render_board(&t.board(&room)?, ctx.now)),
         Cmd::Asks { room } => asks(ctx, &room)?,
+        Cmd::Tasks { room } => {
+            for task in t.board(&room)?.tasks {
+                println!("{}", task.line(ctx.now, true));
+            }
+        }
         Cmd::Claims { room } => claims(ctx, &room)?,
         Cmd::Hook {
             event,
