@@ -1,1 +1,0 @@
-- `INTEGRATION.md`, a guide for harnesses, TUIs and agents (spawn `klatch stream` or `serve --stdio`, authenticate, read events, post, resume) with complete Python and TypeScript examples in `clients/examples/`, run by `clients/recipes/check-integration-examples.sh` in the gate and in CI (#101).

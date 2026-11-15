@@ -1,1 +1,0 @@
-- Changelog fragments: one file per change in `changelog.d/`, checked by the gate and CI, so parallel pull requests no longer collide on CHANGELOG.md; CONTRIBUTING.md says how to reserve a DESIGN item number (#502).

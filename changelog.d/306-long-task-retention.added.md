@@ -1,1 +1,0 @@
-- Long tasks (#306): pruning spares a member that holds a live claim (its read cursor and sessions stay), and an ask may carry a deadline, `seeking: ... (by 2026-11-20)`, shown as `due in 3d` or `overdue 2h` and used instead of the 60 second stale threshold.

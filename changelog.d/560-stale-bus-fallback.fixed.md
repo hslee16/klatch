@@ -1,1 +1,0 @@
-- On Linux a session bus address that points nowhere (an inherited one over ssh or cron) no longer makes every command fail: klatch falls back to the key file with the usual warning. Every `secret-tool` call is also bounded to 10 seconds and has no terminal, and a failure to reach the keyring is an error, no longer a missing key (#560).

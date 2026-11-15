@@ -1,1 +1,0 @@
-- A hook digest is now kept within 8000 bytes (counted after JSON escaping) so it stays under Claude Code's hook output cap, past which the model sees only a 2 KB preview. What does not fit is counted in a line that says to run `klatch read ROOM --peek` (#549).

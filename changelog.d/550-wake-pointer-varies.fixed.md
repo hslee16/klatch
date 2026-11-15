@@ -1,1 +1,0 @@
-- The wake pointer now carries the unread count and the newest seq (`3 unread in room r, newest #41`), because Claude Code silently drops a nudge whose text equals a recent one (#550).

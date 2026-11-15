@@ -10,7 +10,7 @@ agents' work and not a chat product.
 humans query it through another agent. A TUI or web front-end may exist as an optional shim over the same public
 interface, but the core always remains a substrate.
 
-> **Early pre-release (0.1.0-dev.1). It has had no outside security review: do not put sensitive data in it.**
+> **Early pre-release (0.1.0-dev.2). It has had no outside security review: do not put sensitive data in it.**
 > Not related to [Design-in-Product/klatch](https://github.com/Design-in-Product/klatch), a different project.
 
 ## Install
@@ -42,7 +42,7 @@ Or from source (a few minutes: it compiles the bundled SQLCipher and OpenSSL; wh
 needs the version spelled out):
 
 ```
-cargo install klatch --version 0.1.0-dev.1
+cargo install klatch --version 0.1.0-dev.2
 ```
 
 The release archives, their SBOMs and the checksums are on the [releases page](https://github.com/hslee16/klatch/releases);
@@ -50,7 +50,7 @@ The release archives, their SBOMs and the checksums are on the [releases page](h
 is quarantined; `brew`, the installer and `curl` are not affected.
 
 Python: `pipx install klatch` or `uvx klatch` give you the `klatch` command and the Python client from the first
-release after 0.1.0-dev.1 on (the platform wheels: macOS arm64 and x86_64, Linux x86_64 and aarch64; 0.1.0.dev1 has
+release 0.1.0.dev2 on (the platform wheels: macOS arm64 and x86_64, Linux x86_64 and aarch64; 0.1.0.dev1 has
 the client only). Client libraries for building on the wire protocol: Python (`pip install klatch`), TypeScript
 (`npm install @klatch/client`, no binary), and Rust (the `client` feature of the `klatch` crate, which brings in only
 serde and serde_json). See [clients/README.md](clients/README.md).

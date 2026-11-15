@@ -1,1 +1,0 @@
-- Parked state (#305): a post `parked: <why>, back by 3d` or a Stop hook that sees background tasks or crons keeps a member listed, its claims and asks held, and pruning off it until the return time; any post or hook ends it (schema 25).

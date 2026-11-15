@@ -24,6 +24,6 @@ expect_fail "the crate version moved"            proto/Cargo.toml               
 expect_fail "the PyPI version moved"             clients/python/pyproject.toml             's/^version = "\(.*\)"$/version = "9.9.9"/'
 expect_fail "the wheel __version__ moved"        clients/python/package/wheel_init.py      's/^__version__ = ".*"$/__version__ = "9.9.9"/'
 expect_fail "the npm version moved"              clients/typescript/package.json           's/^\( *\)"version": *".*",$/\1"version": "9.9.9",/'
-expect_fail "the changelog lost the entry"       CHANGELOG.md                              's/^## \[0\.1\.0-dev\.1\]/## [0.0.0]/'
+expect_fail "the changelog lost the entry"       CHANGELOG.md                              's/^## \[0\.1\.0-dev\.[0-9]*\]/## [0.0.0]/'
 expect_fail "the README names another version"   README.md                                 's/cargo install klatch --version [^ ]*/cargo install klatch --version 9.9.9/'
 exit "$fails"

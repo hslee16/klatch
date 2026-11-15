@@ -1,1 +1,0 @@
-- The Linux Secret Service backend is now run against a real gnome-keyring in containers (`proto/linux-keys/run.sh`, a manual workflow, never on pull requests) and covered by tests: round trip, replace, delete, wrong size, unsafe names, no secret on any command line, headless fallbacks (#381 #382 #383 #384 #385).
