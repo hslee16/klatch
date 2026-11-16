@@ -16,6 +16,7 @@ mod claim_age;
 mod claims;
 mod credentials;
 mod crossing;
+mod delivery_view;
 mod digest;
 mod dm;
 mod floors;

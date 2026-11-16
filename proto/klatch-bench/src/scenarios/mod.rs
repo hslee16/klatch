@@ -10,6 +10,7 @@ mod anchors;
 mod asks;
 mod bigstore;
 mod claims;
+mod delivery_view;
 mod factory;
 mod faults;
 mod hooks;
@@ -88,6 +89,7 @@ pub fn all() -> Vec<Scenario> {
         liveness::all(),
         reviewer::all(),
         admin_role::all(),
+        delivery_view::all(),
         anchors::all(),
         roles_path::all(),
         hooks::all(),
