@@ -53,6 +53,20 @@ pub fn run_scenarios(scenarios: &[Scenario], bin: &std::path::Path) -> Vec<Outco
             let start = std::time::Instant::now();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (s.run)(&world)));
             let millis = millis(start.elapsed());
+            // a scenario that passed must also leave a sound store (#621); its time is reported apart
+            let checked = std::time::Instant::now();
+            let result = match result {
+                Ok(Ok(mut m)) => Ok(world.check_integrity().map(|()| {
+                    if world.has_store() {
+                        m.push((
+                            "integrity_ms".into(),
+                            checked.elapsed().as_secs_f64() * 1000.0,
+                        ));
+                    }
+                    m
+                })),
+                other => other,
+            };
             let (passed, message, mut metrics) = match result {
                 Ok(Ok(m)) => (true, String::new(), m),
                 Ok(Err(e)) => (false, e, Vec::new()),

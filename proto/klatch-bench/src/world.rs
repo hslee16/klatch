@@ -13,6 +13,7 @@ pub struct World {
     pub home: PathBuf,
     calls: Cell<u64>,
     clock: Cell<Option<i64>>,
+    damaged: Cell<bool>,
 }
 
 /// What one klatch command did.
@@ -35,6 +36,42 @@ impl World {
             home,
             calls: Cell::new(0),
             clock: Cell::new(None),
+            damaged: Cell::new(false),
+        }
+    }
+
+    /// Whether the scenario made a store (an empty file is a database that was never written).
+    pub fn has_store(&self) -> bool {
+        std::fs::metadata(self.home.join("rooms.db")).is_ok_and(|m| m.len() > 0)
+    }
+
+    /// A scenario that breaks the store or an archive on purpose says so (and why), so the end-of-scenario check does
+    /// not fail it for the damage it made. Each use is a place where the check does not run.
+    pub fn expect_damage(&self, _why: &str) {
+        self.damaged.set(true);
+    }
+
+    /// Examine this world's store without changing it (#621): SQLite's page check, a gapless `seq` in every room, and
+    /// an archive entry behind every tombstone. `Ok` also when the scenario never made a store.
+    pub fn check_integrity(&self) -> Result<(), String> {
+        use klatch::keys::{FileKeys, KeySource, store_key_name};
+        if self.damaged.get() {
+            return Ok(());
+        }
+        let db = self.home.join("rooms.db");
+        if !self.has_store() {
+            return Ok(());
+        }
+        let key = FileKeys::new(&self.home.join("keys"))
+            .get(&store_key_name(&self.home))
+            .map_err(|e| format!("integrity: reading the store key: {e}"))?
+            .ok_or("integrity: the world has a store but no key to open it")?;
+        let problems = klatch::store::check_store(&db, &key)
+            .map_err(|e| format!("integrity: the store could not be examined: {e}"))?;
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("integrity: {}", problems.join("; ")))
         }
     }
 
@@ -293,5 +330,75 @@ impl WorkerLauncher {
 impl Drop for World {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.home).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A world with one room of three messages, made by the real binary.
+    fn world_with_messages() -> World {
+        let w = World::new(&crate::find_binary().expect("the klatch binary"));
+        for i in 1..=3 {
+            w.ok("alice", &["post", "lobby", &format!("message {i}")])
+                .unwrap();
+        }
+        w
+    }
+
+    /// Run `sql` against the world's store with its key, the only way in.
+    fn tamper(w: &World, sql: &str) {
+        use klatch::keys::{FileKeys, KeySource, store_key_name};
+        let key = FileKeys::new(&w.home.join("keys"))
+            .get(&store_key_name(&w.home))
+            .unwrap()
+            .unwrap();
+        let c = rusqlite::Connection::open(w.home.join("rooms.db")).unwrap();
+        c.pragma_update(None, "key", key.sqlcipher_pragma().as_str())
+            .unwrap();
+        c.execute_batch(sql).unwrap();
+    }
+
+    #[test]
+    fn a_world_with_no_store_passes() {
+        let w = World::new(&PathBuf::from("unused"));
+        assert_eq!(w.check_integrity(), Ok(()));
+    }
+
+    #[test]
+    fn a_store_made_by_the_binary_passes() {
+        assert_eq!(world_with_messages().check_integrity(), Ok(()));
+    }
+
+    #[test]
+    fn a_missing_seq_fails_the_check() {
+        let w = world_with_messages();
+        tamper(&w, "DELETE FROM messages WHERE seq=2");
+        let e = w.check_integrity().unwrap_err();
+        assert!(e.contains("seq of room lobby"), "{e}");
+    }
+
+    #[test]
+    fn a_tombstone_with_no_archive_fails_the_check() {
+        let w = world_with_messages();
+        tamper(&w, "UPDATE messages SET kind='archived' WHERE seq=1");
+        let e = w.check_integrity().unwrap_err();
+        assert!(e.contains("tombstone lobby#1"), "{e}");
+    }
+
+    #[test]
+    fn a_scenario_that_damages_the_store_on_purpose_is_not_failed_for_it() {
+        let w = world_with_messages();
+        tamper(&w, "DELETE FROM messages WHERE seq=2");
+        w.expect_damage("test");
+        assert_eq!(w.check_integrity(), Ok(()));
+    }
+
+    #[test]
+    fn a_store_whose_key_is_gone_cannot_be_examined_and_fails() {
+        let w = world_with_messages();
+        std::fs::remove_dir_all(w.home.join("keys")).unwrap();
+        assert!(w.check_integrity().is_err());
     }
 }
