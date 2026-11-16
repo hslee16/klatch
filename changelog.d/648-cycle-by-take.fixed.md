@@ -1,0 +1,1 @@
+- A cycle of waits completed by a claim being taken is now told once, in the digest, to the member the new claim blocks (it yields as a refusal that closes a cycle tells it to), instead of only when a member next retries. A refusal also flags a deadlock when the cycle runs through a holder other than the one it names. The store schema is now 29 (#648, DESIGN item 82).

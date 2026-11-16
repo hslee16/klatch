@@ -64,6 +64,11 @@ fn reaches(start: &str, target: &str, waits: &[Wait], held: &[Held]) -> bool {
     false
 }
 
+/// Whether the live claim `h` refuses the attempt: another member's, overlapping, in a colliding scope.
+fn refuses(h: &Held, req: &Attempt) -> bool {
+    h.owner != req.owner && overlaps(&h.path, req.path) && scopes_collide(&h.scope, req.scope)
+}
+
 /// Seconds a claim has been held, 0 when its start is unknown.
 fn held_for(since: i64, now: i64) -> i64 {
     if since > 0 { (now - since).max(0) } else { 0 }
@@ -91,16 +96,20 @@ impl SqliteStore {
         )
     }
 
-    /// Whether a refusal of `requester` by `holder` closes a cycle of waits: `holder` is waiting (a refused claim
-    /// attempt within the window) for something a member holds who is waiting for something ... that `requester`
-    /// holds.
-    fn closes_cycle(
-        &self,
-        room: &str,
-        (requester, holder): (&str, &str),
-        held: &[Held],
-    ) -> Result<bool> {
-        let waits = self.rows(
+    /// Whether a refusal of `req` closes a cycle of waits: some holder that refuses it is waiting (a refused claim
+    /// attempt within the window) for something a member holds who is waiting for something ... that the requester
+    /// holds. Every holder that refuses counts, not only the one named: a cycle through the second of two holders is
+    /// as much a deadlock (#648, found by the model).
+    fn closes_cycle(&self, req: &Attempt, held: &[Held]) -> Result<bool> {
+        let waits = self.room_waits(req.room)?;
+        Ok(held
+            .iter()
+            .filter(|h| refuses(h, req))
+            .any(|h| reaches(&h.owner, req.owner, &waits, held)))
+    }
+
+    fn room_waits(&self, room: &str) -> Result<Vec<Wait>> {
+        self.rows(
             "SELECT member,path,scope FROM claim_waits WHERE room=?1",
             params![room],
             |r| {
@@ -110,24 +119,43 @@ impl SqliteStore {
                     scope: r.get(2)?,
                 })
             },
-        )?;
-        Ok(reaches(holder, requester, &waits, held))
+        )
+    }
+
+    /// A claim just taken is a new hold edge: every waiter it now blocks waits for the new holder. When the holder
+    /// waits, directly or through others, for something that waiter holds, the claim completed a cycle that no
+    /// refusal closed, and the waiter is marked to be told (#648). One waiter per cycle: the cycle has one edge
+    /// into the new holder.
+    fn tell_completed_cycles(&self, req: &Attempt) -> Result<()> {
+        let waits = self.room_waits(req.room)?;
+        let held = self.live_claims(req.room)?;
+        for w in waits.iter().filter(|w| {
+            w.member != req.owner
+                && overlaps(&w.path, req.path)
+                && scopes_collide(&w.scope, req.scope)
+                && reaches(req.owner, &w.member, &waits, &held)
+        }) {
+            self.exec(
+                "UPDATE claim_waits SET told=1 WHERE room=?1 AND member=?2 AND path=?3",
+                params![req.room, w.member, w.path],
+            )?;
+        }
+        Ok(())
     }
 
     /// Remember that the requester is waiting for the path, and say what refused it.
     fn refuse(&self, req: &Attempt, blocker: &Held, held: &[Held]) -> Result<Error> {
         self.exec(
             "INSERT INTO claim_waits(room,member,path,ts,scope) VALUES(?1,?2,?3,?4,?5)
-             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, scope=?5",
+             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, scope=?5, told=0",
             params![req.room, req.owner, req.path, req.now, req.scope],
         )?;
-        let parties = (req.owner, blocker.owner.as_str());
         Ok(Error::Conflict {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
             secs_left: crate::domain::secs_between(blocker.expires, req.now),
             held_secs: held_for(blocker.since, req.now),
-            deadlock: self.closes_cycle(req.room, parties, held)?,
+            deadlock: self.closes_cycle(req, held)?,
         })
     }
 
@@ -191,16 +219,13 @@ impl SqliteStore {
             params![req.now - WAIT_WINDOW_SECS],
         )?;
         let held = self.live_claims(req.room)?;
-        let blocker = held.iter().find(|h| {
-            h.owner != req.owner
-                && overlaps(&h.path, req.path)
-                && scopes_collide(&h.scope, req.scope)
-        });
+        let blocker = held.iter().find(|h| refuses(h, req));
         if let Some(blocker) = blocker {
             return Ok(Err(self.refuse(req, blocker, &held)?));
         }
         self.end_waits(req)?;
         self.insert_claim(req)?;
+        self.tell_completed_cycles(req)?;
         Ok(Ok(()))
     }
 
@@ -220,6 +245,47 @@ impl SqliteStore {
 }
 
 impl SqliteStore {
+    /// The member's waits marked by `tell_completed_cycles` that are still within the window and still on a cycle,
+    /// each told once: the marks are cleared whether or not they are reported.
+    pub(super) fn cycle_notices(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        self.immediate(|| {
+            let marked: Vec<(String, String)> = self.rows(
+                "SELECT path,scope FROM claim_waits WHERE room=?1 AND member=?2 AND told=1 AND ts>=?3 ORDER BY path",
+                params![room, member, now - WAIT_WINDOW_SECS],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            self.exec(
+                "UPDATE claim_waits SET told=0 WHERE room=?1 AND member=?2 AND told=1",
+                params![room, member],
+            )?;
+            let waits = self.room_waits(room)?;
+            let mut held = self.live_claims(room)?;
+            held.retain(|h| h.expires > now);
+            let mut out = Vec::new();
+            for (path, scope) in marked {
+                // a holder that blocks the wait and waits, through others, for something this member holds
+                let holder = held.iter().find(|h| {
+                    h.owner != member
+                        && overlaps(&h.path, &path)
+                        && scopes_collide(&h.scope, &scope)
+                        && reaches(&h.owner, member, &waits, &held)
+                });
+                if let Some(h) = holder {
+                    out.push(crate::domain::CycleNotice {
+                        path,
+                        holder: h.owner.clone(),
+                    });
+                }
+            }
+            Ok(out)
+        })
+    }
+
     /// The owner's live claims in the room that passed an age milestone since it was last told; marks each as told.
     /// Asks are left out: their leases are capped and have their own reminders.
     pub(super) fn aged_claims(&self, room: &str, owner: &str, now: i64) -> Result<Vec<AgedClaim>> {
