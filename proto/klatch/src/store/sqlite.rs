@@ -21,7 +21,7 @@ mod leases;
 mod review;
 mod rows;
 mod schema;
-pub use archive::{ArchiveInfo, ArchiveState, list_archives};
+pub use archive::{ArchiveInfo, ArchiveState, archives_to_rekey, list_archives, rekey_archives};
 pub use integrity::check_store;
 use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
 pub use schema::SCHEMA_VERSION;

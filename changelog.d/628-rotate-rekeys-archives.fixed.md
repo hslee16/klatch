@@ -1,0 +1,1 @@
+- `klatch admin rotate-key` now moves every archive file to the new key with the store (each through a temp file, checked before it replaces the old one), and refuses before changing anything if an archive opens with neither key, so archived messages can still be restored after a rotation (#628).

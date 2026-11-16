@@ -722,6 +722,9 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
                 "the store is now encrypted under a new key. The old key and the old recovery code no longer work."
             );
             println!("New recovery code: {}", klatch::keys::recovery_code(&key));
+            println!(
+                "The archive files were moved to the new key too. Backups made by `klatch admin backup` keep the key they were made under and open only with it."
+            );
         }
         _ => unreachable!("not a key command"),
     }

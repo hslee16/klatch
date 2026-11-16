@@ -89,7 +89,7 @@ fn has_data(db: &Path) -> bool {
 /// Open the encrypted store at `db`: get its key (making one for a new store, never for an existing encrypted store
 /// whose key is missing), convert a plaintext database first, and finish a rotation a crash interrupted.
 pub(crate) fn open_store(db: &Path) -> Result<SqliteStore> {
-    open_store_in(db, key_home(db))
+    open_store_in(db, &key_home(db))
 }
 
 /// Make the key of a store that has none, as one step with making the store. The directory lock is taken before
@@ -116,30 +116,16 @@ fn make_key_under_lock(db: &Path, kh: &KeyHome) -> Result<(Key, bool, Option<std
     Ok((key, true, keep))
 }
 
-fn open_store_in(db: &Path, kh: KeyHome) -> Result<SqliteStore> {
+fn open_store_in(db: &Path, kh: &KeyHome) -> Result<SqliteStore> {
     let (key, created, guard) = match kh.source.get(&kh.name)? {
         Some(k) => (k, false, None),
-        None => make_key_under_lock(db, &kh)?,
+        None => make_key_under_lock(db, kh)?,
     };
     // `ensure_encrypted` locks the directory itself, and there is nothing to convert in a store made just now
     if guard.is_none() {
         ensure_encrypted(db, &key)?;
     }
-    let store = match SqliteStore::open(db, &key) {
-        Ok(s) => s,
-        Err(first) => {
-            // a rotation that died after the database was re-keyed but before the key was promoted
-            match kh.source.get(&next_name(&kh.name))? {
-                Some(next) if next != key => {
-                    let s = SqliteStore::open(db, &next).map_err(|_| first)?;
-                    kh.source.put(&kh.name, &next)?;
-                    kh.source.delete(&next_name(&kh.name))?;
-                    s
-                }
-                _ => return Err(first.into()),
-            }
-        }
-    };
+    let store = open_keyed(db, kh, key)?;
     drop(guard);
     if created && std::io::stderr().is_terminal() {
         eprintln!(
@@ -147,10 +133,33 @@ fn open_store_in(db: &Path, kh: KeyHome) -> Result<SqliteStore> {
             kh.source.describe()
         );
     }
-    if let Some(w) = kh.warning.filter(|_| std::io::stderr().is_terminal()) {
+    if let Some(w) = kh
+        .warning
+        .as_ref()
+        .filter(|_| std::io::stderr().is_terminal())
+    {
         eprintln!("klatch: {w}");
     }
     Ok(store)
+}
+
+/// Open the store with `key`. The caller holds the directory lock.
+fn open_keyed(db: &Path, kh: &KeyHome, key: Key) -> Result<SqliteStore> {
+    match SqliteStore::open(db, &key) {
+        Ok(s) => Ok(s),
+        Err(first) => {
+            // a rotation that died after the database was re-keyed but before the key was promoted
+            match kh.source.get(&next_name(&kh.name))? {
+                Some(next) if next != key => {
+                    let s = SqliteStore::open(db, &next).map_err(|_| first)?;
+                    kh.source.put(&kh.name, &next)?;
+                    kh.source.delete(&next_name(&kh.name))?;
+                    Ok(s)
+                }
+                _ => Err(first.into()),
+            }
+        }
+    }
 }
 
 /// The current key, if there is one (for showing its recovery code).
@@ -177,14 +186,33 @@ pub(crate) fn restore_key(db: &Path, key: &Key) -> Result<()> {
     Ok(())
 }
 
-/// Re-encrypt the store under a new key and make that the stored key. The order survives a crash at any step: the new
-/// key is stored under a second name first, the store is re-keyed, then the new key takes the main name and the
-/// second one goes (`open_store` finishes a run that died in between). Returns the new key.
+/// Re-encrypt the store and every archive file under a new key and make that the stored key. The order survives a
+/// crash at any step (#628): the archives are checked first and the rotation refused, nothing changed, if one opens
+/// with neither key; the new key is stored under a second name; each archive is re-keyed through a temp file (so at
+/// every moment each holds a whole archive under one of the two keys); the store is re-keyed; then the new key takes
+/// the main name and the second one goes. `open_store` finishes a run that died after the store was re-keyed, and a
+/// repeated `rotate-key` finishes one that died before: it reuses the stored second key and skips the archives
+/// already moved. Returns the new key.
 pub(crate) fn rotate_key(db: &Path) -> Result<Key> {
-    let kh = key_home(db);
-    let store = open_store(db)?;
-    let new = Key::generate().map_err(|e| anyhow::anyhow!("no random source: {e}"))?;
+    rotate_key_in(db, &key_home(db))
+}
+
+fn rotate_key_in(db: &Path, kh: &KeyHome) -> Result<Key> {
+    // makes the key of a new store, converts a plaintext one, finishes a rotation that died after the re-key
+    let store = open_store_in(db, kh)?;
+    let old = kh
+        .source
+        .get(&kh.name)?
+        .ok_or_else(|| anyhow::anyhow!("this store has no key to rotate"))?;
+    let archives = db.with_file_name("archive");
+    let next = kh.source.get(&next_name(&kh.name))?.filter(|n| *n != old);
+    let new = match next {
+        Some(n) => n,
+        None => Key::generate().map_err(|e| anyhow::anyhow!("no random source: {e}"))?,
+    };
+    klatch::store::archives_to_rekey(&archives, &old, &new)?;
     kh.source.put(&next_name(&kh.name), &new)?;
+    klatch::store::rekey_archives(&archives, &old, &new)?;
     store.rekey(&new)?;
     kh.source.put(&kh.name, &new)?;
     kh.source.delete(&next_name(&kh.name))?;
@@ -305,7 +333,7 @@ mod tests {
                     state,
                     first: false.into(),
                 };
-                open_store_in(&db, home(Box::new(src))).map(|_| ())
+                open_store_in(&db, &home(Box::new(src))).map(|_| ())
             })
         };
         // wait until the late process has looked and found no key
@@ -314,7 +342,7 @@ mod tests {
             drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
         }
         let keys = klatch::keys::FileKeys::new(&d.join("keys"));
-        open_store_in(&db, home(Box::new(keys))).unwrap();
+        open_store_in(&db, &home(Box::new(keys))).unwrap();
         {
             let (m, cv) = &*state;
             m.lock().unwrap().1 = true;
@@ -330,14 +358,76 @@ mod tests {
         let d = scratch("lost");
         let db = d.join("klatch.db");
         let keys = klatch::keys::FileKeys::new(&d.join("keys"));
-        open_store_in(&db, home(Box::new(keys))).unwrap();
+        open_store_in(&db, &home(Box::new(keys))).unwrap();
         std::fs::remove_dir_all(d.join("keys")).unwrap();
         let keys = klatch::keys::FileKeys::new(&d.join("keys"));
-        let err = open_store_in(&db, home(Box::new(keys)))
+        let err = open_store_in(&db, &home(Box::new(keys)))
             .err()
             .unwrap()
             .to_string();
         assert!(err.contains("admin recover"), "{err}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn file_home(d: &Path) -> KeyHome {
+        home(Box::new(klatch::keys::FileKeys::new(&d.join("keys"))))
+    }
+
+    /// A store in `d` with one archive file of an old message, made under the store's current key.
+    fn store_with_archive(d: &Path) -> PathBuf {
+        let db = d.join("klatch.db");
+        let kh = file_home(d);
+        let store = open_store_in(&db, &kh).unwrap();
+        let key = kh.source.get(&kh.name).unwrap().unwrap();
+        klatch::store::Store::join(&store, "r", "alice", 1).unwrap();
+        let seat = klatch::store::Seat::new("r", "alice");
+        klatch::store::Store::post(&store, seat, "old words", 10).unwrap();
+        let dir = d.join("archive");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("r-100.db");
+        store.archive_before("r", 500, &file, &key).unwrap();
+        file
+    }
+
+    #[test]
+    fn rotating_the_key_moves_the_archives_to_the_new_key_so_they_still_restore() {
+        let d = scratch("rot-archive");
+        let file = store_with_archive(&d);
+        let kh = file_home(&d);
+        let new = rotate_key_in(&d.join("klatch.db"), &kh).unwrap();
+        let listed = klatch::store::list_archives(&d.join("archive"), &new).unwrap();
+        assert!(
+            matches!(listed[0].state, klatch::store::ArchiveState::Ok { .. }),
+            "{:?}",
+            listed[0].state
+        );
+        let store = open_store_in(&d.join("klatch.db"), &kh).unwrap();
+        assert_eq!(store.restore_archive(&file, &new).unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rotating_with_an_archive_that_does_not_open_refuses_and_changes_nothing() {
+        let d = scratch("rot-refuse");
+        let file = store_with_archive(&d);
+        std::fs::copy(&file, file.with_file_name("r-200.db")).unwrap();
+        let strange = Key::generate().unwrap();
+        let old = file_home(&d).source.get("store-test").unwrap().unwrap();
+        klatch::store::rekey_archives(&d.join("archive"), &old, &strange).unwrap();
+        // both files are now under a third key: neither the current nor a new key opens them
+        let kh = file_home(&d);
+        let err = rotate_key_in(&d.join("klatch.db"), &kh)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            err.contains("r-100.db") && err.contains("not changed"),
+            "{err}"
+        );
+        let still = kh.source.get("store-test").unwrap().unwrap();
+        assert!(still == old, "the store key changed");
+        assert!(kh.source.get("store-test-next").unwrap().is_none());
+        assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
