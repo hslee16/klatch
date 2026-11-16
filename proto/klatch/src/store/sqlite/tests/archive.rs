@@ -161,3 +161,29 @@ fn nothing_due_is_not_an_error_even_if_the_archive_name_is_taken() {
     assert_eq!(s.archive_before("r", 500, &out, &key).unwrap(), 0);
     let _ = std::fs::remove_file(out);
 }
+
+#[test]
+fn a_message_landing_after_the_copy_is_not_tombstoned_without_being_archived() {
+    // #634: the tombstone UPDATE matched by room and time, not by the rows copied, so a message that landed between
+    // the copy and the UPDATE lost its text with no archived copy.
+    let path = temp_db("tomb-window");
+    let key = crate::store::insecure_test_key();
+    let s = SqliteStore::open(&path, &key).unwrap();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "alice"), "old one", 10).unwrap();
+    let out = archive_path("tomb-window");
+    let n = s
+        .archive_before_hooked("r", 500, &out, &key, &|| {
+            let other = SqliteStore::open(&path, &key).unwrap();
+            other
+                .post(Seat::new("r", "alice"), "landed late", 20)
+                .unwrap();
+        })
+        .unwrap();
+    assert_eq!(n, 1);
+    let all = s.tail("r", 0, 100).unwrap();
+    assert_eq!(all[0].body, TOMBSTONE);
+    assert_eq!(all[1].body, "landed late", "not copied, so not tombstoned");
+    assert_eq!(all[1].kind, None);
+    let _ = std::fs::remove_file(out);
+}
