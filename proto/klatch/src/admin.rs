@@ -85,6 +85,14 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Limit every member to POSTS posts in SECS seconds over all rooms together, for example `rate-limit 30 60`;
+    /// `rate-limit --off` lifts it. Off by default
+    RateLimit {
+        posts: Option<usize>,
+        secs: Option<i64>,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
@@ -403,6 +411,20 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 "{member} {} create rooms and invite",
                 if off { "may no longer" } else { "may now" }
             );
+        }
+        AdminCmd::RateLimit { posts, secs, off } => {
+            let limit = match (off, posts, secs) {
+                (true, None, None) => None,
+                (false, Some(p), Some(s)) => Some((p, s)),
+                _ => bail!("give POSTS and SECS (rate-limit 30 60), or --off alone"),
+            };
+            t.admin_set_rate_limit(limit)?;
+            match limit {
+                Some((p, s)) => {
+                    println!("each member may post {p} times in {s} seconds in all rooms")
+                }
+                None => println!("no rate limit"),
+            }
         }
         AdminCmd::Cap { label } => {
             t.admin_set_cap(&label)?;

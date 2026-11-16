@@ -1,0 +1,1 @@
+- `klatch admin rate-limit N S`: limit every member to N posts in S seconds over all rooms; a post over it is refused with rule `rate-limit` and how long to wait. Off by default (#187).

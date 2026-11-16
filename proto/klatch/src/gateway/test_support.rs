@@ -107,6 +107,9 @@ impl Store for SpyStore {
     fn refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
         self.inner.refusals(limit)
     }
+    fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
+        self.inner.posts_since(member, since)
+    }
     fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
         self.inner.refusal_rules_since(member, since)
     }
