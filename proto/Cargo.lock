@@ -451,6 +451,7 @@ dependencies = [
 name = "klatch-bench"
 version = "0.1.0-dev.2"
 dependencies = [
+ "klatch",
  "rusqlite",
  "serde_json",
 ]

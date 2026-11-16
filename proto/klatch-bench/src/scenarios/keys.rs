@@ -135,6 +135,8 @@ fn rotation(w: &World) -> Res {
         !w.run("carol", &["read", "r"]).ok,
         "the old key still opens the store",
     )?;
+    // put the new key back so the end-of-scenario store check can open the rotated store
+    std::fs::write(&key_files(w)[0], &new_key).map_err(|e| e.to_string())?;
     Ok(vec![])
 }
 
