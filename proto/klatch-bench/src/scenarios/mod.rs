@@ -13,6 +13,7 @@ mod claims;
 mod delivery_view;
 mod factory;
 mod faults;
+mod hook_keeps_newest;
 mod hooks;
 mod identity;
 mod judge;
@@ -97,6 +98,7 @@ pub fn all() -> Vec<Scenario> {
         anchors::all(),
         roles_path::all(),
         hooks::all(),
+        hook_keeps_newest::all(),
         receipts::all(),
         identity::all(),
         keys::all(),
