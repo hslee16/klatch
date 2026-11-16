@@ -52,6 +52,10 @@ cli = [
 # shipped binary is built without it and has no way to move its clock (DESIGN section 26.5).
 test-clock = []
 
+[lints.rust]
+# cfg(kani) is set by `cargo kani` only (proto/scripts/kani)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [dependencies]
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

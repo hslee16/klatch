@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Kani bounded proofs of the pure security functions (#404, DESIGN section 32 item 66). By hand only: not run by CI,
+# the gate or any pull request. One-time setup (downloads CBMC, a few hundred MB):
+#
+#   cargo install --locked kani-verifier && cargo kani setup
+#
+#   proto/scripts/kani                    run every harness, one at a time, with a time limit each
+#   proto/scripts/kani NAME...            run only the named harnesses
+#   KANI_TIMEOUT=600 proto/scripts/kani   seconds allowed per harness (default 900)
+#
+# A pass is a bounded proof: no counterexample up to the bounds written above each harness in
+# proto/klatch/src/kani_proofs.rs. It is not a proof for all inputs. A harness that runs out of time counts as a
+# failure (a result you cannot read is not a pass).
+set -uo pipefail
+case "${1:-}" in -h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+here="$(cd "$(dirname "$0")" && pwd)"
+command -v cargo > /dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+cargo kani --version > /dev/null 2>&1 || { echo "kani: cargo-kani is not installed (see the header of this script)" >&2; exit 2; }
+limit="${KANI_TIMEOUT:-900}"
+src="$here/../klatch/src/kani_proofs.rs"
+if [ $# -gt 0 ]; then
+  names=("$@")
+else
+  names=($(grep -A3 '^ *#\[kani::proof\]' "$src" | grep -o 'fn [a-z_0-9]*' | sed 's/^fn //'))
+fi
+failed=0
+cd "$here/../klatch" || exit 2
+for h in "${names[@]}"; do
+  start=$SECONDS
+  if command -v timeout > /dev/null 2>&1; then run=(timeout "$limit" cargo kani --harness "$h"); else run=(cargo kani --harness "$h"); fi
+  out="$("${run[@]}" 2>&1)"
+  rc=$?
+  verdict="$(echo "$out" | grep -E '^VERIFICATION:' | tail -1)"
+  if [ $rc -eq 0 ] && echo "$verdict" | grep -q SUCCESSFUL; then status=pass; else status=FAIL; failed=1; fi
+  [ $rc -eq 124 ] && verdict="timed out after ${limit}s"
+  printf '%-4s %-72s %4ss  %s\n' "$status" "$h" "$((SECONDS - start))" "$verdict"
+  [ $status = FAIL ] && echo "$out" | grep -E 'Failed Checks|^Check [0-9]+:|FAILURE' | head -5
+done
+exit $failed

@@ -62,11 +62,26 @@ pub fn norm(p: &str) -> String {
     }
 }
 
+/// `norm` without allocating: the path without trailing slashes, `/` for the root. A byte loop, not
+/// `trim_end_matches`, so the Kani proofs can cover it (#404).
+fn trim_slashes(p: &str) -> &str {
+    let bytes = p.as_bytes();
+    let mut n = bytes.len();
+    while n > 0 && bytes[n - 1] == b'/' {
+        n -= 1;
+    }
+    if n == 0 { "/" } else { &p[..n] }
+}
+
 /// a overlaps b if either is a path-component prefix of the other.
 pub fn overlaps(a: &str, b: &str) -> bool {
-    let (a, b) = (norm(a), norm(b));
-    let pre = |x: &str, y: &str| x == y || y.starts_with(&format!("{}/", x.trim_end_matches('/')));
-    pre(&a, &b) || pre(&b, &a)
+    let (a, b) = (trim_slashes(a), trim_slashes(b));
+    // `y` is under `x` when it continues with a `/` right after `x`; the root's prefix is the empty string
+    let pre = |x: &str, y: &str| {
+        let x = if x == "/" { "" } else { x };
+        x == y || (y.starts_with(x) && y.as_bytes().get(x.len()) == Some(&b'/'))
+    };
+    pre(a, b) || pre(b, a)
 }
 
 #[cfg(test)]
@@ -156,5 +171,31 @@ mod tests {
         assert!(!overlaps("/", "relative/here")); // root covers absolute paths only
         assert!(!overlaps("src", "srcs/a.rs"));
         assert!(!overlaps("src/a", "src/b"));
+    }
+
+    fn overlaps_reference(a: &str, b: &str) -> bool {
+        let (a, b) = (norm(a), norm(b));
+        let pre =
+            |x: &str, y: &str| x == y || y.starts_with(&format!("{}/", x.trim_end_matches('/')));
+        pre(&a, &b) || pre(&b, &a)
+    }
+
+    #[test]
+    fn overlaps_equals_its_reference_on_every_short_input() {
+        // every string of up to 5 characters from / a b (the first form of `overlaps`, before the Kani rewrite, #404)
+        let mut all = vec![String::new()];
+        let mut layer = vec![String::new()];
+        for _ in 0..5 {
+            layer = layer
+                .iter()
+                .flat_map(|s| ['/', 'a', 'b'].map(move |c| format!("{s}{c}")))
+                .collect();
+            all.extend(layer.iter().cloned());
+        }
+        for a in &all {
+            for b in &all {
+                assert_eq!(overlaps(a, b), overlaps_reference(a, b), "{a:?} {b:?}");
+            }
+        }
     }
 }

@@ -13,6 +13,10 @@
 
 pub mod domain;
 
+// Bounded proofs (#404); only `cargo kani` sets cfg(kani), so no build or test run sees this module.
+#[cfg(kani)]
+mod kani_proofs;
+
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]

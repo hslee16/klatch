@@ -8,11 +8,12 @@ pub const SHARED_SCOPE: &str = "*";
 /// A scope name is 1 to 80 characters of letters, digits and `. _ : - /`, so it is safe in output and in a path.
 pub fn valid_scope(scope: &str) -> bool {
     !scope.is_empty()
-        && scope.chars().count() <= 80
+        // every accepted byte is ASCII, so the byte length is the character count
+        && scope.len() <= 80
         && scope != SHARED_SCOPE
         && scope
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || ".:_-/".contains(c))
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b':' | b'_' | b'-' | b'/'))
 }
 
 /// The scope a claim is stored under: shared for an explicit `--shared` and for room-wide names (`ask:<N>`),
