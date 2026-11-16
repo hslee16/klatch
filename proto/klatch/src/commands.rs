@@ -92,6 +92,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         }
         Cmd::Mute { room } => mute(t, &room, true)?,
         Cmd::Unmute { room } => mute(t, &room, false)?,
+        Cmd::View { view } => view_cmd(t, view.as_deref())?,
         Cmd::Cross { room, seq, to } => {
             let id = t.request_crossing(&room, seq, &to)?;
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
@@ -141,6 +142,29 @@ fn mute(t: &dyn Transport, room: &str, muted: bool) -> Result<()> {
         println!("muted {room}: your hook shows only messages that mention you (read shows all)");
     } else {
         println!("unmuted {room}");
+    }
+    Ok(())
+}
+
+/// `klatch view [all|scope]`: show or set the caller's delivery view (#186).
+fn view_cmd(t: &dyn Transport, view: Option<&str>) -> Result<()> {
+    use klatch::gateway::DeliveryView;
+    let word = |v: DeliveryView| match v {
+        DeliveryView::All => "all",
+        DeliveryView::Scope => "scope",
+    };
+    match view {
+        None => println!("view: {}", word(t.delivery_view()?)),
+        Some(v @ ("all" | "scope")) => {
+            let new = if v == "all" {
+                DeliveryView::All
+            } else {
+                DeliveryView::Scope
+            };
+            t.set_delivery_view(new)?;
+            println!("view: {v} (read and history still show everything)");
+        }
+        Some(other) => bail!("unknown view {other}: use all or scope"),
     }
     Ok(())
 }

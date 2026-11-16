@@ -20,9 +20,9 @@ mod transport;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{
     AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, DEFAULT_CAP_SECS,
-    DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, Digest, Gateway, Handoff, History, HistoryRange,
-    LeaseAction, LeasePolicy, LeaseSource, MAX_CREDENTIAL_TTL_SECS, Observed, Refused, RunInfo,
-    check_credential, lease_action, run_prefix, valid_run_id,
+    DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, DeliveryView, Digest, Gateway, Handoff, History,
+    HistoryRange, LeaseAction, LeasePolicy, LeaseSource, MAX_CREDENTIAL_TTL_SECS, Observed,
+    Refused, RunInfo, check_credential, lease_action, run_prefix, valid_run_id,
 };
 pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence, Secret};

@@ -221,6 +221,12 @@ enum Cmd {
     Mute { room: String },
     /// Unmute a room
     Unmute { room: String },
+    /// Show or set what your hook and wake show without being asked: `all` (the default) or `scope` (only your own
+    /// scope, messages addressed to you as @your-name, and broadcasts as @all). `read` and `history` still show all
+    View {
+        /// `all` or `scope`; omit to show the current view
+        view: Option<String>,
+    },
     /// Ask for message SEQ of ROOM to be copied into a lower-labelled room. It waits for a verdict from the judge or
     /// the reviewer; nothing crosses until it is allowed (or redacted), and floors are checked again then
     Cross {
