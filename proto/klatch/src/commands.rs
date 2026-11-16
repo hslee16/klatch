@@ -710,30 +710,9 @@ fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     Ok(())
 }
 
-/// The text of an invite: names only, one pointer, and no way for the sender to add words (#133).
-fn invite_text(from: &str, member: &str, room: &str) -> String {
-    format!(
-        "invite: @{member}, {from} invites you to room {room}. To accept, run `klatch join {room}`; to ignore it, do nothing."
-    )
-}
-
 /// Invite `member` to `room` by posting the pointer in `via`, a room the member is already in. Joins nobody.
 fn invite(ctx: &Ctx, (member, room): (&str, &str), via: &str) -> Result<()> {
-    for (what, name) in [("member", member), ("room", room), ("room", via)] {
-        if !klatch::domain::valid_name(name) {
-            bail!("bad {what} name: {name}");
-        }
-    }
-    if member == ctx.me {
-        bail!("you cannot invite yourself");
-    }
-    if !ctx.t.who(via)?.iter().any(|m| m.name == member) {
-        bail!(
-            "{member} is not in room {via}, so there is nowhere to reach them; name a room you share with --via"
-        );
-    }
-    ctx.t
-        .post_labeled(via, &invite_text(ctx.me, member, room), None)?;
+    ctx.t.invite(member, room, via)?;
     println!("invited {member} to {room} in {via} (a pointer only; they decide whether to join)");
     Ok(())
 }

@@ -565,6 +565,7 @@ mod tests {
             "post",
             "read",
             "history",
+            "invite",
             "who",
             "claim",
             "release",

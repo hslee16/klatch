@@ -40,6 +40,7 @@ mod policy;
 mod reviewer;
 mod roles;
 pub use roles::Role;
+mod rooms;
 mod runs;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
@@ -188,7 +189,9 @@ impl<S: Store> Gateway<S> {
 
     pub fn join(&self, who: &Principal, room: &str) -> Result<()> {
         self.admit(who, room, Operation::Join { room: room.into() })?;
-        self.store.join(room, &who.member, self.now())
+        let created = self.check_creation(who, room)?;
+        self.store.join(room, &who.member, self.now())?;
+        self.note_creation(who, room, created)
     }
 
     pub fn post(&self, who: &Principal, room: &str, body: &str) -> Result<Posted> {
@@ -247,6 +250,7 @@ impl<S: Store> Gateway<S> {
                 body: body.into(),
             },
         )?;
+        let created = self.check_creation(who, room)?;
         let label = self.post_label(who, room, label)?;
         self.check_budget(who, room, body)?;
         let message = NewMessage::new((room, &who.member), who.attribution, &label, body);
@@ -262,6 +266,7 @@ impl<S: Store> Gateway<S> {
             None => message,
         };
         let posted = self.store.post_as(&message, self.now())?;
+        self.note_creation(who, room, created)?;
         self.notifier.posted(room, posted.seq, &who.member);
         self.park_by_post(who, body);
         Ok(posted)

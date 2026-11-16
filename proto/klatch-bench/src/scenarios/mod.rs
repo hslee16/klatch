@@ -23,6 +23,7 @@ mod receipts;
 mod retention;
 mod reviewer;
 mod roles_path;
+mod room_capability;
 mod scale;
 mod sessions;
 
@@ -88,6 +89,7 @@ pub fn all() -> Vec<Scenario> {
         liveness::all(),
         reviewer::all(),
         admin_role::all(),
+        room_capability::all(),
         anchors::all(),
         roles_path::all(),
         hooks::all(),
