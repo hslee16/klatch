@@ -1,0 +1,1 @@
+- A post that ends a park no longer cuts a claim below its own ttl: the cut back is to now plus the larger of the claim's ttl and the default lease, not to 600 s (#649, DESIGN item 80).

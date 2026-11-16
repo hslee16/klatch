@@ -1026,12 +1026,13 @@ impl Store for SqliteStore {
                 return Ok(());
             }
             // A member that is active again renews for itself: what the park stretched is cut back to a normal
-            // lease, short for an ask.
+            // lease, short for an ask. Never below the claim's own ttl from now (item 52, #649): the post's renewal
+            // already ran, so a cut under the ttl would leave a long claim short until the next action.
             let (plain, ask) = (now + CLAIM_DEFAULT_SECS, now + ASK_LEASE_DEFAULT_SECS);
             self.exec(
-                "UPDATE claims SET expires=CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END
-                 WHERE owner=?1 AND expires>CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END",
-                params![member, plain, ask],
+                "UPDATE claims SET expires=?4+MAX(ttl, CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END)
+                 WHERE owner=?1 AND expires>?4+MAX(ttl, CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END)",
+                params![member, CLAIM_DEFAULT_SECS, ASK_LEASE_DEFAULT_SECS, now],
             )?;
             self.exec(
                 "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?3",

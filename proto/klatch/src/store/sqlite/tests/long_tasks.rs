@@ -185,6 +185,33 @@ fn a_new_sign_of_life_ends_the_park_and_gives_claims_a_normal_lease() {
 }
 
 #[test]
+fn the_cut_back_at_unpark_never_goes_below_a_claims_own_ttl() {
+    // #649: the cut back is to a normal lease, but a claim made with a longer ttl keeps that ttl from now (item 52).
+    let s = store();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "long.rs", 3_600, ""), 10)
+        .unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "short.rs", 100, ""), 10)
+        .unwrap();
+    s.park("alice", &parked("ci", 80_000), 50).unwrap();
+    s.unpark("alice", 1_000).unwrap();
+    let at = |path: &str| {
+        s.claims("r", 1_001)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.path == path)
+            .unwrap()
+            .expires
+    };
+    assert_eq!(at("long.rs"), 4_600, "its own ttl from now, not 600 s");
+    assert_eq!(
+        at("short.rs"),
+        1_600,
+        "a short ttl still gets the default lease"
+    );
+}
+
+#[test]
 fn a_parked_member_is_listed_and_spared_by_pruning_until_the_return_time() {
     let s = store();
     s.join("r", "alice", 10).unwrap();
