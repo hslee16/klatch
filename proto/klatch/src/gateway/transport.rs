@@ -109,6 +109,9 @@ pub trait Transport {
     fn rooms(&self) -> Result<Vec<String>>;
     /// Mute or unmute a room for the caller: its hook then shows only messages that mention the caller.
     fn set_muted(&self, room: &str, muted: bool) -> Result<()>;
+    /// The caller's delivery view: what hooks and the wake count show it (#186).
+    fn delivery_view(&self) -> Result<crate::gateway::DeliveryView>;
+    fn set_delivery_view(&self, view: crate::gateway::DeliveryView) -> Result<()>;
     /// Ask for a message to be copied into a lower-labelled room (#497); queued for a verdict, returns the queue id.
     fn request_crossing(&self, from: &str, seq: i64, to: &str) -> Result<i64>;
     /// The review queue with verdicts and outcomes, newest first; pointers, never text (#497).
@@ -322,6 +325,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn rooms(&self) -> Result<Vec<String>> {
         self.gateway.rooms(&self.principal)
+    }
+    fn delivery_view(&self) -> Result<crate::gateway::DeliveryView> {
+        self.gateway.delivery_view(&self.principal)
+    }
+    fn set_delivery_view(&self, view: crate::gateway::DeliveryView) -> Result<()> {
+        self.gateway.set_delivery_view(&self.principal, view)
     }
     fn set_muted(&self, room: &str, muted: bool) -> Result<()> {
         self.gateway.set_muted(&self.principal, room, muted)

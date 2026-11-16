@@ -27,6 +27,8 @@ pub use anchors::{AnchorAdapter, valid_anchor};
 use github_anchor::{normalize_anchor, parse_events};
 mod budget;
 mod crossing;
+mod delivery;
+pub use delivery::DeliveryView;
 mod dm;
 mod lease;
 pub use lease::{
@@ -375,6 +377,7 @@ impl<S: Store> Gateway<S> {
     pub fn wake_summary(&self, who: &Principal, room: &str) -> Result<(usize, i64)> {
         self.admit(who, room, Operation::read(room, false))?;
         let unread = self.store.wake_poll(room, &who.member, self.now())?;
+        let unread = self.in_view(who, room, unread)?;
         let muted = self.store.is_muted(Seat::new(room, &who.member))?;
         let counted = unread
             .iter()
@@ -407,6 +410,7 @@ impl<S: Store> Gateway<S> {
     /// room. A hook shows each message once and leaves the read cursor alone, so a muted-out message stays readable.
     fn digest_messages(&self, who: &Principal, room: &str, now: i64) -> Result<Vec<Message>> {
         let messages = self.store.hook_read(room, &who.member, now)?;
+        let messages = self.in_view(who, room, messages)?;
         if !self.store.is_muted(Seat::new(room, &who.member))? {
             return Ok(messages);
         }
