@@ -187,3 +187,39 @@ fn a_message_landing_after_the_copy_is_not_tombstoned_without_being_archived() {
     assert_eq!(all[1].kind, None);
     let _ = std::fs::remove_file(out);
 }
+
+#[test]
+fn the_copied_set_is_indexed_so_the_tombstone_update_is_not_quadratic() {
+    // the tombstone UPDATE looks each live row up in the temp table of copied rows; without a key that was a scan per
+    // row, and archiving fifty thousand messages took minutes while holding the write lock (live posts failed with
+    // "database is locked").
+    let path = temp_db("tomb-index");
+    let key = crate::store::insecure_test_key();
+    let s = SqliteStore::open(&path, &key).unwrap();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "alice"), "old one", 10).unwrap();
+    let out = archive_path("tomb-index");
+    let plan = std::cell::RefCell::new(String::new());
+    s.archive_before_hooked("r", 500, &out, &key, &|| {
+        let mut st = s
+            .conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT 1 FROM messages m WHERE EXISTS
+                   (SELECT 1 FROM temp.copied c WHERE c.room=m.room AND c.seq=m.seq AND c.mid=m.mid)",
+            )
+            .unwrap();
+        let rows: Vec<String> = st
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        *plan.borrow_mut() = rows.join("\n");
+    })
+    .unwrap();
+    let plan = plan.into_inner();
+    assert!(
+        plan.contains("PRIMARY KEY") && !plan.contains("AUTOMATIC"),
+        "copied rows must be looked up by their own key, plan was:\n{plan}"
+    );
+    let _ = std::fs::remove_file(out);
+}
