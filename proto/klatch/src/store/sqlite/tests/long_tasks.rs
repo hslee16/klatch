@@ -212,6 +212,75 @@ fn the_cut_back_at_unpark_never_goes_below_a_claims_own_ttl() {
 }
 
 #[test]
+fn a_shorter_re_park_cuts_the_earlier_stretch_to_the_new_return_time() {
+    // #647: the stretch of the first park ends at the new return time, but never below a claim's own ttl.
+    let s = store();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "short.rs", 100, ""), 10)
+        .unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "long.rs", 3_600, ""), 10)
+        .unwrap();
+    s.park("alice", &parked("ci", 3 * DAY), 50).unwrap();
+    s.park("alice", &parked("sooner", 360), 60).unwrap();
+    let at = |path: &str| {
+        s.claims("r", 61)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.path == path)
+            .unwrap()
+            .expires
+    };
+    assert_eq!(at("short.rs"), 360, "the new return time");
+    assert_eq!(at("long.rs"), 3_660, "its own ttl from now is the floor");
+}
+
+#[test]
+fn a_shorter_re_park_cuts_an_ask_lease_with_its_claim() {
+    let s = store();
+    s.join("r", "alice", 10).unwrap();
+    s.join("r", "asker", 10).unwrap();
+    let ask = s
+        .post(Seat::new("r", "asker"), "seeking: x", 10)
+        .unwrap()
+        .seq;
+    s.claim(
+        &ClaimRequest::new(("r", "alice"), &format!("ask:{ask}"), 100, ""),
+        10,
+    )
+    .unwrap();
+    s.park("alice", &parked("ci", 5_000), 50).unwrap();
+    assert!(
+        s.stale_asks(Seat::new("r", "asker"), 4_000, 60)
+            .unwrap()
+            .is_empty()
+    );
+    s.park("alice", &parked("sooner", 360), 60).unwrap();
+    let stale = s.stale_asks(Seat::new("r", "asker"), 4_000, 60).unwrap();
+    assert_eq!(
+        stale.len(),
+        1,
+        "the lease ended with the claim, so the ask is reported"
+    );
+}
+
+#[test]
+fn a_first_park_or_one_after_the_return_time_cuts_nothing() {
+    let s = store();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "f.rs", 3_600, ""), 10)
+        .unwrap();
+    let expires = || s.claims("r", 11).unwrap()[0].expires;
+    s.park("alice", &parked("short", 100), 50).unwrap();
+    assert_eq!(expires(), 3_610, "a first park only ever lengthens");
+    s.park("alice", &parked("again", 700), 500).unwrap();
+    assert_eq!(
+        expires(),
+        3_610,
+        "the claim was not stretched by the first park"
+    );
+}
+
+#[test]
 fn a_parked_member_is_listed_and_spared_by_pruning_until_the_return_time() {
     let s = store();
     s.join("r", "alice", 10).unwrap();
