@@ -722,6 +722,18 @@ impl<S: Store> Gateway<S> {
         self.store.release_member_claims(&who.member, self.now())
     }
 
+    /// The member's own refused claims that a claim being taken by someone else turned into a cycle of waits, each
+    /// given once (#648). The digest carries the same notices; this reads them without the other effects of a digest
+    /// (it renews nothing and moves no cursor).
+    pub fn cycle_notices(
+        &self,
+        who: &Principal,
+        room: &str,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        self.admit(who, room, Operation::claims(room))?;
+        self.store.deadlock_notices(room, &who.member, self.now())
+    }
+
     pub fn claims(&self, who: &Principal, room: &str) -> Result<Vec<Claim>> {
         self.admit(who, room, Operation::claims(room))?;
         self.settle_leases(&who.member)?;
@@ -796,6 +808,7 @@ impl<S: Store> Gateway<S> {
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;
+            let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
             let backlog = if backlog {
                 self.store
                     .open_asks(&room, now)?
@@ -816,6 +829,7 @@ impl<S: Store> Gateway<S> {
                 escalated,
                 lapsed,
                 aged,
+                cycles,
             });
         }
         Ok(Digest {

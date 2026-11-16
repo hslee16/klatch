@@ -48,7 +48,7 @@ module claims {
   type Wait = { member: str, path: str, scope: str, ts: int, told: bool }
   type Step = {
     kind: str, member: str, path: str, ttl: int, shared: bool, verdict: str, delta: int, span: int,
-    outcome: str, blocker: str, deadlock: bool
+    outcome: str, blocker: str, deadlock: bool, tells: Set[str]
   }
   type Snapshot = { now: int, claims: Set[Claim], waits: Set[Wait] }
 
@@ -63,7 +63,7 @@ module claims {
 
   pure val NO_STEP: Step = {
     kind: "init", member: "", path: "", ttl: 0, shared: false, verdict: "", delta: 0, span: 0,
-    outcome: "", blocker: "", deadlock: false
+    outcome: "", blocker: "", deadlock: false, tells: Set()
   }
   pure val NO_CLAIM: Claim = { owner: "", path: "", scope: "", expires: 0, ttl: 0, id: -1 }
 
@@ -140,7 +140,11 @@ module claims {
         val b = oldest(blockers)
         val others = ws.filter(w => not(w.member == m and w.path == p))
         val mine0 = { member: m, path: p, scope: sc, ts: now, told: false }
-        val closes = reaches(b.owner, m, others.union(Set(mine0)), held)
+        // any holder that refuses counts, not only the one named (#648); the mutant looks at the named one only
+        val cycleWaits = others.union(Set(mine0))
+        val closes =
+          if (BUG == "firstBlockerOnly") reaches(b.owner, m, cycleWaits, held)
+          else blockers.exists(x => reaches(x.owner, m, cycleWaits, held))
         val dl = if (BUG == "deadlockNever") false else closes
         val others2 = if (BUG == "tellAll" and dl) others.map(w => { ...w, told: true }) else others
         all {
@@ -152,11 +156,20 @@ module claims {
         // taking the path ends this member's waits for it and for anything it overlaps
         val ws2 = ws.filter(w => not(w.member == m and overlap(w.path, p)))
         val fresh = { owner: m, path: p, scope: sc, expires: now + ttl, ttl: ttl, id: nextId }
+        val after = held.filter(c => not(c.owner == m and c.path == p)).union(Set(fresh))
+        // The new claim is a new hold edge: each waiter it blocks now waits for m. When m waits, through others, for
+        // something that waiter holds, the take completed a cycle that no refusal closed, and the waiter is told
+        // (#648). One waiter per cycle: the cycle has one edge into m.
+        val blocked =
+          if (BUG == "takeTellsNone") Set()
+          else ws2.filter(w => w.member != m and overlapBug(w.path, p) and collideBug(w.scope, sc)
+                               and reaches(m, w.member, ws2, after))
         all {
-          claims' = held.filter(c => not(c.owner == m and c.path == p)).union(Set(fresh)),
-          waits' = ws2, nextId' = nextId + 1,
+          claims' = after,
+          waits' = ws2.map(w => if (blocked.contains(w)) { ...w, told: true } else w),
+          nextId' = nextId + 1,
           now' = now, parkedUntil' = parkedUntil, everParked' = everParked,
-          record({ ...s0, outcome: "ok" }),
+          record({ ...s0, outcome: "ok", tells: blocked.map(w => w.member) }),
         }
       }
     }
@@ -353,10 +366,13 @@ module claims {
       c.id != p.id or c.expires >= p.expires or last.kind == "settle" or last.kind == "post"
         or (last.kind == "park" and c.expires >= now + c.ttl and c.expires >= parkedUntil.get(c.owner))))
 
-  // The deadlock flag is exactly "the refused attempt closes a cycle of waits", checked with a second algorithm.
+  // The deadlock flag is exactly "the refused attempt closes a cycle of waits through some holder that refuses it",
+  // checked with a second algorithm.
   val DeadlockFlagExact: bool =
     (last.kind == "claim" and last.outcome == "conflict") implies
-      (last.deadlock == walk3(last.blocker, last.member, waits, claims, now, WINDOW))
+      (last.deadlock == claims.exists(h => h.expires > now and h.owner != last.member
+        and overlap(h.path, last.path) and collide(h.scope, if (last.shared) "*" else scopeOf(last.member))
+        and walk3(h.owner, last.member, waits, claims, now, WINDOW)))
 
   // A refusal tells only the requester: no other member's wait changes at that step, so when an attempt closes a cycle
   // the closer yields and nobody else is newly told. (A told wait from an earlier step can still be on the cycle, if
@@ -378,25 +394,26 @@ module claims {
     liveClaims.forall(c =>
       parkedUntil.get(c.owner) == 0 or c.expires - now <= CAP or c.expires <= parkedUntil.get(c.owner))
 
+  // A cycle of live waits always has a member told to yield. A refusal that closes a cycle tells its requester at once,
+  // and a claim being taken that completes a cycle tells the waiter it blocks (#648). (Before the take told anyone this
+  // failed: a cycle completed by a take was reported only when a member retried.)
+  val EveryCycleHasATold: bool =
+    MEMBERS.forall(x => not(walk3(x, x, waits, claims, now, WINDOW)) or
+      waits.exists(w => w.ts >= now - WINDOW and w.told
+        and walk3(x, w.member, waits, claims, now, WINDOW) and walk3(w.member, x, waits, claims, now, WINDOW)))
+
   // Every invariant that must hold, for a quick run; the runner also checks each alone so a failure names itself.
   val AllInvariants: bool = and {
     NoOverlappingLiveExclusive, LeaseWithinCap, LeaseWithinParkMax, StuckOwnerHoldsNothing, ReleaseOnlyOwn,
     ExpiredNeverBlocks, OnlyLivenessRevives, RenewNeverRevives, RenewNeverShortens,
     ExpiryShrinksOnlyByLeaseRules, DeadlockFlagExact, RefusalTellsOnlyTheRequester, ActivityRenewsToOwnTtl,
-    ParkedLeaseEndsAtReturn,
+    ParkedLeaseEndsAtReturn, EveryCycleHasATold,
   }
 
   // ---- Known findings: these are expected to FAIL, and each has a ticket (RESEARCH-NOTES, Quint) ----
 
   // F1. Strict 24 hour cap including a parked member: fails, a park stretches a claim to seven days (item 46 vs D5).
   val StrictLeaseCap: bool = liveClaims.forall(c => c.expires - now <= CAP)
-
-  // F3. A cycle of live waits always has a member told to yield: fails, a cycle can be completed by a claim being
-  // taken (a hold edge appears), not by a refusal, and nobody is told until one of them retries.
-  val EveryCycleHasATold: bool =
-    MEMBERS.forall(x => not(walk3(x, x, waits, claims, now, WINDOW)) or
-      waits.exists(w => w.ts >= now - WINDOW and w.told
-        and walk3(x, w.member, waits, claims, now, WINDOW) and walk3(w.member, x, waits, claims, now, WINDOW)))
 
   // ---- witnesses: each is "never happens" and is made to fail on purpose, to give a short trace of that event ----
   val W_deadlock: bool = not(last.kind == "claim" and last.deadlock)
@@ -418,6 +435,8 @@ module claims {
   // a re-park that shortens a claim: the earlier stretch cut to the new return time (#647)
   val W_reparkCuts: bool =
     not(last.kind == "park" and prev.claims.exists(p => claims.exists(c => c.id == p.id and c.expires < p.expires)))
+  // a claim being taken that tells a waiter it newly blocks (#648)
+  val W_takeTells: bool = not(last.kind == "claim" and last.outcome == "ok" and last.tells.size() > 0)
   val W_stuck: bool = not(last.kind == "settle" and last.verdict == "stuck" and prev.claims.size() > claims.size())
   val W_gone: bool =
     not(last.kind == "settle" and last.verdict == "gone"

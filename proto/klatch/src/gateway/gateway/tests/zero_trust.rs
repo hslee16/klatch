@@ -55,6 +55,7 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
     ("claims", |g, w| refused(g.claims(w, "r"))),
+    ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),
     ("release", |g, w| refused(g.release(w, "r", "p"))),
     ("release_with_note", |g, w| {
         refused(g.release_with_note(w, ("r", "p"), "n"))

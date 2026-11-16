@@ -11,6 +11,7 @@ mod claims;
 mod concurrency;
 mod conformance;
 mod credentials;
+mod cycle_notice;
 mod encryption;
 mod long_tasks;
 mod members;

@@ -35,21 +35,22 @@ members=3
 invariants="NoOverlappingLiveExclusive LeaseWithinCap LeaseWithinParkMax StuckOwnerHoldsNothing ReleaseOnlyOwn
 ExpiredNeverBlocks OnlyLivenessRevives RenewNeverRevives RenewNeverShortens ExpiryShrinksOnlyByLeaseRules
 DeadlockFlagExact RefusalTellsOnlyTheRequester ActivityRenewsToOwnTtl
-ParkedLeaseEndsAtReturn"
+ParkedLeaseEndsAtReturn EveryCycleHasATold"
 # known findings: expected to fail, with the ticket for each
-findings="StrictLeaseCap EveryCycleHasATold"
+findings="StrictLeaseCap"
 # invariants checked on the smaller action set `stepCore` (claim, release, tick; see claims.qnt)
-core="DeadlockFlagExact RefusalTellsOnlyTheRequester EveryCycleHasATold W_deadlock W_staleWait"
+core="DeadlockFlagExact RefusalTellsOnlyTheRequester EveryCycleHasATold W_deadlock W_staleWait W_takeTells"
 # planted bug -> the invariant that must catch it
 mutations="equalOnly:NoOverlappingLiveExclusive sharedIgnored:NoOverlappingLiveExclusive capOff:LeaseWithinCap
 extendOverCap:LeaseWithinCap parkUncapped:LeaseWithinParkMax stuckKeeps:StuckOwnerHoldsNothing
 releaseAny:ReleaseOnlyOwn expiredBlocks:ExpiredNeverBlocks renewRevives:RenewNeverRevives
 parkRevives:OnlyLivenessRevives renewShortens:RenewNeverShortens parkShortens:ExpiryShrinksOnlyByLeaseRules
 deadlockNever:DeadlockFlagExact windowIgnored:DeadlockFlagExact tellAll:RefusalTellsOnlyTheRequester
-cutBelowTtl:ActivityRenewsToOwnTtl reparkKeeps:ParkedLeaseEndsAtReturn"
+cutBelowTtl:ActivityRenewsToOwnTtl reparkKeeps:ParkedLeaseEndsAtReturn
+takeTellsNone:EveryCycleHasATold firstBlockerOnly:DeadlockFlagExact"
 # event -> witness invariant that is made to fail on purpose, so Apalache returns a short trace of the event
 witnesses="deadlock:W_deadlock conflict:W_conflict invalid:W_invalid renew:W_renewMoves park:W_parkStretch
-revive:W_revive cutback:W_cutBack postkeeps:W_postKeeps ttlcut:W_cutKeepsTtl repark:W_reparkCuts stalewait:W_staleWait stuck:W_stuck gone:W_gone shared:W_shared releasenotfound:W_releaseNotFound"
+revive:W_revive cutback:W_cutBack postkeeps:W_postKeeps ttlcut:W_cutKeepsTtl repark:W_reparkCuts taketells:W_takeTells stalewait:W_staleWait stuck:W_stuck gone:W_gone shared:W_shared releasenotfound:W_releaseNotFound"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/quint-check.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
