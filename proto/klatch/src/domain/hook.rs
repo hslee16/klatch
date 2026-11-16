@@ -5,6 +5,9 @@ use crate::domain::{Claim, Message, OpenAsk, ReleasedClaim, flat};
 pub struct RoomDigest {
     pub room: String,
     pub messages: Vec<Message>,
+    /// The `seq`s of `messages` that are addressed to the member (a mention, `@all`, or any message of a direct
+    /// message room): when not all messages fit, these are kept before newer ones (#185).
+    pub addressed: Vec<i64>,
     /// Claims held by other members that this member has not been shown yet (or that were renewed).
     pub claims: Vec<Claim>,
     /// Claims this member was shown before that are no longer held.
@@ -112,13 +115,38 @@ fn message_line(room: &str, m: &Message) -> String {
     line
 }
 
-/// Message lines of a room, newest last. Over `DIGEST_MAX_MESSAGES` the extra ones are only counted by the caller.
-fn message_units(d: &RoomDigest) -> Vec<String> {
+/// The order messages are tried in when not all fit: the ones addressed to the member (newest first), then the
+/// rest, newest first. Indices into `d.messages`, at most `DIGEST_MAX_MESSAGES` of them (#185).
+fn message_priority(d: &RoomDigest) -> Vec<usize> {
     use crate::domain::budget::DIGEST_MAX_MESSAGES;
-    d.messages
-        .iter()
+    let is_addressed = |i: &usize| d.addressed.contains(&d.messages[*i].seq);
+    let newest_first: Vec<usize> = (0..d.messages.len()).rev().collect();
+    let (addressed, others): (Vec<usize>, Vec<usize>) =
+        newest_first.into_iter().partition(is_addressed);
+    addressed
+        .into_iter()
+        .chain(others)
         .take(DIGEST_MAX_MESSAGES)
-        .map(|m| message_line(&d.room, m))
+        .collect()
+}
+
+/// The message lines of a room that fit `left`, oldest first as they are read. Which ones is decided by
+/// `message_priority`; the first that does not fit ends the selection, so what is kept is never a gap in the order of
+/// importance. A line is whole or absent.
+fn select_messages(d: &RoomDigest, left: &mut usize) -> Vec<String> {
+    let mut kept: Vec<usize> = Vec::new();
+    for i in message_priority(d) {
+        let line = message_line(&d.room, &d.messages[i]);
+        let need = printed_len(&line);
+        if need > *left {
+            break;
+        }
+        *left -= need;
+        kept.push(i);
+    }
+    kept.sort_unstable();
+    kept.into_iter()
+        .map(|i| message_line(&d.room, &d.messages[i]))
         .collect()
 }
 
@@ -326,10 +354,8 @@ fn plan_rooms(digests: &[RoomDigest], now: i64, budget: usize) -> (Vec<RoomPlan<
         });
     }
     for (plan, d) in plans.iter_mut().zip(&active) {
-        let units = message_units(d);
-        let kept = fit(&units, &mut left);
-        plan.messages_left_out = d.messages.len() - kept;
-        plan.messages = units.into_iter().take(kept).collect();
+        plan.messages = select_messages(d, &mut left);
+        plan.messages_left_out = d.messages.len() - plan.messages.len();
     }
     (plans, collapsed)
 }
@@ -509,10 +535,8 @@ mod tests {
     #[test]
     fn a_digest_clips_a_long_message_and_counts_the_messages_it_does_not_show() {
         let long = "x".repeat(5000);
-        let mut messages = vec![msg(1, "bob", &long)];
-        for i in 2..=30 {
-            messages.push(msg(i, "bob", "short"));
-        }
+        let mut messages: Vec<Message> = (1..=29).map(|i| msg(i, "bob", "short")).collect();
+        messages.push(msg(30, "bob", &long));
         let d = RoomDigest {
             room: "lobby".into(),
             messages,
@@ -528,7 +552,9 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains("#20 from bob") && !out.contains("#21 from bob"),
+            out.contains("#30 from bob")
+                && out.contains("#11 from bob")
+                && !out.contains("#10 from bob"),
             "{out}"
         );
         assert!(
@@ -863,6 +889,7 @@ mod tests {
         let d = RoomDigest {
             room: "r".into(),
             messages: vec![msg(1, "eve", evil)],
+            addressed: Vec::new(),
             claims: vec![Claim {
                 path: evil.into(),
                 owner: "eve".into(),
@@ -967,6 +994,81 @@ mod tests {
         hook_context_json("UserPromptSubmit", out).len()
     }
 
+    fn thirty() -> Vec<Message> {
+        (1..=30).map(|i| msg(i, "bob", &format!("m{i}"))).collect()
+    }
+
+    #[test]
+    fn when_messages_do_not_fit_the_newest_are_kept_and_the_older_ones_counted() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        assert!(
+            out.contains("#30 from bob") && out.contains("#11 from bob"),
+            "{out}"
+        );
+        assert!(!out.contains("#10 from bob"), "{out}");
+        assert!(out.contains("[10 more messages not shown;"), "{out}");
+    }
+
+    #[test]
+    fn an_addressed_message_is_kept_over_a_newer_one_and_shown_in_order() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            addressed: vec![3],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        assert!(
+            out.contains("#3 from bob"),
+            "the addressed message was dropped: {out}"
+        );
+        assert!(
+            out.contains("#12 from bob") && !out.contains("#11 from bob"),
+            "{out}"
+        );
+        assert!(
+            out.find("#3 from").unwrap() < out.find("#12 from").unwrap(),
+            "{out}"
+        );
+        assert!(out.contains("[10 more messages not shown;"), "{out}");
+    }
+
+    #[test]
+    fn more_addressed_messages_than_the_cap_keep_the_newest_addressed() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            addressed: (1..=30).collect(),
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        assert!(
+            out.contains("#30 from bob") && out.contains("#11 from bob"),
+            "{out}"
+        );
+        assert!(!out.contains("#10 from bob"), "{out}");
+    }
+
+    #[test]
+    fn under_a_tight_byte_budget_the_addressed_message_still_comes_first() {
+        let mut messages = many(20, 900);
+        messages[0] = msg(1, "bob", "@me please look at the first one");
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages,
+            addressed: vec![1],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        assert!(out.contains("@me please look at the first one"), "{out}");
+        assert!(out.contains("#20 from bob"), "{out}");
+    }
+
     fn many(n: i64, len: usize) -> Vec<Message> {
         (1..=n).map(|i| msg(i, "bob", &"y".repeat(len))).collect()
     }
@@ -1001,8 +1103,8 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains(&format!("#{shown} from bob")),
-            "the newest shown is the last kept: {out}"
+            out.contains("#20 from bob") && out.contains(&format!("#{} from bob", 20 - shown + 1)),
+            "the newest are kept, not the oldest: {out}"
         );
     }
 

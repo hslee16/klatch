@@ -411,6 +411,22 @@ impl<S: Store> Gateway<S> {
             .collect())
     }
 
+    /// The `seq`s of `messages` that are addressed to the caller: it is mentioned, or the room is a direct message with
+    /// the caller in it. A busy hook digest keeps these before newer messages (#185).
+    fn addressed_seqs(
+        &self,
+        who: &Principal,
+        room: &str,
+        messages: &[Message],
+    ) -> Result<Vec<i64>> {
+        let dm = self.dm_pair(room)?.is_some();
+        Ok(messages
+            .iter()
+            .filter(|m| dm || crate::domain::mentions(&m.body, &who.member))
+            .map(|m| m.seq)
+            .collect())
+    }
+
     /// Set the caller's own status in a room (for example `done`). Short, one line, no control characters.
     pub fn set_status(&self, who: &Principal, room: &str, status: &str) -> Result<()> {
         check_member(who)?;
@@ -761,6 +777,7 @@ impl<S: Store> Gateway<S> {
                 continue;
             }
             let messages = self.digest_messages(who, &room, now)?;
+            let addressed = self.addressed_seqs(who, &room, &messages)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             let stale =
                 self.store
@@ -780,6 +797,7 @@ impl<S: Store> Gateway<S> {
             rooms.push(RoomDigest {
                 room,
                 messages,
+                addressed,
                 claims: changes.added,
                 released: changes.released,
                 stale,
