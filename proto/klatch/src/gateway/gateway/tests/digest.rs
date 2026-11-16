@@ -134,3 +134,18 @@ fn a_digest_reports_refused_rooms_and_still_returns_the_others() {
     assert_eq!(d.refused[0].room, "secretroom");
     assert!(d.refused[0].reason.contains("test.deny_room"));
 }
+
+#[test]
+fn the_digest_marks_the_messages_addressed_to_the_member_and_a_dm_room_is_all_addressed() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.post(&bob(), "r", "chatter").unwrap();
+    g.post(&bob(), "r", "@alice for you").unwrap();
+    g.post(&bob(), "r", "@alicebert not for you").unwrap();
+    g.dm(&bob(), "alice", "no mention in a dm", None).unwrap();
+    let d = g.digest(&alice()).unwrap();
+    let r = d.rooms.iter().find(|r| r.room == "r").unwrap();
+    assert_eq!(r.addressed, vec![2]);
+    let dm_room = d.rooms.iter().find(|r| r.room != "r").unwrap();
+    assert_eq!(dm_room.addressed, vec![1]);
+}
