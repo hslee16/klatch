@@ -267,6 +267,7 @@ fn read_only_store(w: &World) -> Res {
 }
 
 fn garbage_database(w: &World) -> Res {
+    w.expect_damage("the scenario overwrites the store with junk");
     let path = w.home.join("rooms.db");
     let junk: Vec<u8> = (0..4096u32).map(|i| (i * 31 % 251) as u8).collect();
     std::fs::write(&path, &junk).map_err(|e| e.to_string())?;

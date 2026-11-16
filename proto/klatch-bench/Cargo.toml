@@ -8,5 +8,8 @@ publish = false
 
 [dependencies]
 serde_json.workspace = true
+# the read-only store check at the end of each scenario (#621) uses the engine's own reader
+klatch = { path = "../klatch" }
 
 [dev-dependencies]
+rusqlite.workspace = true

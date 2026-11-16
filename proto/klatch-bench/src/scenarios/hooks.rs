@@ -154,6 +154,7 @@ fn pre_tool_use(
 }
 
 fn claim_hook(w: &World) -> Res {
+    w.expect_damage("the scenario breaks the store on purpose");
     w.set_clock(T0);
     for who in ["a", "b"] {
         w.ok(who, &["join", "r"])?;

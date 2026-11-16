@@ -122,6 +122,7 @@ fn retention_archive(w: &World) -> Res {
 /// `klatch admin archives` (#487): a listing that never prints text, flags a file that does not open or was changed, and
 /// still lists the good ones; the exit status says whether every file was usable.
 fn archives_listing(w: &World) -> Res {
+    w.expect_damage("the scenario damages an archive file on purpose");
     w.set_clock(T0);
     let none = w.admin(&["archives"], "");
     check(
