@@ -11,7 +11,7 @@ mod sqlite;
 
 pub use sqlite::{
     ArchiveInfo, ArchiveState, SCHEMA_VERSION, SqliteStore, archives_to_rekey, check_store,
-    list_archives, rekey_archives,
+    list_archives, rekey_archives, rekey_archives_in,
 };
 
 use crate::domain::{
