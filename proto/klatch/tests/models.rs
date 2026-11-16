@@ -85,6 +85,8 @@ struct ClaimsRoom {
     /// Members whose last post said `parked:`: a park stretches their live claims to the return time, and the next
     /// ordinary post cuts them back to a normal lease (DESIGN 45).
     parked: [bool; 3],
+    /// The return time of the park a member is in, 0 when not parked (what an earlier park still holds, #647).
+    held_until: [i64; 3],
 }
 
 impl ClaimsRoom {
@@ -96,6 +98,7 @@ impl ClaimsRoom {
             model: Vec::new(),
             posts: 0,
             parked: [false; 3],
+            held_until: [0; 3],
         }
     }
     fn now(&self) -> i64 {
@@ -192,6 +195,7 @@ impl ClaimsRoom {
             .post(&principal(who), ROOM, &format!("note {}", self.posts))
             .unwrap();
         let was_parked = std::mem::replace(&mut self.parked[who as usize], false);
+        self.held_until[who as usize] = 0;
         for c in self
             .model
             .iter_mut()
@@ -209,7 +213,8 @@ impl ClaimsRoom {
     }
 
     /// A `parked:` post: the member renews as for any post, then every live claim it holds is held until it is due
-    /// back (a claim already past it keeps its own time).
+    /// back (a claim already past it keeps its own time), and what an earlier park stretched past the new return time is
+    /// cut back to it.
     #[rule]
     fn park(&mut self, tc: TestCase) {
         let who = tc.draw(member_index());
@@ -226,12 +231,23 @@ impl ClaimsRoom {
             .unwrap();
         self.parked[who as usize] = true;
         let back_by = now + hours * 3600;
+        let held = std::mem::replace(&mut self.held_until[who as usize], back_by);
         for c in self
             .model
             .iter_mut()
             .filter(|c| c.owner == me && c.expires > now)
         {
-            c.expires = c.expires.max(now + c.ttl).max(back_by);
+            // renewal first; short of the return time: stretched to it; the stretch of an earlier park (beyond the
+            // new return time or the claim's own ttl from now, within the earlier return time): cut back to that
+            let renewed = c.expires.max(now + c.ttl);
+            let floor = back_by.max(now + c.ttl);
+            c.expires = if renewed < back_by {
+                back_by
+            } else if held > now && renewed <= held && renewed > floor {
+                floor
+            } else {
+                renewed
+            };
         }
     }
 

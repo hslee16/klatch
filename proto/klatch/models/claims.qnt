@@ -212,10 +212,20 @@ module claims {
     val capped = if (BUG == "parkUncapped") spanMins else (if (spanMins > PARK_MAX) PARK_MAX else spanMins)
     val back = now + capped
     val renewedClaims = renewed(claims, m, now)
+    val held = parkedUntil.get(m)    // what an earlier park still holds; 0 when not parked
+    // A claim short of the return time is stretched to it. A claim beyond it (or its own ttl from now, if later) but
+    // within what the earlier park held is that park's stretch and is cut back to it (#647); one beyond the earlier
+    // return time was never stretched by it and stays.
+    def parked(c: Claim): int = {
+      val floor = if (back > now + c.ttl) back else now + c.ttl
+      if (BUG == "parkShortens") (if (c.expires > back) back else c.expires)
+      else if (c.expires < back) back
+      else if (BUG != "reparkKeeps" and held > now and c.expires <= held and c.expires > floor) floor
+      else c.expires
+    }
     all {
       claims' = renewedClaims.map(c =>
-        if (c.owner == m and (BUG == "parkRevives" or c.expires > now) and (BUG == "parkShortens" or c.expires < back))
-          { ...c, expires: back } else c),
+        if (c.owner == m and (BUG == "parkRevives" or c.expires > now)) { ...c, expires: parked(c) } else c),
       parkedUntil' = parkedUntil.set(m, back),
       everParked' = everParked.union(Set(m)),
       waits' = waits, now' = now, nextId' = nextId,
@@ -336,10 +346,12 @@ module claims {
     (last.kind == "renew") implies
       prev.claims.forall(p => claims.forall(c => c.id != p.id or c.expires >= p.expires))
 
-  // A lease only shrinks by a lease rule: a liveness rule (settle) or the cut back that ends a park (post).
+  // A lease only shrinks by a lease rule: a liveness rule (settle), the cut back that ends a park (post), or a shorter
+  // re-park cutting the earlier stretch, never below the new return time or the claim's own ttl from now (#647).
   val ExpiryShrinksOnlyByLeaseRules: bool =
     prev.claims.forall(p => claims.forall(c =>
-      c.id != p.id or c.expires >= p.expires or last.kind == "settle" or last.kind == "post"))
+      c.id != p.id or c.expires >= p.expires or last.kind == "settle" or last.kind == "post"
+        or (last.kind == "park" and c.expires >= now + c.ttl and c.expires >= parkedUntil.get(c.owner))))
 
   // The deadlock flag is exactly "the refused attempt closes a cycle of waits", checked with a second algorithm.
   val DeadlockFlagExact: bool =
@@ -360,23 +372,24 @@ module claims {
     (last.kind == "post" or last.kind == "renew") implies
       liveClaims.forall(c => c.owner != last.member or c.ttl == 0 or c.expires >= now + c.ttl)
 
+  // A parked member's claims end no later than its stated return time (or the cap). Held after #647: a shorter re-park
+  // cuts the earlier, longer stretch. (Before the fix it failed: a park never shortened, so the old stretch stayed.)
+  val ParkedLeaseEndsAtReturn: bool =
+    liveClaims.forall(c =>
+      parkedUntil.get(c.owner) == 0 or c.expires - now <= CAP or c.expires <= parkedUntil.get(c.owner))
+
   // Every invariant that must hold, for a quick run; the runner also checks each alone so a failure names itself.
   val AllInvariants: bool = and {
     NoOverlappingLiveExclusive, LeaseWithinCap, LeaseWithinParkMax, StuckOwnerHoldsNothing, ReleaseOnlyOwn,
     ExpiredNeverBlocks, OnlyLivenessRevives, RenewNeverRevives, RenewNeverShortens,
     ExpiryShrinksOnlyByLeaseRules, DeadlockFlagExact, RefusalTellsOnlyTheRequester, ActivityRenewsToOwnTtl,
+    ParkedLeaseEndsAtReturn,
   }
 
   // ---- Known findings: these are expected to FAIL, and each has a ticket (RESEARCH-NOTES, Quint) ----
 
   // F1. Strict 24 hour cap including a parked member: fails, a park stretches a claim to seven days (item 46 vs D5).
   val StrictLeaseCap: bool = liveClaims.forall(c => c.expires - now <= CAP)
-
-  // F2. A parked member's claims end no later than its stated return time (or the cap): fails after a shorter re-park,
-  // because a park never shortens and the old, longer stretch stays.
-  val ParkedLeaseEndsAtReturn: bool =
-    liveClaims.forall(c =>
-      parkedUntil.get(c.owner) == 0 or c.expires - now <= CAP or c.expires <= parkedUntil.get(c.owner))
 
   // F3. A cycle of live waits always has a member told to yield: fails, a cycle can be completed by a claim being
   // taken (a hold edge appears), not by a refusal, and nobody is told until one of them retries.
@@ -402,6 +415,9 @@ module claims {
   val W_cutKeepsTtl: bool =
     not(last.kind == "post" and prev.claims.exists(p => claims.exists(c =>
       c.id == p.id and c.expires < p.expires and c.expires > now + DEFAULT_LEASE)))
+  // a re-park that shortens a claim: the earlier stretch cut to the new return time (#647)
+  val W_reparkCuts: bool =
+    not(last.kind == "park" and prev.claims.exists(p => claims.exists(c => c.id == p.id and c.expires < p.expires)))
   val W_stuck: bool = not(last.kind == "settle" and last.verdict == "stuck" and prev.claims.size() > claims.size())
   val W_gone: bool =
     not(last.kind == "settle" and last.verdict == "gone"
