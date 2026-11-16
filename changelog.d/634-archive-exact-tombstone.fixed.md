@@ -1,0 +1,1 @@
+- A message that landed while `klatch admin archive` was copying could be tombstoned without being archived, losing its text (#634). The tombstone now covers exactly the rows copied.
