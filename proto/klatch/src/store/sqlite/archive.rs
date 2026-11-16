@@ -123,6 +123,19 @@ impl SqliteStore {
     /// archive beside the target and checks it opens before putting it in place, and changes the live rows only after
     /// the archive is safely there.
     pub fn archive_before(&self, room: &str, cutoff: i64, out: &Path, key: &Key) -> Result<usize> {
+        self.archive_before_hooked(room, cutoff, out, key, &|| {})
+    }
+
+    /// `archive_before` with a hook that runs after the copy and before the tombstones: a test lands a message in
+    /// exactly that window (#634). Production passes a no-op.
+    pub(crate) fn archive_before_hooked(
+        &self,
+        room: &str,
+        cutoff: i64,
+        out: &Path,
+        key: &Key,
+        after_copy: &dyn Fn(),
+    ) -> Result<usize> {
         let due: i64 = self
             .conn
             .query_row(
@@ -165,6 +178,12 @@ impl SqliteStore {
                     params![room, cutoff, KIND],
                 )
                 .map_err(be)?;
+            // remember exactly which rows went into the file; the tombstones go on these and no others (#634)
+            self.conn
+                .execute_batch(
+                    "DROP TABLE IF EXISTS temp.copied; CREATE TEMP TABLE copied AS SELECT room, seq, mid FROM ar.archived;",
+                )
+                .map_err(be)?;
             self.conn.execute_batch("DETACH DATABASE ar").map_err(be)?;
             crate::store::encrypt::check_opens(&partial, key)?;
             // a hard link fails when the target exists, where a rename would silently replace another archiver's file
@@ -186,17 +205,22 @@ impl SqliteStore {
             Ok(n) => n,
             Err(e) => {
                 let _ = self.conn.execute_batch("DETACH DATABASE ar");
+                let _ = self.conn.execute_batch("DROP TABLE IF EXISTS temp.copied");
                 let _ = std::fs::remove_file(&partial);
                 return Err(e);
             }
         };
-        self.immediate(|| {
+        after_copy();
+        let tombstoned = self.immediate(|| {
             self.exec(
-                "UPDATE messages SET body=?4, payload=NULL, kind=?3 WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3",
+                "UPDATE messages SET body=?4, payload=NULL, kind=?3 WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3
+                   AND EXISTS (SELECT 1 FROM temp.copied c WHERE c.room=messages.room AND c.seq=messages.seq AND c.mid=messages.mid)",
                 params![room, cutoff, KIND, TOMBSTONE],
             )
             .map(|_| ())
-        })?;
+        });
+        let _ = self.conn.execute_batch("DROP TABLE IF EXISTS temp.copied");
+        tombstoned?;
         Ok(copied)
     }
 
