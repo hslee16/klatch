@@ -171,7 +171,7 @@ fn archive_files(dir: &Path) -> Result<Vec<PathBuf>> {
 /// Write `file` again under `new` and put the copy in its place. The copy is made beside it, opened and counted
 /// before anything is replaced, and the replacement is a rename, so at every moment the name holds a whole archive
 /// under `old` or under `new` and a crash leaves at worst a `.partial` file that `admin archives` calls safe to remove.
-pub(crate) fn rekey_archives_in(file: &Path, old: &Key, new: &Key) -> Result<()> {
+pub fn rekey_archives_in(file: &Path, old: &Key, new: &Key) -> Result<()> {
     let mut partial = file.as_os_str().to_owned();
     partial.push(format!(".{}.partial", std::process::id()));
     let partial = PathBuf::from(partial);
