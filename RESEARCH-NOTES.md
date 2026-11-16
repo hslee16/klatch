@@ -1567,3 +1567,56 @@ A refused issue starts nothing for that task (no worktree, no claude), prints cl
 ### 50.8 The real smoke run through klatch (2026-11-15, ticket #592)
 
 Run by the human in their own terminal: `TEAM_KLATCH=<this checkout's debug build, 0.1.0-dev.2, schema 28> proto/scripts/team smoke`. One Haiku session, throwaway home and repo. Result: done, exit 0, 4 turns, 9.2 s, $0.0035. The worker joined the room, read it, posted a hello line and `status: done`. The launcher's view of the room showed both worker posts **without** the `(unverified)` tag, so a headless session started by the launcher acts as a **verified** member through its worker credential. Not checked in this run: that its credential was revoked afterwards (the log shows the session ended; the revoke was not read back), and mail delivery between turns through a real klatch (only the fake-klatch run in 50.3 showed that).
+
+## 51. A Quint model of the claim and lease protocol, checked with Apalache and replayed against the gateway (2026-11-15, Quint 0.33.1, Apalache 0.62.4, Node 22.15.1, Java 22, macOS, ticket #405, decided in #402)
+
+Question: can the claim and lease protocol (overlap, exclusive and shared scopes, expiry, renewal to a claim's own ttl, liveness leases, parking, the 24 hour cap, cycles of waits) be written as a small model with named invariants that a model checker explores to a bound, and can that model be tied to the real gateway so the two cannot drift apart unnoticed?
+
+### 51.1 What was built (DESIGN 76)
+
+`proto/klatch/models/claims.qnt` (about 400 lines of Quint), `proto/scripts/quint-check` (the runner), `proto/klatch/tests/model_replay.rs` (the link), and 19 committed traces under `proto/klatch/models/traces` (250 KB). Tools are installed outside the repository: `npm i --prefix ~/.local/share/klatch-quint @informalsystems/quint`; Quint fetched Apalache itself into `~/.quint` on the first `quint verify`. Node and Java were already present. The model has seven actions (tick, claim, release, activity, post, park, settle) over three members, three paths (`a`, `a/b`, `c`, so one overlap), a shared and two private scope roles, and the real constants in minutes (cap 1440, wait window 2, liveness extension 10, grace 5, unpark cut back 10, park maximum 10080).
+
+### 51.2 Result: model checked up to 8 steps and 3 members
+
+`proto/scripts/quint-check` (random runs, then Apalache per invariant, one at a time so a failure names itself). No violation of any of the 12 invariants; run times on this Mac (Darwin 23.3.0), one Apalache process each:
+
+| invariant | what it says | steps | time |
+|---|---|---|---|
+| `NoOverlappingLiveExclusive` | no two live claims by different members overlap in colliding scopes | 8 | 189 s |
+| `LeaseWithinCap` | a live claim of a member that never parked ends within 24 h of now | 8 | 331 s |
+| `LeaseWithinParkMax` | no live claim ends more than 7 d out | 8 | 231 s |
+| `StuckOwnerHoldsNothing` | after a stuck verdict the owner holds nothing | 8 | 34 s |
+| `ReleaseOnlyOwn` | a release removes only the releaser's own claim | 8 | 35 s |
+| `ExpiredNeverBlocks` | a refusal is by a live claim, never an expired row | 8 | 34 s |
+| `OnlyLivenessRevives` | a lapsed row is live again only by an alive verdict | 8 | 876 s |
+| `RenewNeverRevives` | renewal, a post, a park never revive a lapsed claim | 8 | 266 s |
+| `RenewNeverShortens` | renewal never shortens a lease | 8 | 180 s |
+| `ExpiryShrinksOnlyByLeaseRules` | a lease shrinks only by a liveness rule or the unpark cut back | 8 | 1307 s |
+| `DeadlockFlagExact` | a refusal says deadlock exactly when it closes a cycle of waits | 7 | 506 s |
+| `RefusalTellsOnlyTheRequester` | a refusal changes no other member's wait | 7 | 12 s |
+
+The two deadlock invariants run on the smaller step relation `stepCore` (claim, release, tick; ttl 10 or over the cap, steps of 1 or 3 minutes) and to 7 steps, because at 8 steps `DeadlockFlagExact` had run over half an hour without finishing. The other ten run on all seven actions. The first ten rows are from one run, the last two from a second run made after the last edit of the model, which changed only the second of them (the model's actions did not change between the runs). Every run also does 3000 random runs of 30 steps per invariant (`quint run`), all passing.
+
+Wording: this is **model checked up to 8 steps and 3 members**, not proven. The model leaves out `ask:` claims and their short leases, anchors, release notes, claim ages, rooms and membership changes, and treats the busy-for-the-cap verdict as stuck. Apalache explores every behaviour up to the bound with the values the model offers (four ttls, six clock steps, five park spans, four verdicts); a counterexample needing more steps, another value, a fourth member, or one of the left-out pieces is not excluded.
+
+### 51.3 Each invariant can fail: bugs planted in the model
+
+`proto/scripts/quint-check mutations` rewrites one `BUG` line of a temporary copy and runs the invariant that should catch it. All 15 were caught within 8 steps: `equalOnly` and `sharedIgnored` (`NoOverlappingLiveExclusive`), `capOff` and `extendOverCap` (`LeaseWithinCap`), `parkUncapped` (`LeaseWithinParkMax`), `stuckKeeps` (`StuckOwnerHoldsNothing`), `releaseAny` (`ReleaseOnlyOwn`), `expiredBlocks` (`ExpiredNeverBlocks`), `renewRevives` (`RenewNeverRevives`), `parkRevives` (`OnlyLivenessRevives`), `renewShortens` (`RenewNeverShortens`), `parkShortens` (`ExpiryShrinksOnlyByLeaseRules`), `deadlockNever` and `windowIgnored` (`DeadlockFlagExact`), `tellAll` (`RefusalTellsOnlyTheRequester`). One lesson: the first run did **not** catch `sharedIgnored`, because the invariant used the same `collide` function the bug had broken, so it agreed with the bug. The invariants now use a clean copy of each relation and only the actions use the buggy one. A planted bug is how that vacuous check was found.
+
+### 51.4 Each invariant can fail: bugs planted in the real code
+
+Each of these was applied to the real source one at a time, `cargo test -p klatch --test model_replay` run, and the change reverted (the tree was clean after): overlap by equality only (`domain/text.rs`), renewal that revives a lapsed claim and renewal that also shortens (`store/sqlite.rs`), `closes_cycle` always false, no 24 hour cap in `Gateway::claim`, `Verdict::Stuck` mapped to leave, a park not cut to seven days (`domain/parked.rs`), shared scope that does not collide (`domain/scope.rs`), release that ignores the owner, waits that never expire, an expired claim that still blocks, a liveness extension of 25 hours and a grace period of 10 minutes (`lease.rs`), and the unpark cut back applied to a member that is not parked. 14 of 14 failed the replay with a message naming the trace, step, and the two outcomes. Two were **not** caught by the first six random traces and six witnesses (waits that never expire; the cut back applied to everyone); adding two witnesses (`W_staleWait`, `W_postKeeps`, a refusal after a wait aged out and a post by a member holding a long claim) made both fail. So the replay is only as good as its traces: when the model gains an action or a rule, add a witness for it.
+
+### 51.5 What the model found: four design gaps, ticketed
+
+Kept as invariants that are expected to fail (`quint-check findings`, each reported "violated, as recorded"): `StrictLeaseCap` (a park stretches a claim to seven days, past D5's 24 hours: #646, needs-human, 2 step trace), `ParkedLeaseEndsAtReturn` (a shorter re-park leaves the longer stretch: #647, 3 steps), `EveryCycleHasATold` (a cycle completed by a claim being taken, not by a refusal, is told only at the next retry: #648, 5 steps), and `ActivityRenewsToOwnTtl` (the unpark cut back runs after the post's renewal and goes below the claim's own ttl until the next action: #649, 3 steps). The holding invariants include the weaker forms of the same facts (`LeaseWithinCap` for members that never parked, `LeaseWithinParkMax` for everyone). No violation of the other invariants was found: no two live overlapping claims in colliding scopes, no lease past the cap or the park maximum, no renewal that revives or shortens, a refusal says deadlock exactly when it closes a cycle.
+
+Two properties did not survive their first wording, and the second was found only by Apalache. "A cycle of waits makes exactly one party yield", stated over the told flag of every live wait, failed in a 3000 by 30 step random run: two told waits on one cycle (a member told earlier that did not yield, then a second closure through it). I narrowed it to "the attempt that closes a cycle that did not exist before is the only told wait on that cycle"; 5000 random runs of 30 steps passed it, but Apalache found a 6 step counterexample in 38 s: m3 is told, then re-takes its own claim in another scope (which breaks the cycle without yielding), then m2 closes a new cycle through m3's still stored told wait. The wait record keeps `told` from an earlier step, so any statement over stored flags is about history, not about the step. What the protocol actually promises, and what is now checked as `RefusalTellsOnlyTheRequester`, is step local: a refusal changes no wait but the requester's, and (`DeadlockFlagExact`) the requester is told exactly when its attempt closes a cycle. Together: at the moment a cycle closes, one party is told. A retry while a cycle persists is told again by design, and a member that was told and does not yield stays on the cycle; neither is a second yielder created by the protocol.
+
+### 51.6 Practical notes
+
+- Apalache cost is dominated by the cycle test. A closure built as a set of pairs (`fold` over `filter`) did not finish a 5 step check in 3 minutes; the same question as quantifiers over the three members (`walk3`) took 36 s for 6 steps. The deadlock invariants also run on a smaller step relation (`stepCore`: claim, release, tick), 7 s to find a deadlock trace instead of being intractable. The runner says so.
+- Shortest traces per event come from a witness trick: state "this never happens" as an invariant (`W_deadlock`, `W_revive`, ...), let Apalache violate it, and keep the counterexample as a replayable trace. One witness (`W_staleWait`) is cheaper to find by random search (`quint run`, 1.4 s) than by Apalache.
+- `quint run --out-itf` and `quint verify --out-itf` write ITF JSON (`{"#bigint": "12"}` for numbers, `{"#set": [...]}` for sets); `serde_json` reads it with no new dependency. The replay maps one model minute to 60 seconds and compares the outcome of each claim or release and the live claims.
+- The model's replay needed one fix in the test, not the code: the gateway refuses a post identical to the previous one within moments, so the replay numbers each post.
+- Quint rejects `val` operators with parameters and a few other things Apalache users meet (`next` is a built-in name; map types are written `str -> int`).
