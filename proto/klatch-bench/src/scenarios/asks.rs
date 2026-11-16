@@ -56,6 +56,24 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "functional",
             run: partial_handoff,
         },
+        Scenario {
+            name: "an_ask_posted_to_an_empty_room_tells_the_asker_nobody_is_listening",
+            origin: "#224",
+            layer: "functional",
+            run: ask_into_empty_room,
+        },
+        Scenario {
+            name: "an_ask_with_a_recent_helper_present_prints_no_warning",
+            origin: "#224",
+            layer: "functional",
+            run: ask_with_helper_present,
+        },
+        Scenario {
+            name: "a_late_ask_after_the_helper_left_is_told_then_found_by_the_next_helper",
+            origin: "#224",
+            layer: "functional",
+            run: late_ask_then_new_helper,
+        },
     ]
 }
 
@@ -272,5 +290,49 @@ fn partial_handoff(w: &World) -> Res {
         "partial 1",
         "and the ask shows it",
     )?;
+    Ok(vec![])
+}
+
+const NOBODY: &str = "no other member of this room has been seen";
+
+fn ask_into_empty_room(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    let r = w.run("alice", &["post", "lobby", "seeking: a rare thing"]);
+    check(r.ok, format!("post failed: {}", r.stderr))?;
+    has(&r.stderr, NOBODY, "the asker is told nobody is around")?;
+    has(&r.stderr, "do not wait", "and not to wait")?;
+    let plain = w.run("alice", &["post", "lobby", "just a note"]);
+    lacks(&plain.stderr, NOBODY, "a plain post gets no warning")?;
+    Ok(vec![])
+}
+
+fn ask_with_helper_present(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("bob", &["join", "lobby"])?;
+    w.advance(60);
+    let r = w.run("alice", &["post", "lobby", "seeking: a rare thing"]);
+    lacks(&r.stderr, NOBODY, "a helper seen a minute ago is enough")?;
+    Ok(vec![])
+}
+
+/// Scenarios 1, 4 and 5 of #224: the helper left, a late ask is told at post time, a helper that joins later finds
+/// the open ask in its session-start digest.
+fn late_ask_then_new_helper(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "lobby"])?;
+    w.ok("bob", &["join", "lobby"])?;
+    w.advance(601);
+    let r = w.run("alice", &["post", "lobby", "seeking: a rare thing"]);
+    has(
+        &r.stderr,
+        NOBODY,
+        "a helper unseen for over ten minutes does not count",
+    )?;
+    w.advance(3600);
+    w.ok("carol", &["join", "lobby"])?;
+    let start = w.ok("carol", &["hook", "--event", "SessionStart"])?;
+    has(&start, "a rare thing", "the next helper sees the old ask")?;
     Ok(vec![])
 }

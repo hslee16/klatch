@@ -272,6 +272,23 @@ pub fn statuses(messages: &[Message]) -> Vec<MemberStatus> {
     out
 }
 
+/// What an asker should be told right after posting an ask: whether anyone could be reading it (#224). Option A of
+/// the ticket made automatic, because the asker that did not check waited minutes for a helper that had left. A
+/// member counts as reachable when it is not the asker, has not said it is done, and was seen within
+/// `MEMBER_ACTIVE_SECS` or holds a declared wait. `None` when someone is reachable (the common case prints nothing).
+pub fn ask_reach_note(members: &[MemberInfo], me: &str, now: i64) -> Option<String> {
+    let reachable = members.iter().filter(|m| m.name != me).any(|m| {
+        let done = m.status.as_deref().is_some_and(|s| s.starts_with("done"));
+        !done && (now - m.last_seen <= MEMBER_ACTIVE_SECS || holds_park(m.parked.as_ref(), now))
+    });
+    (!reachable).then(|| {
+        "klatch: no other member of this room has been seen in the last 10 minutes (or all said done). Your ask is \
+         saved and a helper that joins later sees it at session start, but do not wait on it: run `klatch board` to \
+         see who is around, or tell your human what is missing."
+            .to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +306,55 @@ mod tests {
             kind: None,
             payload: None,
         }
+    }
+
+    fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
+        MemberInfo {
+            name: name.into(),
+            joined: 0,
+            last_seen,
+            status: status.map(Into::into),
+            parent: None,
+            parked: None,
+        }
+    }
+
+    #[test]
+    fn an_ask_with_nobody_else_present_says_so() {
+        let note = ask_reach_note(&[peer("asker", 1000, None)], "asker", 1000).unwrap();
+        assert!(note.contains("do not wait"));
+        assert!(!note.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn an_ask_with_a_recent_helper_says_nothing() {
+        let m = [peer("asker", 1000, None), peer("helper", 900, None)];
+        assert_eq!(ask_reach_note(&m, "asker", 1000), None);
+    }
+
+    #[test]
+    fn a_helper_gone_past_the_window_or_done_does_not_count() {
+        let stale = [
+            peer("asker", 5000, None),
+            peer("helper", 5000 - MEMBER_ACTIVE_SECS - 1, None),
+        ];
+        assert!(ask_reach_note(&stale, "asker", 5000).is_some());
+        let done = [
+            peer("asker", 5000, None),
+            peer("helper", 4999, Some("done bye")),
+        ];
+        assert!(ask_reach_note(&done, "asker", 5000).is_some());
+    }
+
+    #[test]
+    fn a_helper_that_declared_a_wait_still_counts() {
+        let mut h = peer("helper", 0, None);
+        h.parked = Some(Parked {
+            why: "ci".into(),
+            back_by: 9000,
+        });
+        let m = [peer("asker", 5000, None), h];
+        assert_eq!(ask_reach_note(&m, "asker", 5000), None);
     }
 
     #[test]

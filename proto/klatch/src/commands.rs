@@ -44,6 +44,7 @@ pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         } => post(
             t,
             (&room, &body),
+            (ctx.me, ctx.now),
             label.as_deref(),
             kind.as_deref().map(|k| (k, payload.as_deref())),
         )?,
@@ -153,6 +154,7 @@ fn dm(t: &dyn Transport, member: &str, body: &[String], label: Option<&str>) -> 
 fn post(
     t: &dyn Transport,
     (room, body): (&str, &[String]),
+    (me, now): (&str, i64),
     label: Option<&str>,
     handoff: Option<(&str, Option<&str>)>,
 ) -> Result<()> {
@@ -167,6 +169,16 @@ fn post(
         None => t.post_labeled(room, &body, label)?,
     };
     println!("posted (queued; not proof of read)");
+    if klatch::domain::is_ask(&body) {
+        // After the post, so a failed who never hides that the ask went in; on standard error like other notes.
+        if let Some(note) = t
+            .who(room)
+            .ok()
+            .and_then(|m| klatch::domain::ask_reach_note(&m, me, now))
+        {
+            eprintln!("{note}");
+        }
+    }
     Ok(())
 }
 
