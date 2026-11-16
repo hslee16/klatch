@@ -636,6 +636,7 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
             let dir = db.with_file_name("archive");
             let at = now();
             let mut total = 0;
+            let mut made = Vec::new();
             for r in rooms {
                 let days = match store.policy_get(&format!("retention:{r}"))? {
                     Some(d) => Some(d),
@@ -665,12 +666,25 @@ fn key_command(db: &std::path::Path, cmd: AdminCmd) -> Result<()> {
                     })
                     .collect();
                 let file = dir.join(format!("{safe}-{at}.db"));
-                let n = store.archive_before(&r, at - days * 86_400, &file, &key)?;
+                let n = match store.archive_before(&r, at - days * 86_400, &file, &key) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        // the file may be in place even when a later step failed (a store re-keyed under this
+                        // process); it must not be left under a key that is no longer the store's
+                        made.extend(file.exists().then_some(file));
+                        let _ =
+                            custody::settle_archive_keys(db, &custody::key_home(db), &key, &made);
+                        return Err(e.into());
+                    }
+                };
                 if n > 0 {
                     println!("{r}: archived {n} messages to {}", file.display());
                     total += n;
+                    made.push(file);
                 }
             }
+            // a key rotation that finished while this ran never saw these files (#629)
+            custody::settle_archive_keys(db, &custody::key_home(db), &key, &made)?;
             note("archive", &format!("{total} messages"))?;
             if total == 0 {
                 println!("nothing is older than its retention");

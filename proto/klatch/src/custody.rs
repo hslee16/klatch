@@ -125,8 +125,17 @@ fn open_store_in(db: &Path, kh: &KeyHome) -> Result<SqliteStore> {
     if guard.is_none() {
         ensure_encrypted(db, &key)?;
     }
-    let store = open_keyed(db, kh, key)?;
-    drop(guard);
+    // A key rotation holds the directory lock from its first step to its last (#629), so the key is read again and the
+    // store opened under that lock: a key read before it was taken may be the old one, and an open that overlapped a
+    // rotation would fail blaming the file. A process that already holds the lock (a new store) just goes on.
+    let store = match guard {
+        Some(_held) => open_keyed(db, kh, key)?,
+        None => {
+            let _lock = lock_store_dir(db)?;
+            let key = kh.source.get(&kh.name)?.unwrap_or(key);
+            open_keyed(db, kh, key)?
+        }
+    };
     if created && std::io::stderr().is_terminal() {
         eprintln!(
             "klatch: made an encryption key for this store in the {}; `klatch admin recovery` shows the code that restores it",
@@ -141,6 +150,15 @@ fn open_store_in(db: &Path, kh: &KeyHome) -> Result<SqliteStore> {
         eprintln!("klatch: {w}");
     }
     Ok(store)
+}
+
+/// The store directory lock, or none when the directory does not exist yet (nothing can be rotating there).
+fn lock_store_dir(db: &Path) -> Result<Option<std::fs::File>> {
+    let dir = db.parent().filter(|d| !d.as_os_str().is_empty());
+    if dir.is_some_and(|d| !d.exists()) {
+        return Ok(None);
+    }
+    Ok(Some(klatch::store::encrypt::lock_dir(db)?))
 }
 
 /// Open the store with `key`. The caller holds the directory lock.
@@ -186,20 +204,28 @@ pub(crate) fn restore_key(db: &Path, key: &Key) -> Result<()> {
     Ok(())
 }
 
-/// Re-encrypt the store and every archive file under a new key and make that the stored key. The order survives a
-/// crash at any step (#628): the archives are checked first and the rotation refused, nothing changed, if one opens
-/// with neither key; the new key is stored under a second name; each archive is re-keyed through a temp file (so at
-/// every moment each holds a whole archive under one of the two keys); the store is re-keyed; then the new key takes
-/// the main name and the second one goes. `open_store` finishes a run that died after the store was re-keyed, and a
-/// repeated `rotate-key` finishes one that died before: it reuses the stored second key and skips the archives
-/// already moved. Returns the new key.
+/// Re-encrypt the store and every archive file under a new key and make that the stored key. The whole rotation runs
+/// under the store directory lock (#629), so a second rotation or any process opening the store waits for it. The
+/// order survives a crash at any step (#628): the archives are checked first and the rotation refused, nothing
+/// changed, if one opens with neither key; the new key is stored under a second name; each archive is re-keyed
+/// through a temp file (so at every moment each holds a whole archive under one of the two keys); the store is
+/// re-keyed; then the new key takes the main name and the second one goes. `open_store` finishes a run that died
+/// after the store was re-keyed, and a repeated `rotate-key` finishes one that died before: it reuses the stored
+/// second key and skips the archives already moved. Returns the new key.
 pub(crate) fn rotate_key(db: &Path) -> Result<Key> {
     rotate_key_in(db, &key_home(db))
 }
 
 fn rotate_key_in(db: &Path, kh: &KeyHome) -> Result<Key> {
-    // makes the key of a new store, converts a plaintext one, finishes a rotation that died after the re-key
-    let store = open_store_in(db, kh)?;
+    // makes the key of a new store, converts a plaintext one; takes and drops the lock itself
+    drop(open_store_in(db, kh)?);
+    let _lock = lock_store_dir(db)?;
+    let current = kh
+        .source
+        .get(&kh.name)?
+        .ok_or_else(|| anyhow::anyhow!("this store has no key to rotate"))?;
+    let store = open_keyed(db, kh, current)?;
+    // open_keyed may have finished an earlier rotation, so the main key is read once more
     let old = kh
         .source
         .get(&kh.name)?
@@ -217,6 +243,28 @@ fn rotate_key_in(db: &Path, kh: &KeyHome) -> Result<Key> {
     kh.source.put(&kh.name, &new)?;
     kh.source.delete(&next_name(&kh.name))?;
     Ok(new)
+}
+
+/// After `admin archive` wrote `files` under `used`, the key it read at the start: if a rotation finished in the
+/// meantime, that rotation never saw these files and the store is under a newer key, so move them to it. Under the
+/// directory lock, so a rotation in progress finishes first, and one that starts later finds the files itself.
+pub(crate) fn settle_archive_keys(
+    db: &Path,
+    kh: &KeyHome,
+    used: &Key,
+    files: &[PathBuf],
+) -> Result<()> {
+    let _lock = lock_store_dir(db)?;
+    let Some(current) = kh.source.get(&kh.name)? else {
+        return Ok(());
+    };
+    if current == *used {
+        return Ok(());
+    }
+    for f in files {
+        klatch::store::rekey_archives_in(f, used, &current)?;
+    }
+    Ok(())
 }
 
 /// The keys of `labels` this store has in its key source; a label with no key there is not held.
@@ -428,6 +476,182 @@ mod tests {
         assert!(still == old, "the store key changed");
         assert!(kh.source.get("store-test-next").unwrap().is_none());
         assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A key source that, when the rotation stores its new key, says so and then waits to be released: the rotation
+    /// is then in the middle of its work, holding whatever it holds.
+    struct HoldRotation {
+        inner: klatch::keys::FileKeys,
+        state: Arc<(Mutex<(bool, bool)>, Condvar)>, // (rotation started, released)
+    }
+
+    impl KeySource for HoldRotation {
+        fn get(&self, name: &str) -> Result<Option<Key>, klatch::keys::Error> {
+            self.inner.get(name)
+        }
+        fn put(&self, name: &str, key: &Key) -> Result<(), klatch::keys::Error> {
+            self.inner.put(name, key)?;
+            if name.ends_with("-next") {
+                let (m, cv) = &*self.state;
+                let mut g = m.lock().unwrap();
+                g.0 = true;
+                cv.notify_all();
+                let _ = cv
+                    .wait_timeout_while(g, std::time::Duration::from_secs(20), |g| !g.1)
+                    .unwrap();
+            }
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> Result<(), klatch::keys::Error> {
+            self.inner.delete(name)
+        }
+        fn describe(&self) -> &'static str {
+            "file"
+        }
+    }
+
+    type Switch = Arc<(Mutex<(bool, bool)>, Condvar)>;
+
+    /// Start a rotation that stops half way (new key stored, store not yet re-keyed). Returns the thread and the
+    /// switch that lets it go on.
+    fn rotation_held_half_way(d: &Path) -> (std::thread::JoinHandle<Result<Key>>, Switch) {
+        let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        let t = {
+            let (db, keys, state) = (d.join("klatch.db"), d.join("keys"), state.clone());
+            std::thread::spawn(move || {
+                let src = HoldRotation {
+                    inner: klatch::keys::FileKeys::new(&keys),
+                    state,
+                };
+                rotate_key_in(&db, &home(Box::new(src)))
+            })
+        };
+        let (m, cv) = &*state;
+        drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
+        (t, state)
+    }
+
+    fn release(state: &Arc<(Mutex<(bool, bool)>, Condvar)>) {
+        let (m, cv) = &**state;
+        m.lock().unwrap().1 = true;
+        cv.notify_all();
+    }
+
+    #[test]
+    fn a_process_that_opens_during_a_rotation_waits_for_it_and_then_opens_with_the_new_key() {
+        let d = scratch("rot-open");
+        store_with_archive(&d);
+        let (rotation, state) = rotation_held_half_way(&d);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let opener = {
+            let d = d.clone();
+            std::thread::spawn(move || {
+                let r = open_store_in(&d.join("klatch.db"), &file_home(&d)).map(|_| ());
+                let _ = tx.send(());
+                r
+            })
+        };
+        // the opener must not get through while the rotation holds the store
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(400))
+                .is_err(),
+            "an opener got through in the middle of a rotation"
+        );
+        release(&state);
+        let new = rotation.join().unwrap().unwrap();
+        let r = opener.join().unwrap();
+        assert!(r.is_ok(), "{:?}", r.err());
+        let now = file_home(&d).source.get("store-test").unwrap().unwrap();
+        assert!(now == new);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_archive_written_under_a_key_that_rotated_meanwhile_is_moved_to_the_current_key() {
+        let d = scratch("rot-stale-archive");
+        let first = store_with_archive(&d);
+        let kh = file_home(&d);
+        let used = kh.source.get("store-test").unwrap().unwrap();
+        let current = rotate_key_in(&d.join("klatch.db"), &kh).unwrap();
+        // an archiver that read the key before the rotation finishes its file after it
+        let store = open_store_in(&d.join("klatch.db"), &kh).unwrap();
+        klatch::store::Store::post(
+            &store,
+            klatch::store::Seat::new("r", "alice"),
+            "later old",
+            20,
+        )
+        .unwrap();
+        let late = d.join("archive").join("r-200.db");
+        store.archive_before("r", 500, &late, &used).unwrap();
+        settle_archive_keys(
+            &d.join("klatch.db"),
+            &kh,
+            &used,
+            std::slice::from_ref(&late),
+        )
+        .unwrap();
+        let listed = klatch::store::list_archives(&d.join("archive"), &current).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(
+            listed
+                .iter()
+                .all(|a| matches!(a.state, klatch::store::ArchiveState::Ok { .. })),
+            "{listed:?}"
+        );
+        let _ = first;
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_second_rotation_waits_for_the_first_and_both_finish_with_a_store_that_opens() {
+        let d = scratch("rot-two");
+        store_with_archive(&d);
+        let (first, state) = rotation_held_half_way(&d);
+        let second = {
+            let d = d.clone();
+            std::thread::spawn(move || rotate_key_in(&d.join("klatch.db"), &file_home(&d)))
+        };
+        release(&state);
+        first.join().unwrap().unwrap();
+        let last = second.join().unwrap().unwrap();
+        let kh = file_home(&d);
+        let now = kh.source.get("store-test").unwrap().unwrap();
+        assert!(now == last, "the stored key is not the last rotation's");
+        assert!(kh.source.get("store-test-next").unwrap().is_none());
+        assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_process_that_read_the_old_key_before_a_rotation_still_opens_afterwards() {
+        let d = scratch("rot-stale");
+        store_with_archive(&d);
+        let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        let late = {
+            let (d, state) = (d.clone(), state.clone());
+            std::thread::spawn(move || {
+                let src = Stalled {
+                    inner: klatch::keys::FileKeys::new(&d.join("keys")),
+                    state,
+                    first: false.into(),
+                };
+                open_store_in(&d.join("klatch.db"), &home(Box::new(src))).map(|_| ())
+            })
+        };
+        {
+            let (m, cv) = &*state;
+            drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
+        }
+        rotate_key_in(&d.join("klatch.db"), &file_home(&d)).unwrap();
+        {
+            let (m, cv) = &*state;
+            m.lock().unwrap().1 = true;
+            cv.notify_all();
+        }
+        let r = late.join().unwrap();
+        assert!(r.is_ok(), "{:?}", r.err());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

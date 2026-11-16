@@ -336,7 +336,7 @@ fn store_key_file(home: &Path) -> Result<PathBuf, String> {
         .map(|e| e.path())
         .find(|p| {
             let n = p.file_name().map(|n| n.to_string_lossy().into_owned());
-            n.is_some_and(|n| n.starts_with("store-") && n.ends_with(".key"))
+            n.is_some_and(|n| crate::mp::is_main_key_file(&n))
         })
         .ok_or_else(|| "no store key file".to_string())
 }

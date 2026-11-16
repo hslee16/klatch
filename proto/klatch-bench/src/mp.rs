@@ -169,12 +169,22 @@ fn head(seqs: &[i64]) -> String {
     )
 }
 
+/// Whether a file in the key directory is the store's own key. `-next.key` is the second name a rotation uses and a
+/// rotation killed before it re-keyed the store leaves it behind, unused (#629); reading it as the store key is a
+/// mistake the checker made.
+pub fn is_main_key_file(name: &str) -> bool {
+    name.starts_with("store-") && name.ends_with(".key") && !name.ends_with("-next.key")
+}
+
 /// Names in the store directory that no finished process may leave behind: lock files, half-written copies.
 pub fn stray_files(names: &[String]) -> Vec<String> {
     let allowed = |n: &str| match n.split_once('/') {
         None => n == "rooms.db" || n == "keys" || n == "archive" || is_backup(n),
         Some(("keys", f)) => f.starts_with("store-") && f.ends_with(".key"),
-        Some(("archive", f)) => (f.ends_with(".db") || f.ends_with(".partial")) && !f.contains('/'),
+        Some(("archive", f)) => {
+            (f.ends_with(".db") || f.ends_with(".partial") || f.ends_with(".partial-journal"))
+                && !f.contains('/')
+        }
         Some(_) => false,
     };
     names.iter().filter(|n| !allowed(n)).cloned().collect()
@@ -187,6 +197,13 @@ fn is_backup(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_second_key_name_of_a_rotation_is_not_the_store_key() {
+        assert!(super::is_main_key_file("store-19ab.key"));
+        assert!(!super::is_main_key_file("store-19ab-next.key"));
+        assert!(!super::is_main_key_file("store-19ab.key.tmp"));
+    }
+
     use super::*;
 
     fn s(x: &str) -> String {
@@ -342,6 +359,7 @@ mod tests {
             // an interrupted archive or backup leaves a partial file by design (`admin archives` calls it safe to
             // remove), so it is not a stale lock
             "archive/r-1900000001.db.4242.partial",
+            "archive/r-1900000001.db.4242.partial-journal",
             "bk-3.db.partial",
             "bk-3.db.partial-journal",
         ]
