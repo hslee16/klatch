@@ -191,7 +191,6 @@ impl ClaimsRoom {
         self.gw
             .post(&principal(who), ROOM, &format!("note {}", self.posts))
             .unwrap();
-        let cut = now + klatch::domain::CLAIM_DEFAULT_SECS;
         let was_parked = std::mem::replace(&mut self.parked[who as usize], false);
         for c in self
             .model
@@ -202,6 +201,8 @@ impl ClaimsRoom {
         }
         if was_parked {
             for c in self.model.iter_mut().filter(|c| c.owner == me) {
+                // a normal lease, but never below the claim's own ttl from now (#649)
+                let cut = now + klatch::domain::CLAIM_DEFAULT_SECS.max(c.ttl);
                 c.expires = c.expires.min(cut);
             }
         }

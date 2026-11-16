@@ -193,10 +193,13 @@ module claims {
   action post(m: str): bool = {
     val renewedClaims = renewed(claims, m, now)
     val wasParked = parkedUntil.get(m) != 0
-    val cut = now + DEFAULT_LEASE
+    // never below the claim's own ttl from now (#649): the renewal just ran, and a cut under it would leave a long
+    // claim short until the member's next action
+    def cutTo(c: Claim): int =
+      now + (if (BUG == "cutBelowTtl" or c.ttl < DEFAULT_LEASE) DEFAULT_LEASE else c.ttl)
     all {
       claims' = if (wasParked) renewedClaims.map(c =>
-                  if (c.owner == m and c.expires > cut) { ...c, expires: cut } else c)
+                  if (c.owner == m and c.expires > cutTo(c)) { ...c, expires: cutTo(c) } else c)
                 else renewedClaims,
       parkedUntil' = parkedUntil.set(m, 0),
       waits' = waits, now' = now, everParked' = everParked, nextId' = nextId,
@@ -350,11 +353,18 @@ module claims {
     (last.kind == "claim" and last.outcome == "conflict") implies
       waits.forall(w => w.member == last.member or prev.waits.contains(w))
 
+  // Activity renews every live claim of the member to at least now plus its own ttl (item 52). Held after #649: the
+  // cut back that ends a park never goes below a claim's own ttl. (Before the fix it failed after a post by a member
+  // that had a park row: the cut to 10 minutes ran after the renewal.)
+  val ActivityRenewsToOwnTtl: bool =
+    (last.kind == "post" or last.kind == "renew") implies
+      liveClaims.forall(c => c.owner != last.member or c.ttl == 0 or c.expires >= now + c.ttl)
+
   // Every invariant that must hold, for a quick run; the runner also checks each alone so a failure names itself.
   val AllInvariants: bool = and {
     NoOverlappingLiveExclusive, LeaseWithinCap, LeaseWithinParkMax, StuckOwnerHoldsNothing, ReleaseOnlyOwn,
     ExpiredNeverBlocks, OnlyLivenessRevives, RenewNeverRevives, RenewNeverShortens,
-    ExpiryShrinksOnlyByLeaseRules, DeadlockFlagExact, RefusalTellsOnlyTheRequester,
+    ExpiryShrinksOnlyByLeaseRules, DeadlockFlagExact, RefusalTellsOnlyTheRequester, ActivityRenewsToOwnTtl,
   }
 
   // ---- Known findings: these are expected to FAIL, and each has a ticket (RESEARCH-NOTES, Quint) ----
@@ -375,13 +385,6 @@ module claims {
       waits.exists(w => w.ts >= now - WINDOW and w.told
         and walk3(x, w.member, waits, claims, now, WINDOW) and walk3(w.member, x, waits, claims, now, WINDOW)))
 
-  // F4. Activity renews every live claim of the member to at least now plus its own ttl (item 52): fails after a post by a
-  // member that has a park row, because the sign of life cuts claims back to 10 minutes after the renewal (item 46),
-  // below a longer ttl, until the member's next action.
-  val ActivityRenewsToOwnTtl: bool =
-    (last.kind == "post" or last.kind == "renew") implies
-      liveClaims.forall(c => c.owner != last.member or c.ttl == 0 or c.expires >= now + c.ttl)
-
   // ---- witnesses: each is "never happens" and is made to fail on purpose, to give a short trace of that event ----
   val W_deadlock: bool = not(last.kind == "claim" and last.deadlock)
   val W_conflict: bool = not(last.kind == "claim" and last.outcome == "conflict")
@@ -395,6 +398,10 @@ module claims {
       c.id == p.id and p.expires <= prev.now and c.expires > now)))
   val W_cutBack: bool =
     not(last.kind == "post" and prev.claims.exists(p => claims.exists(c => c.id == p.id and c.expires < p.expires)))
+  // a cut back that lands above the default lease: the claim's own ttl is the floor (#649)
+  val W_cutKeepsTtl: bool =
+    not(last.kind == "post" and prev.claims.exists(p => claims.exists(c =>
+      c.id == p.id and c.expires < p.expires and c.expires > now + DEFAULT_LEASE)))
   val W_stuck: bool = not(last.kind == "settle" and last.verdict == "stuck" and prev.claims.size() > claims.size())
   val W_gone: bool =
     not(last.kind == "settle" and last.verdict == "gone"
