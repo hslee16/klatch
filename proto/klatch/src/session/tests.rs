@@ -216,6 +216,51 @@ fn history_returns_the_newest_messages_and_how_many_more_follow_and_moves_no_cur
 }
 
 #[test]
+fn invite_posts_a_pointer_and_is_refused_for_a_member_who_is_not_in_the_room() {
+    let g = gateway();
+    run(
+        &g,
+        &alice(),
+        &[req("j", "post", json!({"room":"r","body":"x"}))],
+    );
+    run(
+        &g,
+        &bob(),
+        &[req("j", "post", json!({"room":"r","body":"y"}))],
+    );
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req(
+                "i",
+                "invite",
+                json!({"member":"bob","room":"new","via":"r"}),
+            ),
+            req(
+                "n",
+                "invite",
+                json!({"member":"zed","room":"new","via":"r"}),
+            ),
+            req(
+                "self",
+                "invite",
+                json!({"member":"alice","room":"new","via":"r"}),
+            ),
+        ],
+    );
+    assert!(
+        response(&f, "i").0,
+        "an invite of a member in the room works"
+    );
+    assert!(!response(&f, "n").0, "nobody to reach in that room");
+    assert!(!response(&f, "self").0, "not yourself");
+    let got = run(&g, &bob(), &[req("r", "read", json!({"room":"r"}))]);
+    let body = response(&got, "r").1.unwrap()["messages"].to_string();
+    assert!(body.contains("klatch join new"), "{body}");
+}
+
+#[test]
 fn who_lists_members_with_last_seen() {
     let g = gateway();
     run(

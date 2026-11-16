@@ -32,6 +32,7 @@ mod notify;
 mod parked;
 mod receipt;
 mod reviewer;
+mod room_capability;
 mod runs;
 mod scrub;
 mod stream;

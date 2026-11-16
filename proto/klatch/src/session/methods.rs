@@ -68,6 +68,12 @@ struct StatusParams {
     status: String,
 }
 #[derive(Deserialize)]
+struct InviteParams {
+    member: String,
+    room: String,
+    via: String,
+}
+#[derive(Deserialize)]
 struct ReleaseParams {
     room: String,
     path: String,
@@ -163,6 +169,10 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             |h: crate::gateway::History| {
                 json!({ "messages": h.messages.iter().map(message_json).collect::<Vec<_>>(), "more": h.more })
             },
+        ),
+        "invite" => call.run(
+            |p: InviteParams| g.invite(who, &p.member, &p.room, &p.via),
+            empty,
         ),
         "who" => call.run(|p: RoomParams| g.who(who, &p.room), |ms| members_json(&ms)),
         "status" => call.run(|p: StatusParams| g.set_status(who, &p.room, &p.status), empty),

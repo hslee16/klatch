@@ -7,8 +7,15 @@
 //! Real proof needs roles and authentication (epic #10, #152), at which point only `gate` changes.
 
 use super::*;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use std::io::{BufRead, IsTerminal, Write};
+
+/// Who may create rooms and invite (#188).
+#[derive(Clone, Copy, ValueEnum)]
+pub enum RoomPolicy {
+    Open,
+    Granted,
+}
 
 #[derive(Subcommand)]
 pub enum AdminCmd {
@@ -65,6 +72,15 @@ pub enum AdminCmd {
     /// Make a member the admin agent: it may do the non-floor admin acts (rooms, members, clearances inside the cap,
     /// room labels, upkeep) and is refused and audited on anything else, floors included; --off removes the role
     AdminAgent {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
+    /// Require a grant to create rooms and invite (`granted`), or leave it to every member (`open`, the default)
+    RoomCreation { policy: RoomPolicy },
+    /// Give a member the capability to create rooms and invite, or with --off take it away (matters only under
+    /// `room-creation granted`)
+    GrantRooms {
         member: String,
         #[arg(long)]
         off: bool,
@@ -367,6 +383,25 @@ fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             println!(
                 "{member} is {} the admin agent",
                 if off { "no longer" } else { "now" }
+            );
+        }
+        AdminCmd::RoomCreation { policy } => {
+            let granted = matches!(policy, RoomPolicy::Granted);
+            t.admin_set_room_creation_granted(granted)?;
+            println!(
+                "creating rooms and inviting is now {}",
+                if granted {
+                    "for members with a grant"
+                } else {
+                    "open to every member"
+                }
+            );
+        }
+        AdminCmd::GrantRooms { member, off } => {
+            t.admin_grant_room_capability(&member, !off)?;
+            println!(
+                "{member} {} create rooms and invite",
+                if off { "may no longer" } else { "may now" }
             );
         }
         AdminCmd::Cap { label } => {
