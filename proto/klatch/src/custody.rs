@@ -130,11 +130,7 @@ fn open_store_in(db: &Path, kh: &KeyHome) -> Result<SqliteStore> {
     // rotation would fail blaming the file. A process that already holds the lock (a new store) just goes on.
     let store = match guard {
         Some(_held) => open_keyed(db, kh, key)?,
-        None => {
-            let _lock = lock_store_dir(db)?;
-            let key = kh.source.get(&kh.name)?.unwrap_or(key);
-            open_keyed(db, kh, key)?
-        }
+        None => open_beside_rotation(db, kh, key)?,
     };
     if created && std::io::stderr().is_terminal() {
         eprintln!(
@@ -150,6 +146,25 @@ fn open_store_in(db: &Path, kh: &KeyHome) -> Result<SqliteStore> {
         eprintln!("klatch: {w}");
     }
     Ok(store)
+}
+
+/// Open under the shared directory lock: a rotation (exclusive) is kept out, but openers do not queue behind each
+/// other, which the exclusive lock made them do. Only when the plain open fails, which is how a rotation that died
+/// half way shows itself, is the lock made exclusive for `open_keyed` to repair the key.
+fn open_beside_rotation(db: &Path, kh: &KeyHome, key: Key) -> Result<SqliteStore> {
+    let dir = db.parent().filter(|d| !d.as_os_str().is_empty());
+    if dir.is_some_and(|d| !d.exists()) {
+        return open_keyed(db, kh, key);
+    }
+    let shared = klatch::store::encrypt::lock_dir_shared(db)?;
+    let key = kh.source.get(&kh.name)?.unwrap_or(key);
+    if let Ok(store) = SqliteStore::open(db, &key) {
+        return Ok(store);
+    }
+    drop(shared);
+    let _exclusive = klatch::store::encrypt::lock_dir(db)?;
+    let key = kh.source.get(&kh.name)?.unwrap_or(key);
+    open_keyed(db, kh, key)
 }
 
 /// The store directory lock, or none when the directory does not exist yet (nothing can be rotating there).
@@ -621,6 +636,29 @@ mod tests {
         assert!(now == last, "the stored key is not the last rotation's");
         assert!(kh.source.get("store-test-next").unwrap().is_none());
         assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn opens_do_not_wait_for_each_other() {
+        // only a rotation needs the store alone; fifty workers starting at once queued behind one exclusive lock and
+        // the median post went from 26 ms to 170 ms. Another opener's (shared) lock must not hold an open back.
+        let d = scratch("open-shared");
+        store_with_archive(&d);
+        let other_opener = klatch::store::encrypt::lock_dir_shared(&d.join("klatch.db")).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let opener = {
+            let d = d.clone();
+            std::thread::spawn(move || {
+                let r = open_store_in(&d.join("klatch.db"), &file_home(&d)).map(|_| ());
+                let _ = tx.send(());
+                r
+            })
+        };
+        let got_through = rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
+        drop(other_opener);
+        assert!(opener.join().unwrap().is_ok());
+        assert!(got_through, "an open waited for another open");
         let _ = std::fs::remove_dir_all(&d);
     }
 

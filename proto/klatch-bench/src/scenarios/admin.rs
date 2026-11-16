@@ -123,8 +123,18 @@ fn admin_controls(w: &World) -> Res {
         .lines()
         .filter_map(|l| l.split('\t').nth(1))
         .collect();
+    // the first join of each room (r, side) is audited as a creation (#188), under the admin acts
     check(
-        acts == ["allow", "remove", "reopen", "close", "resume", "pause"],
+        acts == [
+            "allow",
+            "remove",
+            "reopen",
+            "close",
+            "resume",
+            "pause",
+            "create-room",
+            "create-room",
+        ],
         format!("audit order: {acts:?}"),
     )?;
     Ok(vec![])

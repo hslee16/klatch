@@ -295,10 +295,14 @@ impl SqliteStore {
                     params![room, cutoff, KIND],
                 )
                 .map_err(be)?;
-            // remember exactly which rows went into the file; the tombstones go on these and no others (#634)
+            // remember exactly which rows went into the file; the tombstones go on these and no others (#634). The
+            // table has a primary key because an unkeyed one made the tombstone UPDATE scan it once per live row:
+            // minutes at fifty thousand messages, with the write lock held.
             self.conn
                 .execute_batch(
-                    "DROP TABLE IF EXISTS temp.copied; CREATE TEMP TABLE copied AS SELECT room, seq, mid FROM ar.archived;",
+                    "DROP TABLE IF EXISTS temp.copied;
+                     CREATE TEMP TABLE copied(room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, PRIMARY KEY(room, seq)) WITHOUT ROWID;
+                     INSERT INTO temp.copied SELECT room, seq, mid FROM ar.archived;",
                 )
                 .map_err(be)?;
             self.conn.execute_batch("DETACH DATABASE ar").map_err(be)?;

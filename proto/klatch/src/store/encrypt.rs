@@ -74,13 +74,26 @@ pub fn scrub_and_remove(path: &Path) -> Result<()> {
 /// systems `flock` and the locks SQLite takes on the file conflict. The directory is not replaced by the swap, so one
 /// lock covers the whole conversion, and nothing is left behind.
 pub fn lock_dir(path: &Path) -> Result<File> {
+    let f = open_dir(path)?;
+    f.lock().map_err(|e| io("locking the store directory", e))?;
+    Ok(f)
+}
+
+/// The shared lock on the same directory: many openers hold it together, and only a conversion or key rotation (the
+/// exclusive lock) is kept apart from them.
+pub fn lock_dir_shared(path: &Path) -> Result<File> {
+    let f = open_dir(path)?;
+    f.lock_shared()
+        .map_err(|e| io("locking the store directory", e))?;
+    Ok(f)
+}
+
+fn open_dir(path: &Path) -> Result<File> {
     let dir = path
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let f = File::open(dir).map_err(|e| io("opening the store directory", e))?;
-    f.lock().map_err(|e| io("locking the store directory", e))?;
-    Ok(f)
+    File::open(dir).map_err(|e| io("opening the store directory", e))
 }
 
 /// Bring the store at `path` to the encrypted format if it is not there yet, and remove any plaintext a previous run
