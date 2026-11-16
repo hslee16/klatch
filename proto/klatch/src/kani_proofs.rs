@@ -473,22 +473,36 @@ mod key_proofs {
     }
 
     /// The text form is recognised by its prefix alone.
-    /// Bound: up to 18 ASCII bytes of text (the prefix is 16). Not covered: the base64 body.
+    /// Bound: twelve concrete texts, no symbolic input: the exact prefix, with and without a body after it, and texts
+    /// that differ from it in the first byte, a middle byte, the version byte, the last colon, by being one byte short,
+    /// by being the empty string, and by holding the prefix after other text. Not covered: any other text. Concrete
+    /// because validating symbolic bytes as UTF-8 did not finish in 600 s (sixteen bytes, one byte at a symbolic
+    /// position, or forty-eight concrete validations), and `from_utf8_unchecked` is refused by the unsafe-code check
+    /// in tests/hygiene.rs.
     #[kani::proof]
     #[kani::solver(cadical)]
     #[kani::unwind(40)]
     fn sealed_text_is_recognised_by_its_prefix() {
-        let bytes: [u8; 18] = kani::any();
-        kani::assume(bytes.is_ascii());
-        let len: usize = kani::any();
-        kani::assume(len <= 18);
-        // SAFETY: every byte was assumed ASCII above; validating it is what the solver cannot afford
-        let s = unsafe { std::str::from_utf8_unchecked(&bytes[..len]) };
-        // written out by hand, not as `starts_with`, so the check does not repeat the code under test
-        assert_eq!(
-            is_sealed_text(s),
-            len >= 16 && bytes[..16] == *b"klatch-sealed:1:"
-        );
+        for yes in [
+            "klatch-sealed:1:",
+            "klatch-sealed:1:AAAA",
+            "klatch-sealed:1:klatch-sealed:1:",
+        ] {
+            assert!(is_sealed_text(yes));
+        }
+        for no in [
+            "",
+            "xlatch-sealed:1:",
+            "klatch-xealed:1:",
+            "klatch-sealed:2:",
+            "klatch-sealed:1x",
+            "klatch-sealed:1",
+            "klatch-sealed:",
+            " klatch-sealed:1:",
+            "a message that mentions klatch-sealed:1: later",
+        ] {
+            assert!(!is_sealed_text(no));
+        }
     }
 
     // The recovery code (keys/recovery.rs) has no harness: `restore` and `recovery_code` build and filter heap strings,

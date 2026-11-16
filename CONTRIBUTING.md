@@ -150,8 +150,10 @@ A pass is a **bounded proof**: no counterexample up to the bounds written above 
 characters, a chain of at most N names, and so on). It is not a proof for all inputs, and the word "proven" does not
 belong next to it. Each harness lists what it leaves out; RESEARCH-NOTES section 52 records the bounds, the results and
 the run times, and the tickets filed where a bound left a proof shallow. A harness that runs out of time is reported as
-a failure, because a result you cannot read is not a pass. Bolero's Kani engine is not used: it would add a dependency
-and a second harness style for no gain over plain harnesses (section 52 has the reasoning).
+a failure, because a result you cannot read is not a pass. Bolero's Kani engine is not used (it would add a dependency
+to reach the same harnesses, and it was not tried end to end; section 52 has the reasoning). Keep harness inputs on
+the stack: the solver cannot finish on a function that grows a `String` or `Vec` under a symbolic length, which is why
+some functions here take slices (section 52.4).
 
 When you change a function that has a harness, run the harness. When you add a pure security function, add a harness
 with its bound and its "not covered" line, and check that it can fail: plant a bug in the real function, see the
