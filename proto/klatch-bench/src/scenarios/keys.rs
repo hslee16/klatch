@@ -38,7 +38,54 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "fault",
             run: rotation,
         },
+        Scenario {
+            name: "rotating_the_key_moves_the_archives_too_so_archived_messages_still_restore",
+            origin: "#628, DESIGN 77",
+            layer: "fault",
+            run: rotation_with_archive,
+        },
     ]
+}
+
+/// An archived message must come back after a key rotation (#628): the archive files move to the new key with the
+/// store, and `admin archives` finds every file usable.
+fn rotation_with_archive(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["post", "r", "old message with the code hunter2"])?;
+    w.advance(10 * 86_400);
+    w.ok("alice", &["post", "r", "recent message"])?;
+    check(
+        w.admin(&["retention", "r", "7"], "").ok,
+        "setting retention failed",
+    )?;
+    let made = w.admin(&["archive", "--room", "r"], "");
+    check(made.ok, format!("archive failed: {}", made.stderr))?;
+    let rotated = w.admin(&["rotate-key"], "rotate");
+    check(rotated.ok, format!("rotate failed: {}", rotated.stderr))?;
+    let listing = w.admin(&["archives"], "");
+    check(
+        listing.ok,
+        format!(
+            "an archive is unusable after the rotation: {}{}",
+            listing.stdout, listing.stderr
+        ),
+    )?;
+    let files: Vec<_> = std::fs::read_dir(w.home.join("archive"))
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    check(files.len() == 1, format!("{} archive files", files.len()))?;
+    let back = w.admin(&["restore-archive", &files[0].to_string_lossy()], "");
+    check(
+        back.ok,
+        format!("restore failed after rotation: {}", back.stderr),
+    )?;
+    has(&back.stdout, "restored 1 messages", "wrong restore count")?;
+    has(
+        &w.admin(&["export", "r"], "r").stdout,
+        "hunter2",
+        "the archived message did not come back",
+    )?;
+    Ok(vec![])
 }
 
 fn read_all(dir: &std::path::Path) -> Vec<u8> {

@@ -5,6 +5,7 @@ use super::*;
 mod anchors;
 mod archive;
 mod archive_files;
+mod archive_rekey;
 mod claim_age;
 mod claims;
 mod concurrency;

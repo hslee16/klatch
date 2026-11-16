@@ -104,6 +104,123 @@ fn summarize(path: &Path, key: &Key) -> rusqlite::Result<ArchiveState> {
     })
 }
 
+/// Move every archive file in `dir` from `old` to `new` (#628), so a store key rotation does not strand archived
+/// messages. Returns how many files were moved. Safe to repeat: a file that already opens with `new` is skipped, so a
+/// run that died half way is finished by the next. Nothing changes unless every `*.db` file opens with one of the two
+/// keys (a file neither opens would be lost to the rotation, so the caller must hear of it first).
+pub fn rekey_archives(dir: &Path, old: &Key, new: &Key) -> Result<usize> {
+    rekey_archives_hooked(dir, old, new, &|_| Ok(()))
+}
+
+/// `rekey_archives` with a hook called after each file is moved, with the count so far; an error from it stops the
+/// run there. A test uses it to stand in for a crash between two files.
+pub(crate) fn rekey_archives_hooked(
+    dir: &Path,
+    old: &Key,
+    new: &Key,
+    after_each: &dyn Fn(usize) -> Result<()>,
+) -> Result<usize> {
+    let todo = archives_to_rekey(dir, old, new)?;
+    for (done, path) in todo.iter().enumerate() {
+        rekey_archives_in(path, old, new)?;
+        after_each(done + 1)?;
+    }
+    Ok(todo.len())
+}
+
+/// The archive files that still open with `old` (those that open with `new` are done). An error, with every
+/// offending file named, when any file opens with neither; nothing is changed by this call, so a caller can refuse a
+/// key rotation before it has stored or used the new key.
+pub fn archives_to_rekey(dir: &Path, old: &Key, new: &Key) -> Result<Vec<PathBuf>> {
+    let mut todo = Vec::new();
+    let mut stuck = Vec::new();
+    for path in archive_files(dir)? {
+        if crate::store::encrypt::check_opens(&path, new).is_ok() {
+            continue;
+        }
+        match crate::store::encrypt::check_opens(&path, old) {
+            Ok(()) => todo.push(path),
+            Err(e) => stuck.push(format!("{}: {e}", path.display())),
+        }
+    }
+    if !stuck.is_empty() {
+        return Err(Error::Invalid(format!(
+            "{} archive file(s) open with neither the current key nor the new one, so the key was not changed (restore them from a backup or move them out of the archive directory): {}",
+            stuck.len(),
+            stuck.join("; ")
+        )));
+    }
+    Ok(todo)
+}
+
+/// The `*.db` files directly in `dir`, in name order. A missing directory has none.
+fn archive_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::Backend(format!("{}: {e}", dir.display()))),
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".db"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Write `file` again under `new` and put the copy in its place. The copy is made beside it, opened and counted
+/// before anything is replaced, and the replacement is a rename, so at every moment the name holds a whole archive
+/// under `old` or under `new` and a crash leaves at worst a `.partial` file that `admin archives` calls safe to remove.
+pub(crate) fn rekey_archives_in(file: &Path, old: &Key, new: &Key) -> Result<()> {
+    let mut partial = file.as_os_str().to_owned();
+    partial.push(format!(".{}.partial", std::process::id()));
+    let partial = PathBuf::from(partial);
+    let _ = std::fs::remove_file(&partial);
+    let made = copy_rekeyed(file, &partial, old, new);
+    let placed = made.and_then(|()| {
+        std::fs::rename(&partial, file)
+            .map_err(|e| Error::Backend(format!("putting {} in place: {e}", file.display())))
+    });
+    if placed.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    placed
+}
+
+fn copy_rekeyed(file: &Path, partial: &Path, old: &Key, new: &Key) -> Result<()> {
+    let conn = rusqlite::Connection::open(file).map_err(be)?;
+    conn.pragma_update(None, "key", old.sqlcipher_pragma().as_str())
+        .map_err(be)?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS rk KEY ?2",
+        params![partial.to_string_lossy(), new.sqlcipher_pragma().as_str()],
+    )
+    .map_err(be)?;
+    conn.query_row("SELECT sqlcipher_export('rk')", [], |_| Ok(()))
+        .map_err(be)?;
+    let version: i64 = conn
+        .query_row("PRAGMA main.user_version", [], |r| r.get(0))
+        .map_err(be)?;
+    conn.execute_batch(&format!("PRAGMA rk.user_version = {version}"))
+        .map_err(be)?;
+    let count = |db: &str| -> Result<i64> {
+        conn.query_row(&format!("SELECT count(*) FROM {db}.archived"), [], |r| {
+            r.get(0)
+        })
+        .map_err(be)
+    };
+    let (before, after) = (count("main")?, count("rk")?);
+    conn.execute_batch("DETACH DATABASE rk").map_err(be)?;
+    drop(conn);
+    if before != after {
+        return Err(Error::Backend(format!(
+            "re-keying {}: {before} messages and its copy {after}",
+            file.display()
+        )));
+    }
+    crate::store::encrypt::check_opens(partial, new)
+}
+
 /// What a tombstone says in place of the text.
 pub const TOMBSTONE: &str = "[archived: restore it with `klatch admin restore-archive`]";
 const KIND: &str = "archived";

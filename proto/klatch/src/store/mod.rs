@@ -10,7 +10,8 @@ mod memory_spike;
 mod sqlite;
 
 pub use sqlite::{
-    ArchiveInfo, ArchiveState, SCHEMA_VERSION, SqliteStore, check_store, list_archives,
+    ArchiveInfo, ArchiveState, SCHEMA_VERSION, SqliteStore, archives_to_rekey, check_store,
+    list_archives, rekey_archives,
 };
 
 use crate::domain::{
