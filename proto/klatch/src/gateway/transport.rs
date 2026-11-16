@@ -68,6 +68,8 @@ pub trait Transport {
     fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()>;
+    /// Limit every member to `posts` posts in `secs` seconds over all rooms, or with `None` lift it (#187).
+    fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
     /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
     fn admin_plant_canary(&self, room: &str) -> Result<()>;
@@ -237,6 +239,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()> {
         self.gateway.admin_set_reviewer(&self.principal, member, on)
+    }
+    fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()> {
+        self.gateway.admin_set_rate_limit(&self.principal, limit)
     }
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
         self.gateway

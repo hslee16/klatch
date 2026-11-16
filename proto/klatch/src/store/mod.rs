@@ -508,6 +508,11 @@ pub trait Store {
     fn refusal_rules_since(&self, _member: &str, _since: i64) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
+    /// The times of `member`'s posts at or after `since`, in every room, oldest first (the rate limit, #187). The
+    /// default knows none.
+    fn posts_since(&self, _member: &str, _since: i64) -> Result<Vec<i64>> {
+        Ok(Vec::new())
+    }
     /// Release every claim `member` holds in every room, as when its session ends (#277): a member that has ended
     /// cannot be working. An `ask:<N>` claim ends as a lapse, so the asker is told that the helper's claim ended
     /// without an answer. Returns how many unexpired claims were released. The default releases nothing.

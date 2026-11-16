@@ -40,6 +40,7 @@ mod policy;
 mod reviewer;
 mod roles;
 pub use roles::Role;
+mod rate;
 mod runs;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
@@ -249,6 +250,7 @@ impl<S: Store> Gateway<S> {
         )?;
         let label = self.post_label(who, room, label)?;
         self.check_budget(who, room, body)?;
+        self.check_rate(who, room)?;
         let message = NewMessage::new((room, &who.member), who.attribution, &label, body);
         let message = match handoff {
             Some(Handoff {

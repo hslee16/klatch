@@ -1319,6 +1319,14 @@ impl Store for SqliteStore {
         )
     }
 
+    fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
+        self.rows(
+            "SELECT ts FROM messages WHERE sender=?1 AND ts>=?2 ORDER BY ts",
+            params![member, since],
+            |r| r.get(0),
+        )
+    }
+
     fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
         self.rows(
             "SELECT rule FROM refusals WHERE member=?1 AND ts>=?2 ORDER BY id",

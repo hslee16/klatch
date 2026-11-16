@@ -30,6 +30,7 @@ mod members;
 mod mute;
 mod notify;
 mod parked;
+mod rate_limit;
 mod receipt;
 mod reviewer;
 mod runs;
