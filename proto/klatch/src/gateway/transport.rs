@@ -68,6 +68,11 @@ pub trait Transport {
     fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()>;
+    /// Room creation and invites as a capability (#188): the policy and a member's grant, both the human's.
+    fn admin_set_room_creation_granted(&self, on: bool) -> Result<()>;
+    fn admin_grant_room_capability(&self, member: &str, on: bool) -> Result<()>;
+    /// Invite `member` to `room` with a pointer posted in `via` (#188): needs the capability, is audited.
+    fn invite(&self, member: &str, room: &str, via: &str) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
     /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
     fn admin_plant_canary(&self, room: &str) -> Result<()>;
@@ -241,6 +246,17 @@ impl<S: Store> Transport for Direct<S> {
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
         self.gateway
             .admin_set_admin_agent(&self.principal, member, on)
+    }
+    fn admin_set_room_creation_granted(&self, on: bool) -> Result<()> {
+        self.gateway
+            .admin_set_room_creation_granted(&self.principal, on)
+    }
+    fn admin_grant_room_capability(&self, member: &str, on: bool) -> Result<()> {
+        self.gateway
+            .admin_grant_room_capability(&self.principal, member, on)
+    }
+    fn invite(&self, member: &str, room: &str, via: &str) -> Result<()> {
+        self.gateway.invite(&self.principal, member, room, via)
     }
     fn admin_set_cap(&self, label: &str) -> Result<()> {
         self.gateway.admin_set_cap(&self.principal, label)

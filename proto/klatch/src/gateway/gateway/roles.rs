@@ -115,6 +115,7 @@ impl<S: Store> Gateway<S> {
         if self.for_members {
             self.check_member_admin(who, op, role)?;
         }
+        self.check_room_capability(who, op)?;
         match role {
             Some(Role::Librarian) if !op.is_query() => Err(Error::Refused {
                 rule: "read-only".into(),

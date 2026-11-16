@@ -134,13 +134,25 @@ fn the_guard_runs_once_per_operation_in_order_before_the_store() {
             Operation::Ack { .. } => "ack",
             Operation::Mute { .. } => "mute",
             Operation::Admin { .. } => "admin",
+            Operation::CreateRoom { .. } => "create_room",
+            Operation::Invite { .. } => "invite",
             Operation::ReviewNext => "review_next",
             Operation::ReviewVerdict { .. } => "review_verdict",
         })
         .collect();
     assert_eq!(
         kinds,
-        vec!["join", "post", "read", "who", "claim", "claims", "release"]
+        // the first join makes room `r`, which the guard is asked about too (#188)
+        vec![
+            "join",
+            "create_room",
+            "post",
+            "read",
+            "who",
+            "claim",
+            "claims",
+            "release"
+        ]
     );
 }
 

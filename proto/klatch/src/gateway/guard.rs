@@ -52,6 +52,16 @@ pub enum Operation {
         action: String,
         target: String,
     },
+    /// Making a room that does not exist yet, by joining or posting to it (#188).
+    CreateRoom {
+        room: String,
+    },
+    /// Inviting `member` to `room` (#188). The pointer itself is a post in a room they share, which is judged as a
+    /// post as well.
+    Invite {
+        member: String,
+        room: String,
+    },
     /// A reviewer taking the next queued item to read (#51).
     ReviewNext,
     /// A reviewer recording its verdict on queued item `id` (#51).
@@ -101,6 +111,8 @@ impl Operation {
             Operation::Ack { .. } => "ack",
             Operation::Mute { .. } => "mute",
             Operation::Admin { .. } => "admin",
+            Operation::CreateRoom { .. } => "create_room",
+            Operation::Invite { .. } => "invite",
             Operation::ReviewNext => "review_next",
             Operation::ReviewVerdict { .. } => "review_verdict",
         }
@@ -119,6 +131,8 @@ impl Operation {
             | Operation::Subscribe { room }
             | Operation::Status { room, .. }
             | Operation::Mute { room, .. }
+            | Operation::CreateRoom { room }
+            | Operation::Invite { room, .. }
             | Operation::Ack { room } => Some(room),
             Operation::Admin { .. } | Operation::ReviewNext | Operation::ReviewVerdict { .. } => {
                 None
