@@ -5,11 +5,12 @@
 use crate::protocol::{
     Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, decode_server_line, encode_line,
 };
+use crate::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use crate::sync::thread;
 use serde_json::{Map, Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 /// A failed response. `refusals` are the refusal frames that came with it: a policy refused the call.
@@ -83,6 +84,25 @@ pub struct Client {
     caught_up: Option<u64>,
 }
 
+/// The reader thread's body: decode each line of the session's output and send it, then send `None` once at the end.
+/// Split out so a test can run it under Shuttle (#406).
+pub(crate) fn pump_frames<R: Read>(
+    output: R,
+    tx: Sender<Option<std::result::Result<ServerFrame, String>>>,
+) {
+    for line in BufReader::new(output).lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let frame = decode_server_line(&line).map_err(|e| format!("{e:?}"));
+        if tx.send(Some(frame)).is_err() {
+            return;
+        }
+    }
+    let _ = tx.send(None);
+}
+
 fn attribution_text(a: &Attribution) -> String {
     match a {
         Attribution::Verified => "verified",
@@ -109,19 +129,7 @@ impl Client {
             .ok_or_else(|| Error::Session("no output".into()))?;
         let stdin = child.stdin.take();
         let (tx, frames) = channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let frame = decode_server_line(&line).map_err(|e| format!("{e:?}"));
-                if tx.send(Some(frame)).is_err() {
-                    return;
-                }
-            }
-            let _ = tx.send(None);
-        });
+        thread::spawn(move || pump_frames(stdout, tx));
         let mut c = Self {
             member: String::new(),
             attribution: String::new(),

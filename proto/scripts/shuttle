@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Shuttle randomized-schedule tests of the std-thread code (#406, DESIGN section 32 item 83). Shuttle runs a test many
+# times, each with a different random order of the threads' steps. A pass means no failing schedule among those tried,
+# not that none exists. By hand; the gate runs only the smoke form.
+#
+#   proto/scripts/shuttle              2000 schedules per test, fixed seed 406 (about a second once built)
+#   proto/scripts/shuttle smoke        200 schedules per test (what the gate runs)
+#   proto/scripts/shuttle long         200000 schedules per test (a minute or two)
+#   proto/scripts/shuttle mutations    plant each race or ordering bug in the real code: its test must FAIL, then revert
+#   SHUTTLE_SEED=7 SHUTTLE_ITERS=50000 proto/scripts/shuttle    another seed or budget
+#
+# The build goes to proto/target/shuttle (RUSTFLAGS differ, so it never touches the normal build). The ordinary unit
+# tests do not run under --cfg shuttle (Shuttle's atomics panic outside a Shuttle run), so only `shuttle_tests::` runs.
+# A failure prints the failing schedule; replay it with shuttle::replay (see the Shuttle docs) or rerun with the seed.
+set -uo pipefail
+case "${1:-}" in -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+here="$(cd "$(dirname "$0")" && pwd)"
+command -v cargo > /dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+proto="$here/.."
+export RUSTFLAGS="${RUSTFLAGS:-} --cfg shuttle"
+export SHUTTLE_SILENCE_WARNINGS=1
+mode="${1:-run}"
+case "$mode" in
+  smoke) export SHUTTLE_ITERS="${SHUTTLE_ITERS:-200}" ;;
+  long) export SHUTTLE_ITERS="${SHUTTLE_ITERS:-200000}" ;;
+esac
+cd "$proto" || exit 2
+run() { cargo test -p klatch --lib --locked --target-dir target/shuttle "$@" 2>&1; }
+
+if [ "$mode" != mutations ]; then
+  run shuttle_tests:: -- --test-threads=1 | tail -n 14
+  exit "${PIPESTATUS[0]}"
+fi
+
+# Each mutation: file, exact text to replace, replacement, test filter. The file is restored even on an interrupt.
+python3 -I - << 'EOF'
+import os, subprocess, sys
+
+plants = [
+    ("race: the id counter is read then written, not one fetch_add",
+     "klatch/src/store/ids.rs", "let counter = COUNTER.fetch_add(1, Ordering::Relaxed) as u128;",
+     "let counter = { let c = COUNTER.load(Ordering::Relaxed); COUNTER.store(c + 1, Ordering::Relaxed); c } as u128;",
+     "shuttle_tests::message_ids"),
+    ("ordering: the session reader treats an empty channel as a closed input",
+     "klatch/src/session/mod.rs", "            Err(TryRecvError::Empty) => break,",
+     "            Err(TryRecvError::Empty) => *open = false,",
+     "shuttle_tests::the_session_reader"),
+    ("ordering: the client reader sends the end marker first",
+     "klatch/src/client.rs", "    for line in BufReader::new(output).lines() {",
+     "    let _ = tx.send(None);\n    for line in BufReader::new(output).lines() {",
+     "shuttle_tests::the_client_reader"),
+    ("race: within gives up at once instead of waiting for the probe",
+     "klatch/src/sync.rs", "rx.recv_timeout(limit).ok()",
+     "{ let _ = limit; rx.try_recv().ok() }",
+     "shuttle_tests::within"),
+]
+env = {**os.environ}
+bad = 0
+for name, path, old, new, flt in plants:
+    src = open(path).read()
+    if old not in src:
+        print("STALE  ", name, "(the text to replace is gone; update the runner)")
+        bad = 1
+        continue
+    open(path, "w").write(src.replace(old, new, 1))
+    try:
+        r = subprocess.run(["cargo", "test", "-p", "klatch", "--lib", "--locked", "--target-dir", "target/shuttle", flt, "--", "--test-threads=1"],
+                           env=env, capture_output=True, text=True)
+    finally:
+        open(path, "w").write(src)
+    caught = r.returncode != 0 and "panicked at klatch/src/shuttle_tests.rs" in (r.stdout + r.stderr)
+    print("caught " if caught else "MISSED ", name)
+    bad |= 0 if caught else 1
+sys.exit(bad)
+EOF

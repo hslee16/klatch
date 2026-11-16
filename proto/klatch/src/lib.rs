@@ -13,9 +13,16 @@
 
 pub mod domain;
 
+// The thread primitives (std, or Shuttle's under `--cfg shuttle`) and `within` (#406).
+pub mod sync;
+
 // Bounded proofs (#404); only `cargo kani` sets cfg(kani), so no build or test run sees this module.
 #[cfg(kani)]
 mod kani_proofs;
+
+// Randomized-schedule tests (#406); only a build with `--cfg shuttle` (proto/scripts/shuttle) compiles this.
+#[cfg(all(test, shuttle, feature = "cli"))]
+mod shuttle_tests;
 
 #[cfg(feature = "client")]
 pub mod client;

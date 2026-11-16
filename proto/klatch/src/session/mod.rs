@@ -10,12 +10,13 @@ use crate::domain::Principal;
 use crate::gateway::{Connection, Gateway, Identity, Subscription};
 use crate::protocol::{ClientFrame, DecodeError, FrameReader, PROTOCOL_VERSION, ServerFrame};
 use crate::store::Store;
+use crate::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
+use crate::sync::thread;
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
 use methods::{Call, RoomParams, handle, params};
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{self, BufRead, Write};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::time::Duration;
 
 /// Until the label model exists every caller has the lowest clearance; this is the safe direction.
@@ -303,9 +304,9 @@ impl<'a, S: Store> Session<'a, S> {
 }
 
 /// Read the input on a helper thread, so the session can handle requests and poll the store meanwhile.
-fn read_in_background<R: BufRead + Send + 'static>(input: R) -> Receiver<Item> {
+pub(crate) fn read_in_background<R: BufRead + Send + 'static>(input: R) -> Receiver<Item> {
     let (tx, rx) = channel();
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         let mut reader = FrameReader::new(input);
         while let Some(item) = reader.next_client() {
             if tx.send(item).is_err() {
@@ -317,7 +318,7 @@ fn read_in_background<R: BufRead + Send + 'static>(input: R) -> Receiver<Item> {
 }
 
 /// What arrived within `wait`, and (in `open`) whether the input is still open.
-fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> Vec<Item> {
+pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> Vec<Item> {
     let mut items = Vec::new();
     match rx.recv_timeout(wait) {
         Ok(item) => items.push(item),

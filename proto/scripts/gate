@@ -33,7 +33,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=8
+total=9
 n=0
 started=$SECONDS
 replay_hint() {
@@ -78,6 +78,9 @@ else
 fi
 step "test-clock build tests"       no    "$proto" cargo test -p klatch --features test-clock --test no_plaintext --locked
 step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases" cargo test -p klatch --locked --test properties --test models --test crypto
+# Shuttle smoke (#406): 200 random schedules of each std-thread test, in its own target dir (so a cold first run builds
+# for about 40 s, then it is seconds). The long run and the mutation check are by hand: proto/scripts/shuttle
+step "shuttle smoke (200 schedules)" no   "$root" proto/scripts/shuttle smoke
 # the repository's own scripts: the release number agrees everywhere, the installer, the README quickstart, shellcheck
 repo_checks() {
   cargo build -p klatch --locked --manifest-path "$proto/Cargo.toml" > /dev/null 2>&1 || true
@@ -92,7 +95,7 @@ repo_checks() {
     && experiments/gates/test-check-binary.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh > /dev/null \
-    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/quint-check; }
+    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/quint-check proto/scripts/shuttle; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 

@@ -4,7 +4,7 @@
 #[cfg(test)]
 pub mod conformance;
 pub mod encrypt;
-mod ids;
+pub(crate) mod ids;
 #[cfg(test)]
 mod memory_spike;
 mod sqlite;
