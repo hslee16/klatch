@@ -20,6 +20,7 @@ mod keys;
 mod labels;
 mod librarian;
 mod liveness;
+mod rate_limit;
 mod receipts;
 mod retention;
 mod reviewer;
@@ -92,6 +93,7 @@ pub fn all() -> Vec<Scenario> {
         admin_role::all(),
         room_capability::all(),
         delivery_view::all(),
+        rate_limit::all(),
         anchors::all(),
         roles_path::all(),
         hooks::all(),
