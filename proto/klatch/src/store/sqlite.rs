@@ -1420,6 +1420,15 @@ impl Store for SqliteStore {
         self.aged_claims(room, owner, now)
     }
 
+    fn deadlock_notices(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        self.cycle_notices(room, member, now)
+    }
+
     fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
         self.immediate(|| {
             let current: Vec<Claim> = self

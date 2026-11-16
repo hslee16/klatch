@@ -302,6 +302,15 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claim_ages(room, owner, now)
     }
+    fn deadlock_notices(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        self.gate()?;
+        self.inner.deadlock_notices(room, member, now)
+    }
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.gate()?;
         self.inner.rooms_of(member)

@@ -21,6 +21,12 @@ pub(super) fn all() -> Vec<Scenario> {
             run: deadlock,
         },
         Scenario {
+            name: "a_cycle_completed_by_a_claim_being_taken_is_told_once",
+            origin: "#648",
+            layer: "functional",
+            run: cycle_by_take,
+        },
+        Scenario {
             name: "many_claimants_one_wins",
             origin: "#240, #262",
             layer: "scale",
@@ -127,6 +133,42 @@ fn deadlock(w: &World) -> Res {
         &w.refused("c", &["claim", "r3", "X"])?,
         "deadlock",
         "c closes the cycle",
+    )?;
+    Ok(vec![])
+}
+
+/// Carol holds p and alice holds q; alice is refused p, bob is refused q; carol lets go of p and bob takes it. No
+/// refusal closed the cycle, so alice is told by her next hook, once (#648).
+fn cycle_by_take(w: &World) -> Res {
+    for who in ["alice", "bob", "carol"] {
+        w.ok(who, &["join", "r"])?;
+    }
+    w.ok("carol", &["claim", "r", "P"])?;
+    w.ok("alice", &["claim", "r", "Q"])?;
+    lacks(
+        &w.refused("alice", &["claim", "r", "P"])?,
+        "deadlock",
+        "no cycle yet",
+    )?;
+    lacks(
+        &w.refused("bob", &["claim", "r", "Q"])?,
+        "deadlock",
+        "alice waits for carol, not for bob",
+    )?;
+    w.ok("carol", &["release", "r", "P"])?;
+    w.ok("bob", &["claim", "r", "P"])?;
+    let told = w.ok("alice", &["hook"])?;
+    has(
+        &told,
+        "deadlock: your wait for P",
+        "alice is told her wait is in a cycle",
+    )?;
+    has(&told, "you yield", "and that she yields")?;
+    lacks(&w.ok("alice", &["hook"])?, "deadlock", "told once")?;
+    lacks(
+        &w.ok("bob", &["hook"])?,
+        "deadlock",
+        "bob took the claim and is not the one told",
     )?;
     Ok(vec![])
 }

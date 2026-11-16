@@ -22,6 +22,9 @@ pub struct RoomDigest {
     pub lapsed: Vec<(OpenAsk, String)>,
     /// The member's own claims that passed an age milestone, reported once each (#547).
     pub aged: Vec<crate::domain::AgedClaim>,
+    /// The member's own refused claims that a claim someone else took turned into a cycle of waits, reported once
+    /// (#648).
+    pub cycles: Vec<crate::domain::CycleNotice>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -84,6 +87,7 @@ impl RoomDigest {
             && self.escalated.is_empty()
             && self.lapsed.is_empty()
             && self.aged.is_empty()
+            && self.cycles.is_empty()
     }
 }
 
@@ -183,6 +187,17 @@ fn render_aged_claims(d: &RoomDigest, out: &mut String) {
     }
 }
 
+/// A cycle of waits that a claim being taken completed: the same instruction a refusal that closes a cycle gives.
+fn render_cycle_notices(d: &RoomDigest, out: &mut String) {
+    for c in &d.cycles {
+        out.push_str(&format!(
+            "  deadlock: your wait for {} is now part of a cycle: {} took a claim and waits, directly or through others, for something you hold, so you yield: release the claims you hold in this room, wait, then try again\n",
+            flat(&c.path),
+            flat(&c.holder)
+        ));
+    }
+}
+
 /// The member's own asks that need its attention: gone stale, escalated, or whose claim lapsed.
 fn render_own_asks(d: &RoomDigest, now: i64, out: &mut String) {
     for a in &d.stale {
@@ -246,6 +261,7 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     let mut text = String::new();
     render_claims(d, now, &mut text);
     render_aged_claims(d, &mut text);
+    render_cycle_notices(d, &mut text);
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
@@ -363,7 +379,11 @@ fn plan_rooms(digests: &[RoomDigest], now: i64, budget: usize) -> (Vec<RoomPlan<
 /// Whether the room has something for this member itself: an ask of theirs that went stale, was escalated or lapsed,
 /// or a claim of theirs held a long time.
 fn has_own_items(d: &RoomDigest) -> bool {
-    !(d.stale.is_empty() && d.escalated.is_empty() && d.lapsed.is_empty() && d.aged.is_empty())
+    !(d.stale.is_empty()
+        && d.escalated.is_empty()
+        && d.lapsed.is_empty()
+        && d.aged.is_empty()
+        && d.cycles.is_empty())
 }
 
 /// The newest message time of the room, or 0 when it has only claims and asks.
@@ -910,6 +930,10 @@ mod tests {
                 path: evil.into(),
                 held_secs: 8 * 3600,
             }],
+            cycles: vec![crate::domain::CycleNotice {
+                path: evil.into(),
+                holder: evil.into(),
+            }],
         };
         let out = render_hook(
             &[
@@ -933,6 +957,25 @@ mod tests {
             out.matches("\n[room ").count() + 1,
             2,
             "one header per room, the text cannot add one at a line start"
+        );
+    }
+
+    #[test]
+    fn a_cycle_completed_by_a_take_tells_the_blocked_member_to_yield() {
+        let d = RoomDigest {
+            room: "lobby".into(),
+            cycles: vec![crate::domain::CycleNotice {
+                path: "src/a.rs".into(),
+                holder: "bob".into(),
+            }],
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 100);
+        assert!(
+            out.contains("deadlock: your wait for src/a.rs")
+                && out.contains("bob")
+                && out.contains("you yield"),
+            "{out}"
         );
     }
 

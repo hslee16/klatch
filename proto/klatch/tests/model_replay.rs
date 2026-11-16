@@ -132,6 +132,15 @@ impl Replay {
         out
     }
 
+    /// The members that have a notice of a cycle completed by a claim being taken (#648), each notice given once.
+    fn told_members(&self) -> Vec<String> {
+        MEMBERS
+            .iter()
+            .filter(|m| !self.gw.cycle_notices(&who(m), ROOM).unwrap().is_empty())
+            .map(|m| m.to_string())
+            .collect()
+    }
+
     fn unique(&self, text: &str) -> String {
         self.posts.set(self.posts.get() + 1);
         format!("{text} {}", self.posts.get())
@@ -219,6 +228,18 @@ fn model_outcome(step: &Value) -> String {
     }
 }
 
+/// The members the model says a claim just taken told to yield, sorted; none for any other step.
+fn model_tells(step: &Value) -> Vec<String> {
+    let mut out: Vec<String> = step["tells"]["#set"]
+        .as_array()
+        .expect("tells is a set")
+        .iter()
+        .map(|m| m.as_str().unwrap().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
 fn replay(file: &PathBuf) -> usize {
     let itf: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap())
         .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
@@ -231,6 +252,7 @@ fn replay(file: &PathBuf) -> usize {
         let at = format!("{} step {i}: {}", file.display(), step);
         assert_eq!(done, model_outcome(step), "outcome, {at}");
         assert_eq!(real.claims(), model_claims(state), "live claims, {at}");
+        assert_eq!(real.told_members(), model_tells(step), "members told, {at}");
     }
     states.len() - 1
 }

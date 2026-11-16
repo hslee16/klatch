@@ -651,6 +651,16 @@ pub trait Store {
     ) -> Result<Vec<crate::domain::AgedClaim>> {
         Ok(Vec::new())
     }
+    /// The member's own refused claims that a claim being taken by someone else has turned into a cycle of waits,
+    /// each reported once (#648). The default reports nothing.
+    fn deadlock_notices(
+        &self,
+        _room: &str,
+        _member: &str,
+        _now: i64,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        Ok(Vec::new())
+    }
     /// Rooms a member has joined, ordered by name.
     fn rooms_of(&self, member: &str) -> Result<Vec<String>>;
     /// Messages with `seq` greater than `after_seq`, oldest first, at most `limit`, from every sender
