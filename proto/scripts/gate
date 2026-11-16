@@ -39,7 +39,7 @@ started=$SECONDS
 replay_hint() {
   echo
   echo "To replay the property tests exactly:"
-  echo "    cd proto && HEGEL_SEED=$HEGEL_SEED HEGEL_TEST_CASES=$cases cargo test -p klatch --test properties --test models"
+  echo "    cd proto && HEGEL_SEED=$HEGEL_SEED HEGEL_TEST_CASES=$cases cargo test -p klatch --test properties --test models --test crypto"
   echo "A failing property also prints its shrunk input and a line #[hegel::reproduce_failure(\"...\")]: add it under"
   echo "#[hegel::test] to replay that one failure from the blob alone (CONTRIBUTING.md, \"Property tests\")."
 }
@@ -77,7 +77,7 @@ else
   n=$((n + 1)); printf '[%d/%d] %-34s skipped (cargo-deny is not installed; CI runs it)\n' "$n" "$total" "cargo deny"
 fi
 step "test-clock build tests"       no    "$proto" cargo test -p klatch --features test-clock --test no_plaintext --locked
-step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases" cargo test -p klatch --locked --test properties --test models
+step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases" cargo test -p klatch --locked --test properties --test models --test crypto
 # the repository's own scripts: the release number agrees everywhere, the installer, the README quickstart, shellcheck
 repo_checks() {
   cargo build -p klatch --locked --manifest-path "$proto/Cargo.toml" > /dev/null 2>&1 || true
