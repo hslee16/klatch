@@ -151,7 +151,7 @@ const CODEX_PATIENCE: Duration = Duration::from_secs(10);
 /// Run `codex` with `args` on a thread with a time limit: `None` when it did not answer in time, `Err` when it could
 /// not be started. Only help and version requests are made, which need no login and write nothing.
 fn run_codex(args: &'static [&'static str]) -> Option<std::io::Result<String>> {
-    crate::doctor::within(CODEX_PATIENCE, move || {
+    klatch::sync::within(CODEX_PATIENCE, move || {
         Command::new("codex")
             .args(args)
             .stdin(Stdio::null())

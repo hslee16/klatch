@@ -45,19 +45,7 @@ fn store_path(home: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
-/// Run `probe` on its own thread and wait up to `limit` for its answer; `None` when it does not come. A keystore can
-/// block for ever on a dialog nobody is there to answer, and a health check must not hang with it. The abandoned thread
-/// ends with the process.
-pub(crate) fn within<T: Send + 'static>(
-    limit: std::time::Duration,
-    probe: impl FnOnce() -> T + Send + 'static,
-) -> Option<T> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(probe());
-    });
-    rx.recv_timeout(limit).ok()
-}
+use klatch::sync::within;
 
 /// How long the keystore may take to answer before it is reported as stuck.
 const KEYSTORE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);

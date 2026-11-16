@@ -1753,3 +1753,71 @@ FAILED`.
 
 #656 the recovery code has no proof; #657 valid_* beyond 4 characters; #658 LabelChain::new and parse; #659 clean_path
 wrapper and longer paths; #660 overlaps and scopes_collide at 3 characters; #664 the unreachable shared-marker check.
+
+## 53. Shuttle tests of the std-thread code (2026-11-15, Shuttle 0.9.10, shuttle-std 0.1.5, Apple M3 Pro, macOS Darwin 23.3.0, ticket #406, decided in #402)
+
+Question: which std-thread code in the klatch crate shares state between threads, and can Shuttle's randomized
+schedules find an interleaving bug in it? Answer: four small pieces qualify, all four run under Shuttle, and each test
+failed when a bug was planted. A pass is "no failing schedule among those tried", not a proof.
+
+### 53.1 What shares state between threads
+
+A search of `proto/klatch/src` for Mutex, atomics, channels, Condvar and thread spawns found: the message id counter
+(`store/ids.rs`, one `AtomicU32` and a `OnceLock`); the session input reader (`session/mod.rs`, a thread feeding a
+channel that the session loop drains with `collect`); the client's reader thread (`client.rs`); and three copies of
+"run a probe on a thread and wait with `recv_timeout`" (doctor.rs, keys/macos.rs, identity.rs `stdin_json`). The rest
+is test code (session tests, custody and sqlite concurrency tests) or single-threaded by type: `Gateway` and
+`Subscription` hold `Rc` and `RefCell`, so a gateway cannot be shared between threads at all. The wait and wake commands
+poll with sleeps in separate processes; there is no in-process notifier.
+
+### 53.2 What changed shape
+
+- `src/sync.rs` re-exports `std` or Shuttle by `cfg(shuttle)`; the code above imports from it.
+- The three copies of `within` became one `sync::within` (the Keychain and `stdin_json` call it; behaviour is the same).
+- `Client::connect`'s reader closure became `client::pump_frames(reader, tx)`; `read_in_background` and `collect` became
+  `pub(crate)`; `store::ids` became `pub(crate)`.
+- `COUNTER` in ids.rs has two definitions: a plain static, and under Shuttle a `shuttle::lazy_static!` (a plain static
+  would carry its count from one explored run into the next).
+- `shuttle` is a `[target.'cfg(shuttle)'.dependencies]` entry, so it is in Cargo.lock but a normal build never compiles
+  it. The Shuttle build goes to `proto/target/shuttle`.
+
+### 53.3 Results (fixed seed 406)
+
+| Test | Schedules | Time |
+|---|---|---|
+| ids stay unique, 3 threads x 2 ids in one millisecond | 2000 | under 1 s together with the rest |
+| session reader: 4 frames once, in order, then closed | 2000 | same |
+| client reader: 3 frames, then the end marker last | 2000 | same |
+| within: two probes at once each get their own answer | 2000 | same |
+
+All pass at 2000 and at 200000 schedules each (`proto/scripts/shuttle long`, 55 s total).
+
+### 53.4 Planted bugs (`proto/scripts/shuttle mutations`)
+
+Each plant was put in the real code, the test failed with a Shuttle schedule, and the code was reverted.
+
+| Plant | Caught by |
+|---|---|
+| id counter read then written instead of one `fetch_add` (a lost update, duplicate ids) | the ids test |
+| `collect` treats an empty channel as a closed input (a late frame is dropped) | the session reader test |
+| `pump_frames` sends the end marker before the frames | the client reader test |
+| `within` uses `try_recv` instead of waiting (answers None when the probe is slow) | the within test |
+
+Honest notes: the tests were written before the code they exercise existed, so they were red only as compile errors;
+the first runs were green. The planted bugs are what show they can fail. The client reader plant fails on any schedule
+(an ordering bug, not a race), so it shows the test checks order, not that Shuttle was needed.
+
+### 53.5 What is NOT covered
+
+- Time. Shuttle's `recv_timeout` never times out (#666): within's time limit, heartbeats, poll intervals, busy retries.
+- The store, SQLite, SQLCipher, `flock` and OS locks, the Keychain, and everything across processes (#667); the fault
+  tester (#625) and the Quint model (#405) are the evidence for those.
+- The gateway: it is not shared between threads by construction.
+- Ordinary tests cannot run in a Shuttle build (#668), so only `shuttle_tests::` runs there.
+- Shuttle explores random schedules (here the random scheduler with one fixed seed), so a rare interleaving can be
+  missed. Loom (exhaustive within bounds) was not tried: it needs wrapped primitives everywhere and the four pieces
+  are small enough that random schedules at 200000 each are a reasonable first measure.
+
+### 53.6 Tickets
+
+#666 time is not modelled; #667 what Shuttle cannot reach; #668 ordinary tests do not run in a Shuttle build.

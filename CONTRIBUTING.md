@@ -82,6 +82,24 @@ to forget them. Remove the attribute once the bug is fixed.
 `cargo build` of its engine at build time, which resolves dependencies outside our lockfile where `--locked` and
 `cargo-deny` cannot see them. Keep the feature on. (RESEARCH-NOTES section 42 has the measurements.)
 
+## Shuttle tests of the thread code (by hand; a 200-schedule smoke runs in the gate)
+
+`proto/klatch/src/shuttle_tests.rs` runs the in-process shared-state code (message id counter, session and client reader
+threads, `sync::within`) under [Shuttle](https://github.com/awslabs/shuttle), which runs a test many times with a random
+order of the threads' steps. Code that shares state between threads imports its primitives from `crate::sync`
+(`std` normally, Shuttle's under `--cfg shuttle`), never from `std::sync` or `std::thread` directly.
+
+```
+proto/scripts/shuttle              2000 schedules per test, seed 406
+proto/scripts/shuttle long         200000 schedules per test (about a minute)
+proto/scripts/shuttle mutations    plant each bug in the real code: every test must fail; the file is restored
+SHUTTLE_SEED=7 SHUTTLE_ITERS=50000 proto/scripts/shuttle
+```
+
+A pass means no failing schedule among those tried, not that none exists. Shuttle does not model time and cannot see
+SQLite, `flock` or the OS (RESEARCH-NOTES section 53.5). A new test needs a planted bug in `mutations` that it catches.
+The Shuttle build uses its own `proto/target/shuttle` and the ordinary tests do not run in it.
+
 ## The Quint model of claims and leases (checked by hand; only the replay test runs in the gate)
 
 `proto/klatch/models/claims.qnt` is a [Quint](https://quint-lang.org) model of the claim and lease protocol of one

@@ -134,15 +134,11 @@ pub(crate) fn stdin_json() -> Option<serde_json::Value> {
     }
     // Claude Code writes the JSON at once and closes the pipe. Anything else (a script that holds standard input
     // open, a pipe nobody writes to) must not make a hook wait for ever, so the read is time-bounded.
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let text = klatch::sync::within(std::time::Duration::from_millis(1500), || {
         let mut text = String::new();
         let _ = std::io::stdin().take(1 << 20).read_to_string(&mut text);
-        let _ = tx.send(text);
-    });
-    let text = rx
-        .recv_timeout(std::time::Duration::from_millis(1500))
-        .ok()?;
+        text
+    })?;
     serde_json::from_str(&text).ok()
 }
 

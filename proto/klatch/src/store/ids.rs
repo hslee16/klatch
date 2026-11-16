@@ -1,10 +1,10 @@
 //! Message ids: 26 characters of Crockford base32, a 48-bit millisecond timestamp followed by 80 bits that
 //! are random per process plus a counter. Sortable by time, unique across processes, no dependencies.
 
+use crate::sync::atomic::{AtomicU32, Ordering};
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -23,8 +23,15 @@ fn encode(mut value: u128, chars: usize) -> String {
     String::from_utf8(out).expect("alphabet is ascii")
 }
 
+// The per-process counter. A Shuttle build needs Shuttle's lazy_static so each explored run starts it at zero (#406).
+#[cfg(not(shuttle))]
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+#[cfg(shuttle)]
+shuttle::lazy_static! {
+    static ref COUNTER: AtomicU32 = AtomicU32::new(0);
+}
+
 pub fn new_id(now_ms: u64) -> String {
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
     let low = ((process_bits() as u128) << 32) | counter;
     format!(

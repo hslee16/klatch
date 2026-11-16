@@ -14,18 +14,7 @@ use security_framework::passwords::{
 /// How long a Keychain read may take before it is given up as waiting for a dialog.
 const READ_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Runs `f` on a thread and waits at most `limit` for it. A thread stuck in the Keychain is left behind; the
-/// process is about to exit with an error anyway.
-fn within<T: Send + 'static>(
-    limit: std::time::Duration,
-    f: impl FnOnce() -> T + Send + 'static,
-) -> Option<T> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(f());
-    });
-    rx.recv_timeout(limit).ok()
-}
+use crate::sync::within;
 
 /// "item not found" in the Security framework.
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
