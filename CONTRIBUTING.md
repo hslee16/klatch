@@ -43,6 +43,7 @@ cargo test -p klatch --test properties                                  # the de
 HEGEL_TEST_CASES=100000 cargo test -p klatch --test properties          # a long run, by hand (not in CI)
 HEGEL_TEST_CASES=3000 cargo test -p klatch --test models                # 3000 sequences each: about half a minute
 HEGEL_SEED=7 cargo test -p klatch --test properties                     # a fixed seed, to repeat a run exactly
+cargo test -p klatch --test crypto                                      # sealed values and recovery codes: properties and pinned vectors
 ```
 
 **Write** (copy one from the file)
