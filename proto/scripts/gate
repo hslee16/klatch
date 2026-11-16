@@ -92,7 +92,7 @@ repo_checks() {
     && experiments/gates/test-check-binary.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh > /dev/null \
-    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh; }
+    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/quint-check; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 

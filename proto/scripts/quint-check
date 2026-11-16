@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# Check the Quint model of the claim and lease protocol (proto/klatch/models/claims.qnt, DESIGN section 32 item 76,
+# #405). By hand: it is not part of the gate and CI never runs it, because Apalache takes minutes.
+#
+#   proto/scripts/quint-check                  random runs of every invariant, then Apalache on each (default 8 steps)
+#   proto/scripts/quint-check --steps 10       Apalache to 10 steps (--core-steps N for the deadlock invariants, default 7)
+#   proto/scripts/quint-check [--steps N] check NAME...   only these invariants (options come first)
+#   proto/scripts/quint-check findings         the known findings: each of these invariants is EXPECTED to fail
+#   proto/scripts/quint-check mutations        plant each bug in the model, one at a time: each must be caught
+#   proto/scripts/quint-check mutate BUG       one planted bug (names are listed by `mutations --list`)
+#   proto/scripts/quint-check traces [NAME...] regenerate the traces under proto/klatch/models/traces (the replay test
+#                                              proto/klatch/tests/model_replay.rs runs them against the real gateway)
+#   proto/scripts/quint-check versions         the tool versions this was last run with
+#
+# Tools live outside the repository. `npm i --prefix ~/.local/share/klatch-quint @informalsystems/quint` installs Quint
+# (QUINT_BIN overrides the path); Quint downloads Apalache into ~/.quint on its first `verify`. Needs Node and Java.
+#
+# A result here is "model checked up to N steps and M members", never "proven": Apalache checks every behaviour up
+# to a bound, and the model leaves things out (see the header of claims.qnt).
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+models="$(cd "$here/../klatch/models" && pwd)"
+model="$models/claims.qnt"
+quint="${QUINT_BIN:-$HOME/.local/share/klatch-quint/node_modules/.bin/quint}"
+command -v "$quint" > /dev/null 2>&1 || quint="$(command -v quint || true)"
+[ -n "$quint" ] || { echo "quint-check: quint is not installed (see the header of this script)" >&2; exit 2; }
+
+steps=8
+core_steps=7   # the deadlock invariants cost far more per step; 8 steps took over half an hour for one of them
+samples=3000
+members=3
+
+# invariants that must hold
+invariants="NoOverlappingLiveExclusive LeaseWithinCap LeaseWithinParkMax StuckOwnerHoldsNothing ReleaseOnlyOwn
+ExpiredNeverBlocks OnlyLivenessRevives RenewNeverRevives RenewNeverShortens ExpiryShrinksOnlyByLeaseRules
+DeadlockFlagExact RefusalTellsOnlyTheRequester"
+# known findings: expected to fail, with the ticket for each
+findings="StrictLeaseCap ParkedLeaseEndsAtReturn EveryCycleHasATold ActivityRenewsToOwnTtl"
+# invariants checked on the smaller action set `stepCore` (claim, release, tick; see claims.qnt)
+core="DeadlockFlagExact RefusalTellsOnlyTheRequester EveryCycleHasATold W_deadlock W_staleWait"
+# planted bug -> the invariant that must catch it
+mutations="equalOnly:NoOverlappingLiveExclusive sharedIgnored:NoOverlappingLiveExclusive capOff:LeaseWithinCap
+extendOverCap:LeaseWithinCap parkUncapped:LeaseWithinParkMax stuckKeeps:StuckOwnerHoldsNothing
+releaseAny:ReleaseOnlyOwn expiredBlocks:ExpiredNeverBlocks renewRevives:RenewNeverRevives
+parkRevives:OnlyLivenessRevives renewShortens:RenewNeverShortens parkShortens:ExpiryShrinksOnlyByLeaseRules
+deadlockNever:DeadlockFlagExact windowIgnored:DeadlockFlagExact tellAll:RefusalTellsOnlyTheRequester"
+# event -> witness invariant that is made to fail on purpose, so Apalache returns a short trace of the event
+witnesses="deadlock:W_deadlock conflict:W_conflict invalid:W_invalid renew:W_renewMoves park:W_parkStretch
+revive:W_revive cutback:W_cutBack postkeeps:W_postKeeps stalewait:W_staleWait stuck:W_stuck gone:W_gone shared:W_shared releasenotfound:W_releaseNotFound"
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/quint-check.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+# verify <file> <invariant> <steps>: prints ok or violated; Apalache's output is kept in $work/last.log
+verify() {
+  local file="$1" inv="$2" n="$3" step=step
+  # the cycle test is the expensive part for Apalache, so its invariants run on the claims-and-time actions only
+  case " $core " in *" $inv "*) step=stepCore; [ "$n" -gt "$core_steps" ] && n="$core_steps" ;; esac
+  (cd "$work" && "$quint" verify "$file" --step="$step" --invariant="$inv" --max-steps="$n" \
+    --out-itf="$work/$inv.itf.json" > "$work/last.log" 2>&1)
+  local rc=$?
+  if [ $rc -eq 0 ]; then echo ok; elif grep -q '^\[violation\]' "$work/last.log"; then echo violated; else echo "error($rc)"; fi
+}
+
+# mutate_copy <bug>: a copy of the model with the one BUG line rewritten
+mutate_copy() {
+  local out="$work/mutant-$1.qnt"
+  sed "s/pure val BUG = \"none\"/pure val BUG = \"$1\"/" "$model" > "$out"
+  grep -q "pure val BUG = \"$1\"" "$out" || { echo "no BUG line to rewrite" >&2; return 1; }
+  echo "$out"
+}
+
+cmd_check() {
+  local bad=0
+  [ $# -gt 0 ] && invariants="$*"
+  echo "random runs ($samples samples of 30 steps each), every invariant"
+  for inv in $invariants; do
+    if "$quint" run "$model" --max-samples="$samples" --max-steps=30 --invariant="$inv" 2>&1 | grep -q '^\[ok\]'; then
+      printf '  %-34s ok\n' "$inv"
+    else
+      printf '  %-34s VIOLATED in a random run\n' "$inv"; bad=1
+    fi
+  done
+  echo "Apalache, up to $steps steps (the deadlock invariants: up to $core_steps, on claims, releases and time only)"
+  for inv in $invariants; do
+    local t0=$SECONDS r
+    r="$(verify "$model" "$inv" "$steps")"
+    printf '  %-34s %s (%ds)\n' "$inv" "$r" $((SECONDS - t0))
+    [ "$r" = ok ] || { bad=1; tail -n 5 "$work/last.log" | sed 's/^/    /'; }
+  done
+  if [ $bad -eq 0 ]; then
+    echo "model checked up to $steps steps and $members members (the deadlock invariants up to $core_steps steps): no violation of any invariant above"
+  else
+    echo "an invariant failed: replay it with: quint run $model --invariant=<name> --verbosity=3"; return 1
+  fi
+}
+
+cmd_findings() {
+  local bad=0
+  echo "known findings: each must be VIOLATED (a counterexample exists within $steps steps)"
+  for inv in $findings; do
+    local n="$steps" r
+    r="$(verify "$model" "$inv" "$n")"
+    if [ "$r" = violated ]; then printf '  %-34s violated, as recorded\n' "$inv"
+    else printf '  %-34s %s (expected a violation; fixed, or needs more steps)\n' "$inv" "$r"; bad=1; fi
+  done
+  return $bad
+}
+
+cmd_mutate() {
+  local bug="$1" inv="" pair
+  for pair in $mutations; do [ "${pair%%:*}" = "$bug" ] && inv="${pair#*:}"; done
+  [ -n "$inv" ] || { echo "quint-check: unknown bug $bug" >&2; return 2; }
+  local copy r
+  copy="$(mutate_copy "$bug")" || return 2
+  r="$(verify "$copy" "$inv" "$steps")"
+  if [ "$r" = violated ]; then printf '  %-16s caught by %s\n' "$bug" "$inv"; return 0; fi
+  printf '  %-16s NOT caught by %s (%s)\n' "$bug" "$inv" "$r"; return 1
+}
+
+cmd_mutations() {
+  if [ "${1:-}" = "--list" ]; then for pair in $mutations; do echo "${pair%%:*}"; done; return 0; fi
+  local bad=0 pair
+  echo "planted bugs in the model, each must be caught by its invariant (up to $steps steps)"
+  for pair in $mutations; do cmd_mutate "${pair%%:*}" || bad=1; done
+  return $bad
+}
+
+# One shortest trace per event (Apalache counterexample to a witness), plus a few long random ones.
+cmd_traces() {
+  local out="$models/traces" w
+  mkdir -p "$out"
+  for w in $witnesses; do
+    local inv="${w#*:}" name="${w%%:*}" r depth=12
+    # a witness that needs the cycle test is found at a few steps, and deeper searches are slow on it
+    case " $core " in *" $inv "*) depth=8 ;; esac
+    if [ $# -gt 0 ] && ! printf '%s\n' "$@" | grep -qx "$name"; then continue; fi
+    if [ "$name" = stalewait ]; then
+      # Apalache is slow on this one (it compares the cycle test with and without the window); a random search finds it fast
+      (cd "$work" && "$quint" run "$model" --step=stepCore --max-samples=300000 --max-steps=12 --invariant="$inv" \
+        --out-itf="$work/$inv.itf.json" > "$work/last.log" 2>&1)
+      r=error
+      grep -q '^\[violation\]' "$work/last.log" && r=violated
+    else
+      r="$(verify "$model" "$inv" "$depth")"
+    fi
+    if [ "$r" = violated ]; then cp "$work/$inv.itf.json" "$out/witness-$name.itf.json"; echo "  witness-$name"
+    else echo "  witness-$name: no trace ($r)"; fi
+  done
+  local i
+  [ $# -gt 0 ] && return 0
+  for i in 1 2 3 4 5 6; do
+    (cd "$work" && "$quint" run "$model" --max-samples=1 --max-steps=40 --seed="0x$i$i$i" --out-itf="$out/random-$i.itf.json" > /dev/null 2>&1)
+    [ -s "$out/random-$i.itf.json" ] && echo "  random-$i"
+  done
+  local count=0 f
+  for f in "$out"/*.itf.json; do [ -e "$f" ] && count=$((count + 1)); done
+  echo "$count traces written"
+}
+
+cmd_versions() {
+  echo "quint $("$quint" --version 2>&1 | tail -n 1)"
+  local d
+  for d in "$HOME"/.quint/apalache-dist-*; do [ -e "$d" ] && echo "apalache ${d##*/apalache-dist-}"; done
+  java -version 2>&1 | head -n 1
+  node --version | sed 's/^/node /'
+}
+
+mode=check
+names=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --steps) steps="$2"; shift 2 ;;
+    --core-steps) core_steps="$2"; shift 2 ;;
+    --samples) samples="$2"; shift 2 ;;
+    traces) mode=traces; shift; names=("$@"); break ;;
+    check) mode=check; shift; names=("$@"); break ;;
+    findings | mutations | versions) mode="$1"; shift ;;
+    mutate) mode=mutate; bugname="${2:-}"; shift 2 ;;
+    -h | --help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --list) rest="--list"; shift ;;
+    *) echo "quint-check: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$mode" in
+  check) cmd_check ${names[@]+"${names[@]}"} ;;
+  findings) cmd_findings ;;
+  mutations) cmd_mutations "${rest:-}" ;;
+  mutate) cmd_mutate "$bugname" ;;
+  traces) cmd_traces ${names[@]+"${names[@]}"} ;;
+  versions) cmd_versions ;;
+esac

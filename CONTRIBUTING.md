@@ -81,6 +81,37 @@ to forget them. Remove the attribute once the bug is fixed.
 `cargo build` of its engine at build time, which resolves dependencies outside our lockfile where `--locked` and
 `cargo-deny` cannot see them. Keep the feature on. (RESEARCH-NOTES section 42 has the measurements.)
 
+## The Quint model of claims and leases (checked by hand; only the replay test runs in the gate)
+
+`proto/klatch/models/claims.qnt` is a [Quint](https://quint-lang.org) model of the claim and lease protocol of one
+room: overlap and exclusive or shared scopes, expiry, renewal to a claim's own ttl, liveness leases, parking, the 24
+hour cap and the cycle-of-waits (deadlock) rule (DESIGN section 32 item 76). Its invariants have names
+(`NoOverlappingLiveExclusive`, `LeaseWithinCap`, `RenewNeverRevives`, `DeadlockFlagExact` and others, listed at the
+foot of the file) and are checked by [Apalache](https://apalache-mc.org). **Say "model checked up to N steps and M
+members", never "proven"**: Apalache covers every behaviour up to a bound, and the model leaves out asks, anchors, rooms
+and membership changes (the header of the file lists what).
+
+```
+proto/scripts/quint-check                 # random runs, then Apalache on each invariant (8 steps; about half an hour)
+proto/scripts/quint-check findings        # the known findings: each is EXPECTED to be violated, and has a ticket
+proto/scripts/quint-check mutations       # plant each bug in the model: each must be caught by its invariant
+proto/scripts/quint-check mutate capOff   # one planted bug
+proto/scripts/quint-check traces          # rewrite the traces in proto/klatch/models/traces
+proto/scripts/quint-check versions
+```
+
+Install the tools outside the repository: `npm i --prefix ~/.local/share/klatch-quint @informalsystems/quint` (last
+run with Quint 0.33.1; set `QUINT_BIN` to use another path), and Quint downloads Apalache into `~/.quint` the first
+time it verifies (last run with Apalache 0.62.4, Node 22, Java 22). When you change claim, renewal, park or lease
+behaviour, change the model with it, run `quint-check`, and run `quint-check traces` if the model's actions changed.
+
+The link to the real code is `proto/klatch/tests/model_replay.rs`. It reads the traces (ITF JSON, one witness per
+event from Apalache and some long random ones from `quint run`) and executes every step against `Gateway` over
+`SqliteStore::open_in_memory`: a claim, release, read (renewal), post, `parked:` post, or a liveness probe made up by
+the test. After each step the outcome (taken, refused by whom, told to yield, over the cap) and the live claims with owner,
+scope and expiry must equal the model's. The few committed traces replay in an ordinary `cargo test` in well under a
+second; `KLATCH_MODEL_TRACES=dir cargo test -p klatch --test model_replay` replays traces you just made.
+
 ## Before you open a pull request: the local gate
 
 ```
