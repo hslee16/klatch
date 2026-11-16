@@ -58,16 +58,13 @@ impl LabelChain {
 
     /// Position in the chain, 0 for the lowest; `None` for a name the chain does not have.
     pub fn rank(&self, label: &str) -> Option<usize> {
-        self.0.iter().position(|l| l == label)
+        rank_in(&self.0, label)
     }
 
     /// Whether `held` is at least `needed`. A name outside the chain is never enough and never satisfied: unknown
     /// labels fail closed.
     pub fn dominates(&self, held: &str, needed: &str) -> bool {
-        match (self.rank(held), self.rank(needed)) {
-            (Some(h), Some(n)) => h >= n,
-            _ => false,
-        }
+        dominates_in(&self.0, held, needed)
     }
 
     /// The lower of two labels, `None` if either is unknown.
@@ -83,6 +80,20 @@ impl LabelChain {
         } else {
             &self.0[self.0.len() - 2]
         }
+    }
+}
+
+/// `LabelChain::rank` over any list of names. Free functions on a slice, so the Kani proofs (#404) can run the real
+/// logic on a stack array instead of a heap `Vec<String>`, which the solver cannot finish.
+fn rank_in<S: AsRef<str>>(names: &[S], label: &str) -> Option<usize> {
+    names.iter().position(|l| l.as_ref() == label)
+}
+
+/// `LabelChain::dominates` over any list of names.
+pub(crate) fn dominates_in<S: AsRef<str>>(names: &[S], held: &str, needed: &str) -> bool {
+    match (rank_in(names, held), rank_in(names, needed)) {
+        (Some(h), Some(n)) => h >= n,
+        _ => false,
     }
 }
 

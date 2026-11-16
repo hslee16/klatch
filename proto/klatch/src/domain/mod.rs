@@ -48,6 +48,8 @@ pub use hook::{
     render_hook_within,
 };
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
+#[cfg(kani)]
+pub(crate) use labels::dominates_in;
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
@@ -58,6 +60,8 @@ pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
 pub use text::{
     MAX_PAYLOAD_BYTES, flat, mentions, norm, overlaps, secs_between, valid_kind, valid_name,
 };
+#[cfg(kani)]
+pub(crate) use toolguard::clean_bytes;
 pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,

@@ -1620,3 +1620,136 @@ Two properties did not survive their first wording, and the second was found onl
 - `quint run --out-itf` and `quint verify --out-itf` write ITF JSON (`{"#bigint": "12"}` for numbers, `{"#set": [...]}` for sets); `serde_json` reads it with no new dependency. The replay maps one model minute to 60 seconds and compares the outcome of each claim or release and the live claims.
 - The model's replay needed one fix in the test, not the code: the gateway refuses a post identical to the previous one within moments, so the replay numbers each post.
 - Quint rejects `val` operators with parameters and a few other things Apalache users meet (`next` is a built-in name; map types are written `str -> int`).
+
+## 52. Kani bounded proofs of the pure security functions (2026-11-15, Kani 0.68.0, CBMC 6.11.0, nightly-2026-08-21, Apple M3 Pro, macOS Darwin 23.3.0, ticket #404, decided in #402)
+
+Question: can a model checker give a bounded proof, run by hand and never on a pull request, for the pure functions
+that carry the security decisions? Answer: yes for every area asked for except the recovery code (ticket #656), at small bounds, and only after
+restructuring four functions so the solver can finish. Every result below is a
+bounded proof, "no counterexample up to N", not a proof for all inputs.
+
+### 52.1 What was built
+
+`proto/klatch/src/kani_proofs.rs` (compiled only under `cfg(kani)`, declared in `lib.rs`, with `unexpected_cfgs`
+told about `kani` in `Cargo.toml`), `proto/scripts/kani` (runs every harness one at a time with a time limit, prints
+pass or FAIL and the seconds; a harness that times out is a FAIL), and a section in CONTRIBUTING.md. Nothing in CI,
+the gate or any build runs them. Install: `cargo install --locked kani-verifier` (0.68.0) and `cargo kani setup`
+(downloads CBMC and a pinned nightly).
+
+Bolero was not used. I did not install `cargo-bolero` or add the `bolero` crate to a build, so I did not try its Kani
+engine end to end; the reasons are that it adds a dependency (and a licence line for THIRD-PARTY-LICENSES.txt) to
+reach the same `#[kani::proof]` harnesses, and that its generators for `String` and `Vec` build the heap values this
+section shows the solver cannot finish. If someone wants a bolero harness style later, the bounds below are the
+starting point. The crate already uses Hegel for property tests.
+
+### 52.2 Results (final run, one harness at a time, 2026-11-15)
+
+All 21 harnesses pass. Total run time about 30 minutes on one core at a time; the three clean_path harnesses are
+two thirds of it. Times are wall clock for `cargo kani --harness NAME` including the incremental build.
+
+| Harness | Function | Bound | Time |
+|---|---|---|---|
+| clean_path_is_normal | clean_bytes (the logic of clean_path) | path and cwd up to 3 bytes each from `/ . a`, 8 byte output; result starts with `/`, has no `//`, no trailing `/` (except the root), no `.` or `..` segment | 91 s |
+| clean_path_is_idempotent | clean_bytes | same bounds; cleaning a cleaned path changes nothing | 236 s |
+| clean_path_dots_never_escape_the_root | clean_bytes | 2 or 3 `..` segments as a relative path, cwd up to 4 bytes from `/ . a`; the result is the root | 676 s |
+| clean_path_dot_dot_removes_exactly_one_segment | clean_bytes | one byte names a or b; `/x/y/..` is `/x`, `y/..` from `/x` is `/x` | 12 s |
+| overlaps_is_symmetric_and_reflexive | overlaps | each path up to 3 bytes from `/ a b` | 194 s |
+| overlaps_is_by_component_not_by_text_prefix | overlaps | directory and child names of one byte (a or b): `/a` and `/a/b` overlap, `/a` and `/ab` do not, a trailing slash changes nothing | 71 s |
+| valid_name_accepts_only_the_safe_alphabet | valid_name | up to 4 ASCII bytes; accepted implies non-empty and only `A-Za-z0-9 - _ .`, and the converse | 77 s |
+| valid_kind_accepts_only_the_safe_alphabet | valid_kind | same | 45 s |
+| valid_scope_accepts_only_the_safe_alphabet_and_never_the_shared_marker | valid_scope | same; accepted implies not `*` | 24 s |
+| non_ascii_is_refused | the three above | four concrete non-ASCII strings | 47 s |
+| name_length_limit_holds_at_the_boundary, kind_..., scope_... | valid_name, valid_kind, valid_scope | 40, 40 and 80 bytes accepted, one more refused; concrete text | 7, 6, 10 s |
+| scopes_collide_is_symmetric_and_shared_collides_with_all | scopes_collide | up to 3 bytes from `a b *` | 43 s |
+| dominance_is_reflexive_total_and_antisymmetric_and_fails_closed | dominates_in (what LabelChain::dominates calls) | chain of 2 to 4 names (prefix of public, internal, private, secret); labels those four or an outside one | 142 s |
+| dominance_is_transitive | dominates_in | same, three labels | 24 s |
+| loopback_is_exactly_127_slash_8_and_the_ipv6_forms | is_loopback | none: every IPv4 and IPv6 address | 7 s |
+| check_bind_allows_plaintext_only_on_loopback_with_a_token | check_bind | none on the address or port; all three Security values and both token values | 5 s |
+| a_blob_is_protected_only_with_the_full_header_and_the_magic | looks_protected, reveal | blobs of 0 to 30 bytes, any content (the header is 28); short input is refused as Malformed | 35 s |
+| an_unknown_version_or_algorithm_is_refused_before_decryption | reveal | 30 byte blob with the magic and any version and algorithm other than 1 and 1; refused by name before the cipher runs | 12 s |
+| sealed_text_is_recognised_by_its_prefix | is_sealed_text | twelve concrete texts, no symbolic input (an example test run under the checker, not a search) | 7 s |
+
+Two harnesses have no bound on their main input (the address functions); for them "bounded proof" means only that
+the Security and token inputs are enumerated.
+
+### 52.3 What is not covered
+
+- The recovery code (keys/recovery.rs): no harness. A harness for `restore` over 6 characters timed out at 300 s and
+  at 600 s, and over 2 characters (a real code is 63) at 500 s, because it filters into a `String`, decodes base32
+  into a `Vec` and hashes with SHA-256. Ticket #656.
+- clean_path's wrapper (a `vec!` and `String::from_utf8_lossy`) and paths over 3 bytes; ticket #659. Guarded by a
+  unit test that compares the new form with the old split-and-join form on every string of up to 5 characters.
+- valid_name, valid_kind, valid_scope on strings of 5 to 39 characters; ticket #657.
+- LabelChain::new, parse, min, default_cap and the wrapper methods; ticket #658.
+- overlaps and scopes_collide on longer text; ticket #660.
+- Whether a well-formed sealed value opens (the AEAD), whether any transport calls check_bind (a caller property),
+  name resolution, symlinks.
+- is_sealed_text has only concrete examples: validating symbolic bytes as UTF-8 (sixteen bytes, one byte at a symbolic
+  position, even forty-eight concrete validations) did not finish in 600 s, and `from_utf8_unchecked` is refused by
+  the unsafe-code check in tests/hygiene.rs. The text form is one `starts_with` on a constant.
+
+### 52.4 What the solver could not do, and what that cost the code
+
+Anything that grows a heap value with a symbolic size is out of reach at useful bounds. Calling `format!`, `split`,
+`join`, `to_string`, `String::push` or `Vec::push` under a symbolic length gave programs of 300,000 to 640,000 steps
+and 7 to 12 million variables, and timeouts at 300 to 600 s even for one symbolic character. The same logic on a
+fixed array finishes in seconds to minutes. So four functions changed shape, with the same results:
+
+- `clean_path` now allocates once and calls `clean_bytes`, which works on byte slices and an output buffer.
+- `overlaps` trims with a byte loop instead of `norm` (which allocates) and `format!`.
+- `valid_scope` checks bytes instead of `chars().count()` and `contains`.
+- `LabelChain::dominates` and `rank` delegate to `dominates_in` and `rank_in` on a slice of names.
+
+Each is pinned: the old forms of clean_path and overlaps live in the tests as reference functions and are compared on
+every short input (clean_path 5 characters over `/ . a` against six working directories; overlaps 5 characters over
+`/ a b`), and the existing unit tests for all four pass unchanged. A symbolic index into an array of `&str` was also
+costly (the first clean_path harness did not finish in 600 s even on three concrete inputs), as was `assert_eq!` on
+strings (its formatting code); the harnesses use byte arrays, `if` chains and `assert!(a == b)` for that reason.
+
+### 52.5 Each harness can fail: planted bugs
+
+For each harness I planted a bug in the real function, ran the harness, and reverted. CAUGHT means `VERIFICATION:-
+FAILED`.
+
+| Planted in | Bug | Harness | Result |
+|---|---|---|---|
+| clean_bytes | `..` ignored | clean_path_dot_dot_removes_exactly_one_segment | caught, 6 s |
+| clean_bytes | `..` goes to the root | clean_path_dot_dot_removes_exactly_one_segment | caught, 5 s |
+| clean_bytes | `.` segment kept | clean_path_is_normal | caught, 79 s |
+| clean_bytes | an absolute path joined to the cwd | clean_path_is_idempotent | caught, 234 s |
+| clean_bytes | `..` ignored | clean_path_dots_never_escape_the_root | caught, 52 s |
+| overlaps | match by text prefix, not component | overlaps_is_by_component_not_by_text_prefix | caught, 56 s |
+| overlaps | one direction only | overlaps_is_symmetric_and_reflexive | caught, 170 s |
+| valid_name | space allowed | valid_name_accepts_only_the_safe_alphabet | caught, 67 s |
+| valid_name | any Unicode letter allowed | non_ascii_is_refused | caught, 198 s |
+| valid_kind | colon allowed | valid_kind_accepts_only_the_safe_alphabet | caught, 43 s |
+| valid_name, valid_kind, valid_scope | limit one byte too high | the three length harnesses | caught, 10, 10 and 15 s |
+| valid_scope | star allowed in the alphabet | valid_scope_accepts_only_the_safe_alphabet_and_never_the_shared_marker | caught, 23 s |
+| scopes_collide | shared marker ignored on the right | scopes_collide_is_symmetric_and_shared_collides_with_all | caught, 38 s |
+| dominates_in | unknown label dominates | dominance_is_reflexive_total_and_antisymmetric_and_fails_closed | caught, 128 s |
+| dominates_in | a label dominates the one above it | dominance_is_transitive | caught, 27 s |
+| is_loopback | mapped IPv6 loopback not loopback | loopback_is_exactly_127_slash_8_and_the_ipv6_forms | caught, 5 s |
+| check_bind | plaintext needs no token | check_bind_allows_plaintext_only_on_loopback_with_a_token | caught, 5 s |
+| looks_protected | header one byte short accepted | a_blob_is_protected_only_with_the_full_header_and_the_magic | caught, 31 s |
+| reveal | unknown algorithm falls through | an_unknown_version_or_algorithm_is_refused_before_decryption | caught, 12 s |
+| is_sealed_text | prefix one character short | sealed_text_is_recognised_by_its_prefix | caught, 7 s |
+
+### 52.6 What the planted bugs taught
+
+- The normal-form harness did not catch a `..` that is silently ignored: the result is still in normal form. A
+  semantic harness (`..` removes exactly one segment) was added because of that; the first set of plants is what
+  showed the gap.
+- The dot-climbing harness first built an absolute path (`/../..`), so the working directory was ignored and the
+  harness would have passed with any handling of `..`. The planted bug passed it; the path was changed to relative and
+  the plant then fails it. A proof whose input makes the interesting part vacuous is the failure mode to watch for.
+- A plant that removes `scope != SHARED_SCOPE` from valid_scope is not caught, and cannot be: `*` is not in the
+  alphabet, so the line is unreachable (ticket #664). A plant that widens the alphabet to include `*` is caught.
+- A plant of `text.contains(prefix)` in is_sealed_text ran past 900 s, so it was replaced by a cheaper plant; a harness
+  that is slow on the buggy code is slow on the good code too.
+- A plant that keeps `.` segments passes the idempotence harness (the buggy function is stable on its own output); the
+  normal-form harness catches it. Each property needs its own plant.
+
+### 52.7 Tickets
+
+#656 the recovery code has no proof; #657 valid_* beyond 4 characters; #658 LabelChain::new and parse; #659 clean_path
+wrapper and longer paths; #660 overlaps and scopes_collide at 3 characters; #664 the unreachable shared-marker check.

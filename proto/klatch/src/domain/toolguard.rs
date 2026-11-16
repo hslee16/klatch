@@ -60,22 +60,53 @@ pub fn patch_targets(patch: &str) -> Vec<String> {
 /// `path` as an absolute path with `.`, `..` and repeated slashes resolved, taken from `cwd` when relative. Purely
 /// textual: it does not look at the file system (a symlink is the caller's to resolve, since the file may not exist).
 pub fn clean_path(path: &str, cwd: &str) -> String {
-    let joined = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("{cwd}/{path}")
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in joined.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            s => parts.push(s),
-        }
+    // The work is done by `clean_bytes` on a buffer that is sized once; this wrapper only allocates and converts. The
+    // split exists so the Kani proofs (#404) can cover the logic on fixed arrays, where a growing `String` is out of
+    // reach of the solver.
+    let mut buf = vec![0u8; cwd.len() + path.len() + 2];
+    let n = clean_bytes(path.as_bytes(), cwd.as_bytes(), &mut buf);
+    // the pieces are whole segments of UTF-8 text cut at ASCII `/`, so this is lossless
+    String::from_utf8_lossy(&buf[..n]).into_owned()
+}
+
+/// `clean_path` on bytes, into `out`, which must hold `cwd.len() + path.len() + 2` bytes (each part may add one `/` its text lacks). Returns how many bytes of
+/// `out` are the result: `/` for the root, else `/a/b` with no trailing slash.
+pub(crate) fn clean_bytes(path: &[u8], cwd: &[u8], out: &mut [u8]) -> usize {
+    // `n` is the length so far; 0 stands for the root, which is written as `/` only at the end
+    let mut n = 0;
+    if path.first() != Some(&b'/') {
+        n = apply_segments(out, n, cwd);
     }
-    format!("/{}", parts.join("/"))
+    n = apply_segments(out, n, path);
+    if n == 0 {
+        out[0] = b'/';
+        n = 1;
+    }
+    n
+}
+
+/// Apply the `/`-separated segments of `text` to `out[..n]`: `.` and empty segments change nothing, `..` removes the
+/// last one, anything else is appended after a `/`. Returns the new length.
+fn apply_segments(out: &mut [u8], mut n: usize, text: &[u8]) -> usize {
+    let mut start = 0;
+    for i in 0..=text.len() {
+        if i < text.len() && text[i] != b'/' {
+            continue;
+        }
+        let seg = &text[start..i];
+        start = i + 1;
+        if seg.is_empty() || seg == b"." {
+            continue;
+        }
+        if seg == b".." {
+            n = out[..n].iter().rposition(|&b| b == b'/').unwrap_or(0);
+            continue;
+        }
+        out[n] = b'/';
+        out[n + 1..n + 1 + seg.len()].copy_from_slice(seg);
+        n += 1 + seg.len();
+    }
+    n
 }
 
 /// The paths a shell command names: its words, split at quotes, redirections, separators and `=` or `:`.
@@ -386,5 +417,54 @@ mod tests {
         assert_eq!(clean_path("../x", "/w/y"), "/w/x");
         assert_eq!(clean_path("../../../x", "/w"), "/x");
         assert_eq!(clean_path("", "/w"), "/w");
+    }
+
+    /// Every string of up to `n` characters from `alphabet`, the empty one included.
+    fn all_strings(alphabet: &[char], n: usize) -> Vec<String> {
+        let mut all = vec![String::new()];
+        let mut layer = vec![String::new()];
+        for _ in 0..n {
+            layer = layer
+                .iter()
+                .flat_map(|s| alphabet.iter().map(move |c| format!("{s}{c}")))
+                .collect();
+            all.extend(layer.iter().cloned());
+        }
+        all
+    }
+
+    /// The first form of `clean_path` (split, `Vec`, join), kept as the reference the allocation-light form must equal
+    /// (it was rewritten so the Kani proofs can cover it, #404).
+    fn clean_path_reference(path: &str, cwd: &str) -> String {
+        let joined = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("{cwd}/{path}")
+        };
+        let mut parts: Vec<&str> = Vec::new();
+        for seg in joined.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                s => parts.push(s),
+            }
+        }
+        format!("/{}", parts.join("/"))
+    }
+
+    #[test]
+    fn clean_path_equals_its_reference_on_every_short_input() {
+        let strings = all_strings(&['/', '.', 'a'], 5);
+        for path in &strings {
+            for cwd in ["/", "/a", "/.a", "/a/b/c", "x//y/../z", ""] {
+                assert_eq!(
+                    clean_path(path, cwd),
+                    clean_path_reference(path, cwd),
+                    "{path:?} in {cwd:?}"
+                );
+            }
+        }
     }
 }
