@@ -1,7 +1,7 @@
 //! The `MessageStore` area of the store seam; `Store` in the parent module combines every area.
 
 use crate::domain::{Attribution, Message, Posted, Result};
-use crate::store::{NewMessage, Seat};
+use crate::store::{NewMessage, Seat, Seq};
 
 pub trait MessageStore {
     /// Join a room (idempotent). Unread starts at the beginning of history.
@@ -39,9 +39,16 @@ pub trait MessageStore {
         self.read(at, false, now)
     }
 
+    /// What `read(at, false, now)` returns, for a reader that only looks (the librarian, #499): it must not refresh
+    /// the reader's presence, join it to the room or move a cursor. The default is a non-advancing `read`, which
+    /// refreshes presence; a store that can look without touching anything overrides it.
+    fn look(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
+        self.read(at, false, now)
+    }
+
     /// Remember that a wait has looked at the room up to `seq` (forward only), so the next wait does not wake for
     /// the same messages. The read cursor is untouched: the messages stay unread. The default remembers nothing.
-    fn wait_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
+    fn wait_seen(&self, _at: Seat, _seq: Seq, _now: i64) -> Result<()> {
         Ok(())
     }
 
@@ -52,7 +59,7 @@ pub trait MessageStore {
     }
 
     /// Remember that a watcher pointed at the room up to `seq` (forward only). The default remembers nothing.
-    fn wake_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
+    fn wake_seen(&self, _at: Seat, _seq: Seq, _now: i64) -> Result<()> {
         Ok(())
     }
 
@@ -67,9 +74,32 @@ pub trait MessageStore {
     /// (including the caller, so `seq` has no gaps). No cursor and no presence side effects.
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>>;
 
+    /// Every message of the room whose body starts with one of `prefixes` (exactly, case included), oldest first,
+    /// at any depth in the log. The boards fold words (tasks, pull requests) that can be older than any window a
+    /// `tail` reads, so they ask for the words alone. No cursor and no presence side effects. The default pages
+    /// through `tail`; a store with an index or a query overrides it.
+    fn words(&self, room: &str, prefixes: &[&str]) -> Result<Vec<Message>> {
+        let mut found = Vec::new();
+        if prefixes.is_empty() {
+            return Ok(found);
+        }
+        let mut after = 0;
+        loop {
+            let page = self.tail(room, after, 5000)?;
+            let Some(last) = page.last().map(|m| m.seq) else {
+                return Ok(found);
+            };
+            after = last;
+            found.extend(
+                page.into_iter()
+                    .filter(|m| prefixes.iter().any(|p| m.body.starts_with(p))),
+            );
+        }
+    }
+
     /// The highest `seq` in a room, 0 when it is empty.
     fn head(&self, room: &str) -> Result<i64>;
 
     /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()>;
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()>;
 }

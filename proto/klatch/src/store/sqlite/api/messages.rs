@@ -3,7 +3,7 @@
 use super::super::{MESSAGE_COLUMNS, SqliteStore, be};
 use crate::domain::{Message, Posted, Result};
 use crate::store::MessageStore;
-use crate::store::{NewMessage, Seat};
+use crate::store::{NewMessage, Seat, Seq};
 use rusqlite::params;
 
 impl MessageStore for SqliteStore {
@@ -19,15 +19,19 @@ impl MessageStore for SqliteStore {
         self.do_read(at, advance, now)
     }
 
+    fn look(&self, at: Seat, _now: i64) -> Result<Vec<Message>> {
+        Ok(self.unread_after(at.room, at.member)?.0)
+    }
+
     fn wait_poll(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
         self.do_wait_poll(at.room, at.member, now)
     }
 
-    fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn wait_seen(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.update_member(
             (at.room, at.member, now),
             "UPDATE members SET wait_seq=MAX(wait_seq,?3) WHERE room=?1 AND name=?2",
-            &seq,
+            &seq.0,
         )
     }
 
@@ -35,11 +39,11 @@ impl MessageStore for SqliteStore {
         self.do_wake_poll(at.room, at.member, now)
     }
 
-    fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn wake_seen(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.update_member(
             (at.room, at.member, now),
             "UPDATE members SET wake_seq=MAX(wake_seq,?3) WHERE room=?1 AND name=?2",
-            &seq,
+            &seq.0,
         )
     }
 
@@ -61,6 +65,26 @@ impl MessageStore for SqliteStore {
             ), params![room, after_seq, limit as i64], |r| self.open_message(r))
     }
 
+    fn words(&self, room: &str, prefixes: &[&str]) -> Result<Vec<Message>> {
+        if prefixes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // substr compares exactly (LIKE ignores case and reads % and _ as wildcards), and the room's index narrows
+        // the scan to one room
+        let tests = (0..prefixes.len())
+            .map(|i| format!("substr(body,1,{})=?{}", prefixes[i].chars().count(), i + 2))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND ({tests}) ORDER BY seq"
+        );
+        let mut args: Vec<&str> = vec![room];
+        args.extend(prefixes);
+        self.rows(&sql, rusqlite::params_from_iter(args), |r| {
+            self.open_message(r)
+        })
+    }
+
     fn head(&self, room: &str) -> Result<i64> {
         self.conn
             .query_row(
@@ -71,7 +95,7 @@ impl MessageStore for SqliteStore {
             .map_err(be)
     }
 
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         let Seat { room, member } = at;
         // One statement, so it is atomic: forward only, and clamped to the room's head so an
         // acknowledgement can never skip a message that has not arrived yet.
@@ -81,7 +105,7 @@ impl MessageStore for SqliteStore {
                  ON CONFLICT(room,name) DO UPDATE SET
                    last_seq=MAX(last_seq,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))),
                    last_seen=?4",
-                params![room, member, seq, now],
+                params![room, member, seq.0, now],
             )?;
         Ok(())
     }

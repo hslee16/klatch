@@ -1,0 +1,1 @@
+- The board's task list and open-PR list read their words by prefix at any depth, so a task or PR in a room of more than 5000 messages no longer drops off (or never shows) because the board read only the first 5000 messages.

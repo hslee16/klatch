@@ -28,6 +28,20 @@ pub enum Error {
     Busy(String),
 }
 
+/// What a refusal's reason puts before its hint: `<why>; next step: <what to do>`.
+pub const NEXT_STEP: &str = "next step: ";
+
+impl Error {
+    /// The step that fixes a refusal, when its reason ends with one. A hint never holds the refused text, the label
+    /// of a room the member cannot see, or another member's data (#516).
+    pub fn next_step(&self) -> Option<&str> {
+        if let Error::Refused { reason, .. } = self {
+            return reason.split_once(NEXT_STEP).map(|(_, hint)| hint);
+        }
+        None
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -118,6 +132,33 @@ mod tests {
             e.to_string(),
             "refused (label.room_below_message): label too high"
         );
+    }
+
+    #[test]
+    fn a_refusal_hint_is_the_text_after_the_next_step_marker() {
+        let e = Error::Refused {
+            rule: "r".into(),
+            reason: format!("it is too high; {NEXT_STEP}ask the admin"),
+        };
+        assert_eq!(e.next_step(), Some("ask the admin"));
+    }
+
+    #[test]
+    fn a_refusal_without_the_marker_has_no_hint() {
+        let e = Error::Refused {
+            rule: "r".into(),
+            reason: "it is too high".into(),
+        };
+        assert_eq!(e.next_step(), None);
+    }
+
+    #[test]
+    fn only_a_refusal_has_a_hint() {
+        let m = format!("x; {NEXT_STEP}y");
+        assert_eq!(Error::Invalid(m.clone()).next_step(), None);
+        assert_eq!(Error::NotFound(m.clone()).next_step(), None);
+        assert_eq!(Error::Backend(m.clone()).next_step(), None);
+        assert_eq!(Error::Busy(m).next_step(), None);
     }
 
     #[test]

@@ -21,8 +21,12 @@ impl<S: Store> Gateway<S> {
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, advance))?;
-        self.store
-            .read(Seat::new(room, &who.member), advance, self.now())
+        let at = Seat::new(room, &who.member);
+        // a librarian only looks: its peek must not refresh its presence or make it a member (#499)
+        if !advance && self.is_librarian(&who.member)? {
+            return self.store.look(at, self.now());
+        }
+        self.store.read(at, advance, self.now())
     }
 
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
@@ -63,7 +67,7 @@ impl<S: Store> Gateway<S> {
         match unread.iter().map(|m| m.seq).max() {
             Some(last) => self
                 .store
-                .wake_seen(Seat::new(room, &who.member), last, now),
+                .wake_seen(Seat::new(room, &who.member), Seq(last), now),
             None => Ok(()),
         }
     }
@@ -72,7 +76,7 @@ impl<S: Store> Gateway<S> {
     pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
         self.store
-            .wait_seen(Seat::new(room, &who.member), seq, self.now())
+            .wait_seen(Seat::new(room, &who.member), Seq(seq), self.now())
     }
 
     /// Messages after `after_seq`, oldest first, at most `limit`, from every sender including the caller.
@@ -107,6 +111,6 @@ impl<S: Store> Gateway<S> {
         }
         self.check_guard(who, &Operation::Ack { room: room.into() })?;
         self.store
-            .advance_cursor(Seat::new(room, &who.member), seq, self.now())
+            .advance_cursor(Seat::new(room, &who.member), Seq(seq), self.now())
     }
 }

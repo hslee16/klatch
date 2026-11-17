@@ -1,17 +1,17 @@
 //! Retention and the archive files: `retention`, `archive`, `restore-archive` and `archives`.
 
 use super::keys::KeyCtx;
+use super::route::ArchiveAct;
 use super::*;
 use klatch::keys::Key;
 use std::path::{Path, PathBuf};
 
-pub(super) fn archive_command(ctx: &KeyCtx, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::Retention { room, days } => retention(ctx, &room, &days),
-        AdminCmd::Archive { room, all_rooms } => archive(ctx, room, all_rooms),
-        AdminCmd::RestoreArchive { file } => restore_archive(ctx, &file),
-        AdminCmd::Archives => archives(ctx),
-        _ => unreachable!("not a key command"),
+pub(super) fn archive_command(ctx: &KeyCtx, act: ArchiveAct) -> Result<()> {
+    match act {
+        ArchiveAct::Retention { room, days } => retention(ctx, &room, &days),
+        ArchiveAct::Archive { room, all_rooms } => archive(ctx, room, all_rooms),
+        ArchiveAct::RestoreArchive { file } => restore_archive(ctx, &file),
+        ArchiveAct::Archives => archives(ctx),
     }
 }
 

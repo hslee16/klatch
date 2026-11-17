@@ -18,6 +18,27 @@ fn data_persists_across_connections_on_disk() {
     std::fs::remove_dir_all(&dir).ok();
 }
 #[test]
+fn look_returns_the_unread_messages_and_touches_neither_presence_nor_membership() {
+    let s = store();
+    s.join("r", "alice", 2).unwrap();
+    s.post(Seat::new("r", "bob"), "hi", 3).unwrap();
+    assert_eq!(s.look(Seat::new("r", "lib"), 50).unwrap().len(), 1);
+    assert!(
+        s.members("r").unwrap().iter().all(|m| m.name != "lib"),
+        "a look made the reader a member"
+    );
+    assert_eq!(s.look(Seat::new("r", "alice"), 60).unwrap().len(), 1);
+    assert_eq!(s.look(Seat::new("r", "alice"), 61).unwrap().len(), 1);
+    let alice = s.members("r").unwrap();
+    let alice = alice.iter().find(|m| m.name == "alice").unwrap();
+    assert_eq!(alice.last_seen, 2, "a look refreshed presence");
+    assert_eq!(
+        s.read(Seat::new("r", "alice"), false, 62).unwrap().len(),
+        1,
+        "the cursor did not move"
+    );
+}
+#[test]
 fn every_row_carries_tenant_local_and_a_member() {
     let s = store();
     s.post(Seat::new("r", "bob"), "x", 1).unwrap();

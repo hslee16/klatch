@@ -77,6 +77,10 @@ cat > "$bin/bench" <<'SH'
 echo "bench" >> "$FAKE_DIR/calls.log"
 echo "${FAKE_BENCH_OUT:-12 passed, 0 failed}"
 SH
+cat > "$bin/klatch" <<'SH'
+#!/bin/sh
+echo "klatch $*" >> "$FAKE_DIR/calls.log"
+SH
 chmod +x "$bin"/*
 
 n=0
@@ -89,7 +93,7 @@ newenv() {
   echo "success success" > "$fake/checks-sha-old"
 }
 runsweep() {
-  env PATH="$bin:$PATH" FAKE_DIR="$fake" PR_SWEEP_LEDGER="$bin/ledger" PR_SWEEP_GATE="$bin/gate" PR_SWEEP_BENCH="$bin/bench" \
+  env PATH="$bin:$PATH" FAKE_DIR="$fake" PR_SWEEP_LEDGER="$bin/ledger" PR_SWEEP_GATE="$bin/gate" PR_SWEEP_BENCH="$bin/bench" PR_SWEEP_KLATCH="$bin/klatch" \
     PR_SWEEP_REPO="$work/repo" TMPDIR="$work/tmp$n" PR_SWEEP_POLL_SECS=0 PR_SWEEP_SETTLE_SECS=0 PR_SWEEP_WAIT_TRIES=3 \
     "$sweep" "$@" > "$fake/out" 2>&1
   rc=$?
@@ -134,6 +138,11 @@ m=$(line_of "^gh pr merge 13 --merge"); b=$(line_of "^bench"); r=$(line_of "^led
 if [ "$rc" -eq 0 ] && [ -n "$m" ] && [ -n "$b" ] && [ -n "$r" ] && [ "$m" -lt "$b" ] && [ "$b" -lt "$r" ] && [ "$(calls '^git merge')" -eq 0 ]; then ok "ready merges, then benches, then records the bench (no integrate when not behind)"; else bad "ready rc=$rc m=$m b=$b r=$r: $(cat "$log")"; fi
 if grep -q -- "--match-head-commit sha-old" "$log"; then ok "the merge is pinned to the head commit that was seen green"; else bad "merge not pinned: $(cat "$log")"; fi
 if [ -n "$c" ] && grep -q "^gh api -X PATCH repos/hslee16/klatch/issues/706 -f state=closed" "$log"; then ok "the linked ticket is closed when the merge did not close it"; else bad "ticket not closed: $(cat "$log")"; fi
+
+# --- a merge is announced to the lobby as "merged: #N" (DESIGN item 84), after the merge and not before it
+mp=$(line_of '^klatch post lobby merged: #13')
+if [ -n "$mp" ] && [ "$m" -lt "$mp" ]; then ok "after the merge the sweep posts \"merged: #13\" to the lobby"; else bad "no merged post after the merge: $(cat "$log")"; fi
+if [ "$(calls '^klatch post lobby merged:')" -eq 1 ]; then ok "exactly one merged post per merge"; else bad "merged posts: $(cat "$log")"; fi
 
 # --- ready but the ticket is already closed: no second close
 newenv
@@ -216,7 +225,7 @@ L
 runsweep --dry-run
 if [ "$rc" -eq 0 ] && grep -q "would" "$fake/out" \
   && [ "$(calls 'rerun')" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls '^git ')" -eq 0 ] && [ "$(calls 'PATCH')" -eq 0 ] \
-  && [ "$(calls '^bench')" -eq 0 ] && [ "$(calls '^gate')" -eq 0 ] && [ "$(calls 'record-bench')" -eq 0 ] && [ "$(calls '^ledger --post')" -eq 0 ]; then ok "--dry-run prints what it would do and changes nothing"; else bad "dry-run rc=$rc: $(cat "$log") $(cat "$fake/out")"; fi
+  && [ "$(calls '^bench')" -eq 0 ] && [ "$(calls '^gate')" -eq 0 ] && [ "$(calls 'record-bench')" -eq 0 ] && [ "$(calls '^ledger --post')" -eq 0 ] && [ "$(calls '^klatch post')" -eq 0 ]; then ok "--dry-run prints what it would do and changes nothing"; else bad "dry-run rc=$rc: $(cat "$log") $(cat "$fake/out")"; fi
 
 # --- lock: a live holder blocks a second sweep; a dead holder does not; the lock is released
 newenv

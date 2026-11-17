@@ -10,12 +10,15 @@ const KEY: &str = "rate-limit";
 const MAX_POSTS: usize = 10_000;
 const MAX_SECS: i64 = 3600;
 
+/// Whether a limit's posts and seconds are both within the allowed range.
+fn in_bounds((posts, secs): (usize, i64)) -> bool {
+    (1..=MAX_POSTS).contains(&posts) && (1..=MAX_SECS).contains(&secs)
+}
+
 impl<S: Store> Gateway<S> {
     /// Only the human: limit every member to `posts` posts in `secs` seconds, or with `None` remove the limit.
     pub fn admin_set_rate_limit(&self, who: &Principal, limit: Option<(usize, i64)>) -> Result<()> {
-        if let Some((posts, secs)) = limit
-            && !((1..=MAX_POSTS).contains(&posts) && (1..=MAX_SECS).contains(&secs))
-        {
+        if limit.is_some_and(|l| !in_bounds(l)) {
             return Err(Error::Invalid(format!(
                 "a rate limit is 1 to {MAX_POSTS} posts in 1 to {MAX_SECS} seconds"
             )));
@@ -59,5 +62,20 @@ impl<S: Store> Gateway<S> {
         };
         self.note_refusal(who, (room, "post"), &e);
         Err(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_limit_is_in_bounds_only_when_both_numbers_are() {
+        assert!(in_bounds((1, 1)));
+        assert!(in_bounds((MAX_POSTS, MAX_SECS)));
+        assert!(!in_bounds((0, 60)));
+        assert!(!in_bounds((30, 0)));
+        assert!(!in_bounds((MAX_POSTS + 1, 60)));
+        assert!(!in_bounds((30, MAX_SECS + 1)));
     }
 }

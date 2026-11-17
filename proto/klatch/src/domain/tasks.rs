@@ -14,7 +14,14 @@ pub const CHECKPOINT_PREFIX: &str = "checkpoint";
 pub const HANDOFF_PREFIX: &str = "handoff:";
 /// A message starting with this text ends a task.
 pub const FINISHED_PREFIX: &str = "finished";
-/// The longest title: the text before the first colon, or this many characters.
+/// The prefixes of every word that `open_tasks` folds, for a store query that reads only those messages.
+pub const TASK_WORDS: [&str; 4] = [
+    WORKING_PREFIX,
+    CHECKPOINT_PREFIX,
+    HANDOFF_PREFIX,
+    FINISHED_PREFIX,
+];
+/// The longest title:the text before the first colon, or this many characters.
 pub const TITLE_MAX_CHARS: usize = 60;
 /// How long after its last word a task keeps its owner from being pruned. A task whose owner went away for good
 /// stays visible as orphaned from the log, but must not hold the owner's rows forever.

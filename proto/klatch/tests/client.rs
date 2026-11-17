@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use klatch::client::{Client, Error};
+use klatch::client::{ClaimRequest, Client, Error, PostRequest};
 use klatch::protocol::{PROTOCOL_VERSION, decode_server_line};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -79,14 +79,9 @@ fn every_fixture_line_is_understood_and_unknown_things_are_ignored() {
 fn a_post_is_read_by_another_member_and_a_handoff_keeps_its_kind_and_payload() {
     let h = Home::new();
     let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
-    a.post("r", "just words", None, None).unwrap();
-    a.post(
-        "r",
-        "see the order",
-        None,
-        Some(("work-order", Some("{\"id\":7}"))),
-    )
-    .unwrap();
+    a.post(PostRequest::new("r", "just words")).unwrap();
+    a.post(PostRequest::new("r", "see the order").handoff("work-order", Some("{\"id\":7}")))
+        .unwrap();
     let ms = b.read("r", true).unwrap();
     assert_eq!(
         ms.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
@@ -110,7 +105,7 @@ fn subscribe_replays_catches_up_pushes_and_resumes_after_a_reconnect() {
     let h = Home::new();
     let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
     for i in 0..3 {
-        a.post("r", &format!("m{i}"), None, None).unwrap();
+        a.post(PostRequest::new("r", &format!("m{i}"))).unwrap();
     }
     assert_eq!(b.subscribe("r", 0).unwrap(), 3);
     let seen = b.collect(true, Duration::from_secs(10)).unwrap();
@@ -119,12 +114,12 @@ fn subscribe_replays_catches_up_pushes_and_resumes_after_a_reconnect() {
         vec![1, 2, 3]
     );
     assert_eq!(seen.caught_up, Some(3));
-    a.post("r", "live", None, None).unwrap();
+    a.post(PostRequest::new("r", "live")).unwrap();
     let live = b.next_message(Duration::from_secs(5)).unwrap().unwrap();
     assert_eq!((live.seq, live.body.as_str()), (4, "live"));
     b.ack("r", 4).unwrap();
     drop(b);
-    a.post("r", "while away", None, None).unwrap();
+    a.post(PostRequest::new("r", "while away")).unwrap();
     let mut b2 = connect(&h, "bob");
     b2.subscribe("r", 4).unwrap();
     let resumed = b2.collect(true, Duration::from_secs(10)).unwrap();
@@ -138,14 +133,18 @@ fn subscribe_replays_catches_up_pushes_and_resumes_after_a_reconnect() {
 fn a_second_claim_conflicts_names_the_holder_and_a_release_frees_the_path() {
     let h = Home::new();
     let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
-    a.claim("r", "src/a.rs", Some(60), Some("refactor"))
-        .unwrap();
-    let e = api(b.claim("r", "src/a.rs", None, None).unwrap_err());
+    a.claim(
+        ClaimRequest::new("r", "src/a.rs")
+            .ttl(60)
+            .reason("refactor"),
+    )
+    .unwrap();
+    let e = api(b.claim(ClaimRequest::new("r", "src/a.rs")).unwrap_err());
     assert_eq!(e.code, "conflict");
     assert!(e.message.contains("alice"), "{}", e.message);
     assert_eq!(b.claim_owners("r").unwrap(), vec!["alice".to_string()]);
     a.release("r", "src/a.rs", Some("done")).unwrap();
-    b.claim("r", "src/a.rs", None, None).unwrap();
+    b.claim(ClaimRequest::new("r", "src/a.rs")).unwrap();
     assert_eq!(
         api(a.release("r", "never/claimed", None).unwrap_err()).code,
         "not_found"
@@ -158,7 +157,7 @@ fn a_refusal_carries_its_rule_and_never_repeats_the_text() {
     let mut a = connect(&h, "alice");
     let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
     let e = api(a
-        .post("r", &format!("token {secret}"), None, None)
+        .post(PostRequest::new("r", &format!("token {secret}")))
         .unwrap_err());
     assert_eq!(e.code, "refused");
     assert!(
@@ -188,21 +187,97 @@ fn bad_requests_get_a_failed_response_and_the_session_carries_on() {
         "invalid_params"
     );
     assert_eq!(
-        api(a.post("bad room name", "x", None, None).unwrap_err()).code,
+        api(a.post(PostRequest::new("bad room name", "x")).unwrap_err()).code,
         "invalid"
     );
     assert!(
-        a.post("r", "p", None, Some(("", Some("needs a kind"))))
+        a.post(PostRequest::new("r", "p").handoff("", Some("needs a kind")))
             .is_err()
     );
-    assert_eq!(a.post("r", "still working", None, None).unwrap().0, 1);
+    assert_eq!(a.post(PostRequest::new("r", "still working")).unwrap().0, 1);
+}
+
+#[test]
+fn a_member_without_the_admin_role_is_refused_every_act_and_may_prune() {
+    let h = Home::new();
+    let mut a = connect(&h, "alice");
+    for (act, params) in [
+        ("run-create", serde_json::json!({"run": "r1"})),
+        ("run-end", serde_json::json!({"run": "r1"})),
+        ("anchor-done", serde_json::json!({"anchor": "gh:pr:o/r/1"})),
+        ("close", serde_json::json!({"room": "r"})),
+    ] {
+        assert_eq!(
+            api(a.role_act(act, params).unwrap_err()).code,
+            "refused",
+            "{act}"
+        );
+    }
+    assert_eq!(
+        api(a
+            .role_act("reap-anchors", serde_json::json!({}))
+            .unwrap_err())
+        .code,
+        "unknown_act"
+    );
+    assert_eq!(
+        api(a.role_act("run-create", serde_json::json!({})).unwrap_err()).code,
+        "invalid_params"
+    );
+    assert_eq!(a.prune().unwrap(), 0);
+    a.post(PostRequest::new("r", "still here")).unwrap();
+    assert_eq!(a.prune().unwrap(), 0);
+}
+
+#[test]
+fn a_direct_message_reaches_one_member_in_a_room_nobody_else_may_use() {
+    let h = Home::new();
+    let (mut a, mut b, mut c) = (
+        connect(&h, "alice"),
+        connect(&h, "bob"),
+        connect(&h, "carol"),
+    );
+    let (room, seq, id) = a.dm("bob", "hello bob", None).unwrap();
+    assert_eq!((room.as_str(), seq, id.len()), ("dm.alice.bob", 1, 26));
+    let got = b.read(&room, false).unwrap();
+    assert_eq!(
+        got.iter()
+            .map(|m| (m.sender.as_str(), m.body.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("alice", "hello bob")]
+    );
+    assert_eq!(b.dm("alice", "hi back", None).unwrap().1, 2);
+    assert_eq!(api(c.read(&room, false).unwrap_err()).code, "refused");
+    assert_eq!(
+        api(a.dm("alice", "to myself", None).unwrap_err()).code,
+        "invalid"
+    );
+    assert_eq!(
+        api(a
+            .dm("bob", "above the ceiling", Some("secret"))
+            .unwrap_err())
+        .code,
+        "refused"
+    );
+}
+
+#[test]
+fn a_member_mutes_and_unmutes_a_room_and_read_still_shows_everything() {
+    let h = Home::new();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    b.post(PostRequest::new("r", "chatter")).unwrap();
+    a.mute("r", true).unwrap();
+    assert_eq!(a.read("r", true).unwrap().len(), 1);
+    a.mute("r", false).unwrap();
+    a.mute("r", true).unwrap();
+    assert_eq!(api(a.mute("bad room", true).unwrap_err()).code, "invalid");
 }
 
 #[test]
 fn closing_the_input_ends_the_session_cleanly() {
     let h = Home::new();
     let mut a = connect(&h, "alice");
-    a.post("r", "x", None, None).unwrap();
+    a.post(PostRequest::new("r", "x")).unwrap();
     assert_eq!(a.close().unwrap(), 0);
 }
 
@@ -211,7 +286,7 @@ fn history_looks_back_without_moving_the_cursor_and_pages_with_since() {
     let h = Home::new();
     let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
     for i in 1..=5 {
-        a.post("r", &format!("m{i}"), None, None).unwrap();
+        a.post(PostRequest::new("r", &format!("m{i}"))).unwrap();
     }
     let bodies = |ms: &[klatch::client::Message]| -> Vec<String> {
         ms.iter().map(|m| m.body.clone()).collect()
@@ -233,4 +308,17 @@ fn history_looks_back_without_moving_the_cursor_and_pages_with_since() {
         api(b.history("r", Some(0), None).unwrap_err()).code,
         "invalid"
     );
+}
+
+#[test]
+fn a_request_builder_sets_only_what_it_is_given() {
+    let post = PostRequest::new("r", "text");
+    assert_eq!((post.room, post.body, post.label), ("r", "text", None));
+    assert!(post.handoff.is_none());
+    let post = PostRequest::new("r", "text").label("internal");
+    assert_eq!(post.label, Some("internal"));
+    let claim = ClaimRequest::new("r", "a.rs");
+    assert_eq!((claim.ttl, claim.reason), (None, None));
+    let claim = ClaimRequest::new("r", "a.rs").ttl(60).reason("why");
+    assert_eq!((claim.ttl, claim.reason), (Some(60), Some("why")));
 }

@@ -5,6 +5,7 @@ mod asks;
 mod board;
 mod claim_age;
 mod convention;
+mod convention_words;
 mod credentials;
 mod cycle_notice;
 mod dm;
@@ -20,6 +21,7 @@ mod scope;
 mod tasks;
 mod text;
 mod toolguard;
+mod wait_filter;
 
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
@@ -33,18 +35,19 @@ pub use board::{
     current_offers, is_offer, render_board, render_who, statuses,
 };
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
-pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, is_merged_note, open_prs};
+pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
 pub use tasks::{
-    CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, Task,
-    WORKING_PREFIX, open_tasks,
+    CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, TASK_WORDS,
+    Task, WORKING_PREFIX, open_tasks,
 };
 pub mod budget;
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
 pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
+pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
 pub use dm::{DM_PREFIX, dm_room};
-pub use error::{Error, Result};
+pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, printed_len, render_hook,
     render_hook_within,
@@ -68,3 +71,4 @@ pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,
 };
+pub use wait_filter::{Filter as WaitFilter, room_filters};

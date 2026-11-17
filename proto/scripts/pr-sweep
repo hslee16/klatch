@@ -6,7 +6,8 @@
 # It reads `pr-ledger` and acts per stage:
 #   checks-cancelled   rerun the cancelled jobs (never a real failure)
 #   ready              all checks green on the latest head and mergeable: integrate main only when behind, wait for the
-#                      checks on the new head, merge, run the bench, record it, close the linked ticket
+#                      checks on the new head, merge, post "merged: #N" to the lobby (DESIGN item 84), run the bench,
+#                      record it, close the linked ticket
 #   behind, conflict   merge origin/main into the PR branch on a throwaway branch alee/integ-N (docs conflicts keep both
 #                      sides; a code conflict stops), run the gate, push to the PR's own branch
 #   merged-not-benched run the bench and record it;  merged-open-ticket: close the ticket
@@ -17,7 +18,7 @@
 # failure, force-push, push main, run `git merge` while on main, or print the environment. A lock under $TMPDIR keeps
 # two sweeps from overlapping. --dry-run prints what it would do and changes nothing.
 #
-# Test and tuning knobs (environment): PR_SWEEP_LEDGER, PR_SWEEP_GATE, PR_SWEEP_BENCH (commands), PR_SWEEP_REPO (the
+# Test and tuning knobs (environment): PR_SWEEP_LEDGER, PR_SWEEP_GATE, PR_SWEEP_BENCH, PR_SWEEP_KLATCH (commands), PR_SWEEP_REPO (the
 # checkout to work in), PR_SWEEP_GH_REPO, PR_SWEEP_POLL_SECS, PR_SWEEP_SETTLE_SECS, PR_SWEEP_WAIT_TRIES.
 set -uo pipefail
 
@@ -182,6 +183,14 @@ run_bench() { # PR: bench main as it now is; record only a clean run
   fi
 }
 
+# DESIGN item 84: a PR is over on the board when a member posts "merged: #N"; the sweep that merged it says so
+announce_merged() { # PR
+  if [ -n "${PR_SWEEP_KLATCH:-}" ]; then "$PR_SWEEP_KLATCH" post lobby "merged: #$1" > /dev/null 2>&1
+  elif [ -n "${KLATCH:-}" ]; then "$KLATCH" post lobby "merged: #$1" > /dev/null 2>&1
+  else /Users/hosanglee/.local/share/klatch/klatch --discover post lobby "merged: #$1" > /dev/null 2>&1; fi \
+    || say "#$1: could not post \"merged: #$1\" to the lobby; the board shows it open until someone does"
+}
+
 do_ready() { # PR, ticket
   local n=$1 ticket=$2 ms sha rc
   ms="$(pr_field "$n" .mergeable_state)"
@@ -207,6 +216,7 @@ do_ready() { # PR, ticket
   if [ "$(pr_field "$n" .merged)" != "true" ]; then hold "$n" "the merge did not go through"; return; fi
   say "#$n: merged"
   merged=$((merged + 1))
+  announce_merged "$n"
   run_bench "$n"
   close_ticket "$ticket"
 }

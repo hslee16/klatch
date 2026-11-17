@@ -73,31 +73,50 @@ pub fn check_credential<S: Store>(
     Ok(Principal::verified(member))
 }
 
+/// The shape checks on what a launcher asks for: a usable name, a lifetime in range, a sensible parent.
+fn check_spec(spec: &CredentialSpec) -> Result<()> {
+    let CredentialSpec {
+        member,
+        ttl,
+        parent,
+        ..
+    } = *spec;
+    if !valid_name(member) || RESERVED.contains(&member) {
+        return Err(Error::Invalid(format!(
+            "not a usable worker name: {member}"
+        )));
+    }
+    if !(1..=MAX_CREDENTIAL_TTL_SECS).contains(&ttl) {
+        return Err(Error::Invalid(format!(
+            "a credential lives from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
+        )));
+    }
+    match parent {
+        Some(p) if !valid_name(p) || p == member => Err(Error::Invalid("bad parent member".into())),
+        _ => Ok(()),
+    }
+}
+
+/// The audit detail of an issue: clearance, parent (or `none`) and lifetime.
+fn issue_detail(spec: &CredentialSpec) -> String {
+    let parent = spec.parent.filter(|p| !p.is_empty()).unwrap_or("none");
+    format!(
+        "clearance={} parent={parent} ttl={}s",
+        spec.clearance, spec.ttl
+    )
+}
+
 impl<S: Store> Gateway<S> {
     /// Issue a credential for a worker and return its token (the only time it exists outside the worker). The
     /// worker's clearance is set to the one it carries, so every check that follows applies it.
     pub fn admin_issue_credential(&self, who: &Principal, spec: &CredentialSpec) -> Result<Token> {
+        check_spec(spec)?;
         let CredentialSpec {
             member,
             clearance,
             ttl,
             parent,
         } = *spec;
-        if !valid_name(member) || RESERVED.contains(&member) {
-            return Err(Error::Invalid(format!(
-                "not a usable worker name: {member}"
-            )));
-        }
-        if !(1..=MAX_CREDENTIAL_TTL_SECS).contains(&ttl) {
-            return Err(Error::Invalid(format!(
-                "a credential lives from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
-            )));
-        }
-        if let Some(p) = parent
-            && (!valid_name(p) || p == member)
-        {
-            return Err(Error::Invalid("bad parent member".into()));
-        }
         self.check_grantable(clearance)?;
         let token =
             Token::generate().map_err(|e| Error::Backend(format!("no random source: {e}")))?;
@@ -118,14 +137,7 @@ impl<S: Store> Gateway<S> {
             if parent.is_some() {
                 self.store.note_parent(member, parent_text, now)?;
             }
-            Ok(format!(
-                "clearance={clearance} parent={} ttl={ttl}s",
-                if parent_text.is_empty() {
-                    "none"
-                } else {
-                    parent_text
-                }
-            ))
+            Ok(issue_detail(spec))
         })?;
         Ok(token)
     }
