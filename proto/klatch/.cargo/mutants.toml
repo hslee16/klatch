@@ -1,0 +1,20 @@
+# cargo-mutants configuration for klatch (#407, DESIGN item 84). By hand only: run it with proto/scripts/mutants, never
+# from CI, the gate or a pull request. It measures whether the tests would notice a change to the code; it proves nothing.
+#
+# Which files are examined is decided by proto/scripts/mutants (its module table: the security modules), not here, so
+# that one module can be run at a time. This file holds what applies to every run.
+# Test code and the proof and model harnesses are not what is measured.
+exclude_globs = [
+    "**/src/**/tests/**",
+    "**/src/**/*_tests.rs",
+    "**/src/kani_proofs.rs",
+    "**/src/shuttle_tests.rs",
+    "**/src/store/conformance/**",
+    "**/src/gateway/test_support.rs",
+    "**/src/store/memory_spike.rs",
+]
+# Time limits: a mutant that makes the code loop forever must not hold a run. The test limit is a multiple of the
+# unmutated run time (floor 60 s); the build limit is generous because the first build of a copy compiles SQLCipher.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60
+build_timeout_multiplier = 3.0

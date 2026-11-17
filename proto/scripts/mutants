@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# cargo-mutants on the security modules (#407, DESIGN item 84, decided in #402 item 66). By hand only, before a release:
+# not run by CI, the gate or any pull request. One-time setup:
+#
+#   cargo install cargo-mutants --locked
+#
+#   proto/scripts/mutants --list                 the modules and how many mutants each has
+#   proto/scripts/mutants MODULE...              run these modules, one after the other
+#   proto/scripts/mutants --file GLOB MODULE     only the files of the module that match GLOB (for a long module)
+#   proto/scripts/mutants --summary [MODULE...]  print the counts of the last run of each module (default: all)
+#   MUTANTS_DIR=/path proto/scripts/mutants ...  where the copies and the results go (default $TMPDIR/klatch-mutants)
+#
+# One module at a time per copy (cargo-mutants cannot run --in-place with --jobs, and each copy needs 1 to 2 GB of disk);
+# to use more cores start another run with a different MUTANTS_SLOT.
+# Modules: see the module table below (gateway-policy, domain-security, gateway-claims, keys, custody, store-crypto, store-claims, archive). A full run is long (hundreds of mutants, each
+# one a build and a test run), so run one module at a time, under nohup for the long ones:
+#
+#   nohup proto/scripts/mutants domain > /dev/null 2>&1 &     # then: proto/scripts/mutants --summary domain
+#
+# What it does: copies the repository to $MUTANTS_DIR/tree-main (the sources include ../../*.md, so the whole
+# repository is copied, not only proto/), runs `cargo mutants --in-place` there with proto/klatch/.cargo/mutants.toml,
+# and keeps the result in $MUTANTS_DIR/out-MODULE/mutants.out (missed.txt, caught.txt, unviable.txt, timeout.txt,
+# outcomes.json, a diff per mutant). Nothing is written into your checkout. The copy's target directory is kept, so a
+# second run of a module is much faster than the first (which compiles SQLCipher). KLATCH_KEY_DIR points at a scratch
+# directory so no run can reach a real key store.
+#
+# Reading the result: CAUGHT means a test failed when the code was changed. MISSED means every test still passed: the
+# tests would not notice that change. UNVIABLE means the changed code did not compile. TIMEOUT means the tests ran past
+# the limit (counted as caught by cargo-mutants; here it is listed apart). A missed mutant in a security function is a
+# ticket or a new test; an equivalent mutant (a change with no visible effect) is noted as such, never hidden. This
+# measures how good the tests are. It does not prove the code correct, and a clean run proves nothing.
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+command -v cargo > /dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+base="${MUTANTS_DIR:-${TMPDIR:-/tmp}/klatch-mutants}"
+base="${base%/}"
+
+# module -> source globs, relative to proto/klatch (the ** prefix is how cargo-mutants matches from the workspace)
+module_files() {
+  case "$1" in
+    gateway-policy) echo "src/gateway/guard.rs src/gateway/gateway/policy.rs src/gateway/gateway/checks.rs src/gateway/gateway/scrub.rs src/gateway/gateway/tripwire.rs src/gateway/gateway/crossing.rs src/session/policy.rs" ;;
+    domain-security) echo "src/domain/scope.rs src/domain/text.rs src/domain/labels.rs src/domain/toolguard.rs src/domain/credentials.rs src/domain/claim_age.rs" ;;
+    gateway-claims) echo "src/gateway/gateway/claims.rs src/gateway/gateway/lease.rs src/gateway/gateway/roles.rs src/gateway/sys_lease.rs src/roles.rs src/scope.rs" ;;
+    keys) echo "src/keys/*.rs" ;;
+    custody) echo "src/custody.rs src/identity.rs" ;;
+    store-crypto) echo "src/store/encrypt.rs src/store/sqlite/seal.rs src/store/sqlite/connect.rs" ;;
+    store-claims) echo "src/store/sqlite/claims.rs src/store/sqlite/leases.rs src/store/sqlite/credentials.rs src/store/area/claims.rs src/store/area/credentials.rs src/store/sqlite/api/claims.rs src/store/sqlite/api/credentials.rs" ;;
+    archive) echo "src/admin/archive.rs src/admin/keys.rs src/store/sqlite/archive.rs src/store/sqlite/backup.rs src/store/sqlite/integrity.rs" ;;
+    *) return 1 ;;
+  esac
+}
+modules="gateway-policy domain-security gateway-claims keys custody store-crypto store-claims archive"
+
+usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# counts from outcomes.json of a finished run
+summary_of() {
+  local f="$base/out-$1/mutants.out/outcomes.json"
+  [ -f "$f" ] || { printf '%-14s no result yet\n' "$1"; return; }
+  python3 -I - "$f" "$1" << 'EOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+c = {"Success": 0, "MissedMutant": 0, "Unviable": 0, "Timeout": 0, "CaughtMutant": 0}
+for o in d["outcomes"]:
+    if o["scenario"] == "Baseline":
+        continue
+    c[o["summary"]] = c.get(o["summary"], 0) + 1
+total = sum(v for k, v in c.items() if k != "Success")
+print("%-14s total %4d  caught %4d  missed %4d  unviable %4d  timeout %4d" % (sys.argv[2], total, c.get("CaughtMutant", 0), c.get("MissedMutant", 0), c.get("Unviable", 0), c.get("Timeout", 0)))
+EOF
+}
+
+list_modules() {
+  local m g n globs
+  for m in $modules; do
+    globs=()
+    for g in $(module_files "$m"); do globs+=(-f "**/$g"); done
+    n="$(cd "$repo/proto/klatch" && cargo mutants --list "${globs[@]}" 2> /dev/null | grep -c '^klatch/src')"
+    printf '%-14s %4s mutants   %s\n' "$m" "$n" "$(module_files "$m")"
+  done
+}
+
+only=""
+want_summary=0
+run=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --list) command -v cargo-mutants > /dev/null 2>&1 || { echo "mutants: cargo-mutants is not installed (see the header)" >&2; exit 2; }; list_modules; exit 0 ;;
+    --summary) want_summary=1 ;;
+    --file) shift; only="${1:?--file needs a glob}" ;;
+    -*) echo "mutants: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) module_files "$1" > /dev/null || { echo "mutants: unknown module $1 (one of: $modules)" >&2; exit 2; }; run+=("$1") ;;
+  esac
+  shift
+done
+
+if [ "$want_summary" -eq 1 ]; then
+  [ ${#run[@]} -eq 0 ] && read -r -a run <<< "$modules"
+  for m in "${run[@]}"; do summary_of "$m"; done
+  exit 0
+fi
+[ ${#run[@]} -gt 0 ] || { usage >&2; exit 2; }
+command -v cargo-mutants > /dev/null 2>&1 || { echo "mutants: cargo-mutants is not installed (see the header)" >&2; exit 2; }
+command -v rsync > /dev/null 2>&1 || { echo "mutants: rsync is needed to copy the repository" >&2; exit 2; }
+mkdir -p "$base/keys" || exit 2
+export KLATCH_KEY_DIR="$base/keys"
+# no debug info: smaller copies (each module copy has its own target directory, 1 to 2 GB) and faster links
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_PROFILE_TEST_DEBUG=0
+# a mutant can make code write without end (found in the first run: the disk filled at 3 GB per 10 s); a file size
+# limit (1 GiB, in 1 KiB units) makes such a mutant fail with an error instead of filling the disk
+ulimit -f 1048576 2> /dev/null || true
+unset KLATCH_NAME KLATCH_IDENTITY_FILE KLATCH_HOME 2> /dev/null || true
+
+failed=0
+for m in "${run[@]}"; do
+  tree="$base/tree-${MUTANTS_SLOT:-main}"
+  out="$base/out-$m"
+  mkdir -p "$tree" "$out" || exit 2
+  # the copy keeps its own proto/target between runs; sources are refreshed from the checkout each time
+  rsync -a --delete --exclude '/proto/target' --exclude '/.git' --exclude '/proto/klatch/fuzz/target' --exclude '/.claude' "$repo/" "$tree/" || exit 2
+  # rsync restores the old mtimes, so cargo could keep the build of the last mutant of the previous module; touch makes
+  # every source newer than that build (found in the first run: the baseline of the second module failed on a stale build)
+  find "$tree/proto/klatch/src" -name '*.rs' -exec touch {} + 2> /dev/null
+  globs=()
+  if [ -n "$only" ]; then
+    globs+=(-f "$only")
+  else
+    for g in $(module_files "$m"); do globs+=(-f "**/$g"); done
+  fi
+  echo "mutants: module $m ($(date '+%H:%M:%S')), result in $out/mutants.out"
+  # MUTANTS_ITERATE=1 continues an interrupted run of the module: mutants already caught or unviable are skipped
+  iter=()
+  [ "${MUTANTS_ITERATE:-0}" = 1 ] && iter=(--iterate)
+  (cd "$tree/proto/klatch" && cargo mutants --in-place --no-shuffle ${iter[@]+"${iter[@]}"} "${globs[@]}" -o "$out" > "$out/run.log" 2>&1)
+  rc=$?
+  # exit 0 all caught, 2 some missed, 3 some timed out; anything else is a run that did not happen
+  case $rc in 0 | 2 | 3) ;; *) echo "mutants: module $m failed to run (exit $rc), see $out/run.log" >&2; failed=1 ;; esac
+  summary_of "$m"
+done
+exit $failed
