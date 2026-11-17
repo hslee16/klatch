@@ -39,6 +39,13 @@ pub trait MessageStore {
         self.read(at, false, now)
     }
 
+    /// What `read(at, false, now)` returns, for a reader that only looks (the librarian, #499): it must not refresh
+    /// the reader's presence, join it to the room or move a cursor. The default is a non-advancing `read`, which
+    /// refreshes presence; a store that can look without touching anything overrides it.
+    fn look(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
+        self.read(at, false, now)
+    }
+
     /// Remember that a wait has looked at the room up to `seq` (forward only), so the next wait does not wake for
     /// the same messages. The read cursor is untouched: the messages stay unread. The default remembers nothing.
     fn wait_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {

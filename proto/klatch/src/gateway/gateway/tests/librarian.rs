@@ -109,6 +109,75 @@ fn the_role_belongs_to_one_member_and_can_be_taken_away() {
     assert!(g.post(&lib(), "r", "no longer a librarian").is_ok());
 }
 
+/// What `lib` looks like to the room: its `last_seen`, or `None` when it is not a member.
+fn lib_seen(g: &Gateway<SpyStore>) -> Option<i64> {
+    let members = g.who(&alice(), "r").unwrap();
+    members
+        .iter()
+        .find(|m| m.name == "lib")
+        .map(|m| m.last_seen)
+}
+
+/// Everything a librarian may do to look at a room (#499).
+fn look_at_the_room(g: &Gateway<SpyStore>) {
+    assert_eq!(g.read(&lib(), "r", false).unwrap().len(), 1);
+    g.who(&lib(), "r").unwrap();
+    g.claims(&lib(), "r").unwrap();
+    g.board(&lib(), "r").unwrap();
+    g.history(&lib(), "r", crate::gateway::HistoryRange::default())
+        .unwrap();
+    g.digest(&lib()).unwrap();
+}
+
+#[test]
+fn a_librarian_looking_does_not_join_the_room() {
+    let (g, t) = with_librarian();
+    t.set(t.get() + 5_000);
+    look_at_the_room(&g);
+    assert_eq!(lib_seen(&g), None, "looking made the librarian a member");
+}
+
+#[test]
+fn a_librarian_that_was_a_member_keeps_its_old_last_seen_when_it_looks() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.post(&alice(), "r", "what happened").unwrap();
+    g.join(&lib(), "r").unwrap();
+    let before = lib_seen(&g);
+    assert!(before.is_some());
+    g.admin_set_librarian(&admin(), "lib", true).unwrap();
+    t.set(t.get() + 5_000);
+    look_at_the_room(&g);
+    assert_eq!(lib_seen(&g), before, "looking refreshed the presence");
+}
+
+#[test]
+fn a_librarian_peek_still_returns_what_is_unread_and_moves_no_cursor() {
+    let (g, _) = with_librarian();
+    assert_eq!(g.read(&lib(), "r", false).unwrap().len(), 1);
+    assert_eq!(
+        g.read(&lib(), "r", false).unwrap().len(),
+        1,
+        "a peek moves no cursor"
+    );
+}
+
+#[test]
+fn an_ordinary_members_peek_still_refreshes_its_presence() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    t.set(t.get() + 5_000);
+    g.read(&bob(), "r", false).unwrap();
+    let seen = g
+        .who(&alice(), "r")
+        .unwrap()
+        .iter()
+        .find(|m| m.name == "bob")
+        .map(|m| m.last_seen);
+    assert_eq!(seen, Some(t.get()), "a member's peek is presence");
+}
+
 #[test]
 fn granting_the_role_is_audited_and_checks_the_name() {
     let (g, _) = with_librarian();

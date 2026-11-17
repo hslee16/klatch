@@ -21,8 +21,12 @@ impl<S: Store> Gateway<S> {
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, advance))?;
-        self.store
-            .read(Seat::new(room, &who.member), advance, self.now())
+        let at = Seat::new(room, &who.member);
+        // a librarian only looks: its peek must not refresh its presence or make it a member (#499)
+        if !advance && self.is_librarian(&who.member)? {
+            return self.store.look(at, self.now());
+        }
+        self.store.read(at, advance, self.now())
     }
 
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
