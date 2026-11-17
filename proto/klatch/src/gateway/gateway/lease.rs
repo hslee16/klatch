@@ -23,6 +23,26 @@ pub const DEFAULT_GRACE_SECS: i64 = 300;
 /// through the policy key `lease:cap` (seconds).
 pub const DEFAULT_CAP_SECS: i64 = 4 * 3600;
 
+/// One lease setting a human may change: the admin action name, its policy key and the most it may be.
+struct Knob {
+    action: &'static str,
+    key: &'static str,
+    max: i64,
+}
+
+/// The cap: at most seven days, the most a park may stretch a claim.
+const CAP_KNOB: Knob = Knob {
+    action: "lease-cap",
+    key: "lease:cap",
+    max: 7 * 24 * 3600,
+};
+/// The grace: at most a day.
+const GRACE_KNOB: Knob = Knob {
+    action: "lease-grace",
+    key: "lease:grace",
+    max: 24 * 3600,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeasePolicy {
     pub extend_secs: i64,
@@ -95,7 +115,37 @@ impl<S: Store> Gateway<S> {
         self
     }
 
-    fn lease_policy(&self) -> Result<LeasePolicy> {
+    /// Only the human: set the busy-without-progress cap, in seconds, or with `None` put it back to its default
+    /// (#537). One second to seven days, the longest a park may stretch a claim.
+    pub fn admin_set_lease_cap(&self, who: &Principal, secs: Option<i64>) -> Result<()> {
+        self.set_lease_key(who, &CAP_KNOB, secs)
+    }
+
+    /// Only the human: set how long a gone holder's claims linger, in seconds, or with `None` put it back to its
+    /// default (#537). One second to a day.
+    pub fn admin_set_lease_grace(&self, who: &Principal, secs: Option<i64>) -> Result<()> {
+        self.set_lease_key(who, &GRACE_KNOB, secs)
+    }
+
+    fn set_lease_key(&self, who: &Principal, knob: &Knob, secs: Option<i64>) -> Result<()> {
+        let Knob { action, key, max } = *knob;
+        if let Some(s) = secs
+            && !(1..=max).contains(&s)
+        {
+            return Err(Error::Invalid(format!(
+                "the {action} is 1 to {max} seconds, or off for the default"
+            )));
+        }
+        let target = secs.map_or("off".to_string(), |s| s.to_string());
+        self.administer(who, (action, &target), |now| {
+            self.store
+                .policy_set(key, secs.map(|s| s.to_string()).as_deref(), now)?;
+            Ok(String::new())
+        })
+    }
+
+    /// The cap and grace in force: a human's setting, else the default.
+    pub fn lease_policy(&self) -> Result<LeasePolicy> {
         let d = LeasePolicy::default();
         Ok(LeasePolicy {
             extend_secs: d.extend_secs,

@@ -64,6 +64,8 @@ pub(super) fn key_command(db: &Path, cmd: AdminCmd) -> Result<()> {
         | AdminCmd::RoomCreation { .. }
         | AdminCmd::GrantRooms { .. }
         | AdminCmd::RateLimit { .. }
+        | AdminCmd::LeaseCap { .. }
+        | AdminCmd::LeaseGrace { .. }
         | AdminCmd::Cap { .. }
         | AdminCmd::Chain { .. }
         | AdminCmd::Canary { .. }
