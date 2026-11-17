@@ -55,6 +55,12 @@ def classify(rec, stale_hours=3.0):
     return "ready", "merge, then run the bench and close the ticket"
 
 
+def failing(checks):
+    """The jobs that are red or cancelled, as 'name (conclusion) url', so the ledger line says what to open."""
+    bad = ("failure", "timed_out", "action_required", "cancelled")
+    return ["%s (%s) %s" % (c["name"], c["conclusion"], c.get("url", "")) for c in checks if c.get("conclusion") in bad]
+
+
 def gh(path):
     out = subprocess.run(["gh", "api", path], capture_output=True, text=True)
     if out.returncode != 0:
@@ -88,7 +94,7 @@ def record(repo, pr, now):
         "closed": full["state"] == "closed",
         "draft": bool(full.get("draft")),
         "mergeable_state": full.get("mergeable_state"),
-        "checks": [{"name": r["name"], "conclusion": r["conclusion"]} for r in runs],
+        "checks": [{"name": r["name"], "conclusion": r["conclusion"], "url": r.get("html_url", "")} for r in runs],
         "ticket_state": ticket_state,
         "idle_hours": hours_since(full["updated_at"], now),
     }
@@ -139,6 +145,8 @@ def main():
     for rec, stage, nxt in sorted(shown, key=lambda r: r[0]["number"]):
         ticket = "#%d" % rec["ticket"] if rec["ticket"] else "no ticket"
         print("#%-4d %-20s %-18s %-9s %s" % (rec["number"], stage, rec["branch"][:18], ticket, nxt))
+        for job in failing(rec["checks"]):
+            print("        %s" % job)
     print("%d tracked, %d need a step, %d done" % (len(rows), len(shown), len(rows) - len(shown)))
 
 
