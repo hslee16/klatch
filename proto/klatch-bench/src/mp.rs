@@ -103,10 +103,23 @@ pub struct Facts {
 
 /// Every way the store breaks what klatch promises; empty when it holds.
 pub fn judge(facts: &Facts, ledger: &Ledger) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in &facts.integrity {
-        out.push(format!("integrity check failed: {line}"));
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for b in &facts.bodies {
+        *count.entry(b.as_str()).or_default() += 1;
     }
+    let mut out = structure_findings(facts);
+    out.extend(copy_findings(&count, ledger));
+    out.extend(lost_findings(&count, ledger));
+    out
+}
+
+/// Findings about the file itself: integrity, seq gaps, tombstones left behind.
+fn structure_findings(facts: &Facts) -> Vec<String> {
+    let mut out: Vec<String> = facts
+        .integrity
+        .iter()
+        .map(|line| format!("integrity check failed: {line}"))
+        .collect();
     for (room, seqs) in &facts.rooms {
         if !is_dense(seqs) {
             out.push(format!(
@@ -121,11 +134,13 @@ pub fn judge(facts: &Facts, ledger: &Ledger) -> Vec<String> {
             facts.tombstones
         ));
     }
-    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
-    for b in &facts.bodies {
-        *count.entry(b.as_str()).or_default() += 1;
-    }
-    for (body, n) in &count {
+    out
+}
+
+/// Bodies stored twice, and bodies nobody posted.
+fn copy_findings(count: &BTreeMap<&str, usize>, ledger: &Ledger) -> Vec<String> {
+    let mut out = Vec::new();
+    for (body, n) in count {
         let known = ledger.acked.contains(*body)
             || ledger.maybe.contains(*body)
             || ledger.seeded.iter().any(|s| s == body);
@@ -135,21 +150,23 @@ pub fn judge(facts: &Facts, ledger: &Ledger) -> Vec<String> {
             out.push(format!("{body:?} is in the store and nobody posted it"));
         }
     }
-    for body in &ledger.acked {
-        if !count.contains_key(body.as_str()) {
-            out.push(format!(
-                "lost: {body:?} was acknowledged and is not in the store"
-            ));
-        }
-    }
-    for body in &ledger.seeded {
-        if !count.contains_key(body.as_str()) {
-            out.push(format!(
-                "lost: {body:?} was in the store before the run and is gone"
-            ));
-        }
-    }
     out
+}
+
+/// Bodies the store owes and no longer holds.
+fn lost_findings(count: &BTreeMap<&str, usize>, ledger: &Ledger) -> Vec<String> {
+    let gone = |body: &&String| !count.contains_key(body.as_str());
+    let acked = ledger
+        .acked
+        .iter()
+        .filter(gone)
+        .map(|body| format!("lost: {body:?} was acknowledged and is not in the store"));
+    let seeded = ledger
+        .seeded
+        .iter()
+        .filter(gone)
+        .map(|body| format!("lost: {body:?} was in the store before the run and is gone"));
+    acked.chain(seeded).collect()
 }
 
 /// Seqs of one room are 1, 2, 3 ... with nothing missing and nothing repeated (tombstones keep theirs).
@@ -178,16 +195,22 @@ pub fn is_main_key_file(name: &str) -> bool {
 
 /// Names in the store directory that no finished process may leave behind: lock files, half-written copies.
 pub fn stray_files(names: &[String]) -> Vec<String> {
-    let allowed = |n: &str| match n.split_once('/') {
-        None => n == "rooms.db" || n == "keys" || n == "archive" || is_backup(n),
+    names.iter().filter(|n| !is_allowed(n)).cloned().collect()
+}
+
+fn is_allowed(name: &str) -> bool {
+    match name.split_once('/') {
+        None => matches!(name, "rooms.db" | "keys" | "archive") || is_backup(name),
         Some(("keys", f)) => f.starts_with("store-") && f.ends_with(".key"),
-        Some(("archive", f)) => {
-            (f.ends_with(".db") || f.ends_with(".partial") || f.ends_with(".partial-journal"))
-                && !f.contains('/')
-        }
+        Some(("archive", f)) => is_archive_part(f),
         Some(_) => false,
-    };
-    names.iter().filter(|n| !allowed(n)).cloned().collect()
+    }
+}
+
+/// A file directly in the archive directory: a finished archive or one being written.
+fn is_archive_part(f: &str) -> bool {
+    let known = [".db", ".partial", ".partial-journal"];
+    known.iter().any(|ext| f.ends_with(ext)) && !f.contains('/')
 }
 
 /// A backup the harness itself wrote.

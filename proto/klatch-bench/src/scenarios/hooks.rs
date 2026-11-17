@@ -63,17 +63,43 @@ pub(super) fn all() -> Vec<Scenario> {
 /// A hook that reports the session's permission mode, as every Claude Code hook input does.
 fn hook_in_mode(w: &World, who: &str, mode: &str) -> Result<(), String> {
     let input = serde_json::json!({"session_id": "s", "hook_event_name": "PostToolUse", "permission_mode": mode});
+    feed_hook(w, who, ToolEvent::Post, &input.to_string())?;
+    Ok(())
+}
+
+/// The hook events these scenarios feed by hand.
+#[derive(Clone, Copy)]
+enum ToolEvent {
+    Pre,
+    Post,
+}
+
+impl ToolEvent {
+    fn name(self) -> &'static str {
+        match self {
+            ToolEvent::Pre => "PreToolUse",
+            ToolEvent::Post => "PostToolUse",
+        }
+    }
+}
+
+/// Run `klatch hook --event <event>` as `who` with `stdin` on its standard input, and wait for it to end.
+fn feed_hook(
+    w: &World,
+    who: &str,
+    event: ToolEvent,
+    stdin: &str,
+) -> Result<std::process::Output, String> {
     let mut child = w
-        .spawn_piped(who, &["hook", "--event", "PostToolUse"])
+        .spawn_piped(who, &["hook", "--event", event.name()])
         .map_err(|e| e.to_string())?;
     child
         .stdin
         .take()
         .ok_or("no stdin")?
-        .write_all(input.to_string().as_bytes())
+        .write_all(stdin.as_bytes())
         .map_err(|e| e.to_string())?;
-    child.wait_with_output().map_err(|e| e.to_string())?;
-    Ok(())
+    child.wait_with_output().map_err(|e| e.to_string())
 }
 
 fn bypass_warning(w: &World) -> Res {
@@ -136,16 +162,7 @@ fn pre_tool_use(
     who: &str,
     stdin: &str,
 ) -> Result<(Option<i32>, String, String), String> {
-    let mut child = w
-        .spawn_piped(who, &["hook", "--event", "PreToolUse"])
-        .map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .ok_or("no stdin")?
-        .write_all(stdin.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let o = feed_hook(w, who, ToolEvent::Pre, stdin)?;
     Ok((
         o.status.code(),
         String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -222,16 +239,7 @@ fn post_tool_use(w: &World, who: &str, agent: Option<&str>) -> Result<String, St
     if let Some(a) = agent {
         input["agent_id"] = a.into();
     }
-    let mut child = w
-        .spawn_piped(who, &["hook", "--event", "PostToolUse"])
-        .map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .ok_or("no stdin")?
-        .write_all(input.to_string().as_bytes())
-        .map_err(|e| e.to_string())?;
-    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let o = feed_hook(w, who, ToolEvent::Post, &input.to_string())?;
     Ok(String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
