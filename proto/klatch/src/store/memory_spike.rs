@@ -24,6 +24,32 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// What `read` makes of a room, or the default when the room does not exist.
+    fn with_room<T: Default>(&self, room: &str, read: impl FnOnce(&Room) -> T) -> T {
+        self.rooms.borrow().get(room).map(read).unwrap_or_default()
+    }
+}
+
+/// Whether two claim scopes collide: the same scope, or either one is the shared `*`.
+fn scopes_collide(a: &str, b: &str) -> bool {
+    a == b || a == "*" || b == "*"
+}
+
+/// The error for the first live claim of someone else that `q` collides with, if any.
+fn conflict_with(claims: &[(Claim, i64)], q: &ClaimRequest, now: i64) -> Option<Error> {
+    claims
+        .iter()
+        .find(|(c, _)| {
+            c.owner != q.owner && scopes_collide(&c.scope, q.scope) && overlaps(&c.path, q.path)
+        })
+        .map(|(c, exp)| Error::Conflict {
+            path: c.path.clone(),
+            owner: c.owner.clone(),
+            secs_left: exp - now,
+            held_secs: 0,
+            deadlock: false,
+        })
 }
 
 impl MessageStore for MemoryStore {
@@ -75,28 +101,18 @@ impl MessageStore for MemoryStore {
     }
 
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| {
-                r.messages
-                    .iter()
-                    .filter(|m| m.seq > after_seq)
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default())
+        Ok(self.with_room(room, |r| {
+            r.messages
+                .iter()
+                .filter(|m| m.seq > after_seq)
+                .take(limit)
+                .cloned()
+                .collect()
+        }))
     }
 
     fn head(&self, room: &str) -> Result<i64> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| r.messages.len() as i64)
-            .unwrap_or(0))
+        Ok(self.with_room(room, |r| r.messages.len() as i64))
     }
 
     fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
@@ -111,24 +127,19 @@ impl MessageStore for MemoryStore {
 }
 impl MemberStore for MemoryStore {
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| {
-                r.members
-                    .iter()
-                    .map(|(n, (seen, _))| MemberInfo {
-                        name: n.clone(),
-                        joined: 0,
-                        last_seen: *seen,
-                        status: None,
-                        parent: None,
-                        parked: None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
+        Ok(self.with_room(room, |r| {
+            r.members
+                .iter()
+                .map(|(n, (seen, _))| MemberInfo {
+                    name: n.clone(),
+                    joined: 0,
+                    last_seen: *seen,
+                    status: None,
+                    parent: None,
+                    parked: None,
+                })
+                .collect()
+        }))
     }
 
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
@@ -146,18 +157,8 @@ impl ClaimStore for MemoryStore {
         let mut rooms = self.rooms.borrow_mut();
         let r = rooms.entry(q.room.to_string()).or_default();
         r.claims.retain(|(_, exp)| *exp > now);
-        let scope = if q.scope.is_empty() { "" } else { q.scope };
-        for (c, exp) in &r.claims {
-            let same_scope = c.scope == scope || c.scope == "*" || scope == "*";
-            if c.owner != q.owner && same_scope && overlaps(&c.path, q.path) {
-                return Err(Error::Conflict {
-                    path: c.path.clone(),
-                    owner: c.owner.clone(),
-                    secs_left: exp - now,
-                    held_secs: 0,
-                    deadlock: false,
-                });
-            }
+        if let Some(conflict) = conflict_with(&r.claims, q, now) {
+            return Err(conflict);
         }
         r.claims
             .retain(|(c, _)| !(c.owner == q.owner && c.path == q.path));
@@ -167,7 +168,7 @@ impl ClaimStore for MemoryStore {
                 owner: q.owner.to_string(),
                 reason: q.reason.to_string(),
                 expires: now + q.ttl,
-                scope: scope.to_string(),
+                scope: q.scope.to_string(),
             },
             now + q.ttl,
         ));
@@ -183,18 +184,13 @@ impl ClaimStore for MemoryStore {
     }
 
     fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| {
-                r.claims
-                    .iter()
-                    .filter(|(_, exp)| *exp > now)
-                    .map(|(c, _)| c.clone())
-                    .collect()
-            })
-            .unwrap_or_default())
+        Ok(self.with_room(room, |r| {
+            r.claims
+                .iter()
+                .filter(|(_, exp)| *exp > now)
+                .map(|(c, _)| c.clone())
+                .collect()
+        }))
     }
 }
 impl AskStore for MemoryStore {}

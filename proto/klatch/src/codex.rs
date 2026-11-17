@@ -51,22 +51,34 @@ fn snake(event: &str) -> String {
 /// Where each klatch hook sits in a Codex hooks file: its event, the index of its matcher group and its index in
 /// that group, which is how Codex names it in a trust record.
 fn klatch_slots(hooks: &Value) -> Vec<(String, usize, usize)> {
-    let mut slots = Vec::new();
     let Some(events) = hooks.get("hooks").and_then(Value::as_object) else {
-        return slots;
+        return Vec::new();
     };
+    let mut slots = Vec::new();
     for (event, groups) in events {
         for (n, group) in groups.as_array().into_iter().flatten().enumerate() {
-            let list = group.get("hooks").and_then(Value::as_array);
-            for (m, hook) in list.into_iter().flatten().enumerate() {
-                let cmd = hook.get("command").and_then(Value::as_str);
-                if cmd.is_some_and(crate::init::is_klatch_command) {
-                    slots.push((event.clone(), n, m));
-                }
-            }
+            slots.extend(klatch_in_group(group).map(|m| (event.clone(), n, m)));
         }
     }
     slots
+}
+
+/// The indexes, within one matcher group, of the hooks that run a klatch command.
+fn klatch_in_group(group: &Value) -> impl Iterator<Item = usize> + '_ {
+    let list = group.get("hooks").and_then(Value::as_array);
+    list.into_iter()
+        .flatten()
+        .enumerate()
+        .filter(|(_, hook)| {
+            let cmd = hook.get("command").and_then(Value::as_str);
+            cmd.is_some_and(crate::init::is_klatch_command)
+        })
+        .map(|(m, _)| m)
+}
+
+/// Whether a config line sets a real trust hash: `trusted_hash` with a `sha256:` value.
+fn is_trust_hash(line: &str) -> bool {
+    line.starts_with("trusted_hash") && line.contains("sha256:")
 }
 
 /// The `[hooks.state."<key>"]` sections of a Codex config that carry a `trusted_hash`. A section with no hash is not
@@ -80,10 +92,7 @@ fn trusted_keys(config: &str) -> HashSet<String> {
                 .strip_prefix("[hooks.state.\"")
                 .and_then(|r| r.strip_suffix("\"]"))
                 .map(String::from);
-        } else if let Some(key) = &section
-            && line.starts_with("trusted_hash")
-            && line.contains("sha256:")
-        {
+        } else if let Some(key) = section.as_ref().filter(|_| is_trust_hash(line)) {
             trusted.insert(key.clone());
         }
     }
