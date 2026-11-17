@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# pr-sweep: ONE pass of the standing PR sweep (#706). A /loop job calls it every few minutes; see PR-SWEEP.md.
+#
+#   pr-sweep [--dry-run] [--bench-ledger FILE]
+#
+# It reads `pr-ledger` and acts per stage:
+#   checks-cancelled   rerun the cancelled jobs (never a real failure)
+#   ready              all checks green on the latest head and mergeable: integrate main only when behind, wait for the
+#                      checks on the new head, merge, run the bench, record it, close the linked ticket
+#   behind, conflict   merge origin/main into the PR branch on a throwaway branch alee/integ-N (docs conflicts keep both
+#                      sides; a code conflict stops), run the gate, push to the PR's own branch
+#   merged-not-benched run the bench and record it;  merged-open-ticket: close the ticket
+#   anything else a human must look at (red checks, a code conflict, no ticket, stuck over 3 h, abandoned, a failed
+#                      gate or bench) is NOT touched; one message names them via `pr-ledger --post --only`
+#
+# Never: merge a PR whose checks are not all green on its latest head (the merge is pinned to that head), rerun a real
+# failure, force-push, push main, run `git merge` while on main, or print the environment. A lock under $TMPDIR keeps
+# two sweeps from overlapping. --dry-run prints what it would do and changes nothing.
+#
+# Test and tuning knobs (environment): PR_SWEEP_LEDGER, PR_SWEEP_GATE, PR_SWEEP_BENCH (commands), PR_SWEEP_REPO (the
+# checkout to work in), PR_SWEEP_GH_REPO, PR_SWEEP_POLL_SECS, PR_SWEEP_SETTLE_SECS, PR_SWEEP_WAIT_TRIES.
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$HOME/.cargo/bin:$PATH"
+slug="${PR_SWEEP_GH_REPO:-hslee16/klatch}"
+poll="${PR_SWEEP_POLL_SECS:-10}"
+settle="${PR_SWEEP_SETTLE_SECS:-40}"
+tries="${PR_SWEEP_WAIT_TRIES:-90}"
+tmp="${TMPDIR:-/tmp}"
+tmp="${tmp%/}"
+dry=0
+bench_ledger="$tmp/pr-sweep-bench.json"
+
+say() { printf 'pr-sweep: %s\n' "$*"; }
+
+ledger() {
+  if [ -n "${PR_SWEEP_LEDGER:-}" ]; then "$PR_SWEEP_LEDGER" "$@"; else python3 -I "$here/pr-ledger" "$@"; fi
+}
+
+# keep both sides of every conflict hunk; DESIGN.md numbered items at 30 and up are sorted by number (copied from the
+# coordinator's integrate.sh)
+resolve_docs() {
+  python3 -I - "$@" <<'PY'
+import re, sys
+for p in sys.argv[1:]:
+    s = open(p).read()
+    s = re.sub(r'<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n', lambda m: m.group(1) + m.group(2), s, flags=re.S)
+    if p.endswith('DESIGN.md'):
+        L = s.split('\n')
+        idx = [i for i, l in enumerate(L) if re.match(r'^\d+\. \*\*', l)]
+        tail = [i for i in idx if int(re.match(r'^(\d+)\.', L[i]).group(1)) >= 30]
+        if tail and tail == list(range(tail[0], tail[0] + len(tail))):
+            block = sorted([L[i] for i in tail], key=lambda l: int(re.match(r'^(\d+)\.', l).group(1)))
+            L[tail[0]:tail[-1] + 1] = block
+        s = '\n'.join(L)
+    open(p, 'w').write(s)
+PY
+}
+
+if [ "${1:-}" = "--resolve-docs" ]; then shift; resolve_docs "$@"; exit $?; fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) dry=1 ;;
+    --bench-ledger) shift; bench_ledger="${1:-}" ;;
+    -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "pr-sweep: unknown argument $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# one sweep at a time; a lock whose holder is gone is taken over
+lock="$tmp/pr-sweep.lock"
+if [ "$dry" -eq 0 ]; then
+  if ! mkdir "$lock" 2> /dev/null; then
+    holder="$(cat "$lock/pid" 2> /dev/null || true)"
+    if [ -n "$holder" ] && kill -0 "$holder" 2> /dev/null; then
+      say "another sweep is running (pid $holder); nothing done"
+      exit 0
+    fi
+    rm -rf "$lock"
+    mkdir "$lock" 2> /dev/null || { say "could not take the lock; nothing done"; exit 0; }
+  fi
+  echo $$ > "$lock/pid"
+  trap 'rm -rf "$lock"' EXIT
+fi
+
+repo="${PR_SWEEP_REPO:-$(git -C "$here" rev-parse --show-toplevel)}"
+cd "$repo" || { say "cannot enter $repo"; exit 1; }
+
+reran=0; merged=0; integrated=0; benched=0; closed=0
+untouched=""
+hold() { # PR number, reason: leave it for a human and name it in the post
+  say "#$1 not touched: $2"
+  case " $untouched " in *" $1 "*) ;; *) untouched="$untouched $1" ;; esac
+}
+
+pr_field() { gh api "repos/$slug/pulls/$1" --jq "$2"; }
+
+# green = at least one check on the head, and every one of them success, skipped or neutral
+green_on() { # head sha
+  local c
+  c="$(gh api "repos/$slug/commits/$1/check-runs" --jq '[.check_runs[]|(.conclusion // "pending")]|join(" ")' 2> /dev/null)"
+  [ -n "$c" ] || return 1
+  local x
+  for x in $c; do
+    case "$x" in success | skipped | neutral) ;; *) return 1 ;; esac
+  done
+  return 0
+}
+
+wait_green() { # PR, a head sha it must differ from (or empty): echoes the green head, or returns 1
+  local i=0 sha
+  while [ "$i" -lt "$tries" ]; do
+    sha="$(pr_field "$1" .head.sha)"
+    if [ -n "$sha" ] && [ "$sha" != "${2:-}" ] && green_on "$sha"; then echo "$sha"; return 0; fi
+    i=$((i + 1))
+    [ "$poll" -gt 0 ] && /bin/sleep "$poll"
+  done
+  return 1
+}
+
+# merge origin/main into the PR branch on the throwaway branch alee/integ-N, gate, push to the PR's own branch.
+# 0 pushed, 3 code conflict, 1 anything else (all reported)
+integrate() {
+  local n=$1 ref bad cur
+  ref="$(pr_field "$n" .head.ref)"
+  [ -n "$ref" ] || { say "#$n: no head branch found"; return 1; }
+  if [ -n "$(git status --porcelain 2> /dev/null)" ]; then say "#$n: the working tree is not clean; not switching branches"; return 1; fi
+  git fetch -q origin main "+pull/$n/head:refs/pr-sweep/$n" || { say "#$n: fetch failed"; return 1; }
+  git checkout -q -B "alee/integ-$n" origin/main || { say "#$n: cannot make alee/integ-$n"; return 1; }
+  cur="$(git rev-parse --abbrev-ref HEAD)"
+  if [ "$cur" != "alee/integ-$n" ]; then say "#$n: on $cur, not alee/integ-$n; refusing to merge"; return 1; fi
+  if git merge -q --no-edit "refs/pr-sweep/$n" > /dev/null 2>&1; then
+    say "#$n: merged main cleanly"
+  else
+    bad="$(git diff --name-only --diff-filter=U | grep -vE '^(DESIGN.md|CHANGELOG.md|VERSIONING.md|proto/klatch-bench/src/scenarios/mod.rs)$')"
+    if [ -n "$bad" ] || [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+      say "#$n: CODE CONFLICT in: ${bad:-(unknown)}"
+      git merge --abort
+      return 3
+    fi
+    # shellcheck disable=SC2046
+    resolve_docs $(git diff --name-only --diff-filter=U)
+    if git diff --name-only --diff-filter=U | xargs grep -l '^<<<<<<<' > /dev/null 2>&1; then
+      say "#$n: CODE CONFLICT (markers remain after the docs merge)"
+      git merge --abort
+      return 3
+    fi
+    git add -u
+    git commit -q -m "Merge main into the branch (docs conflict)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit of the docs merge failed"; return 1; }
+  fi
+  if [ -n "${PR_SWEEP_GATE:-}" ]; then "$PR_SWEEP_GATE" > /dev/null 2>&1; else (cd proto && ./scripts/gate > /dev/null 2>&1); fi || { say "#$n: the gate failed on the merged branch; not pushed"; return 1; }
+  git push -q origin "alee/integ-$n:$ref" || { say "#$n: push to $ref failed"; return 1; }
+  say "#$n: pushed the merge of main to $ref"
+  integrated=$((integrated + 1))
+  return 0
+}
+
+close_ticket() { # ticket number
+  if [ "$(gh api "repos/$slug/issues/$1" --jq .state 2> /dev/null)" = "open" ]; then
+    gh api -X PATCH "repos/$slug/issues/$1" -f state=closed > /dev/null && { say "closed ticket #$1"; closed=$((closed + 1)); }
+  fi
+}
+
+run_bench() { # PR: bench main as it now is; record only a clean run
+  local n=$1 out failed="$bench_ledger.failed"
+  if grep -qx "$n" "$failed" 2> /dev/null; then hold "$n" "the bench failed earlier"; return; fi
+  git fetch -q origin main || { hold "$n" "cannot fetch main to bench"; return; }
+  git checkout -q -B "alee/integ-$n" origin/main || { hold "$n" "cannot check out main to bench"; return; }
+  if [ -n "${PR_SWEEP_BENCH:-}" ]; then out="$("$PR_SWEEP_BENCH" 2>&1)"; else out="$(cd proto && cargo run -q --release -p klatch-bench 2>&1)"; fi
+  if printf '%s\n' "$out" | grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed'; then
+    ledger --record-bench "$n" --bench-ledger "$bench_ledger" > /dev/null
+    say "#$n: bench clean, recorded"
+    benched=$((benched + 1))
+  else
+    echo "$n" >> "$failed"
+    hold "$n" "the bench did not say \"N passed, 0 failed\""
+  fi
+}
+
+do_ready() { # PR, ticket
+  local n=$1 ticket=$2 ms sha rc
+  ms="$(pr_field "$n" .mergeable_state)"
+  case "$ms" in
+    dirty) hold "$n" "conflicted on a fresh look"; return ;;
+    behind)
+      if [ "$dry" -eq 1 ]; then say "would integrate main into #$n, wait for green on the new head, merge, bench, close #$ticket"; return; fi
+      sha="$(pr_field "$n" .head.sha)"
+      integrate "$n"; rc=$?
+      if [ "$rc" -ne 0 ]; then hold "$n" "integrate failed (exit $rc)"; return; fi
+      [ "$settle" -gt 0 ] && /bin/sleep "$settle"
+      sha="$(wait_green "$n" "$sha")" || { say "#$n: integrated; waiting for green checks on the new head"; return; }
+      ms="$(pr_field "$n" .mergeable_state)"
+      ;;
+    *)
+      sha="$(pr_field "$n" .head.sha)"
+      if ! green_on "$sha"; then say "#$n: checks are not all green on the latest head; not merging"; return; fi
+      ;;
+  esac
+  if [ "$ms" != "clean" ]; then say "#$n: mergeable state is \"$ms\"; not merging"; return; fi
+  if [ "$dry" -eq 1 ]; then say "would merge #$n (head $sha, green), run the bench, record it, close #$ticket"; return; fi
+  gh pr merge "$n" --merge --match-head-commit "$sha" > /dev/null 2>&1
+  if [ "$(pr_field "$n" .merged)" != "true" ]; then hold "$n" "the merge did not go through"; return; fi
+  say "#$n: merged"
+  merged=$((merged + 1))
+  run_bench "$n"
+  close_ticket "$ticket"
+}
+
+rows="$(ledger --bench-ledger "$bench_ledger" | grep -E '^#[0-9]+ ')" || rows=""
+while IFS= read -r row; do
+  [ -n "$row" ] || continue
+  # shellcheck disable=SC2086
+  set -- $row
+  n="${1#\#}"; stage="$2"
+  ticket=""; [ "${4:-}" != "no" ] && ticket="${4#\#}"
+  case "$stage" in
+    checks-cancelled)
+      if [ "$dry" -eq 1 ]; then say "would rerun the cancelled jobs on #$n"; else ledger --rerun-cancelled "$n" > /dev/null; reran=$((reran + 1)); say "#$n: reran the cancelled jobs"; fi ;;
+    ready | behind | conflict)
+      if [ -z "$ticket" ]; then hold "$n" "no linked ticket"; continue; fi
+      if [ "$stage" = ready ]; then do_ready "$n" "$ticket"; continue; fi
+      if [ "$dry" -eq 1 ]; then say "would integrate main into #$n, run the gate, push to its branch"; continue; fi
+      integrate "$n" || hold "$n" "integrate stopped ($stage)" ;;
+    merged-not-benched)
+      if [ "$dry" -eq 1 ]; then say "would bench and record #$n"; else run_bench "$n"; fi ;;
+    merged-open-ticket)
+      if [ -z "$ticket" ]; then continue; fi
+      if [ "$dry" -eq 1 ]; then say "would close ticket #$ticket"; else close_ticket "$ticket"; fi ;;
+    checks-red) hold "$n" "red checks (a real failure)" ;;
+    abandoned) hold "$n" "closed without merging" ;;
+    checks-running)
+      case "$row" in *"stuck?"*) hold "$n" "checks stuck for over 3 h" ;; esac ;;
+    *) ;; # draft, no-checks, running: nothing to do yet
+  esac
+done <<< "$rows"
+
+if [ -n "$untouched" ]; then
+  list="$(echo "$untouched" | tr ' ' '\n' | sed '/^$/d' | sort -n | paste -sd, -)"
+  if [ "$dry" -eq 1 ]; then say "would post to the lobby: $list"; else ledger --post --only "$list" --bench-ledger "$bench_ledger" --state-file "$tmp/pr-sweep-last-post" > /dev/null; fi
+fi
+
+if [ "$dry" -eq 1 ]; then
+  say "dry run; changed nothing"
+elif [ "$((reran + merged + integrated + benched + closed))" -eq 0 ] && [ -z "$untouched" ]; then
+  say "nothing needs a step"
+else
+  # shellcheck disable=SC2086
+  say "reran $reran, integrated $integrated, merged $merged, benched $benched, closed $closed, not touched:${untouched:- none}"
+fi
+exit 0
