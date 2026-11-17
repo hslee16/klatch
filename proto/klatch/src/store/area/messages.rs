@@ -67,6 +67,29 @@ pub trait MessageStore {
     /// (including the caller, so `seq` has no gaps). No cursor and no presence side effects.
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>>;
 
+    /// Every message of the room whose body starts with one of `prefixes` (exactly, case included), oldest first,
+    /// at any depth in the log. The boards fold words (tasks, pull requests) that can be older than any window a
+    /// `tail` reads, so they ask for the words alone. No cursor and no presence side effects. The default pages
+    /// through `tail`; a store with an index or a query overrides it.
+    fn words(&self, room: &str, prefixes: &[&str]) -> Result<Vec<Message>> {
+        let mut found = Vec::new();
+        if prefixes.is_empty() {
+            return Ok(found);
+        }
+        let mut after = 0;
+        loop {
+            let page = self.tail(room, after, 5000)?;
+            let Some(last) = page.last().map(|m| m.seq) else {
+                return Ok(found);
+            };
+            after = last;
+            found.extend(
+                page.into_iter()
+                    .filter(|m| prefixes.iter().any(|p| m.body.starts_with(p))),
+            );
+        }
+    }
+
     /// The highest `seq` in a room, 0 when it is empty.
     fn head(&self, room: &str) -> Result<i64>;
 

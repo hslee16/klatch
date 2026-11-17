@@ -573,6 +573,7 @@ mod tests {
             "status",
             "scope",
             "dm",
+            "mute",
         ] {
             assert!(
                 SPEC.contains(&format!("`{method}`")),
