@@ -355,6 +355,13 @@ impl Client {
             .unwrap_or_default())
     }
 
+    /// Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that
+    /// mention you. `read` and the stream still carry everything.
+    pub fn mute(&mut self, room: &str, muted: bool) -> Result<()> {
+        self.request("mute", json!({"room": room, "muted": muted}))
+            .map(|_| ())
+    }
+
     /// Start (or resume) a stream; returns the room's head.
     pub fn subscribe(&mut self, room: &str, from_seq: u64) -> Result<u64> {
         self.caught_up = None;
