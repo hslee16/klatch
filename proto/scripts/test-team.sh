@@ -95,6 +95,14 @@ pr_missing=""
 for want in 'Closes #' 'python3 -I proto/scripts/pr-ledger' "reaches \`ready\`" '--rerun-cancelled' 'Never rerun a real red' 'ready: #' 'release your claims' 'Never merge'; do
   printf '%s' "$args" | grep -qF -- "$want" || pr_missing="$pr_missing [$want]"
 done
+lc_missing=""
+# shellcheck disable=SC2016
+for want in 'post `pr: #N <title>`' 'pr:N --shared' 'merged: #N'; do
+  printf '%s' "$args" | grep -qF -- "$want" || lc_missing="$lc_missing [$want]"
+done
+if [ -z "$lc_missing" ]; then ok "the brief tells members to post pr: #N <title>, claim pr:N --shared and post merged: #N (DESIGN item 84)"; else bad "brief PR lifecycle missing:$lc_missing"; fi
+# shellcheck disable=SC2016
+if grep -qF 'post `pr: #PR <title>`' "$here/AGENT-PR-RULES.md" && grep -qF 'pr:PR --shared' "$here/AGENT-PR-RULES.md" && grep -qF 'merged: #PR' "$here/AGENT-PR-RULES.md"; then ok "AGENT-PR-RULES.md carries the same PR lifecycle words"; else bad "AGENT-PR-RULES.md lacks the PR lifecycle words"; fi
 if [ -z "$pr_missing" ]; then ok "the brief carries the PR rules (Closes #N, poll pr-ledger to ready, rerun cancelled, fix red, post ready, release claims)"; else bad "brief PR rules missing:$pr_missing"; fi
 if python3 - "$a/settings.json" "$bin/klatch" <<'PY'
 import json, sys
