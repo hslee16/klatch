@@ -146,6 +146,15 @@ fn claims_json(cs: &[Claim]) -> Value {
     json!({ "claims": cs.iter().map(one).collect::<Vec<_>>() })
 }
 
+/// Session-start housekeeping, every member's: remove the members not seen for the fixed retention. It takes no
+/// parameters, so a caller cannot name a shorter age and prune members that are still in use.
+fn prune<S: Store>(g: &Gateway<S>, who: &Principal, id: String) -> Vec<ServerFrame> {
+    match g.prune_members(who, crate::domain::MEMBER_RETENTION_SECS) {
+        Ok(removed) => vec![ok(id, json!({ "removed": removed }))],
+        Err(e) => failure(id, &e),
+    }
+}
+
 /// Answer a request that is a plain call through the gateway.
 pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame> {
     let empty = |()| json!({});
@@ -203,6 +212,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             empty,
         ),
         "claims" => call.run(|p: RoomParams| g.claims(who, &p.room), |cs| claims_json(&cs)),
+        "prune" => prune(g, who, call.id),
         "role_act" | "review_next" | "review_verdict" => {
             crate::session::role_methods::handle(g, who, call)
         }

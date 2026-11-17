@@ -119,6 +119,24 @@ describe("klatch client conformance", () => {
     await assert.rejects(a.release("r", "never/claimed"), (e: ApiError) => e.code === "not_found");
   });
 
+  it("a member without the admin role is refused every act and may prune", async () => {
+    const a = await store.client("alice");
+    for (const [act, params] of [
+      ["run-create", { run: "r1" }],
+      ["run-end", { run: "r1" }],
+      ["anchor-done", { anchor: "gh:pr:o/r/1" }],
+      ["close", { room: "r" }],
+    ] as [string, Record<string, unknown>][]) {
+      await assert.rejects(a.roleAct(act, params), (e: ApiError) => e.code === "refused" && e.refusals.some((r) => r.rule === "admin-scope"), act);
+    }
+    await assert.rejects(a.roleAct("reap-anchors"), (e: ApiError) => e.code === "unknown_act");
+    await assert.rejects(a.roleAct("run-create"), (e: ApiError) => e.code === "invalid_params");
+    assert.equal(await a.prune(), 0);
+    await a.post("r", "still here");
+    assert.equal(await a.prune(), 0);
+    assert.deepEqual((await a.who("r")).map((m) => m.name), ["alice"]);
+  });
+
   it("a direct message reaches one member in a room nobody else may use", async () => {
     const [a, b, c] = [await store.client("alice"), await store.client("bob"), await store.client("carol")];
     const sent = await a.dm("bob", "hello bob");

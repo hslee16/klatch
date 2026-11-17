@@ -376,6 +376,24 @@ impl Client {
             .unwrap_or_default())
     }
 
+    /// An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
+    /// `run-create`, `run-end`, `anchor-done`) with the parameters it needs (`room`, `member`, `label`, `limit`,
+    /// `run`, `anchor`). A member without the role is refused. Returns the result object.
+    pub fn role_act(
+        &mut self,
+        act: &str,
+        mut params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        params["act"] = json!(act);
+        self.request("role_act", params)
+    }
+
+    /// Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many.
+    pub fn prune(&mut self) -> Result<u64> {
+        let r = self.request("prune", json!({}))?;
+        Ok(r["removed"].as_u64().unwrap_or(0))
+    }
+
     /// Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that
     /// mention you. `read` and the stream still carry everything.
     pub fn mute(&mut self, room: &str, muted: bool) -> Result<()> {

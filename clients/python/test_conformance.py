@@ -131,6 +131,29 @@ class Conformance(unittest.TestCase):
             a.release("r", "never/claimed")
         self.assertEqual(ctx.exception.code, "not_found")
 
+    def test_a_member_without_the_admin_role_is_refused_every_act_and_may_prune(self):
+        a = self.store.client("alice")
+        for act, params in (
+            ("run-create", {"run": "r1"}),
+            ("run-end", {"run": "r1"}),
+            ("anchor-done", {"anchor": "gh:pr:o/r/1"}),
+            ("close", {"room": "r"}),
+        ):
+            with self.assertRaises(kc.ApiError, msg=act) as ctx:
+                a.role_act(act, **params)
+            self.assertEqual(ctx.exception.code, "refused", act)
+            self.assertTrue(any(r["rule"] == "admin-scope" for r in ctx.exception.refusals), act)
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.role_act("reap-anchors")
+        self.assertEqual(ctx.exception.code, "unknown_act")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.role_act("run-create")
+        self.assertEqual(ctx.exception.code, "invalid_params")
+        self.assertEqual(a.prune(), 0)
+        a.post("r", "still here")
+        self.assertEqual(a.prune(), 0)
+        self.assertEqual([m["name"] for m in a.who("r")], ["alice"])
+
     def test_a_direct_message_reaches_one_member_in_a_room_nobody_else_may_use(self):
         a, b, c = self.store.client("alice"), self.store.client("bob"), self.store.client("carol")
         sent = a.dm("bob", "hello bob")
