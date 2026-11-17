@@ -80,7 +80,9 @@ impl<S: Store> Gateway<S> {
             .into_iter()
             .map(|c| c.owner)
             .collect();
-        let mut tasks = crate::domain::open_tasks(&messages);
+        // the task words are read by prefix at any depth, not from the tail window: a task can outlive the window
+        let words = self.store.words(room, &crate::domain::TASK_WORDS)?;
+        let mut tasks = crate::domain::open_tasks(&words);
         for t in &mut tasks {
             let present = members.iter().any(|m| {
                 m.name == t.owner && !m.status.as_deref().is_some_and(|s| s.starts_with("done"))
@@ -90,7 +92,7 @@ impl<S: Store> Gateway<S> {
         Ok(crate::domain::Board {
             room: room.into(),
             tasks,
-            prs: self.open_prs_of(room, &messages, now)?,
+            prs: self.open_prs_of(room, now)?,
             asks: self.store.open_asks(room, now)?,
             offers: crate::domain::current_offers(&messages, now, crate::domain::OFFER_TTL_SECS)
                 .into_iter()
@@ -104,13 +106,9 @@ impl<S: Store> Gateway<S> {
     /// The pull requests the log says are open (item 84), each with the holder of its live `pr:N` claim. One that no
     /// message ended and whose claim was last released with a note that says merged is dropped: the claim's note is
     /// the other way to say a PR is over.
-    fn open_prs_of(
-        &self,
-        room: &str,
-        messages: &[Message],
-        now: i64,
-    ) -> Result<Vec<crate::domain::OpenPr>> {
-        let mut prs = crate::domain::open_prs(messages);
+    fn open_prs_of(&self, room: &str, now: i64) -> Result<Vec<crate::domain::OpenPr>> {
+        let words = self.store.words(room, &crate::domain::PR_WORDS)?;
+        let mut prs = crate::domain::open_prs(&words);
         if prs.is_empty() {
             return Ok(prs);
         }
@@ -213,8 +211,7 @@ impl<S: Store> Gateway<S> {
             let aged = self.store.claim_ages(&room, &who.member, now)?;
             let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
             let unowned_prs = if backlog {
-                let log = self.store.tail(&room, 0, 5000)?;
-                let mut prs = self.open_prs_of(&room, &log, now)?;
+                let mut prs = self.open_prs_of(&room, now)?;
                 prs.retain(|p| p.holder.is_none());
                 prs
             } else {

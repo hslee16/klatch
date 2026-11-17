@@ -104,6 +104,11 @@ fn messages_tail_honours_the_limit_and_the_room() {
 }
 
 #[test]
+fn messages_words_returns_only_the_messages_with_a_prefix_however_deep_they_are() {
+    c::messages::words_returns_only_the_messages_with_a_prefix_however_deep_they_are(store);
+}
+
+#[test]
 fn messages_tail_has_no_side_effects_on_cursors_or_presence() {
     c::messages::tail_has_no_side_effects_on_cursors_or_presence(store);
 }

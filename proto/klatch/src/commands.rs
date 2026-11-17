@@ -66,14 +66,22 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             only,
             from,
             peek,
-        } => wait(t, &rooms, timeout, &Filter { only, from, peek })?,
+        } => {
+            let global = klatch::domain::WaitFilter {
+                only,
+                from: from.into_iter().collect(),
+            };
+            let rooms =
+                klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
+            wait(t, &rooms, timeout, peek)?
+        }
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
         Cmd::Receipt { room, seq } => print!(
             "{}",
             klatch::domain::render_receipts(&t.receipt(&room, seq)?, ctx.now)
         ),
-        Cmd::Who { room, all } => print!("{}", render_who(&t.who(&room)?, ctx.now, all)),
+        Cmd::Who { room, all } => who(t, room.as_deref(), ctx.now, all)?,
         Cmd::Status { room, status } => {
             t.set_status(&room, &status.join(" "))?;
             println!("status set");
@@ -350,31 +358,16 @@ fn handoff_suffix(m: &klatch::domain::Message) -> String {
     }
 }
 
-/// What a `wait` listens for besides "anything".
-struct Filter {
-    only: Option<String>,
-    from: Option<String>,
+/// Without a filter or `--peek` a wait consumes what it returns, like a blocking read. With either, it leaves
+/// messages unread (a later read or the hook still shows them) and remembers what it has looked at so it does
+/// not wake for the same message twice.
+fn look(
+    t: &dyn Transport,
+    room: &str,
+    filter: &klatch::domain::WaitFilter,
     peek: bool,
-}
-
-impl Filter {
-    /// Without a filter or `--peek` a wait consumes what it returns, like a blocking read. With either, it leaves
-    /// messages unread (a later read or the hook still shows them) and remembers what it has looked at so it does
-    /// not wake for the same message twice.
-    fn consumes(&self) -> bool {
-        self.only.is_none() && self.from.is_none() && !self.peek
-    }
-
-    fn accepts(&self, m: &klatch::domain::Message) -> bool {
-        let prefix_ok = self.only.as_deref().is_none_or(|p| m.body.starts_with(p));
-        let sender_ok = self.from.as_deref().is_none_or(|f| m.sender == f);
-        prefix_ok && sender_ok
-    }
-}
-
-/// What one look at a room finds for a wait.
-fn look(t: &dyn Transport, room: &str, filter: &Filter) -> Result<Vec<klatch::domain::Message>> {
-    if filter.consumes() {
+) -> Result<Vec<klatch::domain::Message>> {
+    if filter.is_open() && !peek {
         return Ok(t.read(room, true)?);
     }
     let seen = t.wait_poll(room)?;
@@ -384,15 +377,20 @@ fn look(t: &dyn Transport, room: &str, filter: &Filter) -> Result<Vec<klatch::do
     Ok(seen.into_iter().filter(|m| filter.accepts(m)).collect())
 }
 
-fn wait(t: &dyn Transport, rooms: &[String], timeout: u64, filter: &Filter) -> Result<()> {
+fn wait(
+    t: &dyn Transport,
+    rooms: &[(String, klatch::domain::WaitFilter)],
+    timeout: u64,
+    peek: bool,
+) -> Result<()> {
     let (timeout, clamped) = effective_timeout(timeout);
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
     }
     let deadline = Instant::now() + Duration::from_secs(timeout);
     loop {
-        for room in rooms {
-            let found = look(t, room, filter)?;
+        for (room, filter) in rooms {
+            let found = look(t, room, filter, peek)?;
             for m in &found {
                 println!(
                     "[{room} {} {} {}] {}{}",
@@ -411,12 +409,33 @@ fn wait(t: &dyn Transport, rooms: &[String], timeout: u64, filter: &Filter) -> R
         if Instant::now() >= deadline {
             println!(
                 "[klatch wait: timeout room={} after={timeout}s]",
-                rooms.join(",")
+                rooms
+                    .iter()
+                    .map(|(r, _)| r.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// `who ROOM`, or with no room the members of every room the caller has joined, each under its name (#227).
+fn who(t: &dyn Transport, room: Option<&str>, now: i64, all: bool) -> Result<()> {
+    if let Some(room) = room {
+        print!("{}", render_who(&t.who(room)?, now, all));
+        return Ok(());
+    }
+    let rooms = t.rooms()?;
+    if rooms.is_empty() {
+        println!("you have not joined any room (klatch join <room>)");
+    }
+    for room in rooms {
+        println!("[{room}]");
+        print!("{}", render_who(&t.who(&room)?, now, all));
+    }
+    Ok(())
 }
 
 /// What `klatch claim` was asked.
