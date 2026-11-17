@@ -20,6 +20,14 @@ pub enum Role {
     Reviewer,
 }
 
+/// A grant or removal of a role: whose, which, and whether it is given (`on`) or taken away.
+#[derive(Clone, Copy)]
+pub(super) struct RoleChange<'a> {
+    pub member: &'a str,
+    pub role: Role,
+    pub on: bool,
+}
+
 impl Role {
     fn word(self) -> &'static str {
         match self {
@@ -58,14 +66,10 @@ const ADMIN_AGENT_ACTS: [&str; 14] = [
 ];
 
 impl<S: Store> Gateway<S> {
-    /// Give `member` the role `on`, or take it away (only if it is the role it holds). Replaces any other role.
-    pub(super) fn set_role(
-        &self,
-        who: &Principal,
-        member: &str,
-        role: Role,
-        on: bool,
-    ) -> Result<()> {
+    /// Give `change.member` the role `change.role`, or take it away (only if it is the role it holds). Replaces any
+    /// other role.
+    pub(super) fn set_role(&self, who: &Principal, change: RoleChange) -> Result<()> {
+        let RoleChange { member, role, on } = change;
         if !valid_name(member) {
             return Err(Error::Invalid(format!("bad member name: {member}")));
         }
@@ -93,7 +97,14 @@ impl<S: Store> Gateway<S> {
 
     /// Give a member the admin agent role, or take it away.
     pub fn admin_set_admin_agent(&self, who: &Principal, member: &str, on: bool) -> Result<()> {
-        self.set_role(who, member, Role::Admin, on)
+        self.set_role(
+            who,
+            RoleChange {
+                member,
+                role: Role::Admin,
+                on,
+            },
+        )
     }
 
     /// Whether the member holds the admin agent role.

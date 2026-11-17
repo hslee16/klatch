@@ -4,6 +4,7 @@
 //! post, claim or change policy. It holds one role in the same `role:<member>` policy entry the librarian uses, so
 //! a member is never two roles at once (`roles.rs`).
 
+use super::roles::RoleChange;
 use super::*;
 use crate::domain::{ReviewItem, Verdict};
 use crate::gateway::DRAIN_LIMIT;
@@ -14,7 +15,14 @@ const REVIEWER: &str = "reviewer";
 impl<S: Store> Gateway<S> {
     /// Give a member the reviewer role, or take it away.
     pub fn admin_set_reviewer(&self, who: &Principal, member: &str, on: bool) -> Result<()> {
-        self.set_role(who, member, Role::Reviewer, on)
+        self.set_role(
+            who,
+            RoleChange {
+                member,
+                role: Role::Reviewer,
+                on,
+            },
+        )
     }
 
     /// The review operations' own entry: the member check, the role and guard, and a record of a refusal.

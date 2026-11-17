@@ -5,12 +5,20 @@
 //! whatever the human granted (the lowest by default). The role mechanism it shares with the admin agent is in
 //! `roles.rs`.
 
+use super::roles::RoleChange;
 use super::*;
 
 impl<S: Store> Gateway<S> {
     /// Give a member the librarian role, or take it away.
     pub fn admin_set_librarian(&self, who: &Principal, member: &str, on: bool) -> Result<()> {
-        self.set_role(who, member, Role::Librarian, on)
+        self.set_role(
+            who,
+            RoleChange {
+                member,
+                role: Role::Librarian,
+                on,
+            },
+        )
     }
 
     /// Whether the member holds the librarian role.
