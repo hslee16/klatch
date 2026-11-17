@@ -57,7 +57,7 @@ impl<S: Store> Gateway<S> {
             self.store
                 .policy_set(&key, Some(&format!("{a},{b}")), self.now())?;
         }
-        let posted = self.post_labeled(who, &room, body, label)?;
+        let posted = self.post_labeled(who, (&room, body, label))?;
         self.store.join(&room, &who.member, self.now())?;
         self.store.join(&room, to, self.now())?;
         Ok((room, posted))

@@ -14,7 +14,7 @@ fn plan() -> Handoff<'static> {
 #[test]
 fn a_handoff_is_stored_and_delivered_with_its_kind_and_payload_and_a_plain_post_has_none() {
     let g = open();
-    g.post_handoff(&alice(), "r", "see the work order", None, &plan())
+    g.post_handoff(&alice(), ("r", "see the work order", None), &plan())
         .unwrap();
     g.post(&alice(), "r", "just words").unwrap();
     let m = g.read(&bob(), "r", false).unwrap();
@@ -35,9 +35,7 @@ fn a_kind_may_travel_alone_but_a_payload_needs_a_kind_and_both_are_checked() {
     let g = open();
     g.post_handoff(
         &alice(),
-        "r",
-        "done",
-        None,
+        ("r", "done", None),
         &Handoff {
             kind: "result",
             payload: None,
@@ -50,7 +48,7 @@ fn a_kind_may_travel_alone_but_a_payload_needs_a_kind_and_both_are_checked() {
             payload: Some("x"),
         };
         assert!(
-            is_invalid(g.post_handoff(&alice(), "r", "b", None, &h)),
+            is_invalid(g.post_handoff(&alice(), ("r", "b", None), &h)),
             "kind {bad:?}"
         );
     }
@@ -64,7 +62,7 @@ fn a_kind_may_travel_alone_but_a_payload_needs_a_kind_and_both_are_checked() {
             payload: Some(bad),
         };
         assert!(
-            is_invalid(g.post_handoff(&alice(), "r", "b", None, &h)),
+            is_invalid(g.post_handoff(&alice(), ("r", "b", None), &h)),
             "a payload of {} bytes",
             bad.len()
         );
@@ -72,9 +70,7 @@ fn a_kind_may_travel_alone_but_a_payload_needs_a_kind_and_both_are_checked() {
     let full = "p".repeat(crate::domain::MAX_PAYLOAD_BYTES);
     g.post_handoff(
         &alice(),
-        "r",
-        "b",
-        None,
+        ("r", "b", None),
         &Handoff {
             kind: "plan",
             payload: Some(&full),
@@ -100,7 +96,7 @@ fn the_payload_is_held_to_the_same_rules_as_the_body_and_a_refusal_never_repeats
             payload: Some(payload),
         };
         let e = g
-            .post_handoff(&alice(), "r", "harmless body", None, &h)
+            .post_handoff(&alice(), ("r", "harmless body", None), &h)
             .unwrap_err();
         assert!(matches!(e, Error::Refused { .. }), "{what}: {e}");
         let shown = e.to_string().to_lowercase();
@@ -123,20 +119,16 @@ fn a_handoff_follows_the_label_rules_of_the_room() {
     g.admin_set_room_label(&admin(), "vault", "private")
         .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
-    g.post_handoff(&alice(), "vault", "inside", None, &plan())
+    g.post_handoff(&alice(), ("vault", "inside", None), &plan())
         .unwrap();
     assert!(is_refused(g.post_handoff(
         &bob(),
-        "vault",
-        "outside",
-        None,
+        ("vault", "outside", None),
         &plan()
     )));
     assert!(is_refused(g.post_handoff(
         &alice(),
-        "r",
-        "too high",
-        Some("private"),
+        ("r", "too high", Some("private")),
         &plan()
     )));
 }
@@ -151,7 +143,7 @@ fn a_sealed_label_seals_the_payload_and_a_reader_without_the_key_sees_only_a_not
     g.use_label_keys(
         crate::keys::LabelKeys::new().with("private", crate::keys::Key::from_bytes([9; 32])),
     );
-    g.post_handoff(&alice(), "vault", "sealed plan", None, &plan())
+    g.post_handoff(&alice(), ("vault", "sealed plan", None), &plan())
         .unwrap();
     assert_eq!(
         g.read(&alice(), "vault", false).unwrap().len(),

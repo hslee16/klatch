@@ -151,7 +151,7 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted> {
         self.gateway
-            .post_labeled(&self.principal, room, body, label)
+            .post_labeled(&self.principal, (room, body, label))
     }
     fn post_handoff(
         &self,
@@ -161,7 +161,7 @@ impl<S: Store> Transport for Direct<S> {
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted> {
         self.gateway
-            .post_handoff(&self.principal, room, body, label, handoff)
+            .post_handoff(&self.principal, (room, body, label), handoff)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)

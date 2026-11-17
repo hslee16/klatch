@@ -177,7 +177,7 @@ impl<S: Store> Gateway<S> {
             rule: rule.into(),
             reason: reason.into(),
         };
-        self.note_refusal(who, "*", &format!("admin:{action}"), &e);
+        self.note_refusal(who, ("*", &format!("admin:{action}")), &e);
         let detail = format!("{} refused: {rule}", who.member);
         let _ = self
             .store
