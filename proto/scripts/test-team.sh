@@ -91,6 +91,11 @@ for want in "-p" "--output-format" "stream-json" "--verbose" "--settings" "--max
 done
 if [ -z "$missing" ]; then ok "claude is run headless with stream-json, verbose, a budget cap and its own settings"; else bad "claude args missing:$missing"; fi
 if printf '%s' "$args" | grep -q "member alpha" && printf '%s' "$args" | grep -q "ticket #11" && printf '%s' "$args" | grep -q "Build the alpha thing" && ! printf '%s' "$args" | grep -q "KLATCH_NAME="; then ok "the brief names the member, the ticket and the task, and has no KLATCH_NAME"; else bad "brief"; fi
+pr_missing=""
+for want in 'Closes #' 'python3 -I proto/scripts/pr-ledger' "reaches \`ready\`" '--rerun-cancelled' 'Never rerun a real red' 'ready: #' 'release your claims' 'Never merge'; do
+  printf '%s' "$args" | grep -qF -- "$want" || pr_missing="$pr_missing [$want]"
+done
+if [ -z "$pr_missing" ]; then ok "the brief carries the PR rules (Closes #N, poll pr-ledger to ready, rerun cancelled, fix red, post ready, release claims)"; else bad "brief PR rules missing:$pr_missing"; fi
 if python3 - "$a/settings.json" "$bin/klatch" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1])); k = sys.argv[2]; h = s["hooks"]
