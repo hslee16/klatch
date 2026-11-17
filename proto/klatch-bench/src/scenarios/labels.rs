@@ -32,6 +32,11 @@ fn labels_and_clearance(w: &World) -> Res {
         "labelled private, above your clearance public",
         "a public member is refused in a private room",
     )?;
+    has(
+        &w.refused("pub", &["post", "vault", "hello"])?,
+        "next step: ask the admin to raise your clearance or to relabel the room",
+        "the clearance refusal names the fix",
+    )?;
     w.ok("priv", &["post", "vault", "the machine is called quokka"])?;
     // a private fact cannot enter a public room, and the refusal does not repeat it
     let refused = w.refused(
@@ -50,6 +55,11 @@ fn labels_and_clearance(w: &World) -> Res {
         "a private message into a public room",
     )?;
     lacks(&refused, "quokka", "the refusal repeated the text")?;
+    has(
+        &refused,
+        "next step: post it to a room labelled private or higher",
+        "the label refusal names the fix",
+    )?;
     check(
         w.ok("pub", &["read", "town", "--peek"])?.trim().is_empty(),
         "the refused message reached the public room",
@@ -107,6 +117,11 @@ fn scrub_and_direct_messages(w: &World) -> Res {
         &refused.to_lowercase(),
         "quokka",
         "the refusal repeated the term",
+    )?;
+    has(
+        &refused,
+        "next step: remove or reword the part that matches the rule hosts",
+        "the scrub refusal names the fix",
     )?;
     w.ok("alice", &["post", "town", "a quokka is a marsupial"])?;
     let list = w.admin(&["scrub-list"], "");

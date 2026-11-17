@@ -1,7 +1,7 @@
 //! The shape checks every gateway call runs before it asks the guard or touches the store: who is calling, which
 //! room, and the bounds on names, paths, reasons and statuses.
 
-use crate::domain::{Error, Principal, Result, valid_name};
+use crate::domain::{Error, NEXT_STEP, Principal, Result, valid_name};
 
 pub(super) const MAX_PATH_BYTES: usize = 1024;
 pub(super) const MAX_REASON_BYTES: usize = 500;
@@ -53,7 +53,7 @@ pub(super) fn check_no_credentials(text: &str) -> Result<()> {
         Some(kind) => Err(Error::Refused {
             rule: "credentials".into(),
             reason: format!(
-                "the text looks like it contains {kind}; do not post secrets to a room, keep them in a secret store and say where"
+                "the text looks like it contains {kind}; {NEXT_STEP}remove the secret and say where it is kept instead, then post again"
             ),
         }),
     }
