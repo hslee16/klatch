@@ -25,14 +25,12 @@ const GUARDED: &[(&str, Call)] = &[
     ("join", |g, w| refused(g.join(w, "r"))),
     ("post", |g, w| refused(g.post(w, "r", "x"))),
     ("post_labeled", |g, w| {
-        refused(g.post_labeled(w, "r", "x", None))
+        refused(g.post_labeled(w, ("r", "x", None)))
     }),
     ("post_handoff", |g, w| {
         refused(g.post_handoff(
             w,
-            "r",
-            "x",
-            None,
+            ("r", "x", None),
             &crate::gateway::Handoff {
                 kind: "k",
                 payload: None,
@@ -220,12 +218,17 @@ fn public_methods() -> Vec<String> {
         include_str!("../../gateway.rs"),
         include_str!("../admin.rs"),
         include_str!("../anchors.rs"),
+        include_str!("../board.rs"),
         include_str!("../budget.rs"),
+        include_str!("../claims.rs"),
         include_str!("../dm.rs"),
         include_str!("../history.rs"),
         include_str!("../policy.rs"),
+        include_str!("../presence.rs"),
+        include_str!("../reading.rs"),
         include_str!("../runs.rs"),
         include_str!("../scrub.rs"),
+        include_str!("../specs.rs"),
         include_str!("../tripwire.rs"),
         include_str!("../workers.rs"),
     ];

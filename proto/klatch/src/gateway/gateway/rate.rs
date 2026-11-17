@@ -57,7 +57,7 @@ impl<S: Store> Gateway<S> {
                 (oldest + secs - now).max(1)
             ),
         };
-        self.note_refusal(who, room, "post", &e);
+        self.note_refusal(who, (room, "post"), &e);
         Err(e)
     }
 }

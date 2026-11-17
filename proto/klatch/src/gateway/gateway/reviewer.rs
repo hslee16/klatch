@@ -21,7 +21,7 @@ impl<S: Store> Gateway<S> {
     fn admit_review(&self, who: &Principal, op: &Operation) -> Result<()> {
         check_member(who)?;
         self.check_guard(who, op).inspect_err(|e| {
-            self.note_refusal(who, "", op.name(), e);
+            self.note_refusal(who, ("", op.name()), e);
         })
     }
 

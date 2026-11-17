@@ -77,7 +77,10 @@ fn a_message_labelled_above_its_room_is_refused_and_not_stored() {
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
     g.join(&alice(), "town").unwrap();
     let err = g
-        .post_labeled(&alice(), "town", "the hostname is hidden", Some("private"))
+        .post_labeled(
+            &alice(),
+            ("town", "the hostname is hidden", Some("private")),
+        )
         .unwrap_err();
     assert_eq!(rule_of(err), "label");
     assert!(g.read(&alice(), "town", false).unwrap().is_empty());
@@ -86,7 +89,7 @@ fn a_message_labelled_above_its_room_is_refused_and_not_stored() {
 #[test]
 fn a_message_labelled_below_its_room_is_stored_at_that_label() {
     let g = vault();
-    g.post_labeled(&alice(), "vault", "a lower fact", Some("internal"))
+    g.post_labeled(&alice(), ("vault", "a lower fact", Some("internal")))
         .unwrap();
     let got = g.tail(&alice(), "vault", (0, 10)).unwrap();
     assert_eq!(got[0].label, "internal");
@@ -95,12 +98,9 @@ fn a_message_labelled_below_its_room_is_stored_at_that_label() {
 #[test]
 fn a_label_the_chain_does_not_have_is_invalid() {
     let g = open();
-    assert!(is_invalid(g.post_labeled(
-        &alice(),
-        "r",
-        "x",
-        Some("top-secret")
-    )));
+    assert!(is_invalid(
+        g.post_labeled(&alice(), ("r", "x", Some("top-secret")))
+    ));
     assert!(is_invalid(g.admin_set_room_label(
         &admin(),
         "r",
@@ -225,7 +225,7 @@ fn a_label_refusal_and_a_credential_refusal_are_each_audited_once() {
     let g = open();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
     let _ = g
-        .post_labeled(&alice(), "r", "x", Some("private"))
+        .post_labeled(&alice(), ("r", "x", Some("private")))
         .unwrap_err();
     let _ = g
         .post(&alice(), "r", "key AKIAIOSFODNN7EXAMPLE here")

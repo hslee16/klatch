@@ -133,7 +133,7 @@ impl<S: Store> Gateway<S> {
     /// Prove a member from its token (see `check_credential`), recording a failure in the refusal record.
     pub fn verify_credential(&self, member: &str, token: &Token) -> Result<Principal> {
         check_credential(&self.store, self.now(), member, token).inspect_err(|e| {
-            self.note_refusal(&Principal::unattributed(member), "", "credential", e);
+            self.note_refusal(&Principal::unattributed(member), ("", "credential"), e);
         })
     }
 
