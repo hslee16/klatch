@@ -37,7 +37,7 @@ ExpiredNeverBlocks OnlyLivenessRevives RenewNeverRevives RenewNeverShortens Expi
 DeadlockFlagExact RefusalTellsOnlyTheRequester ActivityRenewsToOwnTtl
 ParkedLeaseEndsAtReturn EveryCycleHasATold"
 # known findings: expected to fail, with the ticket for each
-findings="StrictLeaseCap"
+findings=""   # none open (StrictLeaseCap became LeaseWithinCap when #646 was decided)
 # invariants checked on the smaller action set `stepCore` (claim, release, tick; see claims.qnt)
 core="DeadlockFlagExact RefusalTellsOnlyTheRequester EveryCycleHasATold W_deadlock W_staleWait W_takeTells"
 # planted bug -> the invariant that must catch it
@@ -47,7 +47,8 @@ releaseAny:ReleaseOnlyOwn expiredBlocks:ExpiredNeverBlocks renewRevives:RenewNev
 parkRevives:OnlyLivenessRevives renewShortens:RenewNeverShortens parkShortens:ExpiryShrinksOnlyByLeaseRules
 deadlockNever:DeadlockFlagExact windowIgnored:DeadlockFlagExact tellAll:RefusalTellsOnlyTheRequester
 cutBelowTtl:ActivityRenewsToOwnTtl reparkKeeps:ParkedLeaseEndsAtReturn
-takeTellsNone:EveryCycleHasATold firstBlockerOnly:DeadlockFlagExact"
+takeTellsNone:EveryCycleHasATold firstBlockerOnly:DeadlockFlagExact postKeepsStretch:LeaseWithinCap
+parkOverMax:LeaseWithinParkMax"
 # event -> witness invariant that is made to fail on purpose, so Apalache returns a short trace of the event
 witnesses="deadlock:W_deadlock conflict:W_conflict invalid:W_invalid renew:W_renewMoves park:W_parkStretch
 revive:W_revive cutback:W_cutBack postkeeps:W_postKeeps ttlcut:W_cutKeepsTtl repark:W_reparkCuts taketells:W_takeTells stalewait:W_staleWait stuck:W_stuck gone:W_gone shared:W_shared releasenotfound:W_releaseNotFound"
@@ -102,6 +103,7 @@ cmd_check() {
 cmd_findings() {
   local bad=0
   echo "known findings: each must be VIOLATED (a counterexample exists within $steps steps)"
+  [ -n "${findings// /}" ] || echo "  none open"
   for inv in $findings; do
     local n="$steps" r
     r="$(verify "$model" "$inv" "$n")"
