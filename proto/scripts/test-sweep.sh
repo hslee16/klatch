@@ -33,6 +33,7 @@ case "$path" in
       .mergeable_state) cat "$FAKE_DIR/mstate" ;;
       .merged) cat "$FAKE_DIR/merged" ;;
     esac ;;
+  */compare/*) cat "$FAKE_DIR/behind_by" 2> /dev/null || echo 0 ;;
   */check-runs) sha="${path%/check-runs}"; sha="${sha##*/}"; cat "$FAKE_DIR/checks-$sha" 2> /dev/null || true ;;
   */issues/*) t="${path##*/}"; cat "$FAKE_DIR/issue-$t" 2> /dev/null || echo open ;;
 esac
@@ -166,6 +167,13 @@ echo dirty > "$fake/mstate"
 printf '#15   ready                feat-15            #706      merge\n' > "$fake/ledger.txt"
 runsweep
 if [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls '^git merge')" -eq 0 ]; then ok "a ready PR that is conflicted is neither merged nor integrated"; else bad "ready+dirty: $(cat "$log")"; fi
+
+# --- ready and GitHub says clean, but main has commits the head lacks (#760): integrate first, do not merge the stale head
+newenv
+printf '#13   ready                feat-13            #706      merge, then run the bench\n' > "$fake/ledger.txt"
+echo 2 > "$fake/behind_by"
+runsweep
+if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls '^git merge')" -ge 1 ]; then ok "a ready PR that is behind main is integrated, never merged on its stale head"; else bad "stale head rc=$rc: $(cat "$log")"; fi
 
 # --- ready but behind: integrate on a throwaway branch, push to the PR branch, wait for green on the NEW head, merge
 newenv

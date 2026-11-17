@@ -1,0 +1,1 @@
+- `pr-sweep` integrates a ready PR whose head is behind main and merges only a head that includes main, so two PRs that pass alone cannot break main together.
