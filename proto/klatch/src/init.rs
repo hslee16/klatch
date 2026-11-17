@@ -265,28 +265,29 @@ pub fn remove_hooks(settings: &mut Value) -> Result<(), String> {
         return Ok(());
     };
     let map = hooks.as_object_mut().ok_or("\"hooks\" is not an object")?;
-    let mut emptied = Vec::new();
-    for (event, list) in map.iter_mut() {
-        let Some(list) = list.as_array_mut() else {
-            continue;
-        };
-        let had_entries = !list.is_empty();
-        sync_owned(list, "", false, is_ours);
-        sync_owned(list, "", false, is_wake);
-        if had_entries && list.is_empty() {
-            emptied.push(event.clone());
-        }
-    }
+    let emptied: Vec<String> = map
+        .iter_mut()
+        .filter_map(|(event, list)| {
+            let list = list.as_array_mut()?;
+            strip_klatch(list).then(|| event.clone())
+        })
+        .collect();
     for event in &emptied {
         map.remove(event);
     }
-    if !emptied.is_empty()
-        && map.is_empty()
-        && let Some(obj) = settings.as_object_mut()
-    {
+    let klatch_emptied_hooks = !emptied.is_empty() && map.is_empty();
+    if klatch_emptied_hooks && let Some(obj) = settings.as_object_mut() {
         obj.remove("hooks");
     }
     Ok(())
+}
+
+/// Take klatch's entries out of an event's list; whether that left a list that had entries with none.
+fn strip_klatch(list: &mut Vec<Value>) -> bool {
+    let had_entries = !list.is_empty();
+    sync_owned(list, "", false, is_ours);
+    sync_owned(list, "", false, is_wake);
+    had_entries && list.is_empty()
 }
 
 fn plan_removal(label: &'static str, path: PathBuf) -> anyhow::Result<Removal> {
@@ -455,35 +456,42 @@ pub enum HookKind {
 
 /// Every hook klatch installed in a settings value: its event, its command and which one it is. Read only.
 pub fn installed_hooks(settings: &Value) -> Vec<(String, String, HookKind)> {
-    let mut found = Vec::new();
     let Some(events) = settings.get("hooks").and_then(Value::as_object) else {
-        return found;
+        return Vec::new();
     };
+    let mut found = Vec::new();
     for (event, list) in events {
         for matcher in list.as_array().into_iter().flatten() {
-            for hook in matcher
-                .get("hooks")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let Some(cmd) = hook.get("command").and_then(Value::as_str) else {
-                    continue;
-                };
-                let kind = if is_wake(hook) {
-                    HookKind::Wake
-                } else if is_ours(hook) && event == "PreToolUse" {
-                    HookKind::Enforce
-                } else if is_ours(hook) {
-                    HookKind::Base
-                } else {
-                    continue;
-                };
-                found.push((event.clone(), cmd.to_string(), kind));
-            }
+            found.extend(klatch_hooks_in(event, matcher));
         }
     }
     found
+}
+
+/// The klatch hooks of one matcher entry under `event`: the event, the command and which hook it is.
+fn klatch_hooks_in<'a>(
+    event: &'a str,
+    matcher: &'a Value,
+) -> impl Iterator<Item = (String, String, HookKind)> + 'a {
+    let hooks = matcher.get("hooks").and_then(Value::as_array);
+    hooks.into_iter().flatten().filter_map(move |hook| {
+        let cmd = hook.get("command").and_then(Value::as_str)?;
+        let kind = hook_kind(event, hook)?;
+        Some((event.to_string(), cmd.to_string(), kind))
+    })
+}
+
+/// Which klatch hook a settings entry under `event` is, or none when it is not klatch's.
+fn hook_kind(event: &str, hook: &Value) -> Option<HookKind> {
+    if is_wake(hook) {
+        Some(HookKind::Wake)
+    } else if !is_ours(hook) {
+        None
+    } else if event == "PreToolUse" {
+        Some(HookKind::Enforce)
+    } else {
+        Some(HookKind::Base)
+    }
 }
 
 /// The program a hook command runs: its first word, unquoted when `init` quoted it.
@@ -675,10 +683,7 @@ fn set_optional(
         .as_str()
         .ok_or("no hook command")?
         .to_string();
-    let absent = settings
-        .as_object()
-        .is_some_and(|r| !r.get("hooks").is_some_and(|h| h.get(spec.event).is_some()));
-    if how != Switch::On && absent {
+    if how != Switch::On && event_absent(settings, spec.event) {
         return Ok(());
     }
     let hooks = hooks_of(settings)?;
@@ -686,20 +691,31 @@ fn set_optional(
     if !sync_owned(list, &cmd, how != Switch::Off, spec.owns) && how == Switch::On {
         list.push(entry);
     } else if how != Switch::Off && spec.refresh {
-        // an entry written by an older klatch: bring every field up to date, not just the command
-        for hook in list
-            .iter_mut()
-            .filter_map(|m| m.get_mut("hooks").and_then(Value::as_array_mut))
-            .flatten()
-            .filter(|h| (spec.owns)(h))
-        {
-            *hook = entry["hooks"][0].clone();
-        }
+        refresh_owned(list, spec.owns, &entry["hooks"][0]);
     }
     if list.is_empty() {
         hooks.remove(spec.event);
     }
     Ok(())
+}
+
+/// Whether a settings object has no entry for the event (a settings value that is not an object counts as present).
+fn event_absent(settings: &Value, event: &str) -> bool {
+    let has_event =
+        |r: &serde_json::Map<String, Value>| r.get("hooks").is_some_and(|h| h.get(event).is_some());
+    settings.as_object().is_some_and(|r| !has_event(r))
+}
+
+/// An entry written by an older klatch: bring every field of the hooks `owns` claims up to date, not just the command.
+fn refresh_owned(list: &mut [Value], owns: fn(&Value) -> bool, fresh: &Value) {
+    for hook in list
+        .iter_mut()
+        .filter_map(|m| m.get_mut("hooks").and_then(Value::as_array_mut))
+        .flatten()
+        .filter(|h| owns(h))
+    {
+        *hook = fresh.clone();
+    }
 }
 
 /// The PreToolUse claim hook (#33): blocks an edit of a path another member claimed. Opt in with `--enforce`.

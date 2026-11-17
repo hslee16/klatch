@@ -230,23 +230,31 @@ impl Client {
                     result,
                     error,
                     ..
-                }) if rid == id => {
-                    if ok {
-                        return Ok(result.unwrap_or(Value::Null));
-                    }
-                    let e = error.unwrap_or(crate::protocol::ErrorBody {
-                        code: "backend".into(),
-                        message: String::new(),
-                    });
-                    return Err(Error::Api(ApiError {
-                        code: e.code,
-                        message: e.message,
-                        refusals: std::mem::take(&mut self.refusals),
-                    }));
-                }
+                }) if rid == id => return self.outcome(ok, result, error),
                 Some(other) => self.note(other),
             }
         }
+    }
+
+    /// The answer to a request: its result, or an `Error::Api` carrying the refusals seen meanwhile.
+    fn outcome(
+        &mut self,
+        ok: bool,
+        result: Option<Value>,
+        error: Option<crate::protocol::ErrorBody>,
+    ) -> Result<Value> {
+        if ok {
+            return Ok(result.unwrap_or(Value::Null));
+        }
+        let e = error.unwrap_or(crate::protocol::ErrorBody {
+            code: "backend".into(),
+            message: String::new(),
+        });
+        Err(Error::Api(ApiError {
+            code: e.code,
+            message: e.message,
+            refusals: std::mem::take(&mut self.refusals),
+        }))
     }
 
     pub fn post(
@@ -365,7 +373,7 @@ impl Client {
     /// The messages received so far; with `until_caught_up`, wait for the replay to finish first.
     pub fn collect(&mut self, until_caught_up: bool, timeout: Duration) -> Result<Collected> {
         let end = Instant::now() + timeout;
-        while until_caught_up && self.caught_up.is_none() && Instant::now() < end {
+        while self.replaying(until_caught_up, end) {
             match self.frame(end.saturating_duration_since(Instant::now()))? {
                 Some(f) => self.note(f),
                 None => break,
@@ -375,6 +383,11 @@ impl Client {
             messages: std::mem::take(&mut self.pending),
             caught_up: self.caught_up,
         })
+    }
+
+    /// Whether `collect` should keep waiting for the replay to finish before `end`.
+    fn replaying(&self, until_caught_up: bool, end: Instant) -> bool {
+        until_caught_up && self.caught_up.is_none() && Instant::now() < end
     }
 
     /// The next message of a subscription, waiting for it; `None` on timeout.
