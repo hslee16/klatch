@@ -288,7 +288,7 @@ fn identify_by_credential(
     }
     let at = now();
     if let Err(e) = klatch::gateway::check_credential(store, at, &bundle.member, &bundle.token) {
-        let _ = klatch::store::Store::record_refusal(
+        let _ = klatch::store::PolicyStore::record_refusal(
             store,
             &klatch::store::NewRefusal::new(&bundle.member, "", "credential", "credential"),
             at,

@@ -4,7 +4,8 @@ mod common;
 
 use common::*;
 use klatch::keys::KeySource;
-use klatch::store::{SqliteStore, Store};
+use klatch::store::SqliteStore;
+use klatch::store::areas::*;
 use std::path::PathBuf;
 use std::process::Command;
 

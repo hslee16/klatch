@@ -57,7 +57,7 @@ impl<S: Store> Gateway<S> {
             _ => "",
         };
         let note = format!("by {}: {}", who.member, why);
-        record(&self.store, &q, (verdict, &note), REVIEWER, self.now())?;
+        record(&self.store, &q, (verdict, &note), (REVIEWER, self.now()))?;
         self.release_crossings().map(|_| ())
     }
 }

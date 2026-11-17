@@ -3,7 +3,7 @@
 //! stays inline in the gateway and fails closed, so an absent or unreachable judge only leaves the queue longer.
 
 use crate::domain::{Judge, Result, ReviewItem, Verdict};
-use crate::store::{NewAudit, QueuedReview, Store};
+use crate::store::{NewAudit, QueuedReview, ReviewResolution, Store};
 
 /// How many items one drain looks at, so a run is bounded.
 pub const DRAIN_LIMIT: usize = 100;
@@ -59,7 +59,7 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
             Verdict::Deny(_) => out.denied += 1,
         }
         if verdict != Verdict::Defer {
-            record(store, &q, (&verdict, &detail), "judge", now)?;
+            record(store, &q, (&verdict, &detail), ("judge", now))?;
         }
     }
     Ok(out)
@@ -70,8 +70,7 @@ pub(crate) fn record<S: Store>(
     store: &S,
     q: &QueuedReview,
     (v, detail): (&Verdict, &str),
-    action: &str,
-    now: i64,
+    (action, now): (&str, i64),
 ) -> Result<()> {
     let reason = match v {
         Verdict::Deny(why) if detail.is_empty() => why.as_str(),
@@ -81,7 +80,7 @@ pub(crate) fn record<S: Store>(
         // kept on the item so a crossing can release the redaction; the audit never holds it
         store.set_review_text(q.id, text)?;
     }
-    store.resolve_review(q.id, v.word(), reason, now)?;
+    store.resolve_review(&ReviewResolution::new(q.id, v.word(), reason), now)?;
     let target = format!("{}#{}", q.room, q.seq);
     let note = format!("{} to {}: {}", v.word(), q.to_label, reason);
     store.record_audit(
@@ -94,7 +93,8 @@ pub(crate) fn record<S: Store>(
 mod tests {
     use super::*;
     use crate::domain::{Judge, NullJudge, ReviewItem, Verdict};
-    use crate::store::{NewReview, SqliteStore, Store};
+    use crate::store::areas::*;
+    use crate::store::{NewReview, SqliteStore};
 
     struct Says(Verdict);
     impl Judge for Says {

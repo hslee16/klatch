@@ -2,7 +2,10 @@ use super::{Session, SessionConfig, serve};
 use crate::domain::{Claim, Error, MemberInfo, Message, Posted, Principal, Result};
 use crate::gateway::{AllowAll, FixedClock, Gateway, Guard, Operation};
 use crate::protocol::{Attribution, ServerFrame, decode_server_line};
-use crate::store::{ClaimRequest, NewMessage, Seat, SqliteStore, Store};
+use crate::store::{
+    AskStore, ClaimRequest, ClaimStore, CredentialStore, MemberStore, MessageStore, NewMessage,
+    PolicyStore, ReviewStore, RoomStore, Seat, SqliteStore, Store,
+};
 use serde_json::{Value, json};
 use std::io::Cursor;
 
@@ -463,41 +466,58 @@ fn acks_and_unknown_frames_are_accepted_silently() {
 }
 
 struct DownStore;
-impl Store for DownStore {
+impl MessageStore for DownStore {
     fn join(&self, _: &str, _: &str, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
+
     fn post_as(&self, _: &NewMessage, _: i64) -> Result<Posted> {
         Err(Error::Backend("down".into()))
     }
+
     fn read(&self, _: Seat, _: bool, _: i64) -> Result<Vec<Message>> {
         Err(Error::Busy("locked".into()))
     }
-    fn members(&self, _: &str) -> Result<Vec<MemberInfo>> {
-        Err(Error::Backend("down".into()))
-    }
-    fn claim(&self, _: &ClaimRequest, _: i64) -> Result<()> {
-        Err(Error::Backend("down".into()))
-    }
-    fn release(&self, _: &str, _: &str, _: &str) -> Result<()> {
-        Err(Error::Backend("down".into()))
-    }
-    fn claims(&self, _: &str, _: i64) -> Result<Vec<Claim>> {
-        Err(Error::Backend("down".into()))
-    }
-    fn rooms_of(&self, _: &str) -> Result<Vec<String>> {
-        Err(Error::Backend("down".into()))
-    }
+
     fn tail(&self, _: &str, _: i64, _: usize) -> Result<Vec<Message>> {
         Err(Error::Backend("down".into()))
     }
+
     fn head(&self, _: &str) -> Result<i64> {
         Err(Error::Backend("down".into()))
     }
+
     fn advance_cursor(&self, _: Seat, _: i64, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
 }
+impl MemberStore for DownStore {
+    fn members(&self, _: &str) -> Result<Vec<MemberInfo>> {
+        Err(Error::Backend("down".into()))
+    }
+
+    fn rooms_of(&self, _: &str) -> Result<Vec<String>> {
+        Err(Error::Backend("down".into()))
+    }
+}
+impl ClaimStore for DownStore {
+    fn claim(&self, _: &ClaimRequest, _: i64) -> Result<()> {
+        Err(Error::Backend("down".into()))
+    }
+
+    fn release(&self, _: &str, _: &str, _: &str) -> Result<()> {
+        Err(Error::Backend("down".into()))
+    }
+
+    fn claims(&self, _: &str, _: i64) -> Result<Vec<Claim>> {
+        Err(Error::Backend("down".into()))
+    }
+}
+impl AskStore for DownStore {}
+impl ReviewStore for DownStore {}
+impl CredentialStore for DownStore {}
+impl PolicyStore for DownStore {}
+impl RoomStore for DownStore {}
 
 #[test]
 fn store_failures_become_failed_responses_and_the_session_survives() {
@@ -1036,42 +1056,59 @@ impl FlakyStore {
         Ok(())
     }
 }
-impl Store for FlakyStore {
+impl MessageStore for FlakyStore {
     fn join(&self, r: &str, m: &str, n: i64) -> Result<()> {
         self.inner.join(r, m, n)
     }
+
     fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
         self.inner.post_as(message, now)
     }
+
     fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
         self.inner.read(at, advance, now)
     }
-    fn members(&self, r: &str) -> Result<Vec<MemberInfo>> {
-        self.inner.members(r)
-    }
-    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
-        self.inner.claim(request, now)
-    }
-    fn release(&self, r: &str, o: &str, p: &str) -> Result<()> {
-        self.inner.release(r, o, p)
-    }
-    fn claims(&self, r: &str, n: i64) -> Result<Vec<Claim>> {
-        self.inner.claims(r, n)
-    }
-    fn rooms_of(&self, m: &str) -> Result<Vec<String>> {
-        self.inner.rooms_of(m)
-    }
+
     fn tail(&self, r: &str, a: i64, l: usize) -> Result<Vec<Message>> {
         self.gate()?;
         self.inner.tail(r, a, l)
     }
+
     fn head(&self, r: &str) -> Result<i64> {
         self.inner.head(r)
     }
+
     fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.inner.advance_cursor(at, seq, now)
     }
 }
+impl MemberStore for FlakyStore {
+    fn members(&self, r: &str) -> Result<Vec<MemberInfo>> {
+        self.inner.members(r)
+    }
+
+    fn rooms_of(&self, m: &str) -> Result<Vec<String>> {
+        self.inner.rooms_of(m)
+    }
+}
+impl ClaimStore for FlakyStore {
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        self.inner.claim(request, now)
+    }
+
+    fn release(&self, r: &str, o: &str, p: &str) -> Result<()> {
+        self.inner.release(r, o, p)
+    }
+
+    fn claims(&self, r: &str, n: i64) -> Result<Vec<Claim>> {
+        self.inner.claims(r, n)
+    }
+}
+impl AskStore for FlakyStore {}
+impl ReviewStore for FlakyStore {}
+impl CredentialStore for FlakyStore {}
+impl PolicyStore for FlakyStore {}
+impl RoomStore for FlakyStore {}
 
 #[test]
 fn a_busy_store_is_retried_silently_and_the_stream_catches_up() {

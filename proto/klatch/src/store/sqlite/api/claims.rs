@@ -1,0 +1,93 @@
+//! The SQLite side of the `ClaimStore` area.
+
+use super::super::SqliteStore;
+use crate::domain::{Claim, ClaimChanges, ReleaseNote, Result};
+use crate::store::ClaimStore;
+use crate::store::{ClaimRequest, Release};
+use rusqlite::params;
+
+impl ClaimStore for SqliteStore {
+    fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        self.do_release_anchored(anchor, now)
+    }
+
+    fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
+        self.rows(
+            "SELECT DISTINCT anchor FROM claims WHERE anchor<>'' AND expires>?1 ORDER BY anchor",
+            params![now],
+            |r| r.get(0),
+        )
+    }
+
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        self.take_claim(request, now)
+    }
+
+    fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
+        self.do_release(room, owner, path)
+    }
+
+    fn release_with(&self, release: &Release, now: i64) -> Result<()> {
+        self.do_release_with(release, now)
+    }
+
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<ReleaseNote>> {
+        self.optional(
+            "SELECT owner,note,ts FROM claim_notes WHERE room=?1 AND path=?2",
+            params![room, path],
+            |r| {
+                Ok(ReleaseNote {
+                    owner: r.get(0)?,
+                    note: r.get(1)?,
+                    ts: r.get(2)?,
+                })
+            },
+        )
+    }
+
+    fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.do_release_member_claims(member, now)
+    }
+
+    fn claim_owners(&self) -> Result<Vec<String>> {
+        self.claim_owners_all()
+    }
+
+    fn retime_member_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
+        self.retime_claims(member, until, extend)
+    }
+
+    fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
+        self.rows("SELECT path,owner,reason,expires,scope FROM claims WHERE room=?1 AND expires>?2 ORDER BY path", params![room, now], |r| {
+            Ok(Claim {
+                path: r.get(0)?,
+                owner: r.get(1)?,
+                reason: r.get(2)?,
+                expires: r.get(3)?,
+                scope: r.get(4)?,
+            })
+        })
+    }
+
+    fn claim_ages(
+        &self,
+        room: &str,
+        owner: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::AgedClaim>> {
+        self.aged_claims(room, owner, now)
+    }
+
+    fn deadlock_notices(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::CycleNotice>> {
+        self.cycle_notices(room, member, now)
+    }
+
+    fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
+        self.do_claim_changes(room, member, now)
+    }
+}

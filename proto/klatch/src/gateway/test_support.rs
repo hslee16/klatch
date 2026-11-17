@@ -2,7 +2,9 @@
 use crate::domain::{Claim, Error, MemberInfo, Message, Posted, Principal, Result};
 use crate::gateway::{Guard, Operation};
 use crate::store::{
-    ClaimRequest, HookEvent, NewAudit, NewMessage, Release, Seat, SqliteStore, Store,
+    AskStore, ClaimRequest, ClaimStore, CredentialStore, HookEvent, MemberStore, MessageStore,
+    NewAudit, NewMessage, PolicyStore, Release, ReviewResolution, ReviewStore, RoomStore, Seat,
+    SqliteStore,
 };
 use std::cell::{Cell, RefCell};
 
@@ -35,222 +37,154 @@ impl SpyStore {
     }
 }
 
-impl Store for SpyStore {
+impl MessageStore for SpyStore {
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.join(room, member, now)
     }
+
     fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
         self.gate()?;
         self.inner.post_as(message, now)
     }
+
     fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
         self.gate()?;
         self.inner.read(at, advance, now)
     }
-    fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
-        self.gate()?;
-        self.inner.members(room)
-    }
-    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
-        self.gate()?;
-        self.inner.claim(request, now)
-    }
-    fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
-        self.gate()?;
-        self.inner.release(room, owner, path)
-    }
-    fn note_parent(&self, member: &str, parent: &str, now: i64) -> Result<()> {
-        self.gate()?;
-        self.inner.note_parent(member, parent, now)
-    }
-    fn parent_of(&self, member: &str) -> Result<Option<String>> {
-        self.gate()?;
-        self.inner.parent_of(member)
-    }
-    fn set_muted(&self, at: Seat, muted: bool, now: i64) -> Result<()> {
-        self.inner.set_muted(at, muted, now)
-    }
-    fn is_muted(&self, at: Seat) -> Result<bool> {
-        self.inner.is_muted(at)
-    }
-    fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
-        self.inner.set_room_state(room, state, now)
-    }
-    fn room_state(&self, room: &str) -> Result<Option<String>> {
-        self.inner.room_state(room)
-    }
-    fn block_member(&self, room: &str, member: &str, now: i64) -> Result<()> {
-        self.inner.block_member(room, member, now)
-    }
-    fn unblock_member(&self, room: &str, member: &str) -> Result<bool> {
-        self.inner.unblock_member(room, member)
-    }
-    fn is_blocked(&self, room: &str, member: &str) -> Result<bool> {
-        self.inner.is_blocked(room, member)
-    }
-    fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
-        self.inner.remove_member(room, member, now)
-    }
-    fn policy_get(&self, key: &str) -> Result<Option<String>> {
-        self.inner.policy_get(key)
-    }
-    fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
-        self.inner.policy_set(key, value, now)
-    }
-    fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {
-        self.inner.policy_list(prefix)
-    }
-    fn record_refusal(&self, entry: &crate::store::NewRefusal, now: i64) -> Result<()> {
-        self.inner.record_refusal(entry, now)
-    }
-    fn refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
-        self.inner.refusals(limit)
-    }
+
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
         self.inner.posts_since(member, since)
     }
-    fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
-        self.inner.refusal_rules_since(member, since)
-    }
-    fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
-        self.inner.record_audit(entry, now)
-    }
-    fn enqueue_review(&self, item: &crate::store::NewReview, now: i64) -> Result<i64> {
-        self.inner.enqueue_review(item, now)
-    }
-    fn pending_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
-        self.inner.pending_reviews(limit)
-    }
-    fn set_review_text(&self, id: i64, text: &str) -> Result<()> {
-        self.inner.set_review_text(id, text)
-    }
-    fn reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
-        self.inner.reviews(limit)
-    }
-    fn unapplied_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
-        self.inner.unapplied_reviews(limit)
-    }
-    fn mark_review_applied(&self, id: i64, outcome: &str) -> Result<()> {
-        self.inner.mark_review_applied(id, outcome)
-    }
-    fn resolve_review(&self, id: i64, verdict: &str, detail: &str, now: i64) -> Result<bool> {
-        self.inner.resolve_review(id, verdict, detail, now)
-    }
-    fn audit_log(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
-        self.inner.audit_log(limit)
-    }
-    fn release_with(&self, release: &Release, now: i64) -> Result<()> {
+
+    fn hook_read(&self, at: Seat, now: i64) -> Result<Vec<crate::domain::Message>> {
         self.gate()?;
-        self.inner.release_with(release, now)
+        self.inner.hook_read(at, now)
     }
-    fn last_release(&self, room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>> {
+
+    fn wait_poll(&self, at: Seat, now: i64) -> Result<Vec<crate::domain::Message>> {
         self.gate()?;
-        self.inner.last_release(room, path)
+        self.inner.wait_poll(at, now)
     }
-    fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
-        self.gate()?;
-        self.inner.release_member_claims(member, now)
+
+    fn wake_poll(&self, at: Seat, now: i64) -> Result<Vec<crate::domain::Message>> {
+        self.inner.wake_poll(at, now)
     }
-    fn claim_owners(&self) -> Result<Vec<String>> {
-        self.gate()?;
-        self.inner.claim_owners()
-    }
-    fn retime_member_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
-        self.gate()?;
-        self.inner.retime_member_claims(member, until, extend)
-    }
-    fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
-        self.gate()?;
-        self.inner.claims(room, now)
-    }
-    fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<crate::domain::Message>> {
-        self.gate()?;
-        self.inner.hook_read(room, member, now)
-    }
-    fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<crate::domain::Message>> {
-        self.gate()?;
-        self.inner.wait_poll(room, member, now)
-    }
-    fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
-        self.inner.release_anchored(anchor, now)
-    }
-    fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
-        self.inner.anchors_in_use(now)
-    }
-    fn issue_credential(&self, c: &crate::store::NewCredential, now: i64) -> Result<()> {
-        self.inner.issue_credential(c, now)
-    }
-    fn credential(&self, member: &str) -> Result<Option<crate::store::CredentialRecord>> {
-        self.inner.credential(member)
-    }
-    fn revoke_credential(&self, member: &str, now: i64) -> Result<bool> {
-        self.inner.revoke_credential(member, now)
-    }
-    fn credentials(&self) -> Result<Vec<crate::store::CredentialRecord>> {
-        self.inner.credentials()
-    }
-    fn set_label_keys(&self, keys: crate::keys::LabelKeys) {
-        self.inner.set_label_keys(keys);
-    }
-    fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<crate::domain::Message>> {
-        self.inner.wake_poll(room, member, now)
-    }
+
     fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.inner.wake_seen(at, seq, now)
     }
+
     fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.wait_seen(at, seq, now)
     }
-    fn stale_asks(&self, at: Seat, now: i64, after: i64) -> Result<Vec<crate::domain::OpenAsk>> {
+
+    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
         self.gate()?;
-        self.inner.stale_asks(at, now, after)
+        self.inner.tail(room, after_seq, limit)
     }
-    fn open_asks(&self, room: &str, now: i64) -> Result<Vec<crate::domain::OpenAsk>> {
+
+    fn head(&self, room: &str) -> Result<i64> {
         self.gate()?;
-        self.inner.open_asks(room, now)
+        self.inner.head(room)
     }
+
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.advance_cursor(at, seq, now)
+    }
+}
+impl MemberStore for SpyStore {
+    fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
+        self.gate()?;
+        self.inner.members(room)
+    }
+
+    fn note_parent(&self, member: &str, parent: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.note_parent(member, parent, now)
+    }
+
+    fn parent_of(&self, member: &str) -> Result<Option<String>> {
+        self.gate()?;
+        self.inner.parent_of(member)
+    }
+
+    fn set_muted(&self, at: Seat, muted: bool, now: i64) -> Result<()> {
+        self.inner.set_muted(at, muted, now)
+    }
+
+    fn is_muted(&self, at: Seat) -> Result<bool> {
+        self.inner.is_muted(at)
+    }
+
+    fn block_member(&self, room: &str, member: &str, now: i64) -> Result<()> {
+        self.inner.block_member(room, member, now)
+    }
+
+    fn unblock_member(&self, room: &str, member: &str) -> Result<bool> {
+        self.inner.unblock_member(room, member)
+    }
+
+    fn is_blocked(&self, room: &str, member: &str) -> Result<bool> {
+        self.inner.is_blocked(room, member)
+    }
+
+    fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
+        self.inner.remove_member(room, member, now)
+    }
+
     fn set_status(&self, at: Seat, status: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.set_status(at, status, now)
     }
+
     fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.record_hook_run(run, now)
     }
+
     fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>> {
         self.gate()?;
         self.inner.hook_runs(member)
     }
+
     fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
         self.gate()?;
         self.inner.prune_members(older_than, now)
     }
+
     fn park(&self, member: &str, parked: &crate::domain::Parked, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.park(member, parked, now)
     }
+
     fn unpark(&self, member: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.unpark(member, now)
     }
+
     fn note_member_mode(&self, member: &str, mode: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.note_member_mode(member, mode, now)
     }
+
     fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
         self.gate()?;
         self.inner.member_modes()
     }
+
     fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.note_session(session_id, member, now)
     }
+
     fn session_of_member(&self, member: &str) -> Result<Option<String>> {
         self.gate()?;
         self.inner.session_of_member(member)
     }
+
     fn member_of_session(&self, session_id: &str) -> Result<Option<String>> {
         self.gate()?;
         self.inner.member_of_session(session_id)
@@ -260,30 +194,66 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.member_scope(member)
     }
+
     fn set_member_scope(&self, member: &str, scope: &str, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.set_member_scope(member, scope, now)
     }
-    fn lapsed_asks(
-        &self,
-        room: &str,
-        member: &str,
-        now: i64,
-    ) -> Result<Vec<(crate::domain::OpenAsk, String)>> {
+
+    fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.gate()?;
-        self.inner.lapsed_asks(room, member, now)
+        self.inner.rooms_of(member)
     }
-    fn delete_rooms_with_prefix(
-        &self,
-        prefix: &str,
-        now: i64,
-    ) -> Result<crate::store::DeletedRooms> {
-        self.inner.delete_rooms_with_prefix(prefix, now)
-    }
-    fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<crate::domain::AskRoom>> {
+}
+impl ClaimStore for SpyStore {
+    fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
         self.gate()?;
-        self.inner.rooms_with_prefix(prefix)
+        self.inner.claim(request, now)
     }
+
+    fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
+        self.gate()?;
+        self.inner.release(room, owner, path)
+    }
+
+    fn release_with(&self, release: &Release, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.release_with(release, now)
+    }
+
+    fn last_release(&self, room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>> {
+        self.gate()?;
+        self.inner.last_release(room, path)
+    }
+
+    fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.gate()?;
+        self.inner.release_member_claims(member, now)
+    }
+
+    fn claim_owners(&self) -> Result<Vec<String>> {
+        self.gate()?;
+        self.inner.claim_owners()
+    }
+
+    fn retime_member_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
+        self.gate()?;
+        self.inner.retime_member_claims(member, until, extend)
+    }
+
+    fn claims(&self, room: &str, now: i64) -> Result<Vec<Claim>> {
+        self.gate()?;
+        self.inner.claims(room, now)
+    }
+
+    fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        self.inner.release_anchored(anchor, now)
+    }
+
+    fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
+        self.inner.anchors_in_use(now)
+    }
+
     fn claim_changes(
         &self,
         room: &str,
@@ -293,6 +263,7 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claim_changes(room, member, now)
     }
+
     fn claim_ages(
         &self,
         room: &str,
@@ -302,6 +273,7 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.claim_ages(room, owner, now)
     }
+
     fn deadlock_notices(
         &self,
         room: &str,
@@ -311,21 +283,131 @@ impl Store for SpyStore {
         self.gate()?;
         self.inner.deadlock_notices(room, member, now)
     }
-    fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
+}
+impl AskStore for SpyStore {
+    fn stale_asks(&self, at: Seat, now: i64, after: i64) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gate()?;
-        self.inner.rooms_of(member)
+        self.inner.stale_asks(at, now, after)
     }
-    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
+
+    fn open_asks(&self, room: &str, now: i64) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gate()?;
-        self.inner.tail(room, after_seq, limit)
+        self.inner.open_asks(room, now)
     }
-    fn head(&self, room: &str) -> Result<i64> {
+
+    fn lapsed_asks(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<Vec<(crate::domain::OpenAsk, String)>> {
         self.gate()?;
-        self.inner.head(room)
+        self.inner.lapsed_asks(room, member, now)
     }
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+
+    fn rooms_with_prefix(&self, prefix: &str) -> Result<Vec<crate::domain::AskRoom>> {
         self.gate()?;
-        self.inner.advance_cursor(at, seq, now)
+        self.inner.rooms_with_prefix(prefix)
+    }
+}
+impl ReviewStore for SpyStore {
+    fn enqueue_review(&self, item: &crate::store::NewReview, now: i64) -> Result<i64> {
+        self.inner.enqueue_review(item, now)
+    }
+
+    fn pending_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.pending_reviews(limit)
+    }
+
+    fn set_review_text(&self, id: i64, text: &str) -> Result<()> {
+        self.inner.set_review_text(id, text)
+    }
+
+    fn reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.reviews(limit)
+    }
+
+    fn unapplied_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.unapplied_reviews(limit)
+    }
+
+    fn mark_review_applied(&self, id: i64, outcome: &str) -> Result<()> {
+        self.inner.mark_review_applied(id, outcome)
+    }
+
+    fn resolve_review(&self, resolution: &ReviewResolution, now: i64) -> Result<bool> {
+        self.inner.resolve_review(resolution, now)
+    }
+}
+impl CredentialStore for SpyStore {
+    fn issue_credential(&self, c: &crate::store::NewCredential, now: i64) -> Result<()> {
+        self.inner.issue_credential(c, now)
+    }
+
+    fn credential(&self, member: &str) -> Result<Option<crate::store::CredentialRecord>> {
+        self.inner.credential(member)
+    }
+
+    fn revoke_credential(&self, member: &str, now: i64) -> Result<bool> {
+        self.inner.revoke_credential(member, now)
+    }
+
+    fn credentials(&self) -> Result<Vec<crate::store::CredentialRecord>> {
+        self.inner.credentials()
+    }
+}
+impl PolicyStore for SpyStore {
+    fn policy_get(&self, key: &str) -> Result<Option<String>> {
+        self.inner.policy_get(key)
+    }
+
+    fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        self.inner.policy_set(key, value, now)
+    }
+
+    fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.inner.policy_list(prefix)
+    }
+
+    fn record_refusal(&self, entry: &crate::store::NewRefusal, now: i64) -> Result<()> {
+        self.inner.record_refusal(entry, now)
+    }
+
+    fn refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
+        self.inner.refusals(limit)
+    }
+
+    fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
+        self.inner.refusal_rules_since(member, since)
+    }
+
+    fn record_audit(&self, entry: &NewAudit, now: i64) -> Result<()> {
+        self.inner.record_audit(entry, now)
+    }
+
+    fn audit_log(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
+        self.inner.audit_log(limit)
+    }
+}
+impl RoomStore for SpyStore {
+    fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
+        self.inner.set_room_state(room, state, now)
+    }
+
+    fn room_state(&self, room: &str) -> Result<Option<String>> {
+        self.inner.room_state(room)
+    }
+
+    fn set_label_keys(&self, keys: crate::keys::LabelKeys) {
+        self.inner.set_label_keys(keys);
+    }
+
+    fn delete_rooms_with_prefix(
+        &self,
+        prefix: &str,
+        now: i64,
+    ) -> Result<crate::store::DeletedRooms> {
+        self.inner.delete_rooms_with_prefix(prefix, now)
     }
 }
 

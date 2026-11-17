@@ -26,7 +26,8 @@ use klatch::gateway::{
     Transport,
 };
 use klatch::harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
-use klatch::store::{SqliteStore, Store};
+use klatch::store::SqliteStore;
+use klatch::store::areas::*;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};

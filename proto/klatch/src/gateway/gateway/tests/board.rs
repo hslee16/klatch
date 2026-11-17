@@ -109,7 +109,7 @@ fn a_present_member_keeps_its_offer_without_renewing_it() {
     g.store
         .post(Seat::new("r", "bob"), "offering: help", 100)
         .unwrap();
-    g.store.wait_poll("r", "bob", 4990).unwrap();
+    g.store.wait_poll(Seat::new("r", "bob"), 4990).unwrap();
     let b = g.board(&alice(), "r").unwrap();
     assert_eq!(
         b.offers.len(),

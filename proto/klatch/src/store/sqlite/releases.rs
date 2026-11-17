@@ -1,6 +1,7 @@
 //! Releasing claims, singly, by anchor and for a whole member, and what a member is told changed.
 
 use super::*;
+use crate::store::ClaimStore;
 
 impl SqliteStore {
     pub(super) fn do_release_anchored(

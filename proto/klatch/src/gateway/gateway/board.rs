@@ -11,7 +11,7 @@ impl<S: Store> Gateway<S> {
         room: &str,
         now: i64,
     ) -> Result<Vec<Message>> {
-        let messages = self.store.hook_read(room, &who.member, now)?;
+        let messages = self.store.hook_read(Seat::new(room, &who.member), now)?;
         let messages = self.in_view(who, room, messages)?;
         if !self.store.is_muted(Seat::new(room, &who.member))? {
             return Ok(messages);

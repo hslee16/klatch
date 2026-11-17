@@ -223,9 +223,7 @@ fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
     let body = args.body.join(" ");
     match handoff {
         Some((kind, payload)) => t.post_handoff(
-            room,
-            &body,
-            label,
+            (room, &body, label),
             &klatch::gateway::Handoff { kind, payload },
         )?,
         None => t.post_labeled(room, &body, label)?,

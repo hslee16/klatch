@@ -28,7 +28,8 @@ impl<S: Store> Gateway<S> {
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
     pub fn wait_poll(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, false))?;
-        self.store.wait_poll(room, &who.member, self.now())
+        self.store
+            .wait_poll(Seat::new(room, &who.member), self.now())
     }
 
     /// How many unread messages would wake the caller in a room: from others, past both cursors, and only those
@@ -42,7 +43,9 @@ impl<S: Store> Gateway<S> {
     /// time (Claude Code drops a nudge identical to a recent one, #550).
     pub fn wake_summary(&self, who: &Principal, room: &str) -> Result<(usize, i64)> {
         self.admit(who, room, Operation::read(room, false))?;
-        let unread = self.store.wake_poll(room, &who.member, self.now())?;
+        let unread = self
+            .store
+            .wake_poll(Seat::new(room, &who.member), self.now())?;
         let unread = self.in_view(who, room, unread)?;
         let muted = self.store.is_muted(Seat::new(room, &who.member))?;
         let counted = unread
@@ -56,7 +59,7 @@ impl<S: Store> Gateway<S> {
     pub fn wake_mark(&self, who: &Principal, room: &str) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
         let now = self.now();
-        let unread = self.store.wake_poll(room, &who.member, now)?;
+        let unread = self.store.wake_poll(Seat::new(room, &who.member), now)?;
         match unread.iter().map(|m| m.seq).max() {
             Some(last) => self
                 .store

@@ -30,7 +30,8 @@ impl SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::store::{ClaimRequest, SqliteStore, Store};
+    use crate::store::areas::*;
+    use crate::store::{ClaimRequest, SqliteStore};
 
     fn store(tag: &str) -> SqliteStore {
         let path =

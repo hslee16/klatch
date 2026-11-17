@@ -5,7 +5,8 @@ use super::serve;
 use crate::domain::Principal;
 use crate::gateway::{AllowAll, FixedClock, ForbidFloors, Gateway};
 use crate::protocol::{ServerFrame, decode_server_line};
-use crate::store::{NewReview, SqliteStore, Store};
+use crate::store::areas::*;
+use crate::store::{NewReview, SqliteStore};
 use serde_json::{Value, json};
 use std::io::Cursor;
 

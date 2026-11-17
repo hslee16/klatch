@@ -2,7 +2,7 @@
 
 use super::{SqliteStore, be};
 use crate::domain::Result;
-use crate::store::{NewReview, QueuedReview};
+use crate::store::{NewReview, QueuedReview, ReviewResolution};
 use rusqlite::params;
 
 impl SqliteStore {
@@ -78,11 +78,14 @@ impl SqliteStore {
 
     pub(super) fn resolve_review_row(
         &self,
-        id: i64,
-        verdict: &str,
-        detail: &str,
+        resolution: &ReviewResolution,
         now: i64,
     ) -> Result<bool> {
+        let ReviewResolution {
+            id,
+            verdict,
+            detail,
+        } = *resolution;
         let changed = self
             .conn
             .execute(

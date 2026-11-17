@@ -22,7 +22,10 @@ fn queued_items_come_back_oldest_first_and_only_while_pending() {
         ),
         ("r", 1, "public")
     );
-    assert!(s.resolve_review(a, "allow", "", 20).unwrap());
+    assert!(
+        s.resolve_review(&ReviewResolution::new(a, "allow", ""), 20)
+            .unwrap()
+    );
     let left = s.pending_reviews(10).unwrap();
     assert_eq!(left.iter().map(|q| q.id).collect::<Vec<_>>(), vec![b]);
 }
@@ -31,12 +34,19 @@ fn queued_items_come_back_oldest_first_and_only_while_pending() {
 fn a_verdict_is_recorded_once() {
     let s = store();
     let a = s.enqueue_review(&item("r", 1), 10).unwrap();
-    assert!(s.resolve_review(a, "deny", "scrubber hit", 20).unwrap());
     assert!(
-        !s.resolve_review(a, "allow", "", 21).unwrap(),
+        s.resolve_review(&ReviewResolution::new(a, "deny", "scrubber hit"), 20)
+            .unwrap()
+    );
+    assert!(
+        !s.resolve_review(&ReviewResolution::new(a, "allow", ""), 21)
+            .unwrap(),
         "a second verdict replaced the first"
     );
-    assert!(!s.resolve_review(9999, "allow", "", 21).unwrap());
+    assert!(
+        !s.resolve_review(&ReviewResolution::new(9999, "allow", ""), 21)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -80,7 +90,10 @@ fn a_crossing_item_keeps_its_target_requester_and_outcome() {
         ("open", "alice")
     );
     s.set_review_text(id, "[x]").unwrap();
-    assert!(s.resolve_review(id, "redact", "", 20).unwrap());
+    assert!(
+        s.resolve_review(&ReviewResolution::new(id, "redact", ""), 20)
+            .unwrap()
+    );
     let due = s.unapplied_reviews(10).unwrap();
     assert_eq!((due.len(), due[0].redacted.as_str()), (1, "[x]"));
     s.mark_review_applied(id, "released").unwrap();
