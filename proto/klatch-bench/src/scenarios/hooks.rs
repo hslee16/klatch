@@ -275,6 +275,14 @@ fn session_start_budget(w: &World) -> Res {
     for i in 0..25 {
         w.ok(&format!("{}{i:02}", "m".repeat(36)), &["join", "lobby"])?;
     }
+    // offers from ten members make the board longer than any floor, so the cut never depends on how much slack the
+    // digest's whole-message granularity leaves
+    for i in 0..10 {
+        w.ok(
+            &format!("{}{i:02}", "m".repeat(36)),
+            &["post", "lobby", &format!("offering: {}", "o".repeat(120))],
+        )?;
+    }
     // many short messages, so the digest uses nearly all it is given and the board has only its floor
     for i in 0..40 {
         w.ok(

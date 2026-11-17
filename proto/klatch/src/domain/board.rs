@@ -62,6 +62,8 @@ pub struct Board {
     pub stale_members: usize,
     /// Open durable tasks (working, checkpoint, handoff), with owners that are gone marked orphaned.
     pub tasks: Vec<crate::domain::Task>,
+    /// Pull requests said to be open (item 84), with who holds each one's `pr:N` claim, if anyone.
+    pub prs: Vec<crate::domain::OpenPr>,
 }
 
 /// `klatch who` as text: each member with last seen and status. Unless `all`, members not seen for
@@ -157,15 +159,16 @@ fn render_offers(board: &Board, now: i64, out: &mut String) {
     more(out, board.offers.len(), "offers");
 }
 
-fn render_tasks(board: &Board, now: i64, out: &mut String) {
-    if board.tasks.is_empty() {
+/// A section that exists only when it has lines, bounded like the others.
+fn render_list(out: &mut String, heading: &str, lines: &[String], what: &str) {
+    if lines.is_empty() {
         return;
     }
-    section(out, "tasks:", None);
-    for t in board.tasks.iter().take(BOARD_LIST_LIMIT) {
-        out.push_str(&format!("  {}\n", t.line(now, false)));
+    section(out, heading, None);
+    for line in lines.iter().take(BOARD_LIST_LIMIT) {
+        out.push_str(&format!("  {line}\n"));
     }
-    more(out, board.tasks.len(), "tasks");
+    more(out, lines.len(), what);
 }
 
 fn render_members(board: &Board, now: i64, out: &mut String) {
@@ -207,7 +210,10 @@ pub fn render_board(board: &Board, now: i64) -> String {
     let mut out = format!("[board {}]\n", flat(&board.room));
     render_asks(board, now, &mut out);
     render_offers(board, now, &mut out);
-    render_tasks(board, now, &mut out);
+    let tasks: Vec<String> = board.tasks.iter().map(|t| t.line(now, false)).collect();
+    render_list(&mut out, "tasks:", &tasks, "tasks");
+    let prs: Vec<String> = board.prs.iter().map(|p| p.line(now)).collect();
+    render_list(&mut out, "prs:", &prs, "prs");
     render_members(board, now, &mut out);
     out
 }
@@ -518,6 +524,7 @@ mod tests {
             ],
             stale_members: 0,
             tasks: vec![],
+            prs: vec![],
         }
     }
 

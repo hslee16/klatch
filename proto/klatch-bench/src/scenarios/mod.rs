@@ -21,6 +21,7 @@ mod keys;
 mod labels;
 mod librarian;
 mod liveness;
+mod pr_lifecycle;
 mod rate_limit;
 mod receipts;
 mod retention;
@@ -104,6 +105,7 @@ pub fn all() -> Vec<Scenario> {
         keys::all(),
         judge::all(),
         retention::all(),
+        pr_lifecycle::all(),
     ]
     .into_iter()
     .flatten()

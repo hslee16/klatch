@@ -25,6 +25,8 @@ pub struct RoomDigest {
     /// The member's own refused claims that a claim someone else took turned into a cycle of waits, reported once
     /// (#648).
     pub cycles: Vec<crate::domain::CycleNotice>,
+    /// Pull requests said to be open that no live `pr:N` claim holds (shown at session start, item 84).
+    pub unowned_prs: Vec<crate::domain::OpenPr>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -90,7 +92,10 @@ impl RoomName<'_> {
 impl RoomDigest {
     /// Whether there is nothing to say about this room.
     fn is_quiet(&self) -> bool {
-        self.has_no_traffic() && self.backlog.is_empty() && !has_own_items(self)
+        self.has_no_traffic()
+            && self.backlog.is_empty()
+            && self.unowned_prs.is_empty()
+            && !has_own_items(self)
     }
 
     /// Whether no message arrived and no claim appeared or lapsed.
@@ -274,6 +279,9 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
+    }
+    for p in &d.unowned_prs {
+        text.push_str(&format!("  {}\n", p.obligation(now)));
     }
     let mut units: Vec<String> = Vec::new();
     for line in text.split_inclusive('\n') {
@@ -987,6 +995,7 @@ mod tests {
                 path: evil.into(),
                 holder: evil.into(),
             }],
+            unowned_prs: vec![crate::domain::OpenPr::new(5, evil, evil, 0)],
         };
         let out = render_hook(
             &[
