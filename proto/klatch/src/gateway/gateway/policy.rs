@@ -80,12 +80,12 @@ impl<S: Store> Gateway<S> {
                 "a {label} message cannot go into room {room}, which is labelled {room_label}"
             ),
         };
-        self.note_refusal(who, room, "post", &e);
+        self.note_refusal(who, (room, "post"), &e);
         Err(e)
     }
 
     /// Keep a record of a refusal; any other error is not one.
-    pub(super) fn note_refusal(&self, who: &Principal, room: &str, operation: &str, e: &Error) {
+    pub(super) fn note_refusal(&self, who: &Principal, (room, operation): (&str, &str), e: &Error) {
         if let Error::Refused { rule, .. } = e {
             // a refused call stays refused whether or not the record could be kept
             let now = self.now();
@@ -106,18 +106,31 @@ impl<S: Store> Gateway<S> {
         check_no_credentials(text)
             .and_then(|()| self.check_canary(who, room, text))
             .and_then(|()| self.check_scrub(room, text))
-            .inspect_err(|e| self.note_refusal(who, room, operation, e))
+            .inspect_err(|e| self.note_refusal(who, (room, operation), e))
+    }
+
+    /// An administrative act that sets one policy `(key, value)`; the act is `(action, target)` as `administer` has it.
+    fn administer_policy(
+        &self,
+        who: &Principal,
+        act: (&str, &str),
+        (key, value): (&str, Option<&str>),
+    ) -> Result<()> {
+        self.administer(who, act, |now| {
+            self.store.policy_set(key, value, now)?;
+            Ok(String::new())
+        })
     }
 
     /// Set a room's label.
     pub fn admin_set_room_label(&self, who: &Principal, room: &str, label: &str) -> Result<()> {
         check_room(room)?;
         known_label(&self.chain()?, label)?;
-        self.administer(who, ("label", &format!("{room}={label}")), |now| {
-            self.store
-                .policy_set(&format!("label:{room}"), Some(label), now)?;
-            Ok(String::new())
-        })
+        self.administer_policy(
+            who,
+            ("label", &format!("{room}={label}")),
+            (&format!("label:{room}"), Some(label)),
+        )
     }
 
     /// Seal a label: from now on a message under it is stored encrypted under the label's own key, and a principal
@@ -131,11 +144,11 @@ impl<S: Store> Gateway<S> {
                 "{label} is the lowest label and everyone holds it, so it cannot be sealed"
             )));
         }
-        self.administer(who, ("seal-label", label), |now| {
-            self.store
-                .policy_set(&format!("sealed:{label}"), Some("1"), now)?;
-            Ok(String::new())
-        })
+        self.administer_policy(
+            who,
+            ("seal-label", label),
+            (&format!("sealed:{label}"), Some("1")),
+        )
     }
 
     /// Every sealed label, lowest first.
@@ -186,11 +199,11 @@ impl<S: Store> Gateway<S> {
             return Err(Error::Invalid(format!("bad member name: {member}")));
         }
         self.check_grantable(label)?;
-        self.administer(who, ("clear", &format!("{member}={label}")), |now| {
-            self.store
-                .policy_set(&format!("clearance:{member}"), Some(label), now)?;
-            Ok(String::new())
-        })
+        self.administer_policy(
+            who,
+            ("clear", &format!("{member}={label}")),
+            (&format!("clearance:{member}"), Some(label)),
+        )
     }
 
     /// Set the highest clearance an agent may hold: below the top level of the chain.
@@ -202,10 +215,7 @@ impl<S: Store> Gateway<S> {
                 "the agent cap must be below {label}, the top level"
             )));
         }
-        self.administer(who, ("cap", label), |now| {
-            self.store.policy_set("cap", Some(label), now)?;
-            Ok(String::new())
-        })
+        self.administer_policy(who, ("cap", label), ("cap", Some(label)))
     }
 
     /// Replace the label order. The cap goes back to its default; a label stored under the old order that the new

@@ -140,17 +140,11 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
     match call.method.clone().as_str() {
         "post" => call.run(
             |p: PostParams| match (p.kind.as_deref(), p.payload.as_deref()) {
-                (None, None) => g.post_labeled(who, &p.room, &p.body, p.label.as_deref()),
+                (None, None) => g.post_labeled(who, (&p.room, &p.body, p.label.as_deref())),
                 (None, Some(_)) => Err(crate::domain::Error::Invalid(
                     "a payload needs a kind".into(),
                 )),
-                (Some(kind), payload) => g.post_handoff(
-                    who,
-                    &p.room,
-                    &p.body,
-                    p.label.as_deref(),
-                    &crate::gateway::Handoff { kind, payload },
-                ),
+                (Some(kind), payload) => g.post_handoff(who, (&p.room, &p.body, p.label.as_deref()), &crate::gateway::Handoff { kind, payload }),
             },
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
         ),

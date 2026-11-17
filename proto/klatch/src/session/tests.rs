@@ -1400,9 +1400,7 @@ fn read_over_the_wire_carries_a_handoff_and_leaves_an_ordinary_message_as_it_was
     let g = gateway();
     g.post_handoff(
         &bob(),
-        "r",
-        "see",
-        None,
+        ("r", "see", None),
         &crate::gateway::Handoff {
             kind: "plan",
             payload: Some("P"),
