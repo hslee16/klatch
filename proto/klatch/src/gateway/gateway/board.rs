@@ -90,6 +90,7 @@ impl<S: Store> Gateway<S> {
         Ok(crate::domain::Board {
             room: room.into(),
             tasks,
+            prs: self.open_prs_of(room, &messages, now)?,
             asks: self.store.open_asks(room, now)?,
             offers: crate::domain::current_offers(&messages, now, crate::domain::OFFER_TTL_SECS)
                 .into_iter()
@@ -98,6 +99,41 @@ impl<S: Store> Gateway<S> {
             members,
             stale_members: gone.len(),
         })
+    }
+
+    /// The pull requests the log says are open (item 84), each with the holder of its live `pr:N` claim. One that no
+    /// message ended and whose claim was last released with a note that says merged is dropped: the claim's note is
+    /// the other way to say a PR is over.
+    fn open_prs_of(
+        &self,
+        room: &str,
+        messages: &[Message],
+        now: i64,
+    ) -> Result<Vec<crate::domain::OpenPr>> {
+        let mut prs = crate::domain::open_prs(messages);
+        if prs.is_empty() {
+            return Ok(prs);
+        }
+        let claims = self.store.claims(room, now)?;
+        for pr in &mut prs {
+            let path = pr.path();
+            pr.holder = claims
+                .iter()
+                .find(|c| c.path == path)
+                .map(|c| c.owner.clone());
+        }
+        let mut open = Vec::with_capacity(prs.len());
+        for pr in prs {
+            let merged = pr.holder.is_none()
+                && self
+                    .store
+                    .last_release(room, &pr.path())?
+                    .is_some_and(|r| crate::domain::is_merged_note(&r.note));
+            if !merged {
+                open.push(pr);
+            }
+        }
+        Ok(open)
     }
 
     /// Asks in a room nobody has answered or closed.
@@ -176,6 +212,14 @@ impl<S: Store> Gateway<S> {
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;
             let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
+            let unowned_prs = if backlog {
+                let log = self.store.tail(&room, 0, 5000)?;
+                let mut prs = self.open_prs_of(&room, &log, now)?;
+                prs.retain(|p| p.holder.is_none());
+                prs
+            } else {
+                Vec::new()
+            };
             let backlog = if backlog {
                 self.store
                     .open_asks(&room, now)?
@@ -197,6 +241,7 @@ impl<S: Store> Gateway<S> {
                 lapsed,
                 aged,
                 cycles,
+                unowned_prs,
             });
         }
         Ok(Digest {

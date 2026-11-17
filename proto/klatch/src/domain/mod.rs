@@ -14,6 +14,7 @@ mod judge;
 mod labels;
 mod model;
 pub(crate) mod parked;
+mod pr_lifecycle;
 mod receipt;
 mod scope;
 mod tasks;
@@ -32,6 +33,7 @@ pub use board::{
     current_offers, is_offer, render_board, render_who, statuses,
 };
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
+pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, is_merged_note, open_prs};
 pub use tasks::{
     CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, Task,
     WORKING_PREFIX, open_tasks,
