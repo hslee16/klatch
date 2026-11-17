@@ -1,8 +1,6 @@
 //! The admin acts that need only the gateway, grouped by what they act on. `execute` sends each command to its family.
 
-use super::route::{
-    Act, ListingAct, MemberAct, PolicyAct, RoleAct, RoomAct, ScrubAct,
-};
+use super::route::{Act, ListingAct, MemberAct, PolicyAct, RoleAct, RoomAct, ScrubAct};
 use super::*;
 
 /// "no longer" when a role is being taken away, else "now".

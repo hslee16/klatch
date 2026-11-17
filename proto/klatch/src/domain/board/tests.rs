@@ -445,8 +445,7 @@ fn who_text_cannot_forge_a_line() {
 }
 
 #[test]
-fn open_tasks_show_on_the_board_with_their_checkpoint_and_an_empty_board_has_no_tasks_section()
-{
+fn open_tasks_show_on_the_board_with_their_checkpoint_and_an_empty_board_has_no_tasks_section() {
     let task = crate::domain::Task {
         owner: "alice".into(),
         title: "nightly build".into(),
@@ -480,5 +479,9 @@ fn now_reads_ages_and_never_goes_negative() {
     let now = Now(100);
     assert_eq!(now.since(40), 60);
     assert_eq!(now.since(100), 0);
-    assert_eq!(now.since(160), 0, "a reader clock behind the writer is not a negative age");
+    assert_eq!(
+        now.since(160),
+        0,
+        "a reader clock behind the writer is not a negative age"
+    );
 }

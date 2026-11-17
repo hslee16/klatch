@@ -310,7 +310,8 @@ pub fn statuses(messages: &[Message]) -> Vec<MemberStatus> {
 pub fn ask_reach_note(members: &[MemberInfo], me: &str, now: i64) -> Option<String> {
     let reachable = members.iter().filter(|m| m.name != me).any(|m| {
         let done = m.status.as_deref().is_some_and(|s| s.starts_with("done"));
-        !done && (now - m.last_seen <= MEMBER_ACTIVE_SECS || holds_park(m.parked.as_ref(), Now(now)))
+        !done
+            && (now - m.last_seen <= MEMBER_ACTIVE_SECS || holds_park(m.parked.as_ref(), Now(now)))
     });
     (!reachable).then(|| {
         "klatch: no other member of this room has been seen in the last 10 minutes (or all said done). Your ask is \

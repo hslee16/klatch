@@ -47,8 +47,14 @@ pub(super) enum MemberAct {
         room: Option<String>,
         all_rooms: bool,
     },
-    Clear { member: String, label: String },
-    GrantRooms { member: String, off: bool },
+    Clear {
+        member: String,
+        label: String,
+    },
+    GrantRooms {
+        member: String,
+        off: bool,
+    },
 }
 
 pub(super) enum RoleAct {
@@ -66,8 +72,12 @@ pub(super) enum PolicyAct {
         secs: Option<i64>,
         off: bool,
     },
-    Cap { label: String },
-    Chain { levels: String },
+    Cap {
+        label: String,
+    },
+    Chain {
+        levels: String,
+    },
 }
 
 pub(super) enum ScrubAct {
@@ -88,18 +98,38 @@ pub(super) enum KeyAct {
         code: Vec<String>,
         label: Option<String>,
     },
-    SealLabel { label: String },
+    SealLabel {
+        label: String,
+    },
     RotateKey,
-    Backup { file: PathBuf },
-    Restore { file: PathBuf },
-    RunArchive { file: PathBuf, run: String },
-    Export { room: String, json: bool },
+    Backup {
+        file: PathBuf,
+    },
+    Restore {
+        file: PathBuf,
+    },
+    RunArchive {
+        file: PathBuf,
+        run: String,
+    },
+    Export {
+        room: String,
+        json: bool,
+    },
 }
 
 pub(super) enum ArchiveAct {
-    Retention { room: String, days: String },
-    Archive { room: Option<String>, all_rooms: bool },
-    RestoreArchive { file: PathBuf },
+    Retention {
+        room: String,
+        days: String,
+    },
+    Archive {
+        room: Option<String>,
+        all_rooms: bool,
+    },
+    RestoreArchive {
+        file: PathBuf,
+    },
     Archives,
 }
 
