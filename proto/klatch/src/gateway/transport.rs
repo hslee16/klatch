@@ -19,9 +19,7 @@ pub trait Transport {
     /// Post a message that carries a handoff: a kind and optionally an opaque payload.
     fn post_handoff(
         &self,
-        room: &str,
-        body: &str,
-        label: Option<&str>,
+        message: (&str, &str, Option<&str>),
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
@@ -155,13 +153,10 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn post_handoff(
         &self,
-        room: &str,
-        body: &str,
-        label: Option<&str>,
+        message: (&str, &str, Option<&str>),
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted> {
-        self.gateway
-            .post_handoff(&self.principal, (room, body, label), handoff)
+        self.gateway.post_handoff(&self.principal, message, handoff)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)

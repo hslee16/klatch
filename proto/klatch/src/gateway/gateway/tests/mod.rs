@@ -4,6 +4,7 @@ use super::*;
 use crate::domain::Error;
 use crate::gateway::test_support::{SpyGuard, SpyStore};
 use crate::gateway::{AllowAll, FixedClock, Operation};
+use crate::store::areas::*;
 use std::rc::Rc;
 
 mod admin_acts;

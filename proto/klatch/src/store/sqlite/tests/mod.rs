@@ -1,6 +1,8 @@
 //! Tests of the SQLite store, by topic.
 
 use super::*;
+use crate::store::areas::*;
+use crate::store::{ClaimRequest, HookEvent, ReviewResolution};
 use std::time::Duration;
 
 mod anchors;

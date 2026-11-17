@@ -286,7 +286,8 @@ fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_n
     tc: TestCase,
 ) {
     use klatch::domain::{Attribution, Message};
-    use klatch::store::{NewMessage, Seat, SqliteStore, Store, insecure_test_key};
+    use klatch::store::areas::*;
+    use klatch::store::{NewMessage, Seat, SqliteStore, insecure_test_key};
     let s = SqliteStore::open_in_memory().unwrap();
     let members = ["alice", "bob", "carol"];
     for m in members {

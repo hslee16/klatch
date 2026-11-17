@@ -3,7 +3,7 @@
 use super::SqliteStore;
 use super::rows::message_from_row;
 use crate::domain::{Error, Message, Result};
-use crate::store::Store;
+use crate::store::PolicyStore;
 
 impl SqliteStore {
     /// What binds a sealed body to its message: moved to another message or label it no longer opens.

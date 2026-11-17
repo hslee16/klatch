@@ -457,9 +457,9 @@ mod tests {
         let kh = file_home(d);
         let store = open_store_in(&db, &kh).unwrap();
         let key = kh.source.get(&kh.name).unwrap().unwrap();
-        klatch::store::Store::join(&store, "r", "alice", 1).unwrap();
+        klatch::store::MessageStore::join(&store, "r", "alice", 1).unwrap();
         let seat = klatch::store::Seat::new("r", "alice");
-        klatch::store::Store::post(&store, seat, "old words", 10).unwrap();
+        klatch::store::MessageStore::post(&store, seat, "old words", 10).unwrap();
         let dir = d.join("archive");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("r-100.db");
@@ -591,7 +591,7 @@ mod tests {
         let current = rotate_key_in(&d.join("klatch.db"), &kh).unwrap();
         // an archiver that read the key before the rotation finishes its file after it
         let store = open_store_in(&d.join("klatch.db"), &kh).unwrap();
-        klatch::store::Store::post(
+        klatch::store::MessageStore::post(
             &store,
             klatch::store::Seat::new("r", "alice"),
             "later old",

@@ -365,7 +365,9 @@ fn a_principal_holding_the_label_key_reads_the_message_and_one_without_it_does_n
         few.read(Seat::new("r", "bob"), false, 5).unwrap()[0]
             .body
             .clone(),
-        few.hook_read("r", "bob", 6).unwrap()[0].body.clone(),
+        few.hook_read(Seat::new("r", "bob"), 6).unwrap()[0]
+            .body
+            .clone(),
     ] {
         assert!(!body.contains("the-sealed-launch-code"), "{body}");
         assert!(body.contains("sealed") && body.contains("secret"), "{body}");

@@ -3,7 +3,7 @@
 //! more than the required eleven. It is test-only and is not a supported backend.
 
 use super::*;
-use crate::domain::{Error, overlaps};
+use crate::domain::{Claim, Error, MemberInfo, Message, Posted, Result, overlaps};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -26,7 +26,7 @@ impl MemoryStore {
     }
 }
 
-impl Store for MemoryStore {
+impl MessageStore for MemoryStore {
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()> {
         let mut rooms = self.rooms.borrow_mut();
         let r = rooms.entry(room.to_string()).or_default();
@@ -74,6 +74,42 @@ impl Store for MemoryStore {
         Ok(out)
     }
 
+    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
+        Ok(self
+            .rooms
+            .borrow()
+            .get(room)
+            .map(|r| {
+                r.messages
+                    .iter()
+                    .filter(|m| m.seq > after_seq)
+                    .take(limit)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    fn head(&self, room: &str) -> Result<i64> {
+        Ok(self
+            .rooms
+            .borrow()
+            .get(room)
+            .map(|r| r.messages.len() as i64)
+            .unwrap_or(0))
+    }
+
+    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+        let mut rooms = self.rooms.borrow_mut();
+        let r = rooms.entry(at.room.to_string()).or_default();
+        let head = r.messages.len() as i64;
+        let e = r.members.entry(at.member.to_string()).or_insert((now, 0));
+        e.0 = now;
+        e.1 = e.1.max(seq.min(head)).max(0);
+        Ok(())
+    }
+}
+impl MemberStore for MemoryStore {
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         Ok(self
             .rooms
@@ -95,6 +131,17 @@ impl Store for MemoryStore {
             .unwrap_or_default())
     }
 
+    fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
+        Ok(self
+            .rooms
+            .borrow()
+            .iter()
+            .filter(|(_, r)| r.members.contains_key(member))
+            .map(|(n, _)| n.clone())
+            .collect())
+    }
+}
+impl ClaimStore for MemoryStore {
     fn claim(&self, q: &ClaimRequest, now: i64) -> Result<()> {
         let mut rooms = self.rooms.borrow_mut();
         let r = rooms.entry(q.room.to_string()).or_default();
@@ -149,52 +196,12 @@ impl Store for MemoryStore {
             })
             .unwrap_or_default())
     }
-
-    fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
-        Ok(self
-            .rooms
-            .borrow()
-            .iter()
-            .filter(|(_, r)| r.members.contains_key(member))
-            .map(|(n, _)| n.clone())
-            .collect())
-    }
-
-    fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| {
-                r.messages
-                    .iter()
-                    .filter(|m| m.seq > after_seq)
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    fn head(&self, room: &str) -> Result<i64> {
-        Ok(self
-            .rooms
-            .borrow()
-            .get(room)
-            .map(|r| r.messages.len() as i64)
-            .unwrap_or(0))
-    }
-
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
-        let mut rooms = self.rooms.borrow_mut();
-        let r = rooms.entry(at.room.to_string()).or_default();
-        let head = r.messages.len() as i64;
-        let e = r.members.entry(at.member.to_string()).or_insert((now, 0));
-        e.0 = now;
-        e.1 = e.1.max(seq.min(head)).max(0);
-        Ok(())
-    }
 }
+impl AskStore for MemoryStore {}
+impl ReviewStore for MemoryStore {}
+impl CredentialStore for MemoryStore {}
+impl PolicyStore for MemoryStore {}
+impl RoomStore for MemoryStore {}
 
 /// Runs every conformance test on the in-memory store and prints which pass. Not an assertion on the count: the
 /// point is the list. Run with `cargo test --lib memory_spike -- --ignored --nocapture`.

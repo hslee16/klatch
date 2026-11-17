@@ -2,7 +2,7 @@
 
 use super::SqliteStore;
 use crate::domain::{Message, Result};
-use crate::store::Store;
+use crate::store::ClaimStore;
 use rusqlite::params;
 
 /// The messages of a result ordered by room, collected per room (a room's run is consecutive).

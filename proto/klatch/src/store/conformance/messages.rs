@@ -25,9 +25,9 @@ pub fn a_hook_shows_a_message_once_but_read_still_returns_it<S: Store>(make: fn(
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "ask", 2).unwrap();
-    assert_eq!(s.hook_read("r", "alice", 3).unwrap().len(), 1);
+    assert_eq!(s.hook_read(Seat::new("r", "alice"), 3).unwrap().len(), 1);
     assert!(
-        s.hook_read("r", "alice", 4).unwrap().is_empty(),
+        s.hook_read(Seat::new("r", "alice"), 4).unwrap().is_empty(),
         "hook repeated"
     );
     let r = s.read(Seat::new("r", "alice"), true, 5).unwrap();
@@ -39,9 +39,9 @@ pub fn a_hook_skips_what_the_member_already_read<S: Store>(make: fn() -> S) {
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
     s.read(Seat::new("r", "alice"), true, 3).unwrap();
-    assert!(s.hook_read("r", "alice", 4).unwrap().is_empty());
+    assert!(s.hook_read(Seat::new("r", "alice"), 4).unwrap().is_empty());
     s.post(Seat::new("r", "bob"), "two", 5).unwrap();
-    let h = s.hook_read("r", "alice", 6).unwrap();
+    let h = s.hook_read(Seat::new("r", "alice"), 6).unwrap();
     assert_eq!(h.len(), 1);
     assert_eq!(h[0].body, "two");
 }
@@ -51,9 +51,12 @@ pub fn a_hook_shows_new_messages_after_an_earlier_hook_and_read_returns_all_unre
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
-    s.hook_read("r", "alice", 3).unwrap();
+    s.hook_read(Seat::new("r", "alice"), 3).unwrap();
     s.post(Seat::new("r", "bob"), "two", 4).unwrap();
-    assert_eq!(s.hook_read("r", "alice", 5).unwrap()[0].body, "two");
+    assert_eq!(
+        s.hook_read(Seat::new("r", "alice"), 5).unwrap()[0].body,
+        "two"
+    );
     let bodies: Vec<_> = s
         .read(Seat::new("r", "alice"), true, 6)
         .unwrap()
@@ -66,7 +69,7 @@ pub fn a_hook_excludes_own_messages<S: Store>(make: fn() -> S) {
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "alice"), "mine", 2).unwrap();
-    assert!(s.hook_read("r", "alice", 3).unwrap().is_empty());
+    assert!(s.hook_read(Seat::new("r", "alice"), 3).unwrap().is_empty());
 }
 pub fn wait_poll_changes_nothing_and_wait_seen_stops_the_next_wake_but_not_read<S: Store>(
     make: fn() -> S,
@@ -74,28 +77,28 @@ pub fn wait_poll_changes_nothing_and_wait_seen_stops_the_next_wake_but_not_read<
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
-    assert_eq!(s.wait_poll("r", "alice", 3).unwrap().len(), 1);
+    assert_eq!(s.wait_poll(Seat::new("r", "alice"), 3).unwrap().len(), 1);
     assert_eq!(
-        s.wait_poll("r", "alice", 4).unwrap().len(),
+        s.wait_poll(Seat::new("r", "alice"), 4).unwrap().len(),
         1,
         "poll alone must not change state"
     );
     s.wait_seen(Seat::new("r", "alice"), 1, 5).unwrap();
-    assert!(s.wait_poll("r", "alice", 6).unwrap().is_empty());
+    assert!(s.wait_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     assert_eq!(
         s.read(Seat::new("r", "alice"), false, 7).unwrap().len(),
         1,
         "seen by a wait is still unread"
     );
     s.post(Seat::new("r", "bob"), "two", 8).unwrap();
-    let w = s.wait_poll("r", "alice", 9).unwrap();
+    let w = s.wait_poll(Seat::new("r", "alice"), 9).unwrap();
     assert_eq!(w.len(), 1);
     assert_eq!(w[0].body, "two");
 }
 pub fn a_wait_poll_refreshes_the_waiters_presence_like_a_read<S: Store>(make: fn() -> S) {
     let s = make();
     s.join("r", "alice", 1).unwrap();
-    s.wait_poll("r", "alice", 9).unwrap();
+    s.wait_poll(Seat::new("r", "alice"), 9).unwrap();
     assert_eq!(s.members("r").unwrap()[0].last_seen, 9);
     s.read(Seat::new("r", "alice"), false, 12).unwrap();
     assert_eq!(s.members("r").unwrap()[0].last_seen, 12);
@@ -107,7 +110,7 @@ pub fn wait_seen_only_moves_forward<S: Store>(make: fn() -> S) {
     s.post(Seat::new("r", "bob"), "two", 3).unwrap();
     s.wait_seen(Seat::new("r", "alice"), 2, 4).unwrap();
     s.wait_seen(Seat::new("r", "alice"), 1, 5).unwrap();
-    assert!(s.wait_poll("r", "alice", 6).unwrap().is_empty());
+    assert!(s.wait_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
 }
 pub fn wait_poll_skips_what_was_read_and_own_messages<S: Store>(make: fn() -> S) {
     let s = make();
@@ -115,7 +118,7 @@ pub fn wait_poll_skips_what_was_read_and_own_messages<S: Store>(make: fn() -> S)
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
     s.read(Seat::new("r", "alice"), true, 3).unwrap();
     s.post(Seat::new("r", "alice"), "mine", 4).unwrap();
-    assert!(s.wait_poll("r", "alice", 5).unwrap().is_empty());
+    assert!(s.wait_poll(Seat::new("r", "alice"), 5).unwrap().is_empty());
 }
 pub fn pruning_removes_long_gone_members_and_their_bookkeeping_but_keeps_messages_and_recent_members<
     S: Store,
@@ -351,21 +354,21 @@ pub fn a_wake_position_is_separate_from_the_wait_position_and_the_read_cursor<S:
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
-    assert_eq!(s.wake_poll("r", "alice", 3).unwrap().len(), 1);
+    assert_eq!(s.wake_poll(Seat::new("r", "alice"), 3).unwrap().len(), 1);
     assert_eq!(
-        s.wake_poll("r", "alice", 4).unwrap().len(),
+        s.wake_poll(Seat::new("r", "alice"), 4).unwrap().len(),
         1,
         "poll alone changes nothing"
     );
     s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
-    assert!(s.wake_poll("r", "alice", 6).unwrap().is_empty());
+    assert!(s.wake_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     // a wait still sees it, and so does a read
-    assert_eq!(s.wait_poll("r", "alice", 7).unwrap().len(), 1);
+    assert_eq!(s.wait_poll(Seat::new("r", "alice"), 7).unwrap().len(), 1);
     assert_eq!(s.read(Seat::new("r", "alice"), false, 8).unwrap().len(), 1);
     // and the other way round
     s.post(Seat::new("r", "bob"), "two", 9).unwrap();
     s.wait_seen(Seat::new("r", "alice"), 2, 10).unwrap();
-    assert_eq!(s.wake_poll("r", "alice", 11).unwrap().len(), 1);
+    assert_eq!(s.wake_poll(Seat::new("r", "alice"), 11).unwrap().len(), 1);
 }
 pub fn wake_seen_only_moves_forward_and_a_read_hides_what_it_read_from_a_wake<S: Store>(
     make: fn() -> S,
@@ -376,15 +379,15 @@ pub fn wake_seen_only_moves_forward_and_a_read_hides_what_it_read_from_a_wake<S:
     s.post(Seat::new("r", "bob"), "two", 3).unwrap();
     s.wake_seen(Seat::new("r", "alice"), 2, 4).unwrap();
     s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
-    assert!(s.wake_poll("r", "alice", 6).unwrap().is_empty());
+    assert!(s.wake_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     s.post(Seat::new("r", "bob"), "three", 7).unwrap();
     s.read(Seat::new("r", "alice"), true, 8).unwrap();
-    assert!(s.wake_poll("r", "alice", 9).unwrap().is_empty());
+    assert!(s.wake_poll(Seat::new("r", "alice"), 9).unwrap().is_empty());
 }
 pub fn a_wake_poll_refreshes_presence_like_a_wait_poll<S: Store>(make: fn() -> S) {
     let s = make();
     s.join("r", "alice", 1).unwrap();
-    s.wake_poll("r", "alice", 500).unwrap();
+    s.wake_poll(Seat::new("r", "alice"), 500).unwrap();
     assert_eq!(s.members("r").unwrap()[0].last_seen, 500);
 }
 
@@ -420,8 +423,8 @@ pub fn a_kind_and_payload_are_stored_and_come_back_by_every_read_path<S: Store>(
     };
     assert_eq!(got(s.tail("r", 0, 10).unwrap()), want);
     assert_eq!(got(s.read(Seat::new("r", "bob"), false, 3).unwrap()), want);
-    assert_eq!(got(s.hook_read("r", "bob", 4).unwrap()), want);
-    assert_eq!(got(s.wait_poll("r", "bob", 5).unwrap()), want);
+    assert_eq!(got(s.hook_read(Seat::new("r", "bob"), 4).unwrap()), want);
+    assert_eq!(got(s.wait_poll(Seat::new("r", "bob"), 5).unwrap()), want);
 }
 pub fn a_kind_without_a_payload_is_a_label_on_the_message_alone<S: Store>(make: fn() -> S) {
     let s = make();

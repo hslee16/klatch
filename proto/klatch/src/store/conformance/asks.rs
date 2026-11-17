@@ -350,7 +350,7 @@ pub fn a_members_presence_in_a_working_room_is_not_activity_in_it<S: Store>(make
     s.join("ask-1", "helper", 25).unwrap();
     // Hooks refresh presence in every joined room; only a message or a join is news.
     s.read(Seat::new("ask-1", "asker"), false, 500).unwrap();
-    s.wait_poll("ask-1", "helper", 600).unwrap();
+    s.wait_poll(Seat::new("ask-1", "helper"), 600).unwrap();
     let r = s.rooms_with_prefix("ask-").unwrap();
     assert_eq!(
         r[0].last_activity, 25,
