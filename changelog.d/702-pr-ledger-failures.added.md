@@ -1,0 +1,1 @@
+- `pr-ledger` names each red or cancelled job with its link under the PR's line.

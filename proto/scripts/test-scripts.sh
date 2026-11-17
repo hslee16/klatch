@@ -97,5 +97,13 @@ expect_stage '{"merged":true,"ticket_state":"none"}' 'done' "merged with no link
 expect_stage '{"closed":true,"merged":false}' abandoned "closed without merging is abandoned"
 if printf '{"idle_hours":9,"checks":[{"name":"m","conclusion":null}]}' | python3 -I "$ledger" --classify | cut -f2 | grep -q stuck; then ok "pr-ledger: a long-running check says it may be stuck"; else bad "pr-ledger: stuck hint missing"; fi
 
+named=$(python3 -I -c "
+import importlib.machinery, importlib.util, sys
+l = importlib.machinery.SourceFileLoader('pl', sys.argv[1]); sp = importlib.util.spec_from_loader('pl', l)
+m = importlib.util.module_from_spec(sp); l.exec_module(m)
+print(*m.failing([{'name': 'a', 'conclusion': 'success'}, {'name': 'mac', 'conclusion': 'failure', 'url': 'u1'}, {'name': 'b', 'conclusion': 'cancelled', 'url': 'u2'}]), sep=';')
+" "$ledger")
+if [ "$named" = "mac (failure) u1;b (cancelled) u2" ]; then ok "pr-ledger: names each red or cancelled job with its link"; else bad "pr-ledger: failing jobs listed as '$named'"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
