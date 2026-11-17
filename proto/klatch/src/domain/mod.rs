@@ -33,10 +33,10 @@ pub use board::{
     current_offers, is_offer, render_board, render_who, statuses,
 };
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
-pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, is_merged_note, open_prs};
+pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
 pub use tasks::{
-    CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, Task,
-    WORKING_PREFIX, open_tasks,
+    CHECKPOINT_PREFIX, Checkpoint, FINISHED_PREFIX, HANDOFF_PREFIX, TASK_HOLD_SECS, TASK_WORDS,
+    Task, WORKING_PREFIX, open_tasks,
 };
 pub mod budget;
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
