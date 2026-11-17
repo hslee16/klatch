@@ -56,7 +56,7 @@ module claims {
   var claims: Set[Claim]          // table rows: an expired row stays until some claim attempt deletes it
   var waits: Set[Wait]
   var parkedUntil: str -> int     // 0 when not parked; a park row stays until a sign of life
-  var everParked: Set[str]        // ghost: members that parked at some time
+  var everParked: Set[str]        // ghost: members that parked at some time (no invariant reads it now; kept so the traces stay valid)
   var nextId: int
   var last: Step                  // the action just taken, for replay and for the step invariants
   var prev: Snapshot              // the state before it
@@ -205,7 +205,7 @@ module claims {
   // whatever it stretched back to a normal lease.
   action post(m: str): bool = {
     val renewedClaims = renewed(claims, m, now)
-    val wasParked = parkedUntil.get(m) != 0
+    val wasParked = parkedUntil.get(m) != 0 and BUG != "postKeepsStretch"
     // never below the claim's own ttl from now (#649): the renewal just ran, and a cut under it would leave a long
     // claim short until the member's next action
     def cutTo(c: Claim): int =
@@ -222,7 +222,8 @@ module claims {
 
   // "parked: ..., back by <span>": the post renews first, then the live claims are stretched to the return time.
   action park(m: str, spanMins: int): bool = {
-    val capped = if (BUG == "parkUncapped") spanMins else (if (spanMins > PARK_MAX) PARK_MAX else spanMins)
+    val cutAt = if (BUG == "parkOverMax") PARK_MAX + 1 else PARK_MAX   // the mutant allows one minute too many
+    val capped = if (BUG == "parkUncapped") spanMins else (if (spanMins > cutAt) cutAt else spanMins)
     val back = now + capped
     val renewedClaims = renewed(claims, m, now)
     val held = parkedUntil.get(m)    // what an earlier park still holds; 0 when not parked
@@ -320,9 +321,14 @@ module claims {
     liveClaims.forall(x => liveClaims.forall(y =>
       x.owner == y.owner or not(overlap(x.path, y.path) and collide(x.scope, y.scope))))
 
-  // A lease never exceeds the 24 hour cap, except for a member that has parked (item 46 stretches to a return time).
+  // A lease never exceeds the 24 hour cap, except while its member is parked (item 46; D5 and #646: a park is the one
+  // exception, and LeaseWithinParkMax bounds it at seven days). "Parked" is the park row's return time still ahead of
+  // now; once it has passed, or a sign of life ended the park, the member is unparked and the cap holds for it. This
+  // is the former finding StrictLeaseCap, reworded after the human decided the exception (it failed as "no live claim
+  // ends more than 24 h out, parked or not"), and it replaces the earlier weaker form that exempted any member that had
+  // ever parked.
   val LeaseWithinCap: bool =
-    liveClaims.forall(c => everParked.contains(c.owner) or c.expires - now <= CAP)
+    liveClaims.forall(c => parkedUntil.get(c.owner) > now or c.expires - now <= CAP)
 
   // Even a park never stretches a lease past the park maximum.
   val LeaseWithinParkMax: bool =
@@ -410,10 +416,8 @@ module claims {
     ParkedLeaseEndsAtReturn, EveryCycleHasATold,
   }
 
-  // ---- Known findings: these are expected to FAIL, and each has a ticket (RESEARCH-NOTES, Quint) ----
-
-  // F1. Strict 24 hour cap including a parked member: fails, a park stretches a claim to seven days (item 46 vs D5).
-  val StrictLeaseCap: bool = liveClaims.forall(c => c.expires - now <= CAP)
+  // ---- Known findings: none open. An invariant that is expected to FAIL goes here, with its ticket. ----
+  // (F1, StrictLeaseCap, was resolved by #646: the park exception is decided and is now LeaseWithinCap.)
 
   // ---- witnesses: each is "never happens" and is made to fail on purpose, to give a short trace of that event ----
   val W_deadlock: bool = not(last.kind == "claim" and last.deadlock)
