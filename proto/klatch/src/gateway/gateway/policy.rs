@@ -230,6 +230,14 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// The caller's own latest refusals, newest first: rule, room, operation and time, never the text. It reads only
+    /// the caller's rows, so no other member's refusal is ever returned, and it takes no guard: a member stopped by
+    /// the breaker or a pause can still read why (#678).
+    pub fn my_refusals(&self, who: &Principal, limit: usize) -> Result<Vec<RefusalRecord>> {
+        check_member(who)?;
+        self.store.refusals_of(&who.member, limit)
+    }
+
     /// The latest refused calls, newest first.
     pub fn admin_refusals(&self, who: &Principal, limit: usize) -> Result<Vec<RefusalRecord>> {
         check_member(who)?;

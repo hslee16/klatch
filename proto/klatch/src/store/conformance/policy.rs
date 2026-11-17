@@ -46,6 +46,43 @@ pub fn refusals_are_kept_newest_first_with_the_rule_and_no_text<S: Store>(make: 
     );
     assert_eq!(s.refusals(1).unwrap().len(), 1);
 }
+pub fn one_members_refusals_are_listed_newest_first_and_the_limit_counts_only_theirs<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    s.record_refusal(&NewRefusal::new("alice", "r", "post", "label"), 10)
+        .unwrap();
+    s.record_refusal(&NewRefusal::new("bob", "q", "claim", "credentials"), 20)
+        .unwrap();
+    s.record_refusal(&NewRefusal::new("alice", "t", "status", "scrub:hosts"), 30)
+        .unwrap();
+    s.record_refusal(&NewRefusal::new("bob", "q", "post", "canary"), 40)
+        .unwrap();
+    let mine = s.refusals_of("alice", 10).unwrap();
+    let view: Vec<_> = mine
+        .iter()
+        .map(|r| {
+            (
+                r.member.as_str(),
+                r.room.as_str(),
+                r.operation.as_str(),
+                r.rule.as_str(),
+                r.ts,
+            )
+        })
+        .collect();
+    assert_eq!(
+        view,
+        vec![
+            ("alice", "t", "status", "scrub:hosts", 30),
+            ("alice", "r", "post", "label", 10)
+        ]
+    );
+    assert_eq!(s.refusals_of("alice", 1).unwrap().len(), 1);
+    assert_eq!(s.refusals_of("alice", 1).unwrap()[0].ts, 30);
+    assert!(s.refusals_of("alice", 0).unwrap().is_empty());
+    assert!(s.refusals_of("carol", 10).unwrap().is_empty());
+}
 pub fn the_rules_a_member_was_refused_under_since_a_time_are_counted_per_member<S: Store>(
     make: fn() -> S,
 ) {

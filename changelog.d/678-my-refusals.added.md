@@ -1,0 +1,1 @@
+- `klatch refusals [--limit N]`: a member lists its own recent refusals (time, room, operation, rule; never the text). It reads only the caller's own records, so another member's refusals are never shown, and it still works for a member stopped by the circuit breaker (#678).

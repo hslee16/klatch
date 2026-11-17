@@ -212,5 +212,20 @@ fn canary_and_breaker(w: &World) -> Res {
         "allow failed",
     )?;
     w.ok("nosy", &["post", "town", "back"])?;
+    // each member lists its own refusals, with the rule and never the text or another member's rows
+    let mine = w.ok("nosy", &["refusals"])?;
+    check(
+        mine.lines().filter(|l| l.contains("clearance")).count() == 5,
+        "the member did not list its five clearance refusals",
+    )?;
+    lacks(&mine, "canary", "the list held another member's refusal")?;
+    let theirs = w.ok("priv", &["refusals"])?;
+    has(&theirs, "canary", "the canary refusal is in its own list")?;
+    lacks(
+        &theirs,
+        "clearance",
+        "the list held another member's refusal",
+    )?;
+    lacks(&theirs, &token, "the list repeated the canary")?;
     Ok(vec![])
 }

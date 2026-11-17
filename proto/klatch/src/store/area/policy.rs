@@ -38,6 +38,15 @@ pub trait PolicyStore {
         Ok(Vec::new())
     }
 
+    /// The latest `limit` refusals of one member, newest first: a member reads its own record, never another's.
+    fn refusals_of(
+        &self,
+        _member: &str,
+        _limit: usize,
+    ) -> Result<Vec<crate::domain::RefusalRecord>> {
+        Ok(Vec::new())
+    }
+
     fn refusal_rules_since(&self, _member: &str, _since: i64) -> Result<Vec<String>> {
         Ok(Vec::new())
     }

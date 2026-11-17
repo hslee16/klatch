@@ -31,6 +31,7 @@ mod member_surface;
 mod members;
 mod mute;
 mod notify;
+mod own_refusals;
 mod parked;
 mod pr_lifecycle;
 mod rate_limit;
