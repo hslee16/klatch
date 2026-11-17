@@ -261,6 +261,21 @@ pub fn baseline_of(outcomes: &[Outcome]) -> serde_json::Value {
     serde_json::Value::Object(all)
 }
 
+/// The cargo arguments that build the test-clock binary in the same profile as the running bench: a release bench that
+/// built a debug binary would then run whatever stale release binary was left in the directory (#729).
+fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = ["build", "-q", "-p", "klatch", "--features", "test-clock"]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    if profile == "release" {
+        args.push("--release".into());
+    }
+    args.push("--target-dir".into());
+    args.push(dir.display().to_string());
+    args
+}
+
 /// The klatch binary the workspace builds, next to the test or bench executable's directory. Builds it with cargo
 /// when it is missing (running only this crate's tests does not build the other crates' binaries).
 pub fn find_binary() -> Result<std::path::PathBuf, String> {
@@ -283,16 +298,13 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     let dir = target.join("bench-bin");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let status = std::process::Command::new(cargo)
-        .args([
-            "build",
-            "-q",
-            "-p",
-            "klatch",
-            "--features",
-            "test-clock",
-            "--target-dir",
-        ])
-        .arg(&dir)
+        .args(build_args(
+            profile
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("debug"),
+            &dir,
+        ))
         .status()
         .map_err(|e| e.to_string())?;
     let bin = dir
@@ -616,5 +628,24 @@ mod tests {
         )];
         let t = table(&out);
         assert!(t.contains("board_ms=12") && !t.contains("members="), "{t}");
+    }
+}
+
+#[cfg(test)]
+mod build_args_tests {
+    use super::build_args;
+    use std::path::Path;
+
+    #[test]
+    fn a_release_bench_builds_the_release_binary() {
+        let args = build_args("release", Path::new("/t/bench-bin"));
+        assert!(args.contains(&"--release".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn a_debug_bench_builds_the_debug_binary() {
+        let args = build_args("debug", Path::new("/t/bench-bin"));
+        assert!(!args.contains(&"--release".to_string()), "{args:?}");
+        assert_eq!(args.last().map(String::as_str), Some("/t/bench-bin"));
     }
 }
