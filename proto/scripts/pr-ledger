@@ -12,7 +12,8 @@ Usage:
   pr-ledger [--repo OWNER/NAME] [--merged-days N] [--stale-hours H]   list the ledger (uses `gh api`, REST only)
   pr-ledger --classify                                                 read one JSON record on stdin, print the stage
   pr-ledger --rerun-cancelled PR                                       rerun the jobs that were cancelled before they ran
-  pr-ledger --post [--state-file F]                                    post the PRs needing a step to the lobby, only when the list changed
+  pr-ledger --post [--state-file F] [--only N,N]                       post the PRs needing a step to the lobby, only when the list changed
+                                                                       (--only: just those PR numbers, here and in the plain list)
   pr-ledger --record-bench PR --bench-ledger FILE                      record that a merged PR was benched
   pr-ledger --bench-ledger FILE                                        list, treating a merged PR not in FILE as merged-not-benched
 
@@ -204,6 +205,7 @@ def main():
     ap.add_argument("--classify", action="store_true")
     ap.add_argument("--rerun-cancelled", type=int, metavar="PR")
     ap.add_argument("--post", action="store_true", help="post the PRs needing a step to the lobby when the list changed")
+    ap.add_argument("--only", metavar="N,N", help="show or post only these PR numbers")
     ap.add_argument("--state-file", default=os.path.join(os.environ.get("TMPDIR") or tempfile.gettempdir(), "pr-ledger-last-post"))
     ap.add_argument("--record-bench", type=int, metavar="PR", help="record a merged PR as benched (needs --bench-ledger)")
     ap.add_argument("--bench-ledger", metavar="FILE", help="JSON file of benched PRs; a merged PR not in it needs the bench")
@@ -237,6 +239,9 @@ def main():
         rows.append((rec, stage, nxt))
     quiet = {"done"}
     shown = [r for r in rows if r[1] not in quiet]
+    if args.only:
+        wanted = {int(x) for x in args.only.split(",") if x.strip()}
+        shown = [r for r in shown if r[0]["number"] in wanted]
     if args.post:
         text = post_text([(r[0], r[1], r[2]) for r in shown])
         if text is None:
