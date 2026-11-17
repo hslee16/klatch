@@ -135,6 +135,15 @@ class Client:
                 params[k] = v
         return self.request("post", **params)
 
+    def dm(self, to, body, label=None):
+        """Send a direct message to one other member. Returns {"room", "seq", "id"}: the two-member room made on first
+        use, which both members can read, `history` and `subscribe` to. The label may go below the room's ceiling (the
+        lower of the two clearances), never above."""
+        params = {"to": to, "body": body}
+        if label is not None:
+            params["label"] = label
+        return self.request("dm", **params)
+
     def read(self, room, peek=False):
         return self.request("read", room=room, peek=peek)["messages"]
 

@@ -573,6 +573,7 @@ mod tests {
             "status",
             "scope",
             "prune",
+            "dm",
             "mute",
         ] {
             assert!(

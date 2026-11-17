@@ -59,6 +59,13 @@ struct ClaimParams {
     shared: bool,
 }
 #[derive(Deserialize)]
+struct DmParams {
+    to: String,
+    body: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+#[derive(Deserialize)]
 struct MuteParams {
     room: String,
     muted: bool,
@@ -161,6 +168,10 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
                 (Some(kind), payload) => g.post_handoff(who, (&p.room, &p.body, p.label.as_deref()), &crate::gateway::Handoff { kind, payload }),
             },
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
+        ),
+        "dm" => call.run(
+            |p: DmParams| g.dm(who, &p.to, &p.body, p.label.as_deref()),
+            |(room, x): (String, Posted)| json!({ "room": room, "seq": x.seq, "id": x.id }),
         ),
         "read" => call.run(
             |p: ReadParams| g.read(who, &p.room, !p.peek),
