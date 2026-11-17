@@ -4,7 +4,7 @@ use crate::gateway::{Guard, Operation};
 use crate::store::{
     AskStore, ClaimRequest, ClaimStore, CredentialStore, HookEvent, MemberStore, MessageStore,
     NewAudit, NewMessage, PolicyStore, Release, ReviewResolution, ReviewStore, RoomStore, Seat,
-    SqliteStore,
+    Seq, SqliteStore,
 };
 use std::cell::{Cell, RefCell};
 
@@ -53,6 +53,11 @@ impl MessageStore for SpyStore {
         self.inner.read(at, advance, now)
     }
 
+    fn look(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
+        self.gate()?;
+        self.inner.look(at, now)
+    }
+
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
         self.inner.posts_since(member, since)
     }
@@ -71,11 +76,11 @@ impl MessageStore for SpyStore {
         self.inner.wake_poll(at, now)
     }
 
-    fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn wake_seen(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.inner.wake_seen(at, seq, now)
     }
 
-    fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn wait_seen(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.wait_seen(at, seq, now)
     }
@@ -90,7 +95,7 @@ impl MessageStore for SpyStore {
         self.inner.head(room)
     }
 
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.advance_cursor(at, seq, now)
     }

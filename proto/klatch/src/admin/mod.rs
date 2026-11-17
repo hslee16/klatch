@@ -8,6 +8,7 @@
 
 use super::*;
 use clap::{Subcommand, ValueEnum};
+use route::Route;
 use std::io::{BufRead, IsTerminal, Write};
 
 mod acts;
@@ -15,6 +16,7 @@ mod archive;
 mod export;
 mod keys;
 mod listing;
+mod route;
 
 /// Who may create rooms and invite (#188).
 #[derive(Clone, Copy, ValueEnum)]
@@ -263,36 +265,19 @@ fn authorize(cmd: &AdminCmd) -> Result<()> {
     Ok(())
 }
 
-/// The commands that act on the key or the store file itself, and so need more than the gateway.
-fn needs_the_keystore(cmd: &AdminCmd) -> bool {
-    matches!(
-        cmd,
-        AdminCmd::Recovery
-            | AdminCmd::Recover { .. }
-            | AdminCmd::RotateKey
-            | AdminCmd::Backup { .. }
-            | AdminCmd::Restore { .. }
-            | AdminCmd::Retention { .. }
-            | AdminCmd::Archive { .. }
-            | AdminCmd::RestoreArchive { .. }
-            | AdminCmd::Archives
-            | AdminCmd::Export { .. }
-            | AdminCmd::SealLabel { .. }
-            | AdminCmd::RunArchive { .. }
-    )
-}
-
 pub fn run(cmd: AdminCmd) -> Result<()> {
     authorize(&cmd)?;
     let db = db_path()?;
-    if needs_the_keystore(&cmd) {
-        return keys::key_command(&db, cmd);
+    match Route::from(cmd) {
+        Route::Keystore(k) => keys::key_command(&db, k),
+        Route::Gateway(act) => {
+            let store = custody::open_store(&db)?;
+            let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
+            // the person administering holds every label key
+            gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
+            acts::execute(&Direct::new(gateway, Principal::unattributed("admin")), act)
+        }
     }
-    let store = custody::open_store(&db)?;
-    let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
-    // the person administering holds every label key
-    gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
-    acts::execute(&Direct::new(gateway, Principal::unattributed("admin")), cmd)
 }
 
 #[cfg(test)]

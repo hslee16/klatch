@@ -1,6 +1,7 @@
 //! The commands about the key and the store file: they need the keystore as well as the gateway, and each one is in
 //! the audit. `key_command` sends each to its own function.
 
+use super::route::{KeyAct, Keystore};
 use super::*;
 use std::path::Path;
 
@@ -32,49 +33,27 @@ impl KeyCtx<'_> {
     }
 }
 
-pub(super) fn key_command(db: &Path, cmd: AdminCmd) -> Result<()> {
+pub(super) fn key_command(db: &Path, route: Keystore) -> Result<()> {
     let ctx = KeyCtx {
         db,
         who: Principal::unattributed("admin"),
     };
-    match cmd {
-        AdminCmd::Recovery => recovery(&ctx),
-        AdminCmd::Recover { code, label } => recover(&ctx, &code, label.as_deref()),
-        AdminCmd::SealLabel { label } => add_label_seal(&ctx, &label),
-        AdminCmd::RotateKey => rotate_key(&ctx),
-        AdminCmd::Backup { file } => backup(&ctx, &file),
-        AdminCmd::Restore { file } => restore(&ctx, &file),
-        AdminCmd::RunArchive { file, run } => run_archive(&ctx, &file, &run),
-        AdminCmd::Export { room, json } => export::export(&ctx, &room, json),
-        AdminCmd::Retention { .. }
-        | AdminCmd::Archive { .. }
-        | AdminCmd::RestoreArchive { .. }
-        | AdminCmd::Archives => archive::archive_command(&ctx, cmd),
-        AdminCmd::Pause
-        | AdminCmd::Resume
-        | AdminCmd::Close { .. }
-        | AdminCmd::Reopen { .. }
-        | AdminCmd::Remove { .. }
-        | AdminCmd::Allow { .. }
-        | AdminCmd::Label { .. }
-        | AdminCmd::Clear { .. }
-        | AdminCmd::Librarian { .. }
-        | AdminCmd::Reviewer { .. }
-        | AdminCmd::AdminAgent { .. }
-        | AdminCmd::RoomCreation { .. }
-        | AdminCmd::GrantRooms { .. }
-        | AdminCmd::RateLimit { .. }
-        | AdminCmd::LeaseCap { .. }
-        | AdminCmd::LeaseGrace { .. }
-        | AdminCmd::Cap { .. }
-        | AdminCmd::Chain { .. }
-        | AdminCmd::Canary { .. }
-        | AdminCmd::ScrubAdd { .. }
-        | AdminCmd::ScrubRemove { .. }
-        | AdminCmd::ScrubList
-        | AdminCmd::Refusals { .. }
-        | AdminCmd::ReviewQueue { .. }
-        | AdminCmd::Audit { .. } => unreachable!("not a key command"),
+    match route {
+        Keystore::Key(act) => key_act(&ctx, act),
+        Keystore::Archive(act) => archive::archive_command(&ctx, act),
+    }
+}
+
+fn key_act(ctx: &KeyCtx, act: KeyAct) -> Result<()> {
+    match act {
+        KeyAct::Recovery => recovery(ctx),
+        KeyAct::Recover { code, label } => recover(ctx, &code, label.as_deref()),
+        KeyAct::SealLabel { label } => add_label_seal(ctx, &label),
+        KeyAct::RotateKey => rotate_key(ctx),
+        KeyAct::Backup { file } => backup(ctx, &file),
+        KeyAct::Restore { file } => restore(ctx, &file),
+        KeyAct::RunArchive { file, run } => run_archive(ctx, &file, &run),
+        KeyAct::Export { room, json } => export::export(ctx, &room, json),
     }
 }
 

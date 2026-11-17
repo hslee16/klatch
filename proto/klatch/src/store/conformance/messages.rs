@@ -83,7 +83,7 @@ pub fn wait_poll_changes_nothing_and_wait_seen_stops_the_next_wake_but_not_read<
         1,
         "poll alone must not change state"
     );
-    s.wait_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    s.wait_seen(Seat::new("r", "alice"), Seq(1), 5).unwrap();
     assert!(s.wait_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     assert_eq!(
         s.read(Seat::new("r", "alice"), false, 7).unwrap().len(),
@@ -108,8 +108,8 @@ pub fn wait_seen_only_moves_forward<S: Store>(make: fn() -> S) {
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
     s.post(Seat::new("r", "bob"), "two", 3).unwrap();
-    s.wait_seen(Seat::new("r", "alice"), 2, 4).unwrap();
-    s.wait_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    s.wait_seen(Seat::new("r", "alice"), Seq(2), 4).unwrap();
+    s.wait_seen(Seat::new("r", "alice"), Seq(1), 5).unwrap();
     assert!(s.wait_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
 }
 pub fn wait_poll_skips_what_was_read_and_own_messages<S: Store>(make: fn() -> S) {
@@ -303,7 +303,8 @@ pub fn advance_cursor_moves_forward_only_and_read_follows_it<S: Store>(make: fn(
     for i in 0..4 {
         s.post(Seat::new("r", "bob"), &format!("m{i}"), i).unwrap();
     }
-    s.advance_cursor(Seat::new("r", "alice"), 2, 5).unwrap();
+    s.advance_cursor(Seat::new("r", "alice"), Seq(2), 5)
+        .unwrap();
     assert_eq!(
         s.read(Seat::new("r", "alice"), false, 6)
             .unwrap()
@@ -312,7 +313,8 @@ pub fn advance_cursor_moves_forward_only_and_read_follows_it<S: Store>(make: fn(
             .collect::<Vec<_>>(),
         vec![3, 4]
     );
-    s.advance_cursor(Seat::new("r", "alice"), 1, 7).unwrap(); // backward: ignored
+    s.advance_cursor(Seat::new("r", "alice"), Seq(1), 7)
+        .unwrap(); // backward: ignored
     assert_eq!(s.read(Seat::new("r", "alice"), false, 8).unwrap().len(), 2);
 }
 pub fn advance_cursor_never_passes_the_head_so_it_cannot_skip_future_messages<S: Store>(
@@ -321,7 +323,8 @@ pub fn advance_cursor_never_passes_the_head_so_it_cannot_skip_future_messages<S:
     let s = make();
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
-    s.advance_cursor(Seat::new("r", "alice"), 99, 3).unwrap();
+    s.advance_cursor(Seat::new("r", "alice"), Seq(99), 3)
+        .unwrap();
     s.post(Seat::new("r", "bob"), "two", 4).unwrap();
     let got = s.read(Seat::new("r", "alice"), false, 5).unwrap();
     assert_eq!(
@@ -333,7 +336,8 @@ pub fn advance_cursor_never_passes_the_head_so_it_cannot_skip_future_messages<S:
 pub fn advance_cursor_creates_the_membership_if_needed<S: Store>(make: fn() -> S) {
     let s = make();
     s.post(Seat::new("r", "bob"), "x", 1).unwrap();
-    s.advance_cursor(Seat::new("r", "alice"), 1, 2).unwrap();
+    s.advance_cursor(Seat::new("r", "alice"), Seq(1), 2)
+        .unwrap();
     assert!(s.members("r").unwrap().iter().any(|m| m.name == "alice"));
     assert!(
         s.read(Seat::new("r", "alice"), false, 3)
@@ -390,14 +394,14 @@ pub fn a_wake_position_is_separate_from_the_wait_position_and_the_read_cursor<S:
         1,
         "poll alone changes nothing"
     );
-    s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    s.wake_seen(Seat::new("r", "alice"), Seq(1), 5).unwrap();
     assert!(s.wake_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     // a wait still sees it, and so does a read
     assert_eq!(s.wait_poll(Seat::new("r", "alice"), 7).unwrap().len(), 1);
     assert_eq!(s.read(Seat::new("r", "alice"), false, 8).unwrap().len(), 1);
     // and the other way round
     s.post(Seat::new("r", "bob"), "two", 9).unwrap();
-    s.wait_seen(Seat::new("r", "alice"), 2, 10).unwrap();
+    s.wait_seen(Seat::new("r", "alice"), Seq(2), 10).unwrap();
     assert_eq!(s.wake_poll(Seat::new("r", "alice"), 11).unwrap().len(), 1);
 }
 pub fn wake_seen_only_moves_forward_and_a_read_hides_what_it_read_from_a_wake<S: Store>(
@@ -407,8 +411,8 @@ pub fn wake_seen_only_moves_forward_and_a_read_hides_what_it_read_from_a_wake<S:
     s.join("r", "alice", 1).unwrap();
     s.post(Seat::new("r", "bob"), "one", 2).unwrap();
     s.post(Seat::new("r", "bob"), "two", 3).unwrap();
-    s.wake_seen(Seat::new("r", "alice"), 2, 4).unwrap();
-    s.wake_seen(Seat::new("r", "alice"), 1, 5).unwrap();
+    s.wake_seen(Seat::new("r", "alice"), Seq(2), 4).unwrap();
+    s.wake_seen(Seat::new("r", "alice"), Seq(1), 5).unwrap();
     assert!(s.wake_poll(Seat::new("r", "alice"), 6).unwrap().is_empty());
     s.post(Seat::new("r", "bob"), "three", 7).unwrap();
     s.read(Seat::new("r", "alice"), true, 8).unwrap();

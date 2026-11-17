@@ -1,7 +1,7 @@
 //! The `MessageStore` area of the store seam; `Store` in the parent module combines every area.
 
 use crate::domain::{Attribution, Message, Posted, Result};
-use crate::store::{NewMessage, Seat};
+use crate::store::{NewMessage, Seat, Seq};
 
 pub trait MessageStore {
     /// Join a room (idempotent). Unread starts at the beginning of history.
@@ -39,9 +39,16 @@ pub trait MessageStore {
         self.read(at, false, now)
     }
 
+    /// What `read(at, false, now)` returns, for a reader that only looks (the librarian, #499): it must not refresh
+    /// the reader's presence, join it to the room or move a cursor. The default is a non-advancing `read`, which
+    /// refreshes presence; a store that can look without touching anything overrides it.
+    fn look(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
+        self.read(at, false, now)
+    }
+
     /// Remember that a wait has looked at the room up to `seq` (forward only), so the next wait does not wake for
     /// the same messages. The read cursor is untouched: the messages stay unread. The default remembers nothing.
-    fn wait_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
+    fn wait_seen(&self, _at: Seat, _seq: Seq, _now: i64) -> Result<()> {
         Ok(())
     }
 
@@ -52,7 +59,7 @@ pub trait MessageStore {
     }
 
     /// Remember that a watcher pointed at the room up to `seq` (forward only). The default remembers nothing.
-    fn wake_seen(&self, _at: Seat, _seq: i64, _now: i64) -> Result<()> {
+    fn wake_seen(&self, _at: Seat, _seq: Seq, _now: i64) -> Result<()> {
         Ok(())
     }
 
@@ -94,5 +101,5 @@ pub trait MessageStore {
     fn head(&self, room: &str) -> Result<i64>;
 
     /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()>;
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()>;
 }

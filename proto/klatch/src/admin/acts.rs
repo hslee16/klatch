@@ -1,5 +1,6 @@
 //! The admin acts that need only the gateway, grouped by what they act on. `execute` sends each command to its family.
 
+use super::route::{Act, ListingAct, MemberAct, PolicyAct, RoleAct, RoomAct, ScrubAct};
 use super::*;
 
 /// "no longer" when a role is being taken away, else "now".
@@ -7,86 +8,60 @@ fn now_or_no_longer(off: bool) -> &'static str {
     if off { "no longer" } else { "now" }
 }
 
-pub(super) fn execute(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::Pause
-        | AdminCmd::Resume
-        | AdminCmd::Close { .. }
-        | AdminCmd::Reopen { .. }
-        | AdminCmd::Canary { .. }
-        | AdminCmd::Label { .. } => rooms(t, cmd),
-        AdminCmd::Remove { .. }
-        | AdminCmd::Allow { .. }
-        | AdminCmd::Clear { .. }
-        | AdminCmd::Librarian { .. }
-        | AdminCmd::Reviewer { .. }
-        | AdminCmd::AdminAgent { .. }
-        | AdminCmd::GrantRooms { .. } => members(t, cmd),
-        AdminCmd::RoomCreation { .. }
-        | AdminCmd::RateLimit { .. }
-        | AdminCmd::LeaseCap { .. }
-        | AdminCmd::LeaseGrace { .. }
-        | AdminCmd::Cap { .. }
-        | AdminCmd::Chain { .. }
-        | AdminCmd::ScrubAdd { .. }
-        | AdminCmd::ScrubRemove { .. }
-        | AdminCmd::ScrubList => policy(t, cmd),
-        AdminCmd::Refusals { limit } => listing::refusals(t, limit),
-        AdminCmd::Audit { limit } => listing::audit(t, limit),
-        AdminCmd::ReviewQueue { limit } => listing::review_queue(t, limit),
-        AdminCmd::Recovery
-        | AdminCmd::Recover { .. }
-        | AdminCmd::RotateKey
-        | AdminCmd::Backup { .. }
-        | AdminCmd::Restore { .. }
-        | AdminCmd::Retention { .. }
-        | AdminCmd::Archive { .. }
-        | AdminCmd::RestoreArchive { .. }
-        | AdminCmd::Archives
-        | AdminCmd::Export { .. }
-        | AdminCmd::SealLabel { .. }
-        | AdminCmd::RunArchive { .. } => {
-            unreachable!("handled in run, which needs the keystore and not only the gateway")
-        }
+pub(super) fn execute(t: &dyn Transport, act: Act) -> Result<()> {
+    match act {
+        Act::Room(a) => rooms(t, a),
+        Act::Member(a) => members(t, a),
+        Act::Role(a) => roles(t, a),
+        Act::Policy(a) => policy(t, a),
+        Act::Scrub(a) => scrub(t, a),
+        Act::Listing(a) => listings(t, a),
     }
 }
 
-fn rooms(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::Pause => {
+fn listings(t: &dyn Transport, act: ListingAct) -> Result<()> {
+    match act {
+        ListingAct::Refusals { limit } => listing::refusals(t, limit),
+        ListingAct::Audit { limit } => listing::audit(t, limit),
+        ListingAct::ReviewQueue { limit } => listing::review_queue(t, limit),
+    }
+}
+
+fn rooms(t: &dyn Transport, act: RoomAct) -> Result<()> {
+    match act {
+        RoomAct::Pause => {
             t.admin_pause(true)?;
             println!(
                 "all rooms are paused; nothing is posted, claimed or delivered until `klatch admin resume`"
             );
         }
-        AdminCmd::Resume => {
+        RoomAct::Resume => {
             t.admin_pause(false)?;
             println!("rooms resumed");
         }
-        AdminCmd::Close { room } => {
+        RoomAct::Close { room } => {
             t.admin_close_room(&room, true)?;
             println!("room {room} is closed (read-only)");
         }
-        AdminCmd::Reopen { room } => {
+        RoomAct::Reopen { room } => {
             t.admin_close_room(&room, false)?;
             println!("room {room} is open again");
         }
-        AdminCmd::Label { room, label } => {
+        RoomAct::Label { room, label } => {
             t.admin_set_room_label(&room, &label)?;
             println!("room {room} is labelled {label}");
         }
-        AdminCmd::Canary { room } => {
+        RoomAct::Canary { room } => {
             t.admin_plant_canary(&room)?;
             println!("a canary is planted in {room}; a copy of it anywhere else pauses that room");
         }
-        _ => unreachable!("not a room act"),
     }
     Ok(())
 }
 
-fn members(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::Remove {
+fn members(t: &dyn Transport, act: MemberAct) -> Result<()> {
+    match act {
+        MemberAct::Remove {
             member,
             room,
             all_rooms,
@@ -97,7 +72,7 @@ fn members(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 "{member} is removed from {room} and refused there until `klatch admin allow`"
             );
         }
-        AdminCmd::Allow {
+        MemberAct::Allow {
             member,
             room,
             all_rooms,
@@ -106,37 +81,35 @@ fn members(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
             t.admin_allow_member(&room, &member)?;
             println!("{member} is allowed in {room} again");
         }
-        AdminCmd::Clear { member, label } => {
+        MemberAct::Clear { member, label } => {
             t.admin_set_clearance(&member, &label)?;
             println!("{member} is cleared to {label}");
         }
-        AdminCmd::GrantRooms { member, off } => {
+        MemberAct::GrantRooms { member, off } => {
             t.admin_grant_room_capability(&member, !off)?;
             println!(
                 "{member} {} create rooms and invite",
                 if off { "may no longer" } else { "may now" }
             );
         }
-        _ => return roles(t, cmd),
     }
     Ok(())
 }
 
-fn roles(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    let (member, off, what) = match cmd {
-        AdminCmd::Librarian { member, off } => {
+fn roles(t: &dyn Transport, act: RoleAct) -> Result<()> {
+    let (member, off, what) = match act {
+        RoleAct::Librarian { member, off } => {
             t.admin_set_librarian(&member, !off)?;
             (member, off, "a librarian")
         }
-        AdminCmd::Reviewer { member, off } => {
+        RoleAct::Reviewer { member, off } => {
             t.admin_set_reviewer(&member, !off)?;
             (member, off, "a reviewer")
         }
-        AdminCmd::AdminAgent { member, off } => {
+        RoleAct::AdminAgent { member, off } => {
             t.admin_set_admin_agent(&member, !off)?;
             (member, off, "the admin agent")
         }
-        _ => unreachable!("not a member act"),
     };
     println!("{member} is {} {what}", now_or_no_longer(off));
     Ok(())
@@ -164,9 +137,9 @@ fn secs_or_off(secs: Option<i64>, off: bool, name: &str) -> Result<Option<i64>> 
     }
 }
 
-fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::RoomCreation { policy } => {
+fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
+    match act {
+        PolicyAct::RoomCreation { policy } => {
             let granted = matches!(policy, RoomPolicy::Granted);
             t.admin_set_room_creation_granted(granted)?;
             println!(
@@ -178,7 +151,7 @@ fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 }
             );
         }
-        AdminCmd::RateLimit { posts, secs, off } => {
+        PolicyAct::RateLimit { posts, secs, off } => {
             let limit = rate_limit_of(posts, secs, off)?;
             t.admin_set_rate_limit(limit)?;
             match limit {
@@ -188,7 +161,7 @@ fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 None => println!("no rate limit"),
             }
         }
-        AdminCmd::LeaseCap { secs, off } => {
+        PolicyAct::LeaseCap { secs, off } => {
             let secs = secs_or_off(secs, off, "lease-cap")?;
             t.admin_set_lease_cap(secs)?;
             match secs {
@@ -198,7 +171,7 @@ fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 None => println!("the lease cap is back to its default"),
             }
         }
-        AdminCmd::LeaseGrace { secs, off } => {
+        PolicyAct::LeaseGrace { secs, off } => {
             let secs = secs_or_off(secs, off, "lease-grace")?;
             t.admin_set_lease_grace(secs)?;
             match secs {
@@ -206,11 +179,11 @@ fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 None => println!("the lease grace is back to its default"),
             }
         }
-        AdminCmd::Cap { label } => {
+        PolicyAct::Cap { label } => {
             t.admin_set_cap(&label)?;
             println!("the agent cap is {label}");
         }
-        AdminCmd::Chain { levels } => {
+        PolicyAct::Chain { levels } => {
             let names: Vec<&str> = levels.split(',').map(str::trim).collect();
             t.admin_set_label_chain(&names)?;
             println!(
@@ -218,27 +191,25 @@ fn policy(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
                 names.join(" < ")
             );
         }
-        _ => return scrub(t, cmd),
     }
     Ok(())
 }
 
-fn scrub(t: &dyn Transport, cmd: AdminCmd) -> Result<()> {
-    match cmd {
-        AdminCmd::ScrubAdd { name, term } => {
+fn scrub(t: &dyn Transport, act: ScrubAct) -> Result<()> {
+    match act {
+        ScrubAct::Add { name, term } => {
             t.admin_add_scrub_term(&name, &term.join(" "))?;
             println!("rule {name} now refuses its term in rooms below the agent cap");
         }
-        AdminCmd::ScrubRemove { name } => {
+        ScrubAct::Remove { name } => {
             t.admin_remove_scrub_term(&name)?;
             println!("rule {name} removed");
         }
-        AdminCmd::ScrubList => {
+        ScrubAct::List => {
             for (name, term) in t.admin_scrub_terms()? {
                 println!("{name}\t{}", flat(&term));
             }
         }
-        _ => unreachable!("not a policy act"),
     }
     Ok(())
 }

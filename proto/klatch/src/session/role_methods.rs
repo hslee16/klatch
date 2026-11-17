@@ -1,5 +1,6 @@
 //! The wire methods a role-holder uses (#506, #509): `role_act` for the admin agent and `review_next` and
-//! `review_verdict` for the reviewer. They are the only admin-shaped methods on the wire. The table below is an
+//! `review_verdict` for the reviewer. They are the only role-gated methods on the wire (`prune` is every member's
+//! housekeeping and lives with the plain methods). The table below is an
 //! allowlist, so no floor act (cap, label order, scrub list) and no other human-only act can be named here, and the
 //! gateway still refuses a member that does not hold the role, so a method name alone grants nothing.
 
@@ -23,6 +24,12 @@ struct ActParams {
     label: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
+    /// The run id of `run-create` and `run-end`.
+    #[serde(default)]
+    run: Option<String>,
+    /// The work item of `anchor-done`.
+    #[serde(default)]
+    anchor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -35,10 +42,22 @@ struct VerdictParams {
     reason: Option<String>,
 }
 
-/// The acts of the admin agent that have a wire form. The rest of its list (runs, anchors) needs a file or an
-/// adapter on the server side and is not here.
-const WIRE_ACTS: [&str; 8] = [
-    "close", "reopen", "remove", "allow", "clear", "label", "audit", "refusals",
+/// The acts of the admin agent that have a wire form. The rest of its list needs an input the server does not have
+/// a design for: `reap-anchors` asks an adapter that only a launcher configures, and a `run-end` archive is a file
+/// the server would write at a path. `prune` is not here: it is every member's housekeeping, the plain method
+/// `prune`.
+const WIRE_ACTS: [&str; 11] = [
+    "close",
+    "reopen",
+    "remove",
+    "allow",
+    "clear",
+    "label",
+    "audit",
+    "refusals",
+    "run-create",
+    "run-end",
+    "anchor-done",
 ];
 
 fn invalid(id: String) -> Vec<ServerFrame> {
@@ -105,7 +124,28 @@ fn run_act<S: Store>(
         "clear" => done(g.admin_set_clearance(who, member?, label?)),
         "label" => done(g.admin_set_room_label(who, room?, label?)),
         "audit" => g.admin_audit(who, limit).map(|rs| audit_json(&rs)),
-        _ => g.admin_refusals(who, limit).map(|rs| refusals_json(&rs)),
+        "refusals" => g.admin_refusals(who, limit).map(|rs| refusals_json(&rs)),
+        _ => return run_or_anchor_act(g, who, p),
+    })
+}
+
+/// The run and anchor acts: `run-create` and `run-end` (no archive: a wire caller never names a file for the server
+/// to write) and `anchor-done`. `None` when the parameter an act needs is missing.
+fn run_or_anchor_act<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    p: &ActParams,
+) -> Option<Result<Value, Error>> {
+    Some(match p.act.as_str() {
+        "run-create" => g
+            .admin_run_create(who, p.run.as_deref()?)
+            .map(|()| json!({})),
+        "run-end" => g
+            .admin_run_end(who, p.run.as_deref()?, None)
+            .map(|gone| json!({"rooms": gone.rooms, "messages": gone.messages})),
+        _ => g
+            .anchor_done(who, p.anchor.as_deref()?)
+            .map(|released| json!({ "released": released })),
     })
 }
 
