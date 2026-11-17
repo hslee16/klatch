@@ -155,6 +155,15 @@ export class Client {
     return (await this.request("post", params)) as { seq: number; id: string };
   }
 
+  /** Send a direct message to one other member. Answers the two-member room made on first use, which both members
+   * can read, `history` and `subscribe` to. The label may go below the room's ceiling (the lower of the two
+   * clearances), never above. */
+  async dm(to: string, body: string, label?: string) {
+    const params: Record<string, unknown> = { to, body };
+    if (label !== undefined) params.label = label;
+    return (await this.request("dm", params)) as { room: string; seq: number; id: string };
+  }
+
   async read(room: string, peek = false): Promise<Message[]> {
     return (await this.request("read", { room, peek })).messages;
   }

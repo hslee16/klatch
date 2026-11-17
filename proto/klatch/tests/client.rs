@@ -199,6 +199,38 @@ fn bad_requests_get_a_failed_response_and_the_session_carries_on() {
 }
 
 #[test]
+fn a_direct_message_reaches_one_member_in_a_room_nobody_else_may_use() {
+    let h = Home::new();
+    let (mut a, mut b, mut c) = (
+        connect(&h, "alice"),
+        connect(&h, "bob"),
+        connect(&h, "carol"),
+    );
+    let (room, seq, id) = a.dm("bob", "hello bob", None).unwrap();
+    assert_eq!((room.as_str(), seq, id.len()), ("dm.alice.bob", 1, 26));
+    let got = b.read(&room, false).unwrap();
+    assert_eq!(
+        got.iter()
+            .map(|m| (m.sender.as_str(), m.body.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("alice", "hello bob")]
+    );
+    assert_eq!(b.dm("alice", "hi back", None).unwrap().1, 2);
+    assert_eq!(api(c.read(&room, false).unwrap_err()).code, "refused");
+    assert_eq!(
+        api(a.dm("alice", "to myself", None).unwrap_err()).code,
+        "invalid"
+    );
+    assert_eq!(
+        api(a
+            .dm("bob", "above the ceiling", Some("secret"))
+            .unwrap_err())
+        .code,
+        "refused"
+    );
+}
+
+#[test]
 fn closing_the_input_ends_the_session_cleanly() {
     let h = Home::new();
     let mut a = connect(&h, "alice");
