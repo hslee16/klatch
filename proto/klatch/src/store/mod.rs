@@ -35,6 +35,11 @@ pub struct Seat<'a> {
     pub member: &'a str,
 }
 
+/// A position in a room's log: the per-room `seq` of a message (dense, from 1). A type of its own so a cursor is
+/// not confused with a time or a count (#695).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Seq(pub i64);
+
 impl<'a> Seat<'a> {
     pub fn new(room: &'a str, member: &'a str) -> Self {
         Self { room, member }
