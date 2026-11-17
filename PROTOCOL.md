@@ -76,11 +76,17 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 | `release` | `room`, `path`, optional `note` (one line, at most 300 characters: what you changed; shown to members who saw the claim and returned to the next claimant) | `{}`, or fails with `not_found` if you hold no claim on that path |
 | `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires", "scope" }] }`: unexpired claims in the room; `scope` is present when the claim has one (`*` for a shared claim) |
 
+`prune` is every member's housekeeping, as at session start, and needs no role:
+
+| Method | Params | Result |
+|---|---|---|
+| `prune` | none (any param is ignored) | `{ "removed": n }`. Removes the members not seen for the fixed retention (86400 seconds); a member that holds a live claim is kept. The caller cannot name a shorter age. Goes through the same guard and role checks as every call (a reviewer is refused, rule `reviewer`) |
+
 Three more methods exist for members that hold a role (DESIGN section 32 item 41). Any other caller is refused by the gateway (`refused`, rules `admin-scope`, `floors`, `reviewer`):
 
 | Method | Params | Result |
 |---|---|---|
-| `role_act` | `act` (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit` or `refusals`), and what the act needs: `room`, `member`, `label`; `limit` for the records | `{}`, or `{ "records": [...] }` for `audit` and `refusals`; an act not in that list answers `unknown_act` |
+| `role_act` | `act` (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`, `run-create`, `run-end` or `anchor-done`), and what the act needs: `room`, `member`, `label`; `limit` for the records; `run` for `run-create` and `run-end` (1 to 32 characters of letters, digits, dash and underscore); `anchor` for `anchor-done` (1 to 80 characters of letters, digits and `. _ : / -`) | `{}`, or `{ "records": [...] }` for `audit` and `refusals`, or `{ "rooms": n, "messages": n }` for `run-end` (the rooms of that run and their messages are deleted, never archived over the wire), or `{ "released": n }` for `anchor-done` (the claims anchored to that item); an act not in that list (`reap-anchors`, `prune`, any floor act) answers `unknown_act`. `invalid_params` for a missing or wrongly typed parameter, `invalid` for a bad id, `not_found` for `run-end` of a run that is not open |
 | `review_next` | none | `{ "item": null }` or `{ "item": { "id", "room", "seq", "to_label", "reason", "text" } }` |
 | `review_verdict` | `id`, `verdict` (`allow`, `redact` with `text`, or `deny` with optional `reason`) | `{}` |
 

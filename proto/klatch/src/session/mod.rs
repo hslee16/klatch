@@ -338,4 +338,6 @@ pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> V
 #[cfg(test)]
 mod role_tests;
 #[cfg(test)]
+mod run_act_tests;
+#[cfg(test)]
 mod tests;

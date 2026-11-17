@@ -199,6 +199,38 @@ fn bad_requests_get_a_failed_response_and_the_session_carries_on() {
 }
 
 #[test]
+fn a_member_without_the_admin_role_is_refused_every_act_and_may_prune() {
+    let h = Home::new();
+    let mut a = connect(&h, "alice");
+    for (act, params) in [
+        ("run-create", serde_json::json!({"run": "r1"})),
+        ("run-end", serde_json::json!({"run": "r1"})),
+        ("anchor-done", serde_json::json!({"anchor": "gh:pr:o/r/1"})),
+        ("close", serde_json::json!({"room": "r"})),
+    ] {
+        assert_eq!(
+            api(a.role_act(act, params).unwrap_err()).code,
+            "refused",
+            "{act}"
+        );
+    }
+    assert_eq!(
+        api(a
+            .role_act("reap-anchors", serde_json::json!({}))
+            .unwrap_err())
+        .code,
+        "unknown_act"
+    );
+    assert_eq!(
+        api(a.role_act("run-create", serde_json::json!({})).unwrap_err()).code,
+        "invalid_params"
+    );
+    assert_eq!(a.prune().unwrap(), 0);
+    a.post("r", "still here", None, None).unwrap();
+    assert_eq!(a.prune().unwrap(), 0);
+}
+
+#[test]
 fn closing_the_input_ends_the_session_cleanly() {
     let h = Home::new();
     let mut a = connect(&h, "alice");

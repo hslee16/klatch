@@ -187,6 +187,18 @@ export class Client {
     return (await this.request("who", { room })).members;
   }
 
+  /** An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
+   * `run-create`, `run-end`, `anchor-done`) with what it needs (`room`, `member`, `label`, `limit`, `run`, `anchor`).
+   * A member without the role is refused (`ApiError` code `refused`, rule `admin-scope`). Returns the result object. */
+  async roleAct(act: string, params: Record<string, unknown> = {}): Promise<Record<string, any>> {
+    return this.request("role_act", { ...params, act });
+  }
+
+  /** Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many. */
+  async prune(): Promise<number> {
+    return (await this.request("prune")).removed ?? 0;
+  }
+
   /** Start (or resume) a stream; returns the room's head. */
   async subscribe(room: string, fromSeq = 0): Promise<number> {
     this.caughtUp.delete(room);

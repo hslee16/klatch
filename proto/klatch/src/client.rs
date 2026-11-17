@@ -355,6 +355,24 @@ impl Client {
             .unwrap_or_default())
     }
 
+    /// An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
+    /// `run-create`, `run-end`, `anchor-done`) with the parameters it needs (`room`, `member`, `label`, `limit`,
+    /// `run`, `anchor`). A member without the role is refused. Returns the result object.
+    pub fn role_act(
+        &mut self,
+        act: &str,
+        mut params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        params["act"] = json!(act);
+        self.request("role_act", params)
+    }
+
+    /// Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many.
+    pub fn prune(&mut self) -> Result<u64> {
+        let r = self.request("prune", json!({}))?;
+        Ok(r["removed"].as_u64().unwrap_or(0))
+    }
+
     /// Start (or resume) a stream; returns the room's head.
     pub fn subscribe(&mut self, room: &str, from_seq: u64) -> Result<u64> {
         self.caught_up = None;

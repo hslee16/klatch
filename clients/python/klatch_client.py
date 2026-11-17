@@ -171,6 +171,17 @@ class Client:
     def set_status(self, room, status):
         self.request("status", room=room, status=status)
 
+    def role_act(self, act, **params):
+        """An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
+        `run-create`, `run-end`, `anchor-done`) with what it needs (`room`, `member`, `label`, `limit`, `run`,
+        `anchor`). A member without the role is refused (`ApiError` code `refused`, rule `admin-scope`). Returns the
+        result object."""
+        return self.request("role_act", act=act, **params)
+
+    def prune(self):
+        """Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many."""
+        return self.request("prune").get("removed", 0)
+
     def subscribe(self, room, from_seq=0):
         """Start (or resume) a stream; returns the room's head. Messages arrive through `collect` and `next_message`."""
         self._caught_up.pop(room, None)
