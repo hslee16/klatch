@@ -199,6 +199,18 @@ fn bad_requests_get_a_failed_response_and_the_session_carries_on() {
 }
 
 #[test]
+fn a_member_mutes_and_unmutes_a_room_and_read_still_shows_everything() {
+    let h = Home::new();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    b.post("r", "chatter", None, None).unwrap();
+    a.mute("r", true).unwrap();
+    assert_eq!(a.read("r", true).unwrap().len(), 1);
+    a.mute("r", false).unwrap();
+    a.mute("r", true).unwrap();
+    assert_eq!(api(a.mute("bad room", true).unwrap_err()).code, "invalid");
+}
+
+#[test]
 fn closing_the_input_ends_the_session_cleanly() {
     let h = Home::new();
     let mut a = connect(&h, "alice");

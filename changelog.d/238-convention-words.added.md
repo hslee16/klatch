@@ -1,0 +1,1 @@
+- CONVENTIONS.md lists every convention word klatch reads (who may post it, what klatch does, what it must not do, how a word is added), and a test fails when the document and the code disagree (#238).

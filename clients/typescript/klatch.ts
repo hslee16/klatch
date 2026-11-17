@@ -187,6 +187,12 @@ export class Client {
     return (await this.request("who", { room })).members;
   }
 
+  /** Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that mention
+   * you. `read` and the stream still carry everything. */
+  async mute(room: string, muted = true) {
+    await this.request("mute", { room, muted });
+  }
+
   /** Start (or resume) a stream; returns the room's head. */
   async subscribe(room: string, fromSeq = 0): Promise<number> {
     this.caughtUp.delete(room);

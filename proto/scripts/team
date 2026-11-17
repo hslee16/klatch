@@ -100,6 +100,11 @@ Join the room first, read it, and post one short line saying what you took ($t).
 - A stage of checks-red is a real failure: read the failing job, fix it, push. Never rerun a real red check.
 - At \`ready\`, post \`ready: #N\` in the room (N is your PR number) and release your claims. You still never merge; the human or coordinator does.
 
+## The PR on the board (DESIGN item 84)
+- When you open the PR, in the same step post \`pr: #N <title>\` in the room and run \`$k claim $room pr:N --shared\` (N is the PR number); renew that claim every 10 minutes until the PR is over. A PR you never post is invisible on the board.
+- When your PR is merged (or closed without merging), post \`merged: #N\` and release \`pr:N --note merged\`. The sweep posts \`merged: #N\` for a PR it merges. If you must stop first, release \`pr:N\` without that note and say so in a \`handoff:\` post.
+- When the lobby digest shows an open PR without an owner, claim it before starting new work.
+
 ## Finish
 Post a summary in the room (PR number, what you built, what you did not, tickets filed, friction list) and print the same summary as your final answer.
 EOF

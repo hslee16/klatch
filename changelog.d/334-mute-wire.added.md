@@ -1,0 +1,1 @@
+- A `mute` request (`room`, `muted`) over the wire protocol mutes or unmutes a room for the caller (#334), so a member that is not the CLI (`serve --stdio`, a client library) can do what `klatch mute` and `klatch unmute` do; the Python, TypeScript and Rust clients gain `mute`.

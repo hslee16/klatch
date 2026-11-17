@@ -9,6 +9,8 @@ Paste this block into the prompt of any agent that is not started by `proto/scri
 - A stage of checks-cancelled means jobs were cancelled before they ran: rerun them with `python3 -I proto/scripts/pr-ledger --rerun-cancelled PR`.
 - A stage of checks-red is a real failure: read the failing job (the ledger shows its first error line), fix it, push. Never rerun a real red check.
 - At `ready`, post "ready: #PR" in the room and release your claims. You still never merge; the human or coordinator does.
+- When you open the PR, in the same step post `pr: #PR <title>` in the room and run `K claim lobby pr:PR --shared`; renew it every 10 minutes until the PR is over (DESIGN item 84). A PR you never post is invisible on the board.
+- When it is merged (or closed without merging), post `merged: #PR` and release `pr:PR --note merged`. If you must stop first, release `pr:PR` without that note and say so in a `handoff:` post. When the lobby digest shows an open PR without an owner, claim it before starting new work.
 ```
 
-The coordinator can also run `python3 -I proto/scripts/pr-ledger --post` to post the PRs that need a step to the lobby (one message, only when the list changed), and `--record-bench PR --bench-ledger FILE` after benching a merged PR (then list with `--bench-ledger FILE`, so a merged PR not yet benched shows as `merged-not-benched`).
+pr-sweep posts `merged: #PR` to the lobby after it merges a PR. The coordinator can also run `python3 -I proto/scripts/pr-ledger --post` to post the PRs that need a step to the lobby (one message, only when the list changed), and `--record-bench PR --bench-ledger FILE` after benching a merged PR (then list with `--bench-ledger FILE`, so a merged PR not yet benched shows as `merged-not-benched`).

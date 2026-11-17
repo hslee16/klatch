@@ -59,6 +59,11 @@ struct ClaimParams {
     shared: bool,
 }
 #[derive(Deserialize)]
+struct MuteParams {
+    room: String,
+    muted: bool,
+}
+#[derive(Deserialize)]
 struct ScopeParams {
     scope: String,
 }
@@ -177,6 +182,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             },
             empty,
         ),
+        "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
