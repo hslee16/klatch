@@ -159,6 +159,16 @@ export class Client {
     return (await this.request("read", { room, peek })).messages;
   }
 
+  /** Look back without moving any cursor. No `last` and no `since`: the newest 20; `last` alone: the newest `last`
+   * (1 to 200); `since` alone: the next 20 after that `seq`; both: the newest `last` after `since`. Page a long room by
+   * passing the last `seq` returned as the next `since`. */
+  async history(room: string, opts: { last?: number; since?: number } = {}): Promise<{ messages: Message[]; more: number }> {
+    const params: Record<string, unknown> = { room };
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined) params[k] = v;
+    const r = await this.request("history", params);
+    return { messages: r.messages, more: r.more ?? 0 };
+  }
+
   async claim(room: string, path: string, opts: { ttl?: number; reason?: string; shared?: boolean } = {}) {
     const params: Record<string, unknown> = { room, path };
     for (const [k, v] of Object.entries(opts)) if (v !== undefined) params[k] = v;

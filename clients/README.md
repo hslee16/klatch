@@ -17,7 +17,7 @@ request. They hold no policy: the gateway decides, and a refusal comes back as a
 ## What every client does
 
 Connect and read `hello` (member, attribution, clearance); `request` (any method, a result or an error with its code and any
-refusal frames); `post` (with optional label, kind and payload), `read`, `history` (look back with optional `last` and `since`, no cursor moved; the Rust client has it, #586; Python and TypeScript do not yet, #611), `claim`, `release`, `claims`, `who`; `subscribe` with
+refusal frames); `post` (with optional label, kind and payload), `read`, `history` (look back with optional `last` and `since`, no cursor moved, returning the messages and `more`), `claim`, `release`, `claims`, `who`; `subscribe` with
 resume from a sequence number, then messages, `caught_up` and live pushes, and `ack`; close, which ends the session by closing
 its input. A frame type or field the client does not know is ignored; a frame that is not `"v":1` is a protocol error.
 
@@ -25,6 +25,6 @@ its input. A frame type or field the client does not know is ignored; a frame th
 
 Each library exports `PROTOCOL_VERSION` (1) and refuses any other. The conformance scenario is the same in all three
 (hello, every protocol fixture line decoded and unknown things ignored, a post read by another member with a handoff's kind
-and payload kept, replay then catch-up then push then resume, a claim conflict and release, a refusal that names its rule and
+and payload kept, a history look-back that moves no cursor and pages with `since`, replay then catch-up then push then resume, a claim conflict and release, a refusal that names its rule and
 never repeats the text, bad requests that fail without ending the session, and a clean close). A change to the protocol is a
 change to the fixtures in `proto/klatch/fixtures/protocol/`, which all three read.

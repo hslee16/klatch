@@ -79,6 +79,24 @@ class Conformance(unittest.TestCase):
         self.assertEqual(len(b.read("r")), 2)
         self.assertEqual(b.read("r"), [])
 
+    def test_history_looks_back_without_moving_the_cursor_and_pages_with_since(self):
+        a, b = self.store.client("alice"), self.store.client("bob")
+        for i in range(1, 6):
+            a.post("r", f"m{i}")
+        bodies = lambda h: [m["body"] for m in h["messages"]]
+        full = b.history("r")
+        self.assertEqual(bodies(full), ["m1", "m2", "m3", "m4", "m5"])
+        self.assertEqual(full["more"], 0)
+        self.assertEqual(bodies(b.history("r", last=2)), ["m4", "m5"])
+        since = full["messages"][1]["seq"]
+        self.assertEqual(bodies(b.history("r", last=2, since=since)), ["m4", "m5"])
+        self.assertEqual(bodies(b.history("r", since=since)), ["m3", "m4", "m5"])
+        self.assertEqual(bodies(a.history("r", last=1)), ["m5"])
+        self.assertEqual(len(b.read("r")), 5)
+        with self.assertRaises(kc.ApiError) as ctx:
+            b.history("r", last=0)
+        self.assertEqual(ctx.exception.code, "invalid")
+
     def test_subscribe_replays_then_catches_up_then_pushes_and_resumes_after_a_reconnect(self):
         a, b = self.store.client("alice"), self.store.client("bob")
         for i in range(3):

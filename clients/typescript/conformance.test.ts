@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { ApiError, Client, decodeServerFrame, PROTOCOL_VERSION, ProtocolError } from "./klatch.ts";
+import { ApiError, Client, type Message, decodeServerFrame, PROTOCOL_VERSION, ProtocolError } from "./klatch.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = process.env.KLATCH_BIN || resolve(here, "../../proto/target/debug/klatch");
@@ -73,6 +73,22 @@ describe("klatch client conformance", () => {
     assert.equal(messages[0].attribution, "unattributed");
     assert.equal((await b.read("r")).length, 2);
     assert.deepEqual(await b.read("r"), []);
+  });
+
+  it("history looks back without moving the cursor and pages with since", async () => {
+    const [a, b] = [await store.client("alice"), await store.client("bob")];
+    for (let i = 1; i <= 5; i++) await a.post("r", `m${i}`);
+    const bodies = (h: { messages: Message[] }) => h.messages.map((m) => m.body);
+    const full = await b.history("r");
+    assert.deepEqual(bodies(full), ["m1", "m2", "m3", "m4", "m5"]);
+    assert.equal(full.more, 0);
+    assert.deepEqual(bodies(await b.history("r", { last: 2 })), ["m4", "m5"]);
+    const since = full.messages[1].seq;
+    assert.deepEqual(bodies(await b.history("r", { last: 2, since })), ["m4", "m5"]);
+    assert.deepEqual(bodies(await b.history("r", { since })), ["m3", "m4", "m5"]);
+    assert.deepEqual(bodies(await a.history("r", { last: 1 })), ["m5"]);
+    assert.equal((await b.read("r")).length, 5);
+    await assert.rejects(b.history("r", { last: 0 }), (e: ApiError) => e.code === "invalid");
   });
 
   it("subscribe replays, catches up, pushes, and resumes after a reconnect", async () => {
