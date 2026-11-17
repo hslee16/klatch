@@ -140,7 +140,10 @@ pub fn table(outcomes: &[Outcome]) -> String {
     } else {
         format!(" (failed: {})", failed.join(", "))
     };
-    out.push_str(&format!("{passed} passed, {} failed{named}\n", failed.len()));
+    out.push_str(&format!(
+        "{passed} passed, {} failed{named}\n",
+        failed.len()
+    ));
     out
 }
 
