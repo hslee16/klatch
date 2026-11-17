@@ -59,6 +59,18 @@ struct ClaimParams {
     shared: bool,
 }
 #[derive(Deserialize)]
+struct DmParams {
+    to: String,
+    body: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+#[derive(Deserialize)]
+struct MuteParams {
+    room: String,
+    muted: bool,
+}
+#[derive(Deserialize)]
 struct ScopeParams {
     scope: String,
 }
@@ -148,6 +160,10 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             },
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
         ),
+        "dm" => call.run(
+            |p: DmParams| g.dm(who, &p.to, &p.body, p.label.as_deref()),
+            |(room, x): (String, Posted)| json!({ "room": room, "seq": x.seq, "id": x.id }),
+        ),
         "read" => call.run(
             |p: ReadParams| g.read(who, &p.room, !p.peek),
             |ms: Vec<Message>| json!({ "messages": ms.iter().map(message_json).collect::<Vec<_>>() }),
@@ -177,6 +193,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             },
             empty,
         ),
+        "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {

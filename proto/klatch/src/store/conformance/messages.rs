@@ -247,6 +247,36 @@ pub fn tail_honours_the_limit_and_the_room<S: Store>(make: fn() -> S) {
     assert_eq!(two.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 2]);
     assert!(s.tail("empty", 0, 10).unwrap().is_empty());
 }
+pub fn words_returns_only_the_messages_with_a_prefix_however_deep_they_are<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    s.post(Seat::new("r", "alice"), "working: old task", 1)
+        .unwrap();
+    for i in 0..5100 {
+        s.post(Seat::new("r", "bob"), &format!("chatter {i}"), 2)
+            .unwrap();
+    }
+    s.post(Seat::new("r", "alice"), "checkpoint: halfway", 3)
+        .unwrap();
+    s.post(Seat::new("r", "bob"), "Working: wrong case", 4)
+        .unwrap();
+    s.post(Seat::new("r", "bob"), "x working: not a prefix", 5)
+        .unwrap();
+    s.post(Seat::new("r", "carol"), "%: a wildcard is not a prefix", 6)
+        .unwrap();
+    s.post(Seat::new("other", "alice"), "working: other room", 7)
+        .unwrap();
+    let got = s.words("r", &["working:", "checkpoint"]).unwrap();
+    let bodies: Vec<&str> = got.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!(bodies, vec!["working: old task", "checkpoint: halfway"]);
+    assert!(got[0].seq < got[1].seq, "oldest first");
+    assert_eq!(got[0].sender, "alice");
+    assert_eq!(got[0].ts, 1);
+    assert!(s.words("r", &[]).unwrap().is_empty());
+    assert!(s.words("empty", &["working:"]).unwrap().is_empty());
+    assert_eq!(s.words("r", &["%"]).unwrap().len(), 1, "literal, not LIKE");
+}
 pub fn tail_has_no_side_effects_on_cursors_or_presence<S: Store>(make: fn() -> S) {
     let s = make();
     s.join("r", "alice", 1).unwrap();

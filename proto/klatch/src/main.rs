@@ -108,15 +108,18 @@ enum Cmd {
     },
     /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
     Wait {
-        /// Rooms to wait on; wakes on the first with a matching message
+        /// Rooms to wait on; wakes on the first with a matching message. A room may carry its own filter,
+        /// `ROOM:only=PREFIX` or `ROOM:from=MEMBER` (name the room again for another), which replaces --only and
+        /// --from for that room, so a room of two can wake on anything while the lobby is filtered
         #[arg(required = true)]
         rooms: Vec<String>,
         /// Seconds to wait (default 60, at most 300); 0 checks once
         #[arg(long, default_value_t = 60)]
         timeout: u64,
-        /// Only wake for messages whose body starts with this text; others stay unread
+        /// Only wake for messages whose body starts with this text; others stay unread. Repeat it to wake on any
+        /// of several prefixes
         #[arg(long)]
-        only: Option<String>,
+        only: Vec<String>,
         /// Only wake for messages from this member; others stay unread
         #[arg(long)]
         from: Option<String>,
@@ -142,7 +145,8 @@ enum Cmd {
     },
     /// List members of a room with last activity
     Who {
-        room: String,
+        /// The room; without one, every room you have joined
+        room: Option<String>,
         /// List every member, including those not seen for over 10 minutes
         #[arg(long)]
         all: bool,

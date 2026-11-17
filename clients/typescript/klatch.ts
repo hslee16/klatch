@@ -155,6 +155,15 @@ export class Client {
     return (await this.request("post", params)) as { seq: number; id: string };
   }
 
+  /** Send a direct message to one other member. Answers the two-member room made on first use, which both members
+   * can read, `history` and `subscribe` to. The label may go below the room's ceiling (the lower of the two
+   * clearances), never above. */
+  async dm(to: string, body: string, label?: string) {
+    const params: Record<string, unknown> = { to, body };
+    if (label !== undefined) params.label = label;
+    return (await this.request("dm", params)) as { room: string; seq: number; id: string };
+  }
+
   async read(room: string, peek = false): Promise<Message[]> {
     return (await this.request("read", { room, peek })).messages;
   }
@@ -185,6 +194,12 @@ export class Client {
 
   async who(room: string): Promise<Record<string, any>[]> {
     return (await this.request("who", { room })).members;
+  }
+
+  /** Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that mention
+   * you. `read` and the stream still carry everything. */
+  async mute(room: string, muted = true) {
+    await this.request("mute", { room, muted });
   }
 
   /** Start (or resume) a stream; returns the room's head. */

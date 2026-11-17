@@ -117,3 +117,59 @@ fn a_present_member_keeps_its_offer_without_renewing_it() {
         "a waiting member lost its offer to the clock"
     );
 }
+
+/// Fill `room` with enough chatter that its first 5000 messages hold no task or PR word.
+fn bury(g: &Gateway<SpyStore>, room: &str) {
+    for i in 0..5100 {
+        g.store
+            .post(Seat::new(room, "bob"), &format!("chatter {i}"), 50)
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_task_whose_words_are_deep_in_a_busy_room_is_still_on_the_board() {
+    let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+    g.join(&alice(), "r").unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "working: long job", 10)
+        .unwrap();
+    bury(&g, "r");
+    g.store
+        .post(Seat::new("r", "alice"), "checkpoint: step 3", 900)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "working: late job", 950)
+        .unwrap();
+    let b = g.board(&alice(), "r").unwrap();
+    let titles: Vec<_> = b.tasks.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["long job", "late job"], "{titles:?}");
+    let cp = b.tasks[0].checkpoint.as_ref().expect("checkpoint kept");
+    assert_eq!(cp.text, "step 3");
+}
+
+#[test]
+fn an_open_pr_deep_in_a_busy_room_stays_on_the_board_and_in_the_digest_backlog() {
+    let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "pr: #7 old pr", 10)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "pr: #8 over pr", 11)
+        .unwrap();
+    bury(&g, "r");
+    g.store
+        .post(Seat::new("r", "alice"), "merged: #8", 900)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "pr: #9 late pr", 950)
+        .unwrap();
+    let b = g.board(&bob(), "r").unwrap();
+    let numbers: Vec<_> = b.prs.iter().map(|p| p.number).collect();
+    assert_eq!(numbers, [7, 9]);
+    let d = g.digest_with(&bob(), true).unwrap();
+    let owed: Vec<_> = d.rooms[0].unowned_prs.iter().map(|p| p.number).collect();
+    assert_eq!(owed, [7, 9]);
+}

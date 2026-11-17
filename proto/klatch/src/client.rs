@@ -283,6 +283,27 @@ impl Client {
         ))
     }
 
+    /// Send a direct message to one other member. Returns the two-member room made on first use (which both
+    /// members can read, `history` and `subscribe` to), the `seq` and the `id`. The label may go below the
+    /// room's ceiling (the lower of the two clearances), never above.
+    pub fn dm(
+        &mut self,
+        to: &str,
+        body: &str,
+        label: Option<&str>,
+    ) -> Result<(String, u64, String)> {
+        let mut p = json!({"to": to, "body": body});
+        if let Some(l) = label {
+            p["label"] = json!(l);
+        }
+        let r = self.request("dm", p)?;
+        Ok((
+            r["room"].as_str().unwrap_or("").to_string(),
+            r["seq"].as_u64().unwrap_or(0),
+            r["id"].as_str().unwrap_or("").to_string(),
+        ))
+    }
+
     pub fn read(&mut self, room: &str, peek: bool) -> Result<Vec<Message>> {
         let r = self.request("read", json!({"room": room, "peek": peek}))?;
         Ok(r["messages"]
@@ -353,6 +374,13 @@ impl Client {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that
+    /// mention you. `read` and the stream still carry everything.
+    pub fn mute(&mut self, room: &str, muted: bool) -> Result<()> {
+        self.request("mute", json!({"room": room, "muted": muted}))
+            .map(|_| ())
     }
 
     /// Start (or resume) a stream; returns the room's head.

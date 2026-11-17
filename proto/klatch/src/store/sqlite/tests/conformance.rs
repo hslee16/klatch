@@ -104,6 +104,11 @@ fn messages_tail_honours_the_limit_and_the_room() {
 }
 
 #[test]
+fn messages_words_returns_only_the_messages_with_a_prefix_however_deep_they_are() {
+    c::messages::words_returns_only_the_messages_with_a_prefix_however_deep_they_are(store);
+}
+
+#[test]
 fn messages_tail_has_no_side_effects_on_cursors_or_presence() {
     c::messages::tail_has_no_side_effects_on_cursors_or_presence(store);
 }
@@ -256,6 +261,16 @@ fn claims_a_shared_claim_collides_with_every_scope_in_both_directions() {
 #[test]
 fn claims_an_empty_scope_behaves_as_claims_always_did_and_the_listing_shows_each_scope() {
     c::claims::an_empty_scope_behaves_as_claims_always_did_and_the_listing_shows_each_scope(store);
+}
+
+#[test]
+fn claims_a_lapse_after_a_reclaim_shows_no_stale_release_note() {
+    c::claims::a_lapse_after_a_reclaim_shows_no_stale_release_note(store);
+}
+
+#[test]
+fn claims_a_note_of_another_owner_survives_a_reclaim_by_the_first() {
+    c::claims::a_note_of_another_owner_survives_a_reclaim_by_the_first(store);
 }
 
 #[test]

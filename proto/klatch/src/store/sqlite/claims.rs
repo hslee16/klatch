@@ -195,6 +195,13 @@ impl SqliteStore {
             "DELETE FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
             params![req.room, req.owner, req.path],
         )?;
+        // a note this owner left when it released the path is about that earlier claim: if this one lapses instead of
+        // being released, the note must not be shown as if it were about this one (#315). A note left by another
+        // owner stays for the next claimant.
+        self.exec(
+            "DELETE FROM claim_notes WHERE room=?1 AND path=?2 AND owner=?3",
+            params![req.room, req.path, req.owner],
+        )?;
         self.exec(
             "INSERT INTO claims(room,path,owner,member,reason,expires,scope,anchor,ttl,since,age_noted) VALUES(?1,?2,?3,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![req.room, req.path, req.owner, req.reason, req.now + req.ttl, req.scope, req.anchor, req.ttl, since, noted],

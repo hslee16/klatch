@@ -13,6 +13,9 @@ pub const PR_PREFIX: &str = "pr:";
 /// A message starting with this text says a pull request is over (merged, or closed without merging).
 pub const MERGED_PREFIX: &str = "merged:";
 
+/// The prefixes of every word that `open_prs` folds, for a store query that reads only those messages.
+pub const PR_WORDS: [&str; 2] = [PR_PREFIX, MERGED_PREFIX];
+
 /// A pull request that nobody said was over, with who holds its claim now (set by the reader).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPr {
