@@ -73,5 +73,29 @@ if "$t/proto/scripts/install-git-hook" > "$work/out" 2>&1; then bad "overwrote a
 "$t/proto/scripts/install-git-hook" --uninstall > "$work/out" 2>&1
 if grep -q "mine" "$hook"; then ok "--uninstall leaves a hook it did not write"; else bad "uninstall removed a foreign hook"; fi
 
+# pr-ledger: every PR gets exactly one stage and a next step (classification only, no network)
+ledger="$here/pr-ledger"
+stage_of() { printf '%s' "$1" | python3 -I "$ledger" --classify | cut -f1; }
+expect_stage() { # json, expected, label
+  got=$(stage_of "$1" 2>&1)
+  if [ "$got" = "$2" ]; then ok "pr-ledger: $3"; else bad "pr-ledger: $3 (got '$got', wanted '$2')"; fi
+}
+G='{"name":"t","conclusion":"success"}'
+expect_stage '{"checks":['"$G"'],"mergeable_state":"clean"}' ready "green and clean is ready to merge"
+expect_stage '{"checks":['"$G"',{"name":"m","conclusion":null}]}' checks-running "an unfinished check is running"
+expect_stage '{"checks":[{"name":"m","conclusion":null}],"idle_hours":9}' checks-running "a long-running check is still running (flagged stuck in the next step)"
+expect_stage '{"checks":['"$G"',{"name":"m","conclusion":"cancelled"}]}' checks-cancelled "a cancelled job is not a failure"
+expect_stage '{"checks":['"$G"',{"name":"m","conclusion":"failure"}]}' checks-red "a failed job is red"
+expect_stage '{"checks":['"$G"',{"name":"m","conclusion":"failure"},{"name":"n","conclusion":"cancelled"}]}' checks-red "red wins over cancelled"
+expect_stage '{"checks":['"$G"'],"mergeable_state":"dirty"}' conflict "a conflict needs an integrate"
+expect_stage '{"checks":['"$G"'],"mergeable_state":"behind"}' behind "behind main needs an integrate"
+expect_stage '{"checks":[]}' no-checks "no checks reported is flagged"
+expect_stage '{"draft":true,"checks":['"$G"']}' draft "a draft is a draft"
+expect_stage '{"merged":true,"ticket_state":"open"}' merged-open-ticket "merged with its ticket still open is not finished"
+expect_stage '{"merged":true,"ticket_state":"closed"}' 'done' "merged and ticket closed is done"
+expect_stage '{"merged":true,"ticket_state":"none"}' 'done' "merged with no linked ticket is done"
+expect_stage '{"closed":true,"merged":false}' abandoned "closed without merging is abandoned"
+if printf '{"idle_hours":9,"checks":[{"name":"m","conclusion":null}]}' | python3 -I "$ledger" --classify | cut -f2 | grep -q stuck; then ok "pr-ledger: a long-running check says it may be stuck"; else bad "pr-ledger: stuck hint missing"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi

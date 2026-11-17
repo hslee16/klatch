@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""pr-ledger: where is every pull request in its life, and what is the next step?
+
+A pull request is tracked from creation to merge and one step past it (its ticket closed). Each open or recently
+merged PR gets exactly one stage and one next action, so none sits unnoticed:
+
+  draft | no-checks | checks-running | checks-cancelled | checks-red | conflict | behind | ready
+  merged-open-ticket (merged, the linked ticket is still open) | done | abandoned (closed unmerged)
+
+Usage:
+  pr-ledger [--repo OWNER/NAME] [--merged-days N] [--stale-hours H]   list the ledger (uses `gh api`, REST only)
+  pr-ledger --classify                                                 read one JSON record on stdin, print the stage
+  pr-ledger --rerun-cancelled PR                                       rerun the jobs that were cancelled before they ran
+
+`--classify` takes {"merged", "closed", "draft", "mergeable_state", "checks": [{"name", "conclusion"}],
+"ticket_state": "open"|"closed"|"none", "idle_hours"} and prints "stage<TAB>next action". It exists so the rules are
+testable without the network (see test-scripts.sh).
+"""
+import argparse
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+
+DEFAULT_REPO = "hslee16/klatch"
+
+
+def classify(rec, stale_hours=3.0):
+    """The one stage and next action for a PR record."""
+    if rec.get("merged"):
+        if rec.get("ticket_state") == "open":
+            return "merged-open-ticket", "close the linked ticket"
+        return "done", "nothing"
+    if rec.get("closed"):
+        return "abandoned", "closed without merging; reopen or drop its ticket link"
+    if rec.get("draft"):
+        return "draft", "mark ready when the work is done"
+    checks = rec.get("checks") or []
+    conclusions = [c.get("conclusion") for c in checks]
+    if any(c in ("failure", "timed_out", "action_required") for c in conclusions):
+        return "checks-red", "read the failing job and fix it (do not rerun a real failure)"
+    if any(c == "cancelled" for c in conclusions):
+        return "checks-cancelled", "rerun the cancelled job (a runner that never started is not a test failure)"
+    if any(c is None for c in conclusions):
+        if rec.get("idle_hours", 0) > stale_hours:
+            return "checks-running", "stuck? running for over %.0f h: look at the job" % stale_hours
+        return "checks-running", "wait"
+    if rec.get("mergeable_state") == "dirty":
+        return "conflict", "integrate main into the branch (scripts: integrate.sh)"
+    if rec.get("mergeable_state") == "behind":
+        return "behind", "integrate main into the branch, then recheck"
+    if not checks:
+        return "no-checks", "no checks reported: push again or look at the workflow"
+    return "ready", "merge, then run the bench and close the ticket"
+
+
+def gh(path):
+    out = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit("gh api %s failed: %s" % (path, out.stderr.strip()))
+    return json.loads(out.stdout)
+
+
+def ticket_of(pr):
+    """The ticket a PR names: 'Closes #N', 'Fixes #N', 'ticket #N' or a (#N) in the title."""
+    text = "%s\n%s" % (pr.get("title") or "", pr.get("body") or "")
+    found = re.search(r"(?:closes|fixes|resolves|ticket)\s+#(\d+)", text, re.I) or re.search(r"\(#(\d+)\)", text)
+    return int(found.group(1)) if found else None
+
+
+def hours_since(stamp, now):
+    return (now - dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds() / 3600
+
+
+def record(repo, pr, now):
+    full = gh("repos/%s/pulls/%d" % (repo, pr["number"]))
+    runs = gh("repos/%s/commits/%s/check-runs" % (repo, full["head"]["sha"]))["check_runs"]
+    ticket = ticket_of(full)
+    ticket_state = "none"
+    if ticket:
+        ticket_state = gh("repos/%s/issues/%d" % (repo, ticket))["state"]
+    return {
+        "number": full["number"],
+        "branch": full["head"]["ref"],
+        "ticket": ticket,
+        "merged": bool(full.get("merged")),
+        "closed": full["state"] == "closed",
+        "draft": bool(full.get("draft")),
+        "mergeable_state": full.get("mergeable_state"),
+        "checks": [{"name": r["name"], "conclusion": r["conclusion"]} for r in runs],
+        "ticket_state": ticket_state,
+        "idle_hours": hours_since(full["updated_at"], now),
+    }
+
+
+def rerun_cancelled(repo, number):
+    sha = gh("repos/%s/pulls/%d" % (repo, number))["head"]["sha"]
+    reran = 0
+    for run in gh("repos/%s/commits/%s/check-runs" % (repo, sha))["check_runs"]:
+        if run["conclusion"] == "cancelled":
+            subprocess.run(["gh", "api", "-X", "POST", "repos/%s/actions/jobs/%d/rerun" % (repo, run["id"])],
+                           capture_output=True, text=True)
+            reran += 1
+    print("reran %d cancelled job(s) on #%d" % (reran, number))
+
+
+def main():
+    ap = argparse.ArgumentParser(description="PR lifecycle ledger")
+    ap.add_argument("--repo", default=DEFAULT_REPO)
+    ap.add_argument("--merged-days", type=int, default=2, help="also list PRs merged within this many days")
+    ap.add_argument("--stale-hours", type=float, default=3.0)
+    ap.add_argument("--classify", action="store_true")
+    ap.add_argument("--rerun-cancelled", type=int, metavar="PR")
+    args = ap.parse_args()
+
+    if args.classify:
+        stage, nxt = classify(json.load(sys.stdin), args.stale_hours)
+        print("%s\t%s" % (stage, nxt))
+        return
+    if args.rerun_cancelled:
+        rerun_cancelled(args.repo, args.rerun_cancelled)
+        return
+
+    now = dt.datetime.now(dt.timezone.utc)
+    prs = gh("repos/%s/pulls?state=open&per_page=100" % args.repo)
+    cutoff = now - dt.timedelta(days=args.merged_days)
+    recent = gh("repos/%s/pulls?state=closed&sort=updated&direction=desc&per_page=30" % args.repo)
+    for pr in recent:
+        if pr.get("merged_at") and dt.datetime.fromisoformat(pr["merged_at"].replace("Z", "+00:00")) >= cutoff:
+            prs.append(pr)
+    rows = []
+    for pr in prs:
+        rec = record(args.repo, pr, now)
+        stage, nxt = classify(rec, args.stale_hours)
+        rows.append((rec, stage, nxt))
+    quiet = {"done"}
+    shown = [r for r in rows if r[1] not in quiet]
+    for rec, stage, nxt in sorted(shown, key=lambda r: r[0]["number"]):
+        ticket = "#%d" % rec["ticket"] if rec["ticket"] else "no ticket"
+        print("#%-4d %-20s %-18s %-9s %s" % (rec["number"], stage, rec["branch"][:18], ticket, nxt))
+    print("%d tracked, %d need a step, %d done" % (len(rows), len(shown), len(rows) - len(shown)))
+
+
+if __name__ == "__main__":
+    main()

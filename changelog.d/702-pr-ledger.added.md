@@ -1,0 +1,1 @@
+- A `proto/scripts/pr-ledger` script lists every open or recently merged pull request with one lifecycle stage and the next step, so none is left unattended between creation and merge.
