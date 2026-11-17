@@ -225,7 +225,7 @@ fn a_member_without_the_admin_role_is_refused_every_act_and_may_prune() {
         "invalid_params"
     );
     assert_eq!(a.prune().unwrap(), 0);
-    a.post("r", "still here", None, None).unwrap();
+    a.post(PostRequest::new("r", "still here")).unwrap();
     assert_eq!(a.prune().unwrap(), 0);
 }
 
