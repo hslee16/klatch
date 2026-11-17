@@ -138,6 +138,17 @@ class Client:
     def read(self, room, peek=False):
         return self.request("read", room=room, peek=peek)["messages"]
 
+    def history(self, room, last=None, since=None):
+        """Look back without moving any cursor. Returns {"messages": [...], "more": n}. No `last` and no `since`: the
+        newest 20; `last` alone: the newest `last` (1 to 200); `since` alone: the next 20 after that `seq`; both: the
+        newest `last` after `since`. Page a long room by passing the last `seq` returned as the next `since`."""
+        params = {"room": room}
+        for k, v in (("last", last), ("since", since)):
+            if v is not None:
+                params[k] = v
+        r = self.request("history", **params)
+        return {"messages": r["messages"], "more": r.get("more", 0)}
+
     def claim(self, room, path, ttl=None, reason=None, shared=None):
         params = {"room": room, "path": path}
         for k, v in (("ttl", ttl), ("reason", reason), ("shared", shared)):
