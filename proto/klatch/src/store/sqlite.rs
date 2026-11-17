@@ -3,31 +3,39 @@ use crate::domain::{
     AskRoom, AuditRecord, Claim, ClaimChanges, Error, HookRun, MemberInfo, Message, OpenAsk,
     Parked, Posted, RefusalRecord, ReleaseNote, ReleasedClaim, Result,
 };
-use crate::keys::Key;
 use crate::store::ids::new_id;
 use crate::store::{
     ClaimRequest, HookEvent, NewAudit, NewMessage, NewRefusal, NewReview, QueuedReview, Release,
     Seat, Store,
 };
 use rusqlite::{Connection, params};
-use std::path::Path;
-use std::time::Duration;
 
 mod archive;
 mod asks;
+mod backup;
 mod claims;
+mod connect;
+mod credentials;
+mod exec;
+mod housekeeping;
 mod integrity;
 mod leases;
+mod messaging;
+mod parking;
+mod releases;
 mod review;
 mod rows;
 mod schema;
+mod seal;
+mod tasks;
 pub use archive::{
     ArchiveInfo, ArchiveState, archives_to_rekey, list_archives, rekey_archives, rekey_archives_in,
 };
+use connect::be;
 pub use integrity::check_store;
-use rows::{MESSAGE_COLUMNS, attribution_text, message_from_row};
+use rows::{MESSAGE_COLUMNS, attribution_text};
 pub use schema::SCHEMA_VERSION;
-use schema::{SCHEMA, WAIT_WINDOW_SECS, has_table, user_version};
+use schema::WAIT_WINDOW_SECS;
 
 /// SQLite in WAL mode. Many readers, one writer at a time; a claim check-and-insert and a post are each one
 /// `BEGIN IMMEDIATE` transaction so they are atomic across processes.
@@ -53,519 +61,17 @@ fn credential_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::store::
     })
 }
 
-fn be(e: rusqlite::Error) -> Error {
-    match &e {
-        rusqlite::Error::SqliteFailure(f, _)
-            if matches!(
-                f.code,
-                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
-            ) =>
-        {
-            Error::Busy(e.to_string())
-        }
-        _ => Error::Backend(e.to_string()),
-    }
-}
-
-impl SqliteStore {
-    /// Members pruning must spare because they may come back to work they hold: those with a live claim in any
-    /// room (DESIGN section 32 item 44), a park that holds (item 46) and an open task with a word in the last
-    /// `TASK_HOLD_SECS` (item 48).
-    fn members_that_may_return(&self, now: i64) -> Result<Vec<String>> {
-        let mut keep: Vec<String> = self.rows(
-            "SELECT DISTINCT owner FROM claims WHERE expires>?1
-             UNION SELECT member FROM member_parked WHERE back_by>?1",
-            params![now],
-            |r| r.get(0),
-        )?;
-        keep.extend(self.task_owners(now)?);
-        Ok(keep)
-    }
-
-    /// Owners of open tasks that had a word within `TASK_HOLD_SECS`. Only the task words are loaded, per room, and
-    /// folded with the same rules the board uses.
-    fn task_owners(&self, now: i64) -> Result<Vec<String>> {
-        let sql = "SELECT room,seq,sender,body,ts FROM messages WHERE body LIKE 'working:%' OR body LIKE 'checkpoint%'
-             OR body LIKE 'handoff:%' OR body LIKE 'finished%' ORDER BY room,seq";
-        let rows: Vec<(String, Message)> = self.rows(sql, [], |r| {
-            Ok((
-                r.get(0)?,
-                Message {
-                    id: String::new(),
-                    seq: r.get(1)?,
-                    sender: r.get(2)?,
-                    attribution: crate::domain::Attribution::Unattributed,
-                    label: String::new(),
-                    body: r.get(3)?,
-                    ts: r.get(4)?,
-                    kind: None,
-                    payload: None,
-                },
-            ))
-        })?;
-        let mut owners = Vec::new();
-        let mut room_msgs: Vec<Message> = Vec::new();
-        let mut room = String::new();
-        let mut flush = |msgs: &mut Vec<Message>| {
-            for t in crate::domain::open_tasks(msgs) {
-                if now - t.last <= crate::domain::TASK_HOLD_SECS {
-                    owners.push(t.owner);
-                }
-            }
-            msgs.clear();
-        };
-        for (r, m) in rows {
-            if r != room {
-                flush(&mut room_msgs);
-                room = r;
-            }
-            room_msgs.push(m);
-        }
-        flush(&mut room_msgs);
-        Ok(owners)
-    }
-
-    /// The note `owner` left when it released `path`, if it was the latest release of that path (#272).
-    fn note_of(&self, room: &str, owner: &str, path: &str) -> Result<Option<String>> {
-        Ok(self
-            .last_release(room, path)?
-            .filter(|n| n.owner == owner)
-            .map(|n| n.note))
-    }
-
-    /// Open the encrypted store at `path` with `key`, with the default five second wait for another writer. There
-    /// is no way to open a file without a key: the store is encrypted at rest (R32).
-    pub fn open(path: &Path, key: &Key) -> Result<Self> {
-        Self::open_with_timeout(path, key, Duration::from_secs(5))
-    }
-
-    /// Open with an explicit limit on how long a write waits for another writer. Past the limit the
-    /// write fails with `Error::Backend` and leaves nothing behind; it never hangs.
-    pub fn open_with_timeout(path: &Path, key: &Key, busy: Duration) -> Result<Self> {
-        // Switching a fresh database to WAL and creating its schema can collide with other first-time
-        // openers in a way SQLite's own busy handler does not cover, so the whole open is retried on
-        // contention, with a small backoff, until the limit.
-        let deadline = std::time::Instant::now() + busy;
-        let mut attempt: u64 = 0;
-        loop {
-            match Self::try_open(path, key, busy) {
-                Err(Error::Busy(_)) if std::time::Instant::now() < deadline => {
-                    let step = (2u64 << attempt.min(4)).min(50);
-                    let jitter = (u64::from(std::process::id()) * 7 + attempt * 13) % 5;
-                    std::thread::sleep(Duration::from_millis(step + jitter));
-                    attempt += 1;
-                }
-                other => return other,
-            }
-        }
-    }
-
-    /// Every member's last reported permission mode, read from the file without opening it for writing: no migration,
-    /// no journal switch, nothing created (`klatch doctor` must change nothing). A store from before the table
-    /// existed has no modes yet.
-    pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
-        Self::unlock(&conn, key)?;
-        let has_table: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name='member_mode'",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(be)?;
-        if has_table == 0 {
-            return Ok(Vec::new());
-        }
-        let mut stmt = conn
-            .prepare("SELECT member,mode,ts FROM member_mode ORDER BY member")
-            .map_err(be)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .map_err(be)?;
-        rows.collect::<std::result::Result<_, _>>().map_err(be)
-    }
-
-    fn try_open(path: &Path, key: &Key, busy: Duration) -> Result<Self> {
-        let conn = Connection::open(path).map_err(be)?;
-        Self::unlock(&conn, key)?;
-        conn.busy_timeout(busy).map_err(be)?;
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(be)?;
-        conn.pragma_update(None, "synchronous", "NORMAL")
-            .map_err(be)?;
-        // sorting and indexing spill to memory, never to a temporary file (R37)
-        conn.pragma_update(None, "temp_store", "MEMORY")
-            .map_err(be)?;
-        Self::init(conn)
-    }
-
-    /// Apply the key and check it: this must be the first thing done on a connection. Refuses a build that has no
-    /// SQLCipher (the key pragma would be ignored and the file would be plaintext) and a key that does not open the
-    /// file, without changing anything and without putting the key in the message.
-    fn unlock(conn: &Connection, key: &Key) -> Result<()> {
-        conn.pragma_update(None, "key", key.sqlcipher_pragma().as_str())
-            .map_err(be)?;
-        let version: String = conn
-            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
-            .unwrap_or_default();
-        if version.is_empty() {
-            return Err(Error::Backend(
-                "this build has no SQLCipher, so it cannot keep a store encrypted".into(),
-            ));
-        }
-        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
-            .map(|_| ())
-            .map_err(|e| match &e {
-                rusqlite::Error::SqliteFailure(f, _)
-                    if matches!(f.code, rusqlite::ErrorCode::NotADatabase) =>
-                {
-                    Error::Backend(
-                        "cannot open the store: wrong key, or the file is not an encrypted klatch store"
-                            .into(),
-                    )
-                }
-                _ => be(e),
-            })
-    }
-
-    /// Re-encrypt the whole store under `new`, in place. The old key stops working. Other open connections keep their
-    /// old key and fail until they reopen, so rotate when nothing else is using the store.
-    pub fn rekey(&self, new: &Key) -> Result<()> {
-        self.conn
-            .pragma_update(None, "rekey", new.sqlcipher_pragma().as_str())
-            .map_err(be)
-    }
-
-    /// What binds a sealed body to its message: moved to another message or label it no longer opens.
-    fn sealed_context(id: &str, label: &str, field: &str) -> String {
-        format!("klatch message {id} under {label} field {field}")
-    }
-
-    /// The body to store: sealed under the label's key when the label is sealed. A sealed label without a key is
-    /// refused (plain text must never be stored under it), and so is a plain body that looks like a sealed one.
-    fn seal_text(&self, (label, id, field): (&str, &str, &str), body: &str) -> Result<String> {
-        let sealed = self.policy_get(&format!("sealed:{label}"))?.is_some();
-        if !sealed {
-            if crate::keys::is_sealed_text(body) {
-                return Err(Error::Invalid(
-                    "a message cannot start with klatch-sealed:1:, which is how sealed text is written".into(),
-                ));
-            }
-            return Ok(body.to_string());
-        }
-        let ring = self.labels.borrow();
-        let Some(key) = ring.get(label) else {
-            return Err(Error::Refused {
-                rule: "label-key".into(),
-                reason: format!("label {label} is sealed and you hold no key for it"),
-            });
-        };
-        crate::keys::protect_text(key, Self::sealed_context(id, label, field).as_bytes(), body)
-            .map_err(|e| Error::Backend(format!("no random source: {e}")))
-    }
-
-    /// A stored text, opened if it is sealed and this principal holds the label's key, and replaced by a note if not.
-    fn open_text(&self, id: &str, label: &str, field: &str, text: String) -> String {
-        if !crate::keys::is_sealed_text(&text) {
-            return text;
-        }
-        let ctx = Self::sealed_context(id, label, field);
-        self.labels
-            .borrow()
-            .get(label)
-            .and_then(|k| crate::keys::reveal_text(k, ctx.as_bytes(), &text).ok())
-            .unwrap_or_else(|| {
-                format!(
-                    "[sealed: this {label} message needs the {label} key, which you do not hold]"
-                )
-            })
-    }
-
-    /// A message row, with a sealed body opened if this principal holds the label's key and replaced by a note if not.
-    fn open_message(&self, r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
-        let mut m = message_from_row(r)?;
-        m.body = self.open_text(&m.id, &m.label, "body", m.body);
-        m.payload = m
-            .payload
-            .map(|p| self.open_text(&m.id, &m.label, "payload", p));
-        Ok(m)
-    }
-
-    /// Write an encrypted copy of the whole store to `out` (a backup or archive), under `key`. It never overwrites an
-    /// existing file, builds the copy beside the target and checks that it opens before putting it in place, so a
-    /// failure leaves nothing half written.
-    pub fn backup_to(&self, out: &Path, key: &Key) -> Result<()> {
-        if out.exists() {
-            return Err(Error::Invalid(format!(
-                "{} already exists; a backup never overwrites a file",
-                out.display()
-            )));
-        }
-        let mut partial = out.as_os_str().to_owned();
-        partial.push(".partial");
-        let partial = std::path::PathBuf::from(partial);
-        let _ = std::fs::remove_file(&partial);
-        let result = (|| -> Result<()> {
-            self.conn
-                .execute(
-                    "ATTACH DATABASE ?1 AS bk KEY ?2",
-                    params![partial.to_string_lossy(), key.sqlcipher_pragma().as_str()],
-                )
-                .map_err(be)?;
-            self.conn
-                .query_row("SELECT sqlcipher_export('bk')", [], |_| Ok(()))
-                .map_err(be)?;
-            let version: i64 = self
-                .conn
-                .query_row("PRAGMA main.user_version", [], |r| r.get(0))
-                .map_err(be)?;
-            self.conn
-                .execute_batch(&format!(
-                    "PRAGMA bk.user_version = {version}; DETACH DATABASE bk"
-                ))
-                .map_err(be)?;
-            crate::store::encrypt::check_opens(&partial, key)?;
-            std::fs::rename(&partial, out)
-                .map_err(|e| Error::Backend(format!("putting the backup in place: {e}")))
-        })();
-        if result.is_err() {
-            let _ = self.conn.execute_batch("DETACH DATABASE bk");
-            let _ = std::fs::remove_file(&partial);
-        }
-        result
-    }
-
-    /// The SQLCipher version this store runs on.
-    pub fn cipher_version(&self) -> Result<String> {
-        self.conn
-            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
-            .map_err(be)
-    }
-
-    /// An unencrypted in-memory store, for tests: it is never written to disk.
-    pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory().map_err(be)?)
-    }
-
-    fn init(conn: Connection) -> Result<Self> {
-        // The version is re-checked inside the write lock so two processes opening an old
-        // database at once cannot both migrate it.
-        conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
-        let outcome = (|| -> Result<()> {
-            let version = user_version(&conn)?;
-            if version > SCHEMA_VERSION {
-                return Err(Error::Backend(format!(
-                    "this store was written by a newer klatch (schema {version}, this one knows {SCHEMA_VERSION}); upgrade klatch instead of opening it with an older one"
-                )));
-            }
-            if version < SCHEMA_VERSION {
-                if version == 0 && !has_table(&conn, "messages")? {
-                    conn.execute_batch(SCHEMA).map_err(be)?;
-                } else {
-                    schema::migrate(&conn, version)?;
-                }
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)
-                    .map_err(be)?;
-            }
-            Ok(())
-        })();
-        match outcome {
-            Ok(()) => conn.execute_batch("COMMIT").map_err(be)?,
-            Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
-                return Err(e);
-            }
-        }
-        Ok(Self {
-            conn,
-            labels: std::cell::RefCell::default(),
-        })
-    }
-
-    fn touch(&self, room: &str, me: &str, now: i64) -> Result<()> {
-        self.exec(
-            "INSERT INTO members(room,name,joined,last_seen) VALUES(?1,?2,?3,?3)
-                 ON CONFLICT(room,name) DO UPDATE SET last_seen=?3",
-            params![room, me, now],
-        )?;
-        self.renew_claims(room, me, now)
-    }
-
-    /// A member that is active keeps each live claim in the room alive for the ttl that claim was made with, counted
-    /// from now, so a claim does not lapse mid-task (#494). Never a floor: a 60 s claim stays 60 s. It never shortens
-    /// a lease (a liveness lease or a park may have stretched it), never revives a lapsed claim, leaves `ask:`
-    /// leases to their own cap, and skips a claim whose ttl is unknown (stored 0, made before the column existed).
-    fn renew_claims(&self, room: &str, me: &str, now: i64) -> Result<()> {
-        let due: Vec<(String, i64)> = self.rows(
-            "SELECT path, ?3+ttl FROM claims WHERE room=?1 AND owner=?2 AND ttl>0 AND expires>?3
-                 AND expires<?3+ttl AND path NOT LIKE 'ask:%'",
-            params![room, me, now],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        for (path, expires) in due {
-            self.exec(
-                "UPDATE claims SET expires=?4 WHERE room=?1 AND owner=?2 AND path=?3",
-                params![room, me, path, expires],
-            )?;
-            // What others were shown moves with the claim: a heartbeat is not news, and a digest reports a claim
-            // whose expiry differs from the one a member saw.
-            self.exec(
-                "UPDATE claims_seen SET expires=?4 WHERE room=?1 AND owner=?2 AND path=?3 AND expires<?4",
-                params![room, me, path, expires],
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Run one write statement in its own transaction.
-    fn write(&self, sql: &str, params: impl rusqlite::Params) -> Result<()> {
-        self.immediate(|| self.exec(sql, params).map(|_| ()))
-    }
-
-    /// Mark the member present in the room, then update its row: `sql` takes the room, the member and `value`.
-    fn update_member(
-        &self,
-        (room, member, now): (&str, &str, i64),
-        sql: &str,
-        value: &dyn rusqlite::ToSql,
-    ) -> Result<()> {
-        self.immediate(|| {
-            self.touch(room, member, now)?;
-            self.exec(sql, params![room, member, value]).map(|_| ())
-        })
-    }
-
-    /// Run one statement; how many rows it changed.
-    fn exec(&self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
-        self.conn.execute(sql, params).map_err(be)
-    }
-
-    /// The first row of a query, if there is one.
-    fn optional<T>(
-        &self,
-        sql: &str,
-        params: impl rusqlite::Params,
-        map: impl FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    ) -> Result<Option<T>> {
-        match self.conn.query_row(sql, params, map) {
-            Ok(v) => Ok(Some(v)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(be(e)),
-        }
-    }
-
-    /// Every row of a query.
-    fn rows<T>(
-        &self,
-        sql: &str,
-        params: impl rusqlite::Params,
-        map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    ) -> Result<Vec<T>> {
-        let mut st = self.conn.prepare(sql).map_err(be)?;
-        st.query_map(params, map)
-            .map_err(be)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(be)
-    }
-
-    fn immediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
-        match f() {
-            Ok(v) => {
-                self.conn.execute_batch("COMMIT").map_err(be)?;
-                Ok(v)
-            }
-            Err(e) => {
-                let _ = self.conn.execute_batch("ROLLBACK");
-                Err(e)
-            }
-        }
-    }
-}
-
 impl Store for SqliteStore {
     fn delete_rooms_with_prefix(
         &self,
         prefix: &str,
         _now: i64,
     ) -> Result<crate::store::DeletedRooms> {
-        if prefix.is_empty() {
-            return Ok(crate::store::DeletedRooms::default());
-        }
-        let n = prefix.chars().count() as i64;
-        self.immediate(|| {
-            let rooms: Vec<String> = self.rows(
-                "SELECT DISTINCT room FROM members WHERE substr(room,1,?2)=?1
-                 UNION SELECT DISTINCT room FROM messages WHERE substr(room,1,?2)=?1",
-                params![prefix, n],
-                |r| r.get(0),
-            )?;
-            let messages: i64 = self
-                .conn
-                .query_row(
-                    "SELECT count(*) FROM messages WHERE substr(room,1,?2)=?1",
-                    params![prefix, n],
-                    |r| r.get(0),
-                )
-                .map_err(be)?;
-            // every table that is keyed by a room, found from the schema so a table added later is not forgotten;
-            // the record of refusals is an audit trail and stays
-            let tables: Vec<String> = self.rows(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-                params![],
-                |r| r.get(0),
-            )?;
-            for t in tables.iter().filter(|t| t.as_str() != "refusals") {
-                let has_room: bool = self
-                    .rows(&format!("PRAGMA table_info(\"{t}\")"), params![], |r| {
-                        r.get::<_, String>(1)
-                    })?
-                    .iter()
-                    .any(|c| c == "room");
-                if has_room {
-                    self.exec(
-                        &format!("DELETE FROM \"{t}\" WHERE substr(room,1,?2)=?1"),
-                        params![prefix, n],
-                    )?;
-                }
-            }
-            self.exec(
-                "DELETE FROM policy WHERE substr(key,1,?2)=?1",
-                params![
-                    format!("label:{prefix}"),
-                    (prefix.chars().count() + 6) as i64
-                ],
-            )?;
-            Ok(crate::store::DeletedRooms {
-                rooms: rooms.len(),
-                messages: messages as usize,
-            })
-        })
+        self.do_delete_rooms_with_prefix(prefix, _now)
     }
 
     fn release_anchored(&self, anchor: &str, now: i64) -> Result<Vec<(String, String, String)>> {
-        if anchor.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.immediate(|| {
-            let held: Vec<(String, String, String, i64)> = self.rows(
-                "SELECT room,path,owner,expires FROM claims WHERE anchor=?1 ORDER BY room,path",
-                params![anchor],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )?;
-            let mut released = Vec::new();
-            for (room, path, owner, expires) in held {
-                self.exec(
-                    "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
-                    params![room, path, owner],
-                )?;
-                if expires > now {
-                    released.push((room, path, owner));
-                }
-            }
-            Ok(released)
-        })
+        self.do_release_anchored(anchor, now)
     }
 
     fn anchors_in_use(&self, now: i64) -> Result<Vec<String>> {
@@ -577,31 +83,7 @@ impl Store for SqliteStore {
     }
 
     fn issue_credential(&self, c: &crate::store::NewCredential, now: i64) -> Result<()> {
-        self.immediate(|| {
-            let live: Option<(i64, i64)> = self
-                .conn
-                .query_row(
-                    "SELECT expires, revoked FROM credentials WHERE member=?1",
-                    params![c.member],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .ok();
-            if let Some((expires, revoked)) = live
-                && revoked == 0
-                && expires > now
-            {
-                return Err(Error::Invalid(format!(
-                    "{} already holds a live credential; revoke it first or wait for it to expire",
-                    c.member
-                )));
-            }
-            self.exec(
-                "INSERT INTO credentials(member,token_hash,clearance,parent,issued,expires,revoked) VALUES(?1,?2,?3,?4,?5,?6,0)
-                 ON CONFLICT(member) DO UPDATE SET token_hash=?2, clearance=?3, parent=?4, issued=?5, expires=?6, revoked=0",
-                params![c.member, c.token_hash, c.clearance, c.parent, now, now + c.ttl],
-            )
-            .map(|_| ())
-        })
+        self.do_issue_credential(c, now)
     }
 
     fn credential(&self, member: &str) -> Result<Option<crate::store::CredentialRecord>> {
@@ -639,61 +121,11 @@ impl Store for SqliteStore {
     }
 
     fn post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
-        let NewMessage {
-            room,
-            sender,
-            attribution,
-            label,
-            body,
-            ..
-        } = *message;
-        self.immediate(|| {
-            let seq: i64 = self
-                .conn
-                .query_row(
-                    "SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE room=?1",
-                    params![room],
-                    |r| r.get(0),
-                )
-                .map_err(be)?;
-            let id = new_id((now.max(0) as u64) * 1000);
-            let stored = self.seal_text((label, &id, "body"), body)?;
-            let payload = match message.payload {
-                Some(p) => Some(self.seal_text((label, &id, "payload"), p)?),
-                None => None,
-            };
-            self.exec(
-                    "INSERT INTO messages(room,seq,mid,sender,member,body,ts,attribution,label,kind,payload) VALUES(?1,?2,?3,?4,?4,?5,?6,?7,?8,?9,?10)",
-                    params![room, seq, id, sender, stored, now, attribution_text(attribution), label, message.kind, payload],
-                )?;
-            self.touch(room, sender, now)?;
-            Ok(Posted { id, seq })
-        })
+        self.do_post_as(message, now)
     }
 
     fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
-        let Seat { room, member } = at;
-        self.touch(room, member, now)?;
-        let last: i64 = self
-            .conn
-            .query_row(
-                "SELECT last_seq FROM members WHERE room=?1 AND name=?2",
-                params![room, member],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
-        if advance {
-            // Advance to the last message actually returned, never to the room's current maximum:
-            // a message posted between the select above and this update would otherwise be skipped
-            // for good. Own messages after the last returned one are simply filtered again next time.
-            let cursor = rows.last().map_or(last, |m| m.seq.max(last));
-            self.exec(
-                "UPDATE members SET last_seq=?3, last_seen=?4 WHERE room=?1 AND name=?2",
-                params![room, member, cursor, now],
-            )?;
-        }
-        Ok(rows)
+        self.do_read(at, advance, now)
     }
 
     fn note_session(&self, session_id: &str, member: &str, now: i64) -> Result<()> {
@@ -721,62 +153,7 @@ impl Store for SqliteStore {
     }
 
     fn prune_members(&self, older_than: i64, now: i64) -> Result<usize> {
-        self.immediate(|| {
-            let cutoff = now - older_than;
-            // A member that may return (it holds a live claim) keeps its rows, so a session resumed after days
-            // finds its read cursor; later sources of "may return" (parked, open task) join this list.
-            let keep = self.members_that_may_return(now)?;
-            let kept = |name: &str| keep.iter().any(|k| k == name);
-            let old_sessions: Vec<(String, String)> = self.rows(
-                "SELECT session_id,member FROM sessions WHERE ts<?1",
-                params![cutoff],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            for (id, _) in old_sessions.iter().filter(|(_, m)| !kept(m)) {
-                self.exec("DELETE FROM sessions WHERE session_id=?1", params![id])?;
-            }
-            let old: Vec<(String, String)> = self.rows(
-                "SELECT room,name FROM members WHERE last_seen<?1",
-                params![cutoff],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            let mut names: Vec<String> = Vec::new();
-            let mut removed = 0;
-            for (room, name) in old.iter().filter(|(_, n)| !kept(n)) {
-                removed += self.exec(
-                    "DELETE FROM members WHERE room=?1 AND name=?2",
-                    params![room, name],
-                )?;
-                if !names.contains(name) {
-                    names.push(name.clone());
-                }
-            }
-            for name in names {
-                let still: i64 = self
-                    .conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM members WHERE name=?1",
-                        params![name],
-                        |r| r.get(0),
-                    )
-                    .map_err(be)?;
-                if still > 0 {
-                    continue;
-                }
-                for sql in [
-                    "DELETE FROM claims_seen WHERE member=?1",
-                    "DELETE FROM asks_reported WHERE member=?1",
-                    "DELETE FROM asks_escalated WHERE member=?1",
-                    "DELETE FROM hook_runs WHERE member=?1",
-                    "DELETE FROM member_mode WHERE member=?1",
-                    "DELETE FROM claim_waits WHERE member=?1",
-                    "DELETE FROM member_parked WHERE member=?1",
-                ] {
-                    self.exec(sql, params![name])?;
-                }
-            }
-            Ok(removed)
-        })
+        self.do_prune_members(older_than, now)
     }
 
     fn member_scope(&self, member: &str) -> Result<Option<String>> {
@@ -804,18 +181,7 @@ impl Store for SqliteStore {
     }
 
     fn wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
-        // A waiting member is present: every poll refreshes presence, as a read does (#237).
-        self.touch(room, member, now)?;
-        let (read, seen): (i64, i64) = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(last_seq,0), wait_seq FROM members WHERE room=?1 AND name=?2",
-                params![room, member],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap_or((0, 0));
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))?;
-        Ok(rows)
+        self.do_wait_poll(room, member, now)
     }
 
     fn wait_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
@@ -827,16 +193,7 @@ impl Store for SqliteStore {
     }
 
     fn wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
-        self.touch(room, member, now)?;
-        let (read, seen): (i64, i64) = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(last_seq,0), wake_seq FROM members WHERE room=?1 AND name=?2",
-                params![room, member],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap_or((0, 0));
-        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))
+        self.do_wake_poll(room, member, now)
     }
 
     fn wake_seen(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
@@ -954,26 +311,7 @@ impl Store for SqliteStore {
     }
 
     fn hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
-        self.immediate(|| {
-            self.touch(room, member, now)?;
-            let (read, shown): (i64, i64) = self
-                .conn
-                .query_row(
-                    "SELECT COALESCE(last_seq,0), hook_seq FROM members WHERE room=?1 AND name=?2",
-                    params![room, member],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .map_err(be)?;
-            let from = read.max(shown);
-            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, from, member], |r| self.open_message(r))?;
-            if let Some(last) = rows.last() {
-                self.exec(
-                        "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
-                        params![room, member, last.seq],
-                    )?;
-            }
-            Ok(rows)
-        })
+        self.do_hook_read(room, member, now)
     }
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
@@ -1001,69 +339,11 @@ impl Store for SqliteStore {
     }
 
     fn park(&self, member: &str, parked: &Parked, now: i64) -> Result<()> {
-        self.immediate(|| {
-            // What an earlier park still holds: its return time, if that is still ahead (#647).
-            let held_until: i64 = self
-                .optional(
-                    "SELECT back_by FROM member_parked WHERE member=?1",
-                    params![member],
-                    |r| r.get(0),
-                )?
-                .unwrap_or(0);
-            self.exec(
-                "INSERT INTO member_parked(member,why,since,back_by) VALUES(?1,?2,?3,?4)
-                 ON CONFLICT(member) DO UPDATE SET why=?2, since=?3, back_by=?4",
-                params![member, parked.why, now, parked.back_by],
-            )?;
-            // Only what is live now is held: a claim that already ran out stays gone. A claim short of the return
-            // time is stretched to it. One beyond the return time (or its own ttl from now, item 52, if later) but
-            // within what the earlier park held is that park's stretch, and is cut back to it; a claim beyond the
-            // earlier return time was never stretched by it and stays.
-            let target = "MAX(?3, ?2+ttl)";
-            self.exec(
-                &format!(
-                    "UPDATE claims SET expires=CASE WHEN expires<?3 THEN ?3 ELSE {target} END
-                     WHERE owner=?1 AND expires>?2 AND (expires<?3 OR (expires>{target} AND expires<=?4))"
-                ),
-                params![member, now, parked.back_by, held_until],
-            )?;
-            self.exec(
-                "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?2 AND expires<?3",
-                params![member, now, parked.back_by],
-            )?;
-            // An ask lease does not outlive its claim row, which a re-park may have cut.
-            self.exec(
-                "UPDATE ask_leases SET expires=(SELECT c.expires FROM claims c WHERE c.room=ask_leases.room
-                     AND c.path='ask:'||ask_leases.seq AND c.owner=ask_leases.owner)
-                 WHERE owner=?1 AND expires>?2 AND EXISTS (SELECT 1 FROM claims c WHERE c.room=ask_leases.room
-                     AND c.path='ask:'||ask_leases.seq AND c.owner=ask_leases.owner
-                     AND c.expires<ask_leases.expires AND c.expires>?2)",
-                params![member, now],
-            )?;
-            Ok(())
-        })
+        self.do_park(member, parked, now)
     }
 
     fn unpark(&self, member: &str, now: i64) -> Result<()> {
-        self.immediate(|| {
-            if self.exec("DELETE FROM member_parked WHERE member=?1", params![member])? == 0 {
-                return Ok(());
-            }
-            // A member that is active again renews for itself: what the park stretched is cut back to a normal
-            // lease, short for an ask. Never below the claim's own ttl from now (item 52, #649): the post's renewal
-            // already ran, so a cut under the ttl would leave a long claim short until the next action.
-            let (plain, ask) = (now + CLAIM_DEFAULT_SECS, now + ASK_LEASE_DEFAULT_SECS);
-            self.exec(
-                "UPDATE claims SET expires=?4+MAX(ttl, CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END)
-                 WHERE owner=?1 AND expires>?4+MAX(ttl, CASE WHEN path LIKE 'ask:%' THEN ?3 ELSE ?2 END)",
-                params![member, CLAIM_DEFAULT_SECS, ASK_LEASE_DEFAULT_SECS, now],
-            )?;
-            self.exec(
-                "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?3",
-                params![member, plain, ask],
-            )?;
-            Ok(())
-        })
+        self.do_unpark(member, now)
     }
 
     fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
@@ -1071,49 +351,11 @@ impl Store for SqliteStore {
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
-        if let Some(seq) = path
-            .strip_prefix("ask:")
-            .and_then(|n| n.parse::<i64>().ok())
-        {
-            // A release on purpose is not a lapse.
-            self.exec(
-                "DELETE FROM ask_leases WHERE room=?1 AND seq=?2 AND owner=?3",
-                params![room, seq, owner],
-            )?;
-        }
-        let n = self.exec(
-            "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
-            params![room, path, owner],
-        )?;
-        if n == 0 {
-            return Err(Error::NotFound(format!("no claim by {owner} on {path}")));
-        }
-        Ok(())
+        self.do_release(room, owner, path)
     }
 
     fn release_with(&self, release: &Release, now: i64) -> Result<()> {
-        let Release {
-            room,
-            owner,
-            path,
-            note,
-        } = *release;
-        self.immediate(|| {
-            self.release(room, owner, path)?;
-            if note.is_empty() {
-                self.exec(
-                    "DELETE FROM claim_notes WHERE room=?1 AND path=?2",
-                    params![room, path],
-                )?;
-            } else {
-                self.exec(
-                    "INSERT INTO claim_notes(room,path,owner,note,ts) VALUES(?1,?2,?3,?4,?5)
-                         ON CONFLICT(room,path) DO UPDATE SET owner=?3, note=?4, ts=?5",
-                    params![room, path, owner, note, now],
-                )?;
-            }
-            Ok(())
-        })
+        self.do_release_with(release, now)
     }
 
     fn last_release(&self, room: &str, path: &str) -> Result<Option<ReleaseNote>> {
@@ -1216,23 +458,7 @@ impl Store for SqliteStore {
     }
 
     fn remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
-        self.immediate(|| {
-            let released: usize = self
-                .conn
-                .query_row(
-                    "SELECT COUNT(*) FROM claims WHERE room=?1 AND owner=?2 AND expires>?3",
-                    params![room, member, now],
-                    |r| r.get::<_, i64>(0),
-                )
-                .map_err(be)? as usize;
-            for sql in [
-                "DELETE FROM claims WHERE room=?1 AND owner=?2",
-                "DELETE FROM members WHERE room=?1 AND name=?2",
-            ] {
-                self.exec(sql, params![room, member])?;
-            }
-            Ok(released)
-        })
+        self.do_remove_member(room, member, now)
     }
 
     fn enqueue_review(&self, item: &NewReview, now: i64) -> Result<i64> {
@@ -1365,30 +591,7 @@ impl Store for SqliteStore {
     }
 
     fn release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
-        self.immediate(|| {
-            let held: Vec<(String, String, i64)> = self.rows("SELECT room,path,expires FROM claims WHERE owner=?1", params![member], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-            let mut released = 0;
-            for (room, path, expires) in held {
-                if expires > now {
-                    released += 1;
-                    if let Some(seq) = path
-                        .strip_prefix("ask:")
-                        .and_then(|n| n.parse::<i64>().ok())
-                    {
-                        // ends the lease now, so the asker is told it lapsed
-                        self.exec(
-                                "UPDATE ask_leases SET expires=?4 WHERE room=?1 AND seq=?2 AND owner=?3 AND expires>?4",
-                                params![room, seq, member, now],
-                            )?;
-                    }
-                }
-                self.exec(
-                        "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
-                        params![room, path, member],
-                    )?;
-            }
-            Ok(released)
-        })
+        self.do_release_member_claims(member, now)
     }
 
     fn claim_owners(&self) -> Result<Vec<String>> {
@@ -1430,54 +633,7 @@ impl Store for SqliteStore {
     }
 
     fn claim_changes(&self, room: &str, member: &str, now: i64) -> Result<ClaimChanges> {
-        self.immediate(|| {
-            let current: Vec<Claim> = self
-                .claims(room, now)?
-                .into_iter()
-                .filter(|c| c.owner != member)
-                .collect();
-            let mut st = self
-                .conn
-                .prepare("SELECT owner,path,expires FROM claims_seen WHERE room=?1 AND member=?2")
-                .map_err(be)?;
-            let seen: Vec<(String, String, i64)> = st
-                .query_map(params![room, member], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-                })
-                .map_err(be)?
-                .collect::<std::result::Result<_, _>>()
-                .map_err(be)?;
-            let added: Vec<Claim> = current
-                .iter()
-                .filter(|c| !seen.iter().any(|(o, p, e)| *o == c.owner && *p == c.path && *e == c.expires))
-                .cloned()
-                .collect();
-            let mut released = Vec::new();
-            for (o, p, _) in seen
-                .iter()
-                .filter(|(o, p, _)| !current.iter().any(|c| c.owner == *o && c.path == *p))
-            {
-                released.push(ReleasedClaim {
-                    owner: o.clone(),
-                    path: p.clone(),
-                    note: self.note_of(room, o, p)?,
-                });
-            }
-            if added.is_empty() && released.is_empty() {
-                return Ok(ClaimChanges::default());
-            }
-            self.exec(
-                    "DELETE FROM claims_seen WHERE room=?1 AND member=?2",
-                    params![room, member],
-                )?;
-            for c in &current {
-                self.exec(
-                        "INSERT INTO claims_seen(room,member,owner,path,expires) VALUES(?1,?2,?3,?4,?5)",
-                        params![room, member, c.owner, c.path, c.expires],
-                    )?;
-            }
-            Ok(ClaimChanges { added, released })
-        })
+        self.do_claim_changes(room, member, now)
     }
 
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
