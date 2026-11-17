@@ -572,6 +572,8 @@ mod tests {
             "claims",
             "status",
             "scope",
+            "prune",
+            "dm",
             "mute",
         ] {
             assert!(

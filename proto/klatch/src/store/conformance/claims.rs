@@ -182,6 +182,38 @@ pub fn a_release_note_travels_to_those_who_saw_the_claim_and_to_the_next_claiman
     assert!(s.last_release("r", "src/a.rs").unwrap().is_none());
     assert!(s.last_release("r", "other.rs").unwrap().is_none());
 }
+pub fn a_lapse_after_a_reclaim_shows_no_stale_release_note<S: Store>(make: fn() -> S) {
+    let s = make();
+    take(&s, ("r", "bob"), "src/a.rs", Lease::new(0, 100));
+    assert_eq!(changes(&s, "r", "alice", 1).0.len(), 1);
+    s.release_with(&Release::new(("r", "bob"), "src/a.rs", "old note"), 10)
+        .unwrap();
+    // alice has not looked since the release; bob takes the path again before she does
+    take(&s, ("r", "bob"), "src/a.rs", Lease::new(20, 100));
+    let c = s.claim_changes("r", "alice", 21).unwrap();
+    assert!(c.released.is_empty(), "the path is held again: {c:?}");
+    // the second claim lapses without a release: alice is told, but with no note, as bob left none this time
+    let c = s.claim_changes("r", "alice", 200).unwrap();
+    assert_eq!(c.released.len(), 1, "{c:?}");
+    assert_eq!(c.released[0].note, None, "the note of the first release");
+    assert!(
+        s.last_release("r", "src/a.rs").unwrap().is_none(),
+        "a note from before the claim is not offered to the next claimant either"
+    );
+}
+pub fn a_note_of_another_owner_survives_a_reclaim_by_the_first<S: Store>(make: fn() -> S) {
+    let s = make();
+    take(&s, ("r", "bob"), "p", Lease::new(0, 100));
+    s.release_with(&Release::new(("r", "bob"), "p", "bob left this"), 5)
+        .unwrap();
+    take(&s, ("r", "carol"), "p", Lease::new(10, 100));
+    let last = s.last_release("r", "p").unwrap().unwrap();
+    assert_eq!(
+        (last.owner.as_str(), last.note.as_str()),
+        ("bob", "bob left this"),
+        "another member's claim does not erase the note"
+    );
+}
 pub fn removing_a_member_takes_it_out_of_the_room_and_releases_its_claims_there<S: Store>(
     make: fn() -> S,
 ) {

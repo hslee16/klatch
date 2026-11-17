@@ -119,6 +119,36 @@ describe("klatch client conformance", () => {
     await assert.rejects(a.release("r", "never/claimed"), (e: ApiError) => e.code === "not_found");
   });
 
+  it("a member without the admin role is refused every act and may prune", async () => {
+    const a = await store.client("alice");
+    for (const [act, params] of [
+      ["run-create", { run: "r1" }],
+      ["run-end", { run: "r1" }],
+      ["anchor-done", { anchor: "gh:pr:o/r/1" }],
+      ["close", { room: "r" }],
+    ] as [string, Record<string, unknown>][]) {
+      await assert.rejects(a.roleAct(act, params), (e: ApiError) => e.code === "refused" && e.refusals.some((r) => r.rule === "admin-scope"), act);
+    }
+    await assert.rejects(a.roleAct("reap-anchors"), (e: ApiError) => e.code === "unknown_act");
+    await assert.rejects(a.roleAct("run-create"), (e: ApiError) => e.code === "invalid_params");
+    assert.equal(await a.prune(), 0);
+    await a.post("r", "still here");
+    assert.equal(await a.prune(), 0);
+    assert.deepEqual((await a.who("r")).map((m) => m.name), ["alice"]);
+  });
+
+  it("a direct message reaches one member in a room nobody else may use", async () => {
+    const [a, b, c] = [await store.client("alice"), await store.client("bob"), await store.client("carol")];
+    const sent = await a.dm("bob", "hello bob");
+    assert.deepEqual([sent.room, sent.seq, sent.id.length], ["dm.alice.bob", 1, 26]);
+    assert.deepEqual((await b.read(sent.room)).map((m) => [m.sender, m.body]), [["alice", "hello bob"]]);
+    assert.equal((await b.dm("alice", "hi back")).seq, 2);
+    await assert.rejects(c.read(sent.room), (e: ApiError) => e.code === "refused" && e.refusals.some((r) => r.rule === "dm-members"));
+    await assert.rejects(a.dm("alice", "to myself"), (e: ApiError) => e.code === "invalid");
+    await assert.rejects(a.dm("bob", "above the ceiling", "secret"), (e: ApiError) => e.code === "refused");
+    await assert.rejects(a.request("dm", { to: "bob" }), (e: ApiError) => e.code === "invalid_params");
+  });
+
   it("a member mutes and unmutes a room and read still shows everything", async () => {
     const [a, b] = [await store.client("alice"), await store.client("bob")];
     await b.post("r", "chatter");

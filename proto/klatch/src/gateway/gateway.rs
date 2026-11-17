@@ -3,7 +3,7 @@ use crate::domain::{
     RoomDigest, STALE_AFTER_SECS, parse_parked, valid_name,
 };
 use crate::gateway::{Clock, Guard, Operation};
-use crate::store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Store};
+use crate::store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Seq, Store};
 
 /// What a hook needs: unread messages and others' claims per room, and the rooms that were refused.
 #[derive(Debug, Clone, PartialEq, Eq)]

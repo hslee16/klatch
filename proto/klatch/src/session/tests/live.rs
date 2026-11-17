@@ -335,7 +335,7 @@ impl MessageStore for FlakyStore {
         self.inner.head(r)
     }
 
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.inner.advance_cursor(at, seq, now)
     }
 }

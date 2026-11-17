@@ -3,6 +3,7 @@
 //! scrubber only knows what a person listed. A refusal names the rule and never the matched text.
 
 use super::*;
+use crate::domain::NEXT_STEP;
 
 const MAX_TERM_BYTES: usize = 200;
 const PREFIX: &str = "scrub:";
@@ -31,7 +32,7 @@ impl<S: Store> Gateway<S> {
                 Err(Error::Refused {
                     rule: format!("scrub:{name}"),
                     reason: format!(
-                        "the text matches the private-term rule {name}, which keeps it out of room {room} (labelled {label})"
+                        "the text matches the private-term rule {name}, which keeps it out of room {room} (labelled {label}); {NEXT_STEP}remove or reword the part that matches the rule {name}, then post again"
                     ),
                 })
             }

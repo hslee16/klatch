@@ -4,7 +4,7 @@ use crate::gateway::{AllowAll, FixedClock, Gateway, Guard, Operation};
 use crate::protocol::{Attribution, ServerFrame, decode_server_line};
 use crate::store::{
     AskStore, ClaimRequest, ClaimStore, CredentialStore, MemberStore, MessageStore, NewMessage,
-    PolicyStore, ReviewStore, RoomStore, Seat, SqliteStore, Store,
+    PolicyStore, ReviewStore, RoomStore, Seat, Seq, SqliteStore, Store,
 };
 use serde_json::{Value, json};
 use std::io::Cursor;
@@ -93,6 +93,7 @@ fn seqs(f: &[ServerFrame]) -> Vec<u64> {
 }
 
 mod attributes;
+mod dm;
 mod live;
 mod mute;
 mod replay;

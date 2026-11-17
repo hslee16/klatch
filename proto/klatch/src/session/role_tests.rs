@@ -10,12 +10,12 @@ use crate::store::{NewReview, SqliteStore};
 use serde_json::{Value, json};
 use std::io::Cursor;
 
-fn who(name: &str) -> Principal {
+pub(super) fn who(name: &str) -> Principal {
     Principal::unattributed(name)
 }
 
 /// A members' gateway: roles are granted first through the terminal gateway (no `for_members`), as the human does.
-fn gateway() -> Gateway<SqliteStore> {
+pub(super) fn gateway() -> Gateway<SqliteStore> {
     let g = Gateway::new(
         SqliteStore::open_in_memory().unwrap(),
         FixedClock(1_000),
@@ -32,7 +32,12 @@ fn gateway() -> Gateway<SqliteStore> {
     g.for_members()
 }
 
-fn call(g: &Gateway<SqliteStore>, member: &str, method: &str, params: Value) -> Vec<ServerFrame> {
+pub(super) fn call(
+    g: &Gateway<SqliteStore>,
+    member: &str,
+    method: &str,
+    params: Value,
+) -> Vec<ServerFrame> {
     let line = format!(
         "{}\n",
         json!({"v":1,"type":"request","id":"1","method":method,"params":params})
@@ -47,7 +52,7 @@ fn call(g: &Gateway<SqliteStore>, member: &str, method: &str, params: Value) -> 
 }
 
 /// The result of the one response, or its error code.
-fn answer(frames: &[ServerFrame]) -> Result<Value, String> {
+pub(super) fn answer(frames: &[ServerFrame]) -> Result<Value, String> {
     for f in frames {
         if let ServerFrame::Response {
             ok, result, error, ..
@@ -62,7 +67,7 @@ fn answer(frames: &[ServerFrame]) -> Result<Value, String> {
     panic!("no response: {frames:?}");
 }
 
-fn rule_of(frames: &[ServerFrame]) -> Option<String> {
+pub(super) fn rule_of(frames: &[ServerFrame]) -> Option<String> {
     frames.iter().find_map(|f| match f {
         ServerFrame::Refusal { rule, .. } => Some(rule.clone()),
         _ => None,
