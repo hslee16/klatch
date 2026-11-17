@@ -35,6 +35,7 @@ mod parked;
 mod pr_lifecycle;
 mod rate_limit;
 mod receipt;
+mod refusal_hints;
 mod reviewer;
 mod room_capability;
 mod runs;

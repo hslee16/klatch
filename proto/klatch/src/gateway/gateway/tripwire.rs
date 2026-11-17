@@ -4,7 +4,7 @@
 //! record why. Neither echoes a canary or matched text.
 
 use super::*;
-use crate::domain::Attribution;
+use crate::domain::{Attribution, NEXT_STEP};
 use crate::store::NewAudit;
 
 const CANARY: &str = "canary:";
@@ -54,7 +54,7 @@ impl<S: Store> Gateway<S> {
             return Err(Error::Refused {
                 rule: "canary".into(),
                 reason: format!(
-                    "that text came from a room it must not leave; room {room} is paused until an admin reopens it"
+                    "that text came from a room it must not leave; room {room} is paused until an admin reopens it; {NEXT_STEP}do not post it again; ask an admin to look and reopen room {room}"
                 ),
             });
         }

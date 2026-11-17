@@ -3,7 +3,7 @@
 //! above its room, and keeps one record for each refusal. The record names the rule and never the text.
 
 use super::*;
-use crate::domain::{LabelChain, RefusalRecord};
+use crate::domain::{LabelChain, NEXT_STEP, RefusalRecord};
 use crate::store::NewRefusal;
 
 impl<S: Store> Gateway<S> {
@@ -55,7 +55,9 @@ impl<S: Store> Gateway<S> {
         }
         Err(Error::Refused {
             rule: "clearance".into(),
-            reason: format!("room {room} is labelled {label}, above your clearance {held}"),
+            reason: format!(
+                "room {room} is labelled {label}, above your clearance {held}; {NEXT_STEP}ask the admin to raise your clearance or to relabel the room"
+            ),
         })
     }
 
@@ -77,7 +79,7 @@ impl<S: Store> Gateway<S> {
         let e = Error::Refused {
             rule: "label".into(),
             reason: format!(
-                "a {label} message cannot go into room {room}, which is labelled {room_label}"
+                "a {label} message cannot go into room {room}, which is labelled {room_label}; {NEXT_STEP}post it to a room labelled {label} or higher; to release a message already posted, run `klatch cross SOURCE SEQ --to {room}`"
             ),
         };
         self.note_refusal(who, (room, "post"), &e);

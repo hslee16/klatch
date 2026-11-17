@@ -47,7 +47,7 @@ pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
 pub use dm::{DM_PREFIX, dm_room};
-pub use error::{Error, Result};
+pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, printed_len, render_hook,
     render_hook_within,
