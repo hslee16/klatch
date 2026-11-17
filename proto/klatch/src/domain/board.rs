@@ -70,24 +70,11 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
     let mut out = String::new();
     let mut gone = 0;
     for m in members {
-        if !all && now - m.last_seen > MEMBER_ACTIVE_SECS && !holds_park(m.parked.as_ref(), now) {
+        if !all && is_stale(m, now) {
             gone += 1;
             continue;
         }
-        out.push_str(&format!(
-            "{}\tlast seen {}s ago (liveness, not progress)",
-            flat(&m.name),
-            crate::domain::secs_between(now, m.last_seen)
-        ));
-        if let Some(parent) = &m.parent {
-            out.push_str(&format!("\tchild of {}", flat(parent)));
-        }
-        if let Some(status) = &m.status {
-            out.push_str(&format!("\tstatus: {}", flat(status)));
-        }
-        if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now)) {
-            out.push_str(&format!("\t{}", flat(&p.phrase(now))));
-        }
+        out.push_str(&who_line(m, now));
         out.push('\n');
     }
     match gone {
@@ -96,6 +83,30 @@ pub fn render_who(members: &[MemberInfo], now: i64, all: bool) -> String {
         n => out.push_str(&format!(
             "{n} others not seen for over 10 minutes (who --all lists them)\n"
         )),
+    }
+    out
+}
+
+/// Not seen for over `MEMBER_ACTIVE_SECS` and not holding a park.
+fn is_stale(m: &MemberInfo, now: i64) -> bool {
+    now - m.last_seen > MEMBER_ACTIVE_SECS && !holds_park(m.parked.as_ref(), now)
+}
+
+/// One member's `who` line, without the trailing newline.
+fn who_line(m: &MemberInfo, now: i64) -> String {
+    let mut out = format!(
+        "{}\tlast seen {}s ago (liveness, not progress)",
+        flat(&m.name),
+        crate::domain::secs_between(now, m.last_seen)
+    );
+    if let Some(parent) = &m.parent {
+        out.push_str(&format!("\tchild of {}", flat(parent)));
+    }
+    if let Some(status) = &m.status {
+        out.push_str(&format!("\tstatus: {}", flat(status)));
+    }
+    if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now)) {
+        out.push_str(&format!("\t{}", flat(&p.phrase(now))));
     }
     out
 }

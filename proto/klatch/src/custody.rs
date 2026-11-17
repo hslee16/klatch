@@ -201,10 +201,15 @@ pub(crate) fn current_key(db: &Path) -> Result<Option<Key>> {
     Ok(kh.source.get(&kh.name)?)
 }
 
+/// True unless an encrypted store with data exists that `key` fails to open.
+fn opens_existing_store(db: &Path, key: &Key) -> bool {
+    !has_data(db) || is_plaintext(db) || SqliteStore::open(db, key).is_ok()
+}
+
 /// Put `key` in as the store's key, after checking that it opens the store when one exists.
 pub(crate) fn restore_key(db: &Path, key: &Key) -> Result<()> {
     let kh = key_home(db);
-    if has_data(db) && !is_plaintext(db) && SqliteStore::open(db, key).is_err() {
+    if !opens_existing_store(db, key) {
         bail!("that recovery code does not open this store; nothing was changed");
     }
     if let Some(existing) = kh.source.get(&kh.name)?
@@ -335,11 +340,34 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Condvar, Mutex};
 
+    type Gate = Arc<(Mutex<(bool, bool)>, Condvar)>; // (started, released)
+
+    fn signal_and_wait(state: &Gate) {
+        let (m, cv) = &**state;
+        let mut g = m.lock().unwrap();
+        g.0 = true;
+        cv.notify_all();
+        let _ = cv
+            .wait_timeout_while(g, std::time::Duration::from_secs(20), |g| !g.1)
+            .unwrap();
+    }
+
+    fn wait_started(state: &Gate) {
+        let (m, cv) = &**state;
+        drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
+    }
+
+    fn release(state: &Gate) {
+        let (m, cv) = &**state;
+        m.lock().unwrap().1 = true;
+        cv.notify_all();
+    }
+
     /// A file key source whose first `get` reports what it found and then stalls until told to go: the moment in
     /// #596 when one process has looked and found no key while another makes the key and the store.
     struct Stalled {
         inner: klatch::keys::FileKeys,
-        state: Arc<(Mutex<(bool, bool)>, Condvar)>, // (first get done, released)
+        state: Gate, // (first get done, released)
         first: std::sync::atomic::AtomicBool,
     }
 
@@ -347,13 +375,7 @@ mod tests {
         fn get(&self, name: &str) -> Result<Option<Key>, klatch::keys::Error> {
             let found = self.inner.get(name)?;
             if !self.first.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                let (m, cv) = &*self.state;
-                let mut g = m.lock().unwrap();
-                g.0 = true;
-                cv.notify_all();
-                let _ = cv
-                    .wait_timeout_while(g, std::time::Duration::from_secs(20), |g| !g.1)
-                    .unwrap();
+                signal_and_wait(&self.state);
             }
             Ok(found)
         }
@@ -400,17 +422,10 @@ mod tests {
             })
         };
         // wait until the late process has looked and found no key
-        {
-            let (m, cv) = &*state;
-            drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
-        }
+        wait_started(&state);
         let keys = klatch::keys::FileKeys::new(&d.join("keys"));
         open_store_in(&db, &home(Box::new(keys))).unwrap();
-        {
-            let (m, cv) = &*state;
-            m.lock().unwrap().1 = true;
-            cv.notify_all();
-        }
+        release(&state);
         let r = late.join().unwrap();
         assert!(r.is_ok(), "{:?}", r.err());
         let _ = std::fs::remove_dir_all(&d);
@@ -498,7 +513,7 @@ mod tests {
     /// is then in the middle of its work, holding whatever it holds.
     struct HoldRotation {
         inner: klatch::keys::FileKeys,
-        state: Arc<(Mutex<(bool, bool)>, Condvar)>, // (rotation started, released)
+        state: Gate, // (rotation started, released)
     }
 
     impl KeySource for HoldRotation {
@@ -508,13 +523,7 @@ mod tests {
         fn put(&self, name: &str, key: &Key) -> Result<(), klatch::keys::Error> {
             self.inner.put(name, key)?;
             if name.ends_with("-next") {
-                let (m, cv) = &*self.state;
-                let mut g = m.lock().unwrap();
-                g.0 = true;
-                cv.notify_all();
-                let _ = cv
-                    .wait_timeout_while(g, std::time::Duration::from_secs(20), |g| !g.1)
-                    .unwrap();
+                signal_and_wait(&self.state);
             }
             Ok(())
         }
@@ -526,11 +535,9 @@ mod tests {
         }
     }
 
-    type Switch = Arc<(Mutex<(bool, bool)>, Condvar)>;
-
     /// Start a rotation that stops half way (new key stored, store not yet re-keyed). Returns the thread and the
     /// switch that lets it go on.
-    fn rotation_held_half_way(d: &Path) -> (std::thread::JoinHandle<Result<Key>>, Switch) {
+    fn rotation_held_half_way(d: &Path) -> (std::thread::JoinHandle<Result<Key>>, Gate) {
         let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
         let t = {
             let (db, keys, state) = (d.join("klatch.db"), d.join("keys"), state.clone());
@@ -542,15 +549,8 @@ mod tests {
                 rotate_key_in(&db, &home(Box::new(src)))
             })
         };
-        let (m, cv) = &*state;
-        drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
+        wait_started(&state);
         (t, state)
-    }
-
-    fn release(state: &Arc<(Mutex<(bool, bool)>, Condvar)>) {
-        let (m, cv) = &**state;
-        m.lock().unwrap().1 = true;
-        cv.notify_all();
     }
 
     #[test]
@@ -678,16 +678,9 @@ mod tests {
                 open_store_in(&d.join("klatch.db"), &home(Box::new(src))).map(|_| ())
             })
         };
-        {
-            let (m, cv) = &*state;
-            drop(cv.wait_while(m.lock().unwrap(), |g| !g.0).unwrap());
-        }
+        wait_started(&state);
         rotate_key_in(&d.join("klatch.db"), &file_home(&d)).unwrap();
-        {
-            let (m, cv) = &*state;
-            m.lock().unwrap().1 = true;
-            cv.notify_all();
-        }
+        release(&state);
         let r = late.join().unwrap();
         assert!(r.is_ok(), "{:?}", r.err());
         let _ = std::fs::remove_dir_all(&d);
