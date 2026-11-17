@@ -264,6 +264,16 @@ fn claims_an_empty_scope_behaves_as_claims_always_did_and_the_listing_shows_each
 }
 
 #[test]
+fn claims_a_lapse_after_a_reclaim_shows_no_stale_release_note() {
+    c::claims::a_lapse_after_a_reclaim_shows_no_stale_release_note(store);
+}
+
+#[test]
+fn claims_a_note_of_another_owner_survives_a_reclaim_by_the_first() {
+    c::claims::a_note_of_another_owner_survives_a_reclaim_by_the_first(store);
+}
+
+#[test]
 fn claims_a_release_note_travels_to_those_who_saw_the_claim_and_to_the_next_claimant() {
     c::claims::a_release_note_travels_to_those_who_saw_the_claim_and_to_the_next_claimant(store);
 }
