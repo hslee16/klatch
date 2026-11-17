@@ -137,6 +137,17 @@ describe("klatch client conformance", () => {
     assert.deepEqual((await a.who("r")).map((m) => m.name), ["alice"]);
   });
 
+  it("a member mutes and unmutes a room and read still shows everything", async () => {
+    const [a, b] = [await store.client("alice"), await store.client("bob")];
+    await b.post("r", "chatter");
+    await a.mute("r");
+    assert.deepEqual((await a.read("r", true)).map((m) => m.body), ["chatter"]);
+    await a.mute("r", false);
+    await a.mute("r", true);
+    await assert.rejects(a.mute("bad room"), (e: ApiError) => e.code === "invalid");
+    await assert.rejects(a.request("mute", { room: "r" }), (e: ApiError) => e.code === "invalid_params");
+  });
+
   it("a refusal carries its rule and never repeats the text", async () => {
     const a = await store.client("alice");
     const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";

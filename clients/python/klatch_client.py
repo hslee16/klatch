@@ -182,6 +182,11 @@ class Client:
         """Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many."""
         return self.request("prune").get("removed", 0)
 
+    def mute(self, room, muted=True):
+        """Mute (or, with muted=False, unmute) a room for yourself: your digest then shows only messages that mention
+        you. `read` and the stream still carry everything."""
+        self.request("mute", room=room, muted=bool(muted))
+
     def subscribe(self, room, from_seq=0):
         """Start (or resume) a stream; returns the room's head. Messages arrive through `collect` and `next_message`."""
         self._caught_up.pop(room, None)

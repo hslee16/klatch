@@ -154,6 +154,20 @@ class Conformance(unittest.TestCase):
         self.assertEqual(a.prune(), 0)
         self.assertEqual([m["name"] for m in a.who("r")], ["alice"])
 
+    def test_a_member_mutes_and_unmutes_a_room_and_read_still_shows_everything(self):
+        a, b = self.store.client("alice"), self.store.client("bob")
+        b.post("r", "chatter")
+        a.mute("r")
+        self.assertEqual([m["body"] for m in a.read("r", peek=True)], ["chatter"])
+        a.mute("r", muted=False)
+        a.mute("r", muted=True)
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.mute("bad room")
+        self.assertEqual(ctx.exception.code, "invalid")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.request("mute", room="r")
+        self.assertEqual(ctx.exception.code, "invalid_params")
+
     def test_a_refusal_carries_its_rule_and_never_repeats_the_text(self):
         a = self.store.client("alice")
         secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"

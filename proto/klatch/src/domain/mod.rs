@@ -5,6 +5,7 @@ mod asks;
 mod board;
 mod claim_age;
 mod convention;
+mod convention_words;
 mod credentials;
 mod cycle_notice;
 mod dm;
@@ -20,6 +21,7 @@ mod scope;
 mod tasks;
 mod text;
 mod toolguard;
+mod wait_filter;
 
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
@@ -41,6 +43,7 @@ pub use tasks::{
 pub mod budget;
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
 pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
+pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
 pub use dm::{DM_PREFIX, dm_room};
@@ -68,3 +71,4 @@ pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,
 };
+pub use wait_filter::{Filter as WaitFilter, room_filters};
