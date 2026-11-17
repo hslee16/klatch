@@ -61,6 +61,26 @@ impl MessageStore for SqliteStore {
             ), params![room, after_seq, limit as i64], |r| self.open_message(r))
     }
 
+    fn words(&self, room: &str, prefixes: &[&str]) -> Result<Vec<Message>> {
+        if prefixes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // substr compares exactly (LIKE ignores case and reads % and _ as wildcards), and the room's index narrows
+        // the scan to one room
+        let tests = (0..prefixes.len())
+            .map(|i| format!("substr(body,1,{})=?{}", prefixes[i].chars().count(), i + 2))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND ({tests}) ORDER BY seq"
+        );
+        let mut args: Vec<&str> = vec![room];
+        args.extend(prefixes);
+        self.rows(&sql, rusqlite::params_from_iter(args), |r| {
+            self.open_message(r)
+        })
+    }
+
     fn head(&self, room: &str) -> Result<i64> {
         self.conn
             .query_row(
