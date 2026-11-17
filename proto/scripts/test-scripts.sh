@@ -105,5 +105,44 @@ print(*m.failing([{'name': 'a', 'conclusion': 'success'}, {'name': 'mac', 'concl
 " "$ledger")
 if [ "$named" = "mac (failure) u1;b (cancelled) u2" ]; then ok "pr-ledger: names each red or cancelled job with its link"; else bad "pr-ledger: failing jobs listed as '$named'"; fi
 
+# pr-ledger bench stage: a merged PR is done only when benched (or when no bench ledger is in use)
+expect_stage '{"merged":true,"ticket_state":"closed","benched":false}' merged-not-benched "merged but not benched is not done"
+expect_stage '{"merged":true,"ticket_state":"closed","benched":true}' 'done' "merged and benched is done"
+expect_stage '{"merged":true,"ticket_state":"open","benched":true}' merged-open-ticket "benched but the ticket is open still needs the close"
+expect_stage '{"merged":true,"ticket_state":"none","benched":false}' merged-not-benched "no ticket and not benched still needs the bench"
+if printf '{"merged":true,"benched":false}' | python3 -I "$ledger" --classify | cut -f2 | grep -q "run the bench"; then ok "pr-ledger: merged-not-benched says to run the bench"; else bad "pr-ledger: bench next action"; fi
+
+# the pure helpers: first error line, the post text, change detection, the bench ledger file
+plpy() { python3 -I -c "
+import importlib.machinery, importlib.util, sys, json
+l = importlib.machinery.SourceFileLoader('pl', sys.argv[1]); sp = importlib.util.spec_from_loader('pl', l)
+m = importlib.util.module_from_spec(sp); l.exec_module(m)
+$1
+" "$ledger" "${@:2}"; }
+got=$(plpy "print(m.first_error_line('Run cargo test\n\n\`\`\`\ntest a ... ok\nerror[E0425]: cannot find value x\n  --> src/lib.rs:3\n\`\`\`'))")
+if [ "$got" = "error[E0425]: cannot find value x" ]; then ok "pr-ledger: first error line picks the error, not the preamble"; else bad "pr-ledger: first error line '$got'"; fi
+got=$(plpy "print(repr(m.first_error_line('')), repr(m.first_error_line(None)), m.first_error_line('only this line'))")
+if [ "$got" = "'' '' only this line" ]; then ok "pr-ledger: no summary gives nothing, and a plain summary falls back to its first line"; else bad "pr-ledger: error fallback '$got'"; fi
+got=$(plpy "print(*m.failing([{'name': 'mac', 'conclusion': 'failure', 'url': 'u1', 'error': 'boom'}]), sep=';')")
+if [ "$got" = "mac (failure) u1: boom" ]; then ok "pr-ledger: a failing job shows its first error line"; else bad "pr-ledger: failing with error '$got'"; fi
+got=$(plpy "
+rows = [({'number': 7, 'ticket': 5}, 'checks-red', 'fix it'), ({'number': 3, 'ticket': None}, 'ready', 'merge')]
+print(m.post_text(rows).replace(chr(10), '|'))")
+if [ "$got" = "PRs needing a step:|#3 ready (no ticket): merge|#7 checks-red (#5): fix it" ]; then ok "pr-ledger: the post text lists PRs sorted by number"; else bad "pr-ledger: post text '$got'"; fi
+got=$(plpy "print(repr(m.post_text([])))")
+if [ "$got" = "None" ]; then ok "pr-ledger: nothing needing a step posts nothing"; else bad "pr-ledger: empty post text '$got'"; fi
+sf="$work/post-state"
+got=$(plpy "
+a = m.changed_since_last('x', sys.argv[2]); b = m.changed_since_last('x', sys.argv[2]); c = m.changed_since_last('y', sys.argv[2])
+print(a, b, c)" "$sf")
+if [ "$got" = "True False True" ]; then ok "pr-ledger: a post happens only when the text changed since the last one"; else bad "pr-ledger: change detection '$got'"; fi
+bl="$work/bench.json"
+got=$(plpy "
+print(m.is_benched(sys.argv[2], 5))
+m.record_bench(sys.argv[2], 5); m.record_bench(sys.argv[2], 5); m.record_bench(sys.argv[2], 9)
+print(m.is_benched(sys.argv[2], 5), m.is_benched(sys.argv[2], 6), sorted(json.load(open(sys.argv[2]))['benched']))" "$bl")
+if [ "$got" = "False
+True False [5, 9]" ]; then ok "pr-ledger: the bench ledger records PRs once and answers is-benched"; else bad "pr-ledger: bench ledger '$got'"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
