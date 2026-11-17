@@ -19,6 +19,10 @@ impl MessageStore for SqliteStore {
         self.do_read(at, advance, now)
     }
 
+    fn look(&self, at: Seat, _now: i64) -> Result<Vec<Message>> {
+        Ok(self.unread_after(at.room, at.member)?.0)
+    }
+
     fn wait_poll(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
         self.do_wait_poll(at.room, at.member, now)
     }

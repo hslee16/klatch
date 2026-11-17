@@ -36,9 +36,9 @@ impl SqliteStore {
         })
     }
 
-    pub(super) fn do_read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
-        let Seat { room, member } = at;
-        self.touch(room, member, now)?;
+    /// The messages from others past the member's read cursor, with that cursor. Touches nothing: a member that has
+    /// no row has read nothing.
+    pub(super) fn unread_after(&self, room: &str, member: &str) -> Result<(Vec<Message>, i64)> {
         let last: i64 = self
             .conn
             .query_row(
@@ -48,6 +48,13 @@ impl SqliteStore {
             )
             .unwrap_or(0);
         let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
+        Ok((rows, last))
+    }
+
+    pub(super) fn do_read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
+        let Seat { room, member } = at;
+        self.touch(room, member, now)?;
+        let (rows, last) = self.unread_after(room, member)?;
         if advance {
             // Advance to the last message actually returned, never to the room's current maximum:
             // a message posted between the select above and this update would otherwise be skipped

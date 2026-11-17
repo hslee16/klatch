@@ -53,6 +53,11 @@ impl MessageStore for SpyStore {
         self.inner.read(at, advance, now)
     }
 
+    fn look(&self, at: Seat, now: i64) -> Result<Vec<Message>> {
+        self.gate()?;
+        self.inner.look(at, now)
+    }
+
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
         self.inner.posts_since(member, since)
     }
