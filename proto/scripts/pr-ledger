@@ -146,10 +146,18 @@ def gh(path):
 
 
 def ticket_of(pr):
-    """The ticket a PR names: 'Closes #N', 'Fixes #N', 'ticket #N' or a (#N) in the title."""
+    """(ticket number, closes): the ticket a PR names and whether the PR closes it.
+
+    Only "Closes/Fixes/Resolves #N" closes. "Refs/Part of/Related to/ticket #N" links the ticket (so a PR is not
+    'no ticket') but never closes it. A bare (#N) in prose is not a link at all (#758)."""
     text = "%s\n%s" % (pr.get("title") or "", pr.get("body") or "")
-    found = re.search(r"(?:closes|fixes|resolves|ticket)\s+#(\d+)", text, re.I) or re.search(r"\(#(\d+)\)", text)
-    return int(found.group(1)) if found else None
+    closing = re.search(r"\b(?:closes|fixes|resolves)\s+#(\d+)", text, re.I)
+    if closing:
+        return int(closing.group(1)), True
+    linked = re.search(r"\b(?:refs|part of|related to|ticket)\s+#(\d+)", text, re.I)
+    if linked:
+        return int(linked.group(1)), False
+    return None, False
 
 
 def hours_since(stamp, now):
@@ -165,14 +173,15 @@ def error_of(repo, run):
 def record(repo, pr, now, bench_ledger=None):
     full = gh("repos/%s/pulls/%d" % (repo, pr["number"]))
     runs = gh("repos/%s/commits/%s/check-runs" % (repo, full["head"]["sha"]))["check_runs"]
-    ticket = ticket_of(full)
+    ticket, closes = ticket_of(full)
     ticket_state = "none"
-    if ticket:
+    if ticket and closes:
         ticket_state = gh("repos/%s/issues/%d" % (repo, ticket))["state"]
     return {
         "number": full["number"],
         "branch": full["head"]["ref"],
         "ticket": ticket,
+        "closes": closes,
         "merged": bool(full.get("merged")),
         "closed": full["state"] == "closed",
         "draft": bool(full.get("draft")),
@@ -253,7 +262,7 @@ def main():
             print("list unchanged since the last post; no post")
         return
     for rec, stage, nxt in sorted(shown, key=lambda r: r[0]["number"]):
-        ticket = "#%d" % rec["ticket"] if rec["ticket"] else "no ticket"
+        ticket = ("#%d" if rec["closes"] else "refs#%d") % rec["ticket"] if rec["ticket"] else "no ticket"
         print("#%-4d %-20s %-18s %-9s %s" % (rec["number"], stage, rec["branch"][:18], ticket, nxt))
         for job in failing(rec["checks"]):
             print("        %s" % job)

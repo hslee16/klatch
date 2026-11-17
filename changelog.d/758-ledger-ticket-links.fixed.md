@@ -1,0 +1,1 @@
+- `pr-ledger` and `pr-sweep` close only a ticket the PR names with Closes, Fixes or Resolves; Refs or a bare (#N) in the text never closes one.
