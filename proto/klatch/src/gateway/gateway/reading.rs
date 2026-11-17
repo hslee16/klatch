@@ -67,7 +67,7 @@ impl<S: Store> Gateway<S> {
         match unread.iter().map(|m| m.seq).max() {
             Some(last) => self
                 .store
-                .wake_seen(Seat::new(room, &who.member), last, now),
+                .wake_seen(Seat::new(room, &who.member), Seq(last), now),
             None => Ok(()),
         }
     }
@@ -76,7 +76,7 @@ impl<S: Store> Gateway<S> {
     pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
         self.store
-            .wait_seen(Seat::new(room, &who.member), seq, self.now())
+            .wait_seen(Seat::new(room, &who.member), Seq(seq), self.now())
     }
 
     /// Messages after `after_seq`, oldest first, at most `limit`, from every sender including the caller.
@@ -111,6 +111,6 @@ impl<S: Store> Gateway<S> {
         }
         self.check_guard(who, &Operation::Ack { room: room.into() })?;
         self.store
-            .advance_cursor(Seat::new(room, &who.member), seq, self.now())
+            .advance_cursor(Seat::new(room, &who.member), Seq(seq), self.now())
     }
 }

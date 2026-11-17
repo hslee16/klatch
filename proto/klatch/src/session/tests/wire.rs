@@ -426,7 +426,7 @@ impl MessageStore for DownStore {
         Err(Error::Backend("down".into()))
     }
 
-    fn advance_cursor(&self, _: Seat, _: i64, _: i64) -> Result<()> {
+    fn advance_cursor(&self, _: Seat, _: Seq, _: i64) -> Result<()> {
         Err(Error::Backend("down".into()))
     }
 }

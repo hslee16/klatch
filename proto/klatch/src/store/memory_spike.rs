@@ -115,13 +115,13 @@ impl MessageStore for MemoryStore {
         Ok(self.with_room(room, |r| r.messages.len() as i64))
     }
 
-    fn advance_cursor(&self, at: Seat, seq: i64, now: i64) -> Result<()> {
+    fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         let mut rooms = self.rooms.borrow_mut();
         let r = rooms.entry(at.room.to_string()).or_default();
         let head = r.messages.len() as i64;
         let e = r.members.entry(at.member.to_string()).or_insert((now, 0));
         e.0 = now;
-        e.1 = e.1.max(seq.min(head)).max(0);
+        e.1 = e.1.max(seq.0.min(head)).max(0);
         Ok(())
     }
 }

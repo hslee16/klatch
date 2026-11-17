@@ -70,6 +70,79 @@ pub struct History {
     pub more: u64,
 }
 
+/// A typed handoff carried by a post: its kind and an opaque payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Handoff<'a> {
+    pub kind: &'a str,
+    pub payload: Option<&'a str>,
+}
+
+/// What `Client::post` sends: the room and the text, and optionally a label and a handoff. Build it with
+/// `PostRequest::new(room, body)` and the setters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PostRequest<'a> {
+    pub room: &'a str,
+    pub body: &'a str,
+    pub label: Option<&'a str>,
+    pub handoff: Option<Handoff<'a>>,
+}
+
+impl<'a> PostRequest<'a> {
+    pub fn new(room: &'a str, body: &'a str) -> Self {
+        Self {
+            room,
+            body,
+            label: None,
+            handoff: None,
+        }
+    }
+
+    /// Post under this label instead of the room's default.
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    /// Make the post a typed handoff of this kind, with an optional payload.
+    pub fn handoff(mut self, kind: &'a str, payload: Option<&'a str>) -> Self {
+        self.handoff = Some(Handoff { kind, payload });
+        self
+    }
+}
+
+/// What `Client::claim` sends: the room and the path, and optionally a time to live and a reason. Build it with
+/// `ClaimRequest::new(room, path)` and the setters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimRequest<'a> {
+    pub room: &'a str,
+    pub path: &'a str,
+    pub ttl: Option<i64>,
+    pub reason: Option<&'a str>,
+}
+
+impl<'a> ClaimRequest<'a> {
+    pub fn new(room: &'a str, path: &'a str) -> Self {
+        Self {
+            room,
+            path,
+            ttl: None,
+            reason: None,
+        }
+    }
+
+    /// Hold the claim for this many seconds.
+    pub fn ttl(mut self, secs: i64) -> Self {
+        self.ttl = Some(secs);
+        self
+    }
+
+    /// Say why the path is claimed.
+    pub fn reason(mut self, reason: &'a str) -> Self {
+        self.reason = Some(reason);
+        self
+    }
+}
+
 /// One session with the gateway. Not shared between threads: use one client per thread.
 pub struct Client {
     pub member: String,
@@ -257,20 +330,15 @@ impl Client {
         }))
     }
 
-    pub fn post(
-        &mut self,
-        room: &str,
-        body: &str,
-        label: Option<&str>,
-        handoff: Option<(&str, Option<&str>)>,
-    ) -> Result<(u64, String)> {
+    /// Post a message; returns its `seq` and id.
+    pub fn post(&mut self, request: PostRequest) -> Result<(u64, String)> {
         let mut p = Map::new();
-        p.insert("room".into(), json!(room));
-        p.insert("body".into(), json!(body));
-        if let Some(l) = label {
+        p.insert("room".into(), json!(request.room));
+        p.insert("body".into(), json!(request.body));
+        if let Some(l) = request.label {
             p.insert("label".into(), json!(l));
         }
-        if let Some((kind, payload)) = handoff {
+        if let Some(Handoff { kind, payload }) = request.handoff {
             p.insert("kind".into(), json!(kind));
             if let Some(payload) = payload {
                 p.insert("payload".into(), json!(payload));
@@ -338,18 +406,13 @@ impl Client {
         })
     }
 
-    pub fn claim(
-        &mut self,
-        room: &str,
-        path: &str,
-        ttl: Option<i64>,
-        reason: Option<&str>,
-    ) -> Result<()> {
-        let mut p = json!({"room": room, "path": path});
-        if let Some(t) = ttl {
+    /// Claim a path in a room.
+    pub fn claim(&mut self, request: ClaimRequest) -> Result<()> {
+        let mut p = json!({"room": request.room, "path": request.path});
+        if let Some(t) = request.ttl {
             p["ttl"] = json!(t);
         }
-        if let Some(r) = reason {
+        if let Some(r) = request.reason {
             p["reason"] = json!(r);
         }
         self.request("claim", p).map(|_| ())
