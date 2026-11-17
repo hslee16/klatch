@@ -5,23 +5,31 @@ A pull request is tracked from creation to merge and one step past it (its ticke
 merged PR gets exactly one stage and one next action, so none sits unnoticed:
 
   draft | no-checks | checks-running | checks-cancelled | checks-red | conflict | behind | ready
+  merged-not-benched (merged, not recorded as benched; only with --bench-ledger)
   merged-open-ticket (merged, the linked ticket is still open) | done | abandoned (closed unmerged)
 
 Usage:
   pr-ledger [--repo OWNER/NAME] [--merged-days N] [--stale-hours H]   list the ledger (uses `gh api`, REST only)
   pr-ledger --classify                                                 read one JSON record on stdin, print the stage
   pr-ledger --rerun-cancelled PR                                       rerun the jobs that were cancelled before they ran
+  pr-ledger --post [--state-file F]                                    post the PRs needing a step to the lobby, only when the list changed
+  pr-ledger --record-bench PR --bench-ledger FILE                      record that a merged PR was benched
+  pr-ledger --bench-ledger FILE                                        list, treating a merged PR not in FILE as merged-not-benched
+
+`--post` runs `klatch post lobby` with the binary in $KLATCH, or /Users/hosanglee/.local/share/klatch/klatch --discover.
 
 `--classify` takes {"merged", "closed", "draft", "mergeable_state", "checks": [{"name", "conclusion"}],
-"ticket_state": "open"|"closed"|"none", "idle_hours"} and prints "stage<TAB>next action". It exists so the rules are
+"ticket_state": "open"|"closed"|"none", "idle_hours", "benched": true|false (absent: no bench ledger in use)} and prints "stage<TAB>next action". It exists so the rules are
 testable without the network (see test-scripts.sh).
 """
 import argparse
 import datetime as dt
 import json
 import re
+import os
 import subprocess
 import sys
+import tempfile
 
 DEFAULT_REPO = "hslee16/klatch"
 
@@ -29,6 +37,8 @@ DEFAULT_REPO = "hslee16/klatch"
 def classify(rec, stale_hours=3.0):
     """The one stage and next action for a PR record."""
     if rec.get("merged"):
+        if rec.get("benched") is False:
+            return "merged-not-benched", "run the bench"
         if rec.get("ticket_state") == "open":
             return "merged-open-ticket", "close the linked ticket"
         return "done", "nothing"
@@ -58,7 +68,73 @@ def classify(rec, stale_hours=3.0):
 def failing(checks):
     """The jobs that are red or cancelled, as 'name (conclusion) url', so the ledger line says what to open."""
     bad = ("failure", "timed_out", "action_required", "cancelled")
-    return ["%s (%s) %s" % (c["name"], c["conclusion"], c.get("url", "")) for c in checks if c.get("conclusion") in bad]
+    out = []
+    for c in checks:
+        if c.get("conclusion") in bad:
+            line = "%s (%s) %s" % (c["name"], c["conclusion"], c.get("url", ""))
+            if c.get("error"):
+                line += ": %s" % c["error"]
+            out.append(line)
+    return out
+
+
+def first_error_line(text):
+    """The first line of a check-run output summary that looks like an error, else its first non-empty line."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip() and not ln.strip().startswith("```")]
+    for ln in lines:
+        if re.search(r"\b(error|failed|failure|panicked|fatal)\b", ln, re.I):
+            return ln[:200]
+    return lines[0][:200] if lines else ""
+
+
+def post_text(rows):
+    """The one lobby message for the PRs needing a step (rows of (record, stage, next)), or None when there are none."""
+    if not rows:
+        return None
+    lines = ["PRs needing a step:"]
+    for rec, stage, nxt in sorted(rows, key=lambda r: r[0]["number"]):
+        ticket = "#%d" % rec["ticket"] if rec.get("ticket") else "no ticket"
+        lines.append("#%d %s (%s): %s" % (rec["number"], stage, ticket, nxt))
+    return "\n".join(lines)
+
+
+def changed_since_last(text, state_file):
+    """True (and remember the text) when text differs from what the state file holds."""
+    try:
+        with open(state_file) as f:
+            if f.read() == text:
+                return False
+    except OSError:
+        pass
+    with open(state_file, "w") as f:
+        f.write(text)
+    return True
+
+
+def _load_bench(path):
+    try:
+        with open(path) as f:
+            return set(json.load(f).get("benched", []))
+    except (OSError, ValueError):
+        return set()
+
+
+def is_benched(path, pr):
+    return pr in _load_bench(path)
+
+
+def record_bench(path, pr):
+    benched = _load_bench(path)
+    benched.add(pr)
+    with open(path, "w") as f:
+        json.dump({"benched": sorted(benched)}, f)
+
+
+def klatch_post(text):
+    cmd = [os.environ.get("KLATCH")] if os.environ.get("KLATCH") else ["/Users/hosanglee/.local/share/klatch/klatch", "--discover"]
+    out = subprocess.run(cmd + ["post", "lobby", text], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit("klatch post failed: %s" % out.stderr.strip())
 
 
 def gh(path):
@@ -79,7 +155,13 @@ def hours_since(stamp, now):
     return (now - dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds() / 3600
 
 
-def record(repo, pr, now):
+def error_of(repo, run):
+    """The first error line of a failing check run's output summary (and text), '' when it has none."""
+    out = (run.get("output") or {})
+    return first_error_line("%s\n%s" % (out.get("summary") or "", out.get("text") or ""))
+
+
+def record(repo, pr, now, bench_ledger=None):
     full = gh("repos/%s/pulls/%d" % (repo, pr["number"]))
     runs = gh("repos/%s/commits/%s/check-runs" % (repo, full["head"]["sha"]))["check_runs"]
     ticket = ticket_of(full)
@@ -94,8 +176,11 @@ def record(repo, pr, now):
         "closed": full["state"] == "closed",
         "draft": bool(full.get("draft")),
         "mergeable_state": full.get("mergeable_state"),
-        "checks": [{"name": r["name"], "conclusion": r["conclusion"], "url": r.get("html_url", "")} for r in runs],
+        "checks": [{"name": r["name"], "conclusion": r["conclusion"], "url": r.get("html_url", ""),
+                    "error": error_of(repo, r) if r["conclusion"] in ("failure", "timed_out", "action_required") else ""}
+                   for r in runs],
         "ticket_state": ticket_state,
+        **({"benched": is_benched(bench_ledger, full["number"])} if bench_ledger and full.get("merged") else {}),
         "idle_hours": hours_since(full["updated_at"], now),
     }
 
@@ -118,11 +203,21 @@ def main():
     ap.add_argument("--stale-hours", type=float, default=3.0)
     ap.add_argument("--classify", action="store_true")
     ap.add_argument("--rerun-cancelled", type=int, metavar="PR")
+    ap.add_argument("--post", action="store_true", help="post the PRs needing a step to the lobby when the list changed")
+    ap.add_argument("--state-file", default=os.path.join(os.environ.get("TMPDIR") or tempfile.gettempdir(), "pr-ledger-last-post"))
+    ap.add_argument("--record-bench", type=int, metavar="PR", help="record a merged PR as benched (needs --bench-ledger)")
+    ap.add_argument("--bench-ledger", metavar="FILE", help="JSON file of benched PRs; a merged PR not in it needs the bench")
     args = ap.parse_args()
 
     if args.classify:
         stage, nxt = classify(json.load(sys.stdin), args.stale_hours)
         print("%s\t%s" % (stage, nxt))
+        return
+    if args.record_bench:
+        if not args.bench_ledger:
+            raise SystemExit("--record-bench needs --bench-ledger FILE")
+        record_bench(args.bench_ledger, args.record_bench)
+        print("recorded #%d as benched in %s" % (args.record_bench, args.bench_ledger))
         return
     if args.rerun_cancelled:
         rerun_cancelled(args.repo, args.rerun_cancelled)
@@ -137,11 +232,21 @@ def main():
             prs.append(pr)
     rows = []
     for pr in prs:
-        rec = record(args.repo, pr, now)
+        rec = record(args.repo, pr, now, args.bench_ledger)
         stage, nxt = classify(rec, args.stale_hours)
         rows.append((rec, stage, nxt))
     quiet = {"done"}
     shown = [r for r in rows if r[1] not in quiet]
+    if args.post:
+        text = post_text([(r[0], r[1], r[2]) for r in shown])
+        if text is None:
+            print("nothing needs a step; no post")
+        elif changed_since_last(text, args.state_file):
+            klatch_post(text)
+            print("posted to lobby")
+        else:
+            print("list unchanged since the last post; no post")
+        return
     for rec, stage, nxt in sorted(shown, key=lambda r: r[0]["number"]):
         ticket = "#%d" % rec["ticket"] if rec["ticket"] else "no ticket"
         print("#%-4d %-20s %-18s %-9s %s" % (rec["number"], stage, rec["branch"][:18], ticket, nxt))
