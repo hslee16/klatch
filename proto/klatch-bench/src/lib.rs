@@ -128,10 +128,19 @@ fn table_line(o: &Outcome) -> String {
 pub fn table(outcomes: &[Outcome]) -> String {
     let mut out: String = outcomes.iter().map(table_line).collect();
     let passed = outcomes.iter().filter(|o| o.passed).count();
-    out.push_str(&format!(
-        "{passed} passed, {} failed\n",
-        outcomes.len() - passed
-    ));
+    let failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| !o.passed)
+        .map(|o| o.name.as_str())
+        .collect();
+    // The names follow the counts, so a run that failed once and passed on the rerun still says which scenario (#701);
+    // the "N passed, N failed" prefix is what pr-sweep reads.
+    let named = if failed.is_empty() {
+        String::new()
+    } else {
+        format!(" (failed: {})", failed.join(", "))
+    };
+    out.push_str(&format!("{passed} passed, {} failed{named}\n", failed.len()));
     out
 }
 
@@ -315,7 +324,10 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
             "klatch"
         });
     if !status.success() || !bin.exists() {
-        return Err(format!("could not build {}", bin.display()));
+        return Err(format!(
+            "could not build {} (cargo {status}; its own error is printed above)",
+            bin.display()
+        ));
     }
     let version = std::process::Command::new(&bin)
         .arg("--version")
@@ -440,6 +452,19 @@ mod tests {
     #[test]
     fn the_table_ends_with_a_total() {
         assert!(sample_table().contains("1 passed, 2 failed"));
+    }
+
+    #[test]
+    fn the_total_names_each_failed_scenario_so_a_one_line_log_says_which() {
+        let t = sample_table();
+        let last = t.lines().last().expect("a total line");
+        assert_eq!(last, "1 passed, 2 failed (failed: bad, boom)", "{t}");
+    }
+
+    #[test]
+    fn a_clean_total_keeps_the_plain_form_the_sweep_reads() {
+        let out = run_scenarios(&sample()[..1], &bin());
+        assert_eq!(table(&out).lines().last(), Some("1 passed, 0 failed"));
     }
 
     fn sample_json() -> serde_json::Value {
