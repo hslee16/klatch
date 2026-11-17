@@ -92,56 +92,55 @@ fn archive_files(w: &World) -> Vec<std::path::PathBuf> {
 /// The live post ceiling while an archive runs: a writer waiting on the archive's lock this long is a finding.
 const LIVE_POST_CEILING_MS: f64 = 10_000.0;
 
-fn archive_fifty_thousand(w: &World) -> Res {
-    w.set_clock(T0);
-    let total = seed(w, "r", 10, 50)?;
-    w.advance(2 * 86_400);
-    check(
-        w.admin(&["retention", "r", "1"], "").ok,
-        "setting retention failed",
-    )?;
-    let t = Instant::now();
-    let mut child = w
-        .spawn_admin(&["archive", "--room", "r"])
-        .map_err(|e| e.to_string())?;
-    // while it runs, the live store must keep answering: posts from fresh members and reads (under the R22 cap)
-    let (mut live_ops, mut live_max, mut failures) = (0, 0f64, Vec::new());
-    while child.try_wait().map_err(|e| e.to_string())?.is_none() && live_ops < 90 {
-        let name = format!("live{live_ops}");
+/// What the live store did while an archive ran.
+struct LiveLoad {
+    ops: usize,
+    max_ms: f64,
+    failures: Vec<String>,
+}
+
+impl LiveLoad {
+    fn check(&self) -> Result<(), String> {
+        check(
+            self.failures.is_empty(),
+            format!(
+                "the live store refused work during the archive: {:?}",
+                self.failures
+            ),
+        )?;
+        check(
+            self.max_ms < LIVE_POST_CEILING_MS,
+            format!(
+                "a live post waited {:.0} ms behind the archive (ceiling {LIVE_POST_CEILING_MS} ms)",
+                self.max_ms
+            ),
+        )
+    }
+}
+
+/// While the archive runs, the live store must keep answering: posts from fresh members and reads (under the R22 cap).
+fn probe_live_store(w: &World, child: &mut std::process::Child) -> Result<LiveLoad, String> {
+    let mut live = LiveLoad {
+        ops: 0,
+        max_ms: 0.0,
+        failures: Vec::new(),
+    };
+    while child.try_wait().map_err(|e| e.to_string())?.is_none() && live.ops < 90 {
+        let name = format!("live{}", live.ops);
         let s = Instant::now();
         let post = w.run(&name, &["post", "r", "posted during the archive"]);
-        live_max = live_max.max(ms(s));
-        if !post.ok {
-            failures.push(post.stderr.trim().to_string());
-        }
+        live.max_ms = live.max_ms.max(ms(s));
         let read = w.run("reader", &["history", "r", "--last", "3"]);
-        if !read.ok {
-            failures.push(read.stderr.trim().to_string());
+        for run in [post, read].iter().filter(|r| !r.ok) {
+            live.failures.push(run.stderr.trim().to_string());
         }
-        live_ops += 1;
+        live.ops += 1;
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let archive_ms = ms(t);
-    let said = String::from_utf8_lossy(&out.stdout).into_owned();
-    check(out.status.success(), format!("archive failed: {said}"))?;
-    has(
-        &said,
-        &format!("archived {total} messages"),
-        "every old message moved",
-    )?;
-    check(
-        failures.is_empty(),
-        format!("the live store refused work during the archive: {failures:?}"),
-    )?;
-    check(
-        live_max < LIVE_POST_CEILING_MS,
-        format!(
-            "a live post waited {live_max:.0} ms behind the archive (ceiling {LIVE_POST_CEILING_MS} ms)"
-        ),
-    )?;
-    let files = archive_files(w);
-    check(files.len() == 1, format!("{} archive files", files.len()))?;
-    // the live store: tombstones keep the seq, new messages continue it
+    Ok(live)
+}
+
+/// The live store after an archive: tombstones keep the seq, new messages continue it.
+fn check_live_store_continues(w: &World) -> Result<(), String> {
     let after = w.ok("reader", &["history", "r", "--since", "0", "--last", "2"])?;
     let post = w.ok("late", &["post", "r", "after the archive"])?;
     has(&post, "posted", "a post after the archive")?;
@@ -154,7 +153,35 @@ fn archive_fifty_thousand(w: &World) -> Res {
     check(
         !after.contains("seed 0-0-0") || after.contains("archived"),
         format!("an archived message is still readable in full:\n{after}"),
+    )
+}
+
+fn archive_fifty_thousand(w: &World) -> Res {
+    w.set_clock(T0);
+    let total = seed(w, "r", 10, 50)?;
+    w.advance(2 * 86_400);
+    check(
+        w.admin(&["retention", "r", "1"], "").ok,
+        "setting retention failed",
     )?;
+    let t = Instant::now();
+    let mut child = w
+        .spawn_admin(&["archive", "--room", "r"])
+        .map_err(|e| e.to_string())?;
+    let live = probe_live_store(w, &mut child)?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let archive_ms = ms(t);
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    check(out.status.success(), format!("archive failed: {said}"))?;
+    has(
+        &said,
+        &format!("archived {total} messages"),
+        "every old message moved",
+    )?;
+    live.check()?;
+    let files = archive_files(w);
+    check(files.len() == 1, format!("{} archive files", files.len()))?;
+    check_live_store_continues(w)?;
     let t = Instant::now();
     let doctor = w.run("reader", &["doctor"]);
     let doctor_ms = ms(t);
@@ -181,33 +208,23 @@ fn archive_fifty_thousand(w: &World) -> Res {
     Ok(vec![
         ("messages".into(), total as f64),
         ("archive_ms".into(), archive_ms),
-        ("live_post_max_ms".into(), live_max),
-        ("live_ops".into(), live_ops as f64),
+        ("live_post_max_ms".into(), live.max_ms),
+        ("live_ops".into(), live.ops as f64),
         ("doctor_ms".into(), doctor_ms),
         ("archives_ms".into(), archives_ms),
         ("restore_ms".into(), restore_ms),
     ])
 }
 
-fn archive_and_post_race(w: &World) -> Res {
-    w.set_clock(T0);
-    let old = seed(w, "r", 5, 2)?;
-    w.advance(10 * 86_400);
-    check(
-        w.admin(&["retention", "r", "7"], "").ok,
-        "setting retention failed",
-    )?;
-    let (archivers, posters, per) = (8, 8, 10);
-    let mut archive_children = Vec::new();
-    let mut post_children = Vec::new();
-    for _ in 0..archivers {
-        archive_children.push(
-            w.spawn_admin(&["archive", "--room", "r"])
-                .map_err(|e| e.to_string())?,
-        );
-    }
+/// Starts `posters` processes that each post `per` messages over `serve --stdio`.
+fn spawn_racing_posters(
+    w: &World,
+    posters: usize,
+    per: usize,
+) -> Result<Vec<std::process::Child>, String> {
+    use std::io::Write;
+    let mut children = Vec::new();
     for p in 0..posters {
-        use std::io::Write;
         let mut c = w
             .spawn_piped(&format!("racer{p}"), &["serve", "--stdio"])
             .map_err(|e| e.to_string())?;
@@ -224,22 +241,28 @@ fn archive_and_post_race(w: &World) -> Res {
             .ok_or("no stdin")?
             .write_all(body.as_bytes())
             .map_err(|e| e.to_string())?;
-        post_children.push(c);
+        children.push(c);
     }
+    Ok(children)
+}
+
+/// Waits for the posters and counts the posts they were told were accepted.
+fn count_accepted(children: Vec<std::process::Child>) -> Result<usize, String> {
     let mut posted = 0;
-    for c in post_children {
+    for c in children {
         let o = c.wait_with_output().map_err(|e| e.to_string())?;
         posted += String::from_utf8_lossy(&o.stdout)
             .lines()
             .filter(|l| l.contains("\"ok\":true"))
             .count();
     }
-    check(
-        posted == posters * per,
-        format!("{posted} of {} racing posts were accepted", posters * per),
-    )?;
+    Ok(posted)
+}
+
+/// Waits for the racing archives: how many won, how many met a file of the same name, and nothing else is allowed.
+fn settle_racing_archives(children: Vec<std::process::Child>) -> Result<(usize, usize), String> {
     let (mut won, mut collided, mut other) = (0, 0, Vec::new());
-    for c in archive_children {
+    for c in children {
         let o = c.wait_with_output().map_err(|e| e.to_string())?;
         let said = format!(
             "{}{}",
@@ -259,19 +282,24 @@ fn archive_and_post_race(w: &World) -> Res {
         other.is_empty(),
         format!("an archive failed in an unplanned way: {other:?}"),
     )?;
-    check(won >= 1, "no racing archive succeeded (#598)")?;
-    // nothing lost, nothing doubled: bring every archive back, then every message is present once and seq is dense
+    Ok((won, collided))
+}
+
+/// Restores every archive file, returning what each restore said.
+fn restore_every_archive(w: &World) -> Result<Vec<String>, String> {
     let mut restored = Vec::new();
-    for f in archive_files(w) {
-        if f.extension().is_some_and(|e| e == "db") {
-            let r = w.admin(&["restore-archive", &f.to_string_lossy()], "");
-            check(r.ok, format!("restore failed: {}", r.stderr))?;
-            restored.push(format!("{}: {}", f.display(), r.stdout.trim()));
-        }
+    let dbs = archive_files(w)
+        .into_iter()
+        .filter(|f| f.extension().is_some_and(|e| e == "db"));
+    for f in dbs {
+        let r = w.admin(&["restore-archive", &f.to_string_lossy()], "");
+        check(r.ok, format!("restore failed: {}", r.stderr))?;
+        restored.push(format!("{}: {}", f.display(), r.stdout.trim()));
     }
-    let listing = w.admin(&["archives"], "");
-    let lines = export_lines(w, "r")?;
-    let total = old + posters * per;
+    Ok(restored)
+}
+
+fn check_dense_seq(lines: &[serde_json::Value], total: usize) -> Result<(), String> {
     let seqs: Vec<i64> = lines.iter().filter_map(|l| l["seq"].as_i64()).collect();
     check(
         seqs == (1..=total as i64).collect::<Vec<_>>(),
@@ -280,7 +308,39 @@ fn archive_and_post_race(w: &World) -> Res {
             seqs.len(),
             &seqs[..seqs.len().min(5)]
         ),
+    )
+}
+
+fn archive_and_post_race(w: &World) -> Res {
+    w.set_clock(T0);
+    let old = seed(w, "r", 5, 2)?;
+    w.advance(10 * 86_400);
+    check(
+        w.admin(&["retention", "r", "7"], "").ok,
+        "setting retention failed",
     )?;
+    let (archivers, posters, per) = (8, 8, 10);
+    let mut archive_children = Vec::new();
+    for _ in 0..archivers {
+        archive_children.push(
+            w.spawn_admin(&["archive", "--room", "r"])
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    let post_children = spawn_racing_posters(w, posters, per)?;
+    let posted = count_accepted(post_children)?;
+    check(
+        posted == posters * per,
+        format!("{posted} of {} racing posts were accepted", posters * per),
+    )?;
+    let (won, collided) = settle_racing_archives(archive_children)?;
+    check(won >= 1, "no racing archive succeeded (#598)")?;
+    // nothing lost, nothing doubled: bring every archive back, then every message is present once and seq is dense
+    let restored = restore_every_archive(w)?;
+    let listing = w.admin(&["archives"], "");
+    let lines = export_lines(w, "r")?;
+    let total = old + posters * per;
+    check_dense_seq(&lines, total)?;
     let bodies: Vec<&str> = lines.iter().filter_map(|l| l["body"].as_str()).collect();
     for p in 0..posters {
         for i in 0..per {
@@ -392,17 +452,31 @@ fn board_parked_and_tasks(w: &World) -> Res {
     ])
 }
 
+/// Member `m` joins room `r` and takes `per` claims of 600 s.
+fn take_claims(w: &World, m: usize, per: usize) -> Result<(), String> {
+    w.ok(&format!("m{m}"), &["join", "r"])?;
+    for k in 0..per {
+        w.ok(
+            &format!("m{m}"),
+            &["claim", "r", &format!("m{m}/f{k}"), "--ttl", "600"],
+        )?;
+    }
+    Ok(())
+}
+
+/// Every member `m0..m{members}` posts `text` to room `r`.
+fn everyone_posts(w: &World, members: usize, text: &str) -> Result<(), String> {
+    for m in 0..members {
+        w.ok(&format!("m{m}"), &["post", "r", text])?;
+    }
+    Ok(())
+}
+
 fn claim_renewal_fifty(w: &World) -> Res {
     let (members, per) = (50, 4);
     w.set_clock(T0);
     for m in 0..members {
-        w.ok(&format!("m{m}"), &["join", "r"])?;
-        for k in 0..per {
-            w.ok(
-                &format!("m{m}"),
-                &["claim", "r", &format!("m{m}/f{k}"), "--ttl", "600"],
-            )?;
-        }
+        take_claims(w, m, per)?;
     }
     let held = |w: &World| -> Result<usize, String> {
         Ok(w.ok("viewer", &["claims", "r"])?
@@ -416,12 +490,7 @@ fn claim_renewal_fifty(w: &World) -> Res {
     // every member acts at 500 s and again at 1000 s: without renewal their 600 s claims would lapse at 600 s
     for step in 0..2 {
         w.advance(500);
-        for m in 0..members {
-            w.ok(
-                &format!("m{m}"),
-                &["post", "r", &format!("still here {step}")],
-            )?;
-        }
+        everyone_posts(w, members, &format!("still here {step}"))?;
         let n = held(w)?;
         check(
             n == members * per,

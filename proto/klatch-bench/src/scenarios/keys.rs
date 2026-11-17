@@ -240,8 +240,8 @@ fn backup_and_export(w: &World) -> Res {
     Ok(vec![])
 }
 
-fn sealed_label(w: &World) -> Res {
-    w.set_clock(T0);
+/// Clears alice and carol, seals the label `private` on the room `vault`, and checks a member with the key can use it.
+fn protect_private_label(w: &World) -> Result<(), String> {
     for who in ["alice", "carol"] {
         check(w.admin(&["clear", who, "private"], "").ok, "clear failed")?;
     }
@@ -265,16 +265,25 @@ fn sealed_label(w: &World) -> Res {
         &w.ok("carol", &["read", "vault", "--peek"])?,
         "hunter2",
         "a member with the key could not read",
-    )?;
-    // the label key is the only way in: the store key alone shows neither the text nor lets text be written
+    )
+}
+
+/// The recovery code that `admin recovery` prints for the label key.
+fn label_recovery_code(w: &World) -> Result<String, String> {
     let codes = w.admin(&["recovery"], "");
-    let label_code = codes
+    let code = codes
         .stdout
         .lines()
         .find_map(|l| l.strip_prefix("label private: "))
-        .ok_or("no recovery code for the label key")?
-        .trim()
-        .to_string();
+        .ok_or("no recovery code for the label key")?;
+    Ok(code.trim().to_string())
+}
+
+fn sealed_label(w: &World) -> Res {
+    w.set_clock(T0);
+    protect_private_label(w)?;
+    // the label key is the only way in: the store key alone shows neither the text nor lets text be written
+    let label_code = label_recovery_code(w)?;
     let keyfile = key_files(w)
         .into_iter()
         .find(|p| p.to_string_lossy().contains(".label.private"))
@@ -329,6 +338,33 @@ fn sealed_label(w: &World) -> Res {
     Ok(vec![])
 }
 
+/// Issues a credential bundle for `member` with the given clearance and ttl, parented to `lead`.
+fn issue_bundle(
+    w: &World,
+    member: &str,
+    clearance: &str,
+    ttl: &str,
+) -> (crate::world::Run, std::path::PathBuf) {
+    let out = w.home.join(format!("{member}.bundle"));
+    let o = w.run(
+        "launcher",
+        &[
+            "worker",
+            "issue",
+            member,
+            "--clearance",
+            clearance,
+            "--ttl",
+            ttl,
+            "--parent",
+            "lead",
+            "--out",
+            &out.to_string_lossy(),
+        ],
+    );
+    (o, out)
+}
+
 fn workers(w: &World) -> Res {
     w.set_clock(T0);
     check(
@@ -339,51 +375,42 @@ fn workers(w: &World) -> Res {
         w.admin(&["seal-label", "private"], "").ok,
         "seal-label failed",
     )?;
-    let bundle = |member: &str| w.home.join(format!("{member}.bundle"));
-    let issue = |member: &str, clearance: &str, ttl: &str| {
-        let out = bundle(member);
-        let o = w.run(
-            "launcher",
-            &[
-                "worker",
-                "issue",
-                member,
-                "--clearance",
-                clearance,
-                "--ttl",
-                ttl,
-                "--parent",
-                "lead",
-                "--out",
-                &out.to_string_lossy(),
-            ],
-        );
-        (o, out)
-    };
-    let (hi, hi_path) = issue("w-hi", "private", "600");
+    let (hi, hi_path) = issue_bundle(w, "w-hi", "private", "600");
     check(hi.ok, format!("issue failed: {}", hi.stderr))?;
-    let (lo, lo_path) = issue("w-lo", "internal", "600");
+    let (lo, lo_path) = issue_bundle(w, "w-lo", "internal", "600");
     check(lo.ok, format!("issue failed: {}", lo.stderr))?;
+    check_worker_posts_and_export(w, &hi_path, &lo_path)?;
+    check_audit_names_parent_not_token(w)?;
+    check_revocation_and_expiry(w, &hi_path)?;
+    Ok(vec![])
+}
+
+/// The cleared worker writes under the sealed label, the low one is refused, and the export names a verified sender.
+fn check_worker_posts_and_export(
+    w: &World,
+    hi_path: &std::path::Path,
+    lo_path: &std::path::Path,
+) -> Result<(), String> {
     // the worker with the clearance and the bundle's label key writes under the sealed label, verified, with no
     // keystore and no typed name
     let post = w.as_worker(
-        &hi_path,
+        hi_path,
         &["post", "vault", "the sealed launch code is hunter2"],
     );
     check(
         post.ok,
         format!("the cleared worker could not post: {}", post.stderr),
     )?;
-    let own = w.as_worker(&hi_path, &["read", "vault", "--peek"]);
+    let own = w.as_worker(hi_path, &["read", "vault", "--peek"]);
     check(own.ok, format!("read failed: {}", own.stderr))?;
     // below the room's label the other worker is refused, whatever it holds
     has(
-        &w.as_worker(&lo_path, &["read", "vault"]).stderr,
+        &w.as_worker(lo_path, &["read", "vault"]).stderr,
         "above your clearance",
         "a worker below the room was not refused",
     )?;
     // the credential is the only identity: a typed name cannot be added to it
-    let mut c = w.as_worker(&lo_path, &["post", "r", "x"]);
+    let mut c = w.as_worker(lo_path, &["post", "r", "x"]);
     check(c.ok, "the lower worker could not post in an open room")?;
     c = w.admin(&["export", "vault"], "vault");
     has(&c.stdout, "w-hi [", "no verified sender in the export")
@@ -397,8 +424,11 @@ fn workers(w: &World) -> Res {
         &c.stdout,
         "hunter2",
         "the export cannot read what the worker sealed",
-    )?;
-    // the audit names the parent and never the token
+    )
+}
+
+/// The audit names the parent and never the token.
+fn check_audit_names_parent_not_token(w: &World) -> Result<(), String> {
     let audit = w.admin(&["audit"], "");
     has(
         &audit.stdout,
@@ -410,19 +440,22 @@ fn workers(w: &World) -> Res {
         "parent=lead",
         "the audit does not name the parent",
     )?;
-    lacks(&audit.stdout, "KLATCH-CRED-", "a token reached the audit")?;
-    // revocation and expiry stop a worker at once
+    lacks(&audit.stdout, "KLATCH-CRED-", "a token reached the audit")
+}
+
+/// Revocation and expiry stop a worker at once.
+fn check_revocation_and_expiry(w: &World, hi_path: &std::path::Path) -> Result<(), String> {
     check(
         w.run("launcher", &["worker", "revoke", "w-hi"]).ok,
         "revoke failed",
     )?;
     has(
-        &w.as_worker(&hi_path, &["post", "vault", "after revoke"])
+        &w.as_worker(hi_path, &["post", "vault", "after revoke"])
             .stderr,
         "revoked",
         "a revoked worker still posted",
     )?;
-    let (short, short_path) = issue("w-short", "internal", "5");
+    let (short, short_path) = issue_bundle(w, "w-short", "internal", "5");
     check(short.ok, "short issue failed")?;
     check(
         w.as_worker(&short_path, &["post", "r", "in time"]).ok,
@@ -433,8 +466,7 @@ fn workers(w: &World) -> Res {
         &w.as_worker(&short_path, &["post", "r", "too late"]).stderr,
         "expired",
         "an expired worker still posted",
-    )?;
-    Ok(vec![])
+    )
 }
 
 fn runs(w: &World) -> Res {

@@ -50,37 +50,47 @@ impl Drop for Home {
 /// The room every post and claim goes to.
 const ROOM: &str = "r";
 
-fn klatch(bin: &Path, home: &Path, who: &str, now: Option<i64>, args: &[&str]) -> Command {
-    let mut c = Command::new(bin);
-    c.env_clear()
-        .env("KLATCH_HOME", home)
-        .env("KLATCH_KEY_DIR", home.join("keys"))
-        .env("KLATCH_NAME", who)
-        .env("KLATCH_ADMIN_TEST_TERMINAL", "1")
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(t) = now {
-        c.env("KLATCH_NOW", t.to_string());
-    }
-    c
+/// Where klatch runs from and the store it runs against.
+#[derive(Clone, Copy)]
+struct Site<'a> {
+    bin: &'a Path,
+    home: &'a Path,
 }
 
-/// Run to the end, as the checker does when no worker is left.
-fn finish(bin: &Path, home: &Path, args: &[&str]) -> Result<String, String> {
-    use std::io::Write;
-    let mut child = klatch(bin, home, "checker", None, args)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = writeln!(stdin);
+impl Site<'_> {
+    fn klatch(&self, who: &str, now: Option<i64>, args: &[&str]) -> Command {
+        let mut c = Command::new(self.bin);
+        c.env_clear()
+            .env("KLATCH_HOME", self.home)
+            .env("KLATCH_KEY_DIR", self.home.join("keys"))
+            .env("KLATCH_NAME", who)
+            .env("KLATCH_ADMIN_TEST_TERMINAL", "1")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(t) = now {
+            c.env("KLATCH_NOW", t.to_string());
+        }
+        c
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(first_line(&String::from_utf8_lossy(&out.stderr)))
+
+    /// Run to the end, as the checker does when no worker is left.
+    fn finish(&self, args: &[&str]) -> Result<String, String> {
+        use std::io::Write;
+        let mut child = self
+            .klatch("checker", None, args)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin);
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(first_line(&String::from_utf8_lossy(&out.stderr)))
+        }
     }
 }
 
@@ -184,15 +194,16 @@ fn argv(home: &Path, i: usize, op: &Op, warm: usize) -> (Vec<String>, Option<i64
     }
 }
 
-fn start(bin: &Path, home: &Path, i: usize, step: &Step, warm: usize) -> Result<Running, String> {
+fn start(site: Site, i: usize, step: &Step, warm: usize) -> Result<Running, String> {
     use std::io::Write;
     if step.op == Op::Archive {
         // retention is per room and cheap to set again; doing it here keeps the plan self-contained
-        let _ = finish(bin, home, &["admin", "retention", ROOM, "1"]);
+        let _ = site.finish(&["admin", "retention", ROOM, "1"]);
     }
-    let (args, now) = argv(home, i, &step.op, warm);
+    let (args, now) = argv(site.home, i, &step.op, warm);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let mut child = klatch(bin, home, &format!("w{}", i % 7), now, &words)
+    let mut child = site
+        .klatch(&format!("w{}", i % 7), now, &words)
         .spawn()
         .map_err(|e| format!("could not start klatch: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
@@ -226,85 +237,151 @@ fn op_name(op: &Op) -> &'static str {
     }
 }
 
-/// Fold a finished process into the ledger and the refusal counts.
-fn account(r: Running, ledger: &mut Ledger, report: &mut RoundReport) {
-    let Running {
-        child, op, killed, ..
-    } = r;
-    let (ok, stderr) = match child.wait_with_output() {
+impl Running {
+    /// Kill the process when its time has come. True once it is over, one way or the other.
+    fn settle(&mut self) -> bool {
+        let done = matches!(self.child.try_wait(), Ok(Some(_)));
+        let due = self.kill_at.is_some_and(|t| Instant::now() >= t);
+        if !done && due {
+            // SIGKILL: the process gets no chance to clean up, which is the point
+            let _ = self.child.kill();
+            self.killed = true;
+        }
+        done || self.killed
+    }
+}
+
+/// The exit status and the standard error of a process that is over.
+fn outcome(child: Child) -> (bool, String) {
+    match child.wait_with_output() {
         Ok(o) => (
             o.status.success(),
             String::from_utf8_lossy(&o.stderr).into_owned(),
         ),
         Err(e) => (false, e.to_string()),
-    };
-    if stderr.contains("panicked") {
-        report.violations.push(format!(
-            "{} panicked: {}",
-            op_name(&op),
-            first_line(&stderr)
-        ));
-    }
-    if killed {
-        report.killed += 1;
-    }
-    if let Op::Post(b) = &op {
-        // a post is owed only when it said so; a killed or refused one may or may not have landed
-        if ok && !killed {
-            ledger.acked.insert(b.clone());
-        } else {
-            ledger.maybe.insert(b.clone());
-        }
-    }
-    // a claim held by someone else is the ordinary answer to contention, not a finding
-    if !ok && !killed && !stderr.contains("is claimed by") {
-        let key = format!("{} -> {}", op_name(&op), first_line(&stderr));
-        *report.refusals.entry(key).or_default() += 1;
     }
 }
 
-/// Run the plan with at most `workers` processes at once, killing the ones the plan says. True when it had to give up.
-fn drive(
-    bin: &Path,
-    home: &Path,
-    steps: &[Step],
-    cfg: &Config,
-    ledger: &mut Ledger,
-    report: &mut RoundReport,
-) -> Result<bool, String> {
-    let mut running: Vec<Running> = Vec::new();
-    let mut next = 0;
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let warm = warm_up(steps.len());
-    while next < steps.len() || !running.is_empty() {
-        // the barrier: every warm-up post has finished before the first archive may start
-        let held = next == warm && !running.is_empty();
-        while next < steps.len() && running.len() < cfg.workers && !held {
-            running.push(start(bin, home, next, &steps[next], warm)?);
-            report.started += 1;
-            next += 1;
+/// What the round has learned so far: the ledger of posts and the report of what broke.
+struct Tally<'a> {
+    ledger: &'a mut Ledger,
+    report: &'a mut RoundReport,
+}
+
+impl Tally<'_> {
+    /// Fold a finished process into the ledger and the refusal counts.
+    fn account(&mut self, r: Running) {
+        let Running {
+            child, op, killed, ..
+        } = r;
+        let (ok, stderr) = outcome(child);
+        if stderr.contains("panicked") {
+            self.report.violations.push(format!(
+                "{} panicked: {}",
+                op_name(&op),
+                first_line(&stderr)
+            ));
         }
+        if killed {
+            self.report.killed += 1;
+        }
+        if let Op::Post(b) = &op {
+            self.note_post(b, ok && !killed);
+        }
+        // a claim held by someone else is the ordinary answer to contention, not a finding
+        let refused = !ok && !killed;
+        if refused && !stderr.contains("is claimed by") {
+            let key = format!("{} -> {}", op_name(&op), first_line(&stderr));
+            *self.report.refusals.entry(key).or_default() += 1;
+        }
+    }
+
+    /// A post is owed only when it said so; a killed or refused one may or may not have landed.
+    fn note_post(&mut self, body: &str, acked: bool) {
+        if acked {
+            self.ledger.acked.insert(body.to_string());
+        } else {
+            self.ledger.maybe.insert(body.to_string());
+        }
+    }
+}
+
+/// The plan being run: what has started, what is still going, and how many may go at once.
+struct Pool<'a> {
+    site: Site<'a>,
+    steps: &'a [Step],
+    workers: usize,
+    warm: usize,
+    next: usize,
+    running: Vec<Running>,
+}
+
+impl Pool<'_> {
+    fn busy(&self) -> bool {
+        self.next < self.steps.len() || !self.running.is_empty()
+    }
+
+    /// The barrier: every warm-up post has finished before the first archive may start.
+    fn held(&self) -> bool {
+        self.next == self.warm && !self.running.is_empty()
+    }
+
+    fn has_room(&self, held: bool) -> bool {
+        let more = self.next < self.steps.len();
+        let free = self.running.len() < self.workers;
+        more && free && !held
+    }
+
+    fn launch(&mut self, tally: &mut Tally) -> Result<(), String> {
+        let held = self.held();
+        while self.has_room(held) {
+            let step = &self.steps[self.next];
+            self.running
+                .push(start(self.site, self.next, step, self.warm)?);
+            tally.report.started += 1;
+            self.next += 1;
+        }
+        Ok(())
+    }
+
+    /// Account for every process that is over or has just been killed.
+    fn reap(&mut self, tally: &mut Tally) {
         let mut i = 0;
-        while i < running.len() {
-            let done = matches!(running[i].child.try_wait(), Ok(Some(_)));
-            let due = running[i].kill_at.is_some_and(|t| Instant::now() >= t);
-            if !done && due {
-                // SIGKILL: the process gets no chance to clean up, which is the point
-                let _ = running[i].child.kill();
-                running[i].killed = true;
-            }
-            if done || running[i].killed {
-                account(running.swap_remove(i), ledger, report);
+        while i < self.running.len() {
+            if self.running[i].settle() {
+                tally.account(self.running.swap_remove(i));
             } else {
                 i += 1;
             }
         }
+    }
+
+    /// Kill what is left, for a run that did not finish in time.
+    fn abandon(&mut self, tally: &mut Tally) {
+        for mut r in self.running.drain(..) {
+            let _ = r.child.kill();
+            r.killed = true;
+            tally.account(r);
+        }
+    }
+}
+
+/// Run the plan with at most `workers` processes at once, killing the ones the plan says. True when it had to give up.
+fn drive(site: Site, steps: &[Step], cfg: &Config, tally: &mut Tally) -> Result<bool, String> {
+    let mut pool = Pool {
+        site,
+        steps,
+        workers: cfg.workers,
+        warm: warm_up(steps.len()),
+        next: 0,
+        running: Vec::new(),
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while pool.busy() {
+        pool.launch(tally)?;
+        pool.reap(tally);
         if Instant::now() > deadline {
-            for mut r in running.drain(..) {
-                let _ = r.child.kill();
-                r.killed = true;
-                account(r, ledger, report);
-            }
+            pool.abandon(tally);
             return Ok(true);
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -343,12 +420,24 @@ fn store_key_file(home: &Path) -> Result<PathBuf, String> {
 
 /// Open the store the way a user would, with its current key, and read what the checks need.
 pub fn read_store(home: &Path) -> Result<Facts, String> {
+    let c = open_store(home)?;
+    let mut facts = Facts::default();
+    check_integrity(&c, &mut facts)?;
+    read_messages(&c, &mut facts)?;
+    Ok(facts)
+}
+
+fn open_store(home: &Path) -> Result<rusqlite::Connection, String> {
     let key = std::fs::read(store_key_file(home)?).map_err(|e| e.to_string())?;
     let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
     let c = rusqlite::Connection::open(home.join("rooms.db")).map_err(|e| e.to_string())?;
     c.pragma_update(None, "key", format!("x'{hex}'"))
         .map_err(|e| e.to_string())?;
-    let mut facts = Facts::default();
+    Ok(c)
+}
+
+/// What SQLite and SQLCipher say about the file, line by line, except the "ok".
+fn check_integrity(c: &rusqlite::Connection, facts: &mut Facts) -> Result<(), String> {
     for pragma in ["PRAGMA integrity_check", "PRAGMA cipher_integrity_check"] {
         let mut st = c.prepare(pragma).map_err(|e| format!("{pragma}: {e}"))?;
         let lines = st
@@ -358,6 +447,10 @@ pub fn read_store(home: &Path) -> Result<Facts, String> {
             facts.integrity.push(format!("{pragma}: {line}"));
         }
     }
+    Ok(())
+}
+
+fn read_messages(c: &rusqlite::Connection, facts: &mut Facts) -> Result<(), String> {
     let mut st = c
         .prepare("SELECT room, seq, body, kind FROM messages")
         .map_err(|e| e.to_string())?;
@@ -379,7 +472,7 @@ pub fn read_store(home: &Path) -> Result<Facts, String> {
             facts.bodies.push(b);
         }
     }
-    Ok(facts)
+    Ok(())
 }
 
 /// Start from a plaintext prototype database, so the first processes race to migrate it.
@@ -400,12 +493,16 @@ pub fn run_round(bin: &Path, cfg: &Config, round: usize) -> Result<RoundReport, 
     ));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut home = Home { dir, keep: false };
+    let site = Site {
+        bin,
+        home: &home.dir,
+    };
     let migrated = round.is_multiple_of(2);
     let mut ledger = Ledger::default();
     if migrated {
         ledger.seeded = seed_plaintext(&home.dir)?;
     } else {
-        finish(bin, &home.dir, &["join", ROOM])?;
+        site.finish(&["join", ROOM])?;
     }
     let mut report = RoundReport {
         round,
@@ -423,14 +520,22 @@ pub fn run_round(bin: &Path, cfg: &Config, round: usize) -> Result<RoundReport, 
     {
         s.op = Op::Read;
     }
-    let hung = drive(bin, &home.dir, &steps, cfg, &mut ledger, &mut report)?;
+    let hung = drive(
+        site,
+        &steps,
+        cfg,
+        &mut Tally {
+            ledger: &mut ledger,
+            report: &mut report,
+        },
+    )?;
     report.acked = ledger.acked.len();
     if hung {
         report
             .violations
             .push("processes did not finish in 120 s (hung) and were killed".into());
     }
-    verify(bin, &home.dir, &ledger, &mut report);
+    verify(site, &ledger, &mut report);
     home.keep = !report.violations.is_empty();
     if home.keep {
         report.violations.push(format!(
@@ -442,15 +547,16 @@ pub fn run_round(bin: &Path, cfg: &Config, round: usize) -> Result<RoundReport, 
 }
 
 /// After the workers: reopen, restore every archive, look for strays, then judge the store.
-fn verify(bin: &Path, home: &Path, ledger: &Ledger, report: &mut RoundReport) {
-    if let Err(e) = finish(bin, home, &["history", ROOM, "--last", "1"]) {
+fn verify(site: Site, ledger: &Ledger, report: &mut RoundReport) {
+    let home = site.home;
+    if let Err(e) = site.finish(&["history", ROOM, "--last", "1"]) {
         report
             .violations
             .push(format!("the store does not reopen: {e}"));
         return;
     }
     for f in archive_files(home) {
-        if let Err(e) = finish(bin, home, &["admin", "restore-archive", &text(&f)]) {
+        if let Err(e) = site.finish(&["admin", "restore-archive", &text(&f)]) {
             let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
             report.violations.push(format!(
                 "archive {} cannot be restored: {e}",
