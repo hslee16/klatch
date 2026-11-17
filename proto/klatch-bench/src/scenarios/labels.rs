@@ -27,13 +27,14 @@ fn labels_and_clearance(w: &World) -> Res {
         "clear failed",
     )?;
     // a member below the room is refused in it, with the levels named
+    let below = w.refused("pub", &["post", "vault", "hello"])?;
     has(
-        &w.refused("pub", &["post", "vault", "hello"])?,
+        &below,
         "labelled private, above your clearance public",
         "a public member is refused in a private room",
     )?;
     has(
-        &w.refused("pub", &["post", "vault", "hello"])?,
+        &below,
         "next step: ask the admin to raise your clearance or to relabel the room",
         "the clearance refusal names the fix",
     )?;
