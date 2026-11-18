@@ -428,6 +428,43 @@ fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
     Ok(false)
 }
 
+/// How many recent messages a waiting helper reads to find the asks it answered (#226).
+const SERVED_WINDOW: usize = 200;
+
+/// The askers the caller `me` serves in `room` that are gone, as lines (#226, DESIGN item 89). A room that cannot
+/// be read adds nothing.
+fn gone_askers_in(t: &dyn Transport, me: &str, room: &str, now: i64) -> Result<Vec<String>> {
+    let range = klatch::gateway::HistoryRange {
+        since: None,
+        last: Some(SERVED_WINDOW),
+    };
+    let messages = t.history(room, range)?.messages;
+    let served = klatch::domain::served_by(
+        &messages,
+        (&t.open_asks(room)?, &t.claims(room)?),
+        (me, now),
+    );
+    if served.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(klatch::domain::gone_asker_notes(
+        &served,
+        &t.who(room)?,
+        now,
+    ))
+}
+
+/// What a wait that timed out adds to the marker: helpers hear of askers that are gone (#226).
+fn print_gone_askers(t: &dyn Transport, a: &WaitArgs, waited: u64) {
+    let (me, started) = a.caller;
+    let now = started + waited as i64;
+    for (room, _) in a.rooms {
+        for note in gone_askers_in(t, me, room, now).unwrap_or_default() {
+            println!("{note}");
+        }
+    }
+}
+
 /// The marker a wait that timed out prints, then the notes that go with it.
 fn print_timeout(t: &dyn Transport, a: &WaitArgs, timeout: u64) {
     let names: Vec<&str> = a.rooms.iter().map(|(r, _)| r.as_str()).collect();
@@ -438,6 +475,7 @@ fn print_timeout(t: &dyn Transport, a: &WaitArgs, timeout: u64) {
     for note in timeout_notes(t, a, timeout) {
         println!("{note}");
     }
+    print_gone_askers(t, a, timeout);
 }
 
 fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
