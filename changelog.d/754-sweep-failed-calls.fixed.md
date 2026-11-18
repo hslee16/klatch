@@ -1,0 +1,1 @@
+- pr-sweep and pr-ledger give every gh call a timeout and two retries, count a failed or rate-limited call as an incomplete pass (non-zero exit, "pass incomplete", the reset time for a rate limit), and never say "nothing needs a step" after a failure. pr-sweep reports a lock held by a live process for over 30 minutes.
