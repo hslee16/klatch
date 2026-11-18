@@ -126,3 +126,33 @@ fn a_partial_file_left_by_an_interrupted_archive_is_reported() {
     assert_eq!(found[0].state, ArchiveState::Partial);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// #775: a dangling symlink at the target passes the `exists` check (it follows the link) but the hard link finds the
+/// name taken. That failure must be named as "already exists" (an invalid request), not as a failure to put the
+/// archive in place (a backend fault), and nothing may be written through the link or left behind.
+#[test]
+fn a_target_taken_after_the_exists_check_is_refused_as_already_existing() {
+    let dir = archive_dir("taken");
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "alice"), "old one", 10).unwrap();
+    let out = dir.join("r-100.db");
+    std::os::unix::fs::symlink(dir.join("nowhere"), &out).unwrap();
+    assert!(!out.exists(), "the link must dangle for this test");
+    let err = s
+        .archive_before("r", 500, &out, &crate::store::insecure_test_key())
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Invalid(m) if m.contains("already exists")),
+        "{err:?}"
+    );
+    assert!(!dir.join("nowhere").exists(), "written through the link");
+    assert_eq!(
+        s.tail("r", 0, 10).unwrap()[0].body,
+        "old one",
+        "no tombstone"
+    );
+    let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+    assert_eq!(left.len(), 1, "a partial file was left: {left:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
