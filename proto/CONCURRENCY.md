@@ -59,7 +59,7 @@ runs `read` (which also writes the cursor) and `claims` (a pure read) every 10 m
 `klatch wait` and the streaming session used to poll on a fixed timer (200 ms and 100 ms). They now sleep in 20 ms
 ticks and look at SQLite's `PRAGMA data_version` on their own connection, which differs after any other connection
 commits; the tables are polled only when it moved, a request came in or the old period ran out (DESIGN section 32
-item 92). Measured on a machine at load 9 to 17:
+item 94). Measured on a machine at load 9 to 17:
 
 | Measure | Timer | Change token |
 |---|---|---|

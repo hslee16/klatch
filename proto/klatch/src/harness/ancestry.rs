@@ -1,7 +1,7 @@
 //! Walk up from a process to the harness that started it, and say which session that is.
 
 use crate::harness::liveness::{Liveness, check};
-use crate::harness::process::ProcessTable;
+use crate::harness::process::{Lookup, ProcessTable};
 use crate::harness::record::Registry;
 
 /// The session a process belongs to. Same-user evidence, so it is unattributed.
@@ -22,6 +22,8 @@ pub enum Miss {
     /// An ancestor has a record but it is not live (the reason is the nearest one). A stale record never
     /// supplies an identity.
     Stale(Liveness),
+    /// The process table could not be read, so the walk could not look. Not the same as no session (#525).
+    TableUnreadable,
 }
 
 /// The most steps up the tree; real trees are far shallower, and this bounds a cyclic table.
@@ -45,25 +47,41 @@ pub fn find_session(
     let mut pid = start;
     while worth_visiting(pid, &seen) {
         seen.push(pid);
-        let Some(info) = procs.info(pid) else { break };
-        if let Some(rec) = registry.record_for(pid) {
-            match check(&rec, procs, domain) {
-                Liveness::Live => {
-                    return Ok(Found {
-                        session_id: rec.session_id,
-                        name: rec.name,
-                        cwd: rec.cwd,
-                        pid,
-                    });
-                }
-                other => {
-                    stale.get_or_insert(other);
-                }
+        let info = match procs.lookup(pid) {
+            Lookup::Found(info) => info,
+            Lookup::Missing => break,
+            Lookup::Unreadable => return Err(Miss::TableUnreadable),
+        };
+        match session_at(pid, procs, registry, domain) {
+            Some(Ok(found)) => return Ok(found),
+            Some(Err(why)) => {
+                stale.get_or_insert(why);
             }
+            None => {}
         }
         pid = info.ppid;
     }
     Err(stale.map_or(Miss::NoSession, Miss::Stale))
+}
+
+/// The session whose harness is `pid`: `None` with no registry record, the session when the record passes the
+/// liveness check, and otherwise why the record is stale (it supplies nothing).
+fn session_at(
+    pid: u32,
+    procs: &dyn ProcessTable,
+    registry: &dyn Registry,
+    domain: &str,
+) -> Option<Result<Found, Liveness>> {
+    let rec = registry.record_for(pid)?;
+    Some(match check(&rec, procs, domain) {
+        Liveness::Live => Ok(Found {
+            session_id: rec.session_id,
+            name: rec.name,
+            cwd: rec.cwd,
+            pid,
+        }),
+        other => Err(other),
+    })
 }
 
 /// The session above `session`: the nearest live harness record above the process that session was found at. A
@@ -82,6 +100,7 @@ pub fn find_parent(
 mod tests {
     use super::*;
     use crate::harness::liveness::fake::FakeTable;
+    use crate::harness::process::Lookup;
     use crate::harness::record::Record;
     use std::collections::HashMap;
 
@@ -236,6 +255,41 @@ mod tests {
         assert_eq!(
             find_session(2, &t, &FakeRegistry::default(), "darwin"),
             Err(Miss::NoSession)
+        );
+    }
+
+    #[test]
+    fn a_process_table_that_cannot_be_read_names_itself_and_never_supplies_a_session() {
+        // #525: a ps that cannot run is not "no such process", and it must not identify anyone either
+        let reg = FakeRegistry::default().with((10, "s"), None, T);
+        assert_eq!(
+            find_session(
+                30,
+                &crate::harness::liveness::fake::UnreadableTable,
+                &reg,
+                "darwin"
+            ),
+            Err(Miss::TableUnreadable)
+        );
+    }
+
+    #[test]
+    fn a_table_that_becomes_unreadable_partway_up_is_not_a_session() {
+        // the walk reaches pid 20 and then loses the table: no identity from the part already seen
+        struct Flaky(FakeTable);
+        impl ProcessTable for Flaky {
+            fn lookup(&self, pid: u32) -> Lookup {
+                if pid == 10 {
+                    Lookup::Unreadable
+                } else {
+                    self.0.lookup(pid)
+                }
+            }
+        }
+        let reg = FakeRegistry::default().with((10, "s"), None, T);
+        assert_eq!(
+            find_session(30, &Flaky(tree()), &reg, "darwin"),
+            Err(Miss::TableUnreadable)
         );
     }
 
