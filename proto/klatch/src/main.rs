@@ -398,6 +398,13 @@ enum Cmd {
         #[arg(long)]
         stdio: bool,
     },
+    /// Offer the read-only librarian to an editor as an ACP (Agent Client Protocol) agent on standard input and output,
+    /// as the member from the environment; it can only look (read without marking read, history, who, claims)
+    Acp {
+        /// Use standard input and output (the only transport so far)
+        #[arg(long)]
+        stdio: bool,
+    },
 }
 
 /// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when
@@ -791,6 +798,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     match cmd {
         Cmd::Serve { stdio } => serve_stdio(&gateway, &caller.principal, stdio),
         Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
+        Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
             room,
             from_seq,
@@ -866,6 +874,18 @@ fn mcp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool)
         Some(commands::DEFAULT_ROOM),
     );
     klatch::session::mcp::McpServer::new(&session, instructions)
+        .serve(std::io::stdin().lock(), std::io::stdout())?;
+    Ok(())
+}
+
+/// `klatch acp --stdio`: the librarian as an ACP agent over the same session `serve` uses (#115).
+fn acp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
+    if !stdio {
+        bail!("acp needs --stdio, the only transport so far");
+    }
+    let config = klatch::session::SessionConfig::default();
+    let session = klatch::session::Session::new(gateway, principal, &config);
+    klatch::session::acp::AcpServer::new(&session)
         .serve(std::io::stdin().lock(), std::io::stdout())?;
     Ok(())
 }
