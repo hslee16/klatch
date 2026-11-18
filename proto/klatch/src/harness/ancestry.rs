@@ -263,7 +263,12 @@ mod tests {
         // #525: a ps that cannot run is not "no such process", and it must not identify anyone either
         let reg = FakeRegistry::default().with((10, "s"), None, T);
         assert_eq!(
-            find_session(30, &crate::harness::liveness::fake::UnreadableTable, &reg, "darwin"),
+            find_session(
+                30,
+                &crate::harness::liveness::fake::UnreadableTable,
+                &reg,
+                "darwin"
+            ),
             Err(Miss::TableUnreadable)
         );
     }

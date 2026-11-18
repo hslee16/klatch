@@ -69,7 +69,10 @@ pub(crate) mod fake {
 
     impl ProcessTable for FakeTable {
         fn lookup(&self, pid: u32) -> Lookup {
-            self.0.get(&pid).cloned().map_or(Lookup::Missing, Lookup::Found)
+            self.0
+                .get(&pid)
+                .cloned()
+                .map_or(Lookup::Missing, Lookup::Found)
         }
     }
 

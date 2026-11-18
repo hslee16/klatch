@@ -109,7 +109,9 @@ mod tests {
         let d = dir();
         put(&d, "10.json", &record(10, T, "darwin", ""));
         let f = list(
-            &FsRegistry { dir: d.to_path_buf() },
+            &FsRegistry {
+                dir: d.to_path_buf(),
+            },
             &crate::harness::liveness::fake::UnreadableTable,
             "darwin",
         );
