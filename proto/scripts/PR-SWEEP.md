@@ -21,7 +21,7 @@ The bench ledger defaults to `$TMPDIR/pr-sweep-bench.json`. A fresh ledger makes
 | --- | --- |
 | checks-cancelled | `pr-ledger --rerun-cancelled PR` |
 | ready | re-checks live that every check is green on the latest head and the PR is mergeable; if behind, integrates main first and waits for green on the new head; merges with `gh pr merge PR --merge --match-head-commit SHA`; runs `cargo run -q --release -p klatch-bench` (must say "N passed, 0 failed") and records it with `--record-bench`; closes the linked ticket if still open |
-| behind, conflict | merges origin/main into the PR branch on `alee/integ-N` (conflicts in DESIGN.md, CHANGELOG.md, VERSIONING.md, scenarios `mod.rs` keep both sides, DESIGN items sorted by number), runs the gate, pushes to the PR's own branch |
+| behind, conflict | merges origin/main into the PR branch on `alee/integ-N` (conflicts in DESIGN.md, CHANGELOG.md, VERSIONING.md, scenarios `mod.rs` keep both sides, DESIGN items sorted by number; new design items are fragments in `design/items/` (#807), so a DESIGN.md conflict is now rare, but PRs that still append a numbered item keep resolving this way), runs the gate, pushes to the PR's own branch |
 | merged-not-benched, merged-open-ticket | bench and record; close the ticket |
 | checks-red, code conflict, no ticket, stuck over 3 h, abandoned, failed gate or bench | not touched; one lobby message via `pr-ledger --post --only` names them (only when the list changed) |
 

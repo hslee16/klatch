@@ -95,6 +95,12 @@ pr_missing=""
 for want in 'Closes #' 'python3 -I proto/scripts/pr-ledger' "reaches \`ready\`" '--rerun-cancelled' 'Never rerun a real red' 'ready: #' 'release your claims' 'Never merge'; do
   printf '%s' "$args" | grep -qF -- "$want" || pr_missing="$pr_missing [$want]"
 done
+df_missing=""
+for want in 'design/items/<ticket>-<slug>.md' 'never append to DESIGN.md'; do
+  printf '%s' "$args" | grep -qF -- "$want" || df_missing="$df_missing [$want]"
+done
+if [ -z "$df_missing" ]; then ok "the brief tells members to write design/items/<ticket>-<slug>.md and not append to DESIGN.md (#807)"; else bad "brief design fragment words missing:$df_missing"; fi
+if grep -qF 'design/items/<ticket>-<slug>.md' "$here/AGENT-PR-RULES.md" && grep -qF 'never append' "$here/AGENT-PR-RULES.md"; then ok "AGENT-PR-RULES.md carries the design fragment rule"; else bad "AGENT-PR-RULES.md lacks the design fragment rule"; fi
 lc_missing=""
 # shellcheck disable=SC2016
 for want in 'post `pr: #N <title>`' 'pr:N --shared' 'merged: #N'; do

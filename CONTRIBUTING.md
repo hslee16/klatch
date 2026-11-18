@@ -208,8 +208,9 @@ Settings are environment variables listed at the top of the script (budget `TEAM
 - Property tests (Hegel) are in `proto/klatch/tests/properties.rs`; see "Property tests" above.
 - A bug, gap or limitation you find gets a GitHub issue, even if you fix it in the same pull request.
 - Parallel pull requests must not share a line (#502). **CHANGELOG:** add a fragment file in `changelog.d/` (see its
-  README) and leave the Unreleased section of CHANGELOG.md alone. **DESIGN.md numbered items:** fetch `origin/main`,
-  take the next free number, and reserve it before you write it, by a klatch claim on `design-item:<N>` in the room
-  where you coordinate (a second agent whose claim is refused takes the next number); if two pull requests still
-  take the same number, the one merged second renumbers its own item. Never renumber an item already on main.
+  README) and leave the Unreleased section of CHANGELOG.md alone. **DESIGN items:** add a fragment file
+  `design/items/<ticket>-<slug>.md` (see its README; line 1 is the item title, the rest is the text) and do not edit
+  DESIGN.md or pick an item number; the release assembles the fragments into DESIGN.md with the next numbers in ticket
+  order (`release/design-fragments.sh`, #807). Refer to an unassembled item as "the design item for #NNN". Never
+  renumber an item already in DESIGN.md.
 - Releases: see [RELEASING.md](RELEASING.md); versions: [VERSIONING.md](VERSIONING.md).

@@ -52,7 +52,8 @@ ledger() {
 }
 
 # keep both sides of every conflict hunk; DESIGN.md numbered items at 30 and up are sorted by number (copied from the
-# coordinator's integrate.sh)
+# coordinator's integrate.sh). New design items are fragments in design/items/ (#807) and rarely conflict here, but a
+# PR that still appends a numbered item to DESIGN.md is resolved the same way, so keep this resolver.
 resolve_docs() {
   python3 -I - "$@" <<'PY'
 import re, sys
