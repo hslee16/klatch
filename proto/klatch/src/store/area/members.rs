@@ -81,23 +81,25 @@ pub trait MemberStore {
     }
 
     /// Refuse every operation of `member` in `room` (or in every room for `*`) until it is allowed again.
+    /// The four block and removal methods default to errors (#485): a store that cannot keep a block must not answer
+    /// "not blocked".
     fn block_member(&self, _room: &str, _member: &str, _now: i64) -> Result<()> {
-        Ok(())
+        super::unsupported("blocks")
     }
 
     /// Lift a block; whether there was one.
     fn unblock_member(&self, _room: &str, _member: &str) -> Result<bool> {
-        Ok(false)
+        super::unsupported("blocks")
     }
 
     /// Whether `member` is blocked in `room`, by a block on that room or on every room.
     fn is_blocked(&self, _room: &str, _member: &str) -> Result<bool> {
-        Ok(false)
+        super::unsupported("blocks")
     }
 
     /// Take `member` out of `room` and release its claims there; returns how many claims were released.
     fn remove_member(&self, _room: &str, _member: &str, _now: i64) -> Result<usize> {
-        Ok(0)
+        super::unsupported("member removal")
     }
 
     /// Record that a hook event ran for `member`: the time, and how many bytes it printed (never the content).
