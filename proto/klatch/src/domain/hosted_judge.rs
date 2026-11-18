@@ -1,5 +1,5 @@
 //! The optional hosted judge (#53, DESIGN D4). A hosted model is a third party, so it is treated like a reader of a
-//! lower clearance: it only ever sees text posted at or below a ceiling label set at onboarding, and it is off
+//! lower clearance: it only ever sees text posted strictly below a ceiling label set at onboarding, and it is off
 //! until someone turns it on. The label gate runs here, before the transport is touched, and fails closed: a
 //! label that is missing, unknown, or above the ceiling means the text is never sent and the item is left queued
 //! (`Defer`) for the rules, a local judge or the reviewer. The transport is a trait so tests use a fake and no
@@ -17,7 +17,7 @@ pub trait HostedTransport {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostedConfig {
     pub enabled: bool,
-    /// The highest label the hosted service may see. `None` means no label is allowed.
+    /// The label the hosted service may not see: only labels strictly below it are sent. `None` means no label is allowed.
     pub max_label: Option<String>,
 }
 
@@ -36,7 +36,7 @@ impl<T: HostedTransport> HostedJudge<T> {
         }
     }
 
-    /// True only when the judge is on and the item's label is known and no higher than the ceiling.
+    /// True only when the judge is on and the item's label is known and strictly below the ceiling.
     fn may_see(&self, item: &ReviewItem) -> bool {
         if !self.config.enabled {
             return false;
@@ -45,7 +45,7 @@ impl<T: HostedTransport> HostedJudge<T> {
             return false;
         };
         match (self.chain.rank(&item.from_label), self.chain.rank(max)) {
-            (Some(held), Some(ceiling)) => held <= ceiling,
+            (Some(held), Some(ceiling)) => held < ceiling,
             _ => false,
         }
     }
@@ -120,19 +120,26 @@ mod tests {
     fn content_above_the_ceiling_is_never_sent() {
         let f = Fake::saying(Ok(Verdict::Allow));
         let j = judge(&f, on(Some("internal")));
-        for label in ["private", "secret"] {
+        for label in ["internal", "private", "secret"] {
             assert_eq!(j.judge(&item(label)), Verdict::Defer, "{label}");
         }
         assert!(f.sent.borrow().is_empty(), "{:?}", f.sent.borrow());
     }
 
     #[test]
-    fn content_at_or_below_the_ceiling_is_sent_when_enabled() {
+    fn content_at_the_ceiling_is_never_sent() {
         let f = Fake::saying(Ok(Verdict::Allow));
         let j = judge(&f, on(Some("internal")));
-        assert_eq!(j.judge(&item("internal")), Verdict::Allow);
+        assert_eq!(j.judge(&item("internal")), Verdict::Defer);
+        assert!(f.sent.borrow().is_empty(), "{:?}", f.sent.borrow());
+    }
+
+    #[test]
+    fn content_strictly_below_the_ceiling_is_sent_when_enabled() {
+        let f = Fake::saying(Ok(Verdict::Allow));
+        let j = judge(&f, on(Some("internal")));
         assert_eq!(j.judge(&item("public")), Verdict::Allow);
-        assert_eq!(f.sent.borrow().len(), 2);
+        assert_eq!(f.sent.borrow().len(), 1);
     }
 
     #[test]
@@ -162,7 +169,8 @@ mod tests {
         let f = Fake::saying(Ok(Verdict::Allow));
         let chain = LabelChain::new(&["low", "mid", "high"]).unwrap();
         let j = HostedJudge::new(&f, chain, on(Some("mid")));
-        assert_eq!(j.judge(&item("mid")), Verdict::Allow);
+        assert_eq!(j.judge(&item("low")), Verdict::Allow);
+        assert_eq!(j.judge(&item("mid")), Verdict::Defer);
         assert_eq!(j.judge(&item("high")), Verdict::Defer);
         assert_eq!(f.sent.borrow().len(), 1);
     }
