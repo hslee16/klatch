@@ -141,6 +141,22 @@ fn members_json(ms: &[MemberInfo]) -> Value {
     json!({ "members": ms.iter().map(one).collect::<Vec<_>>() })
 }
 
+/// The wire `kind` method: a word of the closed vocabulary, or none to withdraw the declaration.
+fn declare_kind<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    word: Option<&str>,
+) -> Result<(), Error> {
+    let kind = match word {
+        None => None,
+        Some(w) => Some(
+            MemberKind::parse(w)
+                .ok_or_else(|| Error::Invalid("kind is bot, service or human, or null".into()))?,
+        ),
+    };
+    g.set_kind(who, kind)
+}
+
 fn claims_json(cs: &[Claim]) -> Value {
     let one = |c: &Claim| {
         let mut v = json!({
@@ -212,18 +228,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         ),
         "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
-        "kind" => call.run(
-            |p: KindParams| {
-                let kind = match p.kind.as_deref() {
-                    None => None,
-                    Some(word) => Some(MemberKind::parse(word).ok_or_else(|| {
-                        Error::Invalid("kind is bot, service or human, or null".into())
-                    })?),
-                };
-                g.set_kind(who, kind)
-            },
-            empty,
-        ),
+        "kind" => call.run(|p: KindParams| declare_kind(g, who, p.kind.as_deref()), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
                 Some(n) => g.release_with_note(who, (&p.room, &p.path), n),
