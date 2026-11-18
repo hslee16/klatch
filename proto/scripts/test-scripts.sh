@@ -144,5 +144,22 @@ print(m.is_benched(sys.argv[2], 5), m.is_benched(sys.argv[2], 6), sorted(json.lo
 if [ "$got" = "False
 True False [5, 9]" ]; then ok "pr-ledger: the bench ledger records PRs once and answers is-benched"; else bad "pr-ledger: bench ledger '$got'"; fi
 
+# pr-ledger ticket links: only Closes/Fixes/Resolves closes; Refs links without closing; a bare (#N) is nothing (#758)
+link_of() { python3 -I -c "
+import importlib.machinery, importlib.util, sys
+l = importlib.machinery.SourceFileLoader('pl', sys.argv[1]); sp = importlib.util.spec_from_loader('pl', l)
+m = importlib.util.module_from_spec(sp); l.exec_module(m)
+print(*m.ticket_of({'title': sys.argv[2], 'body': sys.argv[3]}))
+" "$ledger" "$1" "$2"; }
+expect_link() { # title, body, expected, label
+  got=$(link_of "$1" "$2")
+  if [ "$got" = "$3" ]; then ok "pr-ledger: $4"; else bad "pr-ledger: $4 (got '$got', wanted '$3')"; fi
+}
+expect_link "t" "Closes #12" "12 True" "Closes links and closes"
+expect_link "t" "fixes #7" "7 True" "Fixes links and closes"
+expect_link "t" $'Refs #678\nfound (#733) while here' "678 False" "Refs links without closing and a bare (#N) in prose is not a link"
+expect_link "t (#9)" "no keywords" "None False" "a (#N) in the title alone is not a link"
+expect_link "t" $'Part of #5\nCloses #6' "6 True" "Closes wins over Part of"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
