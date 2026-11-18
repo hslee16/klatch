@@ -221,7 +221,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         "status" => call.run(|p: StatusParams| g.set_status(who, &p.room, &p.status), empty),
         "claim" => call.run(
             |p: ClaimParams| {
-                let ttl = crate::domain::claim_ttl(&p.path, p.ttl);
+                let ttl = g.claim_ttl_for(who, (&p.room, &p.path), p.ttl)?;
                 g.claim(who, &p.room, &ClaimSpec::new(&p.path, ttl, &p.reason).shared(p.shared))
             },
             empty,

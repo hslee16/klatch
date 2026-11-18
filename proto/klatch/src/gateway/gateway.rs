@@ -1,6 +1,6 @@
 use crate::domain::{
     Claim, Error, MemberInfo, Message, PARKED_DEFAULT_SECS, Parked, Posted, Principal, Result,
-    RoomDigest, STALE_AFTER_SECS, parse_parked, valid_name,
+    RoomDigest, parse_parked, valid_name,
 };
 use crate::gateway::{Clock, Guard, Operation};
 use crate::store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Seq, Store};
@@ -44,6 +44,7 @@ mod reviewer;
 mod roles;
 pub use roles::Role;
 mod rate;
+mod room_settings;
 mod rooms;
 mod runs;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
