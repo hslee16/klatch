@@ -1,0 +1,1 @@
+- Linux: a command now makes one keyring call instead of two. The call that proves the Secret Service answers is the first read of the store key (#562; the saving was about 8 ms of a 25 ms hook in the container measurement, not re-measured on Linux for this change).

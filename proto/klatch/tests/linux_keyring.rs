@@ -238,7 +238,8 @@ fn the_binary_keeps_its_key_in_the_keyring_and_writes_no_key_file() {
 #[test]
 #[ignore = "needs a real Secret Service; run proto/linux-keys/run.sh"]
 fn the_default_source_is_the_secret_service_with_no_warning() {
-    let (source, warning) = klatch::keys::default_source(std::path::Path::new("/nonexistent"));
+    let (source, warning) =
+        klatch::keys::default_source(std::path::Path::new("/nonexistent"), "store-default");
     assert_eq!(source.describe(), "secret-service");
     assert!(warning.is_none());
 }
