@@ -21,7 +21,12 @@ for a in "$@"; do
   [ "$prev" = "--jq" ] && jq="$a"
   prev="$a"
 done
-if [ "$1" = pr ] && [ "$2" = merge ]; then echo true > "$FAKE_DIR/merged"; exit 0; fi
+if [ "$1" = pr ] && [ "$2" = merge ]; then echo true > "$FAKE_DIR/merged-$3"; exit 0; fi
+if [ "$1" = pr ] && [ "$2" = create ]; then
+  [ -n "${FAKE_PR_CREATE_FAIL:-}" ] && { echo "gh: could not create" >&2; exit 1; }
+  prev=""; for a in "$@"; do [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_DIR/batch-body"; prev="$a"; done
+  echo "https://github.com/hslee16/klatch/pull/${FAKE_BATCH_PR:-900}"; exit 0
+fi
 # the rate limit endpoint is free and always answers (#756)
 if [ "$2" = rate_limit ]; then
   case "$jq" in
@@ -48,12 +53,14 @@ case "$path" in
   */pulls/*)
     case "$jq" in
       .head.ref) echo "feat-${path##*/}" ;;
-      .head.sha) cat "$FAKE_DIR/head" ;;
+      .head.sha) cat "$FAKE_DIR/head-${path##*/}" 2> /dev/null || cat "$FAKE_DIR/head" ;;
+      .body) cat "$FAKE_DIR/body-${path##*/}" 2> /dev/null || true ;;
       .mergeable_state)
-        if [ -s "$FAKE_DIR/mstate-seq" ]; then head -1 "$FAKE_DIR/mstate-seq"; tail -n +2 "$FAKE_DIR/mstate-seq" > "$FAKE_DIR/mstate-seq.t"; mv "$FAKE_DIR/mstate-seq.t" "$FAKE_DIR/mstate-seq"; else cat "$FAKE_DIR/mstate"; fi ;;
-      .merged) cat "$FAKE_DIR/merged" ;;
+        if [ -s "$FAKE_DIR/mstate-${path##*/}" ]; then cat "$FAKE_DIR/mstate-${path##*/}"
+        elif [ -s "$FAKE_DIR/mstate-seq" ]; then head -1 "$FAKE_DIR/mstate-seq"; tail -n +2 "$FAKE_DIR/mstate-seq" > "$FAKE_DIR/mstate-seq.t"; mv "$FAKE_DIR/mstate-seq.t" "$FAKE_DIR/mstate-seq"; else cat "$FAKE_DIR/mstate"; fi ;;
+      .merged) cat "$FAKE_DIR/merged-${path##*/}" 2> /dev/null || cat "$FAKE_DIR/merged" ;;
     esac ;;
-  */compare/*) cat "$FAKE_DIR/behind_by" 2> /dev/null || echo 0 ;;
+  */compare/*) cat "$FAKE_DIR/behind_by-${path##*...}" 2> /dev/null || cat "$FAKE_DIR/behind_by" 2> /dev/null || echo 0 ;;
   */check-runs) sha="${path%/check-runs}"; sha="${sha##*/}"; cat "$FAKE_DIR/checks-$sha" 2> /dev/null || true ;;
   */issues/*) t="${path##*/}"; cat "$FAKE_DIR/issue-$t" 2> /dev/null || echo open ;;
 esac
@@ -64,7 +71,20 @@ cat > "$bin/git" <<'SH'
 echo "git $*" >> "$FAKE_DIR/calls.log"
 branch() { cat "$FAKE_DIR/branch"; }
 case "$1" in
-  rev-parse) branch ;;
+  rev-parse)
+    case "$*" in
+      *refs/pr-sweep/*) r="${2##*/}"; cat "$FAKE_DIR/rp-$r" 2> /dev/null || cat "$FAKE_DIR/head-$r" 2> /dev/null || cat "$FAKE_DIR/head" ;;
+      *) branch ;;
+    esac ;;
+  merge-base) [ -n "${FAKE_NOT_ANCESTOR:-}" ] && exit 1; exit 0 ;;
+  merge-tree)
+    # merge-tree --write-tree --name-only A B: A origin/main -> "main", anything else (HEAD) -> "batch"
+    for a in "$@"; do last="$a"; done
+    pr="${last##*/}"; case "$4" in origin/main) k=main ;; *) k=batch ;; esac
+    f="$(cat "$FAKE_DIR/mt-$k-$pr" 2> /dev/null || true)"
+    echo 0123abcd
+    if [ -n "$f" ]; then echo "$f" | tr ' ' '\n'; echo; echo "CONFLICT (content)"; exit 1; fi
+    exit 0 ;;
   status) [ -n "${FAKE_DIRTY:-}" ] && echo " M file" ;;
   checkout)
     [ -n "${FAKE_CHECKOUT_FAIL:-}" ] && exit 1
@@ -73,9 +93,16 @@ case "$1" in
   merge)
     [ "$2" = "--abort" ] && exit 0
     [ "$(branch)" = main ] && echo "MERGE-ON-MAIN" >> "$FAKE_DIR/calls.log"
+    case "$*" in *"${FAKE_MERGE_FAIL_REF:-@none@}"*) exit 1 ;; esac
     case "${FAKE_MERGE:-clean}" in clean) exit 0 ;; *) exit 1 ;; esac ;;
   diff) echo "${FAKE_CONFLICT_FILES:-}" | tr ' ' '\n' | sed '/^$/d' ;;
-  push) echo sha-new > "$FAKE_DIR/head"; echo clean > "$FAKE_DIR/mstate" ;;
+  push)
+    case "$*" in
+      *alee/batch-*) # the first push opens the batch PR; a later push (main merged in) moves its head to head-900-next
+        if [ -e "$FAKE_DIR/batch-pushed" ]; then [ -s "$FAKE_DIR/head-900-next" ] && mv "$FAKE_DIR/head-900-next" "$FAKE_DIR/head-900"; fi
+        : > "$FAKE_DIR/batch-pushed" ;;
+      *) echo sha-new > "$FAKE_DIR/head"; echo clean > "$FAKE_DIR/mstate" ;;
+    esac ;;
 esac
 exit 0
 SH
@@ -332,6 +359,161 @@ if [ "$rc" -eq 0 ] && grep -q "skipped" "$fake/out" && grep -q "100" "$fake/out"
 newenv; ready13
 FAKE_REMAINING=3000 runsweep --budget-floor 1500
 if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 1 ] && ! grep -q "skipped" "$fake/out"; then ok "--budget-floor lets the pass run when enough calls are left"; else bad "budget ok rc=$rc: $(cat "$fake/out")"; fi
+
+# ===== batch mode (#852): several PRs per integration, one gate, one batch PR =====
+# batchenv N...: those PRs are ready (green on their own head sha-N, ticket 700+N, body "Closes #700+N"), GitHub marks them
+# merged once the batch lands; the batch PR is #900 with head sha-b1, green and clean
+batchenv() {
+  newenv
+  : > "$fake/ledger.txt"
+  local p
+  for p in "$@"; do
+    echo "sha-$p" > "$fake/head-$p"; echo "success success" > "$fake/checks-sha-$p"; echo true > "$fake/merged-$p"
+    echo "Closes #$((700 + p))" > "$fake/body-$p"
+    printf '#%-4s %-20s %-18s %-9s %s\n' "$p" ready "feat-$p" "#$((700 + p))" "merge, then run the bench" >> "$fake/ledger.txt"
+  done
+  echo sha-b1 > "$fake/head-900"; echo "success success" > "$fake/checks-sha-b1"; echo clean > "$fake/mstate-900"
+}
+gitcalls() { grep -c "^git $1" "$log" || true; }
+
+# --- a clean batch of three: ONE gate, ONE batch PR, ONE bench, every PR recorded, announced and its ticket closed
+batchenv 11 13 14
+echo "Refs #713" > "$fake/body-13"
+sed -i.bak 's/ #713 / refs#713 /' "$fake/ledger.txt"
+runsweep --batch
+if [ "$rc" -eq 0 ] && [ "$(calls '^gh pr create')" -eq 1 ] && grep -q -- '^gh pr create .*--title Batch: #11 #13 #14' "$log" && [ "$(calls '^gate')" -eq 1 ] \
+  && [ "$(calls '^bench')" -eq 1 ] && [ "$(calls '^gh pr merge ')" -eq 1 ]; then ok "a clean batch of 3 lands via ONE batch PR, ONE gate and ONE bench"; else bad "clean batch rc=$rc: $(cat "$log") $(cat "$fake/out")"; fi
+if grep -q "^gh pr merge 900 --merge --match-head-commit sha-b1$" "$log" && [ "$(calls '^gh pr merge 11')" -eq 0 ]; then ok "the batch PR is merged pinned to its green head; no included PR is merged on its own"; else bad "batch merge: $(cat "$log")"; fi
+if [ "$(gitcalls 'checkout -q -B alee/batch-')" -ge 1 ] && [ "$(calls '^git merge .*refs/pr-sweep/11')" -eq 1 ] && [ "$(calls '^git merge .*refs/pr-sweep/13')" -eq 1 ] && [ "$(calls '^git merge .*refs/pr-sweep/14')" -eq 1 ] \
+  && [ "$(calls '^git push -q origin alee/batch-[0-9]*$')" -eq 1 ] && grep -q -- "--no-prune origin main" "$log"; then ok "the batch branch is built from origin/main with a real git merge of each head, then pushed once"; else bad "batch branch: $(cat "$log")"; fi
+cr=$(line_of '^gh pr create'); gt=$(line_of '^gate'); ps=$(line_of '^git push'); mg=$(line_of '^gh pr merge 900'); bn=$(line_of '^bench'); rc11=$(line_of '^ledger --record-bench 11')
+if [ -n "$cr" ] && [ "$gt" -lt "$ps" ] && [ "$ps" -lt "$cr" ] && [ "$cr" -lt "$mg" ] && [ "$mg" -lt "$bn" ] && [ "$bn" -lt "$rc11" ]; then ok "order: gate, push, open the PR, merge, bench, record"; else bad "batch order gt=$gt ps=$ps cr=$cr mg=$mg bn=$bn rc=$rc11"; fi
+if [ "$(calls '^ledger --record-bench')" -eq 3 ] && [ "$(calls '^klatch post lobby merged: #')" -eq 3 ] && grep -q '^klatch post lobby merged: #14' "$log"; then ok "every included PR is recorded as benched and announced \"merged: #N\""; else bad "record/announce: $(cat "$log")"; fi
+if grep -q "issues/711 -f state=closed" "$log" && grep -q "issues/714 -f state=closed" "$log" && ! grep -q "issues/713 -f state=closed" "$log"; then ok "the tickets the PRs close are closed; a Refs ticket is not"; else bad "tickets: $(cat "$log")"; fi
+if grep -q '^Closes #711$' "$fake/batch-body" && grep -q '^Refs #713$' "$fake/batch-body" && grep -q '^Closes #714$' "$fake/batch-body" && tail -1 "$fake/batch-body" | grep -q 'Generated with \[Claude Code\](https://claude.com/claude-code)'; then ok "the batch PR body copies each PR's Closes/Refs lines and ends with the Generated-with line"; else bad "batch body: $(cat "$fake/batch-body")"; fi
+if grep -q '^klatch post lobby batch: #900' "$log"; then ok "a lobby summary names the batch PR"; else bad "no summary: $(cat "$log")"; fi
+
+# --- a PR that would conflict in code is dropped BEFORE any merge, reported, posted; never merged
+batchenv 11 13 14
+echo "proto/klatch/src/lib.rs" > "$fake/mt-main-13"
+runsweep --batch
+if [ "$(calls '^git merge .*refs/pr-sweep/13')" -eq 0 ] && grep -q '^gh pr create .*--title Batch: #11 #14' "$log" && grep -q "^ledger --post --only 13" "$log" && grep -q "#13.*dropped.*lib.rs" "$fake/out" && [ "$(calls '^gh pr merge 13')" -eq 0 ]; then ok "a code conflict with main drops the PR before it touches the branch; it is reported and posted, never merged"; else bad "code drop: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- docs-only conflicts are fine: the resolver keeps both sides and the PR stays in the batch
+batchenv 11 13 14
+echo "DESIGN.md CHANGELOG.md" > "$fake/mt-main-13"
+FAKE_MERGE_FAIL_REF=refs/pr-sweep/13 FAKE_CONFLICT_FILES="DESIGN.md" runsweep --batch
+if grep -q '^gh pr create .*--title Batch: #11 #13 #14' "$log" && [ "$(calls '^git commit')" -ge 1 ]; then ok "a docs-only conflict does not drop a PR; the keep-both resolver commits the merge"; else bad "docs conflict: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- two PRs that conflict with each other: the lower number stays, the other is dropped and reported
+batchenv 11 13 14
+echo "proto/klatch/src/store.rs" > "$fake/mt-batch-13"
+runsweep --batch
+if [ "$(calls '^git merge .*refs/pr-sweep/13')" -eq 0 ] && [ "$(calls '^git merge .*refs/pr-sweep/11')" -eq 1 ] && grep -q '^gh pr create .*--title Batch: #11 #14' "$log" && grep -q "#13.*dropped.*batch" "$fake/out" && grep -q "^ledger --post --only 13" "$log"; then ok "two mutually conflicting PRs keep the lower number; the higher one is dropped and reported"; else bad "mutual: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- the trial passed but the real merge conflicts: abort, drop it, go on
+batchenv 11 13 14
+FAKE_MERGE_FAIL_REF=refs/pr-sweep/13 FAKE_CONFLICT_FILES="proto/klatch/src/lib.rs" runsweep --batch
+if [ "$(calls '^git merge --abort')" -ge 1 ] && grep -q '^gh pr create .*--title Batch: #11 #14' "$log" && grep -q "^ledger --post --only 13" "$log"; then ok "a real merge that conflicts after a clean trial is aborted and the PR dropped"; else bad "real conflict: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- a head that moved since it was seen green is not batched
+batchenv 11 13 14
+echo sha-moved > "$fake/rp-13"
+runsweep --batch
+if [ "$(calls '^git merge .*refs/pr-sweep/13')" -eq 0 ] && grep -q '^gh pr create .*--title Batch: #11 #14' "$log"; then ok "a PR whose fetched head differs from the green head is left out"; else bad "moved head: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- a PR that is not green on its own head is never batched
+batchenv 11 13 14
+echo "success pending" > "$fake/checks-sha-13"
+runsweep --batch
+if [ "$(calls '^git merge .*refs/pr-sweep/13')" -eq 0 ] && grep -q '^gh pr create .*--title Batch: #11 #14' "$log" && [ "$(calls '^gh pr merge 13')" -eq 0 ]; then ok "only PRs green on their own head are batched"; else bad "not green: $(cat "$log")"; fi
+
+# --- fewer than 2 survivors: nothing batched, the one-at-a-time path takes over
+batchenv 11 13
+echo "proto/klatch/src/lib.rs" > "$fake/mt-main-13"
+runsweep --batch
+if [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^git push')" -eq 0 ] && [ "$(calls '^gh pr merge 11 ')" -eq 1 ] && grep -q "^ledger --post --only 13" "$log" && grep -q "one at a time" "$fake/out"; then ok "fewer than 2 survivors: no batch, the survivor goes the one-at-a-time way, the dropped PR is posted"; else bad "fallback: $(cat "$log") $(cat "$fake/out")"; fi
+batchenv 11
+runsweep --batch
+if [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^gh pr merge 11 ')" -eq 1 ]; then ok "a single candidate is merged the one-at-a-time way"; else bad "single: $(cat "$log")"; fi
+
+# --- gate failure: nothing pushed, no PR, reported; the next pass goes one at a time for that same set
+batchenv 11 13 14
+FAKE_GATE_FAIL=1 runsweep --batch
+if [ "$(calls '^git push')" -eq 0 ] && [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^gh pr merge')" -eq 0 ] && grep -q "batch gate failed" "$fake/out"; then ok "a failing gate on the combined branch pushes nothing, opens nothing and says \"batch gate failed\""; else bad "batch gate fail: $(cat "$log") $(cat "$fake/out")"; fi
+for p in 11 13 14; do echo false > "$fake/merged-$p"; done
+runsweep --batch
+if [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^gh pr merge 11 ')" -eq 1 ] && [ "$(calls '^gh pr merge 13 ')" -eq 1 ] && grep -q "one at a time" "$fake/out"; then ok "the next pass lands that same set one at a time"; else bad "after gate fail: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- main moved while the batch checks ran: re-merge main into the batch, re-gate, push, wait again, merge the NEW head
+batchenv 11 13 14
+echo 2 > "$fake/behind_by-sha-b1"
+echo sha-b2 > "$fake/head-900-next"; echo "success success" > "$fake/checks-sha-b2"
+runsweep --batch
+if [ "$(calls '^gate')" -eq 2 ] && [ "$(calls '^git push -q origin alee/batch-')" -eq 2 ] && grep -q "^gh pr merge 900 --merge --match-head-commit sha-b2$" "$log" && ! grep -q -- "--match-head-commit sha-b1" "$log"; then ok "when main moves the batch re-merges main, re-gates, pushes and is merged pinned to the new head"; else bad "main moved: $(cat "$log") $(cat "$fake/out")"; fi
+batchenv 11 13 14
+echo 2 > "$fake/behind_by-sha-b1"
+echo sha-b2 > "$fake/head-900-next"
+runsweep --batch
+if [ "$(calls '^gh pr merge 900')" -eq 0 ]; then ok "the new batch head is not merged until its checks are green"; else bad "merged unchecked head: $(cat "$log")"; fi
+batchenv 11 13 14
+echo 2 > "$fake/behind_by-sha-b1"
+FAKE_MERGE_FAIL_REF=origin/main FAKE_CONFLICT_FILES="proto/klatch/src/lib.rs" runsweep --batch
+if [ "$(calls '^gh pr merge 900')" -eq 0 ] && grep -q "pulls/900 -f state=closed" "$log" && grep -q "^ledger --post --only 11,13,14" "$log"; then ok "if main conflicts with the batch in code the batch PR is closed, nothing merges and the PRs are posted"; else bad "main conflict: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- the batch checks are not green: never merged
+batchenv 11 13 14
+echo "success pending" > "$fake/checks-sha-b1"
+runsweep --batch
+if [ "$(calls '^gh pr merge')" -eq 0 ] && grep -q "waiting for green" "$fake/out"; then ok "a batch PR whose checks are not both green is never merged"; else bad "red batch: $(cat "$log")"; fi
+
+# --- an included PR still open after the batch merged: comment, close via REST, say so; one that is not in main is left alone
+batchenv 11 13 14
+echo false > "$fake/merged-13"
+PR_SWEEP_VERIFY_TRIES=2 runsweep --batch
+if grep -q "^git merge-base --is-ancestor sha-13 origin/main" "$log" && grep -q "issues/13/comments .*merged via #900" "$log" && grep -q "^gh api -X PATCH repos/hslee16/klatch/pulls/13 -f state=closed" "$log" && grep -q "#13.*closed" "$fake/out"; then ok "an included PR still open after the merge is verified an ancestor of main, commented \"merged via #900\" and closed"; else bad "close straggler: $(cat "$log") $(cat "$fake/out")"; fi
+batchenv 11 13 14
+echo false > "$fake/merged-13"
+FAKE_NOT_ANCESTOR=1 PR_SWEEP_VERIFY_TRIES=2 runsweep --batch
+if ! grep -q "pulls/13 -f state=closed" "$log" && grep -q "^ledger --post --only .*13" "$log"; then ok "a still-open PR whose head is not in main is never closed; it is posted"; else bad "non ancestor: $(cat "$log")"; fi
+
+# --- a failed bench after the batch: nothing recorded, every included PR posted
+batchenv 11 13 14
+FAKE_BENCH_OUT="11 passed, 1 failed" runsweep --batch
+if [ "$(calls 'record-bench')" -eq 0 ] && grep -q "^ledger --post --only 11,13,14" "$log"; then ok "a failed bench after the batch records nothing and posts every included PR"; else bad "batch bench fail: $(cat "$log")"; fi
+
+# --- --max N caps the batch; the lowest numbers go first
+batchenv 11 13 14
+runsweep --batch --max 2
+if grep -q '^gh pr create .*--title Batch: #11 #13 --body-file' "$log" && [ "$(calls '^git merge .*refs/pr-sweep/14')" -eq 0 ]; then ok "--max 2 batches the two lowest PR numbers"; else bad "max: $(cat "$log")"; fi
+newenv
+runsweep --batch --max 1
+r1=$rc
+runsweep --max 3
+if [ "$r1" -eq 2 ] && [ "$rc" -eq 2 ]; then ok "--max needs a number of at least 2 and --batch"; else bad "max args rc=$r1/$rc"; fi
+
+# --- an open batch PR from an earlier pass blocks a new batch, and its included PRs are left alone
+batchenv 11 13
+printf '#900  ready                alee/batch-2026111 #711      merge\n' >> "$fake/ledger.txt"
+printf 'Batch of PRs\n\n- #11\n- #13\n' > "$fake/body-900"
+runsweep --batch
+if [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^gh pr merge 11 ')" -eq 0 ] && [ "$(calls '^gh pr merge 13 ')" -eq 0 ] && [ "$(calls '^gh pr merge 900 ')" -eq 1 ]; then ok "an open batch PR blocks a new batch; its included PRs are skipped and the batch PR is merged the ordinary way"; else bad "open batch: $(cat "$log") $(cat "$fake/out")"; fi
+
+# --- dry run: prints the plan (kept and dropped, and why) and changes nothing
+batchenv 11 13 14
+echo "proto/klatch/src/lib.rs" > "$fake/mt-main-13"
+runsweep --batch --dry-run
+if [ "$rc" -eq 0 ] && grep -q "would batch #11 #14" "$fake/out" && grep -q "#13 would be dropped.*lib.rs" "$fake/out" && ! grep -q "would merge #11\|would integrate main into #1[134]" "$fake/out" \
+  && [ "$(gitcalls 'checkout')" -eq 0 ] && [ "$(gitcalls 'merge ')" -eq 0 ] && [ "$(gitcalls 'push')" -eq 0 ] && [ "$(gitcalls 'commit')" -eq 0 ] && [ "$(gitcalls 'branch')" -eq 0 ] \
+  && [ "$(calls '^gh pr create')" -eq 0 ] && [ "$(calls '^gate')" -eq 0 ] && [ "$(calls '^bench')" -eq 0 ] && [ "$(calls 'PATCH')" -eq 0 ] && [ "$(calls '^ledger --post')" -eq 0 ] && [ "$(calls '^klatch post')" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ]; then ok "--batch --dry-run prints which PRs would be batched and which dropped and why, and changes nothing"; else bad "batch dry-run rc=$rc: $(cat "$log") $(cat "$fake/out")"; fi
+batchenv 11 13 14
+echo "proto/klatch/src/store.rs" > "$fake/mt-batch-13"
+runsweep --batch --dry-run
+if grep -q "would batch #11 #14" "$fake/out" && grep -q "#13 would be dropped.*#11" "$fake/out"; then ok "the dry run names the earlier PR a dropped one conflicts with"; else bad "dry mutual: $(cat "$fake/out")"; fi
+
+# --- every batch run: only alee/batch-* is ever pushed, never main, never forced, never merged on main
+cat "$work"/f*/calls.log | grep '^git push' | grep -vE '^git push -q origin (alee/batch-[0-9]+|alee/integ-[0-9]+:feat-[0-9]+)$' > "$work/odd-push.log" || true
+if [ ! -s "$work/odd-push.log" ]; then ok "every push is to an alee/batch-* or a PR's own branch (no force, no main)"; else bad "odd pushes: $(cat "$work/odd-push.log")"; fi
 
 # --- across every run above: no force push, no push to main, no environment dump
 all="$work/all.log"

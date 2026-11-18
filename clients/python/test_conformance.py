@@ -190,6 +190,58 @@ class Conformance(unittest.TestCase):
             a.request("mute", room="r")
         self.assertEqual(ctx.exception.code, "invalid_params")
 
+    def test_an_invite_is_a_pointer_posted_where_the_member_already_is(self):
+        a, b = self.store.client("alice"), self.store.client("bob")
+        a.post("team", "hello")
+        b.post("team", "hi")
+        a.invite("bob", "design", "team")
+        bodies = [m["body"] for m in b.read("team")]
+        self.assertTrue(any("klatch join design" in x for x in bodies), bodies)
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.invite("alice", "design", "team")
+        self.assertEqual(ctx.exception.code, "invalid")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.invite("bob", "bad room", "team")
+        self.assertEqual(ctx.exception.code, "invalid")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.request("invite", member="bob")
+        self.assertEqual(ctx.exception.code, "invalid_params")
+
+    def test_a_member_declares_its_scope_its_kind_and_its_status(self):
+        a = self.store.client("alice")
+        a.post("r", "here")
+        a.set_scope("git:demo-1")
+        a.claim("r", "src/a.rs")
+        self.assertEqual([c.get("scope") for c in a.claims("r")], ["git:demo-1"])
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.set_scope("not a scope!")
+        self.assertEqual(ctx.exception.code, "invalid")
+        a.set_kind("bot")
+        self.assertEqual([m.get("kind") for m in a.who("r")], ["bot"])
+        a.set_kind(None)
+        self.assertEqual([m.get("kind") for m in a.who("r")], [None])
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.set_kind("session")
+        self.assertEqual(ctx.exception.code, "invalid")
+        a.set_status("r", "done")
+        self.assertEqual([m.get("status") for m in a.who("r")], ["done"])
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.set_status("r", "")
+        self.assertEqual(ctx.exception.code, "invalid")
+
+    def test_a_member_that_is_not_the_reviewer_is_refused_both_review_methods(self):
+        a = self.store.client("alice")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.review_next()
+        self.assertEqual(ctx.exception.code, "refused")
+        self.assertTrue(any(r["rule"] == "reviewer" for r in ctx.exception.refusals), ctx.exception.refusals)
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.review_verdict(1, "allow")
+        self.assertEqual(ctx.exception.code, "refused")
+        with self.assertRaises(kc.ApiError) as ctx:
+            a.request("review_verdict", id=1)
+        self.assertEqual(ctx.exception.code, "invalid_params")
+
     def test_a_refusal_carries_its_rule_and_never_repeats_the_text(self):
         a = self.store.client("alice")
         secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"

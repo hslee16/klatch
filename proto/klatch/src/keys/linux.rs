@@ -14,6 +14,22 @@ use std::time::{Duration, Instant};
 /// How long one `secret-tool` call may take. A healthy call is a few milliseconds; this only ends a hang.
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 
+/// The two programs this backend starts.
+#[derive(Clone, Copy)]
+enum Tool {
+    SecretTool,
+    Busctl,
+}
+
+impl Tool {
+    fn name(self) -> &'static str {
+        match self {
+            Self::SecretTool => "secret-tool",
+            Self::Busctl => "busctl",
+        }
+    }
+}
+
 pub struct SecretService {
     service: String,
     /// A `PATH` to run it under instead of the inherited one: how the unit tests put a stand-in first.
@@ -54,10 +70,64 @@ impl SecretService {
         ["service", &self.service, "name", name]
     }
 
-    /// Run the command with `input` on standard input (never a terminal) and wait at most the limit for it.
+    /// Run `secret-tool` with `input` on standard input (never a terminal) and wait at most the limit for it.
     fn run(&self, args: &[&str], input: Option<&[u8]>) -> Result<Output, Error> {
-        let fail = |e: std::io::Error| Error::Store(format!("secret-tool: {e}"));
-        let mut command = Command::new("secret-tool");
+        self.run_program(Tool::SecretTool, args, input)
+    }
+
+    /// What a silent failure of `secret-tool` hides. A lookup or a clear that finds nothing, and one that cannot
+    /// read a locked collection or one that does not exist, all exit 1 and say nothing, so the answer comes from the
+    /// default collection's `Locked` property over D-Bus (`busctl`, part of systemd). Asked only after a silent miss,
+    /// never on a hit, so a key that is found costs no extra call (#562). When `busctl` is missing or says something
+    /// unexpected the state is unknown and the miss stays a miss: custody still refuses to make a key for an
+    /// existing encrypted store, so this costs a less specific message and nothing else.
+    fn require_readable(&self) -> Result<(), Error> {
+        const ARGS: [&str; 6] = [
+            "--user",
+            "get-property",
+            "org.freedesktop.secrets",
+            "/org/freedesktop/secrets/aliases/default",
+            "org.freedesktop.Secret.Collection",
+            "Locked",
+        ];
+        let Ok(out) = self.run_program(Tool::Busctl, &ARGS, None) else {
+            return Ok(());
+        };
+        if !out.status.success() {
+            return if said(&out).contains("Unknown object") {
+                Err(Error::Locked(
+                    "the keyring has no default collection (no login keyring was created or unlocked); \
+                     unlock or create it, then try again. klatch made no new key"
+                        .into(),
+                ))
+            } else {
+                Ok(())
+            };
+        }
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "b true" => Err(Error::Locked(
+                "the keyring is locked and there is nothing here to unlock it on; unlock it (log in on the \
+                 desktop, or `secret-tool` after unlocking), then try again. klatch made no new key"
+                    .into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Run `program` with `input` on standard input (never a terminal) and wait at most the limit for it.
+    fn run_program(
+        &self,
+        tool: Tool,
+        args: &[&str],
+        input: Option<&[u8]>,
+    ) -> Result<Output, Error> {
+        let program = tool.name();
+        let fail = |e: std::io::Error| Error::Store(format!("{program}: {e}"));
+        // literal names, so the source check can see every program klatch starts (tests/no_telemetry.rs)
+        let mut command = match tool {
+            Tool::SecretTool => Command::new("secret-tool"),
+            Tool::Busctl => Command::new("busctl"),
+        };
         if let Some(path) = &self.path {
             command.env("PATH", path);
         }
@@ -72,7 +142,7 @@ impl SecretService {
         let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| Error::Store("secret-tool: no input".into()))?;
+            .ok_or_else(|| Error::Store(format!("{program}: no input")))?;
         if let Some(bytes) = input {
             stdin.write_all(bytes).map_err(fail)?;
         }
@@ -83,7 +153,7 @@ impl SecretService {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(Error::Store(format!(
-                    "secret-tool did not answer within {} seconds; the keyring may be waiting for a dialog",
+                    "{program} did not answer within {} seconds; the keyring may be waiting for a dialog",
                     self.limit.as_secs().max(1)
                 )));
             }
@@ -124,9 +194,10 @@ impl KeySource for SecretService {
         args.extend(self.attrs(name));
         let out = self.run(&args, None)?;
         if !out.status.success() {
-            // not found exits non-zero and is silent; anything said is a failure to reach the service
+            // not found exits non-zero and is silent, and so does a locked collection: ask which it was (#561);
+            // anything said is a failure to reach the service
             return match said(&out) {
-                m if m.is_empty() => Ok(None),
+                m if m.is_empty() => self.require_readable().map(|()| None),
                 m => Err(Error::Store(format!("secret-tool: {m}"))),
             };
         }
@@ -162,9 +233,11 @@ impl KeySource for SecretService {
         let mut args = vec!["clear"];
         args.extend(self.attrs(name));
         let out = self.run(&args, None)?;
-        // clearing a missing item exits non-zero and is silent; that is not an error here
+        // clearing a missing item exits non-zero and is silent; that is not an error here, but a locked collection
+        // is just as silent and the key is still there, so a revoke must not report success (#561)
         match said(&out) {
-            m if out.status.success() || m.is_empty() => Ok(()),
+            _ if out.status.success() => Ok(()),
+            m if m.is_empty() => self.require_readable(),
             m => Err(Error::Store(format!("secret-tool: {m}"))),
         }
     }
@@ -216,6 +289,102 @@ mod tests {
             }
         }
         (format!("{}:/usr/bin:/bin", dir.display()).into(), dir)
+    }
+
+    /// A stand-in `busctl` in `dir`, with the given body: what the collection's `Locked` property reads as (#561).
+    fn install_busctl(dir: &std::path::Path, body: &str) {
+        let path = dir.join("busctl");
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\n[ -n \"$KLATCH_FAKE_PROBE\" ] && exit 0\n{body}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // the same "Text file busy" wait as `fake` (#570)
+        for _ in 0..200 {
+            let status = std::process::Command::new("sh")
+                .args(["-c", "exec \"$0\""])
+                .arg(&path)
+                .env("KLATCH_FAKE_PROBE", "1")
+                .stderr(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .status();
+            match status {
+                Ok(s) if s.code() == Some(126) => std::thread::sleep(Duration::from_millis(10)),
+                _ => break,
+            }
+        }
+    }
+
+    /// A silent miss from `secret-tool` and a `busctl` that says `bus_body`.
+    fn with_fake_bus(tag: &str, bus_body: &str) -> (SecretService, std::path::PathBuf) {
+        let (svc, dir) = with_fake(tag, "exit 1", CALL_LIMIT);
+        install_busctl(&dir, bus_body);
+        (svc, dir)
+    }
+
+    const GONE: &str = "echo \"Failed to get property Locked: Unknown object '/org/freedesktop/secrets/aliases/default'.\" >&2; exit 1";
+
+    #[test]
+    fn a_silent_miss_on_a_locked_keyring_is_a_locked_error_not_no_key() {
+        let (svc, dir) = with_fake_bus("locked", "echo 'b true'");
+        let got = svc.get("store-a");
+        assert!(
+            matches!(&got, Err(Error::Locked(m)) if m.contains("locked") && m.contains("no new key")),
+            "{got:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_silent_miss_with_no_login_collection_is_a_locked_error_not_no_key() {
+        let (svc, dir) = with_fake_bus("nocoll", GONE);
+        let got = svc.get("store-a");
+        assert!(
+            matches!(&got, Err(Error::Locked(m)) if m.contains("no default collection")),
+            "{got:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_silent_miss_on_an_unlocked_keyring_is_still_no_key() {
+        let (svc, dir) = with_fake_bus("unlocked", "echo 'b false'");
+        assert!(svc.get("store-a").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_silent_miss_when_the_lock_state_cannot_be_read_is_still_no_key() {
+        // custody refuses to make a key for an existing encrypted store, so this only costs a less specific message
+        for (tag, body) in [
+            ("fail", "echo 'busctl: boom' >&2; exit 1"),
+            ("odd", "echo 'something else'"),
+        ] {
+            let (svc, dir) = with_fake_bus(tag, body);
+            assert!(svc.get("store-a").unwrap().is_none(), "{tag}");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn clearing_on_a_locked_keyring_is_a_locked_error_not_a_quiet_success() {
+        let (svc, dir) = with_fake_bus("dellocked", "echo 'b true'");
+        assert!(matches!(svc.delete("store-a"), Err(Error::Locked(_))));
+        let (svc2, dir2) = with_fake_bus("delunlocked", "echo 'b false'");
+        svc2.delete("store-a").unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    #[test]
+    fn a_key_found_is_returned_without_asking_whether_the_keyring_is_locked() {
+        let body = format!("echo {}", hex(&[7; KEY_LEN]));
+        let (svc, dir) = with_fake("found", &body, CALL_LIMIT);
+        install_busctl(&dir, "touch \"$0.ran\"");
+        assert_eq!(svc.get("store-a").unwrap().unwrap().expose(), &[7; KEY_LEN]);
+        assert!(!dir.join("busctl.ran").exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn with_fake(tag: &str, body: &str, limit: Duration) -> (SecretService, std::path::PathBuf) {

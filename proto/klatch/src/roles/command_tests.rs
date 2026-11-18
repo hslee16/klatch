@@ -9,6 +9,7 @@ use klatch::gateway::FixedClock;
 struct World {
     gateway: Rc<Gateway<SqliteStore>>,
     human: Gateway<SqliteStore>,
+    dir: std::path::PathBuf,
 }
 
 impl World {
@@ -22,9 +23,20 @@ impl World {
         let w = World {
             gateway: Rc::new(gateway),
             human,
+            dir,
         };
         w.as_member("alice").join("r").unwrap();
         w
+    }
+    /// A member of the same database whose clock reads `now`: the same store, a later moment.
+    fn later(&self, member: &str, now: i64) -> Direct<SqliteStore> {
+        let store =
+            SqliteStore::open(&self.dir.join("t.db"), &klatch::store::insecure_test_key()).unwrap();
+        let gateway = Gateway::new(store, FixedClock(now), AllowAll).for_members();
+        Direct::new(Rc::new(gateway), Principal::unattributed(member))
+    }
+    fn open_runs(&self) -> usize {
+        self.human.admin_runs(&World::human()).unwrap().len()
     }
     fn as_member(&self, member: &str) -> Direct<SqliteStore> {
         Direct::new(self.gateway.clone(), Principal::unattributed(member))
@@ -130,5 +142,91 @@ fn review_commands_ask_the_gateway_and_are_refused_without_the_role() {
     assert!(
         review(&rita, verdict(999)).is_err(),
         "a verdict on an item that is not waiting is an error, not a silent success"
+    );
+}
+
+#[test]
+fn run_create_and_run_end_open_and_end_a_run_as_the_admin_agent() {
+    let w = World::new("runs");
+    let t = w.admin_agent();
+    act(&t, ActCmd::RunCreate { run: "r1".into() }).unwrap();
+    assert_eq!(w.audited("run-create", "r1"), 1);
+    assert_eq!(w.open_runs(), 1);
+    assert!(
+        act(&t, ActCmd::RunCreate { run: "r1".into() }).is_err(),
+        "a run that is open cannot be opened again"
+    );
+    w.as_member("alice").post("run.r1.chat", "x").unwrap();
+    act(&t, ActCmd::RunEnd { run: "r1".into() }).unwrap();
+    assert_eq!(w.audited("run-end", "r1"), 1);
+    assert_eq!(w.open_runs(), 0);
+    assert!(
+        w.as_member("alice").post("run.r1.chat", "y").is_err(),
+        "the rooms of an ended run are gone and refused"
+    );
+    assert!(
+        act(&t, ActCmd::RunEnd { run: "r1".into() }).is_err(),
+        "a run that is not open cannot be ended"
+    );
+}
+
+#[test]
+fn run_acts_by_a_member_without_the_role_change_nothing() {
+    let w = World::new("runs-norole");
+    let nobody = w.as_member("nobody");
+    assert!(act(&nobody, ActCmd::RunCreate { run: "r1".into() }).is_err());
+    assert_eq!(w.open_runs(), 0);
+    let t = w.admin_agent();
+    act(&t, ActCmd::RunCreate { run: "r1".into() }).unwrap();
+    assert!(act(&nobody, ActCmd::RunEnd { run: "r1".into() }).is_err());
+    assert_eq!(w.open_runs(), 1, "the run is still open");
+    assert!(
+        act(
+            &t,
+            ActCmd::RunCreate {
+                run: "bad id".into()
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn anchor_done_releases_the_claims_anchored_to_that_item_and_no_others() {
+    let w = World::new("anchors");
+    let alice = w.as_member("alice");
+    for (path, anchor) in [("a.rs", "gh:pr:o/r/1"), ("b.rs", "gh:pr:o/r/2")] {
+        alice
+            .claim("r", &ClaimSpec::new(path, 600, "work").anchored(anchor))
+            .unwrap();
+    }
+    let nobody = w.as_member("nobody");
+    let one = || ActCmd::AnchorDone {
+        anchor: "gh:pr:o/r/1".into(),
+    };
+    assert!(act(&nobody, one()).is_err());
+    assert_eq!(alice.claims("r").unwrap().len(), 2, "no role, no release");
+    act(&w.admin_agent(), one()).unwrap();
+    assert_eq!(w.audited("anchor-done", "gh:pr:o/r/1"), 1);
+    let left: Vec<String> = alice
+        .claims("r")
+        .unwrap()
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
+    assert_eq!(left, vec!["b.rs".to_string()]);
+}
+
+#[test]
+fn prune_removes_the_members_not_seen_for_the_retention_for_any_member() {
+    let w = World::new("prune");
+    let late = w.later("bob", 1_000 + klatch::domain::MEMBER_RETENTION_SECS + 10);
+    late.join("r").unwrap();
+    act(&late, ActCmd::Prune).unwrap();
+    let names: Vec<String> = late.who("r").unwrap().into_iter().map(|m| m.name).collect();
+    assert_eq!(
+        names,
+        vec!["bob".to_string()],
+        "alice was not seen for a day"
     );
 }

@@ -150,6 +150,26 @@ fn a_member_is_not_shown_a_tombstone_as_new_mail() {
 }
 
 #[test]
+fn no_unread_path_shows_a_tombstone_as_new_mail() {
+    // #487: `read` was pinned; the look, wait, wake and hook paths each have their own query, so each is pinned
+    let s = store();
+    old_and_new(&s);
+    let out = archive_path("unread-all");
+    s.archive_before("r", 500, &out, &crate::store::insecure_test_key())
+        .unwrap();
+    let bob = Seat::new("r", "bob");
+    let bodies = |ms: Vec<crate::domain::Message>| -> Vec<String> {
+        ms.into_iter().map(|m| m.body).collect()
+    };
+    let live = vec!["new one".to_string()];
+    assert_eq!(bodies(s.look(bob, 2000).unwrap()), live, "look");
+    assert_eq!(bodies(s.wait_poll(bob, 2000).unwrap()), live, "wait_poll");
+    assert_eq!(bodies(s.wake_poll(bob, 2000).unwrap()), live, "wake_poll");
+    assert_eq!(bodies(s.hook_read(bob, 2000).unwrap()), live, "hook_read");
+    let _ = std::fs::remove_file(out);
+}
+
+#[test]
 fn nothing_due_is_not_an_error_even_if_the_archive_name_is_taken() {
     let s = store();
     old_and_new(&s);

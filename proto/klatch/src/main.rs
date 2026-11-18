@@ -339,6 +339,13 @@ enum Cmd {
         /// The room; without one, every room you have joined
         room: Option<String>,
     },
+    /// Show one member's card in a room: its scope and status, the asks it posted, the asks it serves, its claims,
+    /// tasks and pull requests (the member defaults to you). Derived from the board and the claims, never stored
+    Card {
+        room: String,
+        /// The member to show; omit for yourself
+        member: Option<String>,
+    },
     /// List the asks in a room nobody has answered or closed
     Asks {
         /// The room; without one, every room you have joined

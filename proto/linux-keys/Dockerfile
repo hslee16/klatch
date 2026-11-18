@@ -23,7 +23,7 @@ WORKDIR /src/proto
 FROM base AS bus
 USER root
 RUN apt-get update -qq \
- && apt-get install -y -qq --no-install-recommends dbus gnome-keyring libsecret-tools \
+ && apt-get install -y -qq --no-install-recommends dbus gnome-keyring libsecret-tools systemd \
  && rm -rf /var/lib/apt/lists/*
 USER tester
 
