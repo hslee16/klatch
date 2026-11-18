@@ -114,8 +114,33 @@ impl<S: Store> Gateway<S> {
 
     /// The one place every operation reaches the guard: the caller's role is enforced first.
     pub(super) fn check_guard(&self, who: &Principal, op: &Operation) -> Result<()> {
+        self.check_credential_live(who)?;
         self.check_role(who, op)?;
         self.guard.check(who, op)
+    }
+
+    /// Verify explicitly, every time (R35, #161): a verified principal whose member holds an issued credential acts
+    /// only while that credential is live. A session that outlives its credential (expired or revoked) is refused at
+    /// the next request, not only at start. A principal with no credential record (proven some other way) and an
+    /// unattributed one are not touched; a store failure refuses, never allows.
+    fn check_credential_live(&self, who: &Principal) -> Result<()> {
+        if who.attribution != crate::domain::Attribution::Verified {
+            return Ok(());
+        }
+        let Some(rec) = self.store.credential(&who.member)? else {
+            return Ok(());
+        };
+        let why = if rec.revoked {
+            "the credential was revoked"
+        } else if self.now() >= rec.expires {
+            "the credential expired"
+        } else {
+            return Ok(());
+        };
+        Err(Error::Refused {
+            rule: "credential".into(),
+            reason: why.into(),
+        })
     }
 
     fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {

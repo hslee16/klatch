@@ -227,3 +227,80 @@ fn a_member_with_no_credential_ends_nothing_and_a_typed_name_cannot_end_a_worker
     g.verify_credential("w-1", &token).unwrap();
     assert!(!g.end_credential(&alice()).unwrap());
 }
+
+/// What every operation a verified principal makes does (#161, R35): the credential behind it is looked at again, not
+/// only when the process started, so a session that outlives its credential stops at the next request.
+#[test]
+fn a_verified_principal_is_refused_on_the_next_request_once_its_credential_expires() {
+    let (g, t) = timed();
+    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    let who = g.verify_credential("w-1", &token).unwrap();
+    g.join(&who, "r").unwrap();
+    g.post(&who, "r", "while live").unwrap();
+    // the last second of the lifetime still works, the first second after it does not
+    t.set(t.get() + 599);
+    g.post(&who, "r", "last second").unwrap();
+    t.set(t.get() + 1);
+    let calls: [(&str, bool); 6] = [
+        ("post", is_refused(g.post(&who, "r", "after"))),
+        ("read", is_refused(g.read(&who, "r", true))),
+        ("tail", is_refused(g.tail(&who, "r", (0, 10)))),
+        ("who", is_refused(g.who(&who, "r"))),
+        ("claims", is_refused(g.claims(&who, "r"))),
+        ("join", is_refused(g.join(&who, "other"))),
+    ];
+    all_true(&calls, "was not refused after the credential expired");
+    let e = g.post(&who, "r", "again").unwrap_err();
+    assert_eq!(rule_of(e), "credential");
+}
+
+#[test]
+fn a_verified_principal_is_refused_on_the_next_request_once_its_credential_is_revoked() {
+    let (g, t) = timed();
+    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    let who = g.verify_credential("w-1", &token).unwrap();
+    g.join(&who, "r").unwrap();
+    g.admin_revoke_credential(&admin(), "w-1").unwrap();
+    t.set(t.get() + 1);
+    assert_eq!(rule_of(g.post(&who, "r", "x").unwrap_err()), "credential");
+    assert_eq!(rule_of(g.read(&who, "r", true).unwrap_err()), "credential");
+}
+
+#[test]
+fn the_per_request_check_leaves_other_principals_alone() {
+    let (g, t) = timed();
+    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    let _ = g.verify_credential("w-1", &token).unwrap();
+    t.set(t.get() + 700);
+    // a verified principal proven some other way (no credential record) is not touched by it
+    let other = Principal::verified("peer-1");
+    g.join(&other, "r").unwrap();
+    g.post(&other, "r", "fine").unwrap();
+    // a typed name is unattributed and was never proven by the credential, so the credential says nothing about it
+    g.post(&Principal::unattributed("w-1"), "r", "typed")
+        .unwrap();
+}
+
+#[test]
+fn a_refused_expiry_is_recorded_under_the_credential_rule_which_the_breaker_does_not_count() {
+    let (g, t) = timed();
+    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    let who = g.verify_credential("w-1", &token).unwrap();
+    g.join(&who, "r").unwrap();
+    t.set(t.get() + 601);
+    for _ in 0..8 {
+        assert!(is_refused(g.post(&who, "r", "x")));
+        t.set(t.get() + 1);
+    }
+    let refusals = g.admin_refusals(&admin(), 20).unwrap();
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.rule == "credential" && r.member == "w-1"),
+        "{refusals:?}"
+    );
+    // the breaker did not trip: a fresh credential for the same member works at once
+    g.admin_revoke_credential(&admin(), "w-1").ok();
+    let fresh = g.admin_issue_credential(&admin(), &spec("w-1"));
+    assert!(fresh.is_ok(), "{fresh:?}");
+}
