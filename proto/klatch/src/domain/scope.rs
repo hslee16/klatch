@@ -47,9 +47,8 @@ mod tests {
         !s.is_empty()
             && s.len() <= 80
             && s != SHARED_SCOPE
-            && s.chars().all(|c| {
-                c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/')
-            })
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/'))
     }
 
     #[test]

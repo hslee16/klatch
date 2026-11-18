@@ -296,6 +296,11 @@ fn in_name_set(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.')
 }
 
+/// The scope alphabet: the name set, colon and slash.
+fn in_scope_set(c: u8) -> bool {
+    in_name_set(c) || c == b':' || c == b'/'
+}
+
 /// `valid_name` and `valid_kind` (through `safe_name_bytes`) accept exactly the non-empty runs of the safe alphabet.
 /// Bound: up to 12 arbitrary bytes, so non-ASCII and control bytes are in the search.
 #[kani::proof]
@@ -323,7 +328,7 @@ fn scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes() {
     let b = &bytes[..len];
     let mut all_safe = true;
     for c in b {
-        if !(in_name_set(*c) || *c == b':' || *c == b'/') {
+        if !in_scope_set(*c) {
             all_safe = false;
         }
     }
@@ -362,10 +367,7 @@ fn one_symbolic_byte_in_a_full_length_run_decides_the_result() {
     name[at] = c;
     scope[at] = c;
     assert_eq!(safe_name_bytes(&name), in_name_set(c));
-    assert_eq!(
-        scope_bytes_ok(&scope),
-        in_name_set(c) || c == b':' || c == b'/'
-    );
+    assert_eq!(scope_bytes_ok(&scope), in_scope_set(c));
 }
 
 /// A shared scope collides with every scope and a scope collides with itself, in both directions.
@@ -378,9 +380,10 @@ fn scopes_collide_is_symmetric_and_shared_collides_with_all() {
     assert_eq!(scopes_collide(&a, &b), scopes_collide(&b, &a));
     assert!(scopes_collide(&a, &a));
     assert!(scopes_collide(&a, "*") && scopes_collide("*", &a));
-    // two different scopes, neither shared, never collide
-    if a != b && a != "*" && b != "*" {
-        assert!(!scopes_collide(&a, &b));
+    // with neither scope shared, they collide exactly when they are the same scope
+    let neither_shared = a != "*" && b != "*";
+    if neither_shared {
+        assert_eq!(scopes_collide(&a, &b), a == b);
     }
 }
 
