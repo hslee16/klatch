@@ -70,7 +70,7 @@ impl Io<'_> {
     }
 
     /// Ask a yes or no question; an empty answer, end of input and anything but yes mean `default`.
-    fn ask(&mut self, question: &str, default_yes: bool) -> anyhow::Result<bool> {
+    pub(crate) fn ask(&mut self, question: &str, default_yes: bool) -> anyhow::Result<bool> {
         write!(
             self.out,
             "{question} [{}] ",
@@ -157,7 +157,10 @@ impl Io<'_> {
 }
 
 /// The settings files a scope writes to, with a label for each.
-fn targets(scope: Scope, places: &Places) -> anyhow::Result<Vec<(&'static str, PathBuf)>> {
+pub(crate) fn targets(
+    scope: Scope,
+    places: &Places,
+) -> anyhow::Result<Vec<(&'static str, PathBuf)>> {
     let mut targets = Vec::new();
     if matches!(scope, Scope::Project | Scope::Both) {
         targets.push((
@@ -178,7 +181,7 @@ fn targets(scope: Scope, places: &Places) -> anyhow::Result<Vec<(&'static str, P
 }
 
 /// The current content of a settings file, if there is one.
-fn read_settings(path: &Path) -> anyhow::Result<Option<Value>> {
+pub(crate) fn read_settings(path: &Path) -> anyhow::Result<Option<Value>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -239,7 +242,7 @@ fn apply(plan: Plan, yes: bool, io: &mut Io) -> anyhow::Result<()> {
 }
 
 /// Write a settings file whole or not at all: beside it, then a rename.
-fn write_settings(path: &Path, text: &str, io: &mut Io) -> anyhow::Result<()> {
+pub(crate) fn write_settings(path: &Path, text: &str, io: &mut Io) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -482,7 +485,7 @@ fn klatch_hooks_in<'a>(
 }
 
 /// Which klatch hook a settings entry under `event` is, or none when it is not klatch's.
-fn hook_kind(event: &str, hook: &Value) -> Option<HookKind> {
+pub(crate) fn hook_kind(event: &str, hook: &Value) -> Option<HookKind> {
     if is_wake(hook) {
         Some(HookKind::Wake)
     } else if !is_ours(hook) {

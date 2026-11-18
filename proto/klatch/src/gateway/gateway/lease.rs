@@ -154,6 +154,26 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// Whether the process behind `member`'s session has exited (#790, DESIGN item 96): true only when the
+    /// liveness probe says `Gone` for a member of `room` that has a recorded session. Everything else is false,
+    /// because unknown counts as alive: no lease source, a member with no session (a bot), a record the probe
+    /// cannot read, a table `ps` cannot give, another machine. The caller must be a member of the room (as for
+    /// `who`), and only members of that room are answered about. It changes nothing and moves no lease.
+    pub fn process_exited(&self, who: &Principal, room: &str, member: &str) -> Result<bool> {
+        self.admit(who, room, Operation::Who { room: room.into() })?;
+        let Some(source) = &self.leases else {
+            return Ok(false);
+        };
+        let in_room = self.store.members(room)?.iter().any(|m| m.name == member);
+        let session = self.store.session_of_member(member)?;
+        let (true, Some(session)) = (in_room, session) else {
+            return Ok(false);
+        };
+        let now_ms = u64::try_from(self.now()).unwrap_or(0) * 1000;
+        let seen = source.observe(member, &session, now_ms);
+        Ok(seen.is_some_and(|o| o.verdict == Verdict::Gone))
+    }
+
     /// Apply the lease rules to every member holding a claim except `asker` (alive, since it is asking). Does
     /// nothing without a lease source.
     pub(super) fn settle_leases(&self, asker: &str) -> Result<()> {

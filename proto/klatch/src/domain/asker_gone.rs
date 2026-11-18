@@ -66,16 +66,22 @@ fn asker_of(messages: &[Message], n: i64, me: &str) -> Option<String> {
 }
 
 /// One line per served asker that is gone, at most three and then a count. Gone is: not in the room any more;
-/// not seen for `MEMBER_ACTIVE_SECS` and not parked; or, for an ask the helper still holds, said `done` (an ask
-/// the helper already answered treats `done` as the clean ending and is not named). Askers are named once however
-/// many asks of theirs the helper serves.
-pub fn gone_asker_notes(served: &[Served], members: &[MemberInfo], now: i64) -> Vec<String> {
+/// its process has exited (`exited` names the askers the liveness probe found gone, #790); not seen for
+/// `MEMBER_ACTIVE_SECS` and not parked; or, for an ask the helper still holds, said `done` (an ask the helper
+/// already answered treats `done` as the clean ending and is not named). Askers are named once however many asks of
+/// theirs the helper serves.
+pub fn gone_asker_notes(
+    served: &[Served],
+    members: &[MemberInfo],
+    exited: &[String],
+    now: i64,
+) -> Vec<String> {
     let mut gone: Vec<(String, String)> = Vec::new();
     for s in served {
         if gone.iter().any(|(who, _)| *who == s.asker) {
             continue;
         }
-        if let Some(why) = why_gone(s, members, now) {
+        if let Some(why) = why_gone(s, members, exited, now) {
             gone.push((s.asker.clone(), why));
         }
     }
@@ -98,13 +104,32 @@ pub fn gone_asker_notes(served: &[Served], members: &[MemberInfo], now: i64) -> 
     notes
 }
 
-fn why_gone(s: &Served, members: &[MemberInfo], now: i64) -> Option<String> {
+/// Only the askers whose process is known to have exited (#790): the check a waiting helper runs every few seconds,
+/// where presence alone would take ten minutes. An asker gone for any other reason waits for the timeout's note.
+pub fn exited_asker_notes(
+    served: &[Served],
+    members: &[MemberInfo],
+    exited: &[String],
+    now: i64,
+) -> Vec<String> {
+    let of_exited: Vec<Served> = served
+        .iter()
+        .filter(|s| exited.contains(&s.asker))
+        .cloned()
+        .collect();
+    gone_asker_notes(&of_exited, members, exited, now)
+}
+
+fn why_gone(s: &Served, members: &[MemberInfo], exited: &[String], now: i64) -> Option<String> {
     let Some(m) = members.iter().find(|m| m.name == s.asker) else {
         return Some("is no longer in this room".into());
     };
     let done = m.status.as_deref().is_some_and(|t| t.starts_with("done"));
     if done {
         return (!s.answered).then(|| "said it is done".into());
+    }
+    if exited.contains(&s.asker) {
+        return Some("has exited (its process is gone; it never said done)".into());
     }
     let parked = m.parked.as_ref().is_some_and(|p| p.holds(now));
     let quiet = secs_between(now, m.last_seen);
@@ -177,13 +202,13 @@ mod tests {
     #[test]
     fn an_asker_seen_one_second_inside_the_window_is_not_gone() {
         let m = [member("asker", MEMBER_ACTIVE_SECS - 1)];
-        assert!(gone_asker_notes(&served(true), &m, NOW).is_empty());
+        assert!(gone_asker_notes(&served(true), &m, &[], NOW).is_empty());
     }
 
     #[test]
     fn an_asker_quiet_for_the_window_is_named_with_its_minutes_and_that_it_never_said_done() {
         let m = [member("asker", MEMBER_ACTIVE_SECS)];
-        let notes = gone_asker_notes(&served(true), &m, NOW);
+        let notes = gone_asker_notes(&served(true), &m, &[], NOW);
         assert_eq!(notes.len(), 1, "{notes:?}");
         let n = &notes[0];
         assert!(n.contains("asker has not been seen for 10 minutes"), "{n}");
@@ -194,7 +219,7 @@ mod tests {
 
     #[test]
     fn an_asker_that_left_the_room_is_gone_at_once() {
-        let notes = gone_asker_notes(&served(false), &[], NOW);
+        let notes = gone_asker_notes(&served(false), &[], &[], NOW);
         assert!(notes[0].contains("is no longer in this room"), "{notes:?}");
     }
 
@@ -205,16 +230,19 @@ mod tests {
             why: "a build".into(),
             back_by: NOW + 60,
         });
-        assert!(gone_asker_notes(&served(true), &[m.clone()], NOW).is_empty());
-        assert_eq!(gone_asker_notes(&served(true), &[m], NOW + 60).len(), 1);
+        assert!(gone_asker_notes(&served(true), &[m.clone()], &[], NOW).is_empty());
+        assert_eq!(
+            gone_asker_notes(&served(true), &[m], &[], NOW + 60).len(),
+            1
+        );
     }
 
     #[test]
     fn done_is_a_clean_ending_for_an_answered_ask_and_a_note_for_a_held_one() {
         let mut m = member("asker", 5_000);
         m.status = Some("done leaving".into());
-        assert!(gone_asker_notes(&served(true), &[m.clone()], NOW).is_empty());
-        let held = gone_asker_notes(&served(false), &[m], NOW);
+        assert!(gone_asker_notes(&served(true), &[m.clone()], &[], NOW).is_empty());
+        let held = gone_asker_notes(&served(false), &[m], &[], NOW);
         assert!(held[0].contains("said it is done"), "{held:?}");
     }
 
@@ -232,7 +260,7 @@ mod tests {
                 answered: false,
             },
         ];
-        let notes = gone_asker_notes(&two, &[], NOW);
+        let notes = gone_asker_notes(&two, &[], &[], NOW);
         assert_eq!(notes.len(), 1, "{notes:?}");
     }
 
@@ -245,14 +273,14 @@ mod tests {
                 answered: true,
             })
             .collect();
-        let notes = gone_asker_notes(&many, &[], NOW);
+        let notes = gone_asker_notes(&many, &[], &[], NOW);
         assert_eq!(notes.len(), 4, "{notes:?}");
         assert!(notes[3].contains("2 more askers"), "{notes:?}");
     }
 
     #[test]
     fn a_note_has_no_em_dash_and_is_one_line() {
-        let notes = gone_asker_notes(&served(true), &[], NOW);
+        let notes = gone_asker_notes(&served(true), &[], &[], NOW);
         assert!(
             notes
                 .iter()
@@ -263,7 +291,7 @@ mod tests {
     #[test]
     fn a_clock_behind_the_last_seen_never_makes_an_asker_gone() {
         let m = [member("asker", -500)];
-        assert!(gone_asker_notes(&served(true), &m, NOW).is_empty());
+        assert!(gone_asker_notes(&served(true), &m, &[], NOW).is_empty());
     }
 
     #[test]
@@ -311,5 +339,76 @@ mod tests {
         assert!(served_by(&messages, (&[], &[]), ("me", NOW)).is_empty());
         let file = [claim("file:a.rs", "me", 60)];
         assert!(served_by(&messages, (&[open(1)], &file), ("me", NOW)).is_empty());
+    }
+
+    // #790: the liveness probe says an asker's process exited, in seconds, where presence takes ten minutes
+
+    fn exited(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_string()).collect()
+    }
+
+    #[test]
+    fn an_asker_whose_process_exited_is_named_though_it_was_seen_a_second_ago() {
+        let m = [member("asker", 1)];
+        let notes = gone_asker_notes(&served(true), &m, &exited(&["asker"]), NOW);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(
+            notes[0].contains("asker has exited (its process is gone; it never said done)"),
+            "{notes:?}"
+        );
+        assert!(notes[0].contains("Stop waiting for it"), "{notes:?}");
+    }
+
+    #[test]
+    fn an_asker_not_in_the_exited_list_is_judged_by_presence_as_before() {
+        let m = [member("asker", 1)];
+        assert!(gone_asker_notes(&served(true), &m, &exited(&["someone-else"]), NOW).is_empty());
+        let quiet = [member("asker", MEMBER_ACTIVE_SECS)];
+        let notes = gone_asker_notes(&served(true), &quiet, &[], NOW);
+        assert!(
+            notes[0].contains("has not been seen for 10 minutes"),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn done_after_an_answer_is_still_the_clean_ending_when_the_process_has_exited() {
+        let mut m = member("asker", 1);
+        m.status = Some("done thanks".into());
+        assert!(gone_asker_notes(&served(true), &[m.clone()], &exited(&["asker"]), NOW).is_empty());
+        let held = gone_asker_notes(&served(false), &[m], &exited(&["asker"]), NOW);
+        assert!(
+            held[0].contains("said it is done"),
+            "done is the better reason: {held:?}"
+        );
+    }
+
+    #[test]
+    fn a_parked_asker_whose_process_exited_is_named_because_a_park_cannot_end_without_one() {
+        let mut m = member("asker", 5_000);
+        m.parked = Some(Parked {
+            why: "a build".into(),
+            back_by: NOW + 3_600,
+        });
+        assert!(gone_asker_notes(&served(true), &[m.clone()], &[], NOW).is_empty());
+        let notes = gone_asker_notes(&served(true), &[m], &exited(&["asker"]), NOW);
+        assert!(notes[0].contains("has exited"), "{notes:?}");
+    }
+
+    #[test]
+    fn the_early_check_names_only_askers_whose_process_exited() {
+        // quiet for twenty minutes but no word about its process: that waits for the timeout, not the early check
+        let quiet = [member("asker", 1_200)];
+        assert!(exited_asker_notes(&served(true), &quiet, &[], NOW).is_empty());
+        let notes = exited_asker_notes(&served(true), &quiet, &exited(&["asker"]), NOW);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("has exited"), "{notes:?}");
+    }
+
+    #[test]
+    fn the_early_check_says_nothing_for_an_asker_that_said_done_after_an_answer() {
+        let mut m = member("asker", 1);
+        m.status = Some("done".into());
+        assert!(exited_asker_notes(&served(true), &[m], &exited(&["asker"]), NOW).is_empty());
     }
 }
