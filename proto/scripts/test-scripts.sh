@@ -214,5 +214,27 @@ if [ "${#short_tmp}" -ne 60 ]; then bad "test setup: short_tmp is ${#short_tmp} 
 env TMPDIR="$short_tmp" HOME="$work" PATH="/usr/bin:/bin" "$mutants" gateway-policy > "$work/out" 2>&1
 if ! grep -q "TMPDIR is" "$work/out"; then ok "mutants accepts a TMPDIR of exactly 60 bytes (it goes on to the next check)"; else bad "mutants refused 60 bytes: $(cat "$work/out")"; fi
 
+# the mutants runner refuses to start on a nearly full disk (#683) and gives each module a private short TMPDIR that it
+# removes afterwards (a shim cargo-mutants records the TMPDIR it was started with)
+if env HOME="$work" PATH="/usr/bin:/bin" MUTANTS_MIN_FREE_GB=999999999 "$mutants" gateway-policy > "$work/out" 2>&1; then bad "mutants started with too little free disk"; else
+  if grep -q "GB free" "$work/out" && grep -q "MUTANTS_MIN_FREE_GB" "$work/out"; then ok "mutants refuses to start when the disk is below the free space limit and says why"; else bad "mutants disk refusal text: $(cat "$work/out")"; fi
+fi
+mshim="$work/mshim"; mkdir -p "$mshim"
+cat > "$mshim/cargo-mutants" <<'SH'
+#!/bin/sh
+echo "$TMPDIR" > "$MSHIM_LOG"
+exit 0
+SH
+chmod +x "$mshim/cargo-mutants"
+cp "$mshim/cargo-mutants" "$mshim/cargo"
+short="$(mktemp -d /tmp/klt.XXXXXX)"
+env HOME="$work" PATH="$mshim:/usr/bin:/bin" TMPDIR="$short" MSHIM_LOG="$work/mlog" MUTANTS_MIN_FREE_GB=0 MUTANTS_DIR="$work/mdir" "$mutants" gateway-policy > "$work/out" 2>&1
+seen="$(cat "$work/mlog" 2> /dev/null)"
+case "$seen" in
+  "$short/klm."*) if [ -e "$seen" ]; then bad "mutants left its private TMPDIR behind: $seen"; else ok "mutants runs each module in a private short TMPDIR and removes it afterwards"; fi ;;
+  *) bad "mutants did not set a private TMPDIR (saw '$seen'): $(cat "$work/out")" ;;
+esac
+rm -rf "$short"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
