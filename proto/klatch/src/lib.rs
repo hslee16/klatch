@@ -40,6 +40,9 @@ pub mod harness;
 pub mod keys;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
+pub mod router;
+#[cfg(feature = "cli")]
+#[doc(hidden)]
 pub mod session;
 #[cfg(feature = "cli")]
 #[doc(hidden)]

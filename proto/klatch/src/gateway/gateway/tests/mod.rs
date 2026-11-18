@@ -25,6 +25,7 @@ mod floors;
 mod guarding;
 mod handoff;
 mod history;
+mod invite_clearance;
 mod labels;
 mod lease;
 mod lease_settings;
