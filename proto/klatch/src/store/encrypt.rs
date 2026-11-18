@@ -281,3 +281,6 @@ pub fn restore_backup(db: &Path, backup: &Path, key: &Key) -> Result<()> {
     }
     outcome
 }
+
+#[cfg(test)]
+mod tests;
