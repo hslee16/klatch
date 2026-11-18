@@ -14,6 +14,22 @@ use std::time::{Duration, Instant};
 /// How long one `secret-tool` call may take. A healthy call is a few milliseconds; this only ends a hang.
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 
+/// The two programs this backend starts.
+#[derive(Clone, Copy)]
+enum Tool {
+    SecretTool,
+    Busctl,
+}
+
+impl Tool {
+    fn name(self) -> &'static str {
+        match self {
+            Self::SecretTool => "secret-tool",
+            Self::Busctl => "busctl",
+        }
+    }
+}
+
 pub struct SecretService {
     service: String,
     /// A `PATH` to run it under instead of the inherited one: how the unit tests put a stand-in first.
@@ -56,7 +72,7 @@ impl SecretService {
 
     /// Run `secret-tool` with `input` on standard input (never a terminal) and wait at most the limit for it.
     fn run(&self, args: &[&str], input: Option<&[u8]>) -> Result<Output, Error> {
-        self.run_program("secret-tool", args, input)
+        self.run_program(Tool::SecretTool, args, input)
     }
 
     /// What a silent failure of `secret-tool` hides. A lookup or a clear that finds nothing, and one that cannot
@@ -74,7 +90,7 @@ impl SecretService {
             "org.freedesktop.Secret.Collection",
             "Locked",
         ];
-        let Ok(out) = self.run_program("busctl", &ARGS, None) else {
+        let Ok(out) = self.run_program(Tool::Busctl, &ARGS, None) else {
             return Ok(());
         };
         if !out.status.success() {
@@ -101,12 +117,17 @@ impl SecretService {
     /// Run `program` with `input` on standard input (never a terminal) and wait at most the limit for it.
     fn run_program(
         &self,
-        program: &str,
+        tool: Tool,
         args: &[&str],
         input: Option<&[u8]>,
     ) -> Result<Output, Error> {
+        let program = tool.name();
         let fail = |e: std::io::Error| Error::Store(format!("{program}: {e}"));
-        let mut command = Command::new(program);
+        // literal names, so the source check can see every program klatch starts (tests/no_telemetry.rs)
+        let mut command = match tool {
+            Tool::SecretTool => Command::new("secret-tool"),
+            Tool::Busctl => Command::new("busctl"),
+        };
         if let Some(path) = &self.path {
             command.env("PATH", path);
         }
