@@ -41,6 +41,8 @@ pub mod keys;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
 pub mod mediator;
+#[cfg(feature = "cli")]
+#[doc(hidden)]
 pub mod router;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
