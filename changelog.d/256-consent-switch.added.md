@@ -1,0 +1,1 @@
+- `klatch consent`: shows the consents `klatch init` granted (board, join, session-end, enforce, wake) for project and user scope, and `klatch consent <name> on|off --scope ...` switches one later; it edits only klatch's own hook entries, shows a diff first, and says the change takes effect at the next session (#256).

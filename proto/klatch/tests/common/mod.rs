@@ -213,13 +213,17 @@ impl Setup {
         self.home().join(".claude/settings.json")
     }
     pub fn init(&self, args: &[&str], stdin: &str) -> std::process::Output {
+        self.klatch("init", args, stdin)
+    }
+    /// Run one klatch subcommand in the throwaway project with the throwaway home and an empty environment.
+    pub fn klatch(&self, sub: &str, args: &[&str], stdin: &str) -> std::process::Output {
         use std::io::Write;
         let mut child = Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env_remove("KLATCH_IDENTITY_FILE")
             .current_dir(self.project())
             .env_clear()
             .env("HOME", self.home())
-            .arg("init")
+            .arg(sub)
             .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
