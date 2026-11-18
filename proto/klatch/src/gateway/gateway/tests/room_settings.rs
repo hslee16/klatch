@@ -239,15 +239,10 @@ fn an_ask_claim_without_a_requested_lease_gets_the_rooms_default_and_others_do_n
     let g = open();
     g.admin_set_room_ask_lease(&admin(), "r", Some(200))
         .unwrap();
-    assert_eq!(g.claim_ttl_for(&alice(), "r", "ask:3", None).unwrap(), 200);
-    assert_eq!(
-        g.claim_ttl_for(&alice(), "other", "ask:3", None).unwrap(),
-        ASK_LEASE_DEFAULT_SECS
-    );
-    assert_eq!(
-        g.claim_ttl_for(&alice(), "r", "src/lib.rs", None).unwrap(),
-        600
-    );
+    let ttl = |room, path, asked| g.claim_ttl_for(&alice(), (room, path), asked).unwrap();
+    assert_eq!(ttl("r", "ask:3", None), 200);
+    assert_eq!(ttl("other", "ask:3", None), ASK_LEASE_DEFAULT_SECS);
+    assert_eq!(ttl("r", "src/lib.rs", None), 600);
 }
 
 #[test]
@@ -255,20 +250,10 @@ fn a_requested_lease_is_kept_and_an_ask_claim_never_passes_its_cap_whatever_the_
     let g = open();
     g.admin_set_room_ask_lease(&admin(), "r", Some(ASK_LEASE_MAX_SECS))
         .unwrap();
-    assert_eq!(
-        g.claim_ttl_for(&alice(), "r", "ask:3", Some(120)).unwrap(),
-        120
-    );
-    assert_eq!(
-        g.claim_ttl_for(&alice(), "r", "ask:3", Some(3_600))
-            .unwrap(),
-        ASK_LEASE_MAX_SECS
-    );
-    assert_eq!(
-        g.claim_ttl_for(&alice(), "r", "src/lib.rs", Some(3_600))
-            .unwrap(),
-        3_600
-    );
+    let ttl = |path, asked| g.claim_ttl_for(&alice(), ("r", path), asked).unwrap();
+    assert_eq!(ttl("ask:3", Some(120)), 120);
+    assert_eq!(ttl("ask:3", Some(3_600)), ASK_LEASE_MAX_SECS);
+    assert_eq!(ttl("src/lib.rs", Some(3_600)), 3_600);
     // and the gateway still refuses a claim over 24 hours, whatever a room sets
     let over = ClaimSpec::new("src/lib.rs", CLAIM_MAX_SECS + 1, "");
     assert!(is_invalid(g.claim(&alice(), "r", &over)));
@@ -279,7 +264,7 @@ fn a_claim_taken_with_the_rooms_default_lapses_when_that_lease_ends() {
     let (g, clock) = timed();
     g.admin_set_room_ask_lease(&admin(), "r", Some(20)).unwrap();
     g.join(&alice(), "r").unwrap();
-    let ttl = g.claim_ttl_for(&alice(), "r", "ask:1", None).unwrap();
+    let ttl = g.claim_ttl_for(&alice(), ("r", "ask:1"), None).unwrap();
     g.claim(&alice(), "r", &ClaimSpec::new("ask:1", ttl, ""))
         .unwrap();
     assert_eq!(g.claims(&alice(), "r").unwrap().len(), 1);

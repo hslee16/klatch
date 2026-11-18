@@ -54,7 +54,7 @@ const GUARDED: &[(&str, Call)] = &[
     }),
     // before admin_close_room below: a closed room refuses before the guard is asked
     ("claim_ttl_for", |g, w| {
-        refused(g.claim_ttl_for(w, "r", "ask:1", None))
+        refused(g.claim_ttl_for(w, ("r", "ask:1"), None))
     }),
     ("claims", |g, w| refused(g.claims(w, "r"))),
     ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),

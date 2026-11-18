@@ -285,7 +285,7 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64> {
         self.gateway
-            .claim_ttl_for(&self.principal, room, path, requested)
+            .claim_ttl_for(&self.principal, (room, path), requested)
     }
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
         self.gateway

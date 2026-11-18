@@ -1,4 +1,4 @@
-//! Room settings (#242, DESIGN section 32 item 95): how long an ask may sit unclaimed before its asker is told, and
+//! Room settings (#242, DESIGN section 32 item 97): how long an ask may sit unclaimed before its asker is told, and
 //! the lease an `ask:<N>` claim gets when none is asked for, each per room. Both are admin-set policy keys with
 //! bounds, like `lease:cap` (#537): the human's alone, audited, and `off` puts the built-in value back. A stored
 //! value outside its bound reads as the built-in one, so a hand-written key cannot lift a limit. Neither setting
@@ -8,10 +8,46 @@
 use super::*;
 use crate::domain::{ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, STALE_AFTER_SECS, claim_ttl};
 
-/// The stale threshold may be 10 seconds to an hour.
-const STALE_BOUNDS: (i64, i64) = (10, 3_600);
-/// The ask lease default may be 10 seconds up to the cap an ask claim never passes.
-const ASK_LEASE_BOUNDS: (i64, i64) = (10, ASK_LEASE_MAX_SECS);
+/// One room setting: the admin action name, the end of its policy key (`room:ROOM:<suffix>`), the whole seconds it
+/// may take and the built-in value.
+struct Knob {
+    action: &'static str,
+    suffix: &'static str,
+    min: i64,
+    max: i64,
+    default: i64,
+}
+
+impl Knob {
+    fn key(&self, room: &str) -> String {
+        format!("room:{room}:{}", self.suffix)
+    }
+
+    /// A stored whole number of seconds inside the bounds, else the built-in value.
+    fn read(&self, stored: Option<String>) -> i64 {
+        stored
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (self.min..=self.max).contains(v))
+            .unwrap_or(self.default)
+    }
+}
+
+/// How long an ask may go unclaimed before its asker is told: 10 seconds to an hour.
+const STALE: Knob = Knob {
+    action: "room-stale",
+    suffix: "stale",
+    min: 10,
+    max: 3_600,
+    default: STALE_AFTER_SECS,
+};
+/// The lease of an `ask:` claim with none requested: 10 seconds up to the cap an ask claim never passes.
+const ASK_LEASE: Knob = Knob {
+    action: "room-ask-lease",
+    suffix: "ask-lease",
+    min: 10,
+    max: ASK_LEASE_MAX_SECS,
+    default: ASK_LEASE_DEFAULT_SECS,
+};
 
 /// What a room's settings are now: the human's value, else the built-in one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,36 +58,12 @@ pub struct RoomSettings {
     pub ask_lease_secs: i64,
 }
 
-fn stale_key(room: &str) -> String {
-    format!("room:{room}:stale")
-}
-
-fn ask_lease_key(room: &str) -> String {
-    format!("room:{room}:ask-lease")
-}
-
-/// A stored whole number of seconds inside `bounds`, else `default`.
-fn within(value: Option<String>, (min, max): (i64, i64), default: i64) -> i64 {
-    value
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .filter(|v| (min..=max).contains(v))
-        .unwrap_or(default)
-}
-
 impl<S: Store> Gateway<S> {
     /// The settings in force for `room`. Internal: the digest and the claim default read it.
     pub(crate) fn settings_of(&self, room: &str) -> Result<RoomSettings> {
         Ok(RoomSettings {
-            stale_secs: within(
-                self.store.policy_get(&stale_key(room))?,
-                STALE_BOUNDS,
-                STALE_AFTER_SECS,
-            ),
-            ask_lease_secs: within(
-                self.store.policy_get(&ask_lease_key(room))?,
-                ASK_LEASE_BOUNDS,
-                ASK_LEASE_DEFAULT_SECS,
-            ),
+            stale_secs: STALE.read(self.store.policy_get(&STALE.key(room))?),
+            ask_lease_secs: ASK_LEASE.read(self.store.policy_get(&ASK_LEASE.key(room))?),
         })
     }
 
@@ -63,12 +75,7 @@ impl<S: Store> Gateway<S> {
         room: &str,
         secs: Option<i64>,
     ) -> Result<()> {
-        self.set_room_key(
-            who,
-            ("room-stale", room, &stale_key(room)),
-            STALE_BOUNDS,
-            secs,
-        )
+        self.set_room_key((who, room), &STALE, secs)
     }
 
     /// Only the human: set the lease an `ask:<N>` claim gets in `room` when none is asked for, 10 to 300 seconds, or
@@ -79,21 +86,18 @@ impl<S: Store> Gateway<S> {
         room: &str,
         secs: Option<i64>,
     ) -> Result<()> {
-        self.set_room_key(
-            who,
-            ("room-ask-lease", room, &ask_lease_key(room)),
-            ASK_LEASE_BOUNDS,
-            secs,
-        )
+        self.set_room_key((who, room), &ASK_LEASE, secs)
     }
 
     fn set_room_key(
         &self,
-        who: &Principal,
-        (action, room, key): (&str, &str, &str),
-        (min, max): (i64, i64),
+        (who, room): (&Principal, &str),
+        knob: &Knob,
         secs: Option<i64>,
     ) -> Result<()> {
+        let Knob {
+            action, min, max, ..
+        } = *knob;
         check_room(room)?;
         if let Some(s) = secs
             && !(min..=max).contains(&s)
@@ -108,19 +112,18 @@ impl<S: Store> Gateway<S> {
         );
         self.administer(who, (action, &target), |now| {
             self.store
-                .policy_set(key, secs.map(|s| s.to_string()).as_deref(), now)?;
+                .policy_set(&knob.key(room), secs.map(|s| s.to_string()).as_deref(), now)?;
             Ok(String::new())
         })
     }
 
-    /// The lease for a claim in `room`: the one asked for, else the default for the path (the room's setting for an
-    /// `ask:<N>` claim, 10 minutes for any other). An ask claim is never longer than `ASK_LEASE_MAX_SECS`; the
-    /// gateway still refuses any claim over 24 hours when it is taken.
+    /// The lease for a claim at `(room, path)`: the one asked for, else the default for the path (the room's setting
+    /// for an `ask:<N>` claim, 10 minutes for any other). An ask claim is never longer than `ASK_LEASE_MAX_SECS`;
+    /// the gateway still refuses any claim over 24 hours when it is taken.
     pub fn claim_ttl_for(
         &self,
         who: &Principal,
-        room: &str,
-        path: &str,
+        (room, path): (&str, &str),
         requested: Option<i64>,
     ) -> Result<i64> {
         check_member(who)?;
