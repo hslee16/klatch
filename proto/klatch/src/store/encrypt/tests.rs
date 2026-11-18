@@ -162,6 +162,34 @@ fn an_empty_file_is_removed_and_a_missing_one_is_an_error() {
 }
 
 #[test]
+fn leaving_write_ahead_mode_waits_while_another_connection_is_in_the_way_and_stops_on_a_real_error()
+{
+    let said = |r: rusqlite::Result<String>| mode_switch(r);
+    assert!(matches!(said(Ok("delete".into())), Switch::Done));
+    assert!(matches!(said(Ok("DELETE".into())), Switch::Done));
+    // SQLite keeps the old mode, with no error, when another connection stops the change
+    assert!(matches!(said(Ok("wal".into())), Switch::Wait));
+    let failure = |code| {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(code),
+            None,
+        ))
+    };
+    assert!(matches!(
+        said(failure(rusqlite::ffi::SQLITE_BUSY)),
+        Switch::Wait
+    ));
+    assert!(matches!(
+        said(failure(rusqlite::ffi::SQLITE_LOCKED)),
+        Switch::Wait
+    ));
+    assert!(matches!(
+        said(failure(rusqlite::ffi::SQLITE_NOTADB)),
+        Switch::Failed(_)
+    ));
+}
+
+#[test]
 fn a_store_given_as_a_bare_file_name_locks_the_current_directory() {
     // the parent of "rooms.db" is the empty path, which means the current directory, not an error
     let f =

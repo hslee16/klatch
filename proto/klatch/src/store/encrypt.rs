@@ -112,9 +112,11 @@ pub fn ensure_encrypted(path: &Path, key: &Key) -> Result<Outcome> {
         return Ok(Outcome::Nothing);
     }
     if is_plaintext(path) {
-        let (tables, rows) = convert(path, &enc, key)?;
+        // the plaintext stays locked against every other process until the swap and the scrub are done (#373)
+        let (tables, rows, held) = convert(path, &enc, key)?;
         swap(path, &enc, &old)?;
         scrub_and_remove(&old)?;
+        drop(held);
         return Ok(Outcome::Encrypted { tables, rows });
     }
     if old.exists() {
@@ -124,15 +126,128 @@ pub fn ensure_encrypted(path: &Path, key: &Key) -> Result<Outcome> {
     Ok(Outcome::Nothing)
 }
 
-/// Copy the plaintext database into a new encrypted file and check the copy. Returns the table and row counts.
-fn convert(path: &Path, enc: &Path, key: &Key) -> Result<(usize, u64)> {
+/// How many times a copy is made again because another process wrote to the plaintext between the copy and the lock
+/// that holds it still.
+const COPY_ATTEMPTS: usize = 5;
+
+/// Copy the plaintext database into a new encrypted file and check the copy. Returns the table and row counts and
+/// the connection that still holds the plaintext locked: an old klatch (plaintext, no directory lock) that writes
+/// between the copy and the swap would lose that write, and one that is still writing after the swap would
+/// write beside the new file, so nothing may write until the caller has swapped and dropped the guard (#373).
+fn convert(path: &Path, enc: &Path, key: &Key) -> Result<(usize, u64, Connection)> {
+    for _ in 0..COPY_ATTEMPTS {
+        if let Some(done) = copy_once(path, enc, key)? {
+            return Ok(done);
+        }
+        // someone wrote in the gap: the copy is stale, make it again
+        let _ = std::fs::remove_file(enc);
+    }
+    Err(io(
+        "copying",
+        "the store kept being written to by another klatch; stop it and run this again",
+    ))
+}
+
+/// How long the plaintext may stay busy (another klatch has it open) before the conversion gives up.
+#[cfg(not(test))]
+const BUSY_WAIT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const BUSY_WAIT: Duration = Duration::from_millis(300);
+
+/// A test seam: code to run in the instant between the copy being committed and the plaintext being locked again,
+/// which is where an old klatch's write would otherwise be lost (#373).
+#[cfg(test)]
+pub(crate) mod between_copy_and_lock {
+    use std::cell::RefCell;
+
+    type Hook = Box<dyn FnMut()>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn set(f: impl FnMut() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+    }
+
+    pub(super) fn run() {
+        HOOK.with(|h| {
+            if let Some(f) = h.borrow_mut().as_mut() {
+                f();
+            }
+        });
+    }
+}
+
+/// Switch the plaintext database to rollback-journal mode. SQLite refuses while any other connection is open and
+/// does not always wait for it, so this asks again every 20 ms for `BUSY_WAIT`: an old klatch that opens and closes
+/// the store for each command leaves gaps, one that keeps it open (a long-lived process) does not, and then the
+/// conversion stops with a message instead of going on under it.
+fn leave_write_ahead_mode(conn: &Connection) -> Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        let said = conn.query_row("PRAGMA journal_mode=DELETE", [], |r| r.get::<_, String>(0));
+        match mode_switch(said) {
+            Switch::Done => return Ok(()),
+            Switch::Failed(e) => return Err(io("copying", e)),
+            Switch::Wait => {}
+        }
+        if started.elapsed() >= BUSY_WAIT {
+            return Err(io(
+                "copying",
+                "another klatch has the store open; stop it and run this again",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// What SQLite's answer to the journal mode change means.
+#[derive(Debug)]
+enum Switch {
+    /// The database is in rollback-journal mode now.
+    Done,
+    /// Another connection is in the way: SQLite said busy or locked, or kept the old mode (which it does, without
+    /// an error, when it cannot change it). Ask again.
+    Wait,
+    /// Anything else is not going to get better by waiting.
+    Failed(rusqlite::Error),
+}
+
+fn mode_switch(said: rusqlite::Result<String>) -> Switch {
+    match said {
+        Ok(mode) if mode.eq_ignore_ascii_case("delete") => Switch::Done,
+        Ok(_) => Switch::Wait,
+        Err(e) if is_busy(&e) => Switch::Wait,
+        Err(e) => Switch::Failed(e),
+    }
+}
+
+/// Whether SQLite said the database is busy or locked by another connection.
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(
+                f.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
+/// One copy. `None` when the plaintext changed between the end of the copy and the lock taken again.
+fn copy_once(path: &Path, enc: &Path, key: &Key) -> Result<Option<(usize, u64, Connection)>> {
     let sql = |e: rusqlite::Error| io("copying", e);
     let conn = Connection::open(path).map_err(sql)?;
     conn.busy_timeout(Duration::from_secs(5)).map_err(sql)?;
-    // fold the write-ahead log into the file so the copy sees everything
-    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-        .map_err(sql)?;
+    // Rollback-journal mode: a lock then keeps every other process out, readers too, and closing the connection
+    // touches no file by name. Leaving write-ahead mode needs every other connection closed: a store another
+    // klatch still holds open is refused (after the wait) instead of being converted under it.
+    leave_write_ahead_mode(&conn)?;
     conn.execute_batch("BEGIN EXCLUSIVE").map_err(sql)?;
+    let before: i64 = conn
+        .query_row("PRAGMA data_version", [], |r| r.get(0))
+        .map_err(sql)?;
     let pragma = key.sqlcipher_pragma();
     conn.execute(
         "ATTACH DATABASE ?1 AS enc KEY ?2",
@@ -169,9 +284,22 @@ fn convert(path: &Path, enc: &Path, key: &Key) -> Result<(usize, u64)> {
         rows += a as u64;
     }
     conn.execute_batch("COMMIT").map_err(sql)?;
-    drop(conn);
+    // (detached, so the exclusive lock below covers the plaintext only and the copy can be opened to verify it)
+    conn.execute_batch("DETACH DATABASE enc").map_err(sql)?;
+    #[cfg(test)]
+    between_copy_and_lock::run();
+    // the copy is on disk and the plaintext lock was let go for an instant: take it again and see whether anyone
+    // wrote in between; if so the copy is stale
+    conn.execute_batch("BEGIN EXCLUSIVE").map_err(sql)?;
+    let after: i64 = conn
+        .query_row("PRAGMA data_version", [], |r| r.get(0))
+        .map_err(sql)?;
+    if after != before {
+        let _ = conn.execute_batch("ROLLBACK");
+        return Ok(None);
+    }
     verify_copy(enc, key, version, tables.len())?;
-    Ok((tables.len(), rows))
+    Ok(Some((tables.len(), rows, conn)))
 }
 
 /// Open the finished copy as a stranger would and check it: the key opens it, the version matches, SQLCipher's page
@@ -195,7 +323,8 @@ fn verify_copy(enc: &Path, key: &Key, version: i64, tables: usize) -> Result<()>
         .prepare("PRAGMA cipher_integrity_check")
         .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
         .map_err(sql)?;
-    if n as usize != tables || v != version || !problems.is_empty() {
+    let same_shape = n as usize == tables && v == version;
+    if !same_shape || !problems.is_empty() {
         return Err(io(
             "verifying the copy",
             format!(
@@ -207,15 +336,25 @@ fn verify_copy(enc: &Path, key: &Key, version: i64, tables: usize) -> Result<()>
     Ok(())
 }
 
+/// Scrub and remove `side` if it is there. An old klatch closing the database removes its own log files, so a file
+/// that vanishes while this works on it is what was wanted, not a failure.
+fn scrub_if_present(side: &Path) -> Result<()> {
+    if !side.exists() {
+        return Ok(());
+    }
+    match scrub_and_remove(side) {
+        Err(_) if !side.exists() => Ok(()),
+        done => done,
+    }
+}
+
 /// Put the encrypted copy in place. The plaintext stays reachable as `old` until the new file is the database, so a
 /// crash here loses nothing; its write-ahead log and shared memory file go first, because a stale log beside the new
 /// file would be applied to it.
 fn swap(path: &Path, enc: &Path, old: &Path) -> Result<()> {
     for ext in ["-wal", "-shm"] {
         let side = sidecar(path, ext);
-        if side.exists() {
-            scrub_and_remove(&side)?;
-        }
+        scrub_if_present(&side)?;
     }
     std::fs::hard_link(path, old).map_err(|e| io("keeping the old copy", e))?;
     std::fs::rename(enc, path).map_err(|e| io("putting the copy in place", e))
