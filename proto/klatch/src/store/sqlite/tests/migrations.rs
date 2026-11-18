@@ -305,3 +305,43 @@ fn a_version_28_database_gains_the_wait_mark_and_its_old_waits_tell_nobody() {
     assert!(s.deadlock_notices("r", "alice", 12).unwrap().is_empty());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+/// How many times another connection has seen the file change: a commit that wrote nothing does not count.
+fn data_version(c: &Connection) -> i64 {
+    c.query_row("PRAGMA data_version", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_store_already_at_the_current_version_is_not_written_to_when_opened() {
+    let path = temp_db("gate-current");
+    drop(SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap());
+    let watcher = keyed(&path);
+    let before = data_version(&watcher);
+    let s = SqliteStore::init(keyed(&path)).unwrap();
+    assert_eq!(version(&s), crate::store::sqlite::schema::SCHEMA_VERSION);
+    assert_eq!(
+        data_version(&watcher),
+        before,
+        "opening a current store wrote to it (it was migrated again)"
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_store_one_version_behind_is_written_to_when_opened() {
+    // the other side of the boundary: the same watcher sees the migration commit
+    let path = temp_db("gate-behind");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.conn
+            .execute_batch("ALTER TABLE claim_waits DROP COLUMN told; PRAGMA user_version = 28;")
+            .unwrap();
+    }
+    let watcher = keyed(&path);
+    let before = data_version(&watcher);
+    let s = SqliteStore::init(keyed(&path)).unwrap();
+    assert_eq!(version(&s), crate::store::sqlite::schema::SCHEMA_VERSION);
+    assert_ne!(data_version(&watcher), before, "the migration did not run");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
