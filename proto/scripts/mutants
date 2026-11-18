@@ -135,7 +135,11 @@ for m in "${run[@]}"; do
   # MUTANTS_ITERATE=1 continues an interrupted run of the module: mutants already caught or unviable are skipped
   iter=()
   [ "${MUTANTS_ITERATE:-0}" = 1 ] && iter=(--iterate)
-  (cd "$tree/proto/klatch" && cargo mutants --in-place --no-shuffle ${iter[@]+"${iter[@]}"} "${globs[@]}" -o "$out" > "$out/run.log" 2>&1)
+  # MUTANTS_ARGS adds cargo-mutants options, e.g. MUTANTS_ARGS='-E scrub_and_remove' to leave out the mutants that loop
+  # writing without end (run them last, alone, under the ulimit above), or MUTANTS_ARGS='-F scrub_and_remove' for only them
+  extra=()
+  [ -n "${MUTANTS_ARGS:-}" ] && read -r -a extra <<< "$MUTANTS_ARGS"
+  (cd "$tree/proto/klatch" && cargo mutants --in-place --no-shuffle ${iter[@]+"${iter[@]}"} ${extra[@]+"${extra[@]}"} "${globs[@]}" -o "$out" > "$out/run.log" 2>&1)
   rc=$?
   # exit 0 all caught, 2 some missed, 3 some timed out; anything else is a run that did not happen
   case $rc in 0 | 2 | 3) ;; *) echo "mutants: module $m failed to run (exit $rc), see $out/run.log" >&2; failed=1 ;; esac

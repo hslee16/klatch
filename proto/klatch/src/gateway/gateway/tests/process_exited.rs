@@ -1,4 +1,4 @@
-//! Has the process behind another member's session exited? (#790, DESIGN item 94.) Only the probe's `Gone` says yes;
+//! Has the process behind another member's session exited? (#790, DESIGN item 96.) Only the probe's `Gone` says yes;
 //! everything it cannot read, and every member it cannot probe, says no: unknown counts as alive.
 
 use super::*;

@@ -451,7 +451,7 @@ fn served_in(
     ))
 }
 
-/// The askers among `served` whose process has exited, by the liveness probe (#790, DESIGN item 94). An asker the
+/// The askers among `served` whose process has exited, by the liveness probe (#790, DESIGN item 96). An asker the
 /// probe cannot say anything about (no session, an unreadable record, no `ps`) is not in the list: unknown counts
 /// as alive.
 fn exited_askers(t: &dyn Transport, room: &str, served: &[klatch::domain::Served]) -> Vec<String> {
@@ -520,6 +520,11 @@ struct EveryFiveSeconds {
 impl EveryFiveSeconds {
     fn starting(at: Instant) -> Self {
         EveryFiveSeconds { next: at }
+    }
+
+    /// How long until a look is due (zero when it is).
+    fn until_due(&self) -> Duration {
+        self.next.saturating_duration_since(Instant::now())
     }
 
     /// True when a look is due, and then the next one is set.
@@ -599,17 +604,29 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
     let deadline = started + Duration::from_secs(timeout);
     let mut exit_check = EveryFiveSeconds::starting(started);
     loop {
+        // The token is taken before the poll, so a commit in between is a change the pause sees at once (#616).
+        let seen = t.change_token();
         if print_woken(t, a)? {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
             print_timeout(t, a, timeout);
             return Ok(());
         }
         if exit_check.due() && print_exited_askers(t, a, started.elapsed().as_secs()) {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(200));
+        // Wake on a store change; the old 200 ms poll stays as the fallback for a store with no token. The pause
+        // never outlasts the next look for an exited asker (#790).
+        klatch::gateway::pause_for_change(
+            &|| t.change_token(),
+            seen,
+            klatch::gateway::WAKE_FALLBACK
+                .min(left)
+                .min(exit_check.until_due()),
+            klatch::gateway::WAKE_TICK,
+        );
     }
 }
 

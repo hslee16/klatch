@@ -154,7 +154,7 @@ impl<S: Store> Gateway<S> {
         })
     }
 
-    /// Whether the process behind `member`'s session has exited (#790, DESIGN item 94): true only when the
+    /// Whether the process behind `member`'s session has exited (#790, DESIGN item 96): true only when the
     /// liveness probe says `Gone` for a member of `room` that has a recorded session. Everything else is false,
     /// because unknown counts as alive: no lease source, a member with no session (a bot), a record the probe
     /// cannot read, a table `ps` cannot give, another machine. The caller must be a member of the room (as for

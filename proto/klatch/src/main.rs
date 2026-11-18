@@ -748,12 +748,15 @@ fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: boo
         bail!("serve needs --stdio, the only transport so far");
     }
     // stdout carries protocol frames only; nothing else may print there
-    Ok(klatch::session::serve(
-        gateway,
-        principal,
-        std::io::BufReader::new(std::io::stdin()),
-        std::io::stdout().lock(),
-    )?)
+    // stdin cannot be stopped from outside; the process exits when the session does
+    let config = klatch::session::SessionConfig::default();
+    Ok(
+        klatch::session::Session::new(gateway, principal, &config).serve_guarded(
+            std::io::BufReader::new(std::io::stdin()),
+            std::io::stdout(),
+            None,
+        )?,
+    )
 }
 
 #[cfg(test)]

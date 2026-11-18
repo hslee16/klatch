@@ -10,7 +10,7 @@ pub(super) fn all() -> Vec<Scenario> {
         },
         Scenario {
             name: "a_helper_is_told_in_seconds_that_its_askers_process_exited",
-            origin: "#790, DESIGN item 94",
+            origin: "#790, DESIGN item 96",
             layer: "fault",
             run: helper_told_asker_process_exited,
         },
