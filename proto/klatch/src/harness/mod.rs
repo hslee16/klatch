@@ -7,6 +7,7 @@
 
 mod ancestry;
 mod capability;
+pub mod conformance;
 mod host;
 #[cfg(test)]
 mod linux_shaped;

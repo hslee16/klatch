@@ -321,6 +321,19 @@ pub(crate) struct Caller {
     pub stdin_session: Option<String>,
     /// The whole input of a hook, for events that carry more than the session (a tool call).
     pub stdin: Option<serde_json::Value>,
+    /// The caller is a Claude Code session the walk up the process tree verified (#877); see `runs_claude_code`.
+    pub claude_code: bool,
+}
+
+/// Whether the evidence shows a Claude Code session, the only harness klatch can verify today (#877). It is the session
+/// the walk found above this process: a live process whose program is `claude` with a registry record whose pid and
+/// start time match, and for a hook the record of the very session the hook was started for. Nothing the caller
+/// sends counts: a typed name, a session remembered by id, a key bundle (which proves a member and says nothing of
+/// its harness) and Codex (a thread id, not a verified process; #64) all fail closed to the generic floor. This is
+/// same-user evidence, as the registry is: it keeps an honest session from being mislabelled, and does not stop a
+/// process of the same user that forges the registry.
+pub(crate) fn runs_claude_code(evidence: &PeerEvidence, codex: bool) -> bool {
+    !codex && matches!(evidence, PeerEvidence::Session { .. })
 }
 
 /// Who is calling: the typed name if there is one, else the coding-agent session found above this process, kept to
@@ -360,7 +373,9 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         is_hook,
         stdin_session: stdin_session.as_deref(),
     };
+    let is_codex = probe.codex.is_some();
     let (evidence, notice) = probe.evidence(store);
+    let claude_code = runs_claude_code(&evidence, is_codex);
     // A SessionEnd hook that cannot tell which session it ends does nothing, quietly.
     let session_end = matches!(cmd, Cmd::Hook { event: Some(e), .. } if e == "SessionEnd");
     if session_end && matches!(evidence, PeerEvidence::None) {
@@ -376,6 +391,7 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         session_dir,
         stdin_session,
         stdin,
+        claude_code,
     }))
 }
 
@@ -416,6 +432,7 @@ fn identify_by_credential(
         session_dir: None,
         stdin_session,
         stdin,
+        claude_code: false,
     }))
 }
 
@@ -518,6 +535,27 @@ mod tests {
         let (ev, notice) = gather_evidence(None, Some(&stale));
         assert_eq!(ev, PeerEvidence::None);
         assert!(notice.unwrap().contains("stale"));
+    }
+
+    #[test]
+    fn only_a_session_found_by_the_walk_is_taken_for_claude_code() {
+        let session = PeerEvidence::Session {
+            session_id: "s".into(),
+            name: None,
+        };
+        assert!(runs_claude_code(&session, false));
+        // Codex names its session too, but it is not a verified process: the floor until #64.
+        assert!(!runs_claude_code(&session, true));
+        for other in [
+            PeerEvidence::None,
+            PeerEvidence::DeclaredName("claude-code".into()),
+            PeerEvidence::Credential {
+                member: "worker".into(),
+            },
+            PeerEvidence::bearer("t"),
+        ] {
+            assert!(!runs_claude_code(&other, false), "{other:?}");
+        }
     }
 
     #[test]

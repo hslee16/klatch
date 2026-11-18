@@ -815,7 +815,12 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         ),
         cmd => {
             let me = caller.principal.member.clone();
-            let transport = Direct::new(gateway, caller.principal);
+            let mut transport = Direct::new(gateway, caller.principal);
+            if caller.claude_code {
+                transport = transport.with_harness(Box::new(klatch::harness::ClaudeCode::probing(
+                    klatch::harness::wake_support_here,
+                )));
+            }
             let ctx = Ctx {
                 t: &transport,
                 me: &me,

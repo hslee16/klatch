@@ -163,17 +163,36 @@ pub trait Transport {
 pub struct Direct<S: Store> {
     gateway: Rc<Gateway<S>>,
     principal: Principal,
+    harness: Option<Box<dyn crate::harness::Harness>>,
 }
 
 impl<S: Store> Direct<S> {
     pub fn new(gateway: Rc<Gateway<S>>, principal: Principal) -> Self {
-        Self { gateway, principal }
+        Self {
+            gateway,
+            principal,
+            harness: None,
+        }
+    }
+
+    /// The harness the caller runs, which the transport edge learned from evidence it checked itself (#877): never a
+    /// name the caller sent. Without it a join is the generic floor, which is what every caller without such
+    /// evidence stays.
+    pub fn with_harness(mut self, harness: Box<dyn crate::harness::Harness>) -> Self {
+        self.harness = Some(harness);
+        self
     }
 }
 
 impl<S: Store> Transport for Direct<S> {
     fn join(&self, room: &str) -> Result<()> {
-        self.gateway.join(&self.principal, room)
+        match &self.harness {
+            Some(h) => self
+                .gateway
+                .join_with_harness(&self.principal, room, h.as_ref())
+                .map(|_| ()),
+            None => self.gateway.join(&self.principal, room),
+        }
     }
     fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)> {
         self.gateway.dm(&self.principal, to, body, label)
