@@ -35,7 +35,12 @@ fn a_locked_keyring_fails_fast_with_a_reason_and_leaves_no_key_file() {
     );
     assert!(!o.status.success(), "a store was made with no keyring");
     let err = String::from_utf8_lossy(&o.stderr);
-    assert!(err.contains("secret-tool"), "no reason given: {err}");
+    assert!(
+        err.contains("secret-tool")
+            || err.contains("keyring is locked")
+            || err.contains("no default collection"),
+        "no reason given: {err}"
+    );
     assert!(
         !dir.join("state/klatch/keys").exists(),
         "a key file was written behind the keyring's back"

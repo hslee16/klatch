@@ -160,6 +160,47 @@ describe("klatch client conformance", () => {
     await assert.rejects(a.request("mute", { room: "r" }), (e: ApiError) => e.code === "invalid_params");
   });
 
+  it("an invite is a pointer posted where the member already is", async () => {
+    const [a, b] = [await store.client("alice"), await store.client("bob")];
+    await a.post("team", "hello");
+    await b.post("team", "hi");
+    await a.invite("bob", "design", "team");
+    const bodies = (await b.read("team")).map((m) => m.body);
+    assert.ok(bodies.some((x) => x.includes("klatch join design")), bodies.join("|"));
+    await assert.rejects(a.invite("alice", "design", "team"), (e: ApiError) => e.code === "invalid");
+    await assert.rejects(a.invite("bob", "bad room", "team"), (e: ApiError) => e.code === "invalid");
+    await assert.rejects(a.request("invite", { member: "bob" }), (e: ApiError) => e.code === "invalid_params");
+  });
+
+  it("a member declares its scope, its kind and its status", async () => {
+    const a = await store.client("alice");
+    await a.post("r", "here");
+    await a.setScope("git:demo-1");
+    await a.claim("r", "src/a.rs");
+    assert.deepEqual((await a.claims("r")).map((c) => c.scope), ["git:demo-1"]);
+    await assert.rejects(a.setScope("not a scope!"), (e: ApiError) => e.code === "invalid");
+    await a.setKind("bot");
+    assert.deepEqual((await a.who("r")).map((m) => m.kind), ["bot"]);
+    await a.setKind(null);
+    assert.deepEqual((await a.who("r")).map((m) => m.kind), [undefined]);
+    await assert.rejects(a.setKind("session"), (e: ApiError) => e.code === "invalid");
+    await a.setStatus("r", "done");
+    assert.deepEqual((await a.who("r")).map((m) => m.status), ["done"]);
+    await assert.rejects(a.setStatus("r", ""), (e: ApiError) => e.code === "invalid");
+    await a.unsubscribe("r");
+  });
+
+  it("a member that is not the reviewer is refused both review methods", async () => {
+    const a = await store.client("alice");
+    await assert.rejects(a.reviewNext(), (e: ApiError) => {
+      assert.equal(e.code, "refused");
+      assert.ok(e.refusals.some((r) => r.rule === "reviewer"));
+      return true;
+    });
+    await assert.rejects(a.reviewVerdict(1, "allow"), (e: ApiError) => e.code === "refused");
+    await assert.rejects(a.request("review_verdict", { id: 1 }), (e: ApiError) => e.code === "invalid_params");
+  });
+
   it("a refusal carries its rule and never repeats the text", async () => {
     const a = await store.client("alice");
     const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";

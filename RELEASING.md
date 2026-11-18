@@ -14,6 +14,9 @@ One release is one number, spelled three ways (`0.1.0-dev.2` for the crate and n
 - `clients/typescript/package.json` and `clients/typescript/package-lock.json`
 - `CHANGELOG.md`: put the entries under the new version and date: the Unreleased entries, plus what
   `release/changelog-fragments.sh collect` prints (then delete the files in `changelog.d/`)
+- `DESIGN.md`: run `release/design-fragments.sh assemble`; it appends the fragments in `design/items/` as the next numbered
+  items in ticket order and deletes them. It prints the number each ticket got; change references written as "the design
+  item for #NNN" to the number
 - `README.md`: the version in the `cargo install` line and the pre-release notice
 - `VERSIONING.md`, if the protocol or store schema version changed
 
