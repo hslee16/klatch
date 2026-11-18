@@ -64,3 +64,33 @@ fn a_member_mode_is_kept_per_member_the_last_report_wins_and_pruning_takes_it() 
     let left: Vec<String> = s.member_modes().unwrap().into_iter().map(|m| m.0).collect();
     assert_eq!(left, vec!["alice".to_string()]);
 }
+
+#[test]
+fn member_attributes_survive_reopening_keep_the_first_id_and_group_by_repository() {
+    use crate::domain::MemberAttrs;
+    let path = temp_db("member-attrs");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        assert_eq!(s.member_attrs("alice").unwrap(), None);
+        s.note_member_attrs("alice", &MemberAttrs::new("m-1", "git:a-1", "/w/a"), 1)
+            .unwrap();
+        s.note_member_attrs("bob", &MemberAttrs::new("m-2", "git:a-1", "/w/a2"), 2)
+            .unwrap();
+        s.note_member_attrs("carol", &MemberAttrs::new("m-3", "git:b-2", "/w/b"), 3)
+            .unwrap();
+        // a later note changes the observation, never the id
+        s.note_member_attrs("alice", &MemberAttrs::new("m-9", "git:b-2", "/w/b"), 4)
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(
+        s.member_attrs("alice").unwrap(),
+        Some(MemberAttrs::new("m-1", "git:b-2", "/w/b"))
+    );
+    assert_eq!(s.members_in_repository("git:a-1").unwrap(), vec!["bob"]);
+    assert_eq!(
+        s.members_in_repository("git:b-2").unwrap(),
+        vec!["alice", "carol"]
+    );
+    assert!(s.members_in_repository("").unwrap().is_empty());
+}

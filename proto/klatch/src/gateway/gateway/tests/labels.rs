@@ -304,3 +304,37 @@ fn the_lowest_label_cannot_be_sealed_because_everyone_is_at_it() {
     let g = open();
     assert!(is_invalid(g.admin_seal_label(&admin(), "public")));
 }
+
+#[test]
+fn a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it() {
+    // #191, decided by the human on 2026-11-18: a repository's first session keeps the lowest clearance (public).
+    // Observing a repository, alone or shared with members that are cleared, grants nothing.
+    let g = vault();
+    g.store
+        .note_member_attrs(
+            "alice",
+            &crate::domain::MemberAttrs::new("m-a", "git:proj-1", "/w/proj"),
+            1,
+        )
+        .unwrap();
+    g.store
+        .note_member_attrs(
+            "newcomer",
+            &crate::domain::MemberAttrs::new("m-n", "git:proj-1", "/w/proj"),
+            2,
+        )
+        .unwrap();
+    let newcomer = Principal::unattributed("newcomer");
+    assert_eq!(g.clearance_of("alice").unwrap(), "private");
+    assert_eq!(g.clearance_of("newcomer").unwrap(), "public");
+    assert_eq!(
+        g.clearance_of("newcomer").unwrap(),
+        g.chain().unwrap().lowest(),
+        "the lowest level of the chain"
+    );
+    let refused = g.read(&newcomer, "vault", false).unwrap_err();
+    assert_eq!(rule_of(refused), "clearance");
+    // the same repository as a cleared member did not lift it, and a public room is still open to it
+    g.join(&newcomer, "open").unwrap();
+    assert!(g.post(&newcomer, "open", "hello").is_ok());
+}

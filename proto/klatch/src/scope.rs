@@ -4,6 +4,8 @@
 use super::*;
 
 #[cfg(test)]
+mod attr_tests;
+#[cfg(test)]
 mod edge_tests;
 
 /// FNV-1a, a hash that is the same on every run and platform (a scope id must be).
@@ -30,22 +32,84 @@ pub(crate) fn scope_for_dir(dir: &str) -> Option<String> {
     klatch::domain::valid_scope(&scope).then_some(scope)
 }
 
-/// The git directory every worktree of the repository containing `base` shares, if `base` is in one.
+/// The git directory every worktree of the repository containing `base` shares, if `base` is in one. Read from the
+/// files git lays out (no git process is run, so nothing in the directory can execute): walk up to the first `.git`;
+/// a directory is the common directory itself; a file says `gitdir: <path>` (a linked worktree or a submodule), and
+/// the `commondir` file there, if any, points back at the common directory.
 fn git_common_dir(base: &std::path::Path) -> Option<std::path::PathBuf> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(base)
-        .args(["rev-parse", "--git-common-dir"])
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if printed.is_empty() {
-        return None;
+    for dir in base.ancestors() {
+        let dot_git = dir.join(".git");
+        let Ok(meta) = std::fs::symlink_metadata(&dot_git) else {
+            continue;
+        };
+        if meta.is_dir() {
+            return std::fs::canonicalize(&dot_git).ok();
+        }
+        if !meta.is_file() {
+            return None;
+        }
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let target = text.lines().next()?.trim().strip_prefix("gitdir:")?.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let gitdir = std::fs::canonicalize(dir.join(target)).ok()?;
+        return match std::fs::read_to_string(gitdir.join("commondir")) {
+            Ok(rel) => std::fs::canonicalize(gitdir.join(rel.trim())).ok(),
+            Err(_) => Some(gitdir),
+        };
     }
-    let path = std::path::Path::new(&printed);
-    std::fs::canonicalize(base.join(path)).ok()
+    None
+}
+
+/// The repository id of a directory: its `git:<name>-<hash>` scope when it is in a git repository, else `None`. It is
+/// derived here from the git common directory (so worktrees share it) and never taken from the caller (R42). It is an
+/// observation of where a process started; a directory can name another repository's git directory, so the value
+/// proves nothing and grants nothing.
+pub(crate) fn repository_for_dir(dir: &str) -> Option<String> {
+    scope_for_dir(dir).filter(|s| s.starts_with("git:"))
+}
+
+/// The id a member keeps for its whole life (R41): the same for one session on every run, and different for two
+/// sessions. A caller with no session gets one from its member name. It is an identifier, not a secret or a credential.
+pub(crate) fn member_id_for(member: &str, session_id: Option<&str>) -> String {
+    let key = match session_id {
+        Some(sid) => format!("session\0{sid}"),
+        None => format!("member\0{member}"),
+    };
+    format!("m-{:016x}", fnv1a(&key))
+}
+
+/// Record what klatch observes about a member: its directory and the repository derived from it. The member id is
+/// made the first time and kept; a later call only updates the repository and directory, and does nothing at all when
+/// they are unchanged. With no directory there is nothing to observe. Nothing here is consulted for clearance or
+/// access (the repository value is shown and grouped by, never trusted).
+pub(crate) fn ensure_member_attrs(
+    store: &dyn Store,
+    member: &str,
+    session_id: Option<&str>,
+    dir: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    let Some(dir) = dir else {
+        return Ok(());
+    };
+    let repository = repository_for_dir(dir).unwrap_or_default();
+    let existing = store.member_attrs(member)?;
+    if existing
+        .as_ref()
+        .is_some_and(|e| e.repository == repository && e.directory == dir)
+    {
+        return Ok(());
+    }
+    let id = existing
+        .map(|e| e.member_id)
+        .unwrap_or_else(|| member_id_for(member, session_id));
+    Ok(store.note_member_attrs(
+        member,
+        &klatch::domain::MemberAttrs::new(id, repository, dir),
+        now,
+    )?)
 }
 
 /// The repository directory is the parent of `.git`; a bare repository is the directory itself.
@@ -164,6 +228,39 @@ mod scope_dir_tests {
         assert_eq!(top, sub, "a subdirectory is the same repository");
         assert_ne!(top, other);
         assert!(klatch::domain::valid_scope(&top) && top.len() <= 80);
+    }
+
+    #[test]
+    fn a_worktree_made_by_git_shares_the_repository_id_of_the_one_it_was_made_from() {
+        let a = tmp("real-main");
+        if !git(&a, &["init", "-q"])
+            || !git(
+                &a,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "x",
+                ],
+            )
+        {
+            return;
+        }
+        let wt = a.parent().unwrap().join("real-linked");
+        let _ = std::fs::remove_dir_all(&wt);
+        if !git(&a, &["worktree", "add", "-q", &wt.to_string_lossy()]) {
+            return;
+        }
+        assert_eq!(
+            repository_for_dir(&a.to_string_lossy()),
+            repository_for_dir(&wt.to_string_lossy())
+        );
+        assert!(repository_for_dir(&a.to_string_lossy()).is_some());
     }
 
     #[test]
