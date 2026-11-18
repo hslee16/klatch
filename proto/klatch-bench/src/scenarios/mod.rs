@@ -7,6 +7,7 @@ use std::time::Instant;
 mod admin;
 mod admin_role;
 mod anchors;
+mod ask_gone;
 mod asks;
 mod bigstore;
 mod claims;
@@ -82,6 +83,7 @@ pub(super) fn no_panic(text: &str, what: &str) -> Result<(), String> {
 pub fn all() -> Vec<Scenario> {
     [
         asks::all(),
+        ask_gone::all(),
         bigstore::all(),
         claims::all(),
         sessions::all(),

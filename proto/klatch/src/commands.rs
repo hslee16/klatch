@@ -73,7 +73,7 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             };
             let rooms =
                 klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
-            wait(t, &rooms, timeout, peek)?
+            wait(ctx, &rooms, timeout, peek)?
         }
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
@@ -377,12 +377,50 @@ fn look(
     Ok(seen.into_iter().filter(|m| filter.accepts(m)).collect())
 }
 
+/// How many recent messages a waiting helper reads to find the asks it answered (#226).
+const SERVED_WINDOW: usize = 200;
+
+/// The askers `ctx`'s caller serves in `room` that are gone, as lines (#226, DESIGN item 89). A room that cannot be
+/// read adds nothing.
+fn gone_askers_in(ctx: &Ctx, room: &str, now: i64) -> Result<Vec<String>> {
+    let t = ctx.t;
+    let range = klatch::gateway::HistoryRange {
+        since: None,
+        last: Some(SERVED_WINDOW),
+    };
+    let messages = t.history(room, range)?.messages;
+    let served = klatch::domain::served_by(
+        &messages,
+        (&t.open_asks(room)?, &t.claims(room)?),
+        (ctx.me, now),
+    );
+    if served.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(klatch::domain::gone_asker_notes(
+        &served,
+        &t.who(room)?,
+        now,
+    ))
+}
+
+/// What a wait that timed out adds to the marker: helpers hear of askers that are gone (#226).
+fn print_gone_askers(ctx: &Ctx, rooms: &[(String, klatch::domain::WaitFilter)], waited: u64) {
+    let now = ctx.now + waited as i64;
+    for (room, _) in rooms {
+        for note in gone_askers_in(ctx, room, now).unwrap_or_default() {
+            println!("{note}");
+        }
+    }
+}
+
 fn wait(
-    t: &dyn Transport,
+    ctx: &Ctx,
     rooms: &[(String, klatch::domain::WaitFilter)],
     timeout: u64,
     peek: bool,
 ) -> Result<()> {
+    let t = ctx.t;
     let (timeout, clamped) = effective_timeout(timeout);
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
@@ -415,6 +453,7 @@ fn wait(
                     .collect::<Vec<_>>()
                     .join(",")
             );
+            print_gone_askers(ctx, rooms, timeout);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
