@@ -11,6 +11,7 @@ mod host;
 #[cfg(test)]
 mod linux_shaped;
 mod liveness;
+mod negotiate;
 mod probe;
 mod process;
 mod pstime;
@@ -25,6 +26,10 @@ pub use capability::{
 };
 pub use host::SysHost;
 pub use liveness::{Liveness, check, pid_domain_for, this_pid_domain};
+pub use negotiate::{
+    Admission, Capability, ClaudeCode, Codex, Generic, Harness, HookTrust, Level, Mode,
+    Requirement, negotiate,
+};
 pub use probe::{
     Evidence, FileMeta, Host, LAYERS, Probe, ProcRow, Sample, Status, Thresholds, Turn, Verdict,
     parse_turn, probe,

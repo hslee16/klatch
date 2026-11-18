@@ -23,6 +23,9 @@ fn refused<T>(r: Result<T>) -> bool {
 
 const GUARDED: &[(&str, Call)] = &[
     ("join", |g, w| refused(g.join(w, "r"))),
+    ("join_with_harness", |g, w| {
+        refused(g.join_with_harness(w, "r", &crate::harness::Generic))
+    }),
     ("post", |g, w| refused(g.post(w, "r", "x"))),
     ("post_labeled", |g, w| {
         refused(g.post_labeled(w, ("r", "x", None)))
@@ -150,6 +153,9 @@ const GUARDED: &[(&str, Call)] = &[
     }),
     ("admin_set_room_ask_lease", |g, w| {
         refused(g.admin_set_room_ask_lease(w, "r", Some(120)))
+    }),
+    ("admin_set_room_require", |g, w| {
+        refused(g.admin_set_room_require(w, "r", Some("flag:wake")))
     }),
     ("admin_plant_canary", |g, w| {
         refused(g.admin_plant_canary(w, "r"))

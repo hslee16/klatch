@@ -44,6 +44,7 @@ mod reviewer;
 mod roles;
 pub use roles::Role;
 mod rate;
+mod room_require;
 mod room_settings;
 mod rooms;
 mod runs;
@@ -137,11 +138,11 @@ impl<S: Store> Gateway<S> {
         self.store.spy_fail(fail)
     }
 
+    /// Join as a caller that named no harness: the generic floor (CLI and instructions file), so a room that
+    /// requires a capability the floor lacks refuses it. See `join_with_harness`.
     pub fn join(&self, who: &Principal, room: &str) -> Result<()> {
-        self.admit(who, room, Operation::Join { room: room.into() })?;
-        let created = self.check_creation(who, room)?;
-        self.store.join(room, &who.member, self.now())?;
-        self.note_creation(who, room, created)
+        self.join_with_harness(who, room, &crate::harness::Generic)
+            .map(|_| ())
     }
 
     pub fn post(&self, who: &Principal, room: &str, body: &str) -> Result<Posted> {

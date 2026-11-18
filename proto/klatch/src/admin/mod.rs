@@ -134,6 +134,16 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Require harness capabilities of ROOM as MODE:CAPABILITY[,CAPABILITY...] with MODE refuse (a member whose harness
+    /// lacks one cannot join) or flag (it joins and the gap is recorded), for example
+    /// `room-require lobby refuse:pre-action-enforcement,wake`; `room-require lobby --off` lifts it. Only `native`
+    /// support counts; a name this build does not know is refused (#61)
+    RoomRequire {
+        room: String,
+        spec: Option<String>,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board
