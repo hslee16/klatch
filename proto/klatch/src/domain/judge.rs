@@ -12,6 +12,9 @@ pub struct ReviewItem {
     pub seq: i64,
     /// The label the message would cross to.
     pub to_label: String,
+    /// The label the message was posted under. Empty when unknown, which a label-gated judge treats as above its
+    /// gate.
+    pub from_label: String,
     pub reason: String,
     pub text: String,
 }
