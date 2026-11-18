@@ -1865,3 +1865,30 @@ the first runs were green. The planted bugs are what show they can fail. The cli
 ### 53.6 Tickets
 
 #666 time is not modelled; #667 what Shuttle cannot reach; #668 ordinary tests do not run in a Shuttle build.
+
+### 52.8b Update, 2026-11-18: LabelChain::new, min and default_cap (#658; Kani 0.68.0)
+
+`LabelChain::new`'s three rules, `min` and `default_cap` were split into `check_chain`, `min_in` and `default_cap_in`
+(slices, no allocation; `new` keeps only the message text) and proved at small bounds.
+
+| Harness | Bound | Time |
+|---|---|---|
+| a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named | 0 to 4 names from `a`, `b`, `c` and the invalid `x y`; result and first fault compared with a second formulation in the harness | 610 s |
+| min_is_the_lower_known_label_and_none_for_an_unknown_one | chains of 2 to 4 of the default names; labels those or one outside | 42 s |
+| the_default_cap_is_always_a_name_in_the_chain | the same chains | 21 s |
+
+Planted bugs, in the real functions, one run each, reverted:
+
+| Planted bug | Harness | Result |
+|---|---|---|
+| check_chain: a chain of one name accepted | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 524 s |
+| check_chain: names are not checked | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 150 s |
+| check_chain: repeats allowed | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 216 s |
+| check_chain: a repeat is looked for only against the previous name | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 634 s |
+| min_in: returns the higher label | `min_is_the_lower_known_label_and_none_for_an_unknown_one` | caught, 38 s |
+| default_cap_in: the top of the chain | `the_default_cap_is_always_a_name_in_the_chain` | caught, 25 s |
+
+Honest notes. The three harnesses passed on their first run, so the plants are what show they can fail. The chain harness
+is slow because it compares strings pairwise twice (the function and the oracle); the plant that looks for a repeat only
+against the previous name took 634 s to be caught, close to the 900 s default limit of `proto/scripts/kani`.
+`LabelChain::parse` is still uncovered.
