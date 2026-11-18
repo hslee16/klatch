@@ -41,6 +41,7 @@ mod receipt;
 mod refusal_hints;
 mod reviewer;
 mod room_capability;
+mod room_settings;
 mod runs;
 mod scrub;
 mod stream;

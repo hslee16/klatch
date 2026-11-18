@@ -76,6 +76,13 @@ pub trait Transport {
     /// The lease cap and the grace period, in seconds, or with `None` back to the default (#537).
     fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()>;
     fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()>;
+    /// A room's stale-ask threshold and its default `ask:` claim lease, in seconds, or with `None` back to the
+    /// built-in value (#242).
+    fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()>;
+    fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()>;
+    /// The lease a claim gets in a room: the one asked for, else the default for the path (the room's setting for an
+    /// `ask:` claim) (#242).
+    fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
     /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
     fn admin_plant_canary(&self, room: &str) -> Result<()>;
@@ -256,6 +263,18 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()> {
         self.gateway.admin_set_lease_grace(&self.principal, secs)
+    }
+    fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()> {
+        self.gateway
+            .admin_set_room_stale(&self.principal, room, secs)
+    }
+    fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()> {
+        self.gateway
+            .admin_set_room_ask_lease(&self.principal, room, secs)
+    }
+    fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64> {
+        self.gateway
+            .claim_ttl_for(&self.principal, room, path, requested)
     }
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
         self.gateway

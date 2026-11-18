@@ -179,6 +179,28 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
                 None => println!("the lease grace is back to its default"),
             }
         }
+        PolicyAct::RoomStale { room, secs, off } => {
+            let secs = secs_or_off(secs, off, "room-stale ROOM")?;
+            t.admin_set_room_stale(&room, secs)?;
+            match secs {
+                Some(s) => println!(
+                    "an ask in {} with no claim is reported to its asker after {s} seconds",
+                    flat(&room)
+                ),
+                None => println!("{} is back to the default stale threshold", flat(&room)),
+            }
+        }
+        PolicyAct::RoomAskLease { room, secs, off } => {
+            let secs = secs_or_off(secs, off, "room-ask-lease ROOM")?;
+            t.admin_set_room_ask_lease(&room, secs)?;
+            match secs {
+                Some(s) => println!(
+                    "an ask claim in {} lasts {s} seconds unless the claimer asks for less",
+                    flat(&room)
+                ),
+                None => println!("{} is back to the default ask lease", flat(&room)),
+            }
+        }
         PolicyAct::Cap { label } => {
             t.admin_set_cap(&label)?;
             println!("the agent cap is {label}");
