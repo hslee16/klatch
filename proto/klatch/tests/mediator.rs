@@ -69,7 +69,12 @@ fn every_recorded_case_gets_the_proposals_it_expects_and_only_proposals() {
         h.ok("mediator", &["mediator", "--once"]);
         let seen = h.ok("cy", &["read", "lobby"]);
         let n = seen.matches("mediator proposal").count();
-        assert_eq!(n as u64, case["expect_proposals"].as_u64().unwrap(), "{}: {seen}", case["name"]);
+        assert_eq!(
+            n as u64,
+            case["expect_proposals"].as_u64().unwrap(),
+            "{}: {seen}",
+            case["name"]
+        );
     }
 }
 
@@ -90,7 +95,10 @@ fn the_undetectable_cases_are_marked_so_and_show_nothing() {
 fn a_cycle_through_asks_gets_a_room_and_an_invite_pointer_for_each_member() {
     let h = play(&cases()[0]);
     let out = h.ok("mediator", &["mediator", "--once"]);
-    assert!(out.contains("invited ann to mediate-1") && out.contains("invited bo to mediate-1"), "{out}");
+    assert!(
+        out.contains("invited ann to mediate-1") && out.contains("invited bo to mediate-1"),
+        "{out}"
+    );
     let bo = h.ok("bo", &["read", "lobby"]);
     assert!(bo.contains("klatch join mediate-1"), "{bo}");
 }

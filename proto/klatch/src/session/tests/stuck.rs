@@ -2,7 +2,11 @@
 
 use super::*;
 
-fn call(g: &Gateway<SqliteStore>, who: &Principal, params: Value) -> (bool, Option<Value>, Option<(String, String)>) {
+fn call(
+    g: &Gateway<SqliteStore>,
+    who: &Principal,
+    params: Value,
+) -> (bool, Option<Value>, Option<(String, String)>) {
     response(&run(g, who, &[req("s", "stuck", params)]), "s")
 }
 
@@ -10,13 +14,25 @@ fn call(g: &Gateway<SqliteStore>, who: &Principal, params: Value) -> (bool, Opti
 fn a_cycle_through_asks_is_listed_with_members_and_ask_numbers_and_no_text() {
     let g = gateway();
     let post = |who: &Principal, body: &str| {
-        let f = run(&g, who, &[req("p", "post", json!({"room":"r","body":body}))]);
+        let f = run(
+            &g,
+            who,
+            &[req("p", "post", json!({"room":"r","body":body}))],
+        );
         response(&f, "p").1.unwrap()["seq"].as_i64().unwrap()
     };
     let a = post(&alice(), "seeking: SECRET-WORDING one");
     let b = post(&bob(), "seeking: SECRET-WORDING two");
     let claim = |who: &Principal, n: i64| {
-        let f = run(&g, who, &[req("c", "claim", json!({"room":"r","path":format!("ask:{n}")}))]);
+        let f = run(
+            &g,
+            who,
+            &[req(
+                "c",
+                "claim",
+                json!({"room":"r","path":format!("ask:{n}")}),
+            )],
+        );
         assert!(response(&f, "c").0);
     };
     claim(&bob(), a);

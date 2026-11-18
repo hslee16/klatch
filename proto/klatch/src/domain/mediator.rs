@@ -173,7 +173,11 @@ mod tests {
         let p = &ps[0];
         assert_eq!(p.room.as_deref(), Some("mediate-2"));
         assert_eq!(p.invites, ["ann", "bo"]);
-        assert!(p.text.contains("@ann yields") && p.text.contains("@bo"), "{}", p.text);
+        assert!(
+            p.text.contains("@ann yields") && p.text.contains("@bo"),
+            "{}",
+            p.text
+        );
         assert!(p.text.contains("A proposal only"), "{}", p.text);
     }
 
@@ -193,7 +197,11 @@ mod tests {
         let ps = run(&[e], &[member("ann"), member("bo")]);
         assert_eq!(ps[0].room, None);
         assert!(ps[0].invites.is_empty());
-        assert!(ps[0].text.contains("klatch's own rule stands"), "{}", ps[0].text);
+        assert!(
+            ps[0].text.contains("klatch's own rule stands"),
+            "{}",
+            ps[0].text
+        );
     }
 
     #[test]

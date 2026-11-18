@@ -190,7 +190,11 @@ fn stuck_json(events: &[crate::domain::StuckEvent]) -> Value {
     let one = |e: &StuckEvent| {
         let mut v = json!({ "kind": e.kind(), "key": e.key() });
         match e {
-            StuckEvent::StaleAsk { ask, asker, age_secs } => {
+            StuckEvent::StaleAsk {
+                ask,
+                asker,
+                age_secs,
+            } => {
                 v["ask"] = json!(ask);
                 v["asker"] = json!(asker);
                 v["age_secs"] = json!(age_secs);

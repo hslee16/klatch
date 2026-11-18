@@ -32,9 +32,13 @@ fn a_claim_deadlock_stands_as_an_event_not_only_as_a_refusal_flag() {
     for p in [alice(), bob()] {
         g.join(&p, "r").unwrap();
     }
-    g.claim(&alice(), "r", &ClaimSpec::new("p", 500, "")).unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new("p", 500, ""))
+        .unwrap();
     g.claim(&bob(), "r", &ClaimSpec::new("q", 500, "")).unwrap();
-    assert!(g.claim(&alice(), "r", &ClaimSpec::new("q", 500, "")).is_err());
+    assert!(
+        g.claim(&alice(), "r", &ClaimSpec::new("q", 500, ""))
+            .is_err()
+    );
     assert!(g.claim(&bob(), "r", &ClaimSpec::new("p", 500, "")).is_err());
     let ev = g.stuck(&carol_in(&g), "r").unwrap();
     assert_eq!(
@@ -58,8 +62,10 @@ fn a_cycle_through_asks_is_an_event_naming_the_yielder_first() {
     }
     let a = g.post(&alice(), "r", "seeking: x").unwrap().seq;
     let b = g.post(&bob(), "r", "seeking: y").unwrap().seq;
-    g.claim(&bob(), "r", &ClaimSpec::new(&format!("ask:{a}"), 90, "")).unwrap();
-    g.claim(&alice(), "r", &ClaimSpec::new(&format!("ask:{b}"), 90, "")).unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new(&format!("ask:{a}"), 90, ""))
+        .unwrap();
+    g.claim(&alice(), "r", &ClaimSpec::new(&format!("ask:{b}"), 90, ""))
+        .unwrap();
     let ev = g.stuck(&alice(), "r").unwrap();
     assert_eq!(
         ev,
@@ -73,7 +79,8 @@ fn a_cycle_through_asks_is_an_event_naming_the_yielder_first() {
 #[test]
 fn a_member_below_the_rooms_label_cannot_read_the_events() {
     let g = open();
-    g.admin_set_room_label(&admin(), "vault", "private").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
     g.join(&alice(), "vault").unwrap();
     g.post(&alice(), "vault", "seeking: x").unwrap();
@@ -86,9 +93,15 @@ fn reading_the_events_writes_no_message_and_no_claim() {
     g.join(&alice(), "r").unwrap();
     g.post(&alice(), "r", "seeking: x").unwrap();
     t.set(t.get() + 500);
-    let before = (g.tail(&alice(), "r", (0, 100)).unwrap().len(), g.claims(&alice(), "r").unwrap().len());
+    let before = (
+        g.tail(&alice(), "r", (0, 100)).unwrap().len(),
+        g.claims(&alice(), "r").unwrap().len(),
+    );
     g.stuck(&alice(), "r").unwrap();
     g.stuck(&alice(), "r").unwrap();
-    let after = (g.tail(&alice(), "r", (0, 100)).unwrap().len(), g.claims(&alice(), "r").unwrap().len());
+    let after = (
+        g.tail(&alice(), "r", (0, 100)).unwrap().len(),
+        g.claims(&alice(), "r").unwrap().len(),
+    );
     assert_eq!(before, after);
 }

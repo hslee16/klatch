@@ -20,7 +20,11 @@ fn a_standing_two_way_wait_is_one_cycle_and_reading_it_changes_nothing() {
     two_way(&s);
     let want = vec![vec!["alice".to_string(), "bob".to_string()]];
     assert_eq!(s.wait_cycles("r", 3).unwrap(), want);
-    assert_eq!(s.wait_cycles("r", 3).unwrap(), want, "read only, repeatable");
+    assert_eq!(
+        s.wait_cycles("r", 3).unwrap(),
+        want,
+        "read only, repeatable"
+    );
 }
 
 #[test]
@@ -40,7 +44,10 @@ fn a_cycle_ends_when_a_wait_is_satisfied_or_older_than_the_window() {
     assert!(s.wait_cycles("r", 5).unwrap().is_empty(), "satisfied");
     let s = store();
     two_way(&s);
-    assert!(s.wait_cycles("r", 1_000).unwrap().is_empty(), "old waits do not count");
+    assert!(
+        s.wait_cycles("r", 1_000).unwrap().is_empty(),
+        "old waits do not count"
+    );
 }
 
 #[test]

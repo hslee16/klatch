@@ -18,10 +18,18 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A proposal was posted for the stuck case with this key.
-    Proposed { key: String },
-    Invited { member: String, room: String },
+    Proposed {
+        key: String,
+    },
+    Invited {
+        member: String,
+        room: String,
+    },
     /// An act the guard or the gateway refused, with its reason.
-    Refused { what: String, reason: String },
+    Refused {
+        what: String,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for Event {
@@ -132,7 +140,11 @@ mod tests {
 
     fn gateway() -> (Gw, Rc<Cell<i64>>) {
         let t = Rc::new(Cell::new(100));
-        let g = Gateway::new(SqliteStore::open_in_memory().unwrap(), Tick(t.clone()), AllowAll);
+        let g = Gateway::new(
+            SqliteStore::open_in_memory().unwrap(),
+            Tick(t.clone()),
+            AllowAll,
+        );
         (Rc::new(g), t)
     }
 
@@ -207,18 +219,42 @@ mod tests {
     fn a_stale_ask_and_a_claim_deadlock_each_get_a_pointer_and_no_room() {
         let (g, t) = lobby(&["mediator", "ann", "bo"]);
         me(&g, "ann").post("lobby", "seeking: old").unwrap();
-        me(&g, "ann").claim("lobby", &ClaimSpec::new("p", 900, "")).unwrap();
-        me(&g, "bo").claim("lobby", &ClaimSpec::new("q", 900, "")).unwrap();
-        assert!(me(&g, "ann").claim("lobby", &ClaimSpec::new("q", 900, "")).is_err());
-        assert!(me(&g, "bo").claim("lobby", &ClaimSpec::new("p", 900, "")).is_err());
+        me(&g, "ann")
+            .claim("lobby", &ClaimSpec::new("p", 900, ""))
+            .unwrap();
+        me(&g, "bo")
+            .claim("lobby", &ClaimSpec::new("q", 900, ""))
+            .unwrap();
+        assert!(
+            me(&g, "ann")
+                .claim("lobby", &ClaimSpec::new("q", 900, ""))
+                .is_err()
+        );
+        assert!(
+            me(&g, "bo")
+                .claim("lobby", &ClaimSpec::new("p", 900, ""))
+                .is_err()
+        );
         t.set(t.get() + 100);
         let ev = mediator().pass(&me(&g, "mediator"), t.get()).unwrap();
-        let proposed: Vec<&Event> = ev.iter().filter(|e| matches!(e, Event::Proposed { .. })).collect();
+        let proposed: Vec<&Event> = ev
+            .iter()
+            .filter(|e| matches!(e, Event::Proposed { .. }))
+            .collect();
         assert_eq!(proposed.len(), 2, "{ev:?}");
-        assert!(!ev.iter().any(|e| matches!(e, Event::Invited { .. })), "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Invited { .. })),
+            "{ev:?}"
+        );
         let seen = proposals_seen(&g, "ann");
-        assert!(seen.iter().any(|s| s.contains("ask #1 by @ann")), "{seen:?}");
-        assert!(seen.iter().any(|s| s.contains("claim deadlock")), "{seen:?}");
+        assert!(
+            seen.iter().any(|s| s.contains("ask #1 by @ann")),
+            "{seen:?}"
+        );
+        assert!(
+            seen.iter().any(|s| s.contains("claim deadlock")),
+            "{seen:?}"
+        );
     }
 
     #[test]
@@ -262,14 +298,21 @@ mod tests {
         let (g, _) = lobby(&["mediator", "ann", "bo"]);
         ask_cycle(&g, "seeking: x");
         let admin = Principal::unattributed("admin");
-        g.admin_set_room_label(&admin, "mediate-1", "private").unwrap();
-        g.admin_set_clearance(&admin, "mediator", "private").unwrap();
+        g.admin_set_room_label(&admin, "mediate-1", "private")
+            .unwrap();
+        g.admin_set_clearance(&admin, "mediator", "private")
+            .unwrap();
         let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
         assert!(
-            ev.iter().any(|e| matches!(e, Event::Refused { reason, .. } if reason.contains("clearance"))),
+            ev.iter().any(
+                |e| matches!(e, Event::Refused { reason, .. } if reason.contains("clearance"))
+            ),
             "{ev:?}"
         );
-        assert!(!ev.iter().any(|e| matches!(e, Event::Invited { .. })), "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Invited { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
@@ -291,10 +334,14 @@ mod tests {
         g.admin_set_room_creation_granted(&admin, true).unwrap();
         let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
         assert!(
-            ev.iter().any(|e| matches!(e, Event::Refused { what, .. } if what.contains("create room"))),
+            ev.iter()
+                .any(|e| matches!(e, Event::Refused { what, .. } if what.contains("create room"))),
             "{ev:?}"
         );
-        assert!(!ev.iter().any(|e| matches!(e, Event::Invited { .. })), "{ev:?}");
+        assert!(
+            !ev.iter().any(|e| matches!(e, Event::Invited { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
@@ -303,10 +350,19 @@ mod tests {
         ask_cycle(&g, "seeking: x");
         let admin = Principal::unattributed("admin");
         g.admin_set_room_creation_granted(&admin, true).unwrap();
-        g.admin_grant_room_capability(&admin, "mediator", true).unwrap();
+        g.admin_grant_room_capability(&admin, "mediator", true)
+            .unwrap();
         mediator().pass(&me(&g, "mediator"), 100).unwrap();
         let audit = g.admin_audit(&admin, 50).unwrap();
-        assert!(audit.iter().any(|a| a.action == "create-room" && a.detail.contains("mediator")));
-        assert!(audit.iter().any(|a| a.action == "invite" && a.detail.contains("mediator")));
+        assert!(
+            audit
+                .iter()
+                .any(|a| a.action == "create-room" && a.detail.contains("mediator"))
+        );
+        assert!(
+            audit
+                .iter()
+                .any(|a| a.action == "invite" && a.detail.contains("mediator"))
+        );
     }
 }
