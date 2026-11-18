@@ -1,18 +1,20 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
-    vec![Scenario {
-        name: "a_helper_waiting_on_an_asker_that_never_said_done_is_told_it_is_gone",
-        origin: "#226, DESIGN item 89",
-        layer: "functional",
-        run: helper_told_asker_is_gone,
-    },
-    Scenario {
-        name: "a_helper_is_told_in_seconds_that_its_askers_process_exited",
-        origin: "#790, DESIGN item 94",
-        layer: "fault",
-        run: helper_told_asker_process_exited,
-    }]
+    vec![
+        Scenario {
+            name: "a_helper_waiting_on_an_asker_that_never_said_done_is_told_it_is_gone",
+            origin: "#226, DESIGN item 89",
+            layer: "functional",
+            run: helper_told_asker_is_gone,
+        },
+        Scenario {
+            name: "a_helper_is_told_in_seconds_that_its_askers_process_exited",
+            origin: "#790, DESIGN item 94",
+            layer: "fault",
+            run: helper_told_asker_process_exited,
+        },
+    ]
 }
 
 /// #226: two askers get answers from one helper. One says done and leaves cleanly; the other crashes (is never
@@ -94,7 +96,10 @@ fn helper_told_asker_process_exited(w: &World) -> Res {
     )?;
     check(
         started.elapsed().as_secs() < 20,
-        format!("and it ends in seconds, not at the timeout: {:?}", started.elapsed()),
+        format!(
+            "and it ends in seconds, not at the timeout: {:?}",
+            started.elapsed()
+        ),
     )?;
     Ok(vec![])
 }
