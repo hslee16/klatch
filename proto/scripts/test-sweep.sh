@@ -248,6 +248,12 @@ printf '#18   conflict             feat-18            #706      integrate main\n
 FAKE_MERGE=conflict FAKE_CONFLICT_FILES="proto/klatch/src/lib.rs DESIGN.md" runsweep
 if [ "$(calls '^git merge --abort')" -eq 1 ] && [ "$(calls '^git push')" -eq 0 ] && [ "$(calls '^gate')" -eq 0 ] && grep -q "^ledger --post --only 18" "$log" && grep -q "CODE CONFLICT" "$fake/out"; then ok "a code conflict aborts the merge, pushes nothing and is reported to the lobby"; else bad "code conflict: $(cat "$log") $(cat "$fake/out")"; fi
 
+# --- RESEARCH-NOTES.md is an append-only document like DESIGN.md: a conflict in it alone is resolved by keeping both sides, not reported as a code conflict
+newenv
+printf '#18   behind               feat-18            #706      integrate main\n' > "$fake/ledger.txt"
+FAKE_MERGE=conflict FAKE_CONFLICT_FILES="RESEARCH-NOTES.md" runsweep
+if ! grep -q "CODE CONFLICT in: RESEARCH-NOTES.md" "$fake/out"; then ok "a conflict only in RESEARCH-NOTES.md is not a code conflict"; else bad "research notes conflict: $(cat "$fake/out")"; fi
+
 # --- never on main: git merge only ever runs on the throwaway branch, even if the checkout fails
 newenv
 printf '#17   behind               feat-17            #706      integrate main\n' > "$fake/ledger.txt"
