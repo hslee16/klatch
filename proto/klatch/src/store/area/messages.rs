@@ -27,9 +27,9 @@ pub trait MessageStore {
     fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>>;
 
     /// The times of `member`'s posts at or after `since`, in every room, oldest first (the rate limit, #187). The
-    /// default knows none.
+    /// default is an error (#485): a store that cannot count posts must not say there were none, or no limit trips.
     fn posts_since(&self, _member: &str, _since: i64) -> Result<Vec<i64>> {
-        Ok(Vec::new())
+        super::unsupported("post times")
     }
 
     /// Messages from others past both the read cursor and the member's wait position. Changes no cursor, but
