@@ -68,6 +68,27 @@ fn a_claim_taken_that_completes_no_cycle_tells_nobody() {
     assert!(s.deadlock_notices("r", "alice", 3).unwrap().is_empty());
 }
 
+/// #802: the holder named in a notice must overlap the wait and be on the cycle; a live claim of anyone else does not
+/// make one. Both tests leave the wait marked (the cycle was real when it was marked) and then change the world.
+#[test]
+fn a_marked_wait_whose_cycle_has_since_broken_is_not_told() {
+    let s = store();
+    a_cycle_completed_by_a_take(&s);
+    // alice lets go of q: bob still holds p (it overlaps her wait) but no longer waits, through anyone, for her
+    s.release("r", "alice", "q").unwrap();
+    assert!(s.deadlock_notices("r", "alice", 4).unwrap().is_empty());
+}
+
+#[test]
+fn a_marked_wait_is_not_told_because_of_a_claim_that_does_not_overlap_it() {
+    let s = store();
+    a_cycle_completed_by_a_take(&s);
+    // bob lets go of p and an unrelated member takes z: nobody holds anything overlapping alice's wait for p
+    s.release("r", "bob", "p").unwrap();
+    take(&s, "dave", "z", 4).unwrap();
+    assert!(s.deadlock_notices("r", "alice", 5).unwrap().is_empty());
+}
+
 #[test]
 fn a_notice_for_a_wait_that_aged_out_is_not_given() {
     let s = store();
