@@ -1,0 +1,1 @@
+- An asker's own open ask that has gone unanswered for five minutes is named by its `klatch wait` timeout, with the stated message: stop waiting, say to your user what you are blocked on, close the ask or leave it open, re-ask at most once. The convention teaches the same bound (#200).
