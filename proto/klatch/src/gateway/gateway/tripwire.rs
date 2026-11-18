@@ -93,3 +93,22 @@ fn canary_token(room: &str, now: i64, n: usize) -> String {
     }
     format!("kc-canary-{h:016x}")
 }
+
+#[cfg(test)]
+mod canary_token_tests {
+    use super::canary_token;
+
+    #[test]
+    fn the_token_is_pinned_by_a_golden_value() {
+        assert_eq!(canary_token("vault", 1000, 0), "kc-canary-db394614ab5656e2");
+    }
+
+    #[test]
+    fn every_input_changes_the_token_and_the_same_inputs_repeat_it() {
+        let base = canary_token("vault", 1000, 0);
+        assert_eq!(base, canary_token("vault", 1000, 0));
+        assert_eq!(canary_token("vault", 1000, 1), "kc-canary-fa340d1db645a103");
+        assert_eq!(canary_token("vault", 1001, 0), "kc-canary-4870bbf238d4462b");
+        assert_eq!(canary_token("other", 1000, 0), "kc-canary-faabbc6865401d4c");
+    }
+}

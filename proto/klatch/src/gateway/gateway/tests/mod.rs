@@ -14,6 +14,7 @@ mod asks;
 mod board;
 mod budget;
 mod claim_age;
+mod claim_edges;
 mod claims;
 mod credentials;
 mod crossing;

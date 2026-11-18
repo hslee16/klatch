@@ -10,6 +10,7 @@ mod archive;
 mod archive_files;
 mod archive_rekey;
 mod claim_age;
+mod claim_graph;
 mod claims;
 mod concurrency;
 mod conformance;

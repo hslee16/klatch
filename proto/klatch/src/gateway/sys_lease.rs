@@ -81,6 +81,9 @@ impl LeaseSource for SysLeaseSource {
 }
 
 #[cfg(test)]
+mod at_time_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::{ProcessTable, Verdict};
