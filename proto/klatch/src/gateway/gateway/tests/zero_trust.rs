@@ -161,6 +161,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ),
     ("now", "the clock"),
     (
+        "change_token",
+        "when to look, never what: a number that moves when any connection commits, with no room, member or text in it. It takes no principal and returns nothing a peer sees; a session or wait uses it only to decide when to run the checked poll (#616)",
+    ),
+    (
         "my_refusals",
         "the caller's own refusal record: it reads only rows of the caller's principal name, so it is the same as reading its own hook record, and a member stopped by the breaker must still read why (#678)",
     ),

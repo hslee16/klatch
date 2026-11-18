@@ -37,6 +37,7 @@ mod notify;
 mod own_refusals;
 mod parked;
 mod pr_lifecycle;
+mod process_exited;
 mod rate_limit;
 mod receipt;
 mod refusal_hints;

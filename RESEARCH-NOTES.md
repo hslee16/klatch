@@ -754,6 +754,18 @@ Observed in this Claude Code session (2.1.323, macOS), one observation each, rea
   sessions stale. `updatedAt` ages ranged from one minute to over four hours for live sessions, so freshness is not
   a liveness test. The `pidDomain` field (`darwin` here) marks which pid space the record belongs to. Not tested:
   a dead pid, a reused pid, and Linux (where start time would come from `/proc`).
+- **Linux (2026-11-18, #171).** Still **not observed**: no real Claude Code registry or `ps` was read on a Linux machine.
+  What exists: CI runs the fake-harness scenarios and the `PsTable` tests on ubuntu against a real process table
+  (a symlinked `claude`, `lstart` in UTC), and they pass, so the ancestry, liveness and start-time logic works with
+  real procps output. What was added here, by hand and on macOS, is `harness/linux_shaped.rs`: the same code against
+  a made-up table shaped like procps (a padded `lstart` day, a bare `comm` cut to 15 characters, state letters such as
+  `Ssl` and `I`, `HH:MM:SS` CPU times, a `linux` pid domain, an ssh tree under systemd). Those values come from
+  knowledge of procps, not from a Linux run, and the file says so. A record from another pid domain reads as
+  `OtherDomain`, never dead and never live, so a wrong guess about the Linux domain name fails safe (discovery finds
+  no session). **Unobserved, ticketed as #797 (needs a Linux host):** the `pidDomain` a real Linux record carries; what
+  `comm` shows for the harness (a native binary named `claude` passes, a script run by `node` would print `node`
+  and read as not the harness); whether `procStart` equals `TZ=UTC ps -o lstart=` or comes from `/proc`; and the
+  `ps -A` option set on procps and busybox.
 
 
 ## 18. First two-agent run (2026-11-13)
@@ -1533,6 +1545,14 @@ Method: `codex app-server` (stdio JSON-RPC, no login) started with a temp `CODEX
 - **Project hooks.** A `.codex/hooks.json` in the project was not listed (the project layer was not trusted). Where Codex keys trust for a project hook was not observed, so klatch reports a klatch hook there as unchecked.
 - **`codex queue --help` on a binary that has the command (0.169.0), verified.** It prints `Queue a message for an existing session`, then `Usage: codex queue [OPTIONS] --thread <THREAD> --message <TEXT>`; options include `--thread <THREAD>` (session UUID or exact name), `--message <TEXT>`, `--resume`, `--remote <ADDR>`, `--remote-auth-token-env`. The usage line match in `codex.rs` is therefore right; 0.147.0 still has no `queue`.
 - **What changed in klatch.** Doctor and init now judge each klatch hook by the verified key, compare the recorded hash with the recomputed one (a changed hook reads as not trusted), read inline `config.toml` hooks, report an async klatch hook as skipped, and report a klatch hook in the project `.codex/hooks.json` as unchecked. The hash is only compared, never written. If a future Codex changes the hash rule, doctor would call a trusted hook changed; the fix text says to review it in `/hooks`, which clears it.
+
+### 49.8 What `klatch init --codex` writes, listed by Codex itself (2026-11-17, Codex 0.147.0, macOS, ticket #782)
+
+Method: the same `codex app-server` `hooks/list` call as 49.7, in a temp `HOME` and `CODEX_HOME` (no login, no model, empty environment, temp project), after `klatch init --codex --yes` had written the temp `hooks.json`. The live `~/.codex` was never read or written.
+
+- **Listed, verified.** Codex 0.147.0 lists exactly the three hooks klatch writes (`session_start:0:0`, `user_prompt_submit:0:0`, `post_tool_use:0:0`), `source` `user`, `trustStatus` `untrusted`, with no warning and no error. So the file shape (the Claude settings shape, `"hooks": {Event: [{"hooks": [{"type": "command", "command": ...}]}]}`) and the command `<bin> --codex hook --event <Event>` are accepted as written; no `timeout` or `async` field is needed.
+- **Not installed on purpose.** The wake hook (Codex skips async hooks), the claim hook (PreToolUse) and SessionEnd (no run of either was seen in Codex, so klatch does not claim them).
+- **Needs a human and a login, not verified.** Trusting the hooks in `/hooks`, and whether `codex exec` runs them once trusted (needs a Codex login for a model turn). klatch never writes the trust record.
 
 ## 50. Headless Claude Code sessions as verified team members (2026-11-15, Claude Code 2.1.325, macOS, ticket #582)
 

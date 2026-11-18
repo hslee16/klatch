@@ -33,6 +33,13 @@ pub(crate) fn gather_evidence(
                     .into(),
             ),
         ),
+        Err(Miss::TableUnreadable) => (
+            PeerEvidence::None,
+            Some(
+                "the process table could not be read (is ps available?); falling back to a typed name"
+                    .into(),
+            ),
+        ),
         Err(Miss::Stale(why)) => (
             PeerEvidence::None,
             Some(format!(
@@ -266,12 +273,7 @@ pub(crate) fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
     let registry = FsRegistry {
         dir: PathBuf::from(home).join(".claude").join("sessions"),
     };
-    let domain = if cfg!(target_os = "macos") {
-        "darwin"
-    } else {
-        std::env::consts::OS
-    };
-    Some((registry, domain))
+    Some((registry, klatch::harness::this_pid_domain()))
 }
 
 /// The session above `session`, with the real process table and registry.

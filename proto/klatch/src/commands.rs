@@ -431,25 +431,68 @@ fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
 /// How many recent messages a waiting helper reads to find the asks it answered (#226).
 const SERVED_WINDOW: usize = 200;
 
-/// The askers the caller `me` serves in `room` that are gone, as lines (#226, DESIGN item 89). A room that cannot
-/// be read adds nothing.
-fn gone_askers_in(t: &dyn Transport, me: &str, room: &str, now: i64) -> Result<Vec<String>> {
+/// The asks the caller `me` serves in `room`, from its recent messages and its claims. A room that cannot be read
+/// serves nothing.
+fn served_in(
+    t: &dyn Transport,
+    me: &str,
+    room: &str,
+    now: i64,
+) -> Result<Vec<klatch::domain::Served>> {
     let range = klatch::gateway::HistoryRange {
         since: None,
         last: Some(SERVED_WINDOW),
     };
     let messages = t.history(room, range)?.messages;
-    let served = klatch::domain::served_by(
+    Ok(klatch::domain::served_by(
         &messages,
         (&t.open_asks(room)?, &t.claims(room)?),
         (me, now),
-    );
+    ))
+}
+
+/// The askers among `served` whose process has exited, by the liveness probe (#790, DESIGN item 96). An asker the
+/// probe cannot say anything about (no session, an unreadable record, no `ps`) is not in the list: unknown counts
+/// as alive.
+fn exited_askers(t: &dyn Transport, room: &str, served: &[klatch::domain::Served]) -> Vec<String> {
+    let mut exited: Vec<String> = Vec::new();
+    for s in served {
+        let known = exited.contains(&s.asker);
+        if !known && t.process_exited(room, &s.asker).unwrap_or(false) {
+            exited.push(s.asker.clone());
+        }
+    }
+    exited
+}
+
+/// The askers the caller `me` serves in `room` that are gone, as lines (#226, DESIGN item 89; an exited process
+/// is named at once, #790). A room that cannot be read adds nothing.
+fn gone_askers_in(t: &dyn Transport, me: &str, room: &str, now: i64) -> Result<Vec<String>> {
+    let served = served_in(t, me, room, now)?;
     if served.is_empty() {
         return Ok(Vec::new());
     }
+    let exited = exited_askers(t, room, &served);
     Ok(klatch::domain::gone_asker_notes(
         &served,
         &t.who(room)?,
+        &exited,
+        now,
+    ))
+}
+
+/// The lines for askers whose process has exited, and only those: the check a waiting helper runs every few
+/// seconds (#790). Nothing is read but the room and the probe when no asker's process is gone.
+fn exited_askers_in(t: &dyn Transport, me: &str, room: &str, now: i64) -> Result<Vec<String>> {
+    let served = served_in(t, me, room, now)?;
+    let exited = exited_askers(t, room, &served);
+    if exited.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(klatch::domain::exited_asker_notes(
+        &served,
+        &t.who(room)?,
+        &exited,
         now,
     ))
 }
@@ -463,6 +506,67 @@ fn print_gone_askers(t: &dyn Transport, a: &WaitArgs, waited: u64) {
             println!("{note}");
         }
     }
+}
+
+/// How often a waiting helper looks for an asker whose process has exited. Short enough to be seconds, long enough
+/// that the table is read a dozen times a minute at most.
+const EXIT_CHECK_EVERY: Duration = Duration::from_secs(5);
+
+/// When the next look for an exited asker is due: at once, then every `EXIT_CHECK_EVERY`.
+struct EveryFiveSeconds {
+    next: Instant,
+}
+
+impl EveryFiveSeconds {
+    fn starting(at: Instant) -> Self {
+        EveryFiveSeconds { next: at }
+    }
+
+    /// How long until a look is due (zero when it is).
+    fn until_due(&self) -> Duration {
+        self.next.saturating_duration_since(Instant::now())
+    }
+
+    /// True when a look is due, and then the next one is set.
+    fn due(&mut self) -> bool {
+        let now = Instant::now();
+        let due = now >= self.next;
+        if due {
+            self.next = now + EXIT_CHECK_EVERY;
+        }
+        due
+    }
+}
+
+/// End a wait early when an asker the caller serves has exited (#790): its own marker, then one line per asker.
+/// True when it printed, so the wait returns.
+fn print_exited_askers(t: &dyn Transport, a: &WaitArgs, waited: u64) -> bool {
+    let (me, started) = a.caller;
+    let now = started + waited as i64;
+    let notes: Vec<(&str, Vec<String>)> = a
+        .rooms
+        .iter()
+        .map(|(room, _)| {
+            (
+                room.as_str(),
+                exited_askers_in(t, me, room, now).unwrap_or_default(),
+            )
+        })
+        .filter(|(_, notes)| !notes.is_empty())
+        .collect();
+    if notes.is_empty() {
+        return false;
+    }
+    let rooms: Vec<&str> = notes.iter().map(|(room, _)| *room).collect();
+    println!(
+        "[klatch wait: asker-exited room={} after={waited}s]",
+        rooms.join(",")
+    );
+    notes
+        .iter()
+        .flat_map(|(_, n)| n)
+        .for_each(|n| println!("{n}"));
+    true
 }
 
 /// The marker a wait that timed out prints, then the notes that go with it.
@@ -496,16 +600,33 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
     }
-    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(timeout);
+    let mut exit_check = EveryFiveSeconds::starting(started);
     loop {
+        // The token is taken before the poll, so a commit in between is a change the pause sees at once (#616).
+        let seen = t.change_token();
         if print_woken(t, a)? {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
             print_timeout(t, a, timeout);
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(200));
+        if exit_check.due() && print_exited_askers(t, a, started.elapsed().as_secs()) {
+            return Ok(());
+        }
+        // Wake on a store change; the old 200 ms poll stays as the fallback for a store with no token. The pause
+        // never outlasts the next look for an exited asker (#790).
+        klatch::gateway::pause_for_change(
+            &|| t.change_token(),
+            seen,
+            klatch::gateway::WAKE_FALLBACK
+                .min(left)
+                .min(exit_check.until_due()),
+            klatch::gateway::WAKE_TICK,
+        );
     }
 }
 
@@ -1163,6 +1284,15 @@ mod stop_tests {
 #[cfg(test)]
 mod wait_tests {
     use super::*;
+
+    #[test]
+    fn the_exit_check_is_due_at_once_and_then_not_again_until_its_interval_passes() {
+        let mut check = EveryFiveSeconds::starting(Instant::now());
+        assert!(check.due(), "the first look is at the start of the wait");
+        assert!(!check.due(), "and the next one waits for the interval");
+        check.next = Instant::now();
+        assert!(check.due(), "once the interval has passed it is due again");
+    }
 
     #[test]
     fn the_timeout_is_capped_at_300_seconds_and_says_when_it_was_clamped() {

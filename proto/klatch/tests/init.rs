@@ -429,3 +429,29 @@ fn uninstall_does_not_combine_with_options_that_install() {
     }
     assert!(!s.project_settings().exists());
 }
+
+#[test]
+fn init_ends_with_where_the_data_lives_and_the_doctor_step_and_writes_nothing_for_them() {
+    let s = Setup::new();
+    let o = s.init(&["--scope", "project", "--yes"], "");
+    let said = out(&o);
+    let data = s.home().join(".klatch");
+    assert!(said.contains(&data.display().to_string()), "{said}");
+    assert!(said.contains("KLATCH_HOME"), "{said}");
+    assert!(said.contains("klatch doctor"), "{said}");
+    assert!(!data.exists(), "init created the data directory");
+    let again = s.init(&["--scope", "project", "--yes"], "");
+    assert!(
+        out(&again).contains("klatch doctor"),
+        "not said on a re-run: {}",
+        out(&again)
+    );
+}
+
+#[test]
+fn uninstall_does_not_print_the_next_steps() {
+    let s = Setup::new();
+    s.init(&["--scope", "project", "--yes"], "");
+    let o = s.init(&["--uninstall", "--scope", "project", "--yes"], "");
+    assert!(!out(&o).contains("klatch doctor"), "{}", out(&o));
+}

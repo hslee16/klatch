@@ -2,7 +2,7 @@
 //! hours without updating. A record is live only if its pid exists, was started when the record says, and is
 //! the harness (RESEARCH-NOTES section 17).
 
-use crate::harness::process::ProcessTable;
+use crate::harness::process::{Lookup, ProcessTable};
 use crate::harness::record::Record;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,14 +16,19 @@ pub enum Liveness {
     Reused,
     /// The pid is a live process started at the recorded time, but it is not the harness.
     NotHarness,
+    /// The process table could not be read (`ps` cannot run), so nothing can be said about the pid. Not dead,
+    /// and never live: a caller treats it as unknown (#525).
+    Unreadable,
 }
 
 pub fn check(rec: &Record, procs: &dyn ProcessTable, domain: &str) -> Liveness {
     if rec.pid_domain != domain {
         return Liveness::OtherDomain;
     }
-    let Some(info) = procs.info(rec.pid) else {
-        return Liveness::Dead;
+    let info = match procs.lookup(rec.pid) {
+        Lookup::Found(info) => info,
+        Lookup::Missing => return Liveness::Dead,
+        Lookup::Unreadable => return Liveness::Unreadable,
     };
     if info.start_utc != rec.proc_start {
         return Liveness::Reused;
@@ -34,6 +39,18 @@ pub fn check(rec: &Record, procs: &dyn ProcessTable, domain: &str) -> Liveness {
     Liveness::Live
 }
 
+/// The name the harness registry gives the pid space of a system (`pidDomain`): `darwin` for macOS, else the
+/// operating system's own name (`linux`). Whether Claude Code writes `linux` on a real Linux machine is not
+/// observed (#797); a different name there reads as another machine, which is safe.
+pub fn pid_domain_for(os: &'static str) -> &'static str {
+    if os == "macos" { "darwin" } else { os }
+}
+
+/// The pid domain of this machine.
+pub fn this_pid_domain() -> &'static str {
+    pid_domain_for(std::env::consts::OS)
+}
+
 /// True for the Claude Code program name.
 pub fn is_claude_code(command: &str) -> bool {
     command.rsplit('/').next() == Some("claude")
@@ -41,7 +58,7 @@ pub fn is_claude_code(command: &str) -> bool {
 
 #[cfg(test)]
 pub(crate) mod fake {
-    use crate::harness::process::{ProcInfo, ProcessTable};
+    use crate::harness::process::{Lookup, ProcInfo, ProcessTable};
     use std::collections::HashMap;
 
     /// A made-up process table.
@@ -63,8 +80,20 @@ pub(crate) mod fake {
     }
 
     impl ProcessTable for FakeTable {
-        fn info(&self, pid: u32) -> Option<ProcInfo> {
-            self.0.get(&pid).cloned()
+        fn lookup(&self, pid: u32) -> Lookup {
+            self.0
+                .get(&pid)
+                .cloned()
+                .map_or(Lookup::Missing, Lookup::Found)
+        }
+    }
+
+    /// A table that cannot be read at all (a machine where `ps` cannot run).
+    pub struct UnreadableTable;
+
+    impl ProcessTable for UnreadableTable {
+        fn lookup(&self, _pid: u32) -> Lookup {
+            Lookup::Unreadable
         }
     }
 }
@@ -132,6 +161,21 @@ mod tests {
             check(&rec(10), &FakeTable::default(), "linux"),
             Liveness::OtherDomain
         );
+    }
+
+    #[test]
+    fn a_table_that_cannot_be_read_is_not_a_dead_session_and_not_a_live_one() {
+        // #525: ps that cannot run used to read as every pid missing, so every session was Dead
+        let got = check(&rec(10), &super::fake::UnreadableTable, "darwin");
+        assert_eq!(got, Liveness::Unreadable);
+        assert_ne!(got, Liveness::Dead);
+        assert_ne!(got, Liveness::Live, "never an identity");
+    }
+
+    #[test]
+    fn the_domain_is_still_checked_before_an_unreadable_table() {
+        let got = check(&rec(10), &super::fake::UnreadableTable, "linux");
+        assert_eq!(got, Liveness::OtherDomain);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+- A machine where `ps` cannot run no longer reads as every session being gone: the process table now answers found, missing or unreadable, and unreadable makes the liveness probe say unknown (leases are left alone), `klatch sessions --all` say the record could not be checked, and session discovery say the table could not be read (#525).

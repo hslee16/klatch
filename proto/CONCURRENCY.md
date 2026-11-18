@@ -54,6 +54,24 @@ runs `read` (which also writes the cursor) and `claims` (a pure read) every 10 m
   macOS only (CI also runs the tests on Linux), local disk only. A database on a network filesystem is still not
   supported (question 17).
 
+## Waking on a store change (tickets #616 and #148, 2026-11-17)
+
+`klatch wait` and the streaming session used to poll on a fixed timer (200 ms and 100 ms). They now sleep in 20 ms
+ticks and look at SQLite's `PRAGMA data_version` on their own connection, which differs after any other connection
+commits; the tables are polled only when it moved, a request came in or the old period ran out (DESIGN section 32
+item 94). Measured on a machine at load 9 to 17:
+
+| Measure | Timer | Change token |
+|---|---|---|
+| bench `many_waiters_wake_together`, 20 processes, `wake_ms` | 209 (and 207 earlier) | 31 |
+| 20 in-process waiters, worst wake after a post, two runs | 200, 208 ms | 32, 22 ms |
+| polls per idle waiter per second, 20 waiters, two runs | 5.0, 5.0 | 6.9, 6.8 |
+
+The idle cost rises a little in a crowd, not falls: each waiter writes its presence once a second (#128) and that commit
+moves every other waiter's token, so each polls about once more per second. A poll in the same second writes nothing.
+The streaming session no longer queries every subscribed room on each 100 ms tick when idle; it reads one pragma per
+20 ms tick. The measurement is `measure_idle_waiters_and_wake_latency` (`--ignored --nocapture`).
+
 ## The hook path without the writer lock (ticket #128, 2026-11-17)
 
 Two changes, neither of which weakens what a hook or a wait records. Last-seen is a whole second, so a touch in the
@@ -121,9 +139,9 @@ Checked each run, and the scenario fails if any is false: all 500 posts succeed;
 (nothing lost, nothing doubled, dense); exactly one worker wins the contested path and all 50 private claims succeed
 (no double claim); every message is marked verified; the claims list holds the contested path once and 50 private
 paths. A post is slower than the 6 ms of a lone command because 50 processes contend for one SQLCipher write lock and
-each pays process start, key read and open. **Not covered:** memory for a slow consumer. A consumer that stops reading
-a stream still blocks its whole session (ticket #147), so "bounded memory for slow consumers" is not met and stays a
-known limit.
+each pays process start, key read and open. **Not covered:** memory for a slow consumer. (Update, #147: a guarded
+session now holds at most `outgoing` frames for a consumer and ends with a `stream.slow_consumer` refusal when it makes
+no progress for the stall limit, DESIGN item 95; this scenario does not exercise it.)
 
 ## Linux: the Secret Service and the key file (ticket #384, 2026-11-15)
 

@@ -31,7 +31,7 @@ mod wait_filter;
 
 pub use ask_bounds::{ASK_GIVE_UP_SECS, give_up_notes};
 pub use ask_cycle::{AskCycle, ask_cycles, cycle_notes};
-pub use asker_gone::{Served, gone_asker_notes, served_by};
+pub use asker_gone::{Served, exited_asker_notes, gone_asker_notes, served_by};
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
     CLAIM_MAX_SECS, Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,

@@ -97,6 +97,13 @@ pub trait MessageStore {
         }
     }
 
+    /// A number that differs from an earlier answer whenever another connection committed in between (#616). It says
+    /// only that something changed, never what, so it reveals nothing a poll would not check. The default has none,
+    /// and a waiter then polls on a timer.
+    fn change_token(&self) -> Option<u64> {
+        None
+    }
+
     /// The highest `seq` in a room, 0 when it is empty.
     fn head(&self, room: &str) -> Result<i64>;
 
