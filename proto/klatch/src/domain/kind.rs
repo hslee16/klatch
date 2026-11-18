@@ -57,7 +57,9 @@ mod tests {
             assert_eq!(MemberKind::parse(word), Some(kind));
             assert_eq!(kind.word(), word);
         }
-        for bad in ["", "Bot", " bot", "bot ", "robot", "bot\n", "admin", "agent"] {
+        for bad in [
+            "", "Bot", " bot", "bot ", "robot", "bot\n", "admin", "agent",
+        ] {
             assert_eq!(MemberKind::parse(bad), None, "{bad:?}");
         }
     }
