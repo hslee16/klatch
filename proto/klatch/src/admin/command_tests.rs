@@ -17,7 +17,7 @@ use std::process::Command;
 /// The key directory is chosen by the environment, and a test process shares its environment between threads, so each
 /// test runs itself again in a child process of its own with that environment (no `unsafe` needed): `begin` is
 /// `None` in the parent, which runs the child and checks that it passed, and `Some` in the child, which does the work.
-struct Env {
+pub(super) struct Env {
     dir: PathBuf,
 }
 
@@ -33,9 +33,20 @@ macro_rules! this_test {
             .unwrap_or(full)
     }};
 }
+pub(super) use this_test;
 
 impl Env {
-    fn begin(test: &str, tag: &str) -> Option<Self> {
+    pub(super) fn begin(test: &str, tag: &str) -> Option<Self> {
+        Self::begin_saying(test, tag, &[], &[])
+    }
+
+    /// `begin`, and in the parent the child's output must hold every line of `says` and none of `silent`.
+    pub(super) fn begin_saying(
+        test: &str,
+        tag: &str,
+        says: &[&str],
+        silent: &[&str],
+    ) -> Option<Self> {
         if let Some(dir) = std::env::var_os(CHILD_DIR) {
             return Some(Env { dir: dir.into() });
         }
@@ -44,7 +55,7 @@ impl Env {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join("keys")).unwrap();
         let out = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test, "--test-threads=1"])
+            .args(["--exact", test, "--test-threads=1", "--nocapture"])
             .env(CHILD_DIR, &dir)
             .env("KLATCH_KEY_DIR", dir.join("keys"))
             .env_remove("KLATCH_IDENTITY_FILE")
@@ -57,27 +68,34 @@ impl Env {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
+        let said = String::from_utf8_lossy(&out.stdout);
+        for line in says {
+            assert!(said.contains(line), "expected {line:?} in:\n{said}");
+        }
+        for line in silent {
+            assert!(!said.contains(line), "did not expect {line:?} in:\n{said}");
+        }
         None
     }
 
-    fn db(&self) -> PathBuf {
+    pub(super) fn db(&self) -> PathBuf {
         self.dir.join("rooms.db")
     }
 
-    fn archive_dir(&self) -> PathBuf {
+    pub(super) fn archive_dir(&self) -> PathBuf {
         self.dir.join("archive")
     }
 
-    fn store(&self) -> SqliteStore {
+    pub(super) fn store(&self) -> SqliteStore {
         custody::open_store(&self.db()).unwrap()
     }
 
-    fn key(&self) -> Key {
+    pub(super) fn key(&self) -> Key {
         custody::current_key(&self.db()).unwrap().expect("a key")
     }
 
     /// Post `n` messages of ts 10 to `room`, which is older than any retention.
-    fn old_messages(&self, room: &str, n: i64) {
+    pub(super) fn old_messages(&self, room: &str, n: i64) {
         let store = self.store();
         for i in 0..n {
             store
@@ -113,6 +131,20 @@ impl Env {
             room: None,
             all_rooms: true,
         })
+    }
+
+    /// The details of the audit entries of `action`, oldest first.
+    fn details_of(&self, action: &str) -> Vec<String> {
+        let mut d: Vec<String> = self
+            .store()
+            .audit_log(100)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.action == action)
+            .map(|r| r.detail)
+            .collect();
+        d.reverse();
+        d
     }
 
     /// The actions in the audit, oldest first.
@@ -198,7 +230,12 @@ fn retention_refuses_days_that_are_not_a_whole_number_and_stores_nothing() {
 
 #[test]
 fn archive_moves_old_messages_into_a_private_file_and_audits_it() {
-    let Some(e) = Env::begin(this_test!(), "archive") else {
+    let Some(e) = Env::begin_saying(
+        this_test!(),
+        "archive",
+        &["lobby: archived 3 messages to "],
+        &["nothing is older"],
+    ) else {
         return;
     };
     e.old_messages("lobby", 3);
@@ -217,6 +254,7 @@ fn archive_moves_old_messages_into_a_private_file_and_audits_it() {
     assert_eq!(e.archived_messages(), 3);
     assert_eq!(e.live("lobby"), 0, "the messages left the store");
     assert!(e.audited().contains(&"archive".to_string()));
+    assert_eq!(e.details_of("archive"), vec!["3 messages".to_string()]);
 }
 
 #[test]
@@ -233,7 +271,12 @@ fn archive_of_one_room_without_retention_is_refused_and_names_the_fix() {
 
 #[test]
 fn archive_with_nothing_old_enough_writes_no_file_but_still_audits_the_run() {
-    let Some(e) = Env::begin(this_test!(), "archive-young") else {
+    let Some(e) = Env::begin_saying(
+        this_test!(),
+        "archive-young",
+        &["nothing is older than its retention"],
+        &["lobby: archived"],
+    ) else {
         return;
     };
     e.old_messages("lobby", 2);
@@ -346,6 +389,46 @@ fn archives_with_no_directory_and_no_key_is_fine() {
 }
 
 // key commands
+
+#[test]
+fn the_integrity_check_finds_the_archive_of_every_tombstone_and_names_one_that_is_gone() {
+    let Some(e) = Env::begin(this_test!(), "integrity") else {
+        return;
+    };
+    e.old_messages("lobby", 3);
+    e.retention("lobby", "1").unwrap();
+    e.archive("lobby").unwrap();
+    drop(e.store());
+    let sound = klatch::store::check_store(&e.db(), &e.key()).unwrap();
+    assert!(sound.is_empty(), "{sound:?}");
+    // an interrupted copy is not an archive and a file that is not `.db` is not one either
+    let file = e.archive_dir().join(&e.archive_files()[0]);
+    let moved = e.dir.join("moved.db");
+    std::fs::rename(&file, &moved).unwrap();
+    std::fs::write(e.archive_dir().join("lobby-9.db.partial"), "half").unwrap();
+    let lost = klatch::store::check_store(&e.db(), &e.key()).unwrap();
+    assert_eq!(lost.len(), 3, "{lost:?}");
+    assert!(
+        lost[0].contains("lobby#") && lost[0].contains("no message in any archive"),
+        "{lost:?}"
+    );
+}
+
+#[test]
+fn an_archive_directory_that_cannot_be_read_is_an_error_not_an_empty_listing() {
+    let Some(e) = Env::begin(this_test!(), "archives-unreadable") else {
+        return;
+    };
+    e.old_messages("lobby", 1);
+    // a file where the directory should be: reading it fails with something other than "not found"
+    std::fs::write(e.archive_dir(), "not a directory").unwrap();
+    let err = e.archive_cmd(ArchiveAct::Archives).unwrap_err().to_string();
+    assert!(err.contains("archive"), "{err}");
+    // and a rotation refuses before it changes anything
+    let key = e.key();
+    assert!(e.key_cmd(KeyAct::RotateKey).is_err());
+    assert!(e.key() == key, "the key is unchanged");
+}
 
 #[test]
 fn recovery_needs_a_key_and_audits_the_showing() {

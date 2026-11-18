@@ -340,6 +340,89 @@ mod tests {
         assert_eq!((t.files, t.unusable), (0, 1));
     }
 
+    /// A rotation finished after this run read the key and before `finish`: the store and the keystore hold a newer key
+    /// and the files this run made must follow it (#629), the ones it made and only those (a room with nothing old
+    /// enough made none).
+    #[test]
+    fn finish_moves_the_files_this_run_made_to_a_key_that_replaced_its_own() {
+        use super::super::command_tests::{Env, this_test};
+        let Some(e) = Env::begin(this_test!(), "settle") else {
+            return;
+        };
+        e.old_messages("lobby", 2);
+        e.old_messages("young", 1);
+        let ctx = KeyCtx {
+            db: &e.db(),
+            who: Principal::unattributed("admin"),
+        };
+        let mut run = ArchiveRun {
+            ctx: &ctx,
+            store: e.store(),
+            key: e.key(),
+            dir: archive_dir(&e.db()),
+            at: now(),
+            total: 0,
+            made: Vec::new(),
+        };
+        run.archive_room("lobby", 1).unwrap();
+        run.archive_room("young", 100_000).unwrap();
+        assert_eq!((run.total, run.made.len()), (2, 1));
+        let newer = Key::generate().unwrap();
+        run.store.rekey(&newer).unwrap();
+        let kh = custody::key_home(&e.db());
+        kh.source.put(&kh.name, &newer).unwrap();
+        run.finish().unwrap();
+        let listed = klatch::store::list_archives(&e.archive_dir(), &newer).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(matches!(
+            listed[0].state,
+            klatch::store::ArchiveState::Ok { messages: 2, .. }
+        ));
+    }
+
+    /// A run that fails on its file (one is already there) still moves a file of its own that a finished rotation
+    /// missed to the newer key, and says why it failed.
+    #[test]
+    fn a_failed_archive_still_settles_the_file_to_the_newer_key() {
+        use super::super::command_tests::{Env, this_test};
+        let Some(e) = Env::begin(this_test!(), "settle-failure") else {
+            return;
+        };
+        e.old_messages("lobby", 2);
+        e.old_messages("other", 1);
+        let ctx = KeyCtx {
+            db: &e.db(),
+            who: Principal::unattributed("admin"),
+        };
+        let at = now();
+        let mut run = ArchiveRun {
+            ctx: &ctx,
+            store: e.store(),
+            key: e.key(),
+            dir: archive_dir(&e.db()),
+            at,
+            total: 0,
+            made: Vec::new(),
+        };
+        // a whole archive, under the key this run holds, sits where this run's file for `lobby` would go
+        ensure_private_dir(&run.dir).unwrap();
+        let taken = run.dir.join(format!("lobby-{at}.db"));
+        run.store
+            .archive_before("other", at, &taken, &run.key)
+            .unwrap();
+        let newer = Key::generate().unwrap();
+        run.store.rekey(&newer).unwrap();
+        let kh = custody::key_home(&e.db());
+        kh.source.put(&kh.name, &newer).unwrap();
+        let err = run.archive_room("lobby", 1).unwrap_err().to_string();
+        assert!(err.contains("already exists"), "{err}");
+        let listed = klatch::store::list_archives(&e.archive_dir(), &newer).unwrap();
+        assert!(matches!(
+            listed[0].state,
+            klatch::store::ArchiveState::Ok { messages: 1, .. }
+        ));
+    }
+
     #[test]
     fn retention_days_must_be_a_whole_number_of_at_least_one() {
         assert_eq!(parse_days("7").unwrap(), 7);
