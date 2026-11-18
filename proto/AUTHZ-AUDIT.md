@@ -115,6 +115,7 @@ wraps.
 | `board`, `asks`, `tasks` | `board`, `open_asks` | GUARDED `board`, `open_asks` |
 | `card` | `member_card`, which calls `board` first | GUARDED `member_card` and `board`: the same checks as `board` (a read-only view of one member in a room the caller may see) |
 | `mcp` | the session of `serve --stdio`: each of its six tools (`klatch_post`, `klatch_read`, `klatch_claim`, `klatch_release`, `klatch_wait`, `klatch_who`) calls the wire method of the same name | GUARDED the same per-request checks as those wire methods (the caller is the process's member); no admin act and no other method is reachable through it |
+| `acp` | the session of `serve --stdio`: a prompt parses to one of four looks, each calling the wire method of that name (`read` always with `peek`, `who`, `claims`, `history`) | GUARDED the same per-request checks as those wire methods, and the librarian role refuses anything else; no write, no admin act and no other method is reachable (the prompt grammar has no verb for one, `src/session/acp_tests.rs`, `tests/acp.rs`) |
 | `claims` | `claims` | GUARDED `claims` |
 | `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room; the rest are OWN_RECORD |
 | `stream` | `Session::stream` (`head`, `tail`) | GUARDED `head`, `tail` |
