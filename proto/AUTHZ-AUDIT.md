@@ -164,6 +164,7 @@ directly and meets only the terminal heuristic.
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
+| The member attributes (stable id, repository, directory; #181) add no wire method and no command: the host records them for a member that is already acting, and no check reads them. The repository value is an observation (a directory can name another repository's git directory), so it grants no clearance, room or access; the lowest clearance for a first-seen repository is pinned by `a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it` (#191). If a later change shows them in `who` or the board, that read needs a row here | #181 |
 
 Short-lived credentials exist already: a lifetime of 1 second to 30 days (`MAX_CREDENTIAL_TTL_SECS`), 3600 seconds by
 default in `klatch worker issue`, issued only by the human at a launcher, revoked at once by `klatch worker revoke` or

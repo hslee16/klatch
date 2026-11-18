@@ -774,6 +774,19 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         (declared_scope.as_deref(), caller.session_dir.as_deref()),
         now(),
     )?;
+    // what klatch observes about the member (its directory, the repository derived from it, a stable id); a note that
+    // fails must never stop the command
+    let _ = ensure_member_attrs(
+        &store,
+        &caller.principal.member,
+        caller
+            .session
+            .as_ref()
+            .map(|f| f.session_id.as_str())
+            .or(caller.stdin_session.as_deref()),
+        caller.session_dir.as_deref(),
+        now(),
+    );
     let parent = pending_parent(&store, &caller);
     let mut gateway = Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
     // claims follow their holder's liveness (DESIGN section 29, #304); no home means no registry to probe

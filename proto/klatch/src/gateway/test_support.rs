@@ -205,6 +205,26 @@ impl MemberStore for SpyStore {
         self.inner.set_member_scope(member, scope, now)
     }
 
+    fn member_attrs(&self, member: &str) -> Result<Option<crate::domain::MemberAttrs>> {
+        self.gate()?;
+        self.inner.member_attrs(member)
+    }
+
+    fn note_member_attrs(
+        &self,
+        member: &str,
+        attrs: &crate::domain::MemberAttrs,
+        now: i64,
+    ) -> Result<()> {
+        self.gate()?;
+        self.inner.note_member_attrs(member, attrs, now)
+    }
+
+    fn members_in_repository(&self, repository: &str) -> Result<Vec<String>> {
+        self.gate()?;
+        self.inner.members_in_repository(repository)
+    }
+
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.gate()?;
         self.inner.rooms_of(member)

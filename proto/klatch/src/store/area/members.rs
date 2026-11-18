@@ -1,6 +1,6 @@
 //! The `MemberStore` area of the store seam; `Store` in the parent module combines every area.
 
-use crate::domain::{HookRun, MemberInfo, Parked, Result};
+use crate::domain::{HookRun, MemberAttrs, MemberInfo, Parked, Result};
 use crate::store::{HookEvent, Seat};
 
 pub trait MemberStore {
@@ -56,6 +56,23 @@ pub trait MemberStore {
     /// Remember a member's scope (replacing an earlier one). The default stores nothing.
     fn set_member_scope(&self, _member: &str, _scope: &str, _now: i64) -> Result<()> {
         Ok(())
+    }
+
+    /// The attributes klatch observed for a member (#181), if any. The default knows none.
+    fn member_attrs(&self, _member: &str) -> Result<Option<MemberAttrs>> {
+        Ok(None)
+    }
+
+    /// Remember a member's observed attributes. The member id of the first record is kept for the member's whole life
+    /// (a later call updates the repository and directory only); the id given then is ignored. The default stores
+    /// nothing.
+    fn note_member_attrs(&self, _member: &str, _attrs: &MemberAttrs, _now: i64) -> Result<()> {
+        Ok(())
+    }
+
+    /// The members whose observed repository is `repository`, by name. The default knows none.
+    fn members_in_repository(&self, _repository: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     /// Remember that `parent` is the member whose session started `member`'s; an empty `parent` records that it was

@@ -1,7 +1,7 @@
 //! The SQLite side of the `MemberStore` area.
 
 use super::super::{SqliteStore, be};
-use crate::domain::{HookRun, MemberInfo, Parked, Result};
+use crate::domain::{HookRun, MemberAttrs, MemberInfo, Parked, Result};
 use crate::store::MemberStore;
 use crate::store::{HookEvent, Seat};
 use rusqlite::params;
@@ -48,6 +48,39 @@ impl MemberStore for SqliteStore {
             "INSERT INTO member_scope(member,scope,ts) VALUES(?1,?2,?3)
              ON CONFLICT(member) DO UPDATE SET scope=?2, ts=?3",
             params![member, scope, now],
+        )
+    }
+
+    fn member_attrs(&self, member: &str) -> Result<Option<MemberAttrs>> {
+        self.optional(
+            "SELECT member_id,repository,directory FROM member_attrs WHERE member=?1",
+            params![member],
+            |r| {
+                Ok(MemberAttrs::new(
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+    }
+
+    fn note_member_attrs(&self, member: &str, attrs: &MemberAttrs, now: i64) -> Result<()> {
+        self.write(
+            "INSERT INTO member_attrs(member,member_id,repository,directory,ts) VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(member) DO UPDATE SET repository=?3, directory=?4, ts=?5",
+            params![member, attrs.member_id, attrs.repository, attrs.directory, now],
+        )
+    }
+
+    fn members_in_repository(&self, repository: &str) -> Result<Vec<String>> {
+        if repository.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.rows(
+            "SELECT member FROM member_attrs WHERE repository=?1 ORDER BY member",
+            params![repository],
+            |r| r.get(0),
         )
     }
 

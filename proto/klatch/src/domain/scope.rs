@@ -128,3 +128,31 @@ mod tests {
         assert!(scopes_collide("git:a", SHARED_SCOPE));
     }
 }
+
+/// What klatch observed about a member (DESIGN section 24, R41 and R42): a stable id that is never reused and does not
+/// change with a rename, the repository id derived from the git common directory (empty when the directory is in no
+/// repository), and the working directory.
+///
+/// These are observations by the host about where a process started, not authority: nothing may grant clearance, a
+/// room or any access because two members share a repository value (a directory can name any repository's git
+/// directory, so the value can be made to match). The member name, not this record, stays the key of every table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberAttrs {
+    pub member_id: String,
+    pub repository: String,
+    pub directory: String,
+}
+
+impl MemberAttrs {
+    pub fn new(
+        member_id: impl Into<String>,
+        repository: impl Into<String>,
+        directory: impl Into<String>,
+    ) -> Self {
+        Self {
+            member_id: member_id.into(),
+            repository: repository.into(),
+            directory: directory.into(),
+        }
+    }
+}
