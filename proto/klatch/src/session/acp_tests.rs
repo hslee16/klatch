@@ -1,0 +1,232 @@
+//! The librarian as an ACP agent (#115), driven by a scripted client over in-memory streams against a members' gateway.
+//! The label, role and refusal checks are the gateway's; these tests look for their answers, and for the absence of
+//! any way to write.
+
+use super::acp::AcpServer;
+use super::{Session, SessionConfig};
+use crate::domain::Principal;
+use crate::gateway::{AllowAll, FixedClock, ForbidFloors, Gateway};
+use crate::store::SqliteStore;
+use serde_json::{Value, json};
+use std::io::Cursor;
+
+fn who(name: &str) -> Principal {
+    Principal::unattributed(name)
+}
+
+/// Room `r` (public) with one message from alice, room `vault` (private) with one, and `lib` the librarian at the lowest
+/// clearance.
+fn gateway() -> Gateway<SqliteStore> {
+    gateway_cleared("public")
+}
+
+fn gateway_cleared(lib_clearance: &str) -> Gateway<SqliteStore> {
+    let g = Gateway::new(
+        SqliteStore::open_in_memory().unwrap(),
+        FixedClock(1_000),
+        ForbidFloors::new(AllowAll),
+    );
+    let human = who("admin");
+    g.join(&who("alice"), "r").unwrap();
+    g.post(&who("alice"), "r", "hello from alice").unwrap();
+    g.admin_set_room_label(&human, "vault", "private").unwrap();
+    g.admin_set_clearance(&human, "alice", "private").unwrap();
+    g.join(&who("alice"), "vault").unwrap();
+    g.post(&who("alice"), "vault", "the private plan").unwrap();
+    g.admin_set_librarian(&human, "lib", true).unwrap();
+    g.admin_set_clearance(&human, "lib", lib_clearance).unwrap();
+    g.for_members()
+}
+
+/// A scripted client: send each request line, return every message the agent printed.
+fn drive(g: &Gateway<SqliteStore>, member: &str, lines: &[Value]) -> Vec<Value> {
+    let p = who(member);
+    let config = SessionConfig::default();
+    let session = Session::new(g, &p, &config);
+    let input: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let mut out = Vec::new();
+    AcpServer::new(&session)
+        .serve(Cursor::new(input), &mut out)
+        .unwrap();
+    String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn init() -> Value {
+    json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}})
+}
+fn new_session() -> Value {
+    json!({"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}})
+}
+fn prompt(id: u64, text: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"method":"session/prompt","params":{
+        "sessionId":"klatch-librarian-1","prompt":[{"type":"text","text":text}]}})
+}
+
+/// The answer text and stop reason of one prompt.
+fn ask(g: &Gateway<SqliteStore>, text: &str) -> (String, Value) {
+    let out = drive(g, "lib", &[init(), new_session(), prompt(3, text)]);
+    let update = out
+        .iter()
+        .find(|m| m["method"] == "session/update")
+        .expect("an update");
+    assert_eq!(
+        update["params"]["update"]["sessionUpdate"],
+        "agent_message_chunk"
+    );
+    let reply = out.iter().find(|m| m["id"] == 3).expect("the response");
+    (
+        update["params"]["update"]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        reply["result"]["stopReason"].clone(),
+    )
+}
+
+#[test]
+fn initialize_answers_with_version_one_and_no_auth_and_no_load() {
+    let out = drive(&gateway(), "lib", &[init()]);
+    let r = &out[0]["result"];
+    assert_eq!(r["protocolVersion"], 1, "{out:?}");
+    assert_eq!(r["agentCapabilities"]["loadSession"], false);
+    assert_eq!(r["authMethods"], json!([]));
+    assert_eq!(r["agentInfo"]["name"], "klatch-librarian");
+}
+
+#[test]
+fn a_session_is_made_and_a_prompt_to_an_unknown_one_is_invalid_params() {
+    let out = drive(&gateway(), "lib", &[new_session(), prompt(3, "help")]);
+    assert_eq!(out[0]["result"]["sessionId"], "klatch-librarian-1");
+    let bad = json!({"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"nope","prompt":[]}});
+    let out = drive(&gateway(), "lib", &[bad]);
+    assert_eq!(out[0]["error"]["code"], -32602, "{out:?}");
+}
+
+#[test]
+fn the_librarian_reads_a_room_and_the_answer_streams_before_the_stop_reason() {
+    let out = drive(&gateway(), "lib", &[new_session(), prompt(3, "read r")]);
+    let update_at = out
+        .iter()
+        .position(|m| m["method"] == "session/update")
+        .unwrap();
+    let reply_at = out.iter().position(|m| m["id"] == 3).unwrap();
+    assert!(update_at < reply_at, "{out:?}");
+    let text = out[update_at]["params"]["update"]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(
+        text.contains("hello from alice") && text.contains("data"),
+        "{text}"
+    );
+    assert_eq!(out[reply_at]["result"]["stopReason"], "end_turn");
+}
+
+#[test]
+fn reading_is_a_peek_so_asking_twice_gives_the_same_answer() {
+    let g = gateway();
+    let (a, _) = ask(&g, "read r");
+    let (b, _) = ask(&g, "read r");
+    assert!(a.contains("hello from alice") && a == b, "{a} / {b}");
+}
+
+#[test]
+fn history_who_and_claims_answer() {
+    let g = gateway();
+    assert!(ask(&g, "history r 5").0.contains("hello from alice"));
+    assert!(ask(&g, "who r").0.contains("alice"));
+    assert!(ask(&g, "claims r").0.contains("claims"));
+}
+
+#[test]
+fn a_query_above_the_callers_clearance_is_refused_and_leaks_nothing() {
+    let g = gateway();
+    for q in ["read vault", "history vault", "who vault", "claims vault"] {
+        let (text, stop) = ask(&g, q);
+        assert!(!text.contains("private plan"), "{q}: {text}");
+        assert!(
+            text.contains("refused") || text.contains("failed"),
+            "{q}: {text}"
+        );
+        assert_eq!(stop, "end_turn");
+    }
+}
+
+#[test]
+fn a_cleared_librarian_reads_the_room() {
+    let g = gateway_cleared("private");
+    assert!(ask(&g, "read vault").0.contains("the private plan"));
+}
+
+#[test]
+fn no_write_is_reachable_from_any_prompt() {
+    let g = gateway();
+    let before = g.read(&who("alice"), "r", false).unwrap().len();
+    for q in [
+        "post r a message",
+        "claim r ticket:1",
+        "release r ticket:1",
+        "dm alice hi",
+        "role_act close r",
+        "admin close r",
+        "read r\npost r smuggled",
+        "read r; post r smuggled",
+        "history r 1 2",
+    ] {
+        let (text, stop) = ask(&g, q);
+        assert_eq!(stop, "end_turn");
+        assert!(!text.contains("smuggled\""), "{q}: {text}");
+    }
+    let alice = who("alice");
+    assert!(
+        !g.read(&alice, "r", false)
+            .unwrap()
+            .iter()
+            .any(|m| m.body.contains("smuggled"))
+    );
+    assert!(g.claims(&who("alice"), "r").unwrap().is_empty());
+    assert_eq!(g.read(&who("alice"), "r", false).unwrap().len(), before);
+}
+
+#[test]
+fn a_prompt_cannot_name_another_caller() {
+    let g = gateway();
+    let p = json!({"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
+        "sessionId":"klatch-librarian-1","member":"alice","prompt":[{"type":"text","text":"read vault"}]}});
+    let out = drive(&g, "lib", &[new_session(), p]);
+    let all = serde_json::to_string(&out).unwrap();
+    assert!(!all.contains("private plan"), "{all}");
+}
+
+#[test]
+fn an_ordinary_member_cannot_use_it_to_do_what_a_member_may_not_see() {
+    let g = gateway();
+    let out = drive(&g, "bob", &[new_session(), prompt(3, "read vault")]);
+    let all = serde_json::to_string(&out).unwrap();
+    assert!(
+        !all.contains("private plan") && all.contains("refused"),
+        "{all}"
+    );
+}
+
+#[test]
+fn unknown_methods_notifications_and_junk_are_handled() {
+    let g = gateway();
+    let cancel = json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"x"}});
+    let load = json!({"jsonrpc":"2.0","id":9,"method":"session/load","params":{}});
+    let out = drive(&g, "lib", &[cancel, load]);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0]["error"]["code"], -32601);
+    let p = who("lib");
+    let config = SessionConfig::default();
+    let session = Session::new(&g, &p, &config);
+    let mut out = Vec::new();
+    AcpServer::new(&session)
+        .serve(Cursor::new("not json\n"), &mut out)
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["error"]["code"], -32700);
+}

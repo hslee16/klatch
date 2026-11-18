@@ -1,6 +1,7 @@
 //! The session module (the `klatch-session` crate before the crates became modules): one gateway session over any duplex byte stream, speaking `PROTOCOL.md`.
 //! Identity comes from the `Principal` the transport supplies, never from a request.
 
+pub mod acp;
 mod frames;
 mod guarded;
 pub mod mcp;
@@ -307,7 +308,7 @@ impl<'a, S: Store> Session<'a, S> {
     }
 
     /// One plain request outside a stream, as the session's principal: the frames that answer it (a `response`, and a
-    /// `refusal` before it when a policy refused). Subscriptions are not available here. The MCP front end calls
+    /// `refusal` before it when a policy refused). Subscriptions are not available here. The MCP and ACP front ends call
     /// through this, so it meets exactly the checks a wire request meets (#299).
     pub fn call(&self, method: &str, params: serde_json::Value) -> Vec<ServerFrame> {
         let call = Call {
@@ -432,6 +433,8 @@ pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> V
     items
 }
 
+#[cfg(test)]
+mod acp_tests;
 #[cfg(test)]
 mod role_tests;
 #[cfg(test)]
