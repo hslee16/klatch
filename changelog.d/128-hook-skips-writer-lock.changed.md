@@ -1,0 +1,1 @@
+- The hook and `klatch wait` no longer queue behind writers when nothing changed: a member's last-seen is written at most once per second, and a hook digest with no new message and no claim change reads on a snapshot without taking the write lock (#128).
