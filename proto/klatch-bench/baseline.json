@@ -35,7 +35,7 @@
   },
   "many_waiters_wake_together": {
     "total_ms": 1090.0,
-    "wake_ms": 207.0
+    "wake_ms": 40.0
   },
   "paging_a_hundred_thousand_message_room_costs_the_same_at_the_head_and_the_tail": {
     "head_ms": 8.454959,

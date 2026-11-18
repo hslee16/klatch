@@ -35,6 +35,11 @@ pub trait Transport {
     fn wake_mark(&self, room: &str) -> Result<()>;
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
+    /// The store's change token (#616): differs after any other connection commits. A waiter takes it before it polls
+    /// and sleeps until it differs. The default has none, so a waiter polls on a timer.
+    fn change_token(&self) -> Option<u64> {
+        None
+    }
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
     /// Per-recipient liveness states for a message the caller sent (#546); no text, no read state.
     fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts>;
@@ -132,6 +137,9 @@ pub trait Transport {
     fn board(&self, room: &str) -> Result<crate::domain::Board>;
     /// Asks in a room nobody has answered or closed.
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
+    /// Whether the process behind a room member's session has exited, by the liveness probe (#790). False for
+    /// anything the probe cannot say, so unknown counts as alive.
+    fn process_exited(&self, room: &str, member: &str) -> Result<bool>;
     /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription>;
     /// The next batch of a subscription, at most `max` messages.
@@ -190,6 +198,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()> {
         self.gateway.wait_seen(&self.principal, room, seq)
+    }
+    fn change_token(&self) -> Option<u64> {
+        self.gateway.change_token()
     }
     fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts> {
         self.gateway.receipt(&self.principal, room, seq)
@@ -380,6 +391,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gateway.open_asks(&self.principal, room)
+    }
+    fn process_exited(&self, room: &str, member: &str) -> Result<bool> {
+        self.gateway.process_exited(&self.principal, room, member)
     }
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
         Ok(Subscription::new(room, from_seq, DEFAULT_WINDOW))

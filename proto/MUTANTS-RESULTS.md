@@ -121,3 +121,106 @@ rows merge the two runs, the later result winning for a mutant seen twice.
 
 No tests were added in this change: the survivors are reported first and each ticket names the missing test, so the
 tests can be written red first against the mutant.
+
+# Second run, after wave 1M (#407 rerun)
+
+Run by hand on 2026-11-18 (`date` at the end: Wed Nov 18 01:28 EST; the run started the evening before) at main commit
+2c4eaeb ("Merge pull request #772"), which contains the tests of PRs #766, #768, #769, #770 and #772. Same tool
+(cargo-mutants 27.1.0), same config and same eight modules as the first run, through `proto/scripts/mutants`. No
+production code was touched and no test was added by this change; the runner gained one option, `MUTANTS_ARGS`
+(extra cargo-mutants options), to hold back the looping mutants (see below). **This measures the tests, not the code.**
+
+## Before and after
+
+Before is the first run (commit d4d0bba). After is this run. The total changed for three modules because the code changed
+between the two commits (gateway-policy 152 to 158, gateway-claims 126 to 137, archive 136 to 133). Columns: total / caught / missed / timeout / unviable.
+
+| Module | Before | After |
+|---|---|---|
+| gateway-policy | 152 / 139 / 5 / 0 / 8 | 158 / 148 / 1 / 0 / 9 |
+| domain-security | 247 / 234 / 11 / 1 / 1 | 247 / 245 / 0 / 1 / 1 |
+| gateway-claims | 126 / 90 / 22 / 0 / 14 | 137 / 122 / 0 / 0 / 15 |
+| keys | 234 / 136 / 62 / 0 / 36 | 234 / 143 / 55 / 0 / 36 |
+| custody | 115 / 35 / 44 / 2 / 34 | 115 / 73 / 6 / 2 / 34 |
+| store-crypto | 106 / 68 / 21 / 4 / 13 | 106 / 75 / 13 / 5 / 13 |
+| store-claims | 153 / 103 / 34 / 0 / 16 | 153 / 130 / 7 / 0 / 16 |
+| archive | 136 / 55 / 70 / 0 / 11 | 133 / 108 / 14 / 0 / 11 |
+| **All** | **1269 / 860 / 269 / 7 / 133** | **1283 / 1044 / 96 / 8 / 135** |
+
+Every row sums (caught + missed + timeout + unviable = total). Caught ratio over viable mutants (caught + timeout over
+caught + timeout + missed), before to after: gateway-policy 96% to 99%, domain-security 96% to 100%, gateway-claims
+80% to 100%, keys 69% to 72% (40 of its 55 survivors are in code not built here), custody 46% to 93%, store-crypto
+77% to 86%, store-claims 75% to 95%, archive 44% to 89%. Over all modules: 1052 of 1148 = 92% (before 867 of 1136 =
+76%).
+
+The first run's result files were deleted after it, so "which survivors are now caught" is derived from the tickets
+(#716 to #727) and from the module counts, not from a diff of two missed lists. By the tickets, all of #716 to #720,
+#722, #724 (except the survivors below), #725 and #726 (except the survivors below) are now caught.
+
+## What still survives (96)
+
+Not ticketed anew because an open ticket already names them, or equivalent or not a security function:
+
+- keys, 55 survivors. 40 are in `keys/linux.rs`, which is listed by cargo-mutants but not built on macOS (the tests
+  that would catch them do not run here): this run says nothing about them; they need the same run on Linux. 4 in
+  `keys/macos.rs` (the two `ERR_SEC_ITEM_NOT_FOUND` match guards in `get` and `delete`, and `describe` replaced by
+  text) and 1 in `keys/bundle.rs:147` (`store.is_none()` guard in `Bundle::read`) are the remaining items of the open
+  #723. 10 more are `describe` and `Display::fmt` bodies replaced by empty text or "xyzzy": formatting only, not
+  security (listed in the first run too).
+- archive, 14 survivors, all in the area of the open #727 (the archive commands and archive integrity):
+  `admin/archive.rs` `archive_room` (`>` at line 121 three ways, `+=` at 123), `settle_after_failure` replaced by
+  `()`, `finish` (`==` at 149); `store/sqlite/archive.rs` `list_archives` and `archive_files` NotFound guards,
+  `archive_before_hooked` (`==` at 314); `store/sqlite/integrity.rs` `open_archives` (replaced by `Ok(vec![])` and
+  `==` at 120) and `check_store` (replaced by `Ok(vec![])`, `Ok(vec![String::new()])`, `Ok(vec!["xyzzy".into()])`).
+  `check_store` returning an empty list is the important one: a corrupt store would be reported clean. #727 stays
+  open; **it is not closed by this rerun**.
+- store-crypto, 13 survivors plus 5 timeouts: `check_opens` `|` to `^` is **equivalent** (`SQLITE_OPEN_READ_ONLY` 0x1
+  and `SQLITE_OPEN_URI` 0x40 share no bit; first run said the same). The other 12 survivors and the 2 timeouts
+  (`%` replaced in the delay) are in `connect.rs` `open_with_timeout` and its busy test: busy-retry timing, not
+  security (first run's reasoning). The 3 timeouts in `scrub_and_remove` are discussed below. Every function #721
+  names (`verify_copy`, `open_dir`, `convert`, `scrub_and_remove`) now has its mutants caught or timed out.
+- custody, 6 survivors: 4 are in `BrokenKeys` (`put` and `delete` replaced by `Ok(())`, `describe` replaced), the
+  stand-in used when the key bundle is unusable; `custody.rs:186` `next != key` replaced by `true` in `open_keyed` is
+  **equivalent in effect** (when the pending key equals the current key, opening with it fails the same way and the
+  original error is returned). `identity.rs:119` `<` to `<=` is a new ticket (#801). 2 timeouts are `next_name`
+  replaced by empty text or "xyzzy" (a key name that collides with itself loops until the clock).
+- store-claims, 7 survivors: 6 are default bodies of the `ClaimStore` and `CredentialStore` traits that
+  `SqliteStore` overrides, dead today (named as a risk for a second Store implementation in the first run and #726);
+  `claims.rs:281` `&&` to `||` in `cycle_notices` is a new ticket (#802).
+- gateway-policy, 1 survivor: `checks.rs:87` `identifier` replaced by `true`; its security caller is the permission
+  mode check in `presence.rs`. New ticket #800.
+- domain-security: 0 survivors; 1 timeout (`text.rs:71` `-=` to `/=` in `trim_slashes`, a loop that does not end).
+- gateway-claims: 0 survivors.
+
+## The scrub_and_remove loop mutants
+
+The six mutants of `scrub_and_remove` were run last, alone, in a fresh copy, with the runner's `ulimit -f` (1 GiB per
+file) and the disk watchdog (polled every 3 s; kill below 30 GB free; 60 GB free was required to start). Free space
+stayed at 74 to 78 GB for the whole run: nothing grew without end, so the limit and the loop bound held. Results:
+`Ok(())`, `>` to `<` and `-=` to `+=` caught; `>` to `==`, `>` to `>=` and `-=` to `/=` timed out (they loop; a timeout
+counts as caught). The disk hazard of the first run (#683) did not repeat.
+
+## Tickets from this run
+
+| # | About |
+|---|---|
+| 800 | `checks::identifier` replaced by `true` survives (permission mode validation) |
+| 801 | `ensure_session_member` suffix growth bound `<` to `<=` |
+| 802 | `cycle_notices` holder condition `&&` to `||` |
+
+Open from the first run and still correct: #723 (keys), #727 (archive commands and integrity).
+
+## Limits of this run
+
+- Not run, as before: the other `domain/` files, `transport`, `identity` beyond what `custody` covers, `subscription`,
+  `judge`, `session/` beyond `policy.rs`, `harness`, `doctor`, `sync`, `anchor`, and the other gateway submodules.
+- `keys/linux.rs` was listed (40 survivors) but not built on macOS, so those figures are not evidence about Linux.
+  The real Keychain was not touched (`KLATCH_KEY_DIR` points at a scratch directory).
+- The first run's missed list was not kept, so the "now caught" statement rests on counts and tickets, and the total of
+  each module differs a little because the code changed between the two commits.
+- A caught mutant shows that some test fails, not the right one; an equivalent mutant is counted as a survivor unless
+  named above. Timeouts depend on the machine; two modules ran at once on a shared machine.
+- Friction: the first attempt failed with all-zero counts because a long scratch path as TMPDIR broke a unix socket
+  test (`path must be shorter than SUN_LEN`) in the unmutated baseline, so no mutant ran; the runner reports exit 4 in
+  that case. TMPDIR must be short (here `/private/tmp/mra93`). The mutex was held by another agent for a while before
+  the run could start.

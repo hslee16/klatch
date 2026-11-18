@@ -622,6 +622,7 @@ fn run_sessions(all: bool) -> Result<()> {
                 Liveness::NotHarness => "running, but not the harness",
                 Liveness::OtherDomain => "recorded on another machine",
                 Liveness::Live => "live",
+                Liveness::Unreadable => "could not be checked (the process table cannot be read)",
             };
             println!(
                 "ignored\t{}\t{why}\t{}\t{}",
@@ -747,12 +748,15 @@ fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: boo
         bail!("serve needs --stdio, the only transport so far");
     }
     // stdout carries protocol frames only; nothing else may print there
-    Ok(klatch::session::serve(
-        gateway,
-        principal,
-        std::io::BufReader::new(std::io::stdin()),
-        std::io::stdout().lock(),
-    )?)
+    // stdin cannot be stopped from outside; the process exits when the session does
+    let config = klatch::session::SessionConfig::default();
+    Ok(
+        klatch::session::Session::new(gateway, principal, &config).serve_guarded(
+            std::io::BufReader::new(std::io::stdin()),
+            std::io::stdout(),
+            None,
+        )?,
+    )
 }
 
 #[cfg(test)]

@@ -143,8 +143,8 @@ pub fn probe(
     let mut ev = Evidence::empty(identity);
     match identity {
         Liveness::Live => {}
-        // another pid space: its pid is not ours to look up, and "cannot check" is never "dead"
-        Liveness::OtherDomain => {
+        // another pid space or a table that cannot be read: "cannot check" is never "dead"
+        Liveness::OtherDomain | Liveness::Unreadable => {
             ev.unknown.push("identity");
             return finish(Verdict::Unknown, ev, now, None);
         }
@@ -627,6 +627,22 @@ mod tests {
         let p = run(&host_with_children(vec![dead]), None);
         assert_eq!(p.evidence.children, Some(0));
         assert_eq!(p.evidence.resident_children, Some(0));
+    }
+
+    #[test]
+    fn a_process_table_that_cannot_be_read_is_unknown_never_gone() {
+        // #525: with no ps, the lease rule must see Unknown (leave the claims), not Gone (shorten them)
+        let p = probe(
+            &rec(),
+            &crate::harness::liveness::fake::UnreadableTable,
+            "darwin",
+            &host(),
+            None,
+            &Thresholds::default(),
+        );
+        assert_eq!(p.verdict, Verdict::Unknown);
+        assert_eq!(p.evidence.identity, Liveness::Unreadable);
+        assert!(p.evidence.unknown.contains(&"identity"));
     }
 
     #[test]

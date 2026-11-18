@@ -157,6 +157,10 @@ carry the `request` id they refused.
 - **Transient failures.** If the store is busy (`Busy`) the gateway retries on the next poll and says nothing. Any
   other failure while streaming sends a `refusal` (rule `stream.backend`, `stream.invalid` or `stream.not_found`, or
   the policy's own rule) and drops that room's subscription; the consumer may subscribe again.
+- **A consumer that stops reading.** A session behind a bounded output queue (the one `klatch serve` runs) whose
+  queue stays full for the stall limit (default 30 seconds) with no frame written ends, and a consumer that reads
+  again finds one last `refusal` with rule `stream.slow_consumer` (a transport that closes the connection first
+  delivers no refusal; the close is the signal). A consumer that reads slowly but steadily is never refused.
 - **End of input.** When the input of a session closes, the gateway delivers the replay that is immediately
   available within each window and ends the session.
 

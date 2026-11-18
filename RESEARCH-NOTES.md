@@ -754,6 +754,18 @@ Observed in this Claude Code session (2.1.323, macOS), one observation each, rea
   sessions stale. `updatedAt` ages ranged from one minute to over four hours for live sessions, so freshness is not
   a liveness test. The `pidDomain` field (`darwin` here) marks which pid space the record belongs to. Not tested:
   a dead pid, a reused pid, and Linux (where start time would come from `/proc`).
+- **Linux (2026-11-18, #171).** Still **not observed**: no real Claude Code registry or `ps` was read on a Linux machine.
+  What exists: CI runs the fake-harness scenarios and the `PsTable` tests on ubuntu against a real process table
+  (a symlinked `claude`, `lstart` in UTC), and they pass, so the ancestry, liveness and start-time logic works with
+  real procps output. What was added here, by hand and on macOS, is `harness/linux_shaped.rs`: the same code against
+  a made-up table shaped like procps (a padded `lstart` day, a bare `comm` cut to 15 characters, state letters such as
+  `Ssl` and `I`, `HH:MM:SS` CPU times, a `linux` pid domain, an ssh tree under systemd). Those values come from
+  knowledge of procps, not from a Linux run, and the file says so. A record from another pid domain reads as
+  `OtherDomain`, never dead and never live, so a wrong guess about the Linux domain name fails safe (discovery finds
+  no session). **Unobserved, ticketed as #797 (needs a Linux host):** the `pidDomain` a real Linux record carries; what
+  `comm` shows for the harness (a native binary named `claude` passes, a script run by `node` would print `node`
+  and read as not the harness); whether `procStart` equals `TZ=UTC ps -o lstart=` or comes from `/proc`; and the
+  `ps -A` option set on procps and busybox.
 
 
 ## 18. First two-agent run (2026-11-13)
