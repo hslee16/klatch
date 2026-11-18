@@ -3,6 +3,7 @@
 
 mod frames;
 mod guarded;
+pub mod mcp;
 mod methods;
 pub mod policy;
 mod role_methods;
@@ -303,6 +304,18 @@ impl<'a, S: Store> Session<'a, S> {
                 return Ok((sent, false));
             }
         }
+    }
+
+    /// One plain request outside a stream, as the session's principal: the frames that answer it (a `response`, and a
+    /// `refusal` before it when a policy refused). Subscriptions are not available here. The MCP front end calls
+    /// through this, so it meets exactly the checks a wire request meets (#299).
+    pub fn call(&self, method: &str, params: serde_json::Value) -> Vec<ServerFrame> {
+        let call = Call {
+            id: "call".into(),
+            method: method.into(),
+            value: params,
+        };
+        self.request(&mut Vec::new(), call)
     }
 
     /// Dispatch one request. `subscribe` and `unsubscribe` change the session's subscriptions; every other
