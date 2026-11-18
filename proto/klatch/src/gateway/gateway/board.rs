@@ -44,7 +44,8 @@ impl<S: Store> Gateway<S> {
         let now = self.now();
         let messages = self.store.tail(room, 0, 5000)?;
         let statuses = crate::domain::statuses(&messages);
-        let all = self.store.members(room)?;
+        let mut all = self.store.members(room)?;
+        self.with_kinds(&mut all)?;
         let done: Vec<String> = all
             .iter()
             .filter(|m| m.status.as_deref().is_some_and(|s| s.starts_with("done")))
@@ -70,6 +71,7 @@ impl<S: Store> Gateway<S> {
                 last_seen: m.last_seen,
                 parent: m.parent,
                 parked: m.parked.filter(|p| p.holds(now)),
+                kind: m.kind,
             })
             .collect::<Vec<crate::domain::BoardMember>>();
         // A task whose owner is not present (hidden, ended, pruned), not parked and holds no live claim is orphaned:
@@ -103,7 +105,7 @@ impl<S: Store> Gateway<S> {
         })
     }
 
-    /// One member's card (#251, item 100): what the room board and the live claims say about `member`, or `None` when
+    /// One member's card (#251, item 104): what the room board and the live claims say about `member`, or `None` when
     /// it is not listed on the board. Derived on every call, stored nowhere, and a read like the board is.
     pub fn member_card(
         &self,
@@ -166,7 +168,9 @@ impl<S: Store> Gateway<S> {
     pub fn who(&self, who: &Principal, room: &str) -> Result<Vec<MemberInfo>> {
         self.admit(who, room, Operation::Who { room: room.into() })?;
         self.settle_leases(&who.member)?;
-        self.store.members(room)
+        let mut members = self.store.members(room)?;
+        self.with_kinds(&mut members)?;
+        Ok(members)
     }
 
     /// What the sender of message `seq` can learn about each recipient (#546): liveness states only (parked, seen
@@ -226,9 +230,10 @@ impl<S: Store> Gateway<S> {
             let messages = self.digest_messages(who, &room, now)?;
             let addressed = self.addressed_seqs(who, &room, &messages)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
-            let stale =
-                self.store
-                    .stale_asks(Seat::new(&room, &who.member), now, STALE_AFTER_SECS)?;
+            let stale_after = self.settings_of(&room)?.stale_secs;
+            let stale = self
+                .store
+                .stale_asks(Seat::new(&room, &who.member), now, stale_after)?;
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;

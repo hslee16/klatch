@@ -1,7 +1,7 @@
 //! The plain request methods: each reads its parameters, calls the gateway as the session's principal and shapes
 //! the answer.
 
-use crate::domain::{Claim, Error, MemberInfo, Message, Posted, Principal};
+use crate::domain::{Claim, Error, MemberInfo, MemberKind, Message, Posted, Principal};
 use crate::gateway::{ClaimSpec, Gateway};
 use crate::protocol::ServerFrame;
 use crate::session::frames::{fail_with, failure, message_json, ok};
@@ -75,6 +75,11 @@ struct ScopeParams {
     scope: String,
 }
 #[derive(Deserialize)]
+struct KindParams {
+    /// `bot`, `service` or `human`; null or absent withdraws the declaration.
+    kind: Option<String>,
+}
+#[derive(Deserialize)]
 struct StatusParams {
     room: String,
     status: String,
@@ -128,9 +133,28 @@ fn members_json(ms: &[MemberInfo]) -> Value {
         if let Some(status) = &m.status {
             v["status"] = json!(status);
         }
+        if let Some(kind) = m.kind {
+            v["kind"] = json!(kind.word());
+        }
         v
     };
     json!({ "members": ms.iter().map(one).collect::<Vec<_>>() })
+}
+
+/// The wire `kind` method: a word of the closed vocabulary, or none to withdraw the declaration.
+fn declare_kind<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    word: Option<&str>,
+) -> Result<(), Error> {
+    let kind = match word {
+        None => None,
+        Some(w) => Some(
+            MemberKind::parse(w)
+                .ok_or_else(|| Error::Invalid("kind is bot, service or human, or null".into()))?,
+        ),
+    };
+    g.set_kind(who, kind)
 }
 
 fn claims_json(cs: &[Claim]) -> Value {
@@ -197,13 +221,14 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         "status" => call.run(|p: StatusParams| g.set_status(who, &p.room, &p.status), empty),
         "claim" => call.run(
             |p: ClaimParams| {
-                let ttl = crate::domain::claim_ttl(&p.path, p.ttl);
+                let ttl = g.claim_ttl_for(who, (&p.room, &p.path), p.ttl)?;
                 g.claim(who, &p.room, &ClaimSpec::new(&p.path, ttl, &p.reason).shared(p.shared))
             },
             empty,
         ),
         "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
+        "kind" => call.run(|p: KindParams| declare_kind(g, who, p.kind.as_deref()), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
                 Some(n) => g.release_with_note(who, (&p.room, &p.path), n),

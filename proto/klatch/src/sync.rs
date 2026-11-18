@@ -17,6 +17,7 @@ pub use shuttle::thread;
 /// Run `probe` on its own thread and wait up to `limit` for its answer; `None` when it does not come. A keystore can
 /// block for ever on a dialog nobody is there to answer, and a health check must not hang with it. The abandoned thread
 /// ends with the process.
+#[cfg(not(shuttle))]
 pub fn within<T: Send + 'static>(
     limit: std::time::Duration,
     probe: impl FnOnce() -> T + Send + 'static,
@@ -26,4 +27,27 @@ pub fn within<T: Send + 'static>(
         let _ = tx.send(probe());
     });
     rx.recv_timeout(limit).ok()
+}
+
+/// `within` in a Shuttle build. Shuttle has no clock: its `recv_timeout` never times out (#666), so a stuck probe would
+/// leave the waiter blocked for ever, a deadlock Shuttle would report for code that is fine in real time. A second
+/// thread stands in for the clock: it yields (Shuttle's `sleep`) and then sends the expiry on the same channel. The probe's
+/// answer and the expiry reach the waiter in whichever order the schedule picks, so a test sees both outcomes (the
+/// answer first, and the limit passing first with the answer arriving at a waiter that has gone). It does not model how
+/// long `limit` is, only that the limit can pass at any step.
+#[cfg(shuttle)]
+pub fn within<T: Send + 'static>(
+    limit: std::time::Duration,
+    probe: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = mpsc::channel::<Option<T>>();
+    let clock = tx.clone();
+    thread::spawn(move || {
+        let _ = tx.send(Some(probe()));
+    });
+    thread::spawn(move || {
+        thread::sleep(limit);
+        let _ = clock.send(None);
+    });
+    rx.recv().ok().flatten()
 }
