@@ -13,7 +13,7 @@ fn concurrent_posters_get_dense_unique_seqs() {
     SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap(); // create the schema once
     let handles: Vec<_> = (0..8)
         .map(|t| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 (0..25)
@@ -42,7 +42,7 @@ fn many_connections_opening_a_fresh_database_at_once_all_succeed() {
         let gate = std::sync::Arc::new(std::sync::Barrier::new(12));
         let handles: Vec<_> = (0..12)
             .map(|_| {
-                let (path, gate) = (path.clone(), gate.clone());
+                let (path, gate) = (path.to_path_buf(), gate.clone());
                 std::thread::spawn(move || {
                     gate.wait();
                     SqliteStore::open(&path, &crate::store::insecure_test_key()).map(|_| ())
@@ -64,7 +64,7 @@ fn concurrent_claims_on_one_path_have_exactly_one_winner() {
     SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     let handles: Vec<_> = (0..8)
         .map(|t| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 s.claim(
@@ -91,7 +91,7 @@ fn concurrent_claims_on_disjoint_paths_all_succeed() {
     SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     let handles: Vec<_> = (0..8)
         .map(|t| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 s.claim(
@@ -121,7 +121,7 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
     SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     let writers: Vec<_> = (0..4)
         .map(|t| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 for i in 0..25 {
@@ -132,7 +132,7 @@ fn readers_and_writers_together_lose_and_duplicate_nothing() {
         .collect();
     let readers: Vec<_> = (0..3)
         .map(|t| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 let me = format!("reader{t}");
@@ -224,7 +224,7 @@ fn measure_hook_path_latency_under_write_load() {
         let posted = std::sync::Arc::new(AtomicU64::new(0));
         let writers: Vec<_> = (0..4)
             .map(|t| {
-                let (path, stop, posted) = (path.clone(), stop.clone(), posted.clone());
+                let (path, stop, posted) = (path.to_path_buf(), stop.clone(), posted.clone());
                 std::thread::spawn(move || {
                     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                     while !stop.load(Ordering::Relaxed) {
@@ -269,7 +269,7 @@ fn measure_hook_path_latency_under_write_load() {
 
 /// A store whose writer lock another connection can hold, so any write fails with `Busy` after 100 ms. Returns the
 /// store, a second connection that can hold the lock, and the database path.
-fn store_with_lock_holder(name: &str) -> (SqliteStore, rusqlite::Connection, std::path::PathBuf) {
+fn store_with_lock_holder(name: &str) -> (SqliteStore, rusqlite::Connection, TempDb) {
     let path = temp_db(name);
     let s = SqliteStore::open_with_timeout(
         &path,
@@ -395,7 +395,7 @@ fn measure_hook_digest_path_under_write_load() {
         let posted = std::sync::Arc::new(AtomicU64::new(0));
         let writers: Vec<_> = (0..4)
             .map(|t| {
-                let (path, stop, posted) = (path.clone(), stop.clone(), posted.clone());
+                let (path, stop, posted) = (path.to_path_buf(), stop.clone(), posted.clone());
                 std::thread::spawn(move || {
                     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                     while !stop.load(Ordering::Relaxed) {

@@ -103,6 +103,14 @@ if [ "$want_summary" -eq 1 ]; then
   exit 0
 fi
 [ ${#run[@]} -gt 0 ] || { usage >&2; exit 2; }
+# the tests build unix socket paths under the temp directory, and a socket path over about 100 bytes (macOS 104) fails
+# in the unmutated baseline: every mutant would then be reported as 0 (#778). Refuse up front, before any copy or build.
+tmp_root="${TMPDIR:-/tmp}"
+tmp_root="${tmp_root%/}"
+if [ "${#tmp_root}" -gt 60 ]; then
+  echo "mutants: TMPDIR is ${#tmp_root} bytes ($tmp_root); the limit is 60. The tests create unix sockets under it, a socket path must fit in about 100 bytes, and a longer one fails the baseline so the run would report zero mutants. Set TMPDIR to a short directory, for example TMPDIR=/tmp/mut" >&2
+  exit 2
+fi
 command -v cargo-mutants > /dev/null 2>&1 || { echo "mutants: cargo-mutants is not installed (see the header)" >&2; exit 2; }
 command -v rsync > /dev/null 2>&1 || { echo "mutants: rsync is needed to copy the repository" >&2; exit 2; }
 mkdir -p "$base/keys" || exit 2

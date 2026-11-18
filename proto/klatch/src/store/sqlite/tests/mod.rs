@@ -44,11 +44,7 @@ pub(super) fn pair(o: &str, p: &str) -> (String, String) {
     (o.to_string(), p.to_string())
 }
 
-pub(super) fn temp_db(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("klatch-store-{tag}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir.join("rooms.db")
-}
+pub(super) use crate::store::test_dir::{TempDb, temp_db};
 
 /// A plain connection to a file, unlocked with the test key: for building an old-schema database or holding a lock.
 pub(super) fn keyed(path: &std::path::Path) -> Connection {

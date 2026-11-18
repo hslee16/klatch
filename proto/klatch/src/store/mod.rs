@@ -9,6 +9,8 @@ pub(crate) mod ids;
 #[cfg(test)]
 mod memory_spike;
 mod sqlite;
+#[cfg(test)]
+pub(crate) mod test_dir;
 
 pub use area::{
     AskStore, ClaimStore, CredentialStore, MemberStore, MessageStore, PolicyStore, ReviewStore,
