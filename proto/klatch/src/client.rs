@@ -70,6 +70,60 @@ pub struct History {
     pub more: u64,
 }
 
+/// A member as `who` lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub name: String,
+    pub last_seen: i64,
+    pub status: Option<String>,
+    pub kind: Option<String>,
+}
+
+/// A live claim as `claims` lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimInfo {
+    pub path: String,
+    pub owner: String,
+    pub reason: String,
+    pub expires: i64,
+    pub scope: Option<String>,
+}
+
+/// An item in the reviewer's queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewItem {
+    pub id: i64,
+    pub room: String,
+    pub seq: u64,
+    pub to_label: String,
+    pub reason: String,
+    pub text: String,
+}
+
+/// The reviewer's decision on a held item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict<'a> {
+    Allow,
+    /// Release this text in place of the held one.
+    Redact(&'a str),
+    /// Refuse it, with an optional reason.
+    Deny(Option<&'a str>),
+}
+
+fn str_of(v: &Value) -> String {
+    v.as_str().unwrap_or("").to_string()
+}
+
+fn opt_str(v: &Value) -> Option<String> {
+    v.as_str().map(String::from)
+}
+
+fn array_of<T>(v: &Value, one: impl Fn(&Value) -> T) -> Vec<T> {
+    v.as_array()
+        .map(|a| a.iter().map(one).collect())
+        .unwrap_or_default()
+}
+
 /// A typed handoff carried by a post: its kind and an opaque payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handoff<'a> {
@@ -439,6 +493,95 @@ impl Client {
             .unwrap_or_default())
     }
 
+    /// The members of a room: liveness, and the status and kind a member declared.
+    pub fn who(&mut self, room: &str) -> Result<Vec<Member>> {
+        let r = self.request("who", json!({"room": room}))?;
+        Ok(array_of(&r["members"], |m| Member {
+            name: str_of(&m["name"]),
+            last_seen: m["last_seen"].as_i64().unwrap_or(0),
+            status: opt_str(&m["status"]),
+            kind: opt_str(&m["kind"]),
+        }))
+    }
+
+    /// The live claims in a room, in path order.
+    pub fn claims(&mut self, room: &str) -> Result<Vec<ClaimInfo>> {
+        let r = self.request("claims", json!({"room": room}))?;
+        Ok(array_of(&r["claims"], |c| ClaimInfo {
+            path: str_of(&c["path"]),
+            owner: str_of(&c["owner"]),
+            reason: str_of(&c["reason"]),
+            expires: c["expires"].as_i64().unwrap_or(0),
+            scope: opt_str(&c["scope"]),
+        }))
+    }
+
+    /// Set your own status in a room (one line, 1 to 80 characters), for example `done`.
+    pub fn set_status(&mut self, room: &str, status: &str) -> Result<()> {
+        self.request("status", json!({"room": room, "status": status}))
+            .map(|_| ())
+    }
+
+    /// Post a content-free pointer (`klatch join <room>`) for `member` in `via`, a room you both already are in.
+    /// It joins nobody; the invited member decides.
+    pub fn invite(&mut self, member: &str, room: &str, via: &str) -> Result<()> {
+        self.request(
+            "invite",
+            json!({"member": member, "room": room, "via": via}),
+        )
+        .map(|_| ())
+    }
+
+    /// Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict
+    /// only with claims in the same scope, and a shared claim conflicts with every scope.
+    pub fn set_scope(&mut self, scope: &str) -> Result<()> {
+        self.request("scope", json!({"scope": scope})).map(|_| ())
+    }
+
+    /// Declare your own kind for display (`bot`, `service` or `human`); `None` withdraws it. `session` is never
+    /// declared: klatch derives it.
+    pub fn set_kind(&mut self, kind: Option<&str>) -> Result<()> {
+        self.request("kind", json!({"kind": kind})).map(|_| ())
+    }
+
+    /// The reviewer's queue: the next held item, or `None` when there is none. Only the reviewer role may call it
+    /// (refused, rule `reviewer`).
+    pub fn review_next(&mut self) -> Result<Option<ReviewItem>> {
+        let r = self.request("review_next", json!({}))?;
+        let item = &r["item"];
+        if item.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(ReviewItem {
+            id: item["id"].as_i64().unwrap_or(0),
+            room: str_of(&item["room"]),
+            seq: item["seq"].as_u64().unwrap_or(0),
+            to_label: str_of(&item["to_label"]),
+            reason: str_of(&item["reason"]),
+            text: str_of(&item["text"]),
+        }))
+    }
+
+    /// The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`).
+    /// Only the reviewer role may call it.
+    pub fn review_verdict(&mut self, id: i64, verdict: Verdict) -> Result<()> {
+        let mut p = json!({"id": id});
+        match verdict {
+            Verdict::Allow => p["verdict"] = json!("allow"),
+            Verdict::Redact(text) => {
+                p["verdict"] = json!("redact");
+                p["text"] = json!(text);
+            }
+            Verdict::Deny(reason) => {
+                p["verdict"] = json!("deny");
+                if let Some(r) = reason {
+                    p["reason"] = json!(r);
+                }
+            }
+        }
+        self.request("review_verdict", p).map(|_| ())
+    }
+
     /// An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
     /// `run-create`, `run-end`, `anchor-done`) with the parameters it needs (`room`, `member`, `label`, `limit`,
     /// `run`, `anchor`). A member without the role is refused. Returns the result object.
@@ -469,6 +612,12 @@ impl Client {
         self.caught_up = None;
         let r = self.request("subscribe", json!({"room": room, "from_seq": from_seq}))?;
         Ok(r["head"].as_u64().unwrap_or(0))
+    }
+
+    /// Stop the stream for a room; harmless if there is none.
+    pub fn unsubscribe(&mut self, room: &str) -> Result<()> {
+        self.request("unsubscribe", json!({"room": room}))
+            .map(|_| ())
     }
 
     pub fn ack(&mut self, room: &str, seq: u64) -> Result<()> {

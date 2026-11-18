@@ -66,7 +66,7 @@ pub use hook::{
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
 pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]
-pub(crate) use labels::dominates_in;
+pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, min_in};
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,

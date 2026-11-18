@@ -1,0 +1,1 @@
+- New design items are fragment files `design/items/<ticket>-<slug>.md` instead of lines appended to DESIGN.md, so parallel pull requests no longer collide on item numbers; `release/design-fragments.sh check|collect|assemble` checks them (in the gate) and numbers them into DESIGN.md at release (#807).
