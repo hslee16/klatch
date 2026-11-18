@@ -29,6 +29,7 @@ mod labels;
 mod lease;
 mod lease_settings;
 mod librarian;
+mod member_kind;
 mod member_surface;
 mod members;
 mod mute;
