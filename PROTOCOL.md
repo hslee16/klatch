@@ -78,6 +78,7 @@ decided by the transport and never by `params`: a `member` or `sender` field in 
 | `mute` | `room`, `muted` (boolean, required) | `{}`. Mutes (`true`) or unmutes (`false`) the room for the caller only: the caller's digest and wake counts then show only messages that mention it. `read`, `history` and the stream still carry everything. `invalid` for a bad room name; `invalid_params` when `muted` is missing or not a boolean. The same checks as every other method (guard, roles, stops) apply, and a `member` param has no effect |
 | `release` | `room`, `path`, optional `note` (one line, at most 300 characters: what you changed; shown to members who saw the claim and returned to the next claimant) | `{}`, or fails with `not_found` if you hold no claim on that path |
 | `claims` | `room` | `{ "claims": [{ "path", "owner", "reason", "expires", "scope" }] }`: unexpired claims in the room; `scope` is present when the claim has one (`*` for a shared claim) |
+| `stuck` | `room` | `{ "events": [{ "kind", "key", ... }] }`: the stuck cases of a room as structured events (#271), a read guarded like `read` (a room above the caller's clearance is refused). `kind` is `stale_ask` (`ask`, `asker`, `age_secs`), `nobody_capable` (`ask`, `asker`, `cannot`), `ask_cycle` (`members` from the member that yields, `asks`) or `claim_deadlock` (`members`, sorted); `key` is a stable identity for the case. Events carry ids, member names and numbers only, never message text |
 
 `prune` is every member's housekeeping, as at session start, and needs no role:
 

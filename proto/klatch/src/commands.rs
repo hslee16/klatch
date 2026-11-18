@@ -145,6 +145,12 @@ fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
         })?,
         Cmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
         Cmd::Asks { room } => for_rooms(t, room, |room| asks(ctx, room))?,
+        Cmd::Stuck { room } => for_rooms(t, room, |room| {
+            for e in t.stuck(room)? {
+                println!("{}", e.line());
+            }
+            Ok(())
+        })?,
         Cmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
                 println!("{}", task.line(ctx.now, true));
@@ -168,6 +174,11 @@ fn run_agents(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             once,
             interval,
         } => router(ctx, (&room, &rules), (once, interval))?,
+        Cmd::Mediator {
+            room,
+            once,
+            interval,
+        } => mediator(ctx, &room, (once, interval))?,
         Cmd::Hook {
             event,
             board,
@@ -207,6 +218,24 @@ fn router(
             return Ok(());
         }
         // a pass already refreshed presence (it reads the room); between passes the router only waits
+        std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
+        now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(now, |d| i64::try_from(d.as_secs()).unwrap_or(now));
+    }
+}
+
+/// `klatch mediator` (#271): passes of the reference mediator as the caller's own member.
+fn mediator(ctx: &Ctx, room: &str, (once, interval): (bool, u64)) -> Result<()> {
+    let mut mediator = klatch::mediator::Mediator::new(ctx.me, room);
+    let mut now = ctx.now;
+    loop {
+        for event in mediator.pass(ctx.t, now)? {
+            println!("{event}");
+        }
+        if once {
+            return Ok(());
+        }
         std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
         now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -179,7 +179,7 @@ fn repository_of<'a>(members: &'a [MemberInfo], name: &str) -> Option<&'a str> {
 }
 
 /// A member worth inviting now: seen lately, not done, not parked.
-fn present(m: &MemberInfo, now: i64) -> bool {
+pub(super) fn present(m: &MemberInfo, now: i64) -> bool {
     now - m.last_seen <= MEMBER_ACTIVE_SECS
         && !m.status.as_deref().is_some_and(|s| s.starts_with("done"))
         && !m.parked.as_ref().is_some_and(|p| p.holds(now))

@@ -1,0 +1,60 @@
+{
+  "about": "Stuck cases collected from runs and tickets (#271 step 2). Each case is a sequence of CLI steps run in one room; a step that starts with '!' is expected to be refused. expect_kinds is what `klatch stuck` shows afterwards; expect_proposals is how many proposals the rules-only mediator posts. detectable false marks a case rules cannot see: it is recorded so the model-backed mediator (step 4 of #271) has the cases that the rules alone cannot settle.",
+  "cases": [
+    {
+      "name": "ask-cycle",
+      "source": "#273, DESIGN section 25.15",
+      "steps": [
+        ["ann", "post", "lobby", "seeking: x"],
+        ["bo", "post", "lobby", "seeking: y"],
+        ["bo", "claim", "lobby", "ask:1"],
+        ["ann", "claim", "lobby", "ask:2"]
+      ],
+      "detectable": true,
+      "expect_kinds": ["ask_cycle"],
+      "expect_proposals": 1
+    },
+    {
+      "name": "claim-deadlock",
+      "source": "DESIGN section 25.12, #246",
+      "steps": [
+        ["ann", "claim", "lobby", "p"],
+        ["bo", "claim", "lobby", "q"],
+        ["!ann", "claim", "lobby", "q"],
+        ["!bo", "claim", "lobby", "p"]
+      ],
+      "detectable": true,
+      "expect_kinds": ["claim_deadlock"],
+      "expect_proposals": 1
+    },
+    {
+      "name": "overwrite-after-deadlock",
+      "source": "#272, runs fourteen and fifteen",
+      "note": "after the deadlock the yielder lets go and the later editor takes the file and replaces the earlier result; nothing klatch can see is stuck any more, so no event and no proposal: whether the second edit should build on the first is semantic",
+      "steps": [
+        ["ann", "claim", "lobby", "p"],
+        ["bo", "claim", "lobby", "q"],
+        ["!ann", "claim", "lobby", "q"],
+        ["!bo", "claim", "lobby", "p"],
+        ["ann", "release", "lobby", "p"],
+        ["bo", "claim", "lobby", "p"],
+        ["bo", "release", "lobby", "p"]
+      ],
+      "detectable": false,
+      "expect_kinds": [],
+      "expect_proposals": 0
+    },
+    {
+      "name": "two-tasks-need-the-same-result",
+      "source": "#271 (semantic conflicts), #272",
+      "note": "two members ask for the same thing in different words, or two tasks both write one result; klatch compares paths and numbers, never wording, so it shows nothing until an ask goes stale",
+      "steps": [
+        ["ann", "post", "lobby", "seeking: the parser result"],
+        ["bo", "post", "lobby", "seeking: output of the parser"]
+      ],
+      "detectable": false,
+      "expect_kinds": [],
+      "expect_proposals": 0
+    }
+  ]
+}

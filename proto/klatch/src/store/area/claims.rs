@@ -85,6 +85,13 @@ pub trait ClaimStore {
 
     /// The member's own refused claims that a claim being taken by someone else has turned into a cycle of waits,
     /// each reported once (#648). The default reports nothing.
+    /// The cycles of claim waits that stand in the room now (#271): each the sorted names of the members that wait on
+    /// each other, directly or through others. Read only: it tells nothing once and marks nothing. The default knows
+    /// none.
+    fn wait_cycles(&self, _room: &str, _now: i64) -> Result<Vec<Vec<String>>> {
+        Ok(Vec::new())
+    }
+
     fn deadlock_notices(
         &self,
         _room: &str,

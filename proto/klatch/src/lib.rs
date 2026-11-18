@@ -40,6 +40,7 @@ pub mod harness;
 pub mod keys;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
+pub mod mediator;
 pub mod router;
 #[cfg(feature = "cli")]
 #[doc(hidden)]

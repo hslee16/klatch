@@ -299,6 +299,11 @@ impl ClaimStore for SpyStore {
         self.inner.claim_ages(room, owner, now)
     }
 
+    fn wait_cycles(&self, room: &str, now: i64) -> Result<Vec<Vec<String>>> {
+        self.gate()?;
+        self.inner.wait_cycles(room, now)
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,

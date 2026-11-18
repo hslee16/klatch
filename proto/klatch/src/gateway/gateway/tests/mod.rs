@@ -52,6 +52,7 @@ mod room_settings;
 mod runs;
 mod scrub;
 mod stream;
+mod stuck;
 mod tasks;
 mod tripwire;
 mod wake;

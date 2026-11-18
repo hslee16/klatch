@@ -17,6 +17,7 @@ mod error;
 mod hook;
 mod hosted_judge;
 mod judge;
+mod mediator;
 mod kind;
 mod labels;
 mod model;
@@ -25,6 +26,7 @@ mod pr_lifecycle;
 mod receipt;
 mod router;
 mod scope;
+mod stuck;
 mod tasks;
 mod text;
 mod toolguard;
@@ -76,6 +78,10 @@ pub use model::{
     Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
+pub use mediator::{
+    MAX_PROPOSALS, Proposal, View as MediatorView, plan as plan_proposals,
+};
+pub use stuck::{StuckEvent, stuck_events};
 pub use router::{
     AskFacts, MAX_INVITES, Route, Rule, View as RouterView, plan as plan_routes, topic_room,
 };

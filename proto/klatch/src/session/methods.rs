@@ -184,6 +184,35 @@ fn claims_json(cs: &[Claim]) -> Value {
     json!({ "claims": cs.iter().map(one).collect::<Vec<_>>() })
 }
 
+/// The stuck-case events as the wire shows them (#271): a kind, a stable key, and ids, names and numbers; no text.
+fn stuck_json(events: &[crate::domain::StuckEvent]) -> Value {
+    use crate::domain::StuckEvent;
+    let one = |e: &StuckEvent| {
+        let mut v = json!({ "kind": e.kind(), "key": e.key() });
+        match e {
+            StuckEvent::StaleAsk { ask, asker, age_secs } => {
+                v["ask"] = json!(ask);
+                v["asker"] = json!(asker);
+                v["age_secs"] = json!(age_secs);
+            }
+            StuckEvent::NobodyCapable { ask, asker, cannot } => {
+                v["ask"] = json!(ask);
+                v["asker"] = json!(asker);
+                v["cannot"] = json!(cannot);
+            }
+            StuckEvent::AskCycle { members, asks } => {
+                v["members"] = json!(members);
+                v["asks"] = json!(asks);
+            }
+            StuckEvent::ClaimDeadlock { members } => {
+                v["members"] = json!(members);
+            }
+        }
+        v
+    };
+    json!({ "events": events.iter().map(one).collect::<Vec<_>>() })
+}
+
 /// Session-start housekeeping, every member's: remove the members not seen for the fixed retention. It takes no
 /// parameters, so a caller cannot name a shorter age and prune members that are still in use.
 fn prune<S: Store>(g: &Gateway<S>, who: &Principal, id: String) -> Vec<ServerFrame> {
@@ -251,6 +280,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             empty,
         ),
         "claims" => call.run(|p: RoomParams| g.claims(who, &p.room), |cs| claims_json(&cs)),
+        "stuck" => call.run(|p: RoomParams| g.stuck(who, &p.room), |ev| stuck_json(&ev)),
         "label_order" => call.run(
             |_: NoParams| g.label_order(who),
             |(chain, cap): (Vec<String>, String)| json!({ "chain": chain, "cap": cap }),

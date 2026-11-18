@@ -25,6 +25,7 @@ mod migrations;
 mod plaintext;
 mod review;
 mod runs;
+mod wait_cycles;
 
 pub(super) fn store() -> SqliteStore {
     SqliteStore::open_in_memory().unwrap()

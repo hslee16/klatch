@@ -155,6 +155,8 @@ pub trait Transport {
     fn member_card(&self, room: &str, member: &str) -> Result<Option<crate::domain::Card>>;
     /// Asks in a room nobody has answered or closed.
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
+    /// The stuck cases of a room as structured events, ids and numbers only (#271).
+    fn stuck(&self, room: &str) -> Result<Vec<crate::domain::StuckEvent>>;
     /// Whether the process behind a room member's session has exited, by the liveness probe (#790). False for
     /// anything the probe cannot say, so unknown counts as alive.
     fn process_exited(&self, room: &str, member: &str) -> Result<bool>;
@@ -461,6 +463,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gateway.open_asks(&self.principal, room)
+    }
+    fn stuck(&self, room: &str) -> Result<Vec<crate::domain::StuckEvent>> {
+        self.gateway.stuck(&self.principal, room)
     }
     fn process_exited(&self, room: &str, member: &str) -> Result<bool> {
         self.gateway.process_exited(&self.principal, room, member)
