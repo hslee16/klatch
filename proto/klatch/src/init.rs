@@ -29,6 +29,8 @@ pub struct Options {
     pub wake: Switch,
     /// Remove every hook klatch wrote instead of installing (#436); nothing else in the settings is touched.
     pub uninstall: bool,
+    /// Install into Codex's hooks.json instead of Claude Code's settings (#782).
+    pub codex: bool,
 }
 
 /// Where `init` reads answers from and writes its questions and results to.
@@ -42,6 +44,8 @@ pub struct Places<'a> {
     pub project_dir: &'a Path,
     pub home: Option<&'a Path>,
     pub bin: &'a Path,
+    /// Where Codex keeps its files (`CODEX_HOME`, else `.codex` under the home), for `init --codex`.
+    pub codex_home: Option<&'a Path>,
 }
 
 /// What the user decided, by flag or by answering.
@@ -55,11 +59,11 @@ struct Choices {
 }
 
 /// A settings file and what it would become.
-struct Plan {
-    label: &'static str,
-    path: PathBuf,
-    existing: Option<Value>,
-    merged: Value,
+pub(crate) struct Plan {
+    pub(crate) label: &'static str,
+    pub(crate) path: PathBuf,
+    pub(crate) existing: Option<Value>,
+    pub(crate) merged: Value,
 }
 
 impl Io<'_> {
@@ -85,7 +89,12 @@ impl Io<'_> {
     }
 
     /// A setting that is on unless switched off by a flag, and is not asked about under `--yes`.
-    fn on_unless(&mut self, off: bool, yes: bool, question: &str) -> anyhow::Result<bool> {
+    pub(crate) fn on_unless(
+        &mut self,
+        off: bool,
+        yes: bool,
+        question: &str,
+    ) -> anyhow::Result<bool> {
         if off {
             return Ok(false);
         }
@@ -115,7 +124,7 @@ impl Io<'_> {
         }
     }
 
-    fn choose_board(&mut self, options: &Options) -> anyhow::Result<Option<String>> {
+    pub(crate) fn choose_board(&mut self, options: &Options) -> anyhow::Result<Option<String>> {
         if let Some(room) = &options.board {
             return Ok(Some(room.clone()));
         }
@@ -215,7 +224,7 @@ fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> any
 }
 
 /// Show the diff for one plan and write it, unless it is already in place or the user says no.
-fn apply(plan: Plan, yes: bool, io: &mut Io) -> anyhow::Result<()> {
+pub(crate) fn apply(plan: Plan, yes: bool, io: &mut Io) -> anyhow::Result<()> {
     let Plan {
         label,
         path,
@@ -314,7 +323,16 @@ fn plan_removal(label: &'static str, path: PathBuf) -> anyhow::Result<Removal> {
 /// `init --uninstall`: ask the scope, read every file first, then show each diff and remove on a yes.
 fn uninstall(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()> {
     let scope = io.choose_scope(options)?;
-    let removals = targets(scope, places)?
+    remove_from(options.yes, io, targets(scope, places)?)
+}
+
+/// Read every file first, then show each diff and remove klatch's hooks on a yes (or `yes`).
+pub(crate) fn remove_from(
+    yes: bool,
+    io: &mut Io,
+    files: Vec<(&'static str, PathBuf)>,
+) -> anyhow::Result<()> {
+    let removals = files
         .into_iter()
         .map(|(label, path)| plan_removal(label, path))
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -334,7 +352,7 @@ fn uninstall(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<
             serde_json::to_string_pretty(&new)?,
         );
         write!(io.out, "{}", diff(&old, &new))?;
-        if !options.yes
+        if !yes
             && !io.ask(
                 &format!("Remove klatch's hooks from {}?", path.display()),
                 false,
@@ -354,6 +372,9 @@ fn uninstall(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<
 
 /// Run `init`: choose scope and board (asking unless `--yes`), show each diff, write only on a yes.
 pub fn run(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()> {
+    if options.codex {
+        return crate::init_codex::run(options, io, places);
+    }
     if options.uninstall {
         return uninstall(options, io, places);
     }
@@ -370,7 +391,25 @@ pub fn run(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()
     for plan in plans {
         apply(plan, options.yes, io)?;
     }
+    write!(
+        io.out,
+        "{}",
+        next_steps(std::env::var_os("KLATCH_HOME").as_deref(), places.home)
+    )?;
     Ok(())
+}
+
+/// What `init` ends with (DESIGN section 21): where klatch keeps its data, shown as data and never created or
+/// changed here, and the check to run next. A set `KLATCH_HOME` wins over `~/.klatch`, as it does for the store.
+pub(crate) fn next_steps(klatch_home: Option<&std::ffi::OsStr>, home: Option<&Path>) -> String {
+    let data = match (klatch_home, home) {
+        (Some(dir), _) => format!("{}", Path::new(dir).display()),
+        (None, Some(home)) => format!("{}", home.join(".klatch").display()),
+        (None, None) => "~/.klatch".to_string(),
+    };
+    format!(
+        "klatch keeps its data in {data} (set KLATCH_HOME to move it; init neither creates nor changes it).\nNext: run `klatch doctor` to check the install; it only reads.\n"
+    )
 }
 
 /// The Claude Code hook events klatch listens on.
@@ -418,9 +457,20 @@ pub fn hook_command(
     board: Option<&str>,
     join: bool,
 ) -> Result<String, String> {
+    command_with(bin, "--discover", event, (board, join))
+}
+
+/// `hook_command` for a harness: `mode` is the flag that tells klatch who the caller is (`--discover` for Claude Code,
+/// `--codex` for Codex); `(board, join)` are the SessionStart choices.
+pub(crate) fn command_with(
+    bin: &str,
+    mode: &str,
+    event: &str,
+    (board, join): (Option<&str>, bool),
+) -> Result<String, String> {
     check_bin_path(bin)?;
     check_event_name(event)?;
-    let mut cmd = format!("{} --discover hook --event {event}", shell_path(bin));
+    let mut cmd = format!("{} {mode} hook --event {event}", shell_path(bin));
     if let Some(room) = board {
         if !klatch::domain::valid_name(room) {
             return Err(format!("bad board room name: {room:?}"));
@@ -603,10 +653,18 @@ pub fn merge_hooks(
     board: Option<&str>,
     join: bool,
 ) -> Result<Value, String> {
+    merge_commands(existing, |event| hook_command(bin, event, board, join))
+}
+
+/// `merge_hooks` with the hook command of each event given by `command` (Codex's differs from Claude Code's).
+pub(crate) fn merge_commands(
+    existing: Option<&Value>,
+    command: impl Fn(&str) -> Result<String, String>,
+) -> Result<Value, String> {
     let mut settings = existing.cloned().unwrap_or_else(|| json!({}));
     let hooks = hooks_of(&mut settings)?;
     for event in EVENTS {
-        let cmd = hook_command(bin, event, board, join)?;
+        let cmd = command(event)?;
         let list = event_list(hooks, event)?;
         if !sync_entries(list, &cmd, true) {
             list.push(new_entry(&cmd));
@@ -1155,5 +1213,15 @@ mod tests {
             );
             assert_eq!(h["timeout"], 3600, "{event}");
         }
+    }
+
+    #[test]
+    fn the_data_location_is_klatch_home_when_set_else_dot_klatch_under_home() {
+        let set = next_steps(Some("/data/k".as_ref()), Some(Path::new("/h")));
+        assert!(set.contains("in /data/k "), "{set}");
+        let default = next_steps(None, Some(Path::new("/h")));
+        assert!(default.contains("in /h/.klatch "), "{default}");
+        assert!(next_steps(None, None).contains("~/.klatch"));
+        assert!(default.contains("klatch doctor") && !default.contains('\u{2014}'));
     }
 }

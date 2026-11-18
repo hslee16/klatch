@@ -1535,7 +1535,8 @@ The first version writes only Claude Code hook entries (the human chose hooks on
 2. The hook entries (SessionStart, UserPromptSubmit, PostToolUse) call this binary by absolute path with `--discover hook --event <Event>`; SessionStart also gets `--board <room>` only when asked. A path with a shell variable, quote, backslash or control character is refused; a path with spaces is single-quoted. No command it writes contains a shell variable.
 3. Safe to re-run: klatch's own entries are updated in place (a different answer replaces the earlier one, never duplicates it), everything else in the file, including other hooks and key order, is left alone, and an up-to-date file is not rewritten. An unreadable or wrongly shaped settings file stops the run before any scope is written. Writes are a temporary file renamed into place.
 4. `--discover` is part of every command written: it is what lets the hook know the session, by reading the harness registry's `.json` files only (never the `.key` files), so the diff the user confirms shows it.
-5. Not built: the other questions of this section (presets, data location, clearance cap, scrubber, judges), `klatch doctor` (#66), the later switch (#256), the SessionEnd hook (#258).
+5. Not built: the other questions of this section (presets, clearance cap, scrubber, judges), `klatch doctor` (#66), the later switch (#256), the SessionEnd hook (#258).
+6. **Section 21 questions, status (#264, 2026-11-17).** Built: question 10 (Codex hook trust note, `init` and doctor, #544/#782); question 1 as data only (init ends by saying where klatch keeps its data, `KLATCH_HOME` or `~/.klatch`, and creates and changes nothing); the closing step (init ends with `klatch doctor` as the next command, it does not run it). Not built, and why: the questions that need a setting klatch does not have yet to write into (2 label vocabulary, 3 clearance cap and the default clearance of a repository, #191; 4 scrubber and deny list; 5 retention; 6 judge backends; 7 anchor token; 8 permission-mode strategy; 9 editing other harness settings) and the presets (their content is a human decision). `--reconfigure` is `klatch init` again plus `klatch consent` (#256) and needs nothing more until those settings exist. The order of the rest is the human's choice (ticket #264).
 
 ### 21.2 `klatch consent`: the switch after install (#256)
 
@@ -1543,6 +1544,13 @@ The first version writes only Claude Code hook entries (the human chose hooks on
 2. **Minimally invasive.** It writes only the files init already writes (`.claude/settings.local.json`, `~/.claude/settings.json`), only klatch's own hook entries, and never adds klatch where init did not install it (that says `run klatch init first`). It keeps the binary path the hooks already run. An entry klatch did not write is never touched, and a switch off then on again gives back the file byte for byte.
 3. **Effect.** A running session keeps the hooks it started with, so every change says it takes effect at the next session.
 4. **Not covered.** Codex's `hooks.json` has no consent switch yet (the Codex installer is #782); a team-wide checked-in setting is #257 and is not built.
+
+### 21.3 `klatch init --codex`: Codex's hooks.json (#782)
+
+1. **What it writes.** `klatch init --codex` writes `<CODEX_HOME>/hooks.json` (`~/.codex` when `CODEX_HOME` is unset): SessionStart, UserPromptSubmit and PostToolUse, each `<bin> --codex hook --event <Event>`, so the member comes from the hook's own session id and working directory. `--board` and `--no-lobby` work as for Claude Code and apply to SessionStart only. It uses the same merge, diff, consent (`--yes` or a yes per file) and safe re-run as the Claude installer, so every other hook and setting in the file stays as it was; `--codex --uninstall` removes only klatch's entries.
+2. **What it never writes.** The wake hook (Codex skips async hooks), the claim hook and SessionEnd (not verified to run in Codex), a project `.codex/hooks.json`, `config.toml`, and any trust record. `--scope`, `--wake`, `--enforce` and `--no-session-end` are refused with `--codex`. klatch never passes `--dangerously-bypass-hook-trust`.
+3. **The trust step.** The run ends with the note that Codex runs a hook only after it is reviewed in `/hooks`, followed by doctor's untrusted-hook finding. The file shape was checked against Codex itself (RESEARCH-NOTES 49.8).
+4. **Open.** Whether `codex exec` runs the hooks once trusted needs a Codex login (human); `klatch consent` does not cover Codex yet.
 
 ### 25.10 Joining the default lobby at session start (#267, decided 2026-11-13)
 
