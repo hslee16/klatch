@@ -66,6 +66,10 @@ struct WhoFlags {
     /// only inside one scope, so two repositories or two bots can each claim `src/lib.rs`.
     #[arg(long = "member-scope", global = true)]
     member_scope: Option<String>,
+    /// What sort of member this is: bot, service or human (default: $KLATCH_KIND; `off` withdraws it). A coding
+    /// session is a session by itself. Shown by `who` and the board, and it changes who may do what for no one.
+    #[arg(long = "member-kind", global = true)]
+    member_kind: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -748,6 +752,9 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
         ));
     }
     let gateway = Rc::new(gateway);
+    if let Some(kind) = declared_kind(who.member_kind.as_deref()) {
+        declare_member_kind(&gateway, &caller.principal, &kind)?;
+    }
     // the keys of the sealed labels this member's clearance reaches, and no others (#160)
     let labels = gateway.sealed_labels_within(&caller.principal.member)?;
     if !labels.is_empty() {

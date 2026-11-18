@@ -170,6 +170,7 @@ mod tests {
             status: None,
             parent: None,
             parked: None,
+            kind: None,
         }
     }
 

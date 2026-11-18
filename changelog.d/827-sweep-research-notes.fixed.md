@@ -1,0 +1,1 @@
+- `pr-sweep` resolves a conflict in RESEARCH-NOTES.md by keeping both sides, like DESIGN.md, instead of stopping with a code conflict.

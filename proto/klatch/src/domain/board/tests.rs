@@ -25,6 +25,7 @@ fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
         status: status.map(Into::into),
         parent: None,
         parked: None,
+        kind: None,
     }
 }
 
@@ -207,6 +208,7 @@ fn sample() -> Board {
                 status: None,
                 parent: None,
                 parked: None,
+                kind: None,
             },
             BoardMember {
                 name: "api-1".into(),
@@ -214,6 +216,7 @@ fn sample() -> Board {
                 status: Some("done leaving".into()),
                 parent: None,
                 parked: None,
+                kind: None,
             },
         ],
         stale_members: 0,
@@ -376,6 +379,7 @@ fn no_age_is_printed_negative_when_the_reader_clock_is_behind() {
             status: Some("busy".into()),
             parent: None,
             parked: None,
+            kind: None,
         }],
         ..Default::default()
     };
@@ -406,6 +410,7 @@ fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
             status: None,
             parent: Some("lead".into()),
             parked: None,
+            kind: None,
         }],
         ..Default::default()
     };
@@ -414,6 +419,51 @@ fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
         text.contains("worker last seen 10s ago, child of lead"),
         "{text}"
     );
+}
+
+#[test]
+fn a_members_kind_is_shown_in_who_and_on_the_board_and_a_member_without_one_shows_none() {
+    let mut bot = peer("grok", 990, None);
+    bot.kind = Some(crate::domain::MemberKind::Bot);
+    let who = render_who(&[bot, peer("plain", 990, None)], 1000, false);
+    let grok = who.lines().find(|l| l.starts_with("grok")).unwrap();
+    assert!(grok.contains("\tkind: bot"), "{grok}");
+    let plain = who.lines().find(|l| l.starts_with("plain")).unwrap();
+    assert!(!plain.contains("kind"), "{plain}");
+    let board = Board {
+        room: "lobby".into(),
+        members: vec![BoardMember {
+            name: "grok".into(),
+            last_seen: 990,
+            status: Some("busy".into()),
+            parent: None,
+            parked: None,
+            kind: Some(crate::domain::MemberKind::Service),
+        }],
+        ..Default::default()
+    };
+    let text = render_board(&board, 1000);
+    assert!(
+        text.contains("grok last seen 10s ago, kind: service, status: busy"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_kind_never_carries_text_a_member_wrote() {
+    // the kind is a closed vocabulary rendered from an enum, so no member text can reach the line
+    for k in [
+        crate::domain::MemberKind::Session,
+        crate::domain::MemberKind::Bot,
+        crate::domain::MemberKind::Service,
+        crate::domain::MemberKind::Human,
+    ] {
+        let mut m = peer("x", 999, None);
+        m.kind = Some(k);
+        let who = render_who(&[m], 1000, false);
+        assert!(who.contains(&format!("\tkind: {}", k.word())), "{who}");
+        assert_eq!(who.lines().count(), 1);
+    }
 }
 
 #[test]
