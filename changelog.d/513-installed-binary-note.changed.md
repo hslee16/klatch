@@ -1,0 +1,1 @@
+- A klatch command that fails now says which binary is the installed one when the binary that ran is another (for example a child agent given a freshly built one), and points at `klatch convention`. `klatch convention --room <room>` writes the brief for a child that works in a room other than the lobby (#513).

@@ -502,6 +502,34 @@ pub fn hook_program(command: &str) -> &str {
     }
 }
 
+/// The klatch binary the hooks in the project and user settings run: the first program that exists. Read only.
+pub fn installed_binary(project_dir: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let mut files = vec![project_dir.join(".claude").join("settings.local.json")];
+    files.extend(home.map(|h| h.join(".claude").join("settings.json")));
+    files.iter().find_map(|file| {
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+        installed_hooks(&value)
+            .iter()
+            .map(|(_, cmd, _)| PathBuf::from(hook_program(cmd)))
+            .find(|program| program.is_file())
+    })
+}
+
+/// A line telling a caller which klatch is the installed one when the binary that ran (`exe`) is another, for a
+/// child agent that was handed the wrong path (#513). None when they are the same file or nothing is installed.
+pub fn other_binary_note(exe: &Path, project_dir: &Path, home: Option<&Path>) -> Option<String> {
+    let installed = installed_binary(project_dir, home)?;
+    if std::fs::canonicalize(&installed).ok() == std::fs::canonicalize(exe).ok() {
+        return None;
+    }
+    Some(format!(
+        "klatch: this is {}, but the installed klatch is {}; use the installed one (`{} convention` prints the commands for a child agent)",
+        exe.display(),
+        installed.display(),
+        installed.display()
+    ))
+}
+
 /// Make the list of hook matchers hold exactly one klatch entry running `cmd` (`keep`) or none (`!keep`), leaving
 /// every other entry as it was. A matcher left with no hooks is dropped. Returns whether an entry of klatch's
 /// stayed in place, so the caller knows whether to add one.
