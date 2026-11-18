@@ -41,6 +41,7 @@ impl FakeTransport {
             input: Box::new(Cursor::new(input)),
             output: Box::new(CaptureWriter(capture.clone())),
             evidence,
+            closer: None,
         });
         capture
     }

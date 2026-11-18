@@ -2,6 +2,7 @@
 //! Identity comes from the `Principal` the transport supplies, never from a request.
 
 mod frames;
+mod guarded;
 mod methods;
 pub mod policy;
 mod role_methods;
@@ -13,6 +14,7 @@ use crate::store::Store;
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use crate::sync::thread;
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
+pub use guarded::Closer;
 use methods::{Call, RoomParams, handle, params};
 use serde::Deserialize;
 use serde_json::json;
@@ -33,6 +35,11 @@ pub struct SessionConfig {
     pub window: usize,
     /// The most messages sent for one room in one poll.
     pub batch: usize,
+    /// Frames a guarded session may hold for a consumer that is slow to read (#147).
+    pub outgoing: usize,
+    /// How long a guarded session waits for a full outgoing queue to move before it closes the session with a
+    /// `stream.slow_consumer` refusal (#147).
+    pub stall: Duration,
 }
 
 impl Default for SessionConfig {
@@ -42,6 +49,8 @@ impl Default for SessionConfig {
             heartbeat: Duration::from_secs(15),
             window: crate::gateway::DEFAULT_WINDOW,
             batch: 64,
+            outgoing: 1024,
+            stall: Duration::from_secs(30),
         }
     }
 }
@@ -67,7 +76,11 @@ pub fn serve_connection<S: Store>(
     let who = identity
         .resolve(&connection.evidence)
         .map_err(io::Error::other)?;
-    Session::new(gateway, &who, config).serve(connection.input, connection.output)
+    Session::new(gateway, &who, config).serve_guarded(
+        connection.input,
+        connection.output,
+        connection.closer,
+    )
 }
 
 /// What `Session::stream` writes: the history of one room after `from_seq`, and with `follow` its live messages.
@@ -125,23 +138,29 @@ impl<'a, S: Store> Session<'a, S> {
     ) -> io::Result<()> {
         let mut out = Out::new(output);
         self.hello(&mut out)?;
-        let rx = read_in_background(input);
+        self.run(&read_in_background(input), &mut out)
+    }
+
+    /// The session loop over an input already being read and an output that has had its `hello`.
+    fn run<W: Write>(&self, rx: &Receiver<Item>, out: &mut Out<W>) -> io::Result<()> {
         let mut subs: Vec<Subscription> = Vec::new();
         let mut open = true;
         // The store is polled when a request came in, the store's change token moved, or the poll period ran out:
         // an idle session looks at one cheap token per tick instead of querying every room (#148).
         let mut pacer = Pacer::new(self.gateway.change_token(), self.config.poll);
         while open {
-            let items = collect(&rx, pacer.tick, &mut open);
+            let items = collect(rx, pacer.tick, &mut open);
             let forced = !items.is_empty() || !open;
+            // an output that has gone away ends the session even when it has nothing to send (#146)
+            out.healthy()?;
             for item in items {
-                self.dispatch(item, &mut subs, &mut out)?;
+                self.dispatch(item, &mut subs, out)?;
             }
             if pacer.due(self.gateway.change_token(), forced) {
-                self.deliver(&mut subs, &mut out, open)?;
+                self.deliver(&mut subs, out, open)?;
             }
             if open && out.last.elapsed() >= self.config.heartbeat {
-                self.heartbeat(&mut out)?;
+                self.heartbeat(out)?;
             }
         }
         Ok(())
@@ -363,8 +382,15 @@ impl Pacer {
 
 /// Read the input on a helper thread, so the session can handle requests and poll the store meanwhile.
 pub(crate) fn read_in_background<R: BufRead + Send + 'static>(input: R) -> Receiver<Item> {
+    spawn_reader(input).0
+}
+
+/// The same, with the handle of the reader thread, for a session that can stop the input and join the thread (#146).
+pub(crate) fn spawn_reader<R: BufRead + Send + 'static>(
+    input: R,
+) -> (Receiver<Item>, thread::JoinHandle<()>) {
     let (tx, rx) = channel();
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         let mut reader = FrameReader::new(input);
         while let Some(item) = reader.next_client() {
             if tx.send(item).is_err() {
@@ -372,7 +398,7 @@ pub(crate) fn read_in_background<R: BufRead + Send + 'static>(input: R) -> Recei
             }
         }
     });
-    rx
+    (rx, handle)
 }
 
 /// What arrived within `wait`, and (in `open`) whether the input is still open.

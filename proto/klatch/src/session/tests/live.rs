@@ -7,9 +7,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-struct ChanReader {
-    rx: Receiver<Vec<u8>>,
-    pending: Vec<u8>,
+pub(super) struct ChanReader {
+    pub(super) rx: Receiver<Vec<u8>>,
+    pub(super) pending: Vec<u8>,
 }
 impl Read for ChanReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -27,7 +27,7 @@ impl Read for ChanReader {
 }
 
 #[derive(Clone)]
-struct SharedOut(Arc<Mutex<Vec<u8>>>);
+pub(super) struct SharedOut(pub(super) Arc<Mutex<Vec<u8>>>);
 impl Write for SharedOut {
     fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(b);
@@ -38,12 +38,13 @@ impl Write for SharedOut {
     }
 }
 
-fn fast() -> SessionConfig {
+pub(super) fn fast() -> SessionConfig {
     SessionConfig {
         poll: Duration::from_millis(5),
         heartbeat: Duration::from_secs(60),
         window: 100,
         batch: 64,
+        ..SessionConfig::default()
     }
 }
 

@@ -112,9 +112,9 @@ Checked each run, and the scenario fails if any is false: all 500 posts succeed;
 (nothing lost, nothing doubled, dense); exactly one worker wins the contested path and all 50 private claims succeed
 (no double claim); every message is marked verified; the claims list holds the contested path once and 50 private
 paths. A post is slower than the 6 ms of a lone command because 50 processes contend for one SQLCipher write lock and
-each pays process start, key read and open. **Not covered:** memory for a slow consumer. A consumer that stops reading
-a stream still blocks its whole session (ticket #147), so "bounded memory for slow consumers" is not met and stays a
-known limit.
+each pays process start, key read and open. **Not covered:** memory for a slow consumer. (Update, #147: a guarded
+session now holds at most `outgoing` frames for a consumer and ends with a `stream.slow_consumer` refusal when it makes
+no progress for the stall limit, DESIGN item 93; this scenario does not exercise it.)
 
 ## Linux: the Secret Service and the key file (ticket #384, 2026-11-15)
 
