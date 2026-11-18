@@ -281,6 +281,20 @@ printf '#18   behind               feat-18            #706      integrate main\n
 FAKE_MERGE=conflict FAKE_CONFLICT_FILES="RESEARCH-NOTES.md" runsweep
 if ! grep -q "CODE CONFLICT in: RESEARCH-NOTES.md" "$fake/out"; then ok "a conflict only in RESEARCH-NOTES.md is not a code conflict"; else bad "research notes conflict: $(cat "$fake/out")"; fi
 
+# --- where the time goes (#855): gate, CI wait and bench each leave a timing line; --timing summarises them
+newenv
+echo behind > "$fake/mstate"
+echo "success success" > "$fake/checks-sha-new"
+printf '#16   ready                feat-16            #706      merge\n' > "$fake/ledger.txt"
+runsweep
+tl="$work/tmp$n/pr-sweep-timing.log"
+if [ -f "$tl" ] && grep -q ' gate alee/integ-16 [0-9]*s rc=0' "$tl" && grep -q ' wait-green #16 [0-9]*s rc=0' "$tl" && grep -q ' bench main [0-9]*s rc=0' "$tl"; then ok "gate, CI wait and bench each log how long they took"; else bad "timing log: $(cat "$tl" 2>/dev/null)"; fi
+printf '2026-11-18T10:00:00Z gate alee/integ-1 120s rc=0\n2026-11-18T10:05:00Z gate alee/integ-2 300s rc=0\n2026-11-18T10:09:00Z bench main 90s rc=0\n' > "$tl"
+out=$(env TMPDIR="$work/tmp$n" "$sweep" --timing 2>&1)
+if printf '%s\n' "$out" | grep -qE '^gate +2 +420 +210 +300$' && printf '%s\n' "$out" | grep -qE '^bench +1 +90 +90 +90$'; then ok "--timing sums runs, total, average and slowest per step"; else bad "timing summary: $out"; fi
+out=$(env TMPDIR="$work/empty-timing" "$sweep" --timing 2>&1)
+if printf '%s\n' "$out" | grep -q "no timing log yet"; then ok "--timing says so when there is no log"; else bad "empty timing: $out"; fi
+
 # --- never on main: git merge only ever runs on the throwaway branch, even if the checkout fails
 newenv
 printf '#17   behind               feat-17            #706      integrate main\n' > "$fake/ledger.txt"
