@@ -33,6 +33,13 @@ pub(crate) fn gather_evidence(
                     .into(),
             ),
         ),
+        Err(Miss::TableUnreadable) => (
+            PeerEvidence::None,
+            Some(
+                "the process table could not be read (is ps available?); falling back to a typed name"
+                    .into(),
+            ),
+        ),
         Err(Miss::Stale(why)) => (
             PeerEvidence::None,
             Some(format!(
