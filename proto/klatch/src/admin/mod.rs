@@ -18,6 +18,9 @@ mod keys;
 mod listing;
 mod route;
 
+#[cfg(test)]
+mod command_tests;
+
 /// Who may create rooms and invite (#188).
 #[derive(Clone, Copy, ValueEnum)]
 pub enum RoomPolicy {
