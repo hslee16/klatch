@@ -3,6 +3,8 @@
 mod asks;
 mod claims;
 mod credentials;
+#[cfg(test)]
+mod default_tests;
 mod members;
 mod messages;
 mod policy;

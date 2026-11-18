@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod edge_tests;
+
 /// FNV-1a, a hash that is the same on every run and platform (a scope id must be).
 pub(crate) fn fnv1a(text: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
