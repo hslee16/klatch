@@ -37,7 +37,7 @@ impl SqliteStore {
     }
 
     /// The live messages in the room after `after` that the member did not send, in order.
-    fn from_others_after(&self, room: &str, after: i64, member: &str) -> Result<Vec<Message>> {
+    fn others_after(&self, room: &str, after: i64, member: &str) -> Result<Vec<Message>> {
         self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, after, member], |r| self.open_message(r))
     }
 
@@ -52,7 +52,7 @@ impl SqliteStore {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let rows = self.from_others_after(room, last, member)?;
+        let rows = self.others_after(room, last, member)?;
         Ok((rows, last))
     }
 
@@ -100,7 +100,7 @@ impl SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        self.from_others_after(room, read.max(seen), member)
+        self.others_after(room, read.max(seen), member)
     }
 
     /// True when a hook for the member would show nothing and write nothing: it was already seen this second, no claim
@@ -140,7 +140,7 @@ impl SqliteStore {
                 )
                 .map_err(be)?;
             let from = read.max(shown);
-            let rows = self.from_others_after(room, from, member)?;
+            let rows = self.others_after(room, from, member)?;
             if let Some(last) = rows.last() {
                 self.exec(
                     "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
