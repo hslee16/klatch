@@ -73,7 +73,11 @@ pub use model::{
     RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
+#[cfg(kani)]
+pub(crate) use scope::scope_bytes_ok;
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
+#[cfg(kani)]
+pub(crate) use text::safe_name_bytes;
 pub use text::{
     MAX_PAYLOAD_BYTES, flat, mentions, norm, overlaps, secs_between, valid_kind, valid_name,
 };
