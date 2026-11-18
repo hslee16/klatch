@@ -7,7 +7,9 @@ use std::time::Instant;
 mod admin;
 mod admin_role;
 mod anchors;
+mod ask_bounds;
 mod ask_cycle;
+mod ask_gone;
 mod asks;
 mod bigstore;
 mod claims;
@@ -84,6 +86,8 @@ pub fn all() -> Vec<Scenario> {
     [
         asks::all(),
         ask_cycle::all(),
+        ask_gone::all(),
+        ask_bounds::all(),
         bigstore::all(),
         claims::all(),
         sessions::all(),

@@ -1,7 +1,9 @@
 //! The domain module (the `klatch-core` crate before the crates became modules): the types and pure logic every other crate shares.
 //! No I/O and no dependencies, so it can be tested without a database.
 
+mod ask_bounds;
 mod ask_cycle;
+mod asker_gone;
 mod asks;
 mod board;
 mod claim_age;
@@ -26,7 +28,9 @@ mod toolguard;
 mod toolguard_tests;
 mod wait_filter;
 
+pub use ask_bounds::{ASK_GIVE_UP_SECS, give_up_notes};
 pub use ask_cycle::{AskCycle, ask_cycles, cycle_notes};
+pub use asker_gone::{Served, gone_asker_notes, served_by};
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
     CLAIM_MAX_SECS, Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,

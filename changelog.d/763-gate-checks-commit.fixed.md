@@ -1,0 +1,1 @@
+- The local gate checks the commit: it refuses, naming the files, when a tracked file has uncommitted changes (a file edited after the commit could pass locally and fail in CI). `--allow-dirty` checks the working tree anyway and says so.

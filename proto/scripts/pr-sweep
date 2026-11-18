@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pr-sweep: ONE pass of the standing PR sweep (#706). A /loop job calls it every few minutes; see PR-SWEEP.md.
 #
-#   pr-sweep [--dry-run] [--bench-ledger FILE]
+#   pr-sweep [--dry-run] [--bench-ledger FILE] [--budget-floor N]
 #
 # It reads `pr-ledger` and acts per stage:
 #   checks-cancelled   rerun the cancelled jobs (never a real failure)
@@ -18,8 +18,15 @@
 # failure, force-push, push main, run `git merge` while on main, or print the environment. A lock under $TMPDIR keeps
 # two sweeps from overlapping. --dry-run prints what it would do and changes nothing.
 #
+# Failures (#754, #756): every gh call has a timeout (60 s) and two retries; a call that still fails, or a rate limit,
+# makes the pass incomplete: it says "N call(s) failed, pass incomplete" (with the reset time for a rate limit) and
+# exits 1, and never says "nothing needs a step". --budget-floor N skips the pass (exit 0, with a message) when
+# `gh api rate_limit`, which costs no call, shows fewer than N calls left. A lock held by a live pid for over 30 minutes
+# is reported as possibly hung and exits 3.
+#
 # Test and tuning knobs (environment): PR_SWEEP_LEDGER, PR_SWEEP_GATE, PR_SWEEP_BENCH, PR_SWEEP_KLATCH (commands), PR_SWEEP_REPO (the
-# checkout to work in), PR_SWEEP_GH_REPO, PR_SWEEP_POLL_SECS, PR_SWEEP_SETTLE_SECS, PR_SWEEP_WAIT_TRIES.
+# checkout to work in), PR_SWEEP_GH_REPO, PR_SWEEP_POLL_SECS, PR_SWEEP_SETTLE_SECS, PR_SWEEP_WAIT_TRIES,
+# PR_SWEEP_GH_TIMEOUT, PR_SWEEP_GH_RETRY_SLEEP, PR_SWEEP_LOCK_MAX_SECS.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -27,7 +34,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 slug="${PR_SWEEP_GH_REPO:-hslee16/klatch}"
 poll="${PR_SWEEP_POLL_SECS:-10}"
 settle="${PR_SWEEP_SETTLE_SECS:-40}"
+unknown_tries="${PR_SWEEP_UNKNOWN_TRIES:-6}"
 tries="${PR_SWEEP_WAIT_TRIES:-90}"
+gh_timeout="${PR_SWEEP_GH_TIMEOUT:-60}"
+gh_retry_sleep="${PR_SWEEP_GH_RETRY_SLEEP:-2}"
+lock_max="${PR_SWEEP_LOCK_MAX_SECS:-1800}"
+floor=""
 tmp="${TMPDIR:-/tmp}"
 tmp="${tmp%/}"
 dry=0
@@ -65,26 +77,78 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1 ;;
     --bench-ledger) shift; bench_ledger="${1:-}" ;;
-    -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --budget-floor) shift; floor="${1:-}"; case "$floor" in '' | *[!0-9]*) echo "pr-sweep: --budget-floor needs a number" >&2; exit 2 ;; esac ;;
+    -h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "pr-sweep: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
 done
 
-# one sweep at a time; a lock whose holder is gone is taken over
+# gh with a timeout (a perl alarm survives the exec; macOS has no timeout command) and retries (#754). Failures are
+# counted in files under $run, because most calls run inside $( ) where a variable would be lost.
+rl_value() { # a jq expression over `gh api rate_limit`, which costs no call
+  perl -e 'alarm shift; exec @ARGV' "$gh_timeout" gh api rate_limit --jq "$1" 2> /dev/null
+}
+reset_text() {
+  local e t
+  e="$(rl_value .resources.core.reset)"
+  case "$e" in '' | *[!0-9]*) echo "reset time unknown"; return ;; esac
+  t="$(date -u -r "$e" +%Y-%m-%dT%H:%M:%SZ 2> /dev/null || date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ 2> /dev/null)"
+  echo "resets at ${t:-unknown}"
+}
+
+if [ -n "$floor" ]; then
+  rem="$(rl_value .resources.core.remaining)"
+  case "$rem" in '' | *[!0-9]*) ;; *)
+    if [ "$rem" -lt "$floor" ]; then say "skipped; only $rem API calls are left (budget floor $floor), $(reset_text)"; exit 0; fi ;;
+  esac
+fi
+
+run="$(mktemp -d "$tmp/pr-sweep-run.XXXXXX")" || { say "cannot make a work directory under $tmp"; exit 1; }
+locked=""
 lock="$tmp/pr-sweep.lock"
+trap 'rm -rf "$run"; [ -n "$locked" ] && rm -rf "$lock"' EXIT
+
+ghcall() { # tries, gh arguments: prints the output; 0 ok, 1 failed after the tries (counted), 2 rate limited (counted, not retried)
+  local tries=$1 i=0 out rc err="$run/err.$$.$RANDOM"
+  shift
+  if [ -e "$run/ratelimited" ]; then echo "gh $1 $2" >> "$run/failed"; return 2; fi
+  while [ "$i" -lt "$tries" ]; do
+    out="$(perl -e 'alarm shift; exec @ARGV' "$gh_timeout" gh "$@" 2> "$err")"; rc=$?
+    if [ "$rc" -eq 0 ]; then rm -f "$err"; printf '%s\n' "$out"; return 0; fi
+    if grep -qi 'rate limit' "$err" 2> /dev/null || printf '%s' "$out" | grep -qi 'rate limit'; then
+      : > "$run/ratelimited"; echo "gh $1 $2" >> "$run/failed"
+      printf 'pr-sweep: gh %s %s: GitHub API rate limit exceeded\n' "$1" "$2" >&2
+      rm -f "$err"; return 2
+    fi
+    i=$((i + 1))
+    [ "$i" -lt "$tries" ] && [ "$gh_retry_sleep" != 0 ] && /bin/sleep "$gh_retry_sleep"
+  done
+  echo "gh $1 $2" >> "$run/failed"
+  printf 'pr-sweep: gh %s %s failed after %s tries (exit %s): %s\n' "$1" "$2" "$tries" "$rc" "$(head -c 200 "$err" 2> /dev/null | tr '\n' ' ')" >&2
+  rm -f "$err"
+  return 1
+}
+ghx() { ghcall 3 "$@"; }
+
+# one sweep at a time; a lock whose holder is gone is taken over; a lock held too long is reported (#754)
 if [ "$dry" -eq 0 ]; then
   if ! mkdir "$lock" 2> /dev/null; then
     holder="$(cat "$lock/pid" 2> /dev/null || true)"
     if [ -n "$holder" ] && kill -0 "$holder" 2> /dev/null; then
+      age="$(perl -e 'print time - (stat shift)[9]' "$lock" 2> /dev/null || echo 0)"
+      if [ "$age" -gt "$lock_max" ]; then
+        say "another sweep (pid $holder) has held the lock for $((age / 60)) minutes (over $((lock_max / 60))); it may be hung: kill -9 $holder and the next pass takes the lock"
+        exit 3
+      fi
       say "another sweep is running (pid $holder); nothing done"
       exit 0
     fi
     rm -rf "$lock"
     mkdir "$lock" 2> /dev/null || { say "could not take the lock; nothing done"; exit 0; }
   fi
+  locked=1
   echo $$ > "$lock/pid"
-  trap 'rm -rf "$lock"' EXIT
 fi
 
 repo="${PR_SWEEP_REPO:-$(git -C "$here" rev-parse --show-toplevel)}"
@@ -97,12 +161,13 @@ hold() { # PR number, reason: leave it for a human and name it in the post
   case " $untouched " in *" $1 "*) ;; *) untouched="$untouched $1" ;; esac
 }
 
-pr_field() { gh api "repos/$slug/pulls/$1" --jq "$2"; }
+pr_field() { ghx api "repos/$slug/pulls/$1" --jq "$2"; }
 
-# green = at least one check on the head, and every one of them success, skipped or neutral
+# green = at least one check on the head, and every one of them success, skipped or neutral. 0 green, 1 not green,
+# 2 the checks could not be read (a failed call is not "not green", #754)
 green_on() { # head sha
   local c
-  c="$(gh api "repos/$slug/commits/$1/check-runs" --jq '[.check_runs[]|(.conclusion // "pending")]|join(" ")' 2> /dev/null)"
+  c="$(ghx api "repos/$slug/commits/$1/check-runs" --jq '[.check_runs[]|(.conclusion // "pending")]|join(" ")')" || return 2
   [ -n "$c" ] || return 1
   local x
   for x in $c; do
@@ -126,7 +191,7 @@ wait_green() { # PR, a head sha it must differ from (or empty): echoes the green
 # 0 pushed, 3 code conflict, 1 anything else (all reported)
 integrate() {
   local n=$1 ref bad cur
-  ref="$(pr_field "$n" .head.ref)"
+  ref="$(pr_field "$n" .head.ref)" || return 1
   [ -n "$ref" ] || { say "#$n: no head branch found"; return 1; }
   if [ -n "$(git status --porcelain 2> /dev/null)" ]; then say "#$n: the working tree is not clean; not switching branches"; return 1; fi
   git fetch -q --no-prune origin main "+pull/$n/head:refs/pr-sweep/$n" || { say "#$n: fetch failed"; return 1; }
@@ -167,8 +232,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit
 }
 
 close_ticket() { # ticket number
-  if [ "$(gh api "repos/$slug/issues/$1" --jq .state 2> /dev/null)" = "open" ]; then
-    gh api -X PATCH "repos/$slug/issues/$1" -f state=closed > /dev/null && { say "closed ticket #$1"; closed=$((closed + 1)); }
+  local st
+  st="$(ghx api "repos/$slug/issues/$1" --jq .state)" || return
+  if [ "$st" = "open" ]; then
+    ghx api -X PATCH "repos/$slug/issues/$1" -f state=closed > /dev/null && { say "closed ticket #$1"; closed=$((closed + 1)); }
   fi
 }
 
@@ -196,40 +263,58 @@ announce_merged() { # PR
     || say "#$1: could not post \"merged: #$1\" to the lobby; the board shows it open until someone does"
 }
 
-# how many commits main has that this head lacks; 0 when unknown. GitHub reports "clean" for a head that is behind main
-# unless branch protection demands up-to-date, but two PRs that each pass alone can break main together (#760).
-behind_by() { # head sha
+# is main ahead of this head? 0 yes, 1 no, 2 unknown (the call failed, counted). GitHub reports "clean" for a head that is
+# behind main unless branch protection demands up-to-date, but two PRs that each pass alone can break main together (#760).
+is_behind() { # head sha
   local b
-  b="$(gh api "repos/$slug/compare/main...$1" --jq .behind_by 2> /dev/null)" || b=0
-  case "$b" in '' | *[!0-9]*) b=0 ;; esac
-  echo "$b"
+  b="$(ghx api "repos/$slug/compare/main...$1" --jq .behind_by)" || return 2
+  case "$b" in '' | *[!0-9]*) return 2 ;; esac
+  [ "$b" -gt 0 ]
 }
 
 do_ready() { # PR, ticket (any link), closer (ticket the PR closes, or empty)
-  local n=$1 ticket=$2 closer=${3:-} ms sha rc
-  ms="$(pr_field "$n" .mergeable_state)"
-  if [ "$ms" = clean ] && [ "$(behind_by "$(pr_field "$n" .head.sha)")" -gt 0 ]; then ms=behind; fi
+  local n=$1 ticket=$2 closer=${3:-} ms sha rc g merged_now unk
+  ms="$(pr_field "$n" .mergeable_state)" || return
+  # GitHub answers "unknown" for a while after every merge into main while it recomputes the state; ask again before
+  # giving up, so one pass can merge more than one PR (#793)
+  unk=0
+  while [ "$ms" = unknown ] && [ "$unk" -lt "$unknown_tries" ]; do
+    [ "$poll" -gt 0 ] && /bin/sleep "$poll"
+    ms="$(pr_field "$n" .mergeable_state)" || return
+    unk=$((unk + 1))
+  done
+  if [ "$ms" = clean ]; then
+    sha="$(pr_field "$n" .head.sha)" || return
+    is_behind "$sha"; rc=$?
+    if [ "$rc" -eq 2 ]; then say "#$n: could not tell whether main moved; not merging"; return; fi
+    if [ "$rc" -eq 0 ]; then ms=behind; fi
+  fi
   case "$ms" in
     dirty) hold "$n" "conflicted on a fresh look"; return ;;
     behind)
       if [ "$dry" -eq 1 ]; then say "would integrate main into #$n, wait for green on the new head, merge, bench, close #$ticket"; return; fi
-      sha="$(pr_field "$n" .head.sha)"
+      sha="$(pr_field "$n" .head.sha)" || return
       integrate "$n"; rc=$?
       if [ "$rc" -ne 0 ]; then hold "$n" "integrate failed (exit $rc)"; return; fi
       [ "$settle" -gt 0 ] && /bin/sleep "$settle"
       sha="$(wait_green "$n" "$sha")" || { say "#$n: integrated; waiting for green checks on the new head"; return; }
-      ms="$(pr_field "$n" .mergeable_state)"
+      ms="$(pr_field "$n" .mergeable_state)" || return
       ;;
     *)
-      sha="$(pr_field "$n" .head.sha)"
-      if ! green_on "$sha"; then say "#$n: checks are not all green on the latest head; not merging"; return; fi
+      sha="$(pr_field "$n" .head.sha)" || return
+      green_on "$sha"; g=$?
+      if [ "$g" -eq 2 ]; then say "#$n: the checks could not be read; not merging"; return; fi
+      if [ "$g" -ne 0 ]; then say "#$n: checks are not all green on the latest head; not merging"; return; fi
       ;;
   esac
   if [ "$ms" != "clean" ]; then say "#$n: mergeable state is \"$ms\"; not merging"; return; fi
-  if [ "$(behind_by "$sha")" -gt 0 ]; then say "#$n: main moved while the checks ran; not merging, the next pass integrates it"; return; fi
+  is_behind "$sha"; rc=$?
+  if [ "$rc" -eq 2 ]; then say "#$n: could not tell whether main moved; not merging"; return; fi
+  if [ "$rc" -eq 0 ]; then say "#$n: main moved while the checks ran; not merging, the next pass integrates it"; return; fi
   if [ "$dry" -eq 1 ]; then say "would merge #$n (head $sha, green), run the bench, record it${closer:+, close #$closer}"; return; fi
-  gh pr merge "$n" --merge --match-head-commit "$sha" > /dev/null 2>&1
-  if [ "$(pr_field "$n" .merged)" != "true" ]; then hold "$n" "the merge did not go through"; return; fi
+  ghcall 1 pr merge "$n" --merge --match-head-commit "$sha" > /dev/null 2>&1
+  merged_now="$(pr_field "$n" .merged)" || return
+  if [ "$merged_now" != "true" ]; then hold "$n" "the merge did not go through"; return; fi
   say "#$n: merged"
   merged=$((merged + 1))
   announce_merged "$n"
@@ -237,7 +322,13 @@ do_ready() { # PR, ticket (any link), closer (ticket the PR closes, or empty)
   if [ -n "$closer" ]; then close_ticket "$closer"; fi
 }
 
-rows="$(ledger --bench-ledger "$bench_ledger" | grep -E '^#[0-9]+ ')" || rows=""
+ledger_out="$(ledger --bench-ledger "$bench_ledger")"; ledger_rc=$?
+rows="$(printf '%s\n' "$ledger_out" | grep -E '^#[0-9]+ ')" || rows=""
+if [ "$ledger_rc" -ne 0 ]; then
+  echo "pr-ledger exit $ledger_rc" >> "$run/failed"
+  printf '%s\n' "$ledger_out" | grep -E '^pr-ledger: ' | sed 's/^/pr-sweep: /'
+  if printf '%s\n' "$ledger_out" | grep -qi 'rate limit'; then : > "$run/ratelimited"; fi
+fi
 while IFS= read -r row; do
   [ -n "$row" ] || continue
   # shellcheck disable=SC2086
@@ -252,7 +343,7 @@ while IFS= read -r row; do
   esac
   case "$stage" in
     checks-cancelled)
-      if [ "$dry" -eq 1 ]; then say "would rerun the cancelled jobs on #$n"; else ledger --rerun-cancelled "$n" > /dev/null; reran=$((reran + 1)); say "#$n: reran the cancelled jobs"; fi ;;
+      if [ "$dry" -eq 1 ]; then say "would rerun the cancelled jobs on #$n"; elif ledger --rerun-cancelled "$n" > /dev/null; then reran=$((reran + 1)); say "#$n: reran the cancelled jobs"; else echo "rerun $n" >> "$run/failed"; say "#$n: could not rerun the cancelled jobs"; fi ;;
     ready | behind | conflict)
       if [ -z "$ticket" ]; then hold "$n" "no linked ticket"; continue; fi
       if [ "$stage" = ready ]; then do_ready "$n" "$ticket" "$closer"; continue; fi
@@ -274,11 +365,19 @@ done <<< "$rows"
 
 if [ -n "$untouched" ]; then
   list="$(echo "$untouched" | tr ' ' '\n' | sed '/^$/d' | sort -n | paste -sd, -)"
-  if [ "$dry" -eq 1 ]; then say "would post to the lobby: $list"; else ledger --post --only "$list" --bench-ledger "$bench_ledger" --state-file "$tmp/pr-sweep-last-post" > /dev/null; fi
+  if [ "$dry" -eq 1 ]; then say "would post to the lobby: $list"; else ledger --post --only "$list" --bench-ledger "$bench_ledger" --state-file "$tmp/pr-sweep-last-post" > /dev/null || echo "post" >> "$run/failed"; fi
 fi
+
+failed_calls=0
+[ -s "$run/failed" ] && failed_calls="$(wc -l < "$run/failed" | tr -d ' ')"
 
 if [ "$dry" -eq 1 ]; then
   say "dry run; changed nothing"
+elif [ "$failed_calls" -gt 0 ]; then
+  [ -e "$run/ratelimited" ] && say "GitHub API rate limit exhausted; $(reset_text)"
+  # shellcheck disable=SC2086
+  say "$failed_calls call(s) failed, pass incomplete (reran $reran, integrated $integrated, merged $merged, benched $benched, closed $closed, not touched:${untouched:- none})"
+  exit 1
 elif [ "$((reran + merged + integrated + benched + closed))" -eq 0 ] && [ -z "$untouched" ]; then
   say "nothing needs a step"
 else

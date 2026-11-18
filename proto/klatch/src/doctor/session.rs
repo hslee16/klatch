@@ -8,9 +8,10 @@ use std::path::Path;
 /// Codex: whether klatch's hooks in its config are trusted (an untrusted hook is skipped silently, #544) and whether
 /// `codex queue` exists (#545). Reads the Codex files and runs `codex --version` and `codex queue --help`, which need
 /// no login; writes nothing.
-pub(super) fn check_codex(r: &mut Report, home: Option<&Path>) {
+pub(super) fn check_codex(r: &mut Report, home: Option<&Path>, project_dir: &Path) {
     let found = crate::codex::codex_home(std::env::var_os("CODEX_HOME"), home)
-        .and_then(|dir| crate::codex::hook_findings(&dir))
+        .map(|dir| crate::codex::hook_findings(&dir, Some(project_dir)))
+        .unwrap_or_default()
         .into_iter()
         .chain(std::iter::once(crate::codex::queue_finding()));
     for f in found {

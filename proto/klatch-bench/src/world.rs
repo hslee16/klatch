@@ -23,6 +23,12 @@ pub struct Run {
     pub stderr: String,
 }
 
+/// What a Codex process hands klatch: a hook's JSON on standard input, or the thread id of a command it runs.
+pub enum CodexInput<'a> {
+    Hook(&'a str),
+    Thread(&'a str),
+}
+
 impl World {
     pub fn new(bin: &Path) -> World {
         let home = std::env::temp_dir().join(format!(
@@ -103,6 +109,50 @@ impl World {
             c.env("KLATCH_NOW", t.to_string());
         }
         c
+    }
+
+    /// Run `klatch --codex <args>` as a Codex session would: no typed name, no registry (the home holds none), the
+    /// hook's JSON on standard input, or the thread id as `CODEX_THREAD_ID` for a command (#341).
+    pub fn codex(&self, args: &[&str], input: CodexInput) -> Run {
+        use std::io::Write;
+        let (payload, thread) = match input {
+            CodexInput::Hook(json) => (json, None),
+            CodexInput::Thread(id) => ("", Some(id)),
+        };
+        self.calls.set(self.calls.get() + 1);
+        let mut c = Command::new(&self.bin);
+        c.env_remove("KLATCH_IDENTITY_FILE");
+        c.env_clear()
+            .env("KLATCH_HOME", &self.home)
+            .env("KLATCH_KEY_DIR", self.home.join("keys"))
+            .env("HOME", &self.home)
+            .current_dir(&self.home)
+            .arg("--codex")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(t) = thread {
+            c.env("CODEX_THREAD_ID", t);
+        }
+        let run = c.spawn().and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(payload.as_bytes())?;
+            }
+            child.wait_with_output()
+        });
+        match run {
+            Ok(o) => Run {
+                ok: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("could not run {}: {e}", self.bin.display()),
+            },
+        }
     }
 
     /// A launcher for running many workers at once from threads: it holds only what a command needs, so unlike the
