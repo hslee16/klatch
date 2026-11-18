@@ -93,6 +93,113 @@ fn a_session_id_longer_than_the_suffix_grows_it_by_one_character_when_four_colli
     assert_eq!(second, first, "the name is kept for the session's life");
 }
 
+/// A store that only keeps which session holds which member name, and counts how often it is asked who holds one.
+#[derive(Default)]
+struct Holders {
+    held: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    lookups: std::cell::Cell<usize>,
+}
+
+/// The required methods of the areas this store does not keep: nothing in the name search may reach them.
+impl klatch::store::areas::MessageStore for Holders {
+    fn join(&self, _: &str, _: &str, _: i64) -> klatch::domain::Result<()> {
+        unimplemented!()
+    }
+    fn post_as(
+        &self,
+        _: &klatch::store::NewMessage,
+        _: i64,
+    ) -> klatch::domain::Result<klatch::domain::Posted> {
+        unimplemented!()
+    }
+    fn read(
+        &self,
+        _: klatch::store::Seat,
+        _: bool,
+        _: i64,
+    ) -> klatch::domain::Result<Vec<klatch::domain::Message>> {
+        unimplemented!()
+    }
+    fn tail(
+        &self,
+        _: &str,
+        _: i64,
+        _: usize,
+    ) -> klatch::domain::Result<Vec<klatch::domain::Message>> {
+        unimplemented!()
+    }
+    fn head(&self, _: &str) -> klatch::domain::Result<i64> {
+        unimplemented!()
+    }
+    fn advance_cursor(
+        &self,
+        _: klatch::store::Seat,
+        _: klatch::store::Seq,
+        _: i64,
+    ) -> klatch::domain::Result<()> {
+        unimplemented!()
+    }
+}
+impl klatch::store::areas::AskStore for Holders {}
+impl klatch::store::areas::ClaimStore for Holders {
+    fn claim(&self, _: &klatch::store::ClaimRequest, _: i64) -> klatch::domain::Result<()> {
+        unimplemented!()
+    }
+    fn release(&self, _: &str, _: &str, _: &str) -> klatch::domain::Result<()> {
+        unimplemented!()
+    }
+    fn claims(&self, _: &str, _: i64) -> klatch::domain::Result<Vec<klatch::domain::Claim>> {
+        unimplemented!()
+    }
+}
+impl klatch::store::areas::ReviewStore for Holders {}
+impl klatch::store::areas::CredentialStore for Holders {}
+impl klatch::store::areas::PolicyStore for Holders {}
+impl klatch::store::areas::RoomStore for Holders {}
+impl klatch::store::areas::MemberStore for Holders {
+    fn members(&self, _: &str) -> klatch::domain::Result<Vec<klatch::domain::MemberInfo>> {
+        unimplemented!()
+    }
+    fn rooms_of(&self, _: &str) -> klatch::domain::Result<Vec<String>> {
+        unimplemented!()
+    }
+
+    fn session_of_member(&self, member: &str) -> klatch::domain::Result<Option<String>> {
+        self.lookups.set(self.lookups.get() + 1);
+        Ok(self.held.borrow().get(member).cloned())
+    }
+
+    fn note_session(
+        &self,
+        session_id: &str,
+        member: &str,
+        _now: i64,
+    ) -> klatch::domain::Result<()> {
+        self.held
+            .borrow_mut()
+            .insert(member.into(), session_id.into());
+        Ok(())
+    }
+}
+
+/// #801: when every suffix length up to the whole id is taken, the search must stop lengthening at the id (it has no
+/// more characters to give) and count up. The name that comes out is the same one if the loop runs one round too many,
+/// so what pins the bound is the number of times the store is asked: one lookup per name tried, no repeat of the
+/// full-id name.
+#[test]
+fn the_suffix_search_stops_at_the_whole_id_and_asks_once_per_name_it_tries() {
+    let s = Holders::default();
+    for taken in ["proj", "proj-abcd", "proj-abcde"] {
+        s.note_session("someone-else", taken, 1).unwrap();
+    }
+    let got = ensure_session_member(&s, "abcde", Some("proj"), 1).unwrap();
+    assert_eq!(got, "proj-abcde-2");
+    // proj, proj-abcd, proj-abcde (twice: the end of the growing loop and the first round of the counting loop),
+    // proj-abcde-2
+    assert_eq!(s.lookups.get(), 5, "the full-id name was asked about again");
+    assert_eq!(s.held.borrow().get(&got).map(String::as_str), Some("abcde"));
+}
+
 #[test]
 fn a_session_id_with_too_few_characters_to_lengthen_still_gets_a_name() {
     let (a, b, b_again) = bounded(|| {
