@@ -36,7 +36,7 @@ impl<W: Write> Out<W> {
     /// An error when the consumer behind the output is known to be gone.
     pub fn healthy(&mut self) -> io::Result<()> {
         if self.probe {
-            self.w.write(&[])?;
+            self.w.write(&[]).map(drop)?;
         }
         Ok(())
     }
