@@ -110,8 +110,11 @@ repo_checks() {
     && release/check-versions.sh \
     && release/test-check-versions.sh > /dev/null \
     && (cd clients/python && python3 -m unittest discover > /dev/null 2>&1) \
+    && python3 -m unittest discover -s clients/recipes -p 'test_*.py' > /dev/null 2>&1 \
     && release/changelog-fragments.sh check \
     && release/test-changelog-fragments.sh > /dev/null \
+    && release/design-fragments.sh check \
+    && release/test-design-fragments.sh > /dev/null \
     && proto/scripts/test-team.sh > /dev/null \
     && proto/scripts/test-sweep.sh > /dev/null \
     && sh install/test-install.sh > /dev/null \

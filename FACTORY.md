@@ -40,7 +40,8 @@ path, not its contents.
 ## Overlap and gaps with the orchestrators (desk research, not run)
 
 These rows come from the public descriptions gathered in RESEARCH-NOTES section 16 on 2026-11-12. **None of these tools was
-installed or run against klatch**, so none of this is a tested recipe; running them is ticket #414.
+installed or run against klatch**, so none of this is a tested recipe; running them is ticket #414. Per tool, with where each
+claim comes from and how to verify one, see `clients/recipes/ORCHESTRATORS.md`.
 
 | Tool | What it is, as described | Where klatch overlaps | What klatch adds | What it does not do |
 |---|---|---|---|---|

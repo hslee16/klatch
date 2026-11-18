@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use klatch::client::{ClaimRequest, Client, Error, PostRequest};
+use klatch::client::{ClaimRequest, Client, Error, PostRequest, Verdict};
 use klatch::protocol::{PROTOCOL_VERSION, decode_server_line};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -271,6 +271,94 @@ fn a_member_mutes_and_unmutes_a_room_and_read_still_shows_everything() {
     a.mute("r", false).unwrap();
     a.mute("r", true).unwrap();
     assert_eq!(api(a.mute("bad room", true).unwrap_err()).code, "invalid");
+}
+
+#[test]
+fn an_invite_is_a_pointer_posted_where_the_member_already_is() {
+    let h = Home::new();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    a.post(PostRequest::new("team", "hello")).unwrap();
+    b.post(PostRequest::new("team", "hi")).unwrap();
+    a.invite("bob", "design", "team").unwrap();
+    let bodies: Vec<String> = b
+        .read("team", false)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.body)
+        .collect();
+    assert!(
+        bodies.iter().any(|x| x.contains("klatch join design")),
+        "{bodies:?}"
+    );
+    assert_eq!(
+        api(a.invite("alice", "design", "team").unwrap_err()).code,
+        "invalid"
+    );
+    assert_eq!(
+        api(a.invite("bob", "bad room", "team").unwrap_err()).code,
+        "invalid"
+    );
+    assert_eq!(
+        api(a
+            .request("invite", serde_json::json!({"member": "bob"}))
+            .unwrap_err())
+        .code,
+        "invalid_params"
+    );
+}
+
+#[test]
+fn a_member_declares_its_scope_its_kind_and_its_status() {
+    let h = Home::new();
+    let mut a = connect(&h, "alice");
+    a.post(PostRequest::new("r", "here")).unwrap();
+    a.set_scope("git:demo-1").unwrap();
+    a.claim(ClaimRequest::new("r", "src/a.rs")).unwrap();
+    let claims = a.claims("r").unwrap();
+    assert_eq!(
+        claims
+            .iter()
+            .map(|c| c.scope.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("git:demo-1")]
+    );
+    assert_eq!(a.claim_owners("r").unwrap(), vec!["alice".to_string()]);
+    assert_eq!(
+        api(a.set_scope("not a scope!").unwrap_err()).code,
+        "invalid"
+    );
+    a.set_kind(Some("bot")).unwrap();
+    assert_eq!(a.who("r").unwrap()[0].kind.as_deref(), Some("bot"));
+    a.set_kind(None).unwrap();
+    assert_eq!(a.who("r").unwrap()[0].kind, None);
+    assert_eq!(
+        api(a.set_kind(Some("session")).unwrap_err()).code,
+        "invalid"
+    );
+    a.set_status("r", "done").unwrap();
+    assert_eq!(a.who("r").unwrap()[0].status.as_deref(), Some("done"));
+    assert_eq!(api(a.set_status("r", "").unwrap_err()).code, "invalid");
+    a.unsubscribe("r").unwrap();
+}
+
+#[test]
+fn a_member_that_is_not_the_reviewer_is_refused_both_review_methods() {
+    let h = Home::new();
+    let mut a = connect(&h, "alice");
+    let e = api(a.review_next().unwrap_err());
+    assert_eq!(e.code, "refused");
+    assert!(e.refusals.iter().any(|r| r.0 == "reviewer"), "{e:?}");
+    assert_eq!(
+        api(a.review_verdict(1, Verdict::Allow).unwrap_err()).code,
+        "refused"
+    );
+    assert_eq!(
+        api(a
+            .request("review_verdict", serde_json::json!({"id": 1}))
+            .unwrap_err())
+        .code,
+        "invalid_params"
+    );
 }
 
 #[test]

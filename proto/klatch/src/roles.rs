@@ -32,6 +32,16 @@ pub enum ActCmd {
     Label { room: String, label: String },
     /// Set a member's clearance, at most the agent cap (admin agent only)
     Clear { member: String, label: String },
+    /// Open a run: its rooms, `run.<ID>.<name>`, may be used from now on (admin agent only)
+    RunCreate { run: String },
+    /// End a run and delete its rooms and messages, with no archive: a role names no file for the server to write
+    /// (admin agent only)
+    RunEnd { run: String },
+    /// Report a work item done (an anchor such as `gh:pr:OWNER/REPO/N`) and release the claims anchored to it (admin
+    /// agent only)
+    AnchorDone { anchor: String },
+    /// Remove the members not seen for the fixed retention of 24 hours; every member may, as at session start
+    Prune,
     /// Show the latest administrative acts (admin agent or librarian)
     Audit {
         #[arg(long, default_value_t = 20)]
@@ -68,6 +78,24 @@ pub enum VerdictCmd {
 
 pub(crate) fn act(t: &dyn Transport, cmd: ActCmd) -> Result<()> {
     match cmd {
+        ActCmd::RunCreate { run } => t.admin_run_create(&run)?,
+        ActCmd::RunEnd { run } => {
+            let gone = t.admin_run_end(&run)?;
+            println!(
+                "{} room(s), {} message(s) removed",
+                gone.rooms, gone.messages
+            );
+            return Ok(());
+        }
+        ActCmd::AnchorDone { anchor } => {
+            println!("released {} claim(s)", t.anchor_done(&anchor)?);
+            return Ok(());
+        }
+        ActCmd::Prune => {
+            let removed = t.prune_members(klatch::domain::MEMBER_RETENTION_SECS)?;
+            println!("removed {removed} member(s)");
+            return Ok(());
+        }
         ActCmd::Close { room } => t.admin_close_room(&room, true)?,
         ActCmd::Reopen { room } => t.admin_close_room(&room, false)?,
         ActCmd::Remove { member, room } => t.admin_remove_member(&room, &member)?,

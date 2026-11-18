@@ -1,0 +1,1 @@
+- Linux: a locked keyring, or one with no login collection, is now reported as such ("the keyring is locked ... klatch made no new key") instead of reading as "no key", and removing a key no longer reports success when a locked keyring kept it (#561). The check runs only after a miss, so a key that is found costs nothing extra.

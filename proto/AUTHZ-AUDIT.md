@@ -113,6 +113,7 @@ wraps.
 | `hooks` | `hook_runs` | GUARDED `hook_runs` (another member's record with `--of`) |
 | `refusals` | `my_refusals` | OWN_RECORD, only the caller's rows |
 | `board`, `asks`, `tasks` | `board`, `open_asks` | GUARDED `board`, `open_asks` |
+| `card` | `member_card`, which calls `board` first | GUARDED `member_card` and `board`: the same checks as `board` (a read-only view of one member in a room the caller may see) |
 | `claims` | `claims` | GUARDED `claims` |
 | `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room; the rest are OWN_RECORD |
 | `stream` | `Session::stream` (`head`, `tail`) | GUARDED `head`, `tail` |
