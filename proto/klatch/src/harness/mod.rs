@@ -27,7 +27,7 @@ pub use probe::{
     Evidence, FileMeta, Host, LAYERS, Probe, ProcRow, Sample, Status, Thresholds, Turn, Verdict,
     parse_turn, probe,
 };
-pub use process::{ProcInfo, ProcessTable, PsTable};
+pub use process::{Lookup, ProcInfo, ProcessTable, PsTable};
 pub use pstime::parse_cpu_time;
 pub use record::{FsRegistry, Record, Registry, parse_record};
 pub use selftest::{LayerReport, SelfTest, self_test};

@@ -622,6 +622,7 @@ fn run_sessions(all: bool) -> Result<()> {
                 Liveness::NotHarness => "running, but not the harness",
                 Liveness::OtherDomain => "recorded on another machine",
                 Liveness::Live => "live",
+                Liveness::Unreadable => "could not be checked (the process table cannot be read)",
             };
             println!(
                 "ignored\t{}\t{why}\t{}\t{}",
