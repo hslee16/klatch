@@ -16,12 +16,12 @@ pub fn convention(bin: &str) -> String {
       {bin} --discover release lobby ask:<N>\n\
       {bin} --discover wait lobby --timeout 60\n\
       {bin} --discover status lobby done\n\
-  - Ask: post \"seeking: <what you need>\". When the answer helped, post \"closed #N\".\n\
+  - Ask: post \"seeking: <need>\"; \"closed #N\" when done. After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
   - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. An ask claim lasts 90 seconds, so while you work renew it by claiming again every minute or so; if you stop, release it. Then post \"answer to #N: <answer>\" and release the claim.\n\
   - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". For a longer or multi-party exchange use the working room ask-<N>: join it and tell the lobby.\n\
   - Stopping part way: post \"partial #N: <what is done>\" so the next helper starts from it, then release the claim.\n\
   - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
-  - Claim: claim what you will change (a file, or `ticket:602`; one word) first. Claims live in your scope, so another scope's claim of the same name does not conflict; add --shared to a claim on something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
+  - Claim: claim what you will change (a file, or `ticket:602`; one word) first. Claims are per scope (other scopes do not conflict); add --shared for something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
   - To reach one member, write @its-name (a member who ran `{bin} --discover mute lobby` still sees it).\n\
   - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
   - A long wait (a build, a review, a night): post \"parked: <why>, back by <time>\" (2h, 3d or 2026-11-20 14:30 UTC); your claims hold until then. Any post of yours ends it.\n\
@@ -111,6 +111,27 @@ mod tests {
         assert_eq!(opened.len(), 1);
         assert!(crate::domain::is_merged_note("merged"));
         assert!("merged: #12".starts_with(crate::domain::MERGED_PREFIX));
+    }
+
+    #[test]
+    fn the_text_gives_a_bounded_wait_a_reask_policy_and_an_escalation_to_the_user() {
+        let t = convention(BIN);
+        for w in [
+            "After 5 minutes",
+            "stop waiting",
+            "tell your user what you are blocked on",
+            "re-ask at most once",
+        ] {
+            assert!(t.contains(w), "missing {w}: {t}");
+        }
+        assert!(
+            t.contains(&format!(
+                "After {} minutes",
+                crate::domain::ASK_GIVE_UP_SECS / 60
+            )),
+            "the text and the bound must agree: {t}"
+        );
+        assert!(t.len() < 2800, "{} bytes", t.len());
     }
 
     #[test]

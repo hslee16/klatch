@@ -73,7 +73,15 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             };
             let rooms =
                 klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
-            wait(t, &rooms, timeout, peek)?
+            wait(
+                t,
+                &WaitArgs {
+                    rooms: &rooms,
+                    timeout,
+                    peek,
+                    caller: (ctx.me, ctx.now),
+                },
+            )?
         }
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
@@ -377,44 +385,73 @@ fn look(
     Ok(seen.into_iter().filter(|m| filter.accepts(m)).collect())
 }
 
-fn wait(
-    t: &dyn Transport,
-    rooms: &[(String, klatch::domain::WaitFilter)],
+/// What one `wait` call was asked: the rooms (each with its wake filter), the timeout, whether it only peeks, and
+/// who is waiting and when it started (the caller's own asks are named when it times out, #200).
+struct WaitArgs<'a> {
+    rooms: &'a [(String, klatch::domain::WaitFilter)],
     timeout: u64,
     peek: bool,
-) -> Result<()> {
-    let (timeout, clamped) = effective_timeout(timeout);
+    caller: (&'a str, i64),
+}
+
+/// What a wait that timed out adds to the marker: the caller's own asks that have gone unanswered past the bound
+/// (#200). A room that cannot be read adds nothing: a note never hides the marker.
+fn timeout_notes(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Vec<String> {
+    let (me, started) = a.caller;
+    let now = started + waited as i64;
+    a.rooms
+        .iter()
+        .filter_map(|(room, _)| t.open_asks(room).ok())
+        .flat_map(|asks| klatch::domain::give_up_notes(&asks, me, now))
+        .collect()
+}
+
+/// Print the messages that woke a wait; true when there were any.
+fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
+    for (room, filter) in a.rooms {
+        let found = look(t, room, filter, a.peek)?;
+        for m in &found {
+            println!(
+                "[{room} {} {} {}] {}{}",
+                m.seq,
+                m.ts,
+                m.sender_label(),
+                flat(&m.body),
+                handoff_suffix(m)
+            );
+        }
+        if !found.is_empty() {
+            eprintln!("{DATA_RULE}");
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The marker a wait that timed out prints, then the notes that go with it.
+fn print_timeout(t: &dyn Transport, a: &WaitArgs, timeout: u64) {
+    let names: Vec<&str> = a.rooms.iter().map(|(r, _)| r.as_str()).collect();
+    println!(
+        "[klatch wait: timeout room={} after={timeout}s]",
+        names.join(",")
+    );
+    for note in timeout_notes(t, a, timeout) {
+        println!("{note}");
+    }
+}
+
+fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
+    let (timeout, clamped) = effective_timeout(a.timeout);
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
     }
     let deadline = Instant::now() + Duration::from_secs(timeout);
     loop {
-        for (room, filter) in rooms {
-            let found = look(t, room, filter, peek)?;
-            for m in &found {
-                println!(
-                    "[{room} {} {} {}] {}{}",
-                    m.seq,
-                    m.ts,
-                    m.sender_label(),
-                    flat(&m.body),
-                    handoff_suffix(m)
-                );
-            }
-            if !found.is_empty() {
-                eprintln!("{DATA_RULE}");
-                return Ok(());
-            }
+        if print_woken(t, a)? {
+            return Ok(());
         }
         if Instant::now() >= deadline {
-            println!(
-                "[klatch wait: timeout room={} after={timeout}s]",
-                rooms
-                    .iter()
-                    .map(|(r, _)| r.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
+            print_timeout(t, a, timeout);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
