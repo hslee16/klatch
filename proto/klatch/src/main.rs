@@ -11,6 +11,7 @@ mod custody;
 mod doctor;
 mod identity;
 mod init;
+mod init_codex;
 mod judge;
 mod roles;
 mod run;
@@ -558,6 +559,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             enforce: init::Switch::from_flags(enforce, no_enforce),
             wake: init::Switch::from_flags(wake, no_wake),
             uninstall,
+            codex: cli.who.codex,
         }),
         Cmd::Consent {
             name,
@@ -685,12 +687,14 @@ fn run_consent(options: &consent::Options) -> Result<()> {
             project_dir: &std::env::current_dir()?,
             home: home.as_deref(),
             bin: &std::env::current_exe()?,
+            codex_home: None,
         },
     )
 }
 
 fn run_init(options: &init::Options) -> Result<()> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
+    let codex_home = codex::codex_home(std::env::var_os("CODEX_HOME"), home.as_deref());
     init::run(
         options,
         &mut init::Io {
@@ -701,11 +705,12 @@ fn run_init(options: &init::Options) -> Result<()> {
             project_dir: &std::env::current_dir()?,
             home: home.as_deref(),
             bin: &std::env::current_exe()?,
+            codex_home: codex_home.as_deref(),
         },
     )?;
     // A klatch hook that Codex has not trusted is skipped without a word (#544), so say so while the human is here.
     if !options.uninstall
-        && let Some(dir) = codex::codex_home(std::env::var_os("CODEX_HOME"), home.as_deref())
+        && let Some(dir) = codex_home
     {
         codex::init_notice(
             &dir,

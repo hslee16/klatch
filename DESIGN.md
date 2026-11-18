@@ -1544,6 +1544,13 @@ The first version writes only Claude Code hook entries (the human chose hooks on
 3. **Effect.** A running session keeps the hooks it started with, so every change says it takes effect at the next session.
 4. **Not covered.** Codex's `hooks.json` has no consent switch yet (the Codex installer is #782); a team-wide checked-in setting is #257 and is not built.
 
+### 21.3 `klatch init --codex`: Codex's hooks.json (#782)
+
+1. **What it writes.** `klatch init --codex` writes `<CODEX_HOME>/hooks.json` (`~/.codex` when `CODEX_HOME` is unset): SessionStart, UserPromptSubmit and PostToolUse, each `<bin> --codex hook --event <Event>`, so the member comes from the hook's own session id and working directory. `--board` and `--no-lobby` work as for Claude Code and apply to SessionStart only. It uses the same merge, diff, consent (`--yes` or a yes per file) and safe re-run as the Claude installer, so every other hook and setting in the file stays as it was; `--codex --uninstall` removes only klatch's entries.
+2. **What it never writes.** The wake hook (Codex skips async hooks), the claim hook and SessionEnd (not verified to run in Codex), a project `.codex/hooks.json`, `config.toml`, and any trust record. `--scope`, `--wake`, `--enforce` and `--no-session-end` are refused with `--codex`. klatch never passes `--dangerously-bypass-hook-trust`.
+3. **The trust step.** The run ends with the note that Codex runs a hook only after it is reviewed in `/hooks`, followed by doctor's untrusted-hook finding. The file shape was checked against Codex itself (RESEARCH-NOTES 49.8).
+4. **Open.** Whether `codex exec` runs the hooks once trusted needs a Codex login (human); `klatch consent` does not cover Codex yet.
+
 ### 25.10 Joining the default lobby at session start (#267, decided 2026-11-13)
 
 The human decided that a new session joins the default lobby automatically, so nobody has to tell it to ("minimise human activity"). This replaces the earlier choice of a read-only board with no join as the way to reach a session.

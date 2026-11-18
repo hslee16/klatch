@@ -1546,6 +1546,14 @@ Method: `codex app-server` (stdio JSON-RPC, no login) started with a temp `CODEX
 - **`codex queue --help` on a binary that has the command (0.169.0), verified.** It prints `Queue a message for an existing session`, then `Usage: codex queue [OPTIONS] --thread <THREAD> --message <TEXT>`; options include `--thread <THREAD>` (session UUID or exact name), `--message <TEXT>`, `--resume`, `--remote <ADDR>`, `--remote-auth-token-env`. The usage line match in `codex.rs` is therefore right; 0.147.0 still has no `queue`.
 - **What changed in klatch.** Doctor and init now judge each klatch hook by the verified key, compare the recorded hash with the recomputed one (a changed hook reads as not trusted), read inline `config.toml` hooks, report an async klatch hook as skipped, and report a klatch hook in the project `.codex/hooks.json` as unchecked. The hash is only compared, never written. If a future Codex changes the hash rule, doctor would call a trusted hook changed; the fix text says to review it in `/hooks`, which clears it.
 
+### 49.8 What `klatch init --codex` writes, listed by Codex itself (2026-11-17, Codex 0.147.0, macOS, ticket #782)
+
+Method: the same `codex app-server` `hooks/list` call as 49.7, in a temp `HOME` and `CODEX_HOME` (no login, no model, empty environment, temp project), after `klatch init --codex --yes` had written the temp `hooks.json`. The live `~/.codex` was never read or written.
+
+- **Listed, verified.** Codex 0.147.0 lists exactly the three hooks klatch writes (`session_start:0:0`, `user_prompt_submit:0:0`, `post_tool_use:0:0`), `source` `user`, `trustStatus` `untrusted`, with no warning and no error. So the file shape (the Claude settings shape, `"hooks": {Event: [{"hooks": [{"type": "command", "command": ...}]}]}`) and the command `<bin> --codex hook --event <Event>` are accepted as written; no `timeout` or `async` field is needed.
+- **Not installed on purpose.** The wake hook (Codex skips async hooks), the claim hook (PreToolUse) and SessionEnd (no run of either was seen in Codex, so klatch does not claim them).
+- **Needs a human and a login, not verified.** Trusting the hooks in `/hooks`, and whether `codex exec` runs them once trusted (needs a Codex login for a model turn). klatch never writes the trust record.
+
 ## 50. Headless Claude Code sessions as verified team members (2026-11-15, Claude Code 2.1.325, macOS, ticket #582)
 
 Question: can the human run the next wave of work as separate `claude -p` sessions, each a distinct verified klatch member with its own bundle, worktree and hooks, instead of Agent-tool subagents that share the parent's name?
