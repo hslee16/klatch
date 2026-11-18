@@ -63,7 +63,12 @@ impl<S: Store> Gateway<S> {
         room: &str,
         secs: Option<i64>,
     ) -> Result<()> {
-        self.set_room_key(who, ("room-stale", room, &stale_key(room)), STALE_BOUNDS, secs)
+        self.set_room_key(
+            who,
+            ("room-stale", room, &stale_key(room)),
+            STALE_BOUNDS,
+            secs,
+        )
     }
 
     /// Only the human: set the lease an `ask:<N>` claim gets in `room` when none is asked for, 10 to 300 seconds, or
@@ -97,7 +102,10 @@ impl<S: Store> Gateway<S> {
                 "the {action} is {min} to {max} seconds, or off for the default"
             )));
         }
-        let target = format!("{room} {}", secs.map_or("off".to_string(), |s| s.to_string()));
+        let target = format!(
+            "{room} {}",
+            secs.map_or("off".to_string(), |s| s.to_string())
+        );
         self.administer(who, (action, &target), |now| {
             self.store
                 .policy_set(key, secs.map(|s| s.to_string()).as_deref(), now)?;

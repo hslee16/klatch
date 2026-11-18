@@ -56,7 +56,10 @@ fn off_puts_each_back_to_its_default() {
         (s.stale_secs, s.ask_lease_secs),
         (STALE_AFTER_SECS, ASK_LEASE_DEFAULT_SECS)
     );
-    assert_eq!(g.store_for_tests().policy_get("room:r:stale").unwrap(), None);
+    assert_eq!(
+        g.store_for_tests().policy_get("room:r:stale").unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -164,7 +167,16 @@ fn each_change_is_audited_with_the_room_and_its_new_value() {
 #[test]
 fn a_stored_value_outside_the_bounds_reads_as_the_default() {
     let g = open();
-    for junk in ["", "abc", "0", "-5", "1.5", "9", "3601", "99999999999999999999"] {
+    for junk in [
+        "",
+        "abc",
+        "0",
+        "-5",
+        "1.5",
+        "9",
+        "3601",
+        "99999999999999999999",
+    ] {
         g.store_for_tests()
             .policy_set("room:r:stale", Some(junk), 0)
             .unwrap();
@@ -199,16 +211,13 @@ fn the_digest_uses_the_rooms_stale_threshold() {
     }
     g.admin_set_room_stale(&admin(), "quick", Some(10)).unwrap();
     let d = g.digest(&alice()).unwrap();
-    let stale_in = |room: &str| {
-        d.rooms
-            .iter()
-            .find(|r| r.room == room)
-            .unwrap()
-            .stale
-            .len()
-    };
+    let stale_in = |room: &str| d.rooms.iter().find(|r| r.room == room).unwrap().stale.len();
     assert_eq!(stale_in("quick"), 1, "30 s old is stale past 10 s");
-    assert_eq!(stale_in("slow"), 0, "30 s old is not stale at the default 60 s");
+    assert_eq!(
+        stale_in("slow"),
+        0,
+        "30 s old is not stale at the default 60 s"
+    );
 }
 
 #[test]
@@ -228,13 +237,17 @@ fn a_longer_threshold_holds_an_ask_back_that_the_default_would_report() {
 #[test]
 fn an_ask_claim_without_a_requested_lease_gets_the_rooms_default_and_others_do_not() {
     let g = open();
-    g.admin_set_room_ask_lease(&admin(), "r", Some(200)).unwrap();
+    g.admin_set_room_ask_lease(&admin(), "r", Some(200))
+        .unwrap();
     assert_eq!(g.claim_ttl_for(&alice(), "r", "ask:3", None).unwrap(), 200);
     assert_eq!(
         g.claim_ttl_for(&alice(), "other", "ask:3", None).unwrap(),
         ASK_LEASE_DEFAULT_SECS
     );
-    assert_eq!(g.claim_ttl_for(&alice(), "r", "src/lib.rs", None).unwrap(), 600);
+    assert_eq!(
+        g.claim_ttl_for(&alice(), "r", "src/lib.rs", None).unwrap(),
+        600
+    );
 }
 
 #[test]
@@ -247,7 +260,8 @@ fn a_requested_lease_is_kept_and_an_ask_claim_never_passes_its_cap_whatever_the_
         120
     );
     assert_eq!(
-        g.claim_ttl_for(&alice(), "r", "ask:3", Some(3_600)).unwrap(),
+        g.claim_ttl_for(&alice(), "r", "ask:3", Some(3_600))
+            .unwrap(),
         ASK_LEASE_MAX_SECS
     );
     assert_eq!(

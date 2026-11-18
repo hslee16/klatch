@@ -204,9 +204,9 @@ impl<S: Store> Gateway<S> {
             let addressed = self.addressed_seqs(who, &room, &messages)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             let stale_after = self.settings_of(&room)?.stale_secs;
-            let stale =
-                self.store
-                    .stale_asks(Seat::new(&room, &who.member), now, stale_after)?;
+            let stale = self
+                .store
+                .stale_asks(Seat::new(&room, &who.member), now, stale_after)?;
             let escalated = self.store.escalated_asks(&room, &who.member, now)?;
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;
