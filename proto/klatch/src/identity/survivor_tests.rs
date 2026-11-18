@@ -155,7 +155,11 @@ impl klatch::store::areas::ClaimStore for Holders {
 impl klatch::store::areas::ReviewStore for Holders {}
 impl klatch::store::areas::CredentialStore for Holders {}
 impl klatch::store::areas::PolicyStore for Holders {}
-impl klatch::store::areas::RoomStore for Holders {}
+impl klatch::store::areas::RoomStore for Holders {
+    fn set_label_keys(&self, _: klatch::keys::LabelKeys) {
+        unimplemented!()
+    }
+}
 impl klatch::store::areas::MemberStore for Holders {
     fn members(&self, _: &str) -> klatch::domain::Result<Vec<klatch::domain::MemberInfo>> {
         unimplemented!()
