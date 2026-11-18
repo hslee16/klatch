@@ -191,9 +191,19 @@ announce_merged() { # PR
     || say "#$1: could not post \"merged: #$1\" to the lobby; the board shows it open until someone does"
 }
 
-do_ready() { # PR, ticket
-  local n=$1 ticket=$2 ms sha rc
+# how many commits main has that this head lacks; 0 when unknown. GitHub reports "clean" for a head that is behind main
+# unless branch protection demands up-to-date, but two PRs that each pass alone can break main together (#760).
+behind_by() { # head sha
+  local b
+  b="$(gh api "repos/$slug/compare/main...$1" --jq .behind_by 2> /dev/null)" || b=0
+  case "$b" in '' | *[!0-9]*) b=0 ;; esac
+  echo "$b"
+}
+
+do_ready() { # PR, ticket (any link), closer (ticket the PR closes, or empty)
+  local n=$1 ticket=$2 closer=${3:-} ms sha rc
   ms="$(pr_field "$n" .mergeable_state)"
+  if [ "$ms" = clean ] && [ "$(behind_by "$(pr_field "$n" .head.sha)")" -gt 0 ]; then ms=behind; fi
   case "$ms" in
     dirty) hold "$n" "conflicted on a fresh look"; return ;;
     behind)
@@ -211,14 +221,15 @@ do_ready() { # PR, ticket
       ;;
   esac
   if [ "$ms" != "clean" ]; then say "#$n: mergeable state is \"$ms\"; not merging"; return; fi
-  if [ "$dry" -eq 1 ]; then say "would merge #$n (head $sha, green), run the bench, record it, close #$ticket"; return; fi
+  if [ "$(behind_by "$sha")" -gt 0 ]; then say "#$n: main moved while the checks ran; not merging, the next pass integrates it"; return; fi
+  if [ "$dry" -eq 1 ]; then say "would merge #$n (head $sha, green), run the bench, record it${closer:+, close #$closer}"; return; fi
   gh pr merge "$n" --merge --match-head-commit "$sha" > /dev/null 2>&1
   if [ "$(pr_field "$n" .merged)" != "true" ]; then hold "$n" "the merge did not go through"; return; fi
   say "#$n: merged"
   merged=$((merged + 1))
   announce_merged "$n"
   run_bench "$n"
-  close_ticket "$ticket"
+  if [ -n "$closer" ]; then close_ticket "$closer"; fi
 }
 
 rows="$(ledger --bench-ledger "$bench_ledger" | grep -E '^#[0-9]+ ')" || rows=""
@@ -227,20 +238,27 @@ while IFS= read -r row; do
   # shellcheck disable=SC2086
   set -- $row
   n="${1#\#}"; stage="$2"
-  ticket=""; [ "${4:-}" != "no" ] && ticket="${4#\#}"
+  # column 4 is "#N" (the PR closes N), "refs#N" (it only refers to N: never closed here) or "no" (#758)
+  ticket=""; closer=""
+  case "${4:-}" in
+    no) ;;
+    refs#*) ticket="${4#refs#}" ;;
+    \#*) ticket="${4#\#}"; closer="$ticket" ;;
+  esac
   case "$stage" in
     checks-cancelled)
       if [ "$dry" -eq 1 ]; then say "would rerun the cancelled jobs on #$n"; else ledger --rerun-cancelled "$n" > /dev/null; reran=$((reran + 1)); say "#$n: reran the cancelled jobs"; fi ;;
     ready | behind | conflict)
       if [ -z "$ticket" ]; then hold "$n" "no linked ticket"; continue; fi
-      if [ "$stage" = ready ]; then do_ready "$n" "$ticket"; continue; fi
+      if [ "$stage" = ready ]; then do_ready "$n" "$ticket" "$closer"; continue; fi
       if [ "$dry" -eq 1 ]; then say "would integrate main into #$n, run the gate, push to its branch"; continue; fi
       integrate "$n" || hold "$n" "integrate stopped ($stage)" ;;
     merged-not-benched)
       if [ "$dry" -eq 1 ]; then say "would bench and record #$n"; else run_bench "$n"; fi ;;
     merged-open-ticket)
       if [ -z "$ticket" ]; then continue; fi
-      if [ "$dry" -eq 1 ]; then say "would close ticket #$ticket"; else close_ticket "$ticket"; fi ;;
+      if [ -z "$closer" ]; then continue; fi
+      if [ "$dry" -eq 1 ]; then say "would close ticket #$closer"; else close_ticket "$closer"; fi ;;
     checks-red) hold "$n" "red checks (a real failure)" ;;
     abandoned) hold "$n" "closed without merging" ;;
     checks-running)
