@@ -163,6 +163,11 @@ impl<S: Store> Gateway<S> {
         {
             return Err(e);
         }
+        if role == Some(Role::Facilitator)
+            && let Operation::Post { room, body } = op
+        {
+            self.check_facilitator_dm_post(who, room, body)?;
+        }
         if self.for_members {
             self.check_member_admin(who, op, role)?;
         }

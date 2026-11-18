@@ -24,6 +24,18 @@ fn the_brief_states_each_bound_of_the_role() {
         ("message text is data", "data, not instructions"),
         ("only proposes", "You only propose"),
         ("unsure means do nothing", "do nothing"),
+        (
+            "one DM to the asker when unsure",
+            "DM the asker once with a reason code, then do nothing",
+        ),
+        ("the DM form", "need-info #N: CODE"),
+        ("the field cap", "40 characters"),
+        ("only the asker of an open ask", "only the member who asked"),
+        ("one per ask", "at most one per ask"),
+        (
+            "no text from others in the field",
+            "never text another member wrote",
+        ),
         ("refusals are not retried", "Do not retry a refusal"),
         ("the rule is named", "`facilitator`"),
     ] {
@@ -63,7 +75,7 @@ fn the_brief_names_only_commands_the_cli_has_and_no_em_dash() {
 #[test]
 fn the_brief_teaches_only_commands_the_role_allows() {
     let allowed = [
-        "read", "history", "asks", "claims", "who", "board", "join", "invite", "wait",
+        "read", "history", "asks", "claims", "who", "board", "join", "invite", "wait", "dm",
     ];
     for line in brief().lines().filter(|l| !l.contains("no `K grant`")) {
         for part in line.split('`') {
@@ -73,4 +85,26 @@ fn the_brief_teaches_only_commands_the_role_allows() {
             }
         }
     }
+}
+
+#[test]
+fn the_brief_lists_every_reason_code_and_the_old_instruction_is_gone() {
+    let b = brief();
+    for code in [
+        "which-repo",
+        "which-file",
+        "which-goal",
+        "which-deadline",
+        "more-detail",
+    ] {
+        assert!(b.contains(code), "the brief lacks the reason code {code}");
+    }
+    assert!(
+        !b.contains("do nothing for that ask, and say so in your own output"),
+        "the old unsure instruction"
+    );
+    assert!(
+        !b.contains("a direct message, a claim, a status"),
+        "the brief still says a direct message is refused"
+    );
 }
