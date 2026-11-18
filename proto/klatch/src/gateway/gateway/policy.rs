@@ -232,6 +232,16 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// The label order and the agent cap, read-only and any member's (decision on #740). It lists the levels and the
+    /// cap, never a room, a clearance or a rule; setting either stays a floor act at a terminal.
+    pub fn label_order(&self, who: &Principal) -> Result<(Vec<String>, String)> {
+        check_member(who)?;
+        self.check_guard(who, &Operation::admin("label-order", ""))?;
+        let chain = self.chain()?;
+        let cap = self.cap(&chain)?;
+        Ok((chain.names().to_vec(), cap))
+    }
+
     /// The caller's own latest refusals, newest first: rule, room, operation and time, never the text. It reads only
     /// the caller's rows, so no other member's refusal is ever returned, and it takes no guard: a member stopped by
     /// the breaker or a pause can still read why (#678).

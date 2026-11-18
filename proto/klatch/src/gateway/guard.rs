@@ -148,7 +148,10 @@ impl Operation {
             Operation::Read { advance, .. } => !advance,
             Operation::Who { .. } | Operation::Claims { .. } | Operation::Subscribe { .. } => true,
             Operation::Admin { action, .. } => {
-                matches!(action.as_str(), "audit" | "refusals" | "review-queue")
+                matches!(
+                    action.as_str(),
+                    "audit" | "refusals" | "review-queue" | "label-order" | "scrub-check"
+                )
             }
             _ => false,
         }
