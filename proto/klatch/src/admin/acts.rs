@@ -128,6 +128,15 @@ fn rate_limit_of(
     }
 }
 
+/// SECS, or `--off` alone; anything else is a usage error.
+fn secs_or_off(secs: Option<i64>, off: bool, name: &str) -> Result<Option<i64>> {
+    match (off, secs) {
+        (true, None) => Ok(None),
+        (false, Some(s)) => Ok(Some(s)),
+        _ => bail!("give SECS ({name} 600), or --off alone"),
+    }
+}
+
 fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
     match act {
         PolicyAct::RoomCreation { policy } => {
@@ -150,6 +159,24 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
                     println!("each member may post {p} times in {s} seconds in all rooms")
                 }
                 None => println!("no rate limit"),
+            }
+        }
+        PolicyAct::LeaseCap { secs, off } => {
+            let secs = secs_or_off(secs, off, "lease-cap")?;
+            t.admin_set_lease_cap(secs)?;
+            match secs {
+                Some(s) => {
+                    println!("a busy holder with no progress keeps its claims for {s} seconds")
+                }
+                None => println!("the lease cap is back to its default"),
+            }
+        }
+        PolicyAct::LeaseGrace { secs, off } => {
+            let secs = secs_or_off(secs, off, "lease-grace")?;
+            t.admin_set_lease_grace(secs)?;
+            match secs {
+                Some(s) => println!("the claims of a holder found gone linger {s} seconds"),
+                None => println!("the lease grace is back to its default"),
             }
         }
         PolicyAct::Cap { label } => {
@@ -190,6 +217,17 @@ fn scrub(t: &dyn Transport, act: ScrubAct) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lease_setting_is_seconds_or_off_alone() {
+        assert_eq!(
+            secs_or_off(Some(600), false, "lease-cap").unwrap(),
+            Some(600)
+        );
+        assert_eq!(secs_or_off(None, true, "lease-cap").unwrap(), None);
+        assert!(secs_or_off(Some(600), true, "lease-cap").is_err());
+        assert!(secs_or_off(None, false, "lease-cap").is_err());
+    }
 
     #[test]
     fn a_rate_limit_is_both_numbers_or_off_alone() {

@@ -101,6 +101,20 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// How long a holder that is busy with no sign of progress keeps its claims, in seconds (1 to 604800), for
+    /// example `lease-cap 86400`; `lease-cap --off` puts back the default of 4 hours
+    LeaseCap {
+        secs: Option<i64>,
+        #[arg(long)]
+        off: bool,
+    },
+    /// How long the claims of a holder found gone linger, in seconds (1 to 86400), for example `lease-grace 60`;
+    /// `lease-grace --off` puts back the default of 5 minutes
+    LeaseGrace {
+        secs: Option<i64>,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board

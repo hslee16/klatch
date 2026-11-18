@@ -72,6 +72,14 @@ pub(super) enum PolicyAct {
         secs: Option<i64>,
         off: bool,
     },
+    LeaseCap {
+        secs: Option<i64>,
+        off: bool,
+    },
+    LeaseGrace {
+        secs: Option<i64>,
+        off: bool,
+    },
     Cap {
         label: String,
     },
@@ -170,6 +178,8 @@ impl From<AdminCmd> for Route {
             C::RateLimit { posts, secs, off } => {
                 Route::policy(PolicyAct::RateLimit { posts, secs, off })
             }
+            C::LeaseCap { secs, off } => Route::policy(PolicyAct::LeaseCap { secs, off }),
+            C::LeaseGrace { secs, off } => Route::policy(PolicyAct::LeaseGrace { secs, off }),
             C::Cap { label } => Route::policy(PolicyAct::Cap { label }),
             C::Chain { levels } => Route::policy(PolicyAct::Chain { levels }),
             C::ScrubAdd { name, term } => Route::scrub(ScrubAct::Add { name, term }),
