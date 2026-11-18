@@ -269,6 +269,77 @@ mod tests {
         assert_eq!(safe_file_stem("run.1/a b-c"), "run.1_a_b-c");
     }
 
+    fn info(state: klatch::store::ArchiveState) -> klatch::store::ArchiveInfo {
+        klatch::store::ArchiveInfo {
+            path: PathBuf::from("/a/lobby-1.db"),
+            bytes: 100,
+            modified: None,
+            state,
+        }
+    }
+
+    #[test]
+    fn the_summary_counts_and_pluralizes() {
+        let t = Totals {
+            files: 1,
+            messages: 3,
+            bytes: 100,
+            unusable: 0,
+        };
+        assert_eq!(
+            t.summary(),
+            "1 archive, 3 messages, 100 bytes, 0 unusable; nothing is pruned automatically"
+        );
+        let t = Totals {
+            files: 2,
+            messages: 5,
+            bytes: 7,
+            unusable: 1,
+        };
+        assert_eq!(
+            t.summary(),
+            "2 archives, 5 messages, 7 bytes, 1 unusable; nothing is pruned automatically"
+        );
+    }
+
+    #[test]
+    fn a_good_archive_is_a_line_with_its_ages_and_is_counted() {
+        let mut t = Totals::default();
+        let line = archive_line(
+            &info(klatch::store::ArchiveState::Ok {
+                rooms: vec!["a".into(), "b".into()],
+                messages: 3,
+                oldest: 0,
+                newest: 86_400 * 2,
+            }),
+            86_400 * 5,
+            &mut t,
+        );
+        assert_eq!(
+            line,
+            "/a/lobby-1.db\tok\ta,b\t3 messages\toldest 5d ago, newest 3d ago\t100 bytes"
+        );
+        assert_eq!((t.files, t.messages, t.bytes, t.unusable), (1, 3, 100, 0));
+    }
+
+    #[test]
+    fn an_unreadable_archive_is_marked_and_counted_unusable_and_a_partial_one_is_not_counted() {
+        let mut t = Totals::default();
+        let line = archive_line(
+            &info(klatch::store::ArchiveState::Unreadable("bad pages".into())),
+            0,
+            &mut t,
+        );
+        assert_eq!(line, "/a/lobby-1.db\tUNUSABLE\tbad pages\t100 bytes");
+        assert_eq!((t.files, t.messages, t.bytes, t.unusable), (0, 0, 0, 1));
+        let line = archive_line(&info(klatch::store::ArchiveState::Partial), 0, &mut t);
+        assert_eq!(
+            line,
+            "/a/lobby-1.db\tpartial\tleft by an interrupted archive; safe to remove\t100 bytes"
+        );
+        assert_eq!((t.files, t.unusable), (0, 1));
+    }
+
     #[test]
     fn retention_days_must_be_a_whole_number_of_at_least_one() {
         assert_eq!(parse_days("7").unwrap(), 7);

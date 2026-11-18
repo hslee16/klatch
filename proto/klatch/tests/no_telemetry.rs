@@ -142,6 +142,8 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
                     Some(program) if PROGRAMS.contains(&program) => {}
                     Some(program) => problems.push(format!("{rel}:{}: runs {program}", n + 1)),
                     None if rel.ends_with("src/client.rs") => {}
+                    // a unit test that runs its own test binary again, in a child process with its own environment
+                    None if rel.ends_with("src/admin/command_tests.rs") => {}
                     // test-only modules that run the test binary again with a private environment, or a stand-in
                     // for the coding agent's process, so key and registry paths can be tested without the real ones
                     None if rel.ends_with("/survivor_tests.rs") => {}
