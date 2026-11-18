@@ -103,7 +103,7 @@ impl<S: Store> Gateway<S> {
         })
     }
 
-    /// One member's card (#251, item 96): what the room board and the live claims say about `member`, or `None` when
+    /// One member's card (#251, item 100): what the room board and the live claims say about `member`, or `None` when
     /// it is not listed on the board. Derived on every call, stored nowhere, and a read like the board is.
     pub fn member_card(
         &self,

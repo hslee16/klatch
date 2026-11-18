@@ -1,4 +1,4 @@
-//! A member's card (DESIGN section 32 item 96, #251): one member in one place, derived from the room board and the
+//! A member's card (DESIGN section 32 item 100, #251): one member in one place, derived from the room board and the
 //! live claims, never stored. The requester's view is the asks the member posted and their state; the helper's view
 //! is the work it holds (asks it serves, claims, tasks, pull requests). Bounded and labelled like the board: one
 //! clipped line per entry, `BOARD_LIST_LIMIT` entries per section, and every text a member wrote is data.
