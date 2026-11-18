@@ -118,6 +118,22 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// How long an ask may sit with no claim in ROOM before its asker is told, in seconds (10 to 3600), for example
+    /// `room-stale lobby 120`; `room-stale lobby --off` puts back the default of 60 seconds
+    RoomStale {
+        room: String,
+        secs: Option<i64>,
+        #[arg(long)]
+        off: bool,
+    },
+    /// The lease an `ask:<N>` claim gets in ROOM when none is asked for, in seconds (10 to 300, the most an ask claim
+    /// ever lasts), for example `room-ask-lease lobby 120`; `room-ask-lease lobby --off` puts back the default of 90
+    RoomAskLease {
+        room: String,
+        secs: Option<i64>,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set the highest clearance any agent may hold; it must be below the top level
     Cap { label: String },
     /// Replace the label order with a comma separated chain, lowest first, for example open,team,board

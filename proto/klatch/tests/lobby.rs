@@ -184,6 +184,8 @@ fn admin_commands_refuse_without_a_real_terminal_and_change_nothing() {
         vec!["admin", "close", "lobby"],
         vec!["admin", "remove", "alice", "--room", "lobby"],
         vec!["admin", "resume"],
+        vec!["admin", "room-stale", "lobby", "120"],
+        vec!["admin", "room-ask-lease", "lobby", "120"],
     ] {
         let err = h.fail("alice", &args);
         // run by an agent (as here) it is refused for the session above it; run by a script, for having no terminal
