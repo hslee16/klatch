@@ -95,15 +95,54 @@ fn a_session_id_longer_than_the_suffix_grows_it_by_one_character_when_four_colli
 
 #[test]
 fn a_session_id_with_too_few_characters_to_lengthen_still_gets_a_name() {
-    let (a, b) = bounded(|| {
+    let (a, b, b_again) = bounded(|| {
         let s = store("short");
         member(&s, "first", "x");
-        (member(&s, "ab", "x"), member(&s, "a-b", "x"))
+        let a = member(&s, "ab", "x");
+        let b = member(&s, "a-b", "x");
+        (a, b, member(&s, "a-b", "x"))
     });
-    assert_eq!(a, "x-ab");
-    // the second session gets the same name as the first (a known gap, #767); this
-    // pins only that the search ends and the name is valid
-    assert!(b.starts_with("x-") && b.len() <= 40, "{b}");
+    assert_eq!(a, "x-ab", "an existing name never changes");
+    assert_ne!(b, a, "two sessions never share a member name (#767)");
+    assert_ne!(b, "x");
+    assert!(klatch::domain::valid_name(&b), "{b}");
+    assert_eq!(b_again, b, "the name is kept for the session's life");
+}
+
+#[test]
+fn sessions_whose_ids_run_out_of_characters_never_share_a_name_even_when_many_collide() {
+    let long_id = "z".repeat(60);
+    let names = bounded(move || {
+        let s = store("exhausted");
+        let mut names = vec![member(&s, "first", "x")];
+        for sid in [
+            "ab",
+            "a-b",
+            "a_b",
+            "A-B",
+            "---",
+            "!!!",
+            "",
+            &long_id,
+            &format!("{long_id}1"),
+        ] {
+            names.push(member(&s, sid, "x"));
+        }
+        // every name is still the session's name when asked again
+        for (i, sid) in ["ab", "a-b", "a_b", "A-B", "---", "!!!", ""]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(&member(&s, sid, "x"), &names[i + 1], "{sid}");
+        }
+        names
+    });
+    let unique: std::collections::HashSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "{names:?}");
+    assert!(
+        names.iter().all(|n| klatch::domain::valid_name(n)),
+        "{names:?}"
+    );
 }
 
 #[test]

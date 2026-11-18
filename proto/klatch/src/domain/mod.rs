@@ -46,7 +46,7 @@ pub use tasks::{
 };
 pub mod budget;
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
-pub use convention::{CONVENTION_MARKER, convention, subagent_brief};
+pub use convention::{CONVENTION_MARKER, convention, convention_in, subagent_brief};
 pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;

@@ -1,0 +1,1 @@
+- Two different sessions never share a member name, even when their session ids are short or equal once reduced to letters and digits: a count is added when the id has no more characters to give. Existing names do not change.
