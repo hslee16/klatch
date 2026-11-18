@@ -1,0 +1,6 @@
+Read-only wire form for the floors: the label order and a scrub check (#875, decision on #740)
+The human-only floors get a read-only wire form and nothing more. Two wire methods exist: `label_order` (the levels in order and the agent cap, any member's) and `scrub_check` (takes `text`, answers `{"scrubbed": true|false}` for a room below the agent cap). Both guard as `Admin("label-order")` and `Admin("scrub-check")`, are open to every member and to the admin agent and the librarian, and write nothing, not even a refusal row.
+
+`scrub_check` never lists or hints at a rule: the answer is one boolean, a hit on one rule, several or the last gives the same response, and the gateway reads every rule whatever it finds so the work done does not depend on which one matched. No term and no rule name ever crosses the wire, not even to the librarian.
+
+All writes stay floor acts at a terminal: scrub add and remove, the scrub list, the label chain and the cap. They stay `unknown_method` on the wire, and `the_scrub_rules_and_the_label_order_writes_stay_off_the_wire` pins those names. No human identity proof is added. There is no CLI form yet; the terminal still reads the scrub list through `klatch admin`.

@@ -48,7 +48,7 @@ impl Role {
 /// runs, and the records. Everything else is refused, including a stop of every room (the human's stop control),
 /// roles, sealing, canaries, credentials and the floors. An allowlist, so a new admin act is out of scope until
 /// someone decides it belongs here.
-const ADMIN_AGENT_ACTS: [&str; 14] = [
+const ADMIN_AGENT_ACTS: [&str; 16] = [
     "close",
     "reopen",
     "remove",
@@ -63,6 +63,8 @@ const ADMIN_AGENT_ACTS: [&str; 14] = [
     "audit",
     "refusals",
     "hook_runs",
+    "label-order",
+    "scrub-check",
 ];
 
 impl<S: Store> Gateway<S> {
@@ -176,7 +178,10 @@ impl<S: Store> Gateway<S> {
         };
         let floor = admin_agent_refusal(action).filter(|(rule, _)| *rule == "floors");
         // `hook_runs` (content-free, any member's) stays open until the human decides otherwise
-        let allowed = matches!(action.as_str(), "prune" | "hook_runs")
+        let allowed = matches!(
+            action.as_str(),
+            "prune" | "hook_runs" | "label-order" | "scrub-check"
+        )
             || role == Some(Role::Admin)
             // the librarian arm of `check_role` refuses what is not a query, under its own rule
             || role == Some(Role::Librarian);

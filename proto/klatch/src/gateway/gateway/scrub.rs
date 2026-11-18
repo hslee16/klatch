@@ -39,6 +39,23 @@ impl<S: Store> Gateway<S> {
         }
     }
 
+    /// Whether `text` would be scrubbed in a room below the agent cap: yes or no, nothing more (decision on #740).
+    /// It reads every rule whatever it finds, so the work done does not depend on which rule matched or whether
+    /// one did, and it returns neither a name nor a term. It writes no refusal and no audit row.
+    pub fn scrub_check(&self, who: &Principal, text: &str) -> Result<bool> {
+        check_member(who)?;
+        self.check_guard(who, &Operation::admin("scrub-check", ""))?;
+        let lower = text.to_lowercase();
+        Ok(self
+            .store
+            .policy_list(PREFIX)?
+            .iter()
+            .fold(false, |hit, (_, term)| {
+                let m = lower.contains(&term.to_lowercase());
+                hit | m
+            }))
+    }
+
     /// List a private term under a rule name. Matching ignores case.
     pub fn admin_add_scrub_term(&self, who: &Principal, name: &str, term: &str) -> Result<()> {
         if !valid_name(name) {

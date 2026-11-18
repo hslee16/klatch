@@ -80,6 +80,8 @@ const GUARDED: &[(&str, Call)] = &[
     ("wake_summary", |g, w| refused(g.wake_summary(w, "r"))),
     // another member's data, and housekeeping that deletes other members
     ("hook_runs", |g, w| refused(g.hook_runs(w, "bob"))),
+    ("label_order", |g, w| refused(g.label_order(w))),
+    ("scrub_check", |g, w| refused(g.scrub_check(w, "x"))),
     ("prune_members", |g, w| refused(g.prune_members(w, 0))),
     // the administrative acts
     ("admin_close_room", |g, w| {

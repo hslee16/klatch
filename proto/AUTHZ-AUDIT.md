@@ -74,6 +74,8 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 | `mute` | `set_muted` | `Mute` | GUARDED `set_muted`; `mute.rs` |
 | `release` | `release`, `release_with_note` | `Release` | GUARDED `release`, `release_with_note` |
 | `claims` | `claims` | `Claims` | GUARDED `claims` |
+| `label_order` | `label_order` | `Admin("label-order")`, any member's, read-only (levels and cap, no rooms or clearances) | GUARDED `label_order`; `session/tests/dm.rs` |
+| `scrub_check` | `scrub_check` | `Admin("scrub-check")`, any member's, yes or no only, never a rule name or term, no refusal row | GUARDED `scrub_check`; `session/tests/dm.rs` |
 | `prune` | `prune_members` | `Admin("prune")`, every member's, fixed retention | GUARDED `prune_members`; `admin_role.rs` |
 | `role_act` | the `admin_*` acts of the act named | `Admin(act)`, then the admin agent allowlist; floors refused | GUARDED `admin_close_room` and the rest; `session/role_tests.rs`, `floors.rs` |
 | `review_next` | `review_next` | `ReviewNext`, reviewer role only | GUARDED `review_next`; `reviewer.rs` |
@@ -81,7 +83,9 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 
 The client frame `ack` calls `ack` (`Ack`, GUARDED `ack`). An unknown method answers `unknown_method` and reaches no
 gateway call. The wire protocol has no floor act and no `admin` method of its own: `role_act` is the only way in and
-it answers `unknown_act` for anything outside the admin agent's list.
+it answers `unknown_act` for anything outside the admin agent's list. The floors have a read-only wire form only
+(`label_order`, `scrub_check`, decision on #740): the scrub add, remove and list and the label chain and cap writes stay
+terminal-only and answer `unknown_method` on the wire (`the_scrub_rules_and_the_label_order_writes_stay_off_the_wire`).
 
 ## CLI commands
 
