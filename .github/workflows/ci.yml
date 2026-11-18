@@ -56,6 +56,7 @@ jobs:
         run: |
           export KLATCH_BIN="$PWD/target/debug/klatch"
           (cd ../clients/python && python3 -m unittest discover -v)
+          (cd .. && python3 -m unittest discover -v -s clients/recipes -p 'test_*.py')
           (cd ../clients/typescript && node --experimental-strip-types --test conformance.test.ts)
           (cd ../clients/typescript && npm ci --ignore-scripts && node --experimental-strip-types --test package.test.ts)
       - name: The installer (install/install.sh) against a fake release, no network
