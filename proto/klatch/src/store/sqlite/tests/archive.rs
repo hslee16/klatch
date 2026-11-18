@@ -20,10 +20,8 @@ fn old_and_new(s: &SqliteStore) {
     s.post(Seat::new("r", "bob"), "new two", 1001).unwrap();
 }
 
-fn archive_path(tag: &str) -> std::path::PathBuf {
-    let p = temp_db(tag).with_file_name(format!("arch-{tag}-{}.db", std::process::id()));
-    let _ = std::fs::remove_file(&p);
-    p
+fn archive_path(tag: &str) -> TempDb {
+    temp_db(tag).named(format!("arch-{tag}.db"))
 }
 
 #[test]
