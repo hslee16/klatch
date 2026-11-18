@@ -71,3 +71,33 @@ fn a_member_with_no_parent_is_recorded_as_looked_up_and_shows_none() {
     let who = g.who(&alice(), "r").unwrap();
     assert!(who.iter().all(|m| m.parent.is_none()));
 }
+
+/// #800: the mode check is the only thing between a hook's input and the store, so a string that is not a short word
+/// is refused and never stored.
+#[test]
+fn a_permission_mode_that_is_not_a_short_word_is_refused_and_not_stored() {
+    let g = open();
+    let long = "m".repeat(41);
+    for bad in [
+        "",
+        "bad mode",
+        "plan-mode",
+        "plan\n",
+        "mode;drop",
+        long.as_str(),
+    ] {
+        assert!(
+            is_invalid(g.note_member_mode(&alice(), bad)),
+            "{bad:?} was accepted"
+        );
+    }
+    assert!(
+        g.store.member_modes().unwrap().is_empty(),
+        "a bad mode was stored"
+    );
+    let longest = "m".repeat(40);
+    for good in ["plan", "acceptEdits", "bypassPermissions", longest.as_str()] {
+        g.note_member_mode(&alice(), good).unwrap();
+        assert_eq!(g.store.member_modes().unwrap()[0].1, good);
+    }
+}
