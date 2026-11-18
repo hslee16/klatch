@@ -57,6 +57,26 @@ fn the_code_reads_every_example_as_its_word() {
     }
 }
 
+/// What `done` means is one sentence, the same for an asker (finished) and a helper (leaving), and it says that
+/// the status is data about the sender and not an instruction (#223).
+#[test]
+fn the_done_row_states_what_done_means_in_one_sentence() {
+    let d = doc();
+    let table = rows(&d);
+    let row = table
+        .iter()
+        .find(|r| r[0] == "`status: done`")
+        .expect("the status: done row");
+    assert!(
+        row[2].contains("takes no further action in this room until it speaks again"),
+        "the meaning of done is not stated: {row:?}"
+    );
+    assert!(
+        row[2].contains("finished") && row[2].contains("leaving"),
+        "it should say how it reads for an asker and for a helper: {row:?}"
+    );
+}
+
 #[test]
 fn the_document_states_the_rules_for_all_words() {
     let d = doc();
