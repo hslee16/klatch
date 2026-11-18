@@ -6,6 +6,7 @@ mod ask_cycle;
 mod asker_gone;
 mod asks;
 mod board;
+mod card;
 mod claim_age;
 mod convention;
 mod convention_words;
@@ -43,6 +44,7 @@ pub use board::{
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, ask_reach_note,
     current_offers, is_offer, render_board, render_who, statuses,
 };
+pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
 pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
 pub use tasks::{
@@ -71,7 +73,11 @@ pub use model::{
     RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
+#[cfg(kani)]
+pub(crate) use scope::scope_bytes_ok;
 pub use scope::{SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
+#[cfg(kani)]
+pub(crate) use text::safe_name_bytes;
 pub use text::{
     MAX_PAYLOAD_BYTES, flat, mentions, norm, overlaps, secs_between, valid_kind, valid_name,
 };

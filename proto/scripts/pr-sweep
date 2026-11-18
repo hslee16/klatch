@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pr-sweep: ONE pass of the standing PR sweep (#706). A /loop job calls it every few minutes; see PR-SWEEP.md.
 #
-#   pr-sweep [--dry-run] [--bench-ledger FILE] [--budget-floor N]
+#   pr-sweep [--dry-run] [--batch [--max N]] [--bench-ledger FILE] [--budget-floor N]
+#   pr-sweep --timing                      per-step time summary from the timing log ($TMPDIR/pr-sweep-timing.log)
 #
 # It reads `pr-ledger` and acts per stage:
 #   checks-cancelled   rerun the cancelled jobs (never a real failure)
@@ -13,6 +14,12 @@
 #   merged-not-benched run the bench and record it;  merged-open-ticket: close the ticket
 #   anything else a human must look at (red checks, a code conflict, no ticket, stuck over 3 h, abandoned, a failed
 #                      gate or bench) is NOT touched; one message names them via `pr-ledger --post --only`
+#
+# --batch [--max N] (#852, default 6): land several ready or docs-conflicted PRs through ONE integration. It builds
+# alee/batch-TIMESTAMP from origin/main, dropping (and reporting) any PR that would conflict in a non-docs file, with
+# main or with an earlier batch member, BEFORE it touches the branch; runs the gate once; opens ONE pull request; waits
+# for both checks on its head; merges it pinned to that head; verifies each included PR is merged; benches once. Fewer
+# than 2 survivors, or a failed batch gate, mean the one-at-a-time path. See PR-SWEEP.md.
 #
 # Never: merge a PR whose checks are not all green on its latest head (the merge is pinned to that head), rerun a real
 # failure, force-push, push main, run `git merge` while on main, or print the environment. A lock under $TMPDIR keeps
@@ -40,12 +47,28 @@ gh_timeout="${PR_SWEEP_GH_TIMEOUT:-60}"
 gh_retry_sleep="${PR_SWEEP_GH_RETRY_SLEEP:-2}"
 lock_max="${PR_SWEEP_LOCK_MAX_SECS:-1800}"
 floor=""
+batch=0
+batch_max=6
+max_given=0
+verify_tries="${PR_SWEEP_VERIFY_TRIES:-6}"
 tmp="${TMPDIR:-/tmp}"
 tmp="${tmp%/}"
 dry=0
 bench_ledger="$tmp/pr-sweep-bench.json"
 
 say() { printf 'pr-sweep: %s\n' "$*"; }
+
+# where each step spent its time (#855): one line per step "UTC-time step id seconds rc=N"; `pr-sweep --timing` summarises it
+timing_log="${PR_SWEEP_TIMING_LOG:-$tmp/pr-sweep-timing.log}"
+tlog() { # step, id, start epoch, rc
+  printf '%s %s %s %ss rc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(($(date +%s) - $3))" "$4" >> "$timing_log" 2> /dev/null || true
+}
+timing_summary() { # per step: runs, total, average, slowest seconds
+  [ -s "$timing_log" ] || { echo "pr-sweep: no timing log yet ($timing_log)"; return 0; }
+  awk '{ s=$2; v=$4; sub(/s$/, "", v); n[s]++; t[s]+=v; if (v>m[s]) m[s]=v }
+    END { printf "%-12s %5s %9s %9s %9s\n", "step", "runs", "total s", "avg s", "max s";
+          for (s in n) printf "%-12s %5d %9d %9d %9d\n", s, n[s], t[s], t[s]/n[s], m[s] }' "$timing_log" | sort
+}
 
 ledger() {
   if [ -n "${PR_SWEEP_LEDGER:-}" ]; then "$PR_SWEEP_LEDGER" "$@"; else python3 -I "$here/pr-ledger" "$@"; fi
@@ -77,13 +100,20 @@ if [ "${1:-}" = "--resolve-docs" ]; then shift; resolve_docs "$@"; exit $?; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1 ;;
+    --timing) timing_summary; exit 0 ;;
+    --batch) batch=1 ;;
+    --max) shift; batch_max="${1:-}"; case "$batch_max" in '' | *[!0-9]*) echo "pr-sweep: --max needs a number" >&2; exit 2 ;; esac
+      if [ "$batch_max" -lt 2 ]; then echo "pr-sweep: --max needs a number of at least 2" >&2; exit 2; fi
+      max_given=1 ;;
     --bench-ledger) shift; bench_ledger="${1:-}" ;;
     --budget-floor) shift; floor="${1:-}"; case "$floor" in '' | *[!0-9]*) echo "pr-sweep: --budget-floor needs a number" >&2; exit 2 ;; esac ;;
-    -h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "pr-sweep: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+if [ "$max_given" -eq 1 ] && [ "$batch" -eq 0 ]; then echo "pr-sweep: --max only works with --batch" >&2; exit 2; fi
 
 # gh with a timeout (a perl alarm survives the exec; macOS has no timeout command) and retries (#754). Failures are
 # counted in files under $run, because most calls run inside $( ) where a variable would be lost.
@@ -155,6 +185,7 @@ fi
 repo="${PR_SWEEP_REPO:-$(git -C "$here" rev-parse --show-toplevel)}"
 cd "$repo" || { say "cannot enter $repo"; exit 1; }
 
+docs_re='^(DESIGN.md|CHANGELOG.md|VERSIONING.md|RESEARCH-NOTES.md|proto/klatch-bench/src/scenarios/mod.rs)$'
 reran=0; merged=0; integrated=0; benched=0; closed=0
 untouched=""
 hold() { # PR number, reason: leave it for a human and name it in the post
@@ -177,7 +208,15 @@ green_on() { # head sha
   return 0
 }
 
-wait_green() { # PR, a head sha it must differ from (or empty): echoes the green head, or returns 1
+wait_green() { # PR, a head sha it must differ from (or empty): echoes the green head, or returns 1; logs how long it waited
+  local t0 rc
+  t0=$(date +%s)
+  _wait_green "$@"
+  rc=$?
+  tlog wait-green "#$1" "$t0" "$rc"
+  return $rc
+}
+_wait_green() {
   local i=0 sha
   while [ "$i" -lt "$tries" ]; do
     sha="$(pr_field "$1" .head.sha)"
@@ -186,6 +225,49 @@ wait_green() { # PR, a head sha it must differ from (or empty): echoes the green
     [ "$poll" -gt 0 ] && /bin/sleep "$poll"
   done
   return 1
+}
+
+# merge REF into the current (throwaway) branch; conflicts in the docs files keep both sides, any other conflict aborts the
+# merge. $1 ref, $2 PR number (for messages), $3 what is merged (for messages), $4 subject of the docs-merge commit.
+# 0 merged, 3 code conflict (aborted), 1 anything else (aborted)
+merge_in() {
+  local ref=$1 n=$2 what=$3 subject=$4 bad
+  if git merge -q --no-edit "$ref" > /dev/null 2>&1; then
+    say "#$n: merged $what cleanly"
+    return 0
+  fi
+  bad="$(git diff --name-only --diff-filter=U | grep -vE "$docs_re")"
+  if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+    say "#$n: the merge failed without a conflict (see git merge by hand); not touched"
+    git merge --abort 2> /dev/null
+    return 1
+  fi
+  if [ -n "$bad" ]; then
+    say "#$n: CODE CONFLICT in: $bad"
+    git merge --abort
+    return 3
+  fi
+  # shellcheck disable=SC2046
+  resolve_docs $(git diff --name-only --diff-filter=U)
+  if git diff --name-only --diff-filter=U | xargs grep -l '^<<<<<<<' > /dev/null 2>&1; then
+    say "#$n: CODE CONFLICT (markers remain after the docs merge)"
+    git merge --abort
+    return 3
+  fi
+  git add -u
+  git commit -q -m "$subject
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit of the docs merge failed"; git merge --abort 2> /dev/null; return 1; }
+  return 0
+}
+
+run_gate() { # the full gate; 0 passed
+  local t0 rc
+  t0=$(date +%s)
+  if [ -n "${PR_SWEEP_GATE:-}" ]; then "$PR_SWEEP_GATE" > /dev/null 2>&1; else (cd proto && ./scripts/gate > /dev/null 2>&1); fi
+  rc=$?
+  tlog gate "$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo ?)" "$t0" "$rc"
+  return $rc
 }
 
 # merge origin/main into the PR branch on the throwaway branch alee/integ-N, gate, push to the PR's own branch.
@@ -199,33 +281,8 @@ integrate() {
   git checkout -q -B "alee/integ-$n" origin/main || { say "#$n: cannot make alee/integ-$n"; return 1; }
   cur="$(git rev-parse --abbrev-ref HEAD)"
   if [ "$cur" != "alee/integ-$n" ]; then say "#$n: on $cur, not alee/integ-$n; refusing to merge"; return 1; fi
-  if git merge -q --no-edit "refs/pr-sweep/$n" > /dev/null 2>&1; then
-    say "#$n: merged main cleanly"
-  else
-    bad="$(git diff --name-only --diff-filter=U | grep -vE '^(DESIGN.md|CHANGELOG.md|VERSIONING.md|RESEARCH-NOTES.md|proto/klatch-bench/src/scenarios/mod.rs)$')"
-    if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
-      say "#$n: the merge failed without a conflict (see git merge by hand); not touched"
-      git merge --abort 2> /dev/null
-      return 1
-    fi
-    if [ -n "$bad" ]; then
-      say "#$n: CODE CONFLICT in: $bad"
-      git merge --abort
-      return 3
-    fi
-    # shellcheck disable=SC2046
-    resolve_docs $(git diff --name-only --diff-filter=U)
-    if git diff --name-only --diff-filter=U | xargs grep -l '^<<<<<<<' > /dev/null 2>&1; then
-      say "#$n: CODE CONFLICT (markers remain after the docs merge)"
-      git merge --abort
-      return 3
-    fi
-    git add -u
-    git commit -q -m "Merge main into the branch (docs conflict)
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit of the docs merge failed"; return 1; }
-  fi
-  if [ -n "${PR_SWEEP_GATE:-}" ]; then "$PR_SWEEP_GATE" > /dev/null 2>&1; else (cd proto && ./scripts/gate > /dev/null 2>&1); fi || { say "#$n: the gate failed on the merged branch; not pushed"; return 1; }
+  merge_in "refs/pr-sweep/$n" "$n" main "Merge main into the branch (docs conflict)" || return $?
+  run_gate || { say "#$n: the gate failed on the merged branch; not pushed"; return 1; }
   git push -q origin "alee/integ-$n:$ref" || { say "#$n: push to $ref failed"; return 1; }
   say "#$n: pushed the merge of main to $ref"
   integrated=$((integrated + 1))
@@ -240,16 +297,27 @@ close_ticket() { # ticket number
   fi
 }
 
-run_bench() { # PR: bench main as it now is; record only a clean run
-  local n=$1 out failed="$bench_ledger.failed"
-  if grep -qx "$n" "$failed" 2> /dev/null; then hold "$n" "the bench failed earlier"; return; fi
-  git fetch -q origin main || { hold "$n" "cannot fetch main to bench"; return; }
-  git checkout -q -B "alee/integ-$n" origin/main || { hold "$n" "cannot check out main to bench"; return; }
+bench_main() { # label: bench main as it now is, on a throwaway branch. 0 clean, 1 the bench did not pass, 2 main could not be checked out
+  local out
+  git fetch -q origin main || return 2
+  git checkout -q -B "alee/integ-$1" origin/main || return 2
+  local t0
+  t0=$(date +%s)
   if [ -n "${PR_SWEEP_BENCH:-}" ]; then out="$("$PR_SWEEP_BENCH" 2>&1)"; else out="$(cd proto && cargo run -q --release -p klatch-bench 2>&1)"; fi
-  if printf '%s\n' "$out" | grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed'; then
+  tlog bench main "$t0" 0
+  printf '%s\n' "$out" | grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed'
+}
+
+run_bench() { # PR: bench main as it now is; record only a clean run
+  local n=$1 failed="$bench_ledger.failed" rc
+  if grep -qx "$n" "$failed" 2> /dev/null; then hold "$n" "the bench failed earlier"; return; fi
+  bench_main "$n"; rc=$?
+  if [ "$rc" -eq 0 ]; then
     ledger --record-bench "$n" --bench-ledger "$bench_ledger" > /dev/null
     say "#$n: bench clean, recorded"
     benched=$((benched + 1))
+  elif [ "$rc" -eq 2 ]; then
+    hold "$n" "cannot fetch or check out main to bench"
   else
     echo "$n" >> "$failed"
     hold "$n" "the bench did not say \"N passed, 0 failed\""
@@ -257,10 +325,13 @@ run_bench() { # PR: bench main as it now is; record only a clean run
 }
 
 # DESIGN item 84: a PR is over on the board when a member posts "merged: #N"; the sweep that merged it says so
+post_lobby() { # message
+  if [ -n "${PR_SWEEP_KLATCH:-}" ]; then "$PR_SWEEP_KLATCH" post lobby "$1" > /dev/null 2>&1
+  elif [ -n "${KLATCH:-}" ]; then "$KLATCH" post lobby "$1" > /dev/null 2>&1
+  else /Users/hosanglee/.local/share/klatch/klatch --discover post lobby "$1" > /dev/null 2>&1; fi
+}
 announce_merged() { # PR
-  if [ -n "${PR_SWEEP_KLATCH:-}" ]; then "$PR_SWEEP_KLATCH" post lobby "merged: #$1" > /dev/null 2>&1
-  elif [ -n "${KLATCH:-}" ]; then "$KLATCH" post lobby "merged: #$1" > /dev/null 2>&1
-  else /Users/hosanglee/.local/share/klatch/klatch --discover post lobby "merged: #$1" > /dev/null 2>&1; fi \
+  post_lobby "merged: #$1" \
     || say "#$1: could not post \"merged: #$1\" to the lobby; the board shows it open until someone does"
 }
 
@@ -323,6 +394,263 @@ do_ready() { # PR, ticket (any link), closer (ticket the PR closes, or empty)
   if [ -n "$closer" ]; then close_ticket "$closer"; fi
 }
 
+# ---- batch mode (#852): several PRs through ONE integration, ONE gate and ONE pull request -------------------------------
+# Every existing rule stays: only PRs green on their own head, a merge pinned to the head seen green, no force push, no
+# push to main, no `git merge` on main (it all happens on alee/batch-TIMESTAMP), one sweep at a time (the lock above).
+batch_skip=" " # PRs the batch pass dealt with (or that an open batch PR owns); the row loop leaves them alone
+batch_marker="$tmp/pr-sweep-batch-failed" # the candidate set whose batch gate failed last time
+bb=""
+
+skip_pr() { batch_skip="$batch_skip$1 "; }
+is_skipped() { case "$batch_skip" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# the non-docs files a merge of $2 into $1 would conflict in, from `git merge-tree` (writes objects only, never the tree
+# or a branch). Prints them; 0 none (docs conflicts are resolved by the keep-both resolver), 1 some, 2 could not tell
+mt_code_conflicts() {
+  local out rc files bad
+  out="$(git merge-tree --write-tree --name-only "$1" "$2" 2> /dev/null)"; rc=$?
+  case "$rc" in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  files="$(printf '%s\n' "$out" | sed '1d;/^$/,$d')"
+  bad="$(printf '%s\n' "$files" | grep -vE "$docs_re" | sed '/^$/d' | paste -sd ' ' -)"
+  if [ -n "$bad" ]; then echo "$bad"; return 1; fi
+  if [ -z "$files" ]; then echo "(files not named)"; return 1; fi
+  return 0
+}
+
+mstate_of() { # PR: the mergeable state, asked again while GitHub says "unknown" (#793)
+  local ms u=0
+  ms="$(pr_field "$1" .mergeable_state)" || return 1
+  while [ "$ms" = unknown ] && [ "$u" -lt "$unknown_tries" ]; do
+    [ "$poll" -gt 0 ] && /bin/sleep "$poll"
+    ms="$(pr_field "$1" .mergeable_state)" || return 1
+    u=$((u + 1))
+  done
+  echo "$ms"
+}
+
+batch_refs() { # PR, ticket, closer: the Closes/Refs lines of the PR body, else the link the ledger found
+  local out
+  out="$(pr_field "$1" .body 2> /dev/null | grep -ioE '(closes|closed|close|fixes|fixed|fix|resolves|resolved|resolve|refs|ref) +#[0-9]+' | sed -E 's/  +/ /')"
+  if [ -z "$out" ]; then
+    if [ -n "$3" ]; then out="Closes #$3"; elif [ -n "$2" ]; then out="Refs #$2"; fi
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+
+batch_drop() { # PR, reason: leave it out of the batch, never merge it, report it
+  if [ "$dry" -eq 1 ]; then
+    say "#$1 would be dropped from the batch: $2"
+    case " $untouched " in *" $1 "*) ;; *) untouched="$untouched $1" ;; esac
+  else
+    hold "$1" "dropped from the batch: $2"
+  fi
+  skip_pr "$1"
+}
+
+leave_batch() { # back to a throwaway branch on main, and delete the local batch branch (the remote one is the PR's)
+  [ -n "$bb" ] || return 0
+  git checkout -q -B alee/integ-batch origin/main > /dev/null 2>&1
+  git branch -D -q "$bb" > /dev/null 2>&1
+  bb=""
+}
+
+abandon_batch() { # batch PR, reason, PRs...: close the batch PR with a comment and report every included PR
+  local bn=$1 why=$2 n
+  shift 2
+  ghx api "repos/$slug/issues/$bn/comments" -f body="Closed by pr-sweep: $why. The PRs in it are left for the next pass." > /dev/null
+  ghx api -X PATCH "repos/$slug/pulls/$bn" -f state=closed > /dev/null
+  say "batch #$bn closed: $why"
+  for n in "$@"; do hold "$n" "batch #$bn was closed: $why"; done
+}
+
+verify_included() { # batch PR, PR: is the included PR merged (its head is in main)? close it with a comment when GitHub did not. 0 landed
+  local bn=$1 n=$2 sha anc=0 i=0 m
+  sha="$(cat "$run/head.$n")"
+  if git merge-base --is-ancestor "$sha" origin/main > /dev/null 2>&1; then anc=1; fi
+  while [ "$i" -lt "$verify_tries" ]; do
+    m="$(pr_field "$n" .merged)" || return 1
+    [ "$m" = true ] && return 0
+    i=$((i + 1))
+    [ "$poll" -gt 0 ] && /bin/sleep "$poll"
+  done
+  if [ "$anc" -eq 1 ]; then
+    ghx api "repos/$slug/issues/$n/comments" -f body="merged via #$bn" > /dev/null || return 1
+    ghx api -X PATCH "repos/$slug/pulls/$n" -f state=closed > /dev/null || return 1
+    say "#$n: still open after the batch merged, although its head is in main; commented \"merged via #$bn\" and closed it"
+    return 0
+  fi
+  hold "$n" "still open after the batch merged and its head is not in main; not closed"
+  return 1
+}
+
+# the lists of PR numbers are split on purpose
+# shellcheck disable=SC2086
+do_batch_inner() {
+  local row n stage ticket closer sha g ncand=0 cands="" sig="" refspecs="" got surv="" mt r s bad_pair cur title merged_ok
+  local bn url prev ms rc tries_left=3 landed="" nsurv
+  # an open batch PR from an earlier pass (its branch is alee/batch-*) blocks a new batch; the PRs in it are left to it
+  local openb p inc
+  openb="$(printf '%s\n' "$rows" | awk '$3 ~ /^alee\/batch-/ && $2 !~ /^(merged|done|abandoned)/ { sub(/^#/, "", $1); print $1 }')"
+  if [ -n "$openb" ]; then
+    for p in $openb; do
+      say "batch: #$p is still open; no new batch, and the PRs in it are left to it"
+      for inc in $(pr_field "$p" .body | grep -E '^- #[0-9]+' | sed 's/^- #//'); do skip_pr "$inc"; done
+    done
+    return
+  fi
+  # the candidates: ready or conflicted, with a linked ticket, green on their own head, in PR-number order, at most --max
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    # shellcheck disable=SC2086
+    set -- $row
+    n="${1#\#}"; stage="$2"
+    case "$stage" in ready | conflict) ;; *) continue ;; esac
+    ticket=""; closer=""
+    case "${4:-}" in
+      no) ;;
+      refs#*) ticket="${4#refs#}" ;;
+      \#*) ticket="${4#\#}"; closer="$ticket" ;;
+    esac
+    [ -n "$ticket" ] || continue
+    sha="$(pr_field "$n" .head.sha)" || continue
+    green_on "$sha"; g=$?
+    if [ "$g" -ne 0 ]; then say "#$n: not green on its own head (or unreadable); left out of the batch"; continue; fi
+    echo "$sha" > "$run/head.$n"; echo "$ticket" > "$run/ticket.$n"; echo "$closer" > "$run/closer.$n"
+    cands="$cands $n"; ncand=$((ncand + 1))
+    [ "$ncand" -ge "$batch_max" ] && break
+  done <<< "$(printf '%s\n' "$rows" | sort -t'#' -k2,2n)"
+  cands="${cands# }"
+  if [ "$ncand" -lt 2 ]; then say "batch: fewer than 2 candidates (${cands:-none}); one at a time"; return; fi
+  for n in $cands; do sig="$sig$n:$(cat "$run/head.$n") "; refspecs="$refspecs +pull/$n/head:refs/pr-sweep/$n"; done
+  if [ "$(cat "$batch_marker" 2> /dev/null)" = "$sig" ]; then
+    say "batch: the batch gate failed on this same set ($cands) last time; one at a time"
+    return
+  fi
+  # shellcheck disable=SC2086
+  git fetch -q --no-prune origin main $refspecs || { say "batch: fetch failed; one at a time"; return; }
+  if [ "$dry" -eq 0 ]; then
+    if [ -n "$(git status --porcelain 2> /dev/null)" ]; then say "batch: the working tree is not clean; not switching branches"; return; fi
+    bb="alee/batch-$(date +%Y%m%d%H%M%S)"
+    git checkout -q -B "$bb" origin/main || { say "batch: cannot make $bb"; bb=""; return; }
+    cur="$(git rev-parse --abbrev-ref HEAD)"
+    if [ "$cur" != "$bb" ]; then say "batch: on $cur, not $bb; refusing to merge"; return; fi
+  fi
+  # PRE-CHECK: a PR that would conflict in any non-docs file is dropped BEFORE it touches the branch
+  for n in $cands; do
+    got="$(git rev-parse "refs/pr-sweep/$n" 2> /dev/null)"
+    if [ "$got" != "$(cat "$run/head.$n")" ]; then batch_drop "$n" "its head moved since it was seen green"; continue; fi
+    mt="$(mt_code_conflicts origin/main "refs/pr-sweep/$n")"; r=$?
+    case "$r" in
+      1) batch_drop "$n" "conflicts with main in non-docs files: $mt"; continue ;;
+      2) batch_drop "$n" "could not check it for conflicts"; continue ;;
+    esac
+    if [ "$dry" -eq 1 ]; then
+      bad_pair=""
+      for s in $surv; do
+        mt="$(mt_code_conflicts "refs/pr-sweep/$s" "refs/pr-sweep/$n")"; r=$?
+        if [ "$r" -ne 0 ]; then bad_pair="conflicts with #$s in non-docs files: $mt"; break; fi
+      done
+      if [ -n "$bad_pair" ]; then batch_drop "$n" "$bad_pair"; continue; fi
+    else
+      if [ -n "$surv" ]; then
+        mt="$(mt_code_conflicts HEAD "refs/pr-sweep/$n")"; r=$?
+        if [ "$r" -ne 0 ]; then batch_drop "$n" "conflicts with the batch so far (#${surv# }) in non-docs files: $mt"; continue; fi
+      fi
+      merge_in "refs/pr-sweep/$n" "$n" "into the batch" "Merge #$n into the batch (docs conflict)" || { batch_drop "$n" "its merge into the batch conflicted (aborted)"; continue; }
+    fi
+    surv="$surv $n"
+  done
+  surv="${surv# }"
+  nsurv="$(echo "$surv" | wc -w | tr -d ' ')"
+  if [ "$nsurv" -lt 2 ]; then
+    say "batch: fewer than 2 PRs survive (${surv:-none}); one at a time"
+    return
+  fi
+  title="Batch:"
+  for n in $surv; do title="$title #$n"; done
+  if [ "$dry" -eq 1 ]; then
+    for n in $surv; do skip_pr "$n"; done
+    say "would batch$(printf ' #%s' $surv) into one pull request (one gate, one merge, one bench) titled \"$title\""
+    return
+  fi
+  for n in $cands; do skip_pr "$n"; done # whatever happens below, this pass does not also take them one at a time
+  # ONE gate on the combined branch (the merges are committed; the gate refuses a dirty tree)
+  if ! run_gate; then
+    say "batch gate failed on the combined branch of$(printf ' #%s' $surv); nothing pushed; the next pass takes this set one at a time"
+    echo "$sig" > "$batch_marker"
+    return
+  fi
+  git push -q origin "$bb" || { say "batch: push of $bb failed"; return; }
+  {
+    printf 'Batch of %s PRs landed through one integration and one gate (pr-sweep --batch, #852). Each was green on its own head and free of conflicts in non-docs files against main and against the others.\n\nIncluded PRs:\n' "$nsurv"
+    for n in $surv; do printf -- '- #%s\n' "$n"; done
+    printf '\nReferences copied from each PR (so the tickets still close):\n'
+    for n in $surv; do batch_refs "$n" "$(cat "$run/ticket.$n")" "$(cat "$run/closer.$n")"; done
+    printf '\n%s\n' '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+  } > "$run/batch-body.md"
+  url="$(ghcall 1 pr create --base main --head "$bb" --title "$title" --body-file "$run/batch-body.md")" || { say "batch: could not open the batch PR (the branch $bb is pushed)"; return; }
+  bn="${url##*/}"
+  case "$bn" in '' | *[!0-9]*) say "batch: could not read the batch PR number from \"$url\""; return ;; esac
+  say "batch #$bn opened: $title"
+  # both checks green on its head; main may move meanwhile: re-merge it, re-gate, push, wait again (never merge a stale head)
+  prev=""
+  while :; do
+    sha="$(wait_green "$bn" "$prev")" || { say "batch #$bn: waiting for green checks on its head; it stays open and the next pass takes it as an ordinary PR"; return; }
+    ms="$(mstate_of "$bn")" || return
+    case "$ms" in
+      clean | behind) ;;
+      dirty) abandon_batch "$bn" "it conflicts with main" $surv; return ;;
+      *) say "batch #$bn: mergeable state is \"$ms\"; not merging"; return ;;
+    esac
+    is_behind "$sha"; rc=$?
+    if [ "$rc" -eq 2 ]; then say "batch #$bn: could not tell whether main moved; not merging"; return; fi
+    if [ "$rc" -ne 0 ] && [ "$ms" = clean ]; then break; fi
+    if [ "$tries_left" -le 0 ]; then say "batch #$bn: main keeps moving; it stays open for the next pass"; return; fi
+    tries_left=$((tries_left - 1))
+    cur="$(git rev-parse --abbrev-ref HEAD)"
+    if [ "$cur" != "$bb" ]; then say "batch #$bn: on $cur, not $bb; refusing to merge"; return; fi
+    git fetch -q origin main || { say "batch #$bn: fetch of main failed"; return; }
+    merge_in origin/main "$bn" main "Merge main into the batch (docs conflict)" || { abandon_batch "$bn" "main moved and merging it conflicts in code" $surv; return; }
+    run_gate || { abandon_batch "$bn" "the gate failed after merging main in" $surv; return; }
+    git push -q origin "$bb" || { say "batch #$bn: push of $bb failed"; return; }
+    prev="$sha"
+    [ "$settle" -gt 0 ] && /bin/sleep "$settle"
+  done
+  ghcall 1 pr merge "$bn" --merge --match-head-commit "$sha" > /dev/null 2>&1
+  merged_ok="$(pr_field "$bn" .merged)" || return
+  if [ "$merged_ok" != "true" ]; then for n in $surv; do hold "$n" "the batch merge (#$bn) did not go through"; done; return; fi
+  say "batch #$bn merged:$(printf ' #%s' $surv)"
+  git fetch -q origin main || say "batch #$bn: could not fetch main to verify; trusting GitHub"
+  for n in $surv; do
+    if verify_included "$bn" "$n"; then landed="$landed $n"; fi
+  done
+  landed="${landed# }"
+  merged=$((merged + $(echo "$landed" | wc -w | tr -d ' ')))
+  [ -n "$landed" ] || return
+  bench_main "batch-$bn"; rc=$?
+  for n in $landed; do
+    if [ "$rc" -eq 0 ]; then
+      ledger --record-bench "$n" --bench-ledger "$bench_ledger" > /dev/null
+      benched=$((benched + 1))
+    elif [ "$rc" -eq 2 ]; then
+      hold "$n" "cannot fetch or check out main to bench"
+    else
+      echo "$n" >> "$bench_ledger.failed"
+      hold "$n" "the bench did not say \"N passed, 0 failed\""
+    fi
+  done
+  [ "$rc" -eq 0 ] && say "batch #$bn: bench clean, recorded for$(printf ' #%s' $landed)"
+  for n in $landed; do announce_merged "$n"; done
+  for n in $landed; do
+    closer="$(cat "$run/closer.$n")"
+    [ -n "$closer" ] && close_ticket "$closer"
+  done
+  post_lobby "batch: #$bn merged$(printf ' #%s' $landed) through one gate and one bench" || say "batch #$bn: could not post the summary to the lobby"
+}
+
+do_batch() { do_batch_inner; leave_batch; }
+
 ledger_out="$(ledger --bench-ledger "$bench_ledger")"; ledger_rc=$?
 rows="$(printf '%s\n' "$ledger_out" | grep -E '^#[0-9]+ ')" || rows=""
 if [ "$ledger_rc" -ne 0 ]; then
@@ -330,11 +658,13 @@ if [ "$ledger_rc" -ne 0 ]; then
   printf '%s\n' "$ledger_out" | grep -E '^pr-ledger: ' | sed 's/^/pr-sweep: /'
   if printf '%s\n' "$ledger_out" | grep -qi 'rate limit'; then : > "$run/ratelimited"; fi
 fi
+if [ "$batch" -eq 1 ]; then do_batch; fi
 while IFS= read -r row; do
   [ -n "$row" ] || continue
   # shellcheck disable=SC2086
   set -- $row
   n="${1#\#}"; stage="$2"
+  if is_skipped "$n"; then continue; fi
   # column 4 is "#N" (the PR closes N), "refs#N" (it only refers to N: never closed here) or "no" (#758)
   ticket=""; closer=""
   case "${4:-}" in
