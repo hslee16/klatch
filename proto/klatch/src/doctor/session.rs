@@ -20,6 +20,33 @@ pub(super) fn check_codex(r: &mut Report, home: Option<&Path>, project_dir: &Pat
     }
 }
 
+/// The harness probe (#482): what `claude --version` says about the features that depend on the harness version.
+/// A version below the floor is a warning (the wake hook is off, the rest works); no `claude` on the path is a plain
+/// ok line; an answer that is no version is a warning that turns nothing off.
+pub(super) fn check_harness(r: &mut Report) {
+    use klatch::harness::{Support, probe_claude_version, wake_support};
+    let answer = probe_claude_version();
+    let support = wake_support(answer.as_deref());
+    match (&support, answer) {
+        (Support::Supported(_), _) => r.add(Status::Ok, format!("harness: {}", support.say()), None),
+        (Support::Unsupported(_), _) => r.add(
+            Status::Warn,
+            format!("harness: {}", support.say()),
+            Some("upgrade Claude Code (the wake hook turns itself on again once the version is high enough)"),
+        ),
+        (Support::Unknown(_), None) => r.add(
+            Status::Ok,
+            "harness: claude is not on the PATH or did not answer `claude --version` (nothing to check; the wake hook is left as it is)",
+            None,
+        ),
+        (Support::Unknown(_), Some(_)) => r.add(
+            Status::Warn,
+            format!("harness: {}", support.say()),
+            Some("run `claude --version` yourself; klatch reads the first x.y.z in its answer"),
+        ),
+    }
+}
+
 pub(super) fn check_session(r: &mut Report) {
     match crate::identity::discover_session() {
         Ok(found) => r.add(

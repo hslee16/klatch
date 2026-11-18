@@ -138,6 +138,8 @@ proto/scripts/gate            # about a minute; stops at the first failure and s
 proto/scripts/gate --long     # 5000 property cases and sequences each, by hand, takes minutes
 ```
 
+Commit first: the gate checks the commit CI will see, and it refuses (naming the files, running nothing) when a tracked file has uncommitted changes, because fmt, clippy and the tests read the working tree and a file edited after the commit could pass here and fail in CI (#763). `--allow-dirty` checks the working tree anyway and says so.
+
 It runs, in order: `cargo fmt --check`, clippy with warnings as errors, the workspace tests, `cargo deny` (skipped, with
 a note, if it is not installed), the test-clock tests, the property tests and models with a bigger budget (500 cases
 each, one fixed seed), and the repository's own checks (release numbers agree, the installer, the README quickstart,

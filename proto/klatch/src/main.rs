@@ -296,6 +296,9 @@ enum Cmd {
         /// The member name the child will use (letters, digits, - _ .); without one the text asks the child to pick
         #[arg(long)]
         name: Option<String>,
+        /// The room the child works in (default lobby), named in every command of the brief
+        #[arg(long)]
+        room: Option<String>,
     },
     /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates nothing)
     Doctor,
@@ -469,6 +472,10 @@ fn main() -> Result<()> {
         Cmd::Hook { event, .. } => Some(event.clone()),
         _ => None,
     };
+    let names_installed = !matches!(
+        cli.cmd,
+        Cmd::Init { .. } | Cmd::Doctor | Cmd::Convention { .. } | Cmd::Sessions { .. }
+    );
     match run_cli(cli) {
         // A hook never fails a session: it says what went wrong where the model reads it, and exits 0. The session
         // is over at SessionEnd, so there is nothing to tell it.
@@ -485,8 +492,24 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        other => other,
+        Err(e) => {
+            if let Some(line) = other_binary_line().filter(|_| names_installed) {
+                eprintln!("{line}");
+            }
+            Err(e)
+        }
+        ok => ok,
     }
+}
+
+/// When the failing binary is not the installed one, the line that names the installed one (#513).
+fn other_binary_line() -> Option<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    init::other_binary_note(
+        &std::env::current_exe().ok()?,
+        &std::env::current_dir().ok()?,
+        home.as_deref(),
+    )
 }
 
 fn run_cli(cli: Cli) -> Result<()> {
@@ -514,25 +537,39 @@ fn run_cli(cli: Cli) -> Result<()> {
         }),
         Cmd::Sessions { all } => run_sessions(all),
         Cmd::Doctor => run_doctor(),
-        Cmd::Convention { name } => run_convention(name.as_deref()),
+        Cmd::Convention { name, room } => run_convention(name.as_deref(), room.as_deref()),
         Cmd::Admin { cmd } => admin::run(cmd),
         Cmd::Worker { cmd } => worker::run(cmd),
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         Cmd::Judge { cmd } => judge::run(cmd),
+        Cmd::Wake { .. } if !wake_is_on() => Ok(()),
         cmd => run_as_member(&cli.who, cmd),
     }
 }
 
+/// Whether the wake watcher may run: a harness probe that says the coding agent is too old for `asyncRewake` turns it
+/// off (and says so on standard error, which an async hook never shows); one that cannot tell leaves it on (#482).
+fn wake_is_on() -> bool {
+    let support = klatch::harness::wake_support_here();
+    if !support.wake_enabled() {
+        eprintln!("klatch: {}", support.say());
+    }
+    support.wake_enabled()
+}
+
 /// `klatch convention`: the brief for a child agent, with this binary's own path.
-fn run_convention(name: Option<&str>) -> Result<()> {
+fn run_convention(name: Option<&str>, room: Option<&str>) -> Result<()> {
     if let Some(n) = name.filter(|n| !klatch::domain::valid_name(n)) {
         bail!("the name '{n}' is not a member name (1 to 40 letters, digits, - _ .)");
+    }
+    if let Some(r) = room.filter(|r| !klatch::domain::valid_name(r)) {
+        bail!("the room '{r}' is not a room name (1 to 40 letters, digits, - _ .)");
     }
     let bin = std::env::current_exe()?;
     print!(
         "{}",
-        klatch::domain::subagent_brief(&bin.to_string_lossy(), name)
+        klatch::domain::subagent_brief(&bin.to_string_lossy(), name, room)
     );
     Ok(())
 }
