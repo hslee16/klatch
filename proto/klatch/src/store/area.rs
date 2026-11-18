@@ -10,6 +10,16 @@ mod messages;
 mod policy;
 mod reviews;
 mod rooms;
+#[cfg(test)]
+mod security_defaults_tests;
+
+/// The answer of a default body for a feature a backend must provide for the checks to mean anything (#485): an
+/// error that says what is missing, never the empty answer a check would read as "all clear".
+pub(crate) fn unsupported<T>(what: &str) -> crate::domain::Result<T> {
+    Err(crate::domain::Error::Backend(format!(
+        "this store does not keep {what}"
+    )))
+}
 
 pub use asks::AskStore;
 pub use claims::ClaimStore;
