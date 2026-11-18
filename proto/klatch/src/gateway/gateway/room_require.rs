@@ -19,7 +19,7 @@ fn key(room: &str) -> String {
 
 impl<S: Store> Gateway<S> {
     /// The room's requirement: `None` when it has none, an error when the stored text cannot be read.
-    pub fn room_requirement(&self, room: &str) -> Result<Option<Requirement>> {
+    pub(crate) fn room_requirement(&self, room: &str) -> Result<Option<Requirement>> {
         match self.store.policy_get(&key(room))? {
             None => Ok(None),
             Some(text) => Requirement::parse(&text)

@@ -23,6 +23,9 @@ fn refused<T>(r: Result<T>) -> bool {
 
 const GUARDED: &[(&str, Call)] = &[
     ("join", |g, w| refused(g.join(w, "r"))),
+    ("join_with_harness", |g, w| {
+        refused(g.join_with_harness(w, "r", &crate::harness::Generic))
+    }),
     ("post", |g, w| refused(g.post(w, "r", "x"))),
     ("post_labeled", |g, w| {
         refused(g.post_labeled(w, ("r", "x", None)))
