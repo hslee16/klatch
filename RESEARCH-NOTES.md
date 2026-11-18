@@ -1914,3 +1914,33 @@ Honest notes. The three harnesses passed on their first run, so the plants are w
 is slow because it compares strings pairwise twice (the function and the oracle); the plant that looks for a repeat only
 against the previous name took 634 s to be caught, close to the 900 s default limit of `proto/scripts/kani`.
 `LabelChain::parse` is still uncovered.
+
+### 52.8c Update, 2026-11-18: the recovery code framing (#656, Kani 0.68.0, same machine, one harness at a time)
+
+`keys::restore` and `recovery_code` still have no harness: they filter a `String`, decode base32 into a `Vec` and hash,
+and the solver cannot finish that. What changed is that the decision "these bytes are a key" was split out into
+`frame_with` and `unframe_with` (byte slices, the check passed in) and proved at 32 byte keys with a stand-in check.
+It says nothing about SHA-256 or the base32 text.
+
+| Harness | Bound | Time |
+|---|---|---|
+| a_recovery_code_of_the_wrong_length_is_malformed | 0 to 36 bytes, any content, any length but 34 | 7 s |
+| the_check_decides_between_a_key_and_a_mistyped_code | any 34 bytes; Ok exactly when the check matches, then the first 32 bytes | 8 s |
+| a_framed_key_round_trips_and_a_changed_check_byte_is_caught | any 32 byte key, any one changed check byte | 11 s |
+
+Planted bugs (each in the real function, harness run, reverted; CAUGHT is `VERIFICATION:- FAILED`): the run of
+2026-11-18:
+
+| Planted bug | Harness | Result |
+|---|---|---|
+| unframe_with: length check accepts a longer input (!= to <) | `a_recovery_code_of_the_wrong_length_is_malformed` | caught, 10 s |
+| unframe_with: only the first check byte compared | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+| unframe_with: only the first check byte compared | `a_framed_key_round_trips_and_a_changed_check_byte_is_caught` | caught, 9 s |
+| unframe_with: a mismatch is accepted | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 8 s |
+| unframe_with: a mismatch is reported as Malformed | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+| frame_with: the check bytes are those of the key with its first byte zeroed | `a_framed_key_round_trips_and_a_changed_check_byte_is_caught` | caught, 11 s |
+| unframe_with: the key is returned shifted by one byte | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+
+Honest notes. The harnesses passed on their first run, so the plants are what show they can fail. The stand-in check is
+not SHA-256: a framing bug that only shows with the real hash would not be seen, and the typo guarantee for a changed key
+byte is the real hash's, outside this proof.
