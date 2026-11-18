@@ -558,7 +558,8 @@ fn claim_target(path: String, more: &[String]) -> Result<String> {
 
 fn claim(ctx: &Ctx, a: &ClaimArgs) -> Result<()> {
     let (room, path) = (a.room.as_str(), a.path.as_str());
-    let ttl = klatch::domain::claim_ttl(path, a.ttl);
+    // the default lease of an `ask:` claim is the room's setting (#242)
+    let ttl = ctx.t.claim_ttl(room, path, a.ttl)?;
     // what the last holder said it changed, read before this claim so it is the earlier holder's
     let earlier = ctx.t.last_release(room, path).ok().flatten();
     let mut spec = ClaimSpec::new(path, ttl, &a.reason).shared(a.shared);
