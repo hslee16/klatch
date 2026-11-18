@@ -123,6 +123,8 @@ pub trait Transport {
     fn review_queue(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>>;
     /// The room's board (open asks, current offers, members with status).
     fn board(&self, room: &str) -> Result<crate::domain::Board>;
+    /// One member's card from the board and the live claims, or `None` when it is not listed (#251).
+    fn member_card(&self, room: &str, member: &str) -> Result<Option<crate::domain::Card>>;
     /// Asks in a room nobody has answered or closed.
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
     /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
@@ -358,6 +360,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn board(&self, room: &str) -> Result<crate::domain::Board> {
         self.gateway.board(&self.principal, room)
+    }
+    fn member_card(&self, room: &str, member: &str) -> Result<Option<crate::domain::Card>> {
+        self.gateway.member_card(&self.principal, room, member)
     }
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gateway.open_asks(&self.principal, room)

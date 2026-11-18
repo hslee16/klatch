@@ -52,6 +52,8 @@ const GUARDED: &[(&str, Call)] = &[
     ("claim", |g, w| {
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
+    // before admin_close_room below: a closed room refuses before the guard is asked
+    ("member_card", |g, w| refused(g.member_card(w, "r", "bob"))),
     ("claims", |g, w| refused(g.claims(w, "r"))),
     ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),
     ("release", |g, w| refused(g.release(w, "r", "p"))),
