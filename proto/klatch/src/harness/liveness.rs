@@ -34,6 +34,18 @@ pub fn check(rec: &Record, procs: &dyn ProcessTable, domain: &str) -> Liveness {
     Liveness::Live
 }
 
+/// The name the harness registry gives the pid space of a system (`pidDomain`): `darwin` for macOS, else the
+/// operating system's own name (`linux`). Whether Claude Code writes `linux` on a real Linux machine is not
+/// observed (#797); a different name there reads as another machine, which is safe.
+pub fn pid_domain_for(os: &'static str) -> &'static str {
+    if os == "macos" { "darwin" } else { os }
+}
+
+/// The pid domain of this machine.
+pub fn this_pid_domain() -> &'static str {
+    pid_domain_for(std::env::consts::OS)
+}
+
 /// True for the Claude Code program name.
 pub fn is_claude_code(command: &str) -> bool {
     command.rsplit('/').next() == Some("claude")

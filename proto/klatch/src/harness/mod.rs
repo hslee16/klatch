@@ -8,6 +8,8 @@
 mod ancestry;
 mod capability;
 mod host;
+#[cfg(test)]
+mod linux_shaped;
 mod liveness;
 mod probe;
 mod process;
@@ -21,7 +23,7 @@ pub use capability::{
     wake_support_here,
 };
 pub use host::SysHost;
-pub use liveness::{Liveness, check};
+pub use liveness::{Liveness, check, pid_domain_for, this_pid_domain};
 pub use probe::{
     Evidence, FileMeta, Host, LAYERS, Probe, ProcRow, Sample, Status, Thresholds, Turn, Verdict,
     parse_cpu_time, parse_turn, probe,
