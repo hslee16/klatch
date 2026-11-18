@@ -131,6 +131,7 @@ fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             }
         }
         Cmd::Claims { room } => claims(ctx, &room)?,
+        Cmd::Refusals { limit } => my_refusals(ctx, limit)?,
         other => return Ok(Some(other)),
     }
     Ok(None)
@@ -516,6 +517,24 @@ fn hooks(ctx: &Ctx, of: Option<String>) -> Result<()> {
             klatch::domain::secs_between(ctx.now, r.last_ts),
             r.runs,
             r.last_bytes
+        );
+    }
+    Ok(())
+}
+
+/// The caller's own refusals, newest first: time, room, operation and rule. Never the text.
+fn my_refusals(ctx: &Ctx, limit: usize) -> Result<()> {
+    let list = ctx.t.my_refusals(limit)?;
+    if list.is_empty() {
+        println!("no refusals recorded for {}", ctx.me);
+    }
+    for r in list {
+        println!(
+            "{}s ago\t{}\t{}\t{}",
+            klatch::domain::secs_between(ctx.now, r.ts),
+            flat(&r.room),
+            r.operation,
+            r.rule
         );
     }
     Ok(())

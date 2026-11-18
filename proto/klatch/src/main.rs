@@ -248,6 +248,12 @@ enum Cmd {
         #[arg(long)]
         of: Option<String>,
     },
+    /// List your own recent refusals: when, the rule, the room and the operation, never the text and never another
+    /// member's
+    Refusals {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Install klatch's hooks into Claude Code settings, after showing a diff and getting a yes per scope
     Init {
         /// Where to write: project (.claude/settings.local.json here), user (~/.claude/settings.json) or both
