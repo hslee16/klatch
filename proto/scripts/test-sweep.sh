@@ -199,6 +199,9 @@ printf '#17   behind               feat-17            #706      integrate main\n
 runsweep
 if [ "$rc" -eq 0 ] && [ "$(calls '^git merge')" -eq 1 ] && [ "$(calls '^gate')" -eq 1 ] && [ "$(calls '^git push -q origin alee/integ-17:feat-17$')" -eq 1 ] && [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls '^bench')" -eq 0 ]; then ok "behind integrates, runs the gate and pushes to the PR branch; it does not merge"; else bad "behind rc=$rc: $(cat "$log")"; fi
 
+# --- the fetch must not prune: with fetch.prune=true a pruning fetch deletes the PR ref it just made (#764)
+if grep -q "^git fetch -q --no-prune origin main +pull/17/head:refs/pr-sweep/17" "$log"; then ok "integrate fetches the PR with --no-prune"; else bad "fetch may prune: $(grep '^git fetch' "$log" | head -2)"; fi
+
 # --- a gate failure stops before the push
 newenv
 printf '#17   behind               feat-17            #706      integrate main\n' > "$fake/ledger.txt"
