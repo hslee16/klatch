@@ -34,6 +34,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 slug="${PR_SWEEP_GH_REPO:-hslee16/klatch}"
 poll="${PR_SWEEP_POLL_SECS:-10}"
 settle="${PR_SWEEP_SETTLE_SECS:-40}"
+unknown_tries="${PR_SWEEP_UNKNOWN_TRIES:-6}"
 tries="${PR_SWEEP_WAIT_TRIES:-90}"
 gh_timeout="${PR_SWEEP_GH_TIMEOUT:-60}"
 gh_retry_sleep="${PR_SWEEP_GH_RETRY_SLEEP:-2}"
@@ -272,8 +273,16 @@ is_behind() { # head sha
 }
 
 do_ready() { # PR, ticket (any link), closer (ticket the PR closes, or empty)
-  local n=$1 ticket=$2 closer=${3:-} ms sha rc g merged_now
+  local n=$1 ticket=$2 closer=${3:-} ms sha rc g merged_now unk
   ms="$(pr_field "$n" .mergeable_state)" || return
+  # GitHub answers "unknown" for a while after every merge into main while it recomputes the state; ask again before
+  # giving up, so one pass can merge more than one PR (#793)
+  unk=0
+  while [ "$ms" = unknown ] && [ "$unk" -lt "$unknown_tries" ]; do
+    [ "$poll" -gt 0 ] && /bin/sleep "$poll"
+    ms="$(pr_field "$n" .mergeable_state)" || return
+    unk=$((unk + 1))
+  done
   if [ "$ms" = clean ]; then
     sha="$(pr_field "$n" .head.sha)" || return
     is_behind "$sha"; rc=$?
