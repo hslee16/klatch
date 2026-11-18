@@ -36,6 +36,11 @@ impl SqliteStore {
         })
     }
 
+    /// The live messages in the room after `after` that the member did not send, in order.
+    fn from_others_after(&self, room: &str, after: i64, member: &str) -> Result<Vec<Message>> {
+        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, after, member], |r| self.open_message(r))
+    }
+
     /// The messages from others past the member's read cursor, with that cursor. Touches nothing: a member that has
     /// no row has read nothing.
     pub(super) fn unread_after(&self, room: &str, member: &str) -> Result<(Vec<Message>, i64)> {
@@ -47,7 +52,7 @@ impl SqliteStore {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, last, member], |r| self.open_message(r))?;
+        let rows = self.from_others_after(room, last, member)?;
         Ok((rows, last))
     }
 
@@ -70,33 +75,60 @@ impl SqliteStore {
 
     pub(super) fn do_wait_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
         // A waiting member is present: every poll refreshes presence, as a read does (#237).
-        self.touch(room, member, now)?;
-        let (read, seen): (i64, i64) = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(last_seq,0), wait_seq FROM members WHERE room=?1 AND name=?2",
-                params![room, member],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap_or((0, 0));
-        let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))?;
-        Ok(rows)
+        self.poll_past(("wait_seq", room, member), now)
     }
 
     pub(super) fn do_wake_poll(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        self.poll_past(("wake_seq", room, member), now)
+    }
+
+    /// Refresh the member's presence, then the messages from others past both its read cursor and the position kept
+    /// in `column` (`wait_seq` or `wake_seq`, never caller text). Moves no cursor.
+    fn poll_past(
+        &self,
+        (column, room, member): (&str, &str, &str),
+        now: i64,
+    ) -> Result<Vec<Message>> {
         self.touch(room, member, now)?;
         let (read, seen): (i64, i64) = self
             .conn
             .query_row(
-                "SELECT COALESCE(last_seq,0), wake_seq FROM members WHERE room=?1 AND name=?2",
+                &format!(
+                    "SELECT COALESCE(last_seq,0), {column} FROM members WHERE room=?1 AND name=?2"
+                ),
                 params![room, member],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, read.max(seen), member], |r| self.open_message(r))
+        self.from_others_after(room, read.max(seen), member)
+    }
+
+    /// True when a hook for the member would show nothing and write nothing: it was already seen this second, no claim
+    /// of its is due a renewal and no message waits. A read only, so the hook can skip the writer lock (#128).
+    fn hook_is_idle(&self, room: &str, member: &str, now: i64) -> Result<bool> {
+        if self.last_seen(room, member)? != Some(now)
+            || !self.due_renewals(room, member, now)?.is_empty()
+        {
+            return Ok(false);
+        }
+        let waiting: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages m, members s WHERE s.room=?1 AND s.name=?2
+                     AND m.room=?1 AND m.seq>MAX(COALESCE(s.last_seq,0),s.hook_seq)
+                     AND m.sender<>?2 AND COALESCE(m.kind,'')<>'archived')",
+                params![room, member],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        Ok(!waiting)
     }
 
     pub(super) fn do_hook_read(&self, room: &str, member: &str, now: i64) -> Result<Vec<Message>> {
+        // The usual hook finds nothing new; that must not queue behind writers.
+        if self.snapshot(|| self.hook_is_idle(room, member, now))? {
+            return Ok(Vec::new());
+        }
         self.immediate(|| {
             self.touch(room, member, now)?;
             let (read, shown): (i64, i64) = self
@@ -108,12 +140,12 @@ impl SqliteStore {
                 )
                 .map_err(be)?;
             let from = read.max(shown);
-            let rows = self.rows(&format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq"), params![room, from, member], |r| self.open_message(r))?;
+            let rows = self.from_others_after(room, from, member)?;
             if let Some(last) = rows.last() {
                 self.exec(
-                        "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
-                        params![room, member, last.seq],
-                    )?;
+                    "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
+                    params![room, member, last.seq],
+                )?;
             }
             Ok(rows)
         })
