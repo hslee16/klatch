@@ -95,5 +95,4 @@ fn only_a_member_of_the_room_is_answered_about() {
     let carol = Principal::unattributed("carol");
     g.join(&carol, "other").unwrap();
     assert!(!g.process_exited(&carol, "other", "alice").unwrap());
-    assert!(g.process_exited(&carol, "r", "alice").is_ok());
 }

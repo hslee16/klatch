@@ -512,6 +512,27 @@ fn print_gone_askers(t: &dyn Transport, a: &WaitArgs, waited: u64) {
 /// that the table is read a dozen times a minute at most.
 const EXIT_CHECK_EVERY: Duration = Duration::from_secs(5);
 
+/// When the next look for an exited asker is due: at once, then every `EXIT_CHECK_EVERY`.
+struct EveryFiveSeconds {
+    next: Instant,
+}
+
+impl EveryFiveSeconds {
+    fn starting(at: Instant) -> Self {
+        EveryFiveSeconds { next: at }
+    }
+
+    /// True when a look is due, and then the next one is set.
+    fn due(&mut self) -> bool {
+        let now = Instant::now();
+        let due = now >= self.next;
+        if due {
+            self.next = now + EXIT_CHECK_EVERY;
+        }
+        due
+    }
+}
+
 /// End a wait early when an asker the caller serves has exited (#790): its own marker, then one line per asker.
 /// True when it printed, so the wait returns.
 fn print_exited_askers(t: &dyn Transport, a: &WaitArgs, waited: u64) -> bool {
@@ -576,7 +597,7 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
     }
     let started = Instant::now();
     let deadline = started + Duration::from_secs(timeout);
-    let mut next_exit_check = started;
+    let mut exit_check = EveryFiveSeconds::starting(started);
     loop {
         if print_woken(t, a)? {
             return Ok(());
@@ -585,11 +606,8 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
             print_timeout(t, a, timeout);
             return Ok(());
         }
-        if Instant::now() >= next_exit_check {
-            next_exit_check = Instant::now() + EXIT_CHECK_EVERY;
-            if print_exited_askers(t, a, started.elapsed().as_secs()) {
-                return Ok(());
-            }
+        if exit_check.due() && print_exited_askers(t, a, started.elapsed().as_secs()) {
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -1249,6 +1267,15 @@ mod stop_tests {
 #[cfg(test)]
 mod wait_tests {
     use super::*;
+
+    #[test]
+    fn the_exit_check_is_due_at_once_and_then_not_again_until_its_interval_passes() {
+        let mut check = EveryFiveSeconds::starting(Instant::now());
+        assert!(check.due(), "the first look is at the start of the wait");
+        assert!(!check.due(), "and the next one waits for the interval");
+        check.next = Instant::now();
+        assert!(check.due(), "once the interval has passed it is due again");
+    }
 
     #[test]
     fn the_timeout_is_capped_at_300_seconds_and_says_when_it_was_clamped() {
