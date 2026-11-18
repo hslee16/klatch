@@ -1,0 +1,1 @@
+- A busy session that has made no progress is no longer read as waiting on a tool just because MCP servers and other helpers were already running: the liveness probe now counts only processes that started with or after the turn (their age is read from `ps`), so a hung busy session can read as stuck instead of holding its claims to the lease cap (#538).

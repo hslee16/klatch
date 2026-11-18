@@ -141,7 +141,7 @@ Checked each run, and the scenario fails if any is false: all 500 posts succeed;
 paths. A post is slower than the 6 ms of a lone command because 50 processes contend for one SQLCipher write lock and
 each pays process start, key read and open. **Not covered:** memory for a slow consumer. (Update, #147: a guarded
 session now holds at most `outgoing` frames for a consumer and ends with a `stream.slow_consumer` refusal when it makes
-no progress for the stall limit, DESIGN item 93; this scenario does not exercise it.)
+no progress for the stall limit, DESIGN item 94; this scenario does not exercise it.)
 
 ## Linux: the Secret Service and the key file (ticket #384, 2026-11-15)
 
