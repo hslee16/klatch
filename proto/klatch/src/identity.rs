@@ -329,7 +329,7 @@ pub(crate) struct Caller {
 /// the walk found above this process: a live process whose program is `claude` with a registry record whose pid and
 /// start time match, and for a hook the record of the very session the hook was started for. Nothing the caller
 /// sends counts: a typed name, a session remembered by id, a key bundle (which proves a member and says nothing of
-/// its harness) and Codex (a thread id, not a verified process; #64) all fail closed to the generic floor. This is
+/// its harness) and Codex (a thread id, not a verified process; no registry record exists for it, #64, #884) all fail closed to the generic floor. This is
 /// same-user evidence, as the registry is: it keeps an honest session from being mislabelled, and does not stop a
 /// process of the same user that forges the registry.
 pub(crate) fn runs_claude_code(evidence: &PeerEvidence, codex: bool) -> bool {
@@ -544,7 +544,7 @@ mod tests {
             name: None,
         };
         assert!(runs_claude_code(&session, false));
-        // Codex names its session too, but it is not a verified process: the floor until #64.
+        // Codex names its session too, but it is not a verified process and has no registry record: the floor (#884).
         assert!(!runs_claude_code(&session, true));
         for other in [
             PeerEvidence::None,

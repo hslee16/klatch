@@ -1,7 +1,7 @@
 //! The conformance suite every harness adapter must pass (#62, DESIGN section 20 rules 1, 3 and 6). An adapter is an
 //! untrusted conveyor that only declares what its runtime can do, so what it declares has to be checkable: this
 //! suite reads the declaration and reports every rule it breaks. It runs over each adapter in `adapters()`; adding an
-//! adapter (Codex arrives for real in #64) is one line there, and `every_registered_adapter_passes` covers it.
+//! adapter (Codex was added in #64) is one line there, and `every_registered_adapter_passes` covers it.
 //!
 //! The rules, each with the way a bad adapter fails it:
 //! 1. The id is a short stable word (`[a-z0-9-]`, 1 to 32 characters), the same whatever the probe said, and no two
@@ -41,12 +41,7 @@ pub fn adapters() -> Vec<Adapter> {
             name: "codex",
             probed: Box::new(Codex::paper(HookTrust::Trusted)),
             unprobed: Box::new(Codex::paper(HookTrust::Unknown)),
-            probe_dependent: &[
-                Capability::ContextInjection,
-                Capability::SessionIdentity,
-                Capability::PreActionEnforcement,
-                Capability::PermissionMode,
-            ],
+            probe_dependent: &[Capability::SessionIdentity],
         },
         Adapter {
             name: "generic",
