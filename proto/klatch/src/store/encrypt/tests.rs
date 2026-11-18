@@ -92,7 +92,10 @@ fn a_copy_with_a_damaged_page_is_refused_on_that_alone() {
     let dir = scratch("verify-page");
     let path = encrypted_db(&dir);
     let mut bytes = std::fs::read(&path).unwrap();
-    assert!(bytes.len() > 5 * 4096, "the copy is too small to have a later page");
+    assert!(
+        bytes.len() > 5 * 4096,
+        "the copy is too small to have a later page"
+    );
     bytes[3 * 4096 + 100] ^= 0xFF; // a data page, not the schema page the table count reads
     std::fs::write(&path, bytes).unwrap();
     let msg = refusal(verify_copy(&path, &insecure_test_key(), VERSION, 2));
@@ -164,7 +167,8 @@ fn an_empty_file_is_removed_and_a_missing_one_is_an_error() {
 #[test]
 fn a_store_given_as_a_bare_file_name_locks_the_current_directory() {
     // the parent of "rooms.db" is the empty path, which means the current directory, not an error
-    let f = lock_dir_shared(Path::new("rooms.db")).expect("a bare file name has no directory to open");
+    let f =
+        lock_dir_shared(Path::new("rooms.db")).expect("a bare file name has no directory to open");
     drop(f);
 }
 

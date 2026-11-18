@@ -61,6 +61,8 @@ rows merge the two runs, the later result winning for a mutant seen twice.
     same run on Linux.
   - `connect.rs` busy-retry arithmetic (12 survivors in `open_with_timeout`): timing code, not security.
   - `describe` and `Display::fmt` bodies replaced by empty text (several, not counted): pure formatting of messages.
+  - `check_opens` (`|` to `^` in the open flags, #721): equivalent. `SQLITE_OPEN_READ_ONLY` (0x1) and
+    `SQLITE_OPEN_URI` (0x40) share no bit, so `^` and `|` give the same flags; no test can tell them apart.
   - Trait default bodies in `store/area/*.rs` that SqliteStore overrides: dead today (listed in #726 as a risk for a
     second Store implementation).
   - Equivalent mutants were not separated from real survivors by hand except where a ticket says "close to
