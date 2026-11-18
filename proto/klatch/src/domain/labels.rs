@@ -177,4 +177,18 @@ mod tests {
     fn the_default_cap_is_private() {
         assert_eq!(LabelChain::default().default_cap(), "private");
     }
+
+    #[test]
+    fn the_default_cap_is_one_below_the_top_for_chains_of_every_length_without_private() {
+        for names in [
+            vec!["a", "b", "c"],
+            vec!["a", "b", "c", "d", "e"],
+            vec!["a", "b", "c", "d", "e", "f"],
+        ] {
+            let c = LabelChain::new(&names).unwrap();
+            assert_eq!(c.default_cap(), names[names.len() - 2], "{names:?}");
+        }
+        let c = LabelChain::new(&["a", "b"]).unwrap();
+        assert_eq!(c.default_cap(), "a");
+    }
 }

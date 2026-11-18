@@ -183,3 +183,23 @@ fn a_reviewer_and_a_librarian_cannot_ask_for_a_crossing() {
         assert!(matches!(e, Error::Refused { .. }), "{e}");
     }
 }
+
+#[test]
+fn a_crossing_uses_the_messages_own_label_not_the_label_its_room_has_now() {
+    let (g, _) = world();
+    // vault is relabelled public after message 1 (private) was posted; message 2 is posted under public
+    g.admin_set_room_label(&admin(), "vault", "public").unwrap();
+    g.post(&alice(), "vault", "an open remark").unwrap();
+    let labels: Vec<String> = g
+        .tail(&alice(), "vault", (0, 10))
+        .unwrap()
+        .into_iter()
+        .map(|m| m.label)
+        .collect();
+    assert_eq!(labels, ["private", "public"]);
+    // message 1 still carries private, so it may cross to the public room; the room's public label must not decide
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    // message 2 is public: nothing is below it in a public room
+    assert!(is_invalid(g.request_crossing(&alice(), "vault", 2, "open")));
+    assert_eq!(g.store.pending_reviews(10).unwrap().len(), 1);
+}

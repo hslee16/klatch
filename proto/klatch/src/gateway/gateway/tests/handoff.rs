@@ -164,3 +164,21 @@ fn a_sealed_label_seals_the_payload_and_a_reader_without_the_key_sees_only_a_not
         "the kind is not secret"
     );
 }
+
+#[test]
+fn the_payload_limit_is_exactly_sixteen_kibibytes() {
+    assert_eq!(crate::domain::MAX_PAYLOAD_BYTES, 16_384);
+    let g = open();
+    let handoff = |p: &str| {
+        g.post_handoff(
+            &alice(),
+            ("r", "b", None),
+            &Handoff {
+                kind: "plan",
+                payload: Some(p),
+            },
+        )
+    };
+    handoff(&"p".repeat(16_384)).unwrap();
+    assert!(is_invalid(handoff(&"q".repeat(16_385))));
+}

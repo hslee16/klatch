@@ -209,4 +209,34 @@ mod tests {
         let kind = credential_kind(secret).unwrap();
         assert!(!kind.contains("ghp_") && !kind.contains("abcdef"));
     }
+
+    #[test]
+    fn half_a_private_key_marker_is_not_a_private_key() {
+        for text in [
+            "-----BEGIN PUBLIC KEY-----\nMFkw",
+            "-----BEGIN CERTIFICATE-----",
+            "ends with PRIVATE KEY-----",
+        ] {
+            let kind = credential_kind(text);
+            assert_ne!(kind, Some("a private key"), "{text:?}");
+        }
+        assert_eq!(
+            credential_kind("-----BEGIN RSA PRIVATE KEY-----"),
+            Some("a private key")
+        );
+    }
+
+    #[test]
+    fn only_three_parts_starting_with_eyj_make_a_json_web_token() {
+        let part = "abcdefghijkl";
+        let cases = [
+            (format!("eyJhbGciOi.{part}.{part}"), true),
+            (format!("xyJhbGciOi.{part}.{part}"), false),
+            (format!("eyJhbGciOi.{part}"), false),
+            (format!("eyJhbGciOi.{part}.{part}.{part}"), false),
+        ];
+        for (text, jwt) in cases {
+            assert_eq!(json_web_token(&text), jwt, "{text:?}");
+        }
+    }
 }
