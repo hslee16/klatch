@@ -66,6 +66,12 @@ struct DmParams {
     label: Option<String>,
 }
 #[derive(Deserialize)]
+struct NoParams {}
+#[derive(Deserialize)]
+struct ScrubCheckParams {
+    text: String,
+}
+#[derive(Deserialize)]
 struct MuteParams {
     room: String,
     muted: bool,
@@ -237,6 +243,14 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             empty,
         ),
         "claims" => call.run(|p: RoomParams| g.claims(who, &p.room), |cs| claims_json(&cs)),
+        "label_order" => call.run(
+            |_: NoParams| g.label_order(who),
+            |(chain, cap): (Vec<String>, String)| json!({ "chain": chain, "cap": cap }),
+        ),
+        "scrub_check" => call.run(
+            |p: ScrubCheckParams| g.scrub_check(who, &p.text),
+            |scrubbed: bool| json!({ "scrubbed": scrubbed }),
+        ),
         "prune" => prune(g, who, call.id),
         "role_act" | "review_next" | "review_verdict" => {
             crate::session::role_methods::handle(g, who, call)

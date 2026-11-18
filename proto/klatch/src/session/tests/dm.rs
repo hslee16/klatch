@@ -286,18 +286,22 @@ fn a_direct_message_is_audited_the_same_way_as_a_post_by_reaching_the_guard() {
 }
 
 #[test]
-fn the_scrub_rules_and_the_label_order_stay_off_the_wire() {
+fn the_scrub_rules_and_the_label_order_writes_stay_off_the_wire() {
     let g = gateway();
     for method in [
         "scrub",
         "scrub_add",
         "scrub_remove",
         "scrub_terms",
+        "scrub_list",
         "scrub-add",
         "label_chain",
         "chain",
         "cap",
+        "set_cap",
+        "label_cap",
         "set_label_chain",
+        "set_label_order",
     ] {
         let f = run(
             &g,
@@ -305,6 +309,99 @@ fn the_scrub_rules_and_the_label_order_stay_off_the_wire() {
             &[req("s", method, json!({"name":"x","term":"y"}))],
         );
         assert_eq!(response(&f, "s").2.unwrap().0, "unknown_method", "{method}");
+    }
+}
+
+#[test]
+fn any_member_reads_the_label_order_and_the_agent_cap_over_the_wire() {
+    let g = gateway();
+    let f = run(&g, &alice(), &[req("l", "label_order", json!({}))]);
+    let (ok, result, _) = response(&f, "l");
+    assert!(ok);
+    let r = result.unwrap();
+    assert_eq!(r["chain"], json!(["public", "internal", "private", "secret"]));
+    assert_eq!(r["cap"], "private");
+    g.admin_set_label_chain(&admin(), &["open", "closed", "sealed"])
+        .unwrap();
+    let f = run(&g, &bob(), &[req("l", "label_order", json!({}))]);
+    let r = response(&f, "l").1.unwrap();
+    assert_eq!(r["chain"], json!(["open", "closed", "sealed"]));
+    assert_eq!(r["cap"], "closed");
+}
+
+#[test]
+fn a_non_member_cannot_read_the_label_order_or_check_a_scrub() {
+    let g = gateway();
+    let stranger = Principal::unattributed("");
+    for (m, p) in [("label_order", json!({})), ("scrub_check", json!({"text":"x"}))] {
+        let f = run(&g, &stranger, &[req("s", m, p)]);
+        assert!(!response(&f, "s").0, "{m}");
+    }
+}
+
+fn scrub_check(g: &Gateway<SqliteStore>, who: &Principal, text: &str) -> Vec<ServerFrame> {
+    run(g, who, &[req("c", "scrub_check", json!({"text":text}))])
+}
+
+#[test]
+fn a_scrub_check_answers_only_yes_or_no_with_the_same_shape_and_never_a_term() {
+    let g = gateway();
+    g.admin_add_scrub_term(&admin(), "project", "bluebird")
+        .unwrap();
+    g.admin_add_scrub_term(&admin(), "client", "acme corp")
+        .unwrap();
+    let hit = scrub_check(&g, &alice(), "about BLUEBIRD today");
+    let miss = scrub_check(&g, &alice(), "nothing to see");
+    let (hit_ok, hit_r, _) = response(&hit, "c");
+    let (miss_ok, miss_r, _) = response(&miss, "c");
+    assert!(hit_ok && miss_ok);
+    let (hit_r, miss_r) = (hit_r.unwrap(), miss_r.unwrap());
+    assert_eq!(hit_r, json!({"scrubbed": true}));
+    assert_eq!(miss_r, json!({"scrubbed": false}));
+    // a match on the second rule and on both rules gives the same answer as a match on the first
+    let both = scrub_check(&g, &alice(), "bluebird and ACME CORP");
+    assert_eq!(response(&both, "c").1.unwrap(), hit_r);
+    let second = scrub_check(&g, &alice(), "acme corp");
+    assert_eq!(response(&second, "c").1.unwrap(), hit_r);
+    for f in [&hit, &miss, &both, &second] {
+        let text = format!("{f:?}").to_lowercase();
+        for leak in ["bluebird", "acme", "project", "client", "scrub:"] {
+            assert!(!text.contains(leak), "{leak} leaked in {text}");
+        }
+    }
+}
+
+#[test]
+fn a_scrub_check_with_no_rules_says_no_and_a_missing_text_is_invalid() {
+    let g = gateway();
+    let f = scrub_check(&g, &alice(), "anything");
+    assert_eq!(response(&f, "c").1.unwrap(), json!({"scrubbed": false}));
+    let f = run(&g, &alice(), &[req("c", "scrub_check", json!({}))]);
+    assert!(!response(&f, "c").0);
+}
+
+#[test]
+fn a_scrub_check_writes_nothing_and_leaves_no_refusal_record() {
+    let g = gateway();
+    g.admin_add_scrub_term(&admin(), "project", "bluebird")
+        .unwrap();
+    let before = g.my_refusals(&alice(), 10).unwrap().len();
+    scrub_check(&g, &alice(), "bluebird");
+    assert_eq!(g.my_refusals(&alice(), 10).unwrap().len(), before);
+}
+
+#[test]
+fn the_admin_agent_and_the_librarian_may_use_both_read_only_methods() {
+    let g = gateway();
+    g.admin_set_librarian(&admin(), "lib", true).unwrap();
+    g.admin_set_admin_agent(&admin(), "adm", true).unwrap();
+    let g = g.for_members();
+    for who in ["lib", "adm"] {
+        let w = Principal::unattributed(who);
+        let f = run(&g, &w, &[req("l", "label_order", json!({}))]);
+        assert!(response(&f, "l").0, "{who} label_order");
+        let f = scrub_check(&g, &w, "x");
+        assert!(response(&f, "c").0, "{who} scrub_check");
     }
 }
 
