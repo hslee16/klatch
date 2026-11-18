@@ -84,6 +84,10 @@ fn unknown_session(another_session_found: bool) -> String {
     .to_string()
 }
 
+/// The longest member name (`valid_name`), and how many characters of a session id a suffix may use.
+const MAX_MEMBER_LEN: usize = 40;
+const MAX_ID_SUFFIX: usize = 32;
+
 /// The member a harness session is. The first name a session gets is kept for its whole life (a rename in the
 /// harness does not make a new member), and two different sessions never share a member name: when the name is
 /// already held by another session, a few characters of the session id are added (ticket #170).
@@ -112,14 +116,27 @@ pub(crate) fn ensure_session_member(
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .map(|c| c.to_ascii_lowercase())
+            .take(MAX_ID_SUFFIX)
             .collect();
-        let stem: String = base.chars().take(35).collect();
-        member = format!("{stem}-{}", id.chars().take(4).collect::<String>());
+        let named = |suffix: &str| {
+            let stem: String = base
+                .chars()
+                .take(MAX_MEMBER_LEN.saturating_sub(1 + suffix.len()))
+                .collect();
+            format!("{stem}-{suffix}")
+        };
+        member = named(&id.chars().take(4).collect::<String>());
         let mut more = 4;
         while held_by_another(&member)? && more < id.len() {
             more += 1;
-            let stem: String = base.chars().take(40 - 1 - more).collect();
-            member = format!("{stem}-{}", id.chars().take(more).collect::<String>());
+            member = named(&id.chars().take(more).collect::<String>());
+        }
+        // The id has no more characters to give (it is short, or equal to another id once reduced to letters and
+        // digits): count up, so two sessions still never share a name (#767).
+        let mut count = 1;
+        while held_by_another(&member)? {
+            count += 1;
+            member = named(&format!("{id}-{count}"));
         }
     }
     store.note_session(session_id, &member, now)?;
