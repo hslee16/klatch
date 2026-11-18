@@ -1,9 +1,16 @@
 /// Names are restricted so they cannot carry newlines or fake headers into a model's context.
 pub fn valid_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 40
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    safe_name_bytes(s.as_bytes())
+}
+
+/// The rule behind `valid_name` and `valid_kind`, over bytes: 1 to 40 bytes, each a letter, digit, dot, dash or
+/// underscore. A byte fold, so the Kani proofs (#657) can run it on arrays; a multi-byte character has only bytes of
+/// 0x80 and up, none of them in the set, so refusing by byte refuses the same text as refusing by character.
+pub(crate) fn safe_name_bytes(b: &[u8]) -> bool {
+    !b.is_empty()
+        && b.len() <= 40
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
 }
 
 fn name_char(c: char) -> bool {
@@ -40,11 +47,7 @@ pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 /// A handoff kind: 1 to 40 characters of letters, digits, dot, dash and underscore. klatch stores and delivers it and
 /// never interprets it.
 pub fn valid_kind(kind: &str) -> bool {
-    !kind.is_empty()
-        && kind.len() <= 40
-        && kind
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    safe_name_bytes(kind.as_bytes())
 }
 
 /// Collapse line breaks so one message stays on one line.
@@ -84,9 +87,50 @@ pub fn overlaps(a: &str, b: &str) -> bool {
     pre(a, b) || pre(b, a)
 }
 
+/// Every string of 0 to 3 pieces drawn from `pieces` (multi-byte characters included).
+#[cfg(test)]
+pub(crate) fn short_strings(pieces: &[&str]) -> Vec<String> {
+    let mut all = vec![String::new()];
+    let mut layer = vec![String::new()];
+    for _ in 0..3 {
+        layer = layer
+            .iter()
+            .flat_map(|s| pieces.iter().map(move |p| format!("{s}{p}")))
+            .collect();
+        all.extend(layer.iter().cloned());
+    }
+    all
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old character-based form of `valid_name` and `valid_kind`, kept as the reference the byte form must match
+    /// (the Kani proofs of #657 are over the byte form).
+    fn valid_name_by_chars(s: &str) -> bool {
+        !s.is_empty()
+            && s.len() <= 40
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    }
+
+    #[test]
+    fn the_byte_form_of_valid_name_and_kind_matches_the_character_form_on_every_short_string() {
+        let pieces = [
+            "a", "Z", "0", "-", "_", ".", " ", "/", ":", "*", "\n", "\u{e9}", "\u{ff41}",
+        ];
+        for s in short_strings(&pieces) {
+            assert_eq!(valid_name(&s), valid_name_by_chars(&s), "{s:?}");
+            assert_eq!(valid_kind(&s), valid_name_by_chars(&s), "{s:?}");
+        }
+        for n in 0..=45 {
+            let s = "a".repeat(n);
+            assert_eq!(valid_name(&s), valid_name_by_chars(&s), "{n}");
+        }
+        // a multi-byte character near the limit: 20 two-byte characters are 40 bytes but not in the alphabet
+        assert!(!valid_name(&"\u{e9}".repeat(20)));
+    }
 
     #[test]
     fn names_accept_the_safe_alphabet_only() {

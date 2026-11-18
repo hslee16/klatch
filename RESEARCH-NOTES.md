@@ -1888,3 +1888,31 @@ first. It was replaced by a plant that throws the answer away. The new tests wer
 that need the timer (a deadlock and a missing outcome) and green on first run for the two reader tests, whose plants are
 what show they can fail. #667 (the store and the gateway) and #668 (ordinary tests in a Shuttle build) were not changed
 and carry needs-human questions.
+### 52.8a Update, 2026-11-18: valid_name, valid_kind, valid_scope over bytes and at every length (#657, #664; Kani 0.68.0)
+
+`valid_name`, `valid_kind` and `valid_scope` now delegate to byte folds (`safe_name_bytes`, `scope_bytes_ok`), which the
+solver finishes on arrays; the 4 character harnesses stay and still call the real functions.
+
+| Harness | Bound | Time |
+|---|---|---|
+| name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes | any 12 bytes, any length 0 to 12; accepted exactly when non-empty and every byte in the set (the set written by range in the harness, a second way) | 41 s |
+| scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes | same, the scope set; `*` alone refused | 9 s |
+| the_length_limits_hold_at_every_length_up_to_90 | a run of `a`, every length 0 to 90, through `valid_name`, `valid_kind` and `valid_scope` (40, 40, 80) | 99 s |
+| one_symbolic_byte_in_a_full_length_run_decides_the_result | 40 bytes (name) and 80 bytes (scope) of `a` with one symbolic byte at a symbolic position | 14 s |
+
+Planted bugs, in the real functions, one run each, reverted:
+
+| Planted bug | Harness | Result |
+|---|---|---|
+| safe_name_bytes: space allowed | `name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes` | caught, 7 s |
+| safe_name_bytes: space allowed | `one_symbolic_byte_in_a_full_length_run_decides_the_result` | caught, 12 s |
+| safe_name_bytes: non-ASCII bytes allowed | `name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes` | caught, 7 s |
+| safe_name_bytes: limit 41 instead of 40 | `the_length_limits_hold_at_every_length_up_to_90` | caught, 107 s |
+| scope_bytes_ok: limit 79 instead of 80 | `the_length_limits_hold_at_every_length_up_to_90` | caught, 99 s |
+| scope_bytes_ok: limit 79 instead of 80 | `one_symbolic_byte_in_a_full_length_run_decides_the_result` | caught, 6 s |
+| scope_bytes_ok: star added to the alphabet (and the explicit refusal kept) | `scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes` | caught, 9 s |
+
+Honest notes. The four harnesses passed on their first run, so the plants are what show they can fail. Strings of 13 to 39
+bytes that mix characters are still only covered by the 12 byte and the one-bad-byte harnesses together, which is not
+the same as all mixed strings of that length. The valid_scope line that refuses `*` explicitly is redundant with the
+alphabet (#664) and is kept with a comment; a plant that removes it still cannot be caught.
