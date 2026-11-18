@@ -142,6 +142,8 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
                     Some(program) if PROGRAMS.contains(&program) => {}
                     Some(program) => problems.push(format!("{rel}:{}: runs {program}", n + 1)),
                     None if rel.ends_with("src/client.rs") => {}
+                    // a unit test that runs its own test binary again, in a child process with its own environment
+                    None if rel.ends_with("src/admin/command_tests.rs") => {}
                     None => problems.push(format!(
                         "{rel}:{}: runs a program chosen at run time",
                         n + 1
