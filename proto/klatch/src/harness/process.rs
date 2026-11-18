@@ -118,8 +118,18 @@ pub(crate) fn lookup_with(read: &dyn Fn(&str) -> Field) -> Lookup {
     }
 }
 
+/// The largest pid this kind of system can number. A pid above it is no process, and `ps` refuses it with a
+/// complaint ("process id too large") that must not be read as a table that cannot be read.
+#[cfg(target_os = "macos")]
+const PID_LIMIT: u32 = 99_999;
+#[cfg(not(target_os = "macos"))]
+const PID_LIMIT: u32 = 4_194_304;
+
 impl ProcessTable for PsTable {
     fn lookup(&self, pid: u32) -> Lookup {
+        if pid > PID_LIMIT {
+            return Lookup::Missing;
+        }
         lookup_with(&|field| ps(pid, field))
     }
 }
@@ -294,6 +304,9 @@ mod tests {
         let pid = child.id();
         child.wait().unwrap();
         assert_eq!(PsTable.lookup(pid), Lookup::Missing);
+        // a pid no system can number is not a process, and ps is not asked
+        assert_eq!(PsTable.lookup(u32::MAX - 1), Lookup::Missing);
+        assert_eq!(PsTable.lookup(PID_LIMIT + 1), Lookup::Missing);
     }
 
     #[test]
