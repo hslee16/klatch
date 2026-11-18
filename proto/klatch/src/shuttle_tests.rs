@@ -1,12 +1,16 @@
 //! Randomized-schedule tests of the in-process shared-state code (#406, DESIGN section 32 item 83). Compiled only with
 //! `RUSTFLAGS="--cfg shuttle"`; run them with `proto/scripts/shuttle`. Shuttle runs the closure many times, each with a
 //! different random order of the threads' steps, and fails a run when an assertion breaks or the threads deadlock. A pass
-//! means no failing schedule among those tried, not that none exists. Shuttle does not model time (a timeout never
-//! fires) and cannot see SQLite, `flock` or the OS, so none of that is covered here; see CONTRIBUTING.md.
+//! means no failing schedule among those tried, not that none exists. Shuttle has no clock (a timeout never fires), so
+//! `sync::within` stands a timer thread in for its limit under Shuttle (#666, DESIGN item 98): the limit can pass at any
+//! step, which the tests below use; how long the limit is, and every other time limit (heartbeats, poll intervals, the
+//! SQLite busy retries), is not covered. Shuttle also cannot see SQLite, `flock` or the OS; see CONTRIBUTING.md.
 
 use crate::sync::{mpsc, thread};
 use std::collections::HashSet;
 use std::io::Cursor;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as StdOrdering};
 use std::time::Duration;
 
 /// Run `f` under Shuttle with a fixed seed, so a failure repeats. `SHUTTLE_SEED` and `SHUTTLE_ITERS` override.
@@ -101,13 +105,95 @@ fn the_client_reader_sends_every_frame_in_order_and_the_end_marker_last() {
 }
 
 #[test]
-fn within_returns_the_probes_answer_when_the_probe_finishes() {
-    // Shuttle never fires a timeout, so this covers the hand-off between the probe thread and the waiter, not the
-    // time limit itself.
+fn within_hands_each_waiter_its_own_probes_answer_or_none_never_the_others() {
+    // Two waiters at once. Under Shuttle the limit can pass at any step (#666), so each gets its own probe's answer or
+    // None; what it must never get is the other probe's answer.
     explore(|| {
         let other = thread::spawn(|| crate::sync::within(Duration::from_secs(1), || 8));
         let mine = crate::sync::within(Duration::from_secs(1), || 7);
-        assert_eq!(mine, Some(7));
-        assert_eq!(other.join().unwrap(), Some(8));
+        assert!(matches!(mine, Some(7) | None), "got {mine:?}");
+        let theirs = other.join().unwrap();
+        assert!(matches!(theirs, Some(8) | None), "got {theirs:?}");
+    });
+}
+
+#[test]
+fn within_gives_up_on_a_probe_that_never_answers_in_every_schedule() {
+    // The probe waits on a channel nobody sends on. Shuttle has no clock, so under Shuttle `within` stands a timer
+    // thread in for the time limit (#666): whichever step comes first, the waiter must come back with None and not
+    // deadlock.
+    explore(|| {
+        let (_keep_open, never) = mpsc::channel::<()>();
+        let got = crate::sync::within(Duration::from_secs(1), move || never.recv().ok());
+        assert_eq!(got, None);
+    });
+}
+
+#[test]
+fn within_answers_the_probes_value_or_none_and_a_late_answer_is_harmless() {
+    // The probe and the timer race. The result is the probe's value or None; when the timer wins, the probe's answer
+    // arrives after the waiter has gone, and sending it must not panic the probe thread. Both outcomes must occur
+    // among the schedules, or the timer path was never explored.
+    let (answered, gave_up) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (a, g) = (answered.clone(), gave_up.clone());
+    explore(move || {
+        match crate::sync::within(Duration::from_secs(1), || 41 + 1) {
+            Some(v) => {
+                assert_eq!(v, 42);
+                a.fetch_add(1, StdOrdering::Relaxed);
+            }
+            None => {
+                g.fetch_add(1, StdOrdering::Relaxed);
+            }
+        }
+        // let the abandoned probe and timer threads run to their ends inside this execution
+        for _ in 0..4 {
+            thread::yield_now();
+        }
+    });
+    assert!(
+        answered.load(StdOrdering::Relaxed) > 0,
+        "the probe never won"
+    );
+    assert!(
+        gave_up.load(StdOrdering::Relaxed) > 0,
+        "the timer never won"
+    );
+}
+
+#[test]
+fn the_session_reader_ends_quietly_when_the_session_stops_listening_mid_stream() {
+    // The session drops its end after the first frame (it is shutting down, #146). The reader thread has more frames to
+    // send; a failed send must end it, not panic it.
+    explore(|| {
+        let (rx, reader) = crate::session::spawn_reader(ack_lines(4));
+        let first = rx.recv().expect("the first frame arrives");
+        assert!(first.is_ok());
+        drop(rx);
+        reader
+            .join()
+            .expect("the reader thread panicked when nobody was listening");
+    });
+}
+
+#[test]
+fn the_client_reader_ends_quietly_when_the_receiver_is_gone() {
+    // The client dropped its receiver (the connection is closing) while the reader still has frames to send.
+    explore(|| {
+        let mut text = String::new();
+        for ts in 1..=3 {
+            text.push_str(&crate::protocol::encode_line(
+                &crate::protocol::ServerFrame::Heartbeat { v: 1, ts },
+            ));
+        }
+        let (tx, rx) = mpsc::channel();
+        let reader =
+            thread::spawn(move || crate::client::pump_frames(Cursor::new(text.into_bytes()), tx));
+        let first = rx.recv().expect("the first frame arrives");
+        assert!(matches!(first, Some(Ok(_))));
+        drop(rx);
+        reader
+            .join()
+            .expect("the reader thread panicked when nobody was listening");
     });
 }

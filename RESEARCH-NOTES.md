@@ -1857,3 +1857,26 @@ the first runs were green. The planted bugs are what show they can fail. The cli
 ### 53.6 Tickets
 
 #666 time is not modelled; #667 what Shuttle cannot reach; #668 ordinary tests do not run in a Shuttle build.
+
+### 53.7 Update, 2026-11-18: a Shuttle-visible time limit, and listeners that go away (#666)
+
+`sync::within` under `--cfg shuttle` now races the probe against a timer thread (see DESIGN item 98), so Shuttle explores
+the limit passing at any step. Eight tests run (the four from section 53.3, one of them, the `within` hand-off test, reworded because
+the answer can now lose the race, and four new ones), 2000 schedules each, about a second
+together once built; the gate's 200-schedule smoke is unchanged in cost. Results are "no failing schedule among those
+tried", never a proof.
+
+| Test | What it catches (planted bug, caught by `proto/scripts/shuttle mutations`) |
+|---|---|
+| `within_gives_up_on_a_probe_that_never_answers_in_every_schedule` | the expiry is never sent: the waiter blocks, Shuttle reports a deadlock |
+| `within_answers_the_probes_value_or_none_and_a_late_answer_is_harmless` | the probe thread unwraps its send, so an answer after the limit panics it; also the waiter that drops every answer (the test requires both outcomes among the schedules) |
+| `within_hands_each_waiter_its_own_probes_answer_or_none_never_the_others` | (no plant of its own; the old hand-off plant, a waiter that polls once, is the same as the limit passing at once and cannot be told apart) |
+| `the_session_reader_ends_quietly_when_the_session_stops_listening_mid_stream` | `spawn_reader` unwraps its send |
+| `the_client_reader_ends_quietly_when_the_receiver_is_gone` | `pump_frames` unwraps its send |
+
+Honest notes. The first plant I tried for `within` (the waiter uses `try_recv` and gives up at once) was MISSED: under the
+model, giving up before the probe answers is one more legal schedule, so no test can tell it from the limit passing
+first. It was replaced by a plant that throws the answer away. The new tests were red before the change for the two
+that need the timer (a deadlock and a missing outcome) and green on first run for the two reader tests, whose plants are
+what show they can fail. #667 (the store and the gateway) and #668 (ordinary tests in a Shuttle build) were not changed
+and carry needs-human questions.
