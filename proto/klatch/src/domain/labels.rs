@@ -21,18 +21,12 @@ impl LabelChain {
     /// A chain of at least two names, lowest first, each a valid name, none repeated.
     pub fn new<S: AsRef<str>>(names: &[S]) -> Result<Self, String> {
         let names: Vec<String> = names.iter().map(|n| n.as_ref().to_string()).collect();
-        if names.len() < 2 {
-            return Err("a label chain needs at least two levels".into());
+        match check_chain(&names) {
+            Ok(()) => Ok(Self(names)),
+            Err(ChainError::TooFew) => Err("a label chain needs at least two levels".into()),
+            Err(ChainError::BadName(i)) => Err(format!("bad label name: {}", names[i])),
+            Err(ChainError::Repeat(i)) => Err(format!("label {} appears twice", names[i])),
         }
-        if let Some(bad) = names.iter().find(|n| !valid_name(n)) {
-            return Err(format!("bad label name: {bad}"));
-        }
-        for (i, n) in names.iter().enumerate() {
-            if names[..i].contains(n) {
-                return Err(format!("label {n} appears twice"));
-            }
-        }
-        Ok(Self(names))
     }
 
     /// Read a chain written `a,b,c` (as `to_text` writes it).
@@ -69,17 +63,56 @@ impl LabelChain {
 
     /// The lower of two labels, `None` if either is unknown.
     pub fn min<'a>(&'a self, a: &'a str, b: &'a str) -> Option<&'a str> {
-        let (ra, rb) = (self.rank(a)?, self.rank(b)?);
-        Some(if ra <= rb { a } else { b })
+        min_in(&self.0, a, b)
     }
 
     /// The default ceiling for an agent: `private` when the chain has it, else the level just below the top.
     pub fn default_cap(&self) -> &str {
-        if self.rank("private").is_some() {
-            "private"
-        } else {
-            &self.0[self.0.len() - 2]
+        default_cap_in(&self.0)
+    }
+}
+
+/// Why a list of names is not a chain. Carries an index, not text, so `check_chain` allocates nothing.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ChainError {
+    /// Fewer than two names.
+    TooFew,
+    /// The name at this index is not a valid name (the first such).
+    BadName(usize),
+    /// The name at this index repeats an earlier one (the first such).
+    Repeat(usize),
+}
+
+/// The rules `LabelChain::new` enforces, over any list of names and without allocating, so the Kani proofs (#658) can
+/// run them on a stack array: at least two names, each a valid name, none repeated.
+pub(crate) fn check_chain<S: AsRef<str>>(names: &[S]) -> Result<(), ChainError> {
+    if names.len() < 2 {
+        return Err(ChainError::TooFew);
+    }
+    if let Some(i) = names.iter().position(|n| !valid_name(n.as_ref())) {
+        return Err(ChainError::BadName(i));
+    }
+    for (i, n) in names.iter().enumerate() {
+        if names[..i].iter().any(|m| m.as_ref() == n.as_ref()) {
+            return Err(ChainError::Repeat(i));
         }
+    }
+    Ok(())
+}
+
+/// `LabelChain::min` over any list of names.
+pub(crate) fn min_in<'a, S: AsRef<str>>(names: &[S], a: &'a str, b: &'a str) -> Option<&'a str> {
+    let (ra, rb) = (rank_in(names, a)?, rank_in(names, b)?);
+    Some(if ra <= rb { a } else { b })
+}
+
+/// `LabelChain::default_cap` over a list of at least two names: `private` when the list has it, else the name just below
+/// the top.
+pub(crate) fn default_cap_in<S: AsRef<str>>(names: &[S]) -> &str {
+    if rank_in(names, "private").is_some() {
+        "private"
+    } else {
+        names[names.len() - 2].as_ref()
     }
 }
 
@@ -129,6 +162,42 @@ mod tests {
         assert!(!c.dominates("secret", "topsecret"));
         assert!(!c.dominates("topsecret", "topsecret"));
         assert_eq!(c.min("public", "topsecret"), None);
+    }
+
+    #[test]
+    fn building_a_chain_names_the_first_fault_in_these_words() {
+        // pinned before `new` was split into `check_chain` (#658): the words, and which fault comes first
+        let few = "a label chain needs at least two levels";
+        let cases: [(&[&str], &str); 6] = [
+            (&["only"], few),
+            (&[], few),
+            (&["a", "b c", "d e"], "bad label name: b c"),
+            (&["a", "b", "a", "b"], "label a appears twice"),
+            (&["a", "b", "b", "a"], "label b appears twice"),
+            // a bad name is reported before a repeat, even when the repeat comes first in the list
+            (&["a", "a", "b c"], "bad label name: b c"),
+        ];
+        for (names, words) in cases {
+            assert_eq!(LabelChain::new(names).unwrap_err(), words, "{names:?}");
+        }
+        assert!(LabelChain::new(&["a", "b"]).is_ok());
+    }
+
+    #[test]
+    fn the_lower_of_two_labels_and_the_default_cap() {
+        let c = LabelChain::default();
+        let mins = [("secret", "internal"), ("public", "public")];
+        for (a, b) in mins {
+            assert_eq!(c.min(a, b), Some(if a == "secret" { b } else { a }));
+        }
+        let chains = [
+            (LabelChain::default(), "private"),
+            (LabelChain::new(&["open", "closed"]).unwrap(), "open"),
+            (LabelChain::new(&["open", "team", "board"]).unwrap(), "team"),
+        ];
+        for (chain, cap) in &chains {
+            assert_eq!(chain.default_cap(), *cap);
+        }
     }
 
     #[test]

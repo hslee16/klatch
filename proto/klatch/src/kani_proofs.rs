@@ -5,7 +5,8 @@
 //! harness leaves out is listed with it, and RESEARCH-NOTES section 52 collects them.
 
 use crate::domain::{
-    clean_bytes, dominates_in, overlaps, scopes_collide, valid_kind, valid_name, valid_scope,
+    ChainError, check_chain, clean_bytes, default_cap_in, dominates_in, min_in, overlaps,
+    safe_name_bytes, scope_bytes_ok, scopes_collide, valid_kind, valid_name, valid_scope,
 };
 
 /// Text of at most `N` characters drawn from `alphabet`, with a symbolic length. The alphabet is the characters a
@@ -179,10 +180,13 @@ fn format_slash(p: &str) -> String {
 
 // ---------------------------------------------------------------------------------------------------------------
 // valid_name, valid_kind, valid_scope (domain/text.rs, domain/scope.rs): the gate against newlines and fake headers.
-// Bound: up to 4 arbitrary ASCII characters (non-ASCII only as concrete cases); the length limits (40 and 80) are checked on the
-// boundary lengths only, as concrete strings.
-// Not covered: strings between 5 and 39 characters, so the alphabet property is a bounded result and the length
-// limits are two spot checks (ticket filed).
+// Bound: the first group of harnesses draws up to 4 arbitrary ASCII characters and calls the real `valid_*` functions
+// (non-ASCII only as concrete cases). The byte-fold harnesses (#657) call `safe_name_bytes` and `scope_bytes_ok`, the
+// functions `valid_name`, `valid_kind` and `valid_scope` delegate to, on arrays of 12 arbitrary bytes (non-ASCII
+// included), and check the 40 and 80 byte limits at every length from 0 to 90 on text made of `a`.
+// Not covered: strings longer than 12 bytes with a mixed alphabet (a limit of the solver; the length harnesses use a
+// single letter, so they say nothing about which characters sit in a long string), and the one-line delegation from
+// `valid_*` to the byte functions, which only the 4 character harnesses and the unit tests exercise.
 // ---------------------------------------------------------------------------------------------------------------
 
 fn any_text<const N: usize>() -> &'static str {
@@ -277,6 +281,93 @@ fn kind_length_limit_holds_at_the_boundary() {
 fn scope_length_limit_holds_at_the_boundary() {
     let s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert!(valid_scope(&s[..80]) && !valid_scope(&s[..81]));
+}
+
+/// Up to `N` arbitrary bytes (non-ASCII included), as an array and a length.
+fn any_bytes<const N: usize>() -> ([u8; N], usize) {
+    let bytes: [u8; N] = kani::any();
+    let len: usize = kani::any();
+    kani::assume(len <= N);
+    (bytes, len)
+}
+
+/// The name alphabet written by range, a second way, so the harness does not repeat the function's own expression.
+fn in_name_set(c: u8) -> bool {
+    matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.')
+}
+
+/// The scope alphabet: the name set, colon and slash.
+fn in_scope_set(c: u8) -> bool {
+    in_name_set(c) || c == b':' || c == b'/'
+}
+
+/// `valid_name` and `valid_kind` (through `safe_name_bytes`) accept exactly the non-empty runs of the safe alphabet.
+/// Bound: up to 12 arbitrary bytes, so non-ASCII and control bytes are in the search.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(14)]
+fn name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes() {
+    let (bytes, len) = any_bytes::<12>();
+    let b = &bytes[..len];
+    let mut all_safe = true;
+    for c in b {
+        if !in_name_set(*c) {
+            all_safe = false;
+        }
+    }
+    assert_eq!(safe_name_bytes(b), len >= 1 && all_safe);
+}
+
+/// `valid_scope` (through `scope_bytes_ok`) accepts exactly the non-empty runs of the scope alphabet, and never `*`.
+/// Bound: up to 12 arbitrary bytes.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(14)]
+fn scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes() {
+    let (bytes, len) = any_bytes::<12>();
+    let b = &bytes[..len];
+    let mut all_safe = true;
+    for c in b {
+        if !in_scope_set(*c) {
+            all_safe = false;
+        }
+    }
+    assert_eq!(scope_bytes_ok(b), len >= 1 && all_safe);
+    if len == 1 && b[0] == b'*' {
+        assert!(!scope_bytes_ok(b));
+    }
+}
+
+/// The length limits at every length, not only at the boundary: a run of `a` is accepted when its length is 1 to 40
+/// (name, kind) or 1 to 80 (scope). Bound: lengths 0 to 90, through the real `valid_*` functions.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(95)]
+fn the_length_limits_hold_at_every_length_up_to_90() {
+    const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let n: usize = kani::any();
+    kani::assume(n <= 90);
+    let s = &A[..n];
+    assert_eq!(valid_name(s), (1..=40).contains(&n));
+    assert_eq!(valid_kind(s), (1..=40).contains(&n));
+    assert_eq!(valid_scope(s), (1..=80).contains(&n));
+}
+
+/// One bad byte anywhere in a run at the length limit is refused, and a good one is accepted: the alphabet property at
+/// 40 bytes (name, kind) and 80 bytes (scope) with one symbolic byte at a symbolic position and `a` everywhere else.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(85)]
+fn one_symbolic_byte_in_a_full_length_run_decides_the_result() {
+    let c: u8 = kani::any();
+    let at: usize = kani::any();
+    let mut name = [b'a'; 40];
+    let mut scope = [b'a'; 80];
+    kani::assume(at < 40);
+    name[at] = c;
+    scope[at] = c;
+    assert_eq!(safe_name_bytes(&name), in_name_set(c));
+    assert_eq!(scope_bytes_ok(&scope), in_scope_set(c));
 }
 
 /// A shared scope collides with every scope and a scope collides with itself, in both directions.
@@ -378,8 +469,10 @@ fn scopes_collide_up_to_5_bytes() {
 // same function on a stack array of names.
 // Bound: a chain of 2 to 4 names, the first k of public, internal, private, secret; queried labels are those four
 // names or one name outside every chain, symbolic.
-// Not covered: other chain contents (the names are opaque to the order), `LabelChain::new` and `parse` (uniqueness
-// and name checks), the wrapper methods `rank`, `min` and `default_cap`.
+// Not covered: other chain contents (the names are opaque to the order), `LabelChain::parse` (a `split`, `trim` and
+// `collect` into a heap `Vec`, which the solver cannot finish), and the wrappers themselves, each a one-line
+// delegation (`new` keeps only the message text for the three `ChainError`s, which a unit test pins).
+// `check_chain`, `min_in` and `default_cap_in` are the functions `LabelChain::new`, `min` and `default_cap` call (#658).
 // ---------------------------------------------------------------------------------------------------------------
 
 const NAMES: [&str; 4] = ["public", "internal", "private", "secret"];
@@ -438,6 +531,83 @@ fn dominance_is_transitive() {
     let (x, y, z) = (any_label(), any_label(), any_label());
     if dominates_in(chain, x, y) && dominates_in(chain, y, z) {
         assert!(dominates_in(chain, x, z));
+    }
+}
+
+/// A name for the chain-building harness: three valid names and one invalid (it has a space).
+fn any_chain_name() -> &'static str {
+    match kani::any::<u8>() % 4 {
+        0 => "a",
+        1 => "b",
+        2 => "c",
+        _ => "x y",
+    }
+}
+
+/// `check_chain` (what `LabelChain::new` runs) accepts a list exactly when it has at least two names, every name is a
+/// valid name and none repeats, and names the first fault. Bound: lists of 0 to 4 names drawn from `a`, `b`, `c` and
+/// the invalid `x y`, so a repeat is forced for any all-valid list of 4. Not covered: other name text (the valid-name
+/// rule has its own harnesses) and lists longer than 4.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(10)]
+fn a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named() {
+    let all = [
+        any_chain_name(),
+        any_chain_name(),
+        any_chain_name(),
+        any_chain_name(),
+    ];
+    let len: usize = kani::any();
+    kani::assume(len <= 4);
+    let names = &all[..len];
+    let bad = |n: &str| n == "x y";
+    let first_bad = (0..len).find(|&i| bad(names[i]));
+    let first_repeat = (0..len).find(|&i| (0..i).any(|j| names[j] == names[i]));
+    let got = check_chain(names);
+    if len < 2 {
+        assert!(got == Err(ChainError::TooFew));
+    } else if let Some(i) = first_bad {
+        assert!(got == Err(ChainError::BadName(i)));
+    } else if let Some(i) = first_repeat {
+        assert!(got == Err(ChainError::Repeat(i)));
+    } else {
+        assert!(got == Ok(()));
+    }
+}
+
+/// `min_in` (what `LabelChain::min` calls) is the lower of two known labels and `None` when either is unknown.
+/// Bound: the same chains and labels as the dominance harnesses.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(10)]
+fn min_is_the_lower_known_label_and_none_for_an_unknown_one() {
+    let chain = &NAMES[..chain_len()];
+    let (x, y) = (any_label(), any_label());
+    let got = min_in(chain, x, y);
+    match (position(chain, x), position(chain, y)) {
+        (Some(i), Some(j)) => {
+            let r = got.unwrap();
+            assert!(if i <= j { r == x } else { r == y });
+            assert!(dominates_in(chain, x, r) && dominates_in(chain, y, r));
+        }
+        (None, _) | (_, None) => assert!(got.is_none()),
+    }
+}
+
+/// `default_cap_in` (what `LabelChain::default_cap` calls) is always a name of the chain: `private` when the chain has
+/// it, else the name just below the top. Bound: chains of 2 to 4 names, the first k of the default names.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(10)]
+fn the_default_cap_is_always_a_name_in_the_chain() {
+    let chain = &NAMES[..chain_len()];
+    let cap = default_cap_in(chain);
+    assert!(position(chain, cap).is_some());
+    if position(chain, "private").is_some() {
+        assert!(cap == "private");
+    } else {
+        assert!(cap == chain[chain.len() - 2]);
     }
 }
 
@@ -581,8 +751,68 @@ mod key_proofs {
         }
     }
 
-    // The recovery code (keys/recovery.rs) has no harness: `restore` and `recovery_code` build and filter heap strings,
-    // decode base32 into a `Vec` and hash with SHA-256, and a harness over input of only 2 characters (far short of
-    // the 63 a real code has) still ran past 500 s. RESEARCH-NOTES section 52 and the ticket it names say what was
-    // tried; the unit tests in keys/recovery.rs are the only cover for it.
+    // The recovery code (keys/recovery.rs), the framing only (#656). `restore` and `recovery_code` also filter and
+    // upper-case a heap `String`, decode base32 into a `Vec` and hash with SHA-256; a harness over input of only 2
+    // characters (a real code has 63) ran past 500 s, so that part is not covered. What is covered is `frame_with` and
+    // `unframe_with`, the functions both call (the code passes the real SHA-256 check; the harnesses pass a stand-in
+    // check, a function of the key bytes, so what they establish is a property of the framing for any check function and
+    // says nothing about SHA-256).
+    use crate::keys::{RecoveryError, frame_with, unframe_with};
+
+    /// A stand-in check: xor of the bytes and wrapping sum of the bytes.
+    fn stand_in(key: &[u8]) -> [u8; 2] {
+        let (mut x, mut sum) = (0u8, 0u8);
+        for b in key {
+            x ^= *b;
+            sum = sum.wrapping_add(*b);
+        }
+        [x, sum]
+    }
+
+    /// Anything but 34 decoded bytes is `Malformed`, before the check is looked at. Bound: 0 to 36 bytes, any content.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(40)]
+    fn a_recovery_code_of_the_wrong_length_is_malformed() {
+        let bytes: [u8; 36] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 36 && len != KEY_LEN + 2);
+        assert!(unframe_with(&bytes[..len], stand_in) == Err(RecoveryError::Malformed));
+    }
+
+    /// Of 34 bytes, the code restores exactly when the last two are the check of the first 32, and then to those 32
+    /// bytes; otherwise it is `Mistyped`. Bound: any 34 bytes.
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(40)]
+    fn the_check_decides_between_a_key_and_a_mistyped_code() {
+        let bytes: [u8; 34] = kani::any();
+        let want = stand_in(&bytes[..KEY_LEN]);
+        let got = unframe_with(&bytes, stand_in);
+        if want == [bytes[KEY_LEN], bytes[KEY_LEN + 1]] {
+            assert!(got.is_ok() && got.unwrap()[..] == bytes[..KEY_LEN]);
+        } else {
+            assert!(got == Err(RecoveryError::Mistyped));
+        }
+    }
+
+    /// What `recovery_code` frames, `restore` unframes, for every key; and any change to a check byte (a typo in the last
+    /// four characters, in effect) is caught whatever the check function is, because the check is a function of the key
+    /// bytes alone. Bound: any 32 byte key, any one changed byte of the two check bytes. Not covered: a change in a key
+    /// byte, which depends on how well the real check detects it (a unit test tries every character of one code).
+    #[kani::proof]
+    #[kani::solver(cadical)]
+    #[kani::unwind(40)]
+    fn a_framed_key_round_trips_and_a_changed_check_byte_is_caught() {
+        let key: [u8; KEY_LEN] = kani::any();
+        let framed = frame_with(&key, stand_in);
+        assert!(unframe_with(&framed, stand_in) == Ok(key));
+        let at: usize = kani::any();
+        kani::assume(at < 2);
+        let flip: u8 = kani::any();
+        kani::assume(flip != 0);
+        let mut changed = framed;
+        changed[KEY_LEN + at] ^= flip;
+        assert!(unframe_with(&changed, stand_in) == Err(RecoveryError::Mistyped));
+    }
 }

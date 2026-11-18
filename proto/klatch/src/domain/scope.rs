@@ -7,13 +7,20 @@ pub const SHARED_SCOPE: &str = "*";
 
 /// A scope name is 1 to 80 characters of letters, digits and `. _ : - /`, so it is safe in output and in a path.
 pub fn valid_scope(scope: &str) -> bool {
-    !scope.is_empty()
-        // every accepted byte is ASCII, so the byte length is the character count
-        && scope.len() <= 80
-        && scope != SHARED_SCOPE
-        && scope
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b':' | b'_' | b'-' | b'/'))
+    scope_bytes_ok(scope.as_bytes())
+}
+
+/// The rule behind `valid_scope`, over bytes (a byte fold, so the Kani proofs of #657 run it on arrays). Every accepted
+/// byte is ASCII, so the byte length is the character count.
+pub(crate) fn scope_bytes_ok(b: &[u8]) -> bool {
+    !b.is_empty()
+        && b.len() <= 80
+        // Redundant today, by design (#664): `*` is not in the alphabet checked below, so that check refuses it too and no
+        // test or proof can tell the two apart. It stays so that widening the alphabet to include `*` cannot let a member
+        // into the shared scope.
+        && b != SHARED_SCOPE.as_bytes()
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b':' | b'_' | b'-' | b'/'))
 }
 
 /// The scope a claim is stored under: shared for an explicit `--shared` and for room-wide names (`ask:<N>`),
@@ -34,6 +41,39 @@ pub fn scopes_collide(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old character-class form of `valid_scope`, the reference the byte form must match (#657).
+    fn valid_scope_by_chars(s: &str) -> bool {
+        !s.is_empty()
+            && s.len() <= 80
+            && s != SHARED_SCOPE
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '/'))
+    }
+
+    #[test]
+    fn the_byte_form_of_valid_scope_matches_the_character_form_on_every_short_string() {
+        let pieces = [
+            "a", "Z", "0", "-", "_", ".", " ", "/", ":", "*", "\n", "\u{e9}", "\u{ff41}",
+        ];
+        for s in crate::domain::text::short_strings(&pieces) {
+            assert_eq!(valid_scope(&s), valid_scope_by_chars(&s), "{s:?}");
+        }
+        for n in 0..=85 {
+            let s = "a".repeat(n);
+            assert_eq!(valid_scope(&s), valid_scope_by_chars(&s), "{n}");
+        }
+    }
+
+    /// The shared marker is refused (#664). The explicit check is redundant with the alphabet today, so this test
+    /// cannot tell them apart either; it pins the result for a member that tries to claim the shared scope.
+    #[test]
+    fn the_shared_marker_is_never_a_valid_scope() {
+        assert!(!valid_scope(SHARED_SCOPE));
+        assert!(!valid_scope("*"));
+        assert!(valid_scope("a*") == valid_scope_by_chars("a*"));
+        assert!(!valid_scope("a*"));
+    }
 
     #[test]
     fn a_scope_is_a_short_safe_name() {

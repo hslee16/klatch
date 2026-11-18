@@ -12,7 +12,9 @@ mod recovery;
 mod sealed;
 mod source;
 
-#[cfg(target_os = "linux")]
+// Built on every system under test, so the stand-in `secret-tool` tests run on a macOS host too (#561).
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -22,6 +24,8 @@ pub use file::FileKeys;
 pub use key::{KEY_LEN, Key};
 pub use labels::{LabelKeys, label_key_name};
 pub use recovery::{RecoveryError, recovery_code, restore};
+#[cfg(kani)]
+pub(crate) use recovery::{frame_with, unframe_with};
 pub use sealed::{
     RevealError, is_sealed_text, looks_protected, protect, protect_text, reveal, reveal_text,
 };

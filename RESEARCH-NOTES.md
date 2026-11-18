@@ -1898,6 +1898,17 @@ and carry needs-human questions.
 | overlaps_follows_components_two_levels_deep | `/d`, `/d/e`, `/d/e/r` and `/d/er`, names of one byte (a or b); overlaps by component not by text prefix, both directions | 195 s |
 | scopes_collide_up_to_5_bytes | up to 5 characters from `a b *` (was 3, 43 s); symmetric, reflexive, and with neither shared they collide exactly when equal | 43 s |
 
+### 52.8b Update, 2026-11-18: LabelChain::new, min and default_cap (#658; Kani 0.68.0)
+
+`LabelChain::new`'s three rules, `min` and `default_cap` were split into `check_chain`, `min_in` and `default_cap_in`
+(slices, no allocation; `new` keeps only the message text) and proved at small bounds.
+
+| Harness | Bound | Time |
+|---|---|---|
+| a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named | 0 to 4 names from `a`, `b`, `c` and the invalid `x y`; result and first fault compared with a second formulation in the harness | 610 s |
+| min_is_the_lower_known_label_and_none_for_an_unknown_one | chains of 2 to 4 of the default names; labels those or one outside | 42 s |
+| the_default_cap_is_always_a_name_in_the_chain | the same chains | 21 s |
+
 Planted bugs, in the real functions, one run each, reverted:
 
 | Planted bug | Harness | Result |
@@ -1914,3 +1925,73 @@ it ran 19 minutes without a result, at 1 byte 11 minutes (stopped by me, not a t
 out of the solver's reach (section 52.4). Not kept. Honest notes: the four harnesses passed on their first run, so the
 plants are what show they can fail; none reaches the 3 level or 5 byte-path structures the tickets worry about, and the
 `clean_path` wrapper is still covered only by the differential unit test.
+
+| check_chain: a chain of one name accepted | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 524 s |
+| check_chain: names are not checked | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 150 s |
+| check_chain: repeats allowed | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 216 s |
+| check_chain: a repeat is looked for only against the previous name | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 634 s |
+| min_in: returns the higher label | `min_is_the_lower_known_label_and_none_for_an_unknown_one` | caught, 38 s |
+| default_cap_in: the top of the chain | `the_default_cap_is_always_a_name_in_the_chain` | caught, 25 s |
+
+Honest notes. The three harnesses passed on their first run, so the plants are what show they can fail. The chain harness
+is slow because it compares strings pairwise twice (the function and the oracle); the plant that looks for a repeat only
+against the previous name took 634 s to be caught, close to the 900 s default limit of `proto/scripts/kani`.
+`LabelChain::parse` is still uncovered.
+
+### 52.8c Update, 2026-11-18: the recovery code framing (#656, Kani 0.68.0, same machine, one harness at a time)
+
+`keys::restore` and `recovery_code` still have no harness: they filter a `String`, decode base32 into a `Vec` and hash,
+and the solver cannot finish that. What changed is that the decision "these bytes are a key" was split out into
+`frame_with` and `unframe_with` (byte slices, the check passed in) and proved at 32 byte keys with a stand-in check.
+It says nothing about SHA-256 or the base32 text.
+
+| Harness | Bound | Time |
+|---|---|---|
+| a_recovery_code_of_the_wrong_length_is_malformed | 0 to 36 bytes, any content, any length but 34 | 7 s |
+| the_check_decides_between_a_key_and_a_mistyped_code | any 34 bytes; Ok exactly when the check matches, then the first 32 bytes | 8 s |
+| a_framed_key_round_trips_and_a_changed_check_byte_is_caught | any 32 byte key, any one changed check byte | 11 s |
+
+Planted bugs (each in the real function, harness run, reverted; CAUGHT is `VERIFICATION:- FAILED`): the run of
+2026-11-18:
+
+| Planted bug | Harness | Result |
+|---|---|---|
+| unframe_with: length check accepts a longer input (!= to <) | `a_recovery_code_of_the_wrong_length_is_malformed` | caught, 10 s |
+| unframe_with: only the first check byte compared | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+| unframe_with: only the first check byte compared | `a_framed_key_round_trips_and_a_changed_check_byte_is_caught` | caught, 9 s |
+| unframe_with: a mismatch is accepted | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 8 s |
+| unframe_with: a mismatch is reported as Malformed | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+| frame_with: the check bytes are those of the key with its first byte zeroed | `a_framed_key_round_trips_and_a_changed_check_byte_is_caught` | caught, 11 s |
+| unframe_with: the key is returned shifted by one byte | `the_check_decides_between_a_key_and_a_mistyped_code` | caught, 10 s |
+
+Honest notes. The harnesses passed on their first run, so the plants are what show they can fail. The stand-in check is
+not SHA-256: a framing bug that only shows with the real hash would not be seen, and the typo guarantee for a changed key
+byte is the real hash's, outside this proof.
+### 52.8a Update, 2026-11-18: valid_name, valid_kind, valid_scope over bytes and at every length (#657, #664; Kani 0.68.0)
+
+`valid_name`, `valid_kind` and `valid_scope` now delegate to byte folds (`safe_name_bytes`, `scope_bytes_ok`), which the
+solver finishes on arrays; the 4 character harnesses stay and still call the real functions.
+
+| Harness | Bound | Time |
+|---|---|---|
+| name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes | any 12 bytes, any length 0 to 12; accepted exactly when non-empty and every byte in the set (the set written by range in the harness, a second way) | 41 s |
+| scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes | same, the scope set; `*` alone refused | 9 s |
+| the_length_limits_hold_at_every_length_up_to_90 | a run of `a`, every length 0 to 90, through `valid_name`, `valid_kind` and `valid_scope` (40, 40, 80) | 99 s |
+| one_symbolic_byte_in_a_full_length_run_decides_the_result | 40 bytes (name) and 80 bytes (scope) of `a` with one symbolic byte at a symbolic position | 14 s |
+
+Planted bugs, in the real functions, one run each, reverted:
+
+| Planted bug | Harness | Result |
+|---|---|---|
+| safe_name_bytes: space allowed | `name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes` | caught, 7 s |
+| safe_name_bytes: space allowed | `one_symbolic_byte_in_a_full_length_run_decides_the_result` | caught, 12 s |
+| safe_name_bytes: non-ASCII bytes allowed | `name_and_kind_bytes_accept_exactly_the_safe_alphabet_up_to_12_bytes` | caught, 7 s |
+| safe_name_bytes: limit 41 instead of 40 | `the_length_limits_hold_at_every_length_up_to_90` | caught, 107 s |
+| scope_bytes_ok: limit 79 instead of 80 | `the_length_limits_hold_at_every_length_up_to_90` | caught, 99 s |
+| scope_bytes_ok: limit 79 instead of 80 | `one_symbolic_byte_in_a_full_length_run_decides_the_result` | caught, 6 s |
+| scope_bytes_ok: star added to the alphabet (and the explicit refusal kept) | `scope_bytes_accept_exactly_the_scope_alphabet_up_to_12_bytes` | caught, 9 s |
+
+Honest notes. The four harnesses passed on their first run, so the plants are what show they can fail. Strings of 13 to 39
+bytes that mix characters are still only covered by the 12 byte and the one-bad-byte harnesses together, which is not
+the same as all mixed strings of that length. The valid_scope line that refuses `*` explicitly is redundant with the
+alphabet (#664) and is kept with a comment; a plant that removes it still cannot be caught.

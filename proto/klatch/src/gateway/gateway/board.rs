@@ -105,6 +105,29 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// One member's card (#251, the design item for #251): what the room board and the live claims say about `member`, or `None` when
+    /// it is not listed on the board. Derived on every call, stored nowhere, and a read like the board is.
+    pub fn member_card(
+        &self,
+        who: &Principal,
+        room: &str,
+        member: &str,
+    ) -> Result<Option<crate::domain::Card>> {
+        if !valid_name(member) {
+            return Err(Error::Invalid("bad member name".into()));
+        }
+        let board = self.board(who, room)?;
+        let now = self.now();
+        let claims = self.store.claims(room, now)?;
+        let scope = self.store.member_scope(member)?;
+        Ok(crate::domain::card_of(
+            &board,
+            member,
+            scope,
+            (&claims, now),
+        ))
+    }
+
     /// The pull requests the log says are open (item 84), each with the holder of its live `pr:N` claim. One that no
     /// message ended and whose claim was last released with a note that says merged is dropped: the claim's note is
     /// the other way to say a PR is over.

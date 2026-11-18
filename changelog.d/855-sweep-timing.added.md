@@ -1,0 +1,1 @@
+- `pr-sweep` logs how long each gate, CI wait and bench took, and `pr-sweep --timing` summarises it per step.
