@@ -438,6 +438,10 @@ impl MemberStore for DownStore {
     fn rooms_of(&self, _: &str) -> Result<Vec<String>> {
         Err(Error::Backend("down".into()))
     }
+
+    fn is_blocked(&self, _: &str, _: &str) -> Result<bool> {
+        Ok(false)
+    }
 }
 impl ClaimStore for DownStore {
     fn claim(&self, _: &ClaimRequest, _: i64) -> Result<()> {
@@ -455,8 +459,22 @@ impl ClaimStore for DownStore {
 impl AskStore for DownStore {}
 impl ReviewStore for DownStore {}
 impl CredentialStore for DownStore {}
-impl PolicyStore for DownStore {}
-impl RoomStore for DownStore {}
+// the checks that run before the message store is reached see an empty, healthy policy, so each failure is the one
+// the message store gives (the silent defaults are gone, #485)
+impl PolicyStore for DownStore {
+    fn policy_get(&self, _: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    fn policy_list(&self, _: &str) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+}
+impl RoomStore for DownStore {
+    fn room_state(&self, _: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    fn set_label_keys(&self, _keys: crate::keys::LabelKeys) {}
+}
 
 #[test]
 fn store_failures_become_failed_responses_and_the_session_survives() {
@@ -494,4 +512,51 @@ fn every_output_line_is_one_valid_frame() {
         ],
     );
     assert!(f.len() >= 3); // decoding every line already proved validity
+}
+
+struct MovingClock(std::rc::Rc<std::cell::Cell<i64>>);
+impl crate::gateway::Clock for MovingClock {
+    fn now(&self) -> i64 {
+        self.0.get()
+    }
+}
+
+#[test]
+fn a_session_for_a_verified_member_whose_credential_has_ended_is_refused_on_every_request() {
+    // the process proved itself while the credential was live and kept running (#161): the session checks again
+    let now = std::rc::Rc::new(std::cell::Cell::new(1_000));
+    let g = Gateway::new(
+        SqliteStore::open_in_memory().unwrap(),
+        MovingClock(now.clone()),
+        AllowAll,
+    );
+    let spec = crate::gateway::CredentialSpec {
+        member: "w-1",
+        clearance: "internal",
+        ttl: 10,
+        parent: None,
+    };
+    g.admin_issue_credential(&alice(), &spec).unwrap();
+    let who = Principal::verified("w-1");
+    let live = run(
+        &g,
+        &who,
+        &[req("a", "post", json!({"room":"r","body":"x"}))],
+    );
+    assert!(response(&live, "a").0, "a live credential was refused");
+    now.set(1_010);
+    let f = run(
+        &g,
+        &who,
+        &[
+            req("a", "post", json!({"room":"r","body":"y"})),
+            req("b", "who", json!({"room":"r"})),
+            req("c", "claims", json!({"room":"r"})),
+        ],
+    );
+    for id in ["a", "b", "c"] {
+        let (ok, _, err) = response(&f, id);
+        assert!(!ok, "{id} was answered after the credential expired");
+        assert_eq!(err.unwrap().0, "refused");
+    }
 }

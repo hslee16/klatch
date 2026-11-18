@@ -59,7 +59,7 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             },
         )?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
-        Cmd::History { room, last, since } => history(t, &room, since, last)?,
+        Cmd::History { room, last, since } => history_of(t, room, since, last)?,
         Cmd::Wait {
             rooms,
             timeout,
@@ -131,15 +131,18 @@ fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             let id = t.request_crossing(&room, seq, &to)?;
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
         }
-        Cmd::Board { room } => print!("{}", render_board(&t.board(&room)?, ctx.now)),
+        Cmd::Board { room } => for_rooms(t, room, |room| {
+            print!("{}", render_board(&t.board(room)?, ctx.now));
+            Ok(())
+        })?,
         Cmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
-        Cmd::Asks { room } => asks(ctx, &room)?,
+        Cmd::Asks { room } => for_rooms(t, room, |room| asks(ctx, room))?,
         Cmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
                 println!("{}", task.line(ctx.now, true));
             }
         }
-        Cmd::Claims { room } => claims(ctx, &room)?,
+        Cmd::Claims { room } => for_rooms(t, room, |room| claims(ctx, room))?,
         Cmd::Refusals { limit } => my_refusals(ctx, limit)?,
         other => return Ok(Some(other)),
     }
@@ -320,6 +323,19 @@ fn message_row(m: &klatch::domain::Message) -> String {
 
 /// `klatch history`: look back without moving a cursor (#518). The output is whole messages up to
 /// `HISTORY_MAX_BYTES` (the first is always shown); what is left is counted and the line says where to resume.
+/// `klatch history`: one room, or with none every joined room. A `--since` seq belongs to one room, so it needs one.
+fn history_of(
+    t: &dyn Transport,
+    room: Option<String>,
+    since: Option<i64>,
+    last: Option<usize>,
+) -> Result<()> {
+    if room.is_none() && since.is_some() {
+        bail!("--since is a seq in one room: name the room, `klatch history ROOM --since N`");
+    }
+    for_rooms(t, room, |room| history(t, room, since, last))
+}
+
 fn history(t: &dyn Transport, room: &str, since: Option<i64>, last: Option<usize>) -> Result<()> {
     let found = t.history(room, klatch::gateway::HistoryRange { since, last })?;
     if found.messages.is_empty() {
@@ -633,9 +649,21 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
 
 /// `who ROOM`, or with no room the members of every room the caller has joined, each under its name (#227).
 fn who(t: &dyn Transport, room: Option<&str>, now: i64, all: bool) -> Result<()> {
-    if let Some(room) = room {
+    for_rooms(t, room.map(String::from), |room| {
         print!("{}", render_who(&t.who(room)?, now, all));
-        return Ok(());
+        Ok(())
+    })
+}
+
+/// Run a read-only command for one room, or with no room for every room the caller has joined, each under a `[room]`
+/// header (#227, #734). Only commands that move no cursor take this default; one that consumes (`read`) does not.
+fn for_rooms(
+    t: &dyn Transport,
+    room: Option<String>,
+    mut show: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    if let Some(room) = room {
+        return show(&room);
     }
     let rooms = t.rooms()?;
     if rooms.is_empty() {
@@ -643,7 +671,7 @@ fn who(t: &dyn Transport, room: Option<&str>, now: i64, all: bool) -> Result<()>
     }
     for room in rooms {
         println!("[{room}]");
-        print!("{}", render_who(&t.who(&room)?, now, all));
+        show(&room)?;
     }
     Ok(())
 }

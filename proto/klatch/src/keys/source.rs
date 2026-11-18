@@ -144,8 +144,11 @@ pub fn store_key_name(home: &std::path::Path) -> String {
 }
 
 /// The source this machine uses by default: the keystore of the operating system when there is one, else a 0600
-/// file under `dir`. `Ok` carries a warning when the file had to stand in for a keystore.
-pub fn default_source(dir: &std::path::Path) -> (Box<dyn KeySource>, Option<String>) {
+/// file under `dir`. `Ok` carries a warning when the file had to stand in for a keystore. `name` is the key the
+/// caller is about to read: the Linux keyring is asked for it once, to find out whether it answers and to read it
+/// (#562).
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+pub fn default_source(dir: &std::path::Path, name: &str) -> (Box<dyn KeySource>, Option<String>) {
     #[cfg(target_os = "macos")]
     {
         (
@@ -158,7 +161,7 @@ pub fn default_source(dir: &std::path::Path) -> (Box<dyn KeySource>, Option<Stri
     }
     #[cfg(target_os = "linux")]
     {
-        if let Some(s) = crate::keys::linux::SecretService::detect("klatch") {
+        if let Some(s) = crate::keys::linux::SecretService::detect(name) {
             return (Box::new(s), None);
         }
         (

@@ -109,7 +109,8 @@ enum Cmd {
     /// Look back in a room: the newest 20 messages, or `--last N`, or the next 20 after `--since SEQ`. Prints
     /// everyone's messages as `read` does and moves no read cursor.
     History {
-        room: String,
+        /// The room; without one, every room you have joined
+        room: Option<String>,
         /// The newest N messages (at most 200); with `--since`, the newest N after it
         #[arg(long)]
         last: Option<usize>,
@@ -334,7 +335,10 @@ enum Cmd {
         all: bool,
     },
     /// Show a room's board: open asks, current offers and members with their status
-    Board { room: String },
+    Board {
+        /// The room; without one, every room you have joined
+        room: Option<String>,
+    },
     /// Show one member's card in a room: its scope and status, the asks it posted, the asks it serves, its claims,
     /// tasks and pull requests (the member defaults to you). Derived from the board and the claims, never stored
     Card {
@@ -343,11 +347,17 @@ enum Cmd {
         member: Option<String>,
     },
     /// List the asks in a room nobody has answered or closed
-    Asks { room: String },
+    Asks {
+        /// The room; without one, every room you have joined
+        room: Option<String>,
+    },
     /// List the open durable tasks in a room with their full latest checkpoint (working, checkpoint, handoff)
     Tasks { room: String },
     /// List active claims in a room
-    Claims { room: String },
+    Claims {
+        /// The room; without one, every room you have joined
+        room: Option<String>,
+    },
     /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
     Hook {
         /// Print JSON additional context for this Claude Code hook event (needed for PostToolUse, whose plain
