@@ -21,6 +21,8 @@ mod scope;
 mod tasks;
 mod text;
 mod toolguard;
+#[cfg(test)]
+mod toolguard_tests;
 mod wait_filter;
 
 pub use asks::{

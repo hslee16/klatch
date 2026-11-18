@@ -7,6 +7,9 @@ use super::*;
 use clap::Subcommand;
 use klatch::domain::Verdict;
 
+#[cfg(test)]
+mod command_tests;
+
 #[derive(Subcommand)]
 pub enum ActCmd {
     /// Make a room read-only (admin agent only)
