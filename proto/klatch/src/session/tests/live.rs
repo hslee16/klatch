@@ -358,6 +358,10 @@ impl MessageStore for FlakyStore {
     fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {
         self.inner.advance_cursor(at, seq, now)
     }
+
+    fn posts_since(&self, m: &str, s: i64) -> Result<Vec<i64>> {
+        self.inner.posts_since(m, s)
+    }
 }
 impl MemberStore for FlakyStore {
     fn members(&self, r: &str) -> Result<Vec<MemberInfo>> {
@@ -366,6 +370,22 @@ impl MemberStore for FlakyStore {
 
     fn rooms_of(&self, m: &str) -> Result<Vec<String>> {
         self.inner.rooms_of(m)
+    }
+
+    fn block_member(&self, r: &str, m: &str, n: i64) -> Result<()> {
+        self.inner.block_member(r, m, n)
+    }
+
+    fn unblock_member(&self, r: &str, m: &str) -> Result<bool> {
+        self.inner.unblock_member(r, m)
+    }
+
+    fn is_blocked(&self, r: &str, m: &str) -> Result<bool> {
+        self.inner.is_blocked(r, m)
+    }
+
+    fn remove_member(&self, r: &str, m: &str, n: i64) -> Result<usize> {
+        self.inner.remove_member(r, m, n)
     }
 }
 impl ClaimStore for FlakyStore {
@@ -384,8 +404,50 @@ impl ClaimStore for FlakyStore {
 impl AskStore for FlakyStore {}
 impl ReviewStore for FlakyStore {}
 impl CredentialStore for FlakyStore {}
-impl PolicyStore for FlakyStore {}
-impl RoomStore for FlakyStore {}
+// The security-relevant methods have no silent defaults (#485), so this store passes them to the real one.
+impl PolicyStore for FlakyStore {
+    fn record_audit(&self, e: &crate::store::NewAudit, n: i64) -> Result<()> {
+        self.inner.record_audit(e, n)
+    }
+    fn audit_log(&self, l: usize) -> Result<Vec<crate::domain::AuditRecord>> {
+        self.inner.audit_log(l)
+    }
+    fn policy_get(&self, k: &str) -> Result<Option<String>> {
+        self.inner.policy_get(k)
+    }
+    fn policy_set(&self, k: &str, v: Option<&str>, n: i64) -> Result<()> {
+        self.inner.policy_set(k, v, n)
+    }
+    fn policy_list(&self, p: &str) -> Result<Vec<(String, String)>> {
+        self.inner.policy_list(p)
+    }
+    fn record_refusal(&self, e: &crate::store::NewRefusal, n: i64) -> Result<()> {
+        self.inner.record_refusal(e, n)
+    }
+    fn refusals(&self, l: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
+        self.inner.refusals(l)
+    }
+    fn refusals_of(&self, m: &str, l: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
+        self.inner.refusals_of(m, l)
+    }
+    fn refusal_rules_since(&self, m: &str, s: i64) -> Result<Vec<String>> {
+        self.inner.refusal_rules_since(m, s)
+    }
+}
+impl RoomStore for FlakyStore {
+    fn set_room_state(&self, r: &str, s: Option<&str>, n: i64) -> Result<()> {
+        self.inner.set_room_state(r, s, n)
+    }
+    fn room_state(&self, r: &str) -> Result<Option<String>> {
+        self.inner.room_state(r)
+    }
+    fn delete_rooms_with_prefix(&self, p: &str, n: i64) -> Result<crate::store::DeletedRooms> {
+        self.inner.delete_rooms_with_prefix(p, n)
+    }
+    fn set_label_keys(&self, keys: crate::keys::LabelKeys) {
+        self.inner.set_label_keys(keys);
+    }
+}
 
 #[test]
 fn a_busy_store_is_retried_silently_and_the_stream_catches_up() {
