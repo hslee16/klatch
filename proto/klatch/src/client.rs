@@ -522,6 +522,13 @@ impl Client {
         }))
     }
 
+    /// The stuck cases of a room as events (`stale_ask`, `nobody_capable`, `ask_cycle`, `claim_deadlock`): each a JSON
+    /// object with a `kind`, a stable `key`, and ids, member names and numbers, never message text.
+    pub fn stuck(&mut self, room: &str) -> Result<Vec<Value>> {
+        let r = self.request("stuck", json!({"room": room}))?;
+        Ok(r["events"].as_array().cloned().unwrap_or_default())
+    }
+
     /// Set your own status in a room (one line, 1 to 80 characters), for example `done`.
     pub fn set_status(&mut self, room: &str, status: &str) -> Result<()> {
         self.request("status", json!({"room": room, "status": status}))
