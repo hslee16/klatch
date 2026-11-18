@@ -23,7 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS is off on pull requests (#861): its runner is often never assigned and the job is cancelled after
+        # 15 minutes. The local gate runs on macOS and build-release.yml builds there. Add macos-latest back to run it.
+        os: [ubuntu-latest]
     defaults:
       run:
         working-directory: proto
