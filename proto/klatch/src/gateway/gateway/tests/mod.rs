@@ -32,6 +32,7 @@ mod lease_settings;
 mod librarian;
 mod member_card;
 mod member_kind;
+mod member_places;
 mod member_surface;
 mod members;
 mod mute;

@@ -171,6 +171,7 @@ mod tests {
             parent: None,
             parked: None,
             kind: None,
+            place: None,
         }
     }
 

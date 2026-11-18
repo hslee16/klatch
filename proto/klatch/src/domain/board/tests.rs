@@ -26,6 +26,7 @@ fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
         parent: None,
         parked: None,
         kind: None,
+        place: None,
     }
 }
 
@@ -209,6 +210,7 @@ fn sample() -> Board {
                 parent: None,
                 parked: None,
                 kind: None,
+                place: None,
             },
             BoardMember {
                 name: "api-1".into(),
@@ -217,6 +219,7 @@ fn sample() -> Board {
                 parent: None,
                 parked: None,
                 kind: None,
+                place: None,
             },
         ],
         stale_members: 0,
@@ -380,6 +383,7 @@ fn no_age_is_printed_negative_when_the_reader_clock_is_behind() {
             parent: None,
             parked: None,
             kind: None,
+            place: None,
         }],
         ..Default::default()
     };
@@ -411,6 +415,7 @@ fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
             parent: Some("lead".into()),
             parked: None,
             kind: None,
+            place: None,
         }],
         ..Default::default()
     };
@@ -439,6 +444,7 @@ fn a_members_kind_is_shown_in_who_and_on_the_board_and_a_member_without_one_show
             parent: None,
             parked: None,
             kind: Some(crate::domain::MemberKind::Service),
+            place: None,
         }],
         ..Default::default()
     };
@@ -533,5 +539,32 @@ fn now_reads_ages_and_never_goes_negative() {
         now.since(160),
         0,
         "a reader clock behind the writer is not a negative age"
+    );
+}
+
+#[test]
+fn who_line_shows_repo_and_dir_and_flattens_them() {
+    let mut m = peer("alice", 1000, None);
+    m.place = Some(MemberPlace {
+        repository: Some("git:proj-1".into()),
+        directory: Some("pro\nj".into()),
+    });
+    let shown = render_who(&[m], 1000, true);
+    assert_eq!(shown.lines().count(), 1, "{shown:?}");
+    assert!(shown.contains("repo: git:proj-1\tdir: pro j"), "{shown:?}");
+}
+
+#[test]
+fn the_short_directory_name_is_the_last_component_and_nothing_more() {
+    assert_eq!(short_dir_name("/a/b/proj"), Some("proj".into()));
+    assert_eq!(short_dir_name("/a/b/proj/"), Some("proj".into()));
+    assert_eq!(short_dir_name("proj"), Some("proj".into()));
+    assert_eq!(short_dir_name("/"), None);
+    assert_eq!(short_dir_name(""), None);
+    assert_eq!(
+        short_dir_name(&format!("/x/{}", "d".repeat(100)))
+            .unwrap()
+            .len(),
+        40
     );
 }

@@ -11,6 +11,7 @@ fn member(name: &str, last_seen: i64, status: Option<&str>) -> BoardMember {
         parent: None,
         parked: None,
         kind: None,
+        place: None,
     }
 }
 

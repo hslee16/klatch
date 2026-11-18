@@ -156,6 +156,7 @@ impl MemberStore for SqliteStore {
                         back_by,
                     }),
                     kind: None,
+                    place: None,
                 })
             },
         )

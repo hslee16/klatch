@@ -44,7 +44,7 @@ pub use asks::{
 pub use board::{
     BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS, MemberStatus,
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, ask_reach_note,
-    current_offers, is_offer, render_board, render_who, statuses,
+    current_offers, is_offer, render_board, render_who, short_dir_name, statuses,
 };
 pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
@@ -72,8 +72,8 @@ pub use kind::{KIND_KEY, MemberKind};
 pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, min_in};
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use model::{
-    Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, Message, Posted, Principal,
-    RefusalRecord, ReleaseNote, ReleasedClaim,
+    Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, MemberPlace, Message,
+    Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
 pub use router::{
