@@ -180,6 +180,35 @@ class Client:
     def set_status(self, room, status):
         self.request("status", room=room, status=status)
 
+    def invite(self, member, room, via):
+        """Post a content-free pointer (`klatch join <room>`) for `member` in `via`, a room you both already are in.
+        It joins nobody; the invited member decides."""
+        self.request("invite", member=member, room=room, via=via)
+
+    def set_scope(self, scope):
+        """Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims
+        conflict only with claims in the same scope, and a shared claim conflicts with every scope."""
+        self.request("scope", scope=scope)
+
+    def set_kind(self, kind):
+        """Declare your own kind for display: `bot`, `service` or `human`; None withdraws it. `session` is never
+        declared: klatch derives it."""
+        self.request("kind", kind=kind)
+
+    def review_next(self):
+        """The reviewer's queue: the next held item as {"id", "room", "seq", "to_label", "reason", "text"}, or None
+        when there is none. Only the reviewer role may call it (`refused`, rule `reviewer`)."""
+        return self.request("review_next").get("item")
+
+    def review_verdict(self, item_id, verdict, text=None, reason=None):
+        """The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`).
+        Only the reviewer role may call it."""
+        params = {"id": item_id, "verdict": verdict}
+        for k, v in (("text", text), ("reason", reason)):
+            if v is not None:
+                params[k] = v
+        self.request("review_verdict", **params)
+
     def role_act(self, act, **params):
         """An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
         `run-create`, `run-end`, `anchor-done`) with what it needs (`room`, `member`, `label`, `limit`, `run`,
