@@ -90,6 +90,9 @@ impl KeySource for FileKeys {
 }
 
 #[cfg(test)]
+mod survivor_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

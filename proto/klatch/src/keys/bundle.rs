@@ -332,6 +332,65 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
+    fn read_text(d: &std::path::Path, tag: &str, text: &str) -> Result<Bundle, Error> {
+        let p = d.join(tag);
+        std::fs::write(&p, text).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        Bundle::read(&p)
+    }
+
+    #[test]
+    fn a_bundle_member_that_is_empty_too_long_or_has_a_slash_is_refused() {
+        let d = dir("member");
+        let good = {
+            let p = d.join("good");
+            sample().write(&p).unwrap();
+            std::fs::read_to_string(&p).unwrap()
+        };
+        let long40 = "a".repeat(40);
+        let ok = read_text(
+            &d,
+            "ok40",
+            &good.replace("member w-1", &format!("member {long40}")),
+        )
+        .expect("40 characters is the longest allowed member");
+        assert_eq!(ok.member, long40);
+        for (tag, name) in [
+            ("empty", String::new()),
+            ("long41", "a".repeat(41)),
+            ("slash", "a/b".to_string()),
+            ("dotdot", "../x".to_string()),
+            ("symbol", "a@b".to_string()),
+            ("unicode", "w\u{e9}".to_string()),
+        ] {
+            let text = good.replace("member w-1", &format!("member {name}"));
+            assert!(
+                read_text(&d, tag, &text).is_err(),
+                "a member named {name:?} was accepted"
+            );
+        }
+        for name in ["a.b", "a_b", "a-b", "A1"] {
+            let text = good.replace("member w-1", &format!("member {name}"));
+            assert_eq!(read_text(&d, "legal", &text).unwrap().member, name);
+        }
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_bundle_with_two_token_lines_is_refused_and_the_first_one_is_never_replaced() {
+        let d = dir("twotokens");
+        let p = d.join("good");
+        sample().write(&p).unwrap();
+        let good = std::fs::read_to_string(&p).unwrap();
+        let other = Token::generate().unwrap();
+        let twice = format!("{good}token {}\n", other.to_text().as_str());
+        assert!(
+            read_text(&d, "twice", &twice).is_err(),
+            "a second token line was accepted"
+        );
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     #[test]
     fn as_a_key_source_it_answers_for_its_own_keys_only_and_cannot_be_written() {
         let src = sample().into_source("store-abc");

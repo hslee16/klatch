@@ -346,6 +346,9 @@ fn settle_name(evidence: PeerEvidence, store: &SqliteStore) -> Result<PeerEviden
 }
 
 #[cfg(test)]
+mod survivor_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use klatch::domain::Attribution;
