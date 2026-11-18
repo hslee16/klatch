@@ -23,7 +23,7 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
    principals untouched, the breaker not counting it) and the wire test in `session/tests/wire.rs`. Gap: the
    own-record methods (#835).
 3. **Roles.** `check_role` in the same function: librarian may only look (`read-only`), reviewer may only review
-   (`reviewer`), the facilitator (#190) may only look, create a room, invite and post the invite pointer (`facilitator`,
+   (`reviewer`), the facilitator (#190) may only look, create a room, invite, post the invite pointer and send one fixed-form need-info DM to the asker of an open ask (#902; `facilitator`,
    enforced before any guard is asked), admin agent has an allowlist (`admin-scope`, `floors`), members' admin acts need a role on a
    members' gateway, room creation and invite need the capability (`room-capability`). Proof: `admin_role.rs`,
    `librarian.rs`, `reviewer.rs`, `facilitator.rs`, `room_capability.rs`, `floors.rs`.
@@ -148,7 +148,7 @@ directly and meets only the terminal heuristic.
 |---|---|---|
 | Rooms | `pause`, `resume`, `close`, `reopen`, `label`, `canary` | `administer`: guard, audit |
 | Members | `remove`, `allow`, `clear`, `grant-rooms`, `grantor`, `room-clear` | `administer`; `grantor` (name or remove the room's grantor) and `room-clear` (set or revoke a room grant) are floors, refused to every agent and to the admin agent by `ForbidFloors` and `admin_agent_refusal` (#893) |
-| Roles | `librarian`, `reviewer`, `facilitator`, `admin-agent` | `administer`; only the human at a terminal grants a role. `facilitator` (#190, `admin_set_facilitator`, audited as `facilitator`) gives a member the bounded routing role: read, who, claims, board and open asks at its own clearance, create a room, invite and the exact invite pointer post; every other operation, every admin act and the room grant are refused with the rule `facilitator` before the guard is asked. Proof: `gateway/tests/facilitator.rs`, `session/facilitator_tests.rs` |
+| Roles | `librarian`, `reviewer`, `facilitator`, `admin-agent` | `administer`; only the human at a terminal grants a role. `facilitator` (#190, `admin_set_facilitator`, audited as `facilitator`) gives a member the bounded routing role: read, who, claims, board and open asks at its own clearance, create a room, invite, the exact invite pointer post and (#902, `check_facilitator_dm`, audited as `facilitator-dm` and `create-room`) one need-info DM per open ask to that ask's asker only, in the form `need-info #N: CODE` or `need-info #N: CODE (FIELD)` (CODE from a fixed set of five, FIELD at most 40 characters of a fixed charset and not repeating another member's lobby text), in a two-member room capped at the lower clearance and needing the room-creation capability; every other operation, every other DM, a second DM for an ask, a DM to anyone but the asker, a DM about a closed ask, every admin act and the room grant are refused with the rule `facilitator` before the guard is asked. Proof: `gateway/tests/facilitator.rs`, `session/facilitator_tests.rs` (a scripted model DMs once; ask text steering it to another member, a second DM or other text in the field is refused) |
 | Policy | `room-creation`, `rate-limit`, `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `room-require`, `cap`, `chain` | `administer`; `cap` and `chain` are floors, refused to every agent by `ForbidFloors` |
 | Scrub | `scrub-add`, `scrub-remove`, `scrub-list` | `administer`; the first two are floors |
 | Listing | `refusals`, `audit`, `review-queue` | guard (`Admin`, a query) |
@@ -168,6 +168,7 @@ directly and meets only the terminal heuristic.
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
 | The facilitator (#190) has no wire or MCP form of `join` (room creation), `asks` or `invite` in the MCP tools, so a live facilitator session creates rooms and invites with the `klatch` command line (the same gateway calls); `scope` and `kind` are refused to it in the gateway, not by an operation | #901 |
+| The facilitator's need-info DM field (#902) is checked against other members' lobby message text only, not claim notes, statuses or other rooms, and cannot catch re-worded text; the field is 40 characters of a fixed charset to the asker only | #905 |
 | The room grantor (#893) has no wire method, so a wire client cannot grant | #895 |
 | A room grant raises clearance for one room's checks only; the label keys a process is given (`sealed_labels_within`) still read the global clearance | #896 |
 | `grant_room_clearance` reads the grantor, cap and labels and then writes, not in one transaction | #897 |

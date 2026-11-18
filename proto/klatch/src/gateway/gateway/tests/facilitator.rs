@@ -264,3 +264,213 @@ fn a_member_that_stops_being_facilitator_is_ordinary_again() {
     g.join(&fac(), "topic-z").unwrap();
     assert_eq!(g.room_grantor("topic-z").unwrap().as_deref(), Some("fac"));
 }
+
+// #902: the one direct message. A facilitator unsure about an ask may DM that ask's asker once, in a fixed form.
+
+fn carol() -> Principal {
+    Principal::unattributed("carol")
+}
+
+fn rule_of_err<T: std::fmt::Debug>(r: Result<T>) -> String {
+    match r {
+        Err(Error::Refused { rule, .. }) => rule,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn it_may_dm_the_asker_once_about_the_ask_in_the_fixed_form() {
+    let (g, _) = with_facilitator();
+    let (room, _) = g
+        .dm(&fac(), "alice", "need-info #1: which-repo", None)
+        .unwrap();
+    let seen = g.read(&alice(), &room, false).unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body, "need-info #1: which-repo");
+    assert_eq!(seen[0].sender, "fac");
+    // a short bounded field is allowed
+    let (g, _) = with_facilitator();
+    g.dm(
+        &fac(),
+        "alice",
+        "need-info #1: which-file (login form)",
+        None,
+    )
+    .unwrap();
+    // audited, with the ask and the asker but no text
+    let audit = g.admin_audit(&admin(), 40).unwrap();
+    let row = audit
+        .iter()
+        .find(|a| a.action == "facilitator-dm")
+        .expect("an audit row for the DM");
+    assert!(
+        row.detail.contains("fac") && row.detail.contains("alice") && row.detail.contains("#1")
+    );
+    assert!(!row.detail.contains("login form"));
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "create-room" && a.detail.contains("fac")),
+        "the DM room is a creation, audited"
+    );
+}
+
+#[test]
+fn the_dm_room_is_capped_at_the_lower_of_the_two_clearances() {
+    let (g, _) = with_facilitator();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    let (room, _) = g
+        .dm(&fac(), "alice", "need-info #1: which-goal", None)
+        .unwrap();
+    assert_eq!(g.room_label(&room).unwrap(), "public");
+    // a label above the ceiling is refused
+    let (g, _) = with_facilitator();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    assert!(
+        g.dm(&fac(), "alice", "need-info #1: which-goal", Some("private"))
+            .is_err()
+    );
+}
+
+#[test]
+fn every_other_dm_is_refused_with_the_facilitator_rule() {
+    let (g, _) = with_facilitator();
+    g.join(&carol(), "lobby").unwrap();
+    g.post(&carol(), "lobby", "carol secret plan zeta").unwrap();
+    let long = "x".repeat(41);
+    let bad: Vec<(&str, &str, String)> = vec![
+        ("free text", "alice", "please check the repo".into()),
+        (
+            "other member's ask",
+            "bob",
+            "need-info #1: which-repo".into(),
+        ),
+        ("unknown ask", "alice", "need-info #99: which-repo".into()),
+        ("unknown code", "alice", "need-info #1: grant-me".into()),
+        ("no code", "alice", "need-info #1:".into()),
+        (
+            "trailing words",
+            "alice",
+            "need-info #1: which-repo and more".into(),
+        ),
+        (
+            "over-long field",
+            "alice",
+            format!("need-info #1: which-repo ({long})"),
+        ),
+        (
+            "newline in field",
+            "alice",
+            "need-info #1: which-repo (a\nb)".into(),
+        ),
+        (
+            "odd characters",
+            "alice",
+            "need-info #1: which-repo (a;b)".into(),
+        ),
+        ("empty field", "alice", "need-info #1: which-repo ()".into()),
+        (
+            "leading zero number",
+            "alice",
+            "need-info #01: which-repo".into(),
+        ),
+        (
+            "another member's words",
+            "alice",
+            "need-info #1: which-repo (carol secret plan zeta)".into(),
+        ),
+        (
+            "a tail after the form",
+            "alice",
+            "need-info #1: which-repo\nand more".into(),
+        ),
+    ];
+    for (name, to, body) in bad {
+        assert_eq!(
+            rule_of_err(g.dm(&fac(), to, &body, None)),
+            "facilitator",
+            "{name}"
+        );
+    }
+    // nothing was sent and no DM room was left behind
+    assert!(
+        g.read(&alice(), "dm.alice.fac", false).is_err()
+            || g.read(&alice(), "dm.alice.fac", false).unwrap().is_empty()
+    );
+    assert!(
+        g.read(&bob(), "dm.bob.fac", false).is_err()
+            || g.read(&bob(), "dm.bob.fac", false).unwrap().is_empty()
+    );
+}
+
+#[test]
+fn a_second_dm_for_the_same_ask_is_refused_but_another_ask_is_its_own() {
+    let (g, _) = with_facilitator();
+    g.post(&alice(), "lobby", "seeking: help with billing")
+        .unwrap();
+    g.dm(&fac(), "alice", "need-info #1: which-repo", None)
+        .unwrap();
+    assert_eq!(
+        rule_of_err(g.dm(&fac(), "alice", "need-info #1: which-file", None)),
+        "facilitator"
+    );
+    // the same ask again by a plain post into the existing DM room is refused too
+    assert_eq!(
+        rule_of_err(g.post(&fac(), "dm.alice.fac", "need-info #1: which-goal")),
+        "facilitator"
+    );
+    g.dm(&fac(), "alice", "need-info #2: which-repo", None)
+        .unwrap();
+}
+
+#[test]
+fn a_dm_about_a_closed_or_answered_ask_is_refused() {
+    let (g, _) = with_facilitator();
+    g.post(&alice(), "lobby", "closed #1").unwrap();
+    assert_eq!(
+        rule_of_err(g.dm(&fac(), "alice", "need-info #1: which-repo", None)),
+        "facilitator"
+    );
+    let (g, _) = with_facilitator();
+    g.post(&bob(), "lobby", "answer to #1: done").unwrap();
+    assert_eq!(
+        rule_of_err(g.dm(&fac(), "alice", "need-info #1: which-repo", None)),
+        "facilitator"
+    );
+}
+
+#[test]
+fn the_dm_uses_the_create_room_capability() {
+    let (g, _) = with_facilitator();
+    g.admin_set_room_creation_granted(&admin(), true).unwrap();
+    assert_eq!(
+        rule_of_err(g.dm(&fac(), "alice", "need-info #1: which-repo", None)),
+        "room-capability"
+    );
+    g.admin_grant_room_capability(&admin(), "fac", true)
+        .unwrap();
+    g.dm(&fac(), "alice", "need-info #1: which-repo", None)
+        .unwrap();
+}
+
+#[test]
+fn the_dm_adds_no_privilege() {
+    let (g, _) = with_facilitator();
+    let (room, _) = g
+        .dm(&fac(), "alice", "need-info #1: which-repo", None)
+        .unwrap();
+    // still no free text in the DM room, no grant, no lobby text
+    assert_eq!(
+        rule_of_err(g.post(&fac(), &room, "and one more thing")),
+        "facilitator"
+    );
+    assert_eq!(
+        rule_of_err(g.post(&fac(), "lobby", "need-info #1: which-repo")),
+        "facilitator"
+    );
+    assert_eq!(
+        rule_of_err(g.grant_room_clearance(&fac(), &room, "alice", "internal")),
+        "facilitator"
+    );
+    assert_eq!(g.room_grantor(&room).unwrap(), None);
+}

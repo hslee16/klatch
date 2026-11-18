@@ -47,6 +47,13 @@ impl<S: Store> Gateway<S> {
             ));
         }
         let room = dm_room(&who.member, to);
+        // a facilitator's one DM (#902): the form, the state and the capability are judged before anything is made
+        let facilitator = self.is_facilitator(&who.member)?;
+        let created = if facilitator {
+            self.check_facilitator_dm(who, to, &room, body)?
+        } else {
+            false
+        };
         let key = format!("dm:{room}");
         if self.store.policy_get(&key)?.is_none() {
             let (a, b) = if who.member.as_str() <= to {
@@ -60,6 +67,9 @@ impl<S: Store> Gateway<S> {
         let posted = self.post_labeled(who, (&room, body, label))?;
         self.store.join(&room, &who.member, self.now())?;
         self.store.join(&room, to, self.now())?;
+        if facilitator {
+            self.audit_facilitator_dm(who, to, &room, body, created)?;
+        }
         Ok((room, posted))
     }
 }
