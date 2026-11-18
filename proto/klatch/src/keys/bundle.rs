@@ -391,6 +391,25 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
+    /// #723: a second `store` line must not replace the first, as a second `token` or `member` line must not.
+    #[test]
+    fn a_bundle_with_two_store_lines_is_refused_and_the_first_one_is_never_replaced() {
+        let d = dir("twostores");
+        let p = d.join("good");
+        sample().write(&p).unwrap();
+        let good = std::fs::read_to_string(&p).unwrap();
+        let twice = format!("{good}store {}\n", "03".repeat(32));
+        assert!(
+            read_text(&d, "twice", &twice).is_err(),
+            "a second store line was accepted"
+        );
+        assert_eq!(
+            read_text(&d, "once", &good).unwrap().store_key,
+            Key::from_bytes([1; 32])
+        );
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     #[test]
     fn as_a_key_source_it_answers_for_its_own_keys_only_and_cannot_be_written() {
         let src = sample().into_source("store-abc");
