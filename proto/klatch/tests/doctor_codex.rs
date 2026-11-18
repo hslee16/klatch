@@ -99,13 +99,15 @@ fn a_trusted_klatch_hook_is_ok_and_a_trust_record_for_another_slot_does_not_coun
     let key = format!("{}:session_start:0:0", codex.join("hooks.json").display());
     write(
         &codex.join("config.toml"),
-        &format!("[hooks.state.\"{key}\"]\ntrusted_hash = \"sha256:abc\"\n"),
+        &format!(
+            "[hooks.state.\"{key}\"]\ntrusted_hash = \"sha256:1055e4969f2467390aa1f1af05f9c325b70f1fbd5f27c654eb5fdbff8ae4626d\"\n"
+        ),
     );
     assert!(line(&doctor(&s, None, Some(&codex)), "codex hooks:").starts_with("ok"));
     write(
         &codex.join("config.toml"),
         &format!(
-            "[hooks.state.\"{}:session_start:0:1\"]\ntrusted_hash = \"sha256:abc\"\n",
+            "[hooks.state.\"{}:session_start:0:1\"]\ntrusted_hash = \"sha256:1055e4969f2467390aa1f1af05f9c325b70f1fbd5f27c654eb5fdbff8ae4626d\"\n",
             codex.join("hooks.json").display()
         ),
     );
@@ -204,4 +206,129 @@ fn init_reports_an_untrusted_klatch_hook_in_codex_and_writes_nothing_there() {
         !codex.join("config.toml").exists(),
         "init wrote the Codex config"
     );
+}
+
+// ---- #590: key indexes, inline and project hooks, a changed hook, async hooks. The hashes below were produced by
+// Codex itself (`codex app-server`, `hooks/list`, RESEARCH-NOTES 49.7), except the no-matcher one, computed by the same rule.
+
+const KLATCH_SESSION_START: &str = "/opt/klatch/klatch --discover hook --event SessionStart";
+/// The hash of the SessionStart klatch hook with no matcher by the rule that reproduced five real Codex hashes.
+const HASH_SESSION_START: &str =
+    "sha256:1055e4969f2467390aa1f1af05f9c325b70f1fbd5f27c654eb5fdbff8ae4626d";
+/// ... with the matcher `startup`.
+const HASH_SESSION_START_STARTUP: &str =
+    "sha256:b7e2c8af3709751cf204a8346551891a6a5707fb48c9b60c42a085ca932338c2";
+/// Codex's `currentHash` for the inline `[[hooks.Stop]]` klatch hook in config.toml.
+const HASH_STOP: &str = "sha256:6743c9ef4e6ebb218e996df434f804d5eab719b02bc0eba6ec6e2ffa9c701df9";
+
+fn trust(file: &Path, (key_tail, hash): (&str, &str)) -> String {
+    format!(
+        "[hooks.state.\"{}:{key_tail}\"]\ntrusted_hash = \"{hash}\"\n",
+        file.display()
+    )
+}
+
+#[test]
+fn a_file_with_several_groups_is_judged_by_the_group_and_handler_index() {
+    let s = Setup::new();
+    let codex = s.home().join("codexhome");
+    let hooks = codex.join("hooks.json");
+    let other = r#"{"type":"command","command":"/bin/echo other"}"#;
+    write(
+        &hooks,
+        &format!(
+            r#"{{"hooks":{{"SessionStart":[{{"hooks":[{other}]}},{{"matcher":"startup","hooks":[{other},{{"type":"command","command":"{KLATCH_SESSION_START}"}}]}}]}}}}"#
+        ),
+    );
+    // Codex keys the klatch hook session_start:1:1 (group 1, handler 1)
+    write(
+        &codex.join("config.toml"),
+        &trust(&hooks, ("session_start:1:1", HASH_SESSION_START_STARTUP)),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    assert!(line(&t, "codex hooks:").starts_with("ok"), "{t}");
+    // a record for the first slot does not cover it
+    write(
+        &codex.join("config.toml"),
+        &trust(&hooks, ("session_start:0:0", HASH_SESSION_START_STARTUP)),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    assert!(line(&t, "codex hooks:").starts_with("warn"), "{t}");
+}
+
+#[test]
+fn a_changed_hook_with_an_old_hash_is_not_trusted() {
+    let s = Setup::new();
+    let codex = s.home().join("codexhome");
+    let hooks = codex.join("hooks.json");
+    write(&hooks, &hooks_json(KLATCH_HOOK));
+    write(
+        &codex.join("config.toml"),
+        &trust(&hooks, ("session_start:0:0", HASH_SESSION_START)),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    assert!(line(&t, "codex hooks:").starts_with("ok"), "{t}");
+    // the same record, but the command was edited after it was trusted
+    write(
+        &hooks,
+        &hooks_json("/opt/klatch/klatch --discover hook --event SessionStart --extra"),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    let l = line(&t, "codex hooks:");
+    assert!(l.starts_with("warn"), "{t}");
+    assert!(l.contains("changed since") && l.contains("trusted"), "{t}");
+    assert!(t.contains("/hooks"), "{t}");
+}
+
+#[test]
+fn a_hook_written_inline_in_config_toml_is_read_too() {
+    let s = Setup::new();
+    let codex = s.home().join("codexhome");
+    let config = codex.join("config.toml");
+    let inline = "[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"/opt/klatch/klatch --discover hook --event Stop\"\n";
+    write(&config, inline);
+    let t = doctor(&s, None, Some(&codex));
+    let l = line(&t, "codex hooks:");
+    assert!(l.starts_with("warn") && l.contains("config.toml"), "{t}");
+    write(
+        &config,
+        &format!("{inline}\n{}", trust(&config, ("stop:0:0", HASH_STOP))),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    assert!(line(&t, "codex hooks:").starts_with("ok"), "{t}");
+}
+
+#[test]
+fn an_async_klatch_hook_is_reported_because_codex_skips_it() {
+    let s = Setup::new();
+    let codex = s.home().join("codexhome");
+    write(
+        &codex.join("hooks.json"),
+        &format!(
+            r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{KLATCH_SESSION_START}","async":true}}]}}]}}}}"#
+        ),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    let l = line(&t, "codex hooks:");
+    assert!(l.starts_with("warn"), "{t}");
+    assert!(l.contains("async") && l.contains("skips"), "{t}");
+}
+
+#[test]
+fn a_klatch_hook_in_the_project_codex_directory_is_said_to_be_unchecked() {
+    let s = Setup::new();
+    let codex = s.home().join("codexhome");
+    std::fs::create_dir_all(&codex).unwrap();
+    write(
+        &s.project().join(".codex/hooks.json"),
+        &hooks_json(KLATCH_HOOK),
+    );
+    let t = doctor(&s, None, Some(&codex));
+    let l = line(&t, "codex hooks (project):");
+    assert!(l.starts_with("warn"), "{t}");
+    assert!(
+        l.contains("cannot be checked") && l.contains(".codex/hooks.json"),
+        "{t}"
+    );
+    assert!(t.contains("/hooks"), "{t}");
 }

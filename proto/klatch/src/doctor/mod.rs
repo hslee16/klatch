@@ -74,7 +74,7 @@ pub fn run(
     store::check_store(&mut r, home);
     store::check_archives(&mut r, home);
     store::check_modes(&mut r, home);
-    session::check_codex(&mut r, home);
+    session::check_codex(&mut r, home, project_dir);
     hooks::check_hooks(&mut r, project_dir, home, exe);
     session::check_session(&mut r);
     session::check_registry(&mut r);
