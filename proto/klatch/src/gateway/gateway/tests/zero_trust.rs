@@ -56,6 +56,15 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
     ("invite", |g, w| refused(g.invite(w, "bob", "r", "r"))),
+    ("grant_room_clearance", |g, w| {
+        refused(g.grant_room_clearance(w, "r", "bob", "public"))
+    }),
+    ("admin_set_room_grantor", |g, w| {
+        refused(g.admin_set_room_grantor(w, "r", "bob", true))
+    }),
+    ("admin_set_room_clearance", |g, w| {
+        refused(g.admin_set_room_clearance(w, "r", "bob", Some("public")))
+    }),
     ("process_exited", |g, w| {
         refused(g.process_exited(w, "r", "bob"))
     }),
@@ -214,6 +223,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "builds the gateway: members' admin acts need the admin agent role",
     ),
     ("now", "the clock"),
+    (
+        "room_grantor",
+        "a policy lookup that takes no principal and returns one member name for a room (#893); the decision to grant reads it inside `grant_room_clearance`, which is GUARDED",
+    ),
     (
         "change_token",
         "when to look, never what: a number that moves when any connection commits, with no room, member or text in it. It takes no principal and returns nothing a peer sees; a session or wait uses it only to decide when to run the checked poll (#616)",

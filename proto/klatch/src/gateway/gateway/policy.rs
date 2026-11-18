@@ -16,7 +16,7 @@ impl<S: Store> Gateway<S> {
     }
 
     /// The highest clearance any agent may hold.
-    fn cap(&self, chain: &LabelChain) -> Result<String> {
+    pub(super) fn cap(&self, chain: &LabelChain) -> Result<String> {
         Ok(self
             .store
             .policy_get("cap")?
@@ -49,7 +49,10 @@ impl<S: Store> Gateway<S> {
     /// qualifies, so a room or member left with a stale label fails closed.
     pub(super) fn check_clearance(&self, who: &Principal, room: &str) -> Result<()> {
         let chain = self.chain()?;
-        let (label, held) = (self.room_label(room)?, self.clearance_of(&who.member)?);
+        let (label, held) = (
+            self.room_label(room)?,
+            self.clearance_in(&who.member, room)?,
+        );
         if chain.dominates(&held, &label) {
             return Ok(());
         }
@@ -264,7 +267,7 @@ impl<S: Store> Gateway<S> {
     }
 }
 
-fn known_label(chain: &LabelChain, label: &str) -> Result<()> {
+pub(super) fn known_label(chain: &LabelChain, label: &str) -> Result<()> {
     match chain.rank(label) {
         Some(_) => Ok(()),
         None => Err(Error::Invalid(format!(

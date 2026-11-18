@@ -35,6 +35,7 @@ pub use lease::{
     DEFAULT_CAP_SECS, DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, LeaseAction, LeasePolicy,
     LeaseSource, Observed, lease_action,
 };
+mod grantor;
 mod history;
 pub use history::{History, HistoryRange};
 mod kind;

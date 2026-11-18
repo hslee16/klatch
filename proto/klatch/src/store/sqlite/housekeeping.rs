@@ -48,13 +48,15 @@ impl SqliteStore {
                     )?;
                 }
             }
-            self.exec(
-                "DELETE FROM policy WHERE substr(key,1,?2)=?1",
-                params![
-                    format!("label:{prefix}"),
-                    (prefix.chars().count() + 6) as i64
-                ],
-            )?;
+            // a room's policy keys: its label, and its grantor and room grants (#893)
+            for key_prefix in ["label:", "grantor:", "room-clear:"] {
+                let head = format!("{key_prefix}{prefix}");
+                let n = head.chars().count() as i64;
+                self.exec(
+                    "DELETE FROM policy WHERE substr(key,1,?2)=?1",
+                    params![head, n],
+                )?;
+            }
             Ok(crate::store::DeletedRooms {
                 rooms: rooms.len(),
                 messages: messages as usize,

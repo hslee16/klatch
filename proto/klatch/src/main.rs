@@ -148,6 +148,14 @@ enum Cmd {
         #[arg(long, default_value = "lobby")]
         via: String,
     },
+    /// Grant a member a clearance in one room (#893), as that room's grantor (its creator, unless the person at the
+    /// terminal named another). At most your own clearance, the room's label and the agent cap, never the top level,
+    /// never to yourself; it raises nobody's clearance anywhere else. Audited.
+    Grant {
+        room: String,
+        member: String,
+        label: String,
+    },
     /// Watch for unread messages and, when one arrives, exit 2 with a one-line pointer (no content): the command
     /// of an `asyncRewake` hook. Quiet at its timeout. Moves no read cursor; refreshes presence.
     Wake {

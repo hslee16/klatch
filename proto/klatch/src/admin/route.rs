@@ -55,6 +55,16 @@ pub(super) enum MemberAct {
         member: String,
         off: bool,
     },
+    Grantor {
+        room: String,
+        member: String,
+        off: bool,
+    },
+    RoomClear {
+        room: String,
+        member: String,
+        label: Option<String>,
+    },
 }
 
 pub(super) enum RoleAct {
@@ -186,6 +196,19 @@ impl From<AdminCmd> for Route {
             }),
             C::Clear { member, label } => Route::member(MemberAct::Clear { member, label }),
             C::GrantRooms { member, off } => Route::member(MemberAct::GrantRooms { member, off }),
+            C::Grantor { room, member, off } => {
+                Route::member(MemberAct::Grantor { room, member, off })
+            }
+            C::RoomClear {
+                room,
+                member,
+                label,
+                off: _,
+            } => Route::member(MemberAct::RoomClear {
+                room,
+                member,
+                label,
+            }),
             C::Librarian { member, off } => Route::role(RoleAct::Librarian { member, off }),
             C::Reviewer { member, off } => Route::role(RoleAct::Reviewer { member, off }),
             C::AdminAgent { member, off } => Route::role(RoleAct::AdminAgent { member, off }),

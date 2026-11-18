@@ -84,6 +84,14 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             )?
         }
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
+        Cmd::Grant {
+            room,
+            member,
+            label,
+        } => {
+            t.grant_room_clearance(&room, &member, &label)?;
+            println!("{member} may now reach {label} in {room} only (audited)");
+        }
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
         Cmd::Receipt { room, seq } => print!(
             "{}",
