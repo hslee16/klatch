@@ -27,7 +27,8 @@ impl Codex {
     /// Run `klatch init --codex ...` with CODEX_HOME set (or not) in an empty environment.
     fn init(&self, args: &[&str], stdin: &str, codex_home: Option<&PathBuf>) -> Output {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_klatch"));
-        cmd.env_clear()
+        cmd.env_remove("KLATCH_IDENTITY_FILE")
+            .env_clear()
             .current_dir(self.setup.project())
             .env("HOME", self.setup.home())
             .arg("init")
