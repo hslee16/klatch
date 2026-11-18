@@ -132,6 +132,7 @@ fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
         }
         Cmd::Board { room } => print!("{}", render_board(&t.board(&room)?, ctx.now)),
+        Cmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
         Cmd::Asks { room } => asks(ctx, &room)?,
         Cmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
@@ -747,6 +748,23 @@ fn my_refusals(ctx: &Ctx, limit: usize) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// `klatch card ROOM [MEMBER]`: one member's card (#251). A member that is not on the board has no card, said in
+/// words and as a failure so a script can tell.
+fn card(ctx: &Ctx, room: &str, member: Option<&str>) -> Result<()> {
+    let name = member.unwrap_or(ctx.me);
+    match ctx.t.member_card(room, name)? {
+        Some(card) => {
+            print!("{}", klatch::domain::render_card(&card, room, ctx.now));
+            Ok(())
+        }
+        None => bail!(
+            "{} has no card in {}: not on its board (not in the room, or not seen for over 10 minutes)",
+            flat(name),
+            flat(room)
+        ),
+    }
 }
 
 fn asks(ctx: &Ctx, room: &str) -> Result<()> {
