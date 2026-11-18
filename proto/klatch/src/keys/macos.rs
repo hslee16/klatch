@@ -97,6 +97,13 @@ mod tests {
         kc.delete("store").unwrap();
     }
 
+    /// #723: the word an error names the key source by. It builds the source and asks for the word; no Keychain item
+    /// is read, written or deleted.
+    #[test]
+    fn the_keychain_names_itself_in_messages() {
+        assert_eq!(Keychain::new("klatch-describe-only").describe(), "keychain");
+    }
+
     #[test]
     fn a_stuck_call_is_given_up_on_and_a_quick_one_returns() {
         let t = std::time::Instant::now();

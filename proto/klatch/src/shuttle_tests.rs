@@ -2,7 +2,7 @@
 //! `RUSTFLAGS="--cfg shuttle"`; run them with `proto/scripts/shuttle`. Shuttle runs the closure many times, each with a
 //! different random order of the threads' steps, and fails a run when an assertion breaks or the threads deadlock. A pass
 //! means no failing schedule among those tried, not that none exists. Shuttle has no clock (a timeout never fires), so
-//! `sync::within` stands a timer thread in for its limit under Shuttle (#666, DESIGN item 98): the limit can pass at any
+//! `sync::within` stands a timer thread in for its limit under Shuttle (#666, DESIGN item 102): the limit can pass at any
 //! step, which the tests below use; how long the limit is, and every other time limit (heartbeats, poll intervals, the
 //! SQLite busy retries), is not covered. Shuttle also cannot see SQLite, `flock` or the OS; see CONTRIBUTING.md.
 

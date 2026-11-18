@@ -1868,7 +1868,7 @@ the first runs were green. The planted bugs are what show they can fail. The cli
 
 ### 53.7 Update, 2026-11-18: a Shuttle-visible time limit, and listeners that go away (#666)
 
-`sync::within` under `--cfg shuttle` now races the probe against a timer thread (see DESIGN item 98), so Shuttle explores
+`sync::within` under `--cfg shuttle` now races the probe against a timer thread (see DESIGN item 102), so Shuttle explores
 the limit passing at any step. Eight tests run (the four from section 53.3, one of them, the `within` hand-off test, reworded because
 the answer can now lose the race, and four new ones), 2000 schedules each, about a second
 together once built; the gate's 200-schedule smoke is unchanged in cost. Results are "no failing schedule among those
