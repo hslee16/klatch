@@ -105,6 +105,7 @@ wraps.
 | `wait` | `wait_poll`, `wait_seen` | GUARDED `wait_poll`, `wait_seen` |
 | `invite` | `invite` | as wire `invite` |
 | `router` | `join`, `open_asks`, `claims`, `who`, `invite`, repeated by the command, as the caller's own member (#189) | GUARDED each of those calls; the router holds no capability a member lacks: creating a room and inviting are the capability of #188 (`room-capability`, audited with the router's name), and `invite` refuses a member below the room's label (`clearance`, `gateway/tests/invite_clearance.rs`). It has no admin act, label or clearance call, posts only the invite pointer, and decides from claims, presence and the ask number, never message text (`domain/router.rs`: `AskFacts` has no text field). Proof: `router.rs` tests, `tests/router.rs` |
+| `grant` | `grant_room_clearance` | GUARDED `grant_room_clearance`: the operation `GrantClearance`, then the room's checks (stops, the caller's own clearance for the room), the role (a librarian or reviewer is refused) and the grantor rules (#893): the caller is the room's grantor now (`grantor`), not the grantee (`self-grant`), the label is not the top level (`top-level`), at most the agent cap (`agent-cap`), the room's label (`room-label`) and the caller's own global clearance (`own-clearance`, room grants are not passed on). Audited (`grant-clearance`: grantor, grantee, room, label); a refusal keeps a refusal row. The decision reads the policy table and roles only, never text. No wire method yet (#895). Proof: `gateway/tests/room_grantor.rs`, `tests/room_grantor.rs` |
 | `wake` | `wake_mark`, `wakeable`, `wake_summary` | GUARDED, one each |
 | `who` | `who` | as wire `who` |
 | `receipt` | `receipt` | GUARDED `receipt` |
@@ -145,7 +146,7 @@ directly and meets only the terminal heuristic.
 | Family | Commands | Check after the terminal heuristic |
 |---|---|---|
 | Rooms | `pause`, `resume`, `close`, `reopen`, `label`, `canary` | `administer`: guard, audit |
-| Members | `remove`, `allow`, `clear`, `grant-rooms` | `administer` |
+| Members | `remove`, `allow`, `clear`, `grant-rooms`, `grantor`, `room-clear` | `administer`; `grantor` (name or remove the room's grantor) and `room-clear` (set or revoke a room grant) are floors, refused to every agent and to the admin agent by `ForbidFloors` and `admin_agent_refusal` (#893) |
 | Roles | `librarian`, `reviewer`, `admin-agent` | `administer`; only the human at a terminal grants a role |
 | Policy | `room-creation`, `rate-limit`, `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `room-require`, `cap`, `chain` | `administer`; `cap` and `chain` are floors, refused to every agent by `ForbidFloors` |
 | Scrub | `scrub-add`, `scrub-remove`, `scrub-list` | `administer`; the first two are floors |
@@ -165,6 +166,9 @@ directly and meets only the terminal heuristic.
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
+| The room grantor (#893) has no wire method, so a wire client cannot grant | #895 |
+| A room grant raises clearance for one room's checks only; the label keys a process is given (`sealed_labels_within`) still read the global clearance | #896 |
+| `grant_room_clearance` reads the grantor, cap and labels and then writes, not in one transaction | #897 |
 | The member attributes (stable id, repository, directory; #181) add no wire method and no command: the host records them for a member that is already acting, and no check reads them. The repository value is an observation (a directory can name another repository's git directory), so it grants no clearance, room or access; the lowest clearance for a first-seen repository is pinned by `a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it` (#191). If a later change shows them in `who` or the board, that read needs a row here | #181 |
 
 Short-lived credentials exist already: a lifetime of 1 second to 30 days (`MAX_CREDENTIAL_TTL_SECS`), 3600 seconds by

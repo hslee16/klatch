@@ -85,6 +85,24 @@ fn members(t: &dyn Transport, act: MemberAct) -> Result<()> {
             t.admin_set_clearance(&member, &label)?;
             println!("{member} is cleared to {label}");
         }
+        MemberAct::Grantor { room, member, off } => {
+            t.admin_set_room_grantor(&room, &member, !off)?;
+            println!(
+                "{member} is {} the grantor of {room}",
+                if off { "no longer" } else { "now" }
+            );
+        }
+        MemberAct::RoomClear {
+            room,
+            member,
+            label,
+        } => {
+            t.admin_set_room_clearance(&room, &member, label.as_deref())?;
+            match label {
+                Some(l) => println!("{member} is cleared to {l} in {room} only"),
+                None => println!("{member}'s clearance in {room} is revoked"),
+            }
+        }
         MemberAct::GrantRooms { member, off } => {
             t.admin_grant_room_capability(&member, !off)?;
             println!(
