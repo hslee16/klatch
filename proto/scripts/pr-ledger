@@ -225,8 +225,9 @@ BAD = ("failure", "timed_out", "action_required", "cancelled")
 
 def needs_mergeable_state(checks):
     """Only a PR whose checks are all finished and none bad can be 'conflict' or 'behind', so only then is the pull
-    (the one place GitHub reports mergeable_state) fetched."""
-    return bool(checks) and all(c["conclusion"] is not None and c["conclusion"] not in BAD for c in checks)
+    (the one place GitHub reports mergeable_state) fetched. A PR with no checks at all is fetched too: GitHub starts no
+    workflows for a PR that conflicts with main, so zero checks can mean a conflict (#803)."""
+    return not checks or all(c["conclusion"] is not None and c["conclusion"] not in BAD for c in checks)
 
 
 def record(repo, pr, now, bench_ledger=None):
