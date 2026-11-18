@@ -125,6 +125,9 @@ pub trait Transport {
     fn board(&self, room: &str) -> Result<crate::domain::Board>;
     /// Asks in a room nobody has answered or closed.
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
+    /// Whether the process behind a room member's session has exited, by the liveness probe (#790). False for
+    /// anything the probe cannot say, so unknown counts as alive.
+    fn process_exited(&self, room: &str, member: &str) -> Result<bool>;
     /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription>;
     /// The next batch of a subscription, at most `max` messages.
@@ -361,6 +364,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>> {
         self.gateway.open_asks(&self.principal, room)
+    }
+    fn process_exited(&self, room: &str, member: &str) -> Result<bool> {
+        self.gateway.process_exited(&self.principal, room, member)
     }
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
         Ok(Subscription::new(room, from_seq, DEFAULT_WINDOW))
