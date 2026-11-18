@@ -194,6 +194,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A keystore that must never be asked: a read of the macOS Keychain by a binary it does not know is the one
+    /// slow, prompting call in key custody (#372), so a key the file already holds must never reach it.
+    struct NeverAsked;
+
+    impl KeySource for NeverAsked {
+        fn get(&self, _name: &str) -> Result<Option<Key>, Error> {
+            panic!("the older keystore was asked although the key file holds the key");
+        }
+        fn put(&self, _name: &str, _key: &Key) -> Result<(), Error> {
+            panic!("the older keystore was written");
+        }
+        fn delete(&self, _name: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        fn describe(&self) -> &'static str {
+            "never asked"
+        }
+    }
+
+    #[test]
+    fn file_first_never_asks_the_older_keystore_for_a_key_the_file_holds() {
+        let dir = std::env::temp_dir().join(format!("klatch-ff3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = crate::keys::FileKeys::new(&dir);
+        let key = Key::from_bytes([4; 32]);
+        file.put("store", &key).unwrap();
+        let src = FileFirst::new(file, Box::new(NeverAsked));
+        assert_eq!(src.get("store").unwrap().unwrap(), key);
+        assert_eq!(src.get("store").unwrap().unwrap(), key);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn file_first_writes_new_keys_to_the_file_not_the_keystore() {
         let dir = std::env::temp_dir().join(format!("klatch-ff2-{}", std::process::id()));
