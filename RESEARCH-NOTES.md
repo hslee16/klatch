@@ -1888,6 +1888,16 @@ first. It was replaced by a plant that throws the answer away. The new tests wer
 that need the timer (a deadlock and a missing outcome) and green on first run for the two reader tests, whose plants are
 what show they can fail. #667 (the store and the gateway) and #668 (ordinary tests in a Shuttle build) were not changed
 and carry needs-human questions.
+
+### 52.8d Update, 2026-11-18: one step past the first bounds, and the clean_path wrapper (#659, #660; Kani 0.68.0)
+
+| Harness | Bound | Time |
+|---|---|---|
+| clean_path_is_normal_up_to_4_bytes | `clean_bytes`, path and cwd up to 4 bytes from `/ . a`, 10 byte output (the first set stopped at 3 bytes, 91 s); starts with `/`, no `//`, no trailing `/` except the root, no `.` or `..` segment | 161 s |
+| overlaps_is_symmetric_and_reflexive_up_to_4_bytes | each path up to 4 characters from `/ a b` (was 3, 194 s) | 320 s |
+| overlaps_follows_components_two_levels_deep | `/d`, `/d/e`, `/d/e/r` and `/d/er`, names of one byte (a or b); overlaps by component not by text prefix, both directions | 195 s |
+| scopes_collide_up_to_5_bytes | up to 5 characters from `a b *` (was 3, 43 s); symmetric, reflexive, and with neither shared they collide exactly when equal | 43 s |
+
 ### 52.8b Update, 2026-11-18: LabelChain::new, min and default_cap (#658; Kani 0.68.0)
 
 `LabelChain::new`'s three rules, `min` and `default_cap` were split into `check_chain`, `min_in` and `default_cap_in`
@@ -1903,6 +1913,19 @@ Planted bugs, in the real functions, one run each, reverted:
 
 | Planted bug | Harness | Result |
 |---|---|---|
+| scopes_collide: shared marker ignored on the right | `scopes_collide_up_to_5_bytes` | caught, 41 s |
+| overlaps: match by text prefix, not component | `overlaps_follows_components_two_levels_deep` | caught, 169 s |
+| overlaps: one direction only | `overlaps_is_symmetric_and_reflexive_up_to_4_bytes` | caught, 321 s |
+| overlaps: one direction only | `overlaps_follows_components_two_levels_deep` | caught, 148 s |
+| clean_bytes: a `.` segment is kept | `clean_path_is_normal_up_to_4_bytes` | caught, 148 s |
+
+Not finished. A harness for `clean_path` itself, the wrapper that sizes a buffer with `vec!` and converts with
+`String::from_utf8_lossy`, asserting that it returns the bytes `clean_bytes` computes: at 2 bytes for the path and the cwd
+it ran 19 minutes without a result, at 1 byte 11 minutes (stopped by me, not a timeout verdict). A growing `String` is
+out of the solver's reach (section 52.4). Not kept. Honest notes: the four harnesses passed on their first run, so the
+plants are what show they can fail; none reaches the 3 level or 5 byte-path structures the tickets worry about, and the
+`clean_path` wrapper is still covered only by the differential unit test.
+
 | check_chain: a chain of one name accepted | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 524 s |
 | check_chain: names are not checked | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 150 s |
 | check_chain: repeats allowed | `a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named` | caught, 216 s |
