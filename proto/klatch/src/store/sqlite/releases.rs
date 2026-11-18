@@ -111,7 +111,42 @@ impl SqliteStore {
         member: &str,
         now: i64,
     ) -> Result<ClaimChanges> {
+        // Most digests find nothing changed; that is decided on a read snapshot, with no writer lock (#128).
+        let unchanged = self.snapshot(|| {
+            let (_, added, released) = self.claim_diff(room, member, now)?;
+            Ok(added.is_empty() && released.is_empty())
+        })?;
+        if unchanged {
+            return Ok(ClaimChanges::default());
+        }
         self.immediate(|| {
+            let (current, added, released) = self.claim_diff(room, member, now)?;
+            if added.is_empty() && released.is_empty() {
+                return Ok(ClaimChanges::default());
+            }
+            self.exec(
+                "DELETE FROM claims_seen WHERE room=?1 AND member=?2",
+                params![room, member],
+            )?;
+            for c in &current {
+                self.exec(
+                    "INSERT INTO claims_seen(room,member,owner,path,expires) VALUES(?1,?2,?3,?4,?5)",
+                    params![room, member, c.owner, c.path, c.expires],
+                )?;
+            }
+            Ok(ClaimChanges { added, released })
+        })
+    }
+
+    /// The live claims of others, those the member has not been shown as they are, and those it was shown that are
+    /// gone. A read.
+    fn claim_diff(
+        &self,
+        room: &str,
+        member: &str,
+        now: i64,
+    ) -> Result<(Vec<Claim>, Vec<Claim>, Vec<ReleasedClaim>)> {
+        {
             let current: Vec<Claim> = self
                 .claims(room, now)?
                 .into_iter()
@@ -130,7 +165,11 @@ impl SqliteStore {
                 .map_err(be)?;
             let added: Vec<Claim> = current
                 .iter()
-                .filter(|c| !seen.iter().any(|(o, p, e)| *o == c.owner && *p == c.path && *e == c.expires))
+                .filter(|c| {
+                    !seen
+                        .iter()
+                        .any(|(o, p, e)| *o == c.owner && *p == c.path && *e == c.expires)
+                })
                 .cloned()
                 .collect();
             let mut released = Vec::new();
@@ -144,20 +183,7 @@ impl SqliteStore {
                     note: self.note_of(room, o, p)?,
                 });
             }
-            if added.is_empty() && released.is_empty() {
-                return Ok(ClaimChanges::default());
-            }
-            self.exec(
-                    "DELETE FROM claims_seen WHERE room=?1 AND member=?2",
-                    params![room, member],
-                )?;
-            for c in &current {
-                self.exec(
-                        "INSERT INTO claims_seen(room,member,owner,path,expires) VALUES(?1,?2,?3,?4,?5)",
-                        params![room, member, c.owner, c.path, c.expires],
-                    )?;
-            }
-            Ok(ClaimChanges { added, released })
-        })
+            Ok((current, added, released))
+        }
     }
 }

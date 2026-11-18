@@ -72,6 +72,33 @@ moves every other waiter's token, so each polls about once more per second. A po
 The streaming session no longer queries every subscribed room on each 100 ms tick when idle; it reads one pragma per
 20 ms tick. The measurement is `measure_idle_waiters_and_wake_latency` (`--ignored --nocapture`).
 
+## The hook path without the writer lock (ticket #128, 2026-11-17)
+
+Two changes, neither of which weakens what a hook or a wait records. Last-seen is a whole second, so a touch in the
+second already stored changes nothing and now writes nothing (at most one write per member and room each second). A
+hook digest that finds no message to show, no claim of the member due a renewal and no claim change decides that on a
+read snapshot and never asks for the writer lock; a hook with something to record still takes it. Last-seen is not
+coalesced across seconds, because the receipts and the board read it to the second.
+
+Measured with `measure_hook_digest_path_under_write_load` (`cargo test --release -p klatch --lib -- --ignored
+--nocapture`): four writers, one reader doing `hook_read` then `claim_changes` and a waiter doing `wait_poll` every 10
+ms for 5 s, real clock in seconds. Release build, Apple M3 Pro, macOS 14.3, **load average 14 to 22 from other agents,
+so the timings are noisy**: one run before, two after.
+
+| Writer pause | Posts per second before / after | Hook p50 / p99 before | Hook p50 / p99 after (two runs) | Wait poll p99 before / after |
+|---|---|---|---|---|
+| 100 ms | 37 / 37 | 210 us / 25.8 ms | 219 us / 2.8 ms; 117 us / 1.8 ms | 1.1 ms / 0.6 ms; 0.4 ms |
+| 10 ms | 280 / 274; 286 | 400 us / 12.3 ms | 647 us / 6.0 ms; 245 us / 4.9 ms | 1.6 ms / 2.8 ms; 0.8 ms |
+| 1 ms | 943 / 1,244; 1,121 | 1.7 ms / 104 ms | 299 us / 104 ms; 463 us / 33 ms | 23 ms / 4.4 ms; 14.5 ms |
+| none (saturating) | 7,213 / 24,005; 14,053 | 58 ms / 2.9 s (10 calls) | 5.2 s; 130 ms / 5.3 s (2 and 7 calls) | 55 ms / 72 ms; 1.2 s |
+
+Reading it honestly: at the lighter loads the hook p99 falls by roughly a factor of ten (the 100 ms row, where most
+hooks now take no lock), and posters get faster too because their own touch is skipped within a second. At saturation
+nothing is fixed: the one hook call each second that must refresh last-seen still starves against four writers that
+never pause, because SQLite's busy handling is not fair, and the 1 ms row's p99 is within the noise of a machine at
+load 17. The remaining cost is that one write per second; removing it would mean letting last-seen go stale by a
+window, which changes what receipts and the board report (a decision, not done here).
+
 ## With encryption (ticket #166, 2026-11-14)
 
 The store is now SQLCipher under a raw 256-bit key. The cost that matters is per process, because every command and
