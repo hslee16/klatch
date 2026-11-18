@@ -15,6 +15,7 @@ mod cycle_notice;
 mod dm;
 mod error;
 mod hook;
+mod hosted_judge;
 mod judge;
 mod kind;
 mod labels;
@@ -63,6 +64,7 @@ pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, printed_len, render_hook,
     render_hook_within,
 };
+pub use hosted_judge::{HostedConfig, HostedJudge, HostedTransport};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
 pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]

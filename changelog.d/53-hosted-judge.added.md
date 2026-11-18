@@ -1,0 +1,1 @@
+- A hosted judge adapter exists as a library type, off by default and not yet reachable from any command. It never sends text posted at or above its configured label ceiling, and fails closed on any doubt about a label (#53).
