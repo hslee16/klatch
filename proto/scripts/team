@@ -88,7 +88,7 @@ Join the room first, read it, and post one short line saying what you took ($t).
 - Add files by name (never \`git add -A\` or \`git add .\`). Tests first: write the failing test, watch it fail, then implement; say honestly in the PR if a test was not red first.
 - GitHub: \`gh api\` REST only (never \`gh issue view\`, \`gh pr edit\`, or GraphQL). File a ticket for every bug, gap or limitation you find.
 - Never use em dashes in anything you write. No time or effort estimates. CI stays lightweight.
-- Rust: \`export PATH=\$HOME/.cargo/bin:\$PATH\`. Run \`proto/scripts/gate\` before the PR; it must pass.
+- Rust: \`export PATH=\$HOME/.cargo/bin:\$PATH\`. Commit, then run \`proto/scripts/gate\` before the PR; it must pass (it refuses a tree with uncommitted changes to tracked files: it checks the commit).
 - Never read or print the environment; never touch the macOS Keychain or the live store; never run \`klatch admin\` or \`klatch worker\`.
 - Use \`kill -9\` to kill; never sleep in the foreground. If a design needs a human decision, file a ticket labeled \`needs-human\` and move on.
 - Commit trailer: Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>. A PR body ends with: Generated with [Claude Code](https://claude.com/claude-code).

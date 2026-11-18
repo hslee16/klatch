@@ -24,7 +24,8 @@ chmod +x "$shim/cargo"
 run_gate() { # fail-pattern, args...
   FAKE_LOG="$work/log"; : > "$FAKE_LOG"
   FAKE_FAIL="$1"; shift
-  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" "$gate" "$@" > "$work/out" 2>&1
+  # --allow-dirty: these tests run in whatever checkout they are in, which may have uncommitted changes (#763)
+  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
 }
 
 # the seed the gate must derive from this commit
@@ -58,6 +59,35 @@ run_gate "" --long
 if grep -q "cases=5000" "$work/log"; then ok "--long raises the case budget"; else bad "--long: $(cat "$work/log")"; fi
 run_gate ""
 if grep -q "cases=500" "$work/log"; then ok "the default budget is small"; else bad "default budget: $(cat "$work/log")"; fi
+
+# ---- the gate checks the commit, not the working tree (#763): in a throwaway repository with a commit
+g="$work/grepo"; mkdir -p "$g/proto/scripts"; git -C "$g" init -q
+cp "$gate" "$g/proto/scripts/gate"
+printf 'one\n' > "$g/tracked.txt"
+git -C "$g" add tracked.txt proto/scripts/gate
+git -C "$g" -c user.name=t -c user.email=t@example.com commit -q -m first
+gate_in_g() { # fail-pattern, args...
+  FAKE_LOG="$work/log"; : > "$FAKE_LOG"
+  FAKE_FAIL="$1"; shift
+  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" "$g/proto/scripts/gate" "$@" > "$work/out" 2>&1
+}
+printf 'two\n' > "$g/tracked.txt"
+gate_in_g "fmt"
+rc=$?
+if [ "$rc" -ne 0 ] && [ ! -s "$work/log" ] && grep -q "uncommitted" "$work/out" && grep -q "tracked.txt" "$work/out" && grep -q "allow-dirty" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a tracked file changed since the commit: the gate refuses, names the file and runs nothing (#763)"; else bad "dirty tree rc=$rc: $(cat "$work/out") log: $(cat "$work/log")"; fi
+gate_in_g "fmt" --allow-dirty
+if grep -q "fmt" "$work/log" && grep -qi "working tree, not the commit" "$work/out"; then ok "--allow-dirty runs the gate anyway and says it checks the working tree, not the commit"; else bad "allow-dirty: $(cat "$work/out") log: $(cat "$work/log")"; fi
+git -C "$g" checkout -q -- tracked.txt
+printf 'scratch\n' > "$g/untracked.txt"
+gate_in_g "fmt"
+if grep -q "fmt" "$work/log" && ! grep -q "uncommitted" "$work/out"; then ok "a clean tree (an untracked file only) runs the gate"; else bad "clean tree: $(cat "$work/out") log: $(cat "$work/log")"; fi
+printf 'staged\n' > "$g/tracked.txt"; git -C "$g" add tracked.txt
+gate_in_g "fmt"
+if [ ! -s "$work/log" ] && grep -q "uncommitted" "$work/out"; then ok "a staged but uncommitted change is refused too"; else bad "staged: $(cat "$work/out") log: $(cat "$work/log")"; fi
+git -C "$g" reset -q --hard
+t0="$work/not-a-repo"; mkdir -p "$t0/proto/scripts"; cp "$gate" "$t0/proto/scripts/gate"
+FAKE_LOG="$work/log"; : > "$FAKE_LOG"
+if env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="fmt" GIT_CEILING_DIRECTORIES="$work" "$t0/proto/scripts/gate" > "$work/out" 2>&1; [ -s "$work/log" ] && ! grep -q "uncommitted" "$work/out"; then ok "outside a git checkout (an export) the gate has no commit to compare and runs"; else bad "not a repo: $(cat "$work/out")"; fi
 
 # ---- the pre-push hook installer, in a throwaway repository -------------------------------------------------------
 t="$work/repo"; mkdir -p "$t/proto/scripts"; git -C "$t" init -q
