@@ -391,6 +391,13 @@ enum Cmd {
         #[arg(long)]
         stdio: bool,
     },
+    /// Run an MCP (Model Context Protocol) server on standard input and output as the member from the environment, so
+    /// an agent runtime that can attach a tool server can post, read, wait, claim and release without a harness
+    Mcp {
+        /// Use standard input and output (the only transport so far)
+        #[arg(long)]
+        stdio: bool,
+    },
 }
 
 /// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when
@@ -783,26 +790,21 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     }
     match cmd {
         Cmd::Serve { stdio } => serve_stdio(&gateway, &caller.principal, stdio),
+        Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
             room,
             from_seq,
             follow,
             poll_ms,
-        } => {
-            let config = klatch::session::SessionConfig {
-                poll: std::time::Duration::from_millis(poll_ms),
-                ..Default::default()
-            };
-            // stdout carries protocol frames only
-            let request = klatch::session::StreamRequest {
+        } => stream_room(
+            (&gateway, &caller.principal),
+            &klatch::session::StreamRequest {
                 room: &room,
                 from_seq,
                 follow,
-            };
-            klatch::session::Session::new(&gateway, &caller.principal, &config)
-                .stream(&request, std::io::stdout().lock())
-                .map_err(Into::into)
-        }
+            },
+            poll_ms,
+        ),
         cmd => {
             let me = caller.principal.member.clone();
             let transport = Direct::new(gateway, caller.principal);
@@ -819,6 +821,21 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     }
 }
 
+/// `klatch stream`: one room's events on standard output, which carries protocol frames only.
+fn stream_room(
+    (gateway, principal): (&Gateway<SqliteStore>, &Principal),
+    request: &klatch::session::StreamRequest,
+    poll_ms: u64,
+) -> Result<()> {
+    let config = klatch::session::SessionConfig {
+        poll: std::time::Duration::from_millis(poll_ms),
+        ..Default::default()
+    };
+    klatch::session::Session::new(gateway, principal, &config)
+        .stream(request, std::io::stdout().lock())
+        .map_err(Into::into)
+}
+
 fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
     if !stdio {
         bail!("serve needs --stdio, the only transport so far");
@@ -833,6 +850,24 @@ fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: boo
             None,
         )?,
     )
+}
+
+/// `klatch mcp --stdio`: the MCP front end over the same session `serve` uses; standard output carries MCP messages only.
+fn mcp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
+    if !stdio {
+        bail!("mcp needs --stdio, the only transport so far");
+    }
+    let config = klatch::session::SessionConfig::default();
+    let session = klatch::session::Session::new(gateway, principal, &config);
+    let bin = std::env::current_exe()?;
+    let instructions = klatch::domain::subagent_brief(
+        &bin.to_string_lossy(),
+        Some(&principal.member),
+        Some(commands::DEFAULT_ROOM),
+    );
+    klatch::session::mcp::McpServer::new(&session, instructions)
+        .serve(std::io::stdin().lock(), std::io::stdout())?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -16,12 +16,30 @@ not know, and refuse a different `v`.
 |---|---|---|
 | To watch a room (history, then live) | `klatch stream ROOM [--from-seq N] [--follow]` | klatch writes frames to its standard output; you write nothing |
 | To post, claim, read, ask `who`, or subscribe with acknowledgement | `klatch serve --stdio` | you write `request` and `ack` frames, klatch writes `hello`, `response`, `message`, `caught_up`, `heartbeat` and `refusal` frames |
+| To give an agent runtime that can attach an MCP tool server the same abilities, with no harness | `klatch mcp --stdio` | the runtime speaks MCP; see "MCP" below |
 | A one-off from a shell or a hook | `klatch post ROOM "text"`, `klatch read ROOM`, `klatch claim ROOM path` (ONE word: `ticket:602`, or a quoted path) | plain text commands, no frames |
 
 `stream` is the zero-daemon producer: it prints `hello`, every message after `--from-seq`, then `caught_up`, and exits. With
 `--follow` it keeps running and prints live messages and a `heartbeat` while idle until its output closes. The room is checked
 before anything is printed, so a bad room gives an error on standard error and nothing on standard output. `serve --stdio` is
 the full duplex session: one session carries requests and their responses one way and events the other.
+
+### MCP
+
+`klatch mcp --stdio` is a Model Context Protocol server (revision 2025-06-18, JSON-RPC one message per line) for a runtime that
+can attach a tool server and has no hooks. It is the member from the process's environment (`KLATCH_NAME`, `--as-member`, a
+worker's key bundle), exactly as for every other command; no argument can name another member. Many runtimes take a tool
+server as a command and arguments in a configuration of this shape (check your runtime's own documentation for where it goes):
+
+```json
+{"mcpServers": {"klatch": {"command": "/path/to/klatch", "args": ["mcp", "--stdio"], "env": {"KLATCH_NAME": "my-bot"}}}}
+```
+
+Tools: `klatch_post`, `klatch_read` (marks read unless `peek`), `klatch_claim` (ONE path or name), `klatch_release`,
+`klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`; call it again to keep waiting) and `klatch_who`.
+Each is one call through the same gateway checks as the wire and the command line (a refusal is a tool result with
+`isError` that names the rule and never repeats the text). The convention text arrives as the server's `instructions`. The
+server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: the design item for #299 (`design/items/299-mcp-stdio.md` until it is assembled into `DESIGN.md`).
 
 The `klatch` binary is found on your `PATH`; use an absolute path from your own configuration if you do not want that, and
 never a freshly built binary on a machine whose store key is in the Keychain (it asks the user for a password).
