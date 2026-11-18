@@ -30,10 +30,39 @@ fn check(key: &[u8]) -> [u8; 2] {
     [d[0], d[1]]
 }
 
+/// The bytes a recovery code spells: the key, then its two check bytes. The check is a parameter so the Kani proofs
+/// (#656) can run the framing without SHA-256, which the solver cannot finish; the code itself always passes `check`.
+pub(crate) fn frame_with(
+    key: &[u8; KEY_LEN],
+    check: impl Fn(&[u8]) -> [u8; 2],
+) -> [u8; KEY_LEN + 2] {
+    let mut out = [0u8; KEY_LEN + 2];
+    out[..KEY_LEN].copy_from_slice(key);
+    out[KEY_LEN..].copy_from_slice(&check(key));
+    out
+}
+
+/// The key in decoded recovery-code bytes: refused as `Malformed` unless there are exactly `KEY_LEN + 2` bytes, and as
+/// `Mistyped` unless the last two are the check of the first `KEY_LEN`.
+pub(crate) fn unframe_with(
+    bytes: &[u8],
+    check: impl Fn(&[u8]) -> [u8; 2],
+) -> Result<[u8; KEY_LEN], RecoveryError> {
+    if bytes.len() != KEY_LEN + 2 {
+        return Err(RecoveryError::Malformed);
+    }
+    let (key, tail) = bytes.split_at(KEY_LEN);
+    if check(key) != [tail[0], tail[1]] {
+        return Err(RecoveryError::Mistyped);
+    }
+    let mut k = [0u8; KEY_LEN];
+    k.copy_from_slice(key);
+    Ok(k)
+}
+
 /// The recovery code of `key`: `KLATCH-XXXX-XXXX-...`.
 pub fn recovery_code(key: &Key) -> String {
-    let mut bytes = key.expose().to_vec();
-    bytes.extend(check(key.expose()));
+    let bytes = frame_with(key.expose(), check);
     let text = BASE32_NOPAD.encode(&bytes);
     let groups: Vec<&str> = text
         .as_bytes()
@@ -56,21 +85,31 @@ pub fn restore(code: &str) -> Result<Key, RecoveryError> {
     let bytes = BASE32_NOPAD
         .decode(body.as_bytes())
         .map_err(|_| RecoveryError::Malformed)?;
-    if bytes.len() != KEY_LEN + 2 {
-        return Err(RecoveryError::Malformed);
-    }
-    let (key, tail) = bytes.split_at(KEY_LEN);
-    if check(key) != [tail[0], tail[1]] {
-        return Err(RecoveryError::Mistyped);
-    }
-    let mut k = [0u8; KEY_LEN];
-    k.copy_from_slice(key);
-    Ok(Key::from_bytes(k))
+    unframe_with(&bytes, check).map(Key::from_bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_framing_is_the_key_then_the_first_two_bytes_of_its_hash_and_refuses_the_wrong_length() {
+        let key = [7u8; KEY_LEN];
+        let framed = frame_with(&key, check);
+        assert_eq!(&framed[..KEY_LEN], &key);
+        assert_eq!(&framed[KEY_LEN..], &check(&key));
+        assert_eq!(unframe_with(&framed, check), Ok(key));
+        for len in [0, 1, KEY_LEN, KEY_LEN + 1, KEY_LEN + 3] {
+            assert_eq!(
+                unframe_with(&vec![7u8; len], check),
+                Err(RecoveryError::Malformed),
+                "{len}"
+            );
+        }
+        let mut bad = framed;
+        bad[KEY_LEN + 1] ^= 1;
+        assert_eq!(unframe_with(&bad, check), Err(RecoveryError::Mistyped));
+    }
 
     #[test]
     fn a_code_restores_the_same_key() {
