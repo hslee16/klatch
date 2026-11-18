@@ -51,7 +51,7 @@ pub(crate) fn key_home(db: &Path) -> KeyHome {
             warning: None,
         };
     }
-    let (source, warning) = klatch::keys::default_source(&state_dir());
+    let (source, warning) = klatch::keys::default_source(&state_dir(), &name);
     KeyHome {
         source,
         name,
