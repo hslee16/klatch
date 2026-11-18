@@ -438,6 +438,10 @@ impl MemberStore for DownStore {
     fn rooms_of(&self, _: &str) -> Result<Vec<String>> {
         Err(Error::Backend("down".into()))
     }
+
+    fn is_blocked(&self, _: &str, _: &str) -> Result<bool> {
+        Ok(false)
+    }
 }
 impl ClaimStore for DownStore {
     fn claim(&self, _: &ClaimRequest, _: i64) -> Result<()> {
@@ -455,8 +459,22 @@ impl ClaimStore for DownStore {
 impl AskStore for DownStore {}
 impl ReviewStore for DownStore {}
 impl CredentialStore for DownStore {}
-impl PolicyStore for DownStore {}
-impl RoomStore for DownStore {}
+// the checks that run before the message store is reached see an empty, healthy policy, so each failure is the one
+// the message store gives (the silent defaults are gone, #485)
+impl PolicyStore for DownStore {
+    fn policy_get(&self, _: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    fn policy_list(&self, _: &str) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+}
+impl RoomStore for DownStore {
+    fn room_state(&self, _: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    fn set_label_keys(&self, _keys: crate::keys::LabelKeys) {}
+}
 
 #[test]
 fn store_failures_become_failed_responses_and_the_session_survives() {
