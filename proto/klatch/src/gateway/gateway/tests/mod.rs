@@ -21,6 +21,7 @@ mod crossing;
 mod delivery_view;
 mod digest;
 mod dm;
+mod facilitator;
 mod floors;
 mod guarding;
 mod handoff;

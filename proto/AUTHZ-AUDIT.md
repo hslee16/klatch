@@ -23,9 +23,10 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
    principals untouched, the breaker not counting it) and the wire test in `session/tests/wire.rs`. Gap: the
    own-record methods (#835).
 3. **Roles.** `check_role` in the same function: librarian may only look (`read-only`), reviewer may only review
-   (`reviewer`), admin agent has an allowlist (`admin-scope`, `floors`), members' admin acts need a role on a
+   (`reviewer`), the facilitator (#190) may only look, create a room, invite and post the invite pointer (`facilitator`,
+   enforced before any guard is asked), admin agent has an allowlist (`admin-scope`, `floors`), members' admin acts need a role on a
    members' gateway, room creation and invite need the capability (`room-capability`). Proof: `admin_role.rs`,
-   `librarian.rs`, `reviewer.rs`, `room_capability.rs`, `floors.rs`.
+   `librarian.rs`, `reviewer.rs`, `facilitator.rs`, `room_capability.rs`, `floors.rs`.
 4. **Stops, runs, direct messages, clearance.** `authorize` adds, for an operation about a room: the breaker, a
    member removed from the room, a pause, a closed room, run rooms, direct-message membership and clearance against
    the room's label. Proof: `guarding.rs`, `labels.rs`, `dm.rs`, `runs.rs`, `tripwire.rs`.
@@ -150,7 +151,7 @@ directly and meets only the terminal heuristic.
 |---|---|---|
 | Rooms | `pause`, `resume`, `close`, `reopen`, `label`, `canary` | `administer`: guard, audit |
 | Members | `remove`, `allow`, `clear`, `grant-rooms`, `grantor`, `room-clear` | `administer`; `grantor` (name or remove the room's grantor) and `room-clear` (set or revoke a room grant) are floors, refused to every agent and to the admin agent by `ForbidFloors` and `admin_agent_refusal` (#893) |
-| Roles | `librarian`, `reviewer`, `admin-agent` | `administer`; only the human at a terminal grants a role |
+| Roles | `librarian`, `reviewer`, `facilitator`, `admin-agent` | `administer`; only the human at a terminal grants a role. `facilitator` (#190, `admin_set_facilitator`, audited as `facilitator`) gives a member the bounded routing role: read, who, claims, board and open asks at its own clearance, create a room, invite and the exact invite pointer post; every other operation, every admin act and the room grant are refused with the rule `facilitator` before the guard is asked. Proof: `gateway/tests/facilitator.rs`, `session/facilitator_tests.rs` |
 | Policy | `room-creation`, `rate-limit`, `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `room-require`, `cap`, `chain` | `administer`; `cap` and `chain` are floors, refused to every agent by `ForbidFloors` |
 | Scrub | `scrub-add`, `scrub-remove`, `scrub-list` | `administer`; the first two are floors |
 | Listing | `refusals`, `audit`, `review-queue` | guard (`Admin`, a query) |
@@ -169,6 +170,7 @@ directly and meets only the terminal heuristic.
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
+| The facilitator (#190) has no wire or MCP form of `join` (room creation), `asks` or `invite` in the MCP tools, so a live facilitator session creates rooms and invites with the `klatch` command line (the same gateway calls); `scope` and `kind` are refused to it in the gateway, not by an operation | #901 |
 | The room grantor (#893) has no wire method, so a wire client cannot grant | #895 |
 | A room grant raises clearance for one room's checks only; the label keys a process is given (`sealed_labels_within`) still read the global clearance | #896 |
 | `grant_room_clearance` reads the grantor, cap and labels and then writes, not in one transaction | #897 |

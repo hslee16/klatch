@@ -185,6 +185,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_set_reviewer", |g, w| {
         refused(g.admin_set_reviewer(w, "bob", true))
     }),
+    ("admin_set_facilitator", |g, w| {
+        refused(g.admin_set_facilitator(w, "bob", true))
+    }),
     ("admin_set_admin_agent", |g, w| {
         refused(g.admin_set_admin_agent(w, "bob", true))
     }),
@@ -296,6 +299,7 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ),
     ("is_admin_agent", "a role lookup; takes no principal"),
     ("is_librarian", "a role lookup; takes no principal"),
+    ("is_facilitator", "a role lookup; takes no principal"),
     (
         "can_create_rooms",
         "a policy lookup `check_room_capability` uses on every call; takes no principal",

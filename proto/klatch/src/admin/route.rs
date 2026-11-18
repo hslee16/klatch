@@ -70,6 +70,7 @@ pub(super) enum MemberAct {
 pub(super) enum RoleAct {
     Librarian { member: String, off: bool },
     Reviewer { member: String, off: bool },
+    Facilitator { member: String, off: bool },
     AdminAgent { member: String, off: bool },
 }
 
@@ -211,6 +212,7 @@ impl From<AdminCmd> for Route {
             }),
             C::Librarian { member, off } => Route::role(RoleAct::Librarian { member, off }),
             C::Reviewer { member, off } => Route::role(RoleAct::Reviewer { member, off }),
+            C::Facilitator { member, off } => Route::role(RoleAct::Facilitator { member, off }),
             C::AdminAgent { member, off } => Route::role(RoleAct::AdminAgent { member, off }),
             C::RoomCreation { policy } => Route::policy(PolicyAct::RoomCreation { policy }),
             C::RateLimit { posts, secs, off } => {
@@ -324,6 +326,11 @@ mod tests {
             off: false,
         };
         assert_eq!(family(librarian), "role");
+        let facilitator = AdminCmd::Facilitator {
+            member: "m".into(),
+            off: false,
+        };
+        assert_eq!(family(facilitator), "role");
         let admin = AdminCmd::AdminAgent {
             member: "m".into(),
             off: true,
