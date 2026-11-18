@@ -137,6 +137,32 @@ fn secs_or_off(secs: Option<i64>, off: bool, name: &str) -> Result<Option<i64>> 
     }
 }
 
+fn room_stale(t: &dyn Transport, room: &str, (secs, off): (Option<i64>, bool)) -> Result<()> {
+    let secs = secs_or_off(secs, off, "room-stale ROOM")?;
+    t.admin_set_room_stale(room, secs)?;
+    let said =
+        secs.map(|s| format!("an ask with no claim is reported to its asker after {s} seconds"));
+    println!("{}", room_said(room, said, "the default stale threshold"));
+    Ok(())
+}
+
+/// What a room setting change prints: what it now says, or that the room is back to the default.
+fn room_said(room: &str, now: Option<String>, default: &str) -> String {
+    match now {
+        Some(text) => format!("{}: {text}", flat(room)),
+        None => format!("{} is back to {default}", flat(room)),
+    }
+}
+
+fn room_ask_lease(t: &dyn Transport, room: &str, (secs, off): (Option<i64>, bool)) -> Result<()> {
+    let secs = secs_or_off(secs, off, "room-ask-lease ROOM")?;
+    t.admin_set_room_ask_lease(room, secs)?;
+    let said =
+        secs.map(|s| format!("an ask claim lasts {s} seconds unless the claimer asks for less"));
+    println!("{}", room_said(room, said, "the default ask lease"));
+    Ok(())
+}
+
 fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
     match act {
         PolicyAct::RoomCreation { policy } => {
@@ -179,6 +205,8 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
                 None => println!("the lease grace is back to its default"),
             }
         }
+        PolicyAct::RoomStale { room, secs, off } => room_stale(t, &room, (secs, off))?,
+        PolicyAct::RoomAskLease { room, secs, off } => room_ask_lease(t, &room, (secs, off))?,
         PolicyAct::Cap { label } => {
             t.admin_set_cap(&label)?;
             println!("the agent cap is {label}");
