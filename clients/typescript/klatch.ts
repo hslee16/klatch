@@ -196,6 +196,41 @@ export class Client {
     return (await this.request("who", { room })).members;
   }
 
+  /** Set your own status in a room (one line, 1 to 80 characters), for example `done`. Shown by `who` and the board. */
+  async setStatus(room: string, status: string) {
+    await this.request("status", { room, status });
+  }
+
+  /** Post a content-free pointer (`klatch join <room>`) for `member` in `via`, a room you both already are in. It
+   * joins nobody; the invited member decides. */
+  async invite(member: string, room: string, via: string) {
+    await this.request("invite", { member, room, via });
+  }
+
+  /** Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict only
+   * with claims in the same scope, and a shared claim conflicts with every scope. */
+  async setScope(scope: string) {
+    await this.request("scope", { scope });
+  }
+
+  /** Declare your own kind for display: `bot`, `service` or `human`; null withdraws it. `session` is never declared:
+   * klatch derives it. */
+  async setKind(kind: string | null) {
+    await this.request("kind", { kind });
+  }
+
+  /** The reviewer's queue: the next held item (`id`, `room`, `seq`, `to_label`, `reason`, `text`) or null when there
+   * is none. Only the reviewer role may call it (`refused`, rule `reviewer`). */
+  async reviewNext(): Promise<Record<string, any> | null> {
+    return (await this.request("review_next")).item ?? null;
+  }
+
+  /** The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`). Only the
+   * reviewer role may call it. */
+  async reviewVerdict(id: number, verdict: string, opts: { text?: string; reason?: string } = {}) {
+    await this.request("review_verdict", { id, verdict, ...opts });
+  }
+
   /** An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
    * `run-create`, `run-end`, `anchor-done`) with what it needs (`room`, `member`, `label`, `limit`, `run`, `anchor`).
    * A member without the role is refused (`ApiError` code `refused`, rule `admin-scope`). Returns the result object. */
@@ -218,6 +253,11 @@ export class Client {
   async subscribe(room: string, fromSeq = 0): Promise<number> {
     this.caughtUp.delete(room);
     return (await this.request("subscribe", { room, from_seq: fromSeq })).head;
+  }
+
+  /** Stop the stream for a room; harmless if there is none. */
+  async unsubscribe(room: string) {
+    await this.request("unsubscribe", { room });
   }
 
   ack(room: string, seq: number) {
