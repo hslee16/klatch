@@ -181,6 +181,56 @@ fn a_bad_scope_is_an_invalid_error_over_the_wire() {
     assert_invalid_request("scope", json!({"scope":"has space"}));
 }
 
+#[test]
+fn a_declared_kind_shows_in_who_over_the_wire_and_a_null_kind_withdraws_it() {
+    let g = gateway();
+    run(
+        &g,
+        &alice(),
+        &[req("j", "post", json!({"room":"r","body":"hi"}))],
+    );
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req("k", "kind", json!({"kind":"bot"})),
+            req("w", "who", json!({"room":"r"})),
+        ],
+    );
+    assert!(response(&f, "k").0, "kind failed");
+    let members = response(&f, "w").1.unwrap()["members"].clone();
+    let a = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "alice")
+        .unwrap();
+    assert_eq!(a["kind"], "bot");
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req("k", "kind", json!({"kind":null})),
+            req("w", "who", json!({"room":"r"})),
+        ],
+    );
+    assert!(response(&f, "k").0);
+    let members = response(&f, "w").1.unwrap()["members"].clone();
+    let a = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "alice")
+        .unwrap();
+    assert!(a.get("kind").is_none(), "{a}");
+}
+
+#[test]
+fn a_kind_outside_the_vocabulary_or_a_session_is_an_invalid_error_over_the_wire() {
+    assert_invalid_request("kind", json!({"kind":"robot"}));
+    assert_invalid_request("kind", json!({"kind":"session"}));
+}
+
 // ---- typed handoffs on the wire (#123) ----
 
 #[test]

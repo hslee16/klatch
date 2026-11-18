@@ -4,7 +4,7 @@
 //! not been seen for a while (DESIGN section 25.8).
 
 use crate::domain::hook::clip;
-use crate::domain::{MemberInfo, Message, OpenAsk, Parked, flat};
+use crate::domain::{MemberInfo, MemberKind, Message, OpenAsk, Parked, flat};
 
 /// A message whose body starts with this text is an offer.
 pub const OFFER_PREFIX: &str = "offering:";
@@ -61,6 +61,8 @@ pub struct BoardMember {
     pub parent: Option<String>,
     /// A declared long wait that still holds.
     pub parked: Option<Parked>,
+    /// What sort of member this is (item 95), if known.
+    pub kind: Option<MemberKind>,
 }
 
 /// The current state of a room derived from its log: open asks, current offers and members.
@@ -116,6 +118,9 @@ fn who_line(m: &MemberInfo, now: Now) -> String {
     );
     if let Some(parent) = &m.parent {
         out.push_str(&format!("\tchild of {}", flat(parent)));
+    }
+    if let Some(kind) = m.kind {
+        out.push_str(&format!("\tkind: {}", kind.word()));
     }
     if let Some(status) = &m.status {
         out.push_str(&format!("\tstatus: {}", flat(status)));
@@ -203,8 +208,12 @@ fn render_members(board: &Board, now: Now, out: &mut String) {
             .as_deref()
             .map(|p| format!(", child of {}", flat(p)))
             .unwrap_or_default();
+        let kind = m
+            .kind
+            .map(|k| format!(", kind: {}", k.word()))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "  {} last seen {}s ago{parent}{status}{parked}\n",
+            "  {} last seen {}s ago{parent}{kind}{status}{parked}\n",
             flat(&m.name),
             now.since(m.last_seen)
         ));

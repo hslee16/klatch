@@ -1,7 +1,7 @@
 //! The plain request methods: each reads its parameters, calls the gateway as the session's principal and shapes
 //! the answer.
 
-use crate::domain::{Claim, Error, MemberInfo, Message, Posted, Principal};
+use crate::domain::{Claim, Error, MemberInfo, MemberKind, Message, Posted, Principal};
 use crate::gateway::{ClaimSpec, Gateway};
 use crate::protocol::ServerFrame;
 use crate::session::frames::{fail_with, failure, message_json, ok};
@@ -75,6 +75,11 @@ struct ScopeParams {
     scope: String,
 }
 #[derive(Deserialize)]
+struct KindParams {
+    /// `bot`, `service` or `human`; null or absent withdraws the declaration.
+    kind: Option<String>,
+}
+#[derive(Deserialize)]
 struct StatusParams {
     room: String,
     status: String,
@@ -127,6 +132,9 @@ fn members_json(ms: &[MemberInfo]) -> Value {
         let mut v = json!({"name": m.name, "last_seen": m.last_seen});
         if let Some(status) = &m.status {
             v["status"] = json!(status);
+        }
+        if let Some(kind) = m.kind {
+            v["kind"] = json!(kind.word());
         }
         v
     };
@@ -204,6 +212,18 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         ),
         "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
         "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
+        "kind" => call.run(
+            |p: KindParams| {
+                let kind = match p.kind.as_deref() {
+                    None => None,
+                    Some(word) => Some(MemberKind::parse(word).ok_or_else(|| {
+                        Error::Invalid("kind is bot, service or human, or null".into())
+                    })?),
+                };
+                g.set_kind(who, kind)
+            },
+            empty,
+        ),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
                 Some(n) => g.release_with_note(who, (&p.room, &p.path), n),

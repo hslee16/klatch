@@ -122,6 +122,7 @@ impl MemberStore for SqliteStore {
                         why: why.unwrap_or_default(),
                         back_by,
                     }),
+                    kind: None,
                 })
             },
         )

@@ -48,6 +48,9 @@ pub struct MemberInfo {
     /// A declared long wait (a `parked:` post or the Stop hook). It holds only while its return time is ahead
     /// (`Parked::holds`); an expired one is still returned so a reader can say the return time has passed.
     pub parked: Option<crate::domain::Parked>,
+    /// What sort of member this is (item 95), for display only. The store leaves it `None`; the gateway fills it from
+    /// the session record (a session) or the member's own declaration.
+    pub kind: Option<crate::domain::MemberKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
