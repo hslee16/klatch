@@ -55,6 +55,8 @@ pub struct ProcRow {
     /// First letter of the `ps` state: R, S, I, U, Z (zombie), T (stopped).
     pub state: char,
     pub cpu_ms: u64,
+    /// How long the process has been running (`ps -o etime=`); `None` when it was not readable.
+    pub elapsed_ms: Option<u64>,
 }
 
 /// Where the probe gets everything but the identity check, behind a trait so tests use made-up files and tables.
@@ -112,6 +114,9 @@ pub struct Evidence {
     /// Whether tree CPU grew since the previous sample; `None` with no previous sample or no reading.
     pub cpu_grew: Option<bool>,
     pub children: Option<usize>,
+    /// Descendants that were already running when the busy turn began (MCP servers and other helpers, #538); they
+    /// are not counted in `children`.
+    pub resident_children: Option<usize>,
     /// How long since the last sign of activity while busy.
     pub quiet_for_ms: Option<u64>,
     /// Names of the layers that could not be read.
@@ -145,11 +150,13 @@ pub fn probe(
         }
         _ => return finish(Verdict::Gone, ev, now, None),
     }
-    let tree = host.procs().and_then(|rows| tree_of(&rows, rec.pid));
+    ev.turn = host.turn(rec.pid);
+    let since = turn_start(&ev.turn, now).map(|start| (start, now));
+    let tree = host.procs().and_then(|rows| tree_of(&rows, rec.pid, since));
     ev.proc_state = tree.map(|x| x.state);
     ev.cpu_ms = tree.map(|x| x.cpu_ms);
     ev.children = tree.map(|x| x.live_children);
-    ev.turn = host.turn(rec.pid);
+    ev.resident_children = tree.map(|x| x.resident_children);
     ev.transcript = host.transcript(rec).map(|m| clamp(m, now));
     ev.task_output = host.task_output(rec).map(|m| clamp(m, now));
     let progress = Progress::new(&ev, prev, now, t);
@@ -191,6 +198,7 @@ impl Evidence {
             cpu_ms: None,
             cpu_grew: None,
             children: None,
+            resident_children: None,
             quiet_for_ms: None,
             unknown: Vec::new(),
         }
@@ -209,16 +217,41 @@ fn clamp(m: FileMeta, now: u64) -> FileMeta {
 struct Tree {
     state: char,
     cpu_ms: u64,
+    /// Live descendants that count as a running tool call.
     live_children: usize,
+    /// Live descendants known to have started before the turn did.
+    resident_children: usize,
+}
+
+/// Ages are whole seconds in `ps` and the registry time is in milliseconds: a descendant that started this much
+/// before the recorded turn start still counts as started with the turn.
+const START_SLACK_MS: u64 = 2_000;
+
+/// When the busy turn began: the registry's status time, only while busy and not in the future. `None` otherwise,
+/// and then no descendant is called resident.
+fn turn_start(turn: &Turn, now: u64) -> Option<u64> {
+    turn.updated_ms
+        .filter(|u| *u <= now && turn.status == Some(Status::Busy))
+}
+
+/// Whether a descendant row started before the turn at `(start, now)` did. A row with no readable age is never
+/// called resident, so an unreadable age keeps the earlier behaviour (it counts as a child).
+fn started_before(row: &ProcRow, turn: Option<(u64, u64)>) -> bool {
+    let (Some((start, now)), Some(elapsed)) = (turn, row.elapsed_ms) else {
+        return false;
+    };
+    now.saturating_sub(elapsed).saturating_add(START_SLACK_MS) < start
 }
 
 /// The session process, the CPU of it and everything below it, and how many descendants are alive. `None` when
-/// the table has no row for the pid (it ended between the identity check and the read).
-fn tree_of(rows: &[ProcRow], pid: u32) -> Option<Tree> {
+/// the table has no row for the pid (it ended between the identity check and the read). With `turn` (its start and
+/// now), descendants that began before the turn are counted apart: they are what a session carries between turns
+/// (MCP servers), not a tool it is waiting on (#538).
+fn tree_of(rows: &[ProcRow], pid: u32, turn: Option<(u64, u64)>) -> Option<Tree> {
     let root = rows.iter().find(|r| r.pid == pid)?;
     let mut seen = vec![pid];
     let mut cpu_ms = root.cpu_ms;
-    let mut live_children = 0;
+    let (mut live_children, mut resident_children) = (0, 0);
     let mut i = 0;
     while i < seen.len() {
         let parent = seen[i];
@@ -229,13 +262,21 @@ fn tree_of(rows: &[ProcRow], pid: u32) -> Option<Tree> {
             }
             seen.push(r.pid);
             cpu_ms += r.cpu_ms;
-            live_children += usize::from(r.state != 'Z');
+            if r.state == 'Z' {
+                continue;
+            }
+            if started_before(r, turn) {
+                resident_children += 1;
+            } else {
+                live_children += 1;
+            }
         }
     }
     Some(Tree {
         state: root.state,
         cpu_ms,
         live_children,
+        resident_children,
     })
 }
 
@@ -346,25 +387,6 @@ pub fn parse_turn(json: &str) -> Turn {
     Turn { status, updated_ms }
 }
 
-/// `ps -o time=` to milliseconds: `M:SS.cc`, `H:MM:SS` or `D-HH:MM:SS`. `None` for anything else.
-pub fn parse_cpu_time(text: &str) -> Option<u64> {
-    let (days, clock) = match text.split_once('-') {
-        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
-        None => (0, text),
-    };
-    let parts: Vec<&str> = clock.split(':').collect();
-    let (hours, minutes, seconds) = match parts[..] {
-        [m, s] => (0, m.parse::<u64>().ok()?, s),
-        [h, m, s] => (h.parse::<u64>().ok()?, m.parse::<u64>().ok()?, s),
-        _ => return None,
-    };
-    if seconds.is_empty() || !seconds.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
-        return None;
-    }
-    let ms = (seconds.parse::<f64>().ok()? * 1000.0).round() as u64;
-    Some(((days * 24 + hours) * 60 + minutes) * 60_000 + ms)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +427,15 @@ mod tests {
             ppid,
             state,
             cpu_ms,
+            elapsed_ms: None,
+        }
+    }
+
+    /// A row that has been running for `elapsed_ms`.
+    fn row_aged(pid: u32, ppid: u32, elapsed_ms: u64) -> ProcRow {
+        ProcRow {
+            elapsed_ms: Some(elapsed_ms),
+            ..row(pid, ppid, 'S', 0)
         }
     }
 
@@ -485,6 +516,117 @@ mod tests {
         );
         assert_eq!(p.verdict, Verdict::Unknown);
         assert!(p.evidence.unknown.contains(&"identity"));
+    }
+
+    // #538: descendants that were already running when the turn began (MCP servers, helpers) are not a tool call
+
+    const DAY: u64 = 24 * 60 * MIN;
+
+    fn host_with_children(children: Vec<ProcRow>) -> FakeHost {
+        // busy since 30 minutes ago, no sign of progress since
+        let mut h = host();
+        let mut rows = vec![row_aged(100, 1, 5 * DAY)];
+        rows.extend(children);
+        h.rows = Some(rows);
+        h
+    }
+
+    #[test]
+    fn a_resident_mcp_server_does_not_make_a_quiet_busy_session_wait_on_a_tool() {
+        // two MCP servers started days ago, a turn that began 30 minutes ago: nothing is running for the turn
+        let h = host_with_children(vec![
+            row_aged(200, 100, 5 * DAY),
+            row_aged(201, 100, 4 * DAY),
+        ]);
+        let p = run(&h, None);
+        assert_eq!(p.verdict, Verdict::Stuck);
+        assert_eq!(p.evidence.children, Some(0));
+        assert_eq!(p.evidence.resident_children, Some(2));
+    }
+
+    #[test]
+    fn a_child_started_after_the_turn_began_is_a_tool_call() {
+        // started 20 minutes ago, ten minutes after the turn began
+        let h = host_with_children(vec![
+            row_aged(200, 100, 5 * DAY),
+            row_aged(300, 100, 20 * MIN),
+        ]);
+        let p = run(&h, None);
+        assert_eq!(p.verdict, Verdict::WaitingOnTool);
+        assert_eq!(p.evidence.children, Some(1));
+        assert_eq!(p.evidence.resident_children, Some(1));
+    }
+
+    #[test]
+    fn a_grandchild_started_this_turn_counts_even_below_a_resident_server() {
+        let h = host_with_children(vec![
+            row_aged(200, 100, 5 * DAY),
+            row_aged(300, 200, 5 * MIN),
+        ]);
+        assert_eq!(verdict(&h), Verdict::WaitingOnTool);
+    }
+
+    #[test]
+    fn a_child_whose_age_is_unknown_still_counts() {
+        // the old behaviour: no age, no way to call it resident
+        let h = host_with_children(vec![row(200, 100, 'S', 0)]);
+        let p = run(&h, None);
+        assert_eq!(p.verdict, Verdict::WaitingOnTool);
+        assert_eq!(p.evidence.resident_children, Some(0));
+    }
+
+    #[test]
+    fn a_child_that_started_in_the_second_the_turn_began_counts() {
+        // ps ages are whole seconds and the registry time is milliseconds: two seconds of slack
+        let at_turn_start = 30 * MIN;
+        for (elapsed, counts) in [
+            (at_turn_start + 1_999, true),
+            (at_turn_start + 2_000, true),
+            (at_turn_start + 2_001, false),
+        ] {
+            let h = host_with_children(vec![row_aged(200, 100, elapsed)]);
+            let want = if counts {
+                Verdict::WaitingOnTool
+            } else {
+                Verdict::Stuck
+            };
+            assert_eq!(verdict(&h), want, "elapsed {elapsed}");
+        }
+    }
+
+    #[test]
+    fn with_no_known_turn_start_every_descendant_counts() {
+        let mut h = host_with_children(vec![row_aged(200, 100, 5 * DAY)]);
+        h.turn.updated_ms = None;
+        let p = run(&h, None);
+        assert_eq!(p.evidence.resident_children, Some(0));
+        assert_eq!(p.evidence.children, Some(1));
+        assert_eq!(p.verdict, Verdict::WaitingOnTool);
+    }
+
+    #[test]
+    fn a_turn_start_in_the_future_is_not_used_to_exclude_anything() {
+        let mut h = host_with_children(vec![row_aged(200, 100, 5 * DAY)]);
+        h.turn.updated_ms = Some(NOW + 10 * MIN);
+        let p = run(&h, None);
+        assert_eq!(p.evidence.resident_children, Some(0));
+        assert_eq!(p.evidence.children, Some(1));
+    }
+
+    #[test]
+    fn an_idle_session_is_unaffected_by_its_resident_children() {
+        let mut h = host_with_children(vec![row_aged(200, 100, 5 * DAY)]);
+        h.turn.status = Some(Status::Idle);
+        assert_eq!(verdict(&h), Verdict::WaitingOnHuman);
+    }
+
+    #[test]
+    fn a_resident_server_that_is_a_zombie_is_not_counted_either_way() {
+        let mut dead = row_aged(200, 100, 5 * DAY);
+        dead.state = 'Z';
+        let p = run(&host_with_children(vec![dead]), None);
+        assert_eq!(p.evidence.children, Some(0));
+        assert_eq!(p.evidence.resident_children, Some(0));
     }
 
     #[test]
@@ -726,20 +868,6 @@ mod tests {
             );
         }
         assert_eq!(parse_turn(r#"{"status":"thinking"}"#).status, None);
-    }
-
-    #[test]
-    fn parse_cpu_time_reads_the_ps_formats() {
-        assert_eq!(parse_cpu_time("0:00.78"), Some(780));
-        assert_eq!(parse_cpu_time("82:51.93"), Some(82 * 60_000 + 51_930));
-        assert_eq!(parse_cpu_time("1:02:03"), Some(3_723_000));
-        assert_eq!(
-            parse_cpu_time("2-01:00:00"),
-            Some(2 * 86_400_000 + 3_600_000)
-        );
-        for bad in ["", "abc", "1:2:3:4", "-", "1:xx"] {
-            assert_eq!(parse_cpu_time(bad), None, "{bad}");
-        }
     }
 
     #[test]
