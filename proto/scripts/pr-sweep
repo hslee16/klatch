@@ -129,7 +129,7 @@ integrate() {
   ref="$(pr_field "$n" .head.ref)"
   [ -n "$ref" ] || { say "#$n: no head branch found"; return 1; }
   if [ -n "$(git status --porcelain 2> /dev/null)" ]; then say "#$n: the working tree is not clean; not switching branches"; return 1; fi
-  git fetch -q origin main "+pull/$n/head:refs/pr-sweep/$n" || { say "#$n: fetch failed"; return 1; }
+  git fetch -q --no-prune origin main "+pull/$n/head:refs/pr-sweep/$n" || { say "#$n: fetch failed"; return 1; }
   git checkout -q -B "alee/integ-$n" origin/main || { say "#$n: cannot make alee/integ-$n"; return 1; }
   cur="$(git rev-parse --abbrev-ref HEAD)"
   if [ "$cur" != "alee/integ-$n" ]; then say "#$n: on $cur, not alee/integ-$n; refusing to merge"; return 1; fi
@@ -137,8 +137,13 @@ integrate() {
     say "#$n: merged main cleanly"
   else
     bad="$(git diff --name-only --diff-filter=U | grep -vE '^(DESIGN.md|CHANGELOG.md|VERSIONING.md|proto/klatch-bench/src/scenarios/mod.rs)$')"
-    if [ -n "$bad" ] || [ -z "$(git diff --name-only --diff-filter=U)" ]; then
-      say "#$n: CODE CONFLICT in: ${bad:-(unknown)}"
+    if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+      say "#$n: the merge failed without a conflict (see git merge by hand); not touched"
+      git merge --abort 2> /dev/null
+      return 1
+    fi
+    if [ -n "$bad" ]; then
+      say "#$n: CODE CONFLICT in: $bad"
       git merge --abort
       return 3
     fi
