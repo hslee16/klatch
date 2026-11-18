@@ -11,6 +11,7 @@ mod host;
 mod liveness;
 mod probe;
 mod process;
+mod pstime;
 mod record;
 mod selftest;
 mod sessions;
@@ -24,9 +25,10 @@ pub use host::SysHost;
 pub use liveness::{Liveness, check};
 pub use probe::{
     Evidence, FileMeta, Host, LAYERS, Probe, ProcRow, Sample, Status, Thresholds, Turn, Verdict,
-    parse_cpu_time, parse_turn, probe,
+    parse_turn, probe,
 };
 pub use process::{ProcInfo, ProcessTable, PsTable};
+pub use pstime::parse_cpu_time;
 pub use record::{FsRegistry, Record, Registry, parse_record};
 pub use selftest::{LayerReport, SelfTest, self_test};
 pub use sessions::{Sessions, list};
