@@ -168,6 +168,35 @@ impl Codex {
     pub fn paper(trust: HookTrust) -> Codex {
         Codex { trust }
     }
+
+    /// What the level of `c` rests on, in RESEARCH-NOTES section 49 (the findings of #548, #590 and #782): OBSERVED
+    /// claims are the only ones that may be native; every NOT VERIFIED claim is degraded until someone runs the
+    /// live check listed in the design item for #64 with a real Codex login.
+    pub fn ground(c: Capability) -> &'static str {
+        match c {
+            Capability::ContextInjection => {
+                "NOT VERIFIED: plain stdout of a UserPromptSubmit hook reaching the model is documented, not seen; the 401 stopped the turn first (49.3)"
+            }
+            Capability::SessionIdentity => {
+                "OBSERVED (49.3, Codex 0.147.0, hooks run under the bypass flag): hook stdin carries session_id equal to the thread_id of the stream; native only once the human trusted the hooks (49.7). Same-user evidence, not a verified process"
+            }
+            Capability::Wake => {
+                "NOT VERIFIED: codex queue is absent from 0.147.0 and unrun on 0.169.0, has no sender or acknowledgement (49.3, 49.7); async hooks are skipped, so no asyncRewake (49.7)"
+            }
+            Capability::PreActionEnforcement => {
+                "NOT VERIFIED: klatch installs no PreToolUse hook for Codex because no run of one was seen (49.8)"
+            }
+            Capability::PermissionMode => {
+                "NOT VERIFIED: nothing in 49.3 to 49.8 shows a hook or event carrying Codex's permission mode"
+            }
+            Capability::HeadlessWorker => {
+                "OBSERVED (49.3, Codex 0.147.0): codex exec --json starts a non-interactive run and streams events with a thread_id; the model turn itself was not run (401, no login)"
+            }
+            Capability::PullPath => {
+                "NOT VERIFIED: a Codex session running klatch through its shell or an MCP entry in config.toml was never run (49.3, 49.8)"
+            }
+        }
+    }
 }
 
 impl Harness for Codex {
@@ -175,22 +204,22 @@ impl Harness for Codex {
         "codex"
     }
     fn level(&self, c: Capability) -> Level {
-        let hooked = if self.trust == HookTrust::Trusted {
-            Level::Native
-        } else {
-            Level::Degraded
-        };
         match c {
-            // Hook stdin carries `session_id`, and the prompt hook adds developer context, once trusted.
-            Capability::ContextInjection | Capability::SessionIdentity => hooked,
-            Capability::PreActionEnforcement | Capability::PermissionMode => hooked,
-            // `codex queue` is absent from the installed 0.147 and has no sender or acknowledgement; a `Stop` hook can
-            // continue a turn. Either way it needs a probe before it counts.
-            Capability::Wake => Level::Degraded,
-            // `codex exec --json` was observed on 0.147.
+            // Only after the human trusted the hooks (untrusted hooks are skipped silently in exec, 49.3).
+            Capability::SessionIdentity => {
+                if self.trust == HookTrust::Trusted {
+                    Level::Native
+                } else {
+                    Level::Degraded
+                }
+            }
             Capability::HeadlessWorker => Level::Native,
-            // MCP client through `config.toml` is a report, not observed.
-            Capability::PullPath => Level::Degraded,
+            // Everything else is documented or inferred, not seen (see `ground`), so it never satisfies a room.
+            Capability::ContextInjection
+            | Capability::Wake
+            | Capability::PreActionEnforcement
+            | Capability::PermissionMode
+            | Capability::PullPath => Level::Degraded,
         }
     }
     fn basis(&self, c: Capability) -> Option<&'static str> {
@@ -375,6 +404,7 @@ mod tests {
             assert_eq!(h.id(), "codex");
             for c in [
                 Capability::ContextInjection,
+                Capability::SessionIdentity,
                 Capability::PreActionEnforcement,
                 Capability::PermissionMode,
             ] {
@@ -382,8 +412,74 @@ mod tests {
             }
         }
         let t = Codex::paper(HookTrust::Trusted);
-        assert_eq!(t.level(Capability::ContextInjection), Level::Native);
-        assert_eq!(t.level(Capability::PreActionEnforcement), Level::Native);
+        assert_eq!(t.level(Capability::SessionIdentity), Level::Native);
+    }
+
+    #[test]
+    fn codex_native_claims_are_only_what_548_observed_and_each_names_its_basis() {
+        let h = Codex::paper(HookTrust::Trusted);
+        let native: Vec<Capability> = Capability::ALL
+            .into_iter()
+            .filter(|c| h.level(*c) == Level::Native)
+            .collect();
+        assert_eq!(
+            native,
+            vec![Capability::SessionIdentity, Capability::HeadlessWorker]
+        );
+        let notes = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../RESEARCH-NOTES.md"
+        ))
+        .unwrap();
+        for c in native {
+            assert_eq!(h.basis(c), Some("RESEARCH-NOTES.md"), "{c:?}");
+            let ground = Codex::ground(c);
+            assert!(ground.contains("OBSERVED"), "{c:?}: {ground}");
+            assert!(notes.contains("### 49.3"), "the section the claim names");
+        }
+    }
+
+    #[test]
+    fn codex_claims_not_seen_live_are_never_native_even_with_trusted_hooks() {
+        let h = Codex::paper(HookTrust::Trusted);
+        for c in [
+            Capability::ContextInjection,
+            Capability::PreActionEnforcement,
+            Capability::PermissionMode,
+            Capability::Wake,
+            Capability::PullPath,
+        ] {
+            assert_eq!(h.level(c), Level::Degraded, "{c:?}");
+            assert_eq!(h.basis(c), None);
+            assert!(Codex::ground(c).contains("NOT VERIFIED"), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn every_codex_ground_names_a_research_notes_section_and_has_no_em_dash() {
+        for c in Capability::ALL {
+            let g = Codex::ground(c);
+            assert!(g.contains("49."), "{c:?}: {g}");
+            assert!(!g.contains('\u{2014}'), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn the_design_item_lists_every_unverified_codex_claim_as_a_live_check() {
+        let item = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../design/items/64-codex-adapter.md"
+        ))
+        .unwrap();
+        for c in Capability::ALL {
+            if Codex::ground(c).contains("NOT VERIFIED") {
+                assert!(
+                    item.contains(&format!("- [ ] {}", c.name())),
+                    "checklist row for {}",
+                    c.name()
+                );
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,1 @@
+- The Codex adapter marks only what was observed as native (session identity once hooks are trusted, headless worker); context injection, pre-action enforcement and permission mode are degraded until a live check (#64, #883). A Codex join stays on the generic floor because Codex has no registry record (#884).
