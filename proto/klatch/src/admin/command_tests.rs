@@ -1,7 +1,7 @@
 //! The archive and key commands through their command function, `key_command` (#727): each one is run against a
 //! throwaway store with a throwaway key directory and its effect is asserted (the files, the rows, the keys and the
-//! audit). A command that did nothing would fail here. They run in this process because an admin command needs a real
-//! terminal at the command line; the environment is shared, so the tests take turns.
+//! audit). A command that did nothing would fail here. They call the command function because an admin command needs a
+//! real terminal at the command line.
 
 use super::route::{ArchiveAct, KeyAct, Keystore};
 use super::*;
@@ -10,29 +10,54 @@ use klatch::store::areas::*;
 use klatch::store::{ArchiveState, Seat, list_archives};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV: Mutex<()> = Mutex::new(());
+use std::process::Command;
 
 /// A scratch directory holding the store and its keys. Never the real keystore: `KLATCH_KEY_DIR` points inside it.
+///
+/// The key directory is chosen by the environment, and a test process shares its environment between threads, so each
+/// test runs itself again in a child process of its own with that environment (no `unsafe` needed): `begin` is
+/// `None` in the parent, which runs the child and checks that it passed, and `Some` in the child, which does the work.
 struct Env {
-    _turn: MutexGuard<'static, ()>,
     dir: PathBuf,
 }
 
+const CHILD_DIR: &str = "KLATCH_ADMIN_CMD_TEST_DIR";
+
+/// The path of the test that calls it, as the test runner names it.
+macro_rules! this_test {
+    () => {{
+        fn here() {}
+        let full = std::any::type_name_of_val(&here);
+        full.strip_prefix("klatch::")
+            .and_then(|n| n.strip_suffix("::here"))
+            .unwrap_or(full)
+    }};
+}
+
 impl Env {
-    fn new(tag: &str) -> Self {
-        let turn = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    fn begin(test: &str, tag: &str) -> Option<Self> {
+        if let Some(dir) = std::env::var_os(CHILD_DIR) {
+            return Some(Env { dir: dir.into() });
+        }
         let dir =
             std::env::temp_dir().join(format!("klatch-admin-cmd-{}-{tag}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join("keys")).unwrap();
-        // SAFETY: the tests of this module hold ENV while they run, and no other thread here reads these names.
-        unsafe {
-            std::env::set_var("KLATCH_KEY_DIR", dir.join("keys"));
-            std::env::remove_var("KLATCH_IDENTITY_FILE");
-        }
-        Env { _turn: turn, dir }
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1"])
+            .env(CHILD_DIR, &dir)
+            .env("KLATCH_KEY_DIR", dir.join("keys"))
+            .env_remove("KLATCH_IDENTITY_FILE")
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        None
     }
 
     fn db(&self) -> PathBuf {
@@ -138,12 +163,6 @@ impl Env {
     }
 }
 
-impl Drop for Env {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.dir).ok();
-    }
-}
-
 fn mode(p: &std::path::Path) -> u32 {
     std::fs::metadata(p).unwrap().permissions().mode() & 0o777
 }
@@ -152,7 +171,9 @@ fn mode(p: &std::path::Path) -> u32 {
 
 #[test]
 fn retention_is_stored_and_audited_and_off_removes_it() {
-    let e = Env::new("retention");
+    let Some(e) = Env::begin(this_test!(), "retention") else {
+        return;
+    };
     e.retention("lobby", "7").unwrap();
     assert_eq!(
         e.store().policy_get("retention:lobby").unwrap().as_deref(),
@@ -165,7 +186,9 @@ fn retention_is_stored_and_audited_and_off_removes_it() {
 
 #[test]
 fn retention_refuses_days_that_are_not_a_whole_number_and_stores_nothing() {
-    let e = Env::new("retention-bad");
+    let Some(e) = Env::begin(this_test!(), "retention-bad") else {
+        return;
+    };
     assert!(e.retention("lobby", "0").is_err());
     assert!(e.retention("lobby", "soon").is_err());
     assert_eq!(e.store().policy_get("retention:lobby").unwrap(), None);
@@ -175,7 +198,9 @@ fn retention_refuses_days_that_are_not_a_whole_number_and_stores_nothing() {
 
 #[test]
 fn archive_moves_old_messages_into_a_private_file_and_audits_it() {
-    let e = Env::new("archive");
+    let Some(e) = Env::begin(this_test!(), "archive") else {
+        return;
+    };
     e.old_messages("lobby", 3);
     e.retention("lobby", "1").unwrap();
     // an archive directory left open to others is closed again
@@ -196,7 +221,9 @@ fn archive_moves_old_messages_into_a_private_file_and_audits_it() {
 
 #[test]
 fn archive_of_one_room_without_retention_is_refused_and_names_the_fix() {
-    let e = Env::new("archive-none");
+    let Some(e) = Env::begin(this_test!(), "archive-none") else {
+        return;
+    };
     e.old_messages("lobby", 1);
     let err = e.archive("lobby").unwrap_err().to_string();
     assert!(err.contains("klatch admin retention lobby"), "{err}");
@@ -206,7 +233,9 @@ fn archive_of_one_room_without_retention_is_refused_and_names_the_fix() {
 
 #[test]
 fn archive_with_nothing_old_enough_writes_no_file_but_still_audits_the_run() {
-    let e = Env::new("archive-young");
+    let Some(e) = Env::begin(this_test!(), "archive-young") else {
+        return;
+    };
     e.old_messages("lobby", 2);
     e.retention("lobby", "100000").unwrap();
     e.archive("lobby").unwrap();
@@ -217,7 +246,9 @@ fn archive_with_nothing_old_enough_writes_no_file_but_still_audits_the_run() {
 
 #[test]
 fn archive_all_uses_each_rooms_own_retention_then_the_star_one_and_skips_rooms_with_none() {
-    let e = Env::new("archive-all");
+    let Some(e) = Env::begin(this_test!(), "archive-all") else {
+        return;
+    };
     e.old_messages("own-long", 1);
     e.old_messages("falls-back", 2);
     e.retention("own-long", "100000").unwrap();
@@ -236,7 +267,9 @@ fn archive_all_uses_each_rooms_own_retention_then_the_star_one_and_skips_rooms_w
 
 #[test]
 fn archive_all_skips_a_room_with_no_retention_at_all() {
-    let e = Env::new("archive-all-skip");
+    let Some(e) = Env::begin(this_test!(), "archive-all-skip") else {
+        return;
+    };
     e.old_messages("kept", 2);
     e.old_messages("moved", 1);
     e.retention("moved", "1").unwrap();
@@ -249,7 +282,9 @@ fn archive_all_skips_a_room_with_no_retention_at_all() {
 
 #[test]
 fn restore_archive_puts_the_archived_messages_back_and_audits_it() {
-    let e = Env::new("restore-archive");
+    let Some(e) = Env::begin(this_test!(), "restore-archive") else {
+        return;
+    };
     e.old_messages("lobby", 3);
     e.retention("lobby", "1").unwrap();
     e.archive("lobby").unwrap();
@@ -262,7 +297,9 @@ fn restore_archive_puts_the_archived_messages_back_and_audits_it() {
 
 #[test]
 fn archives_lists_a_good_directory_and_an_empty_or_missing_one() {
-    let e = Env::new("archives-ok");
+    let Some(e) = Env::begin(this_test!(), "archives-ok") else {
+        return;
+    };
     e.old_messages("lobby", 1);
     e.archive_cmd(ArchiveAct::Archives).unwrap();
     e.retention("lobby", "1").unwrap();
@@ -272,7 +309,9 @@ fn archives_lists_a_good_directory_and_an_empty_or_missing_one() {
 
 #[test]
 fn archives_reports_a_corrupted_file_as_an_error_after_listing_the_rest() {
-    let e = Env::new("archives-bad");
+    let Some(e) = Env::begin(this_test!(), "archives-bad") else {
+        return;
+    };
     e.old_messages("lobby", 2);
     e.retention("lobby", "1").unwrap();
     e.archive("lobby").unwrap();
@@ -287,7 +326,9 @@ fn archives_reports_a_corrupted_file_as_an_error_after_listing_the_rest() {
 
 #[test]
 fn archives_with_a_directory_but_no_key_is_an_error_naming_recover() {
-    let e = Env::new("archives-nokey");
+    let Some(e) = Env::begin(this_test!(), "archives-nokey") else {
+        return;
+    };
     e.old_messages("lobby", 1);
     std::fs::create_dir_all(e.archive_dir()).unwrap();
     let kh = custody::key_home(&e.db());
@@ -298,7 +339,9 @@ fn archives_with_a_directory_but_no_key_is_an_error_naming_recover() {
 
 #[test]
 fn archives_with_no_directory_and_no_key_is_fine() {
-    let e = Env::new("archives-nothing");
+    let Some(e) = Env::begin(this_test!(), "archives-nothing") else {
+        return;
+    };
     e.archive_cmd(ArchiveAct::Archives).unwrap();
 }
 
@@ -306,7 +349,9 @@ fn archives_with_no_directory_and_no_key_is_fine() {
 
 #[test]
 fn recovery_needs_a_key_and_audits_the_showing() {
-    let e = Env::new("recovery");
+    let Some(e) = Env::begin(this_test!(), "recovery") else {
+        return;
+    };
     assert!(e.key_cmd(KeyAct::Recovery).is_err(), "no key yet");
     drop(e.store());
     e.key_cmd(KeyAct::Recovery).unwrap();
@@ -315,7 +360,9 @@ fn recovery_needs_a_key_and_audits_the_showing() {
 
 #[test]
 fn recover_puts_the_key_back_from_its_code_and_audits_it() {
-    let e = Env::new("recover");
+    let Some(e) = Env::begin(this_test!(), "recover") else {
+        return;
+    };
     let key = Key::generate().unwrap();
     let code = klatch::keys::recovery_code(&key);
     let words: Vec<String> = code.split(' ').map(String::from).collect();
@@ -331,7 +378,9 @@ fn recover_puts_the_key_back_from_its_code_and_audits_it() {
 
 #[test]
 fn recover_with_a_label_puts_back_that_labels_key_only() {
-    let e = Env::new("recover-label");
+    let Some(e) = Env::begin(this_test!(), "recover-label") else {
+        return;
+    };
     let key = Key::generate().unwrap();
     let code = klatch::keys::recovery_code(&key);
     let words: Vec<String> = code.split(' ').map(String::from).collect();
@@ -351,7 +400,9 @@ fn recover_with_a_label_puts_back_that_labels_key_only() {
 
 #[test]
 fn recover_refuses_a_bad_code_and_changes_nothing() {
-    let e = Env::new("recover-bad");
+    let Some(e) = Env::begin(this_test!(), "recover-bad") else {
+        return;
+    };
     let err = e.key_cmd(KeyAct::Recover {
         code: vec!["nonsense".into()],
         label: None,
@@ -361,8 +412,10 @@ fn recover_refuses_a_bad_code_and_changes_nothing() {
 }
 
 #[test]
-fn seal_label_seals_it_makes_its_key_and_audits_it() {
-    let e = Env::new("seal");
+fn sealing_a_label_makes_its_key_and_audits_it() {
+    let Some(e) = Env::begin(this_test!(), "seal") else {
+        return;
+    };
     e.key_cmd(KeyAct::SealLabel {
         label: "private".into(),
     })
@@ -378,7 +431,9 @@ fn seal_label_seals_it_makes_its_key_and_audits_it() {
 
 #[test]
 fn backup_writes_a_file_that_opens_with_the_key_and_audits_it() {
-    let e = Env::new("backup");
+    let Some(e) = Env::begin(this_test!(), "backup") else {
+        return;
+    };
     e.old_messages("lobby", 2);
     let file = e.dir.join("backup.db");
     e.key_cmd(KeyAct::Backup { file: file.clone() }).unwrap();
@@ -389,7 +444,9 @@ fn backup_writes_a_file_that_opens_with_the_key_and_audits_it() {
 
 #[test]
 fn restore_brings_the_store_back_to_the_backup_and_keeps_the_old_one_aside() {
-    let e = Env::new("restore");
+    let Some(e) = Env::begin(this_test!(), "restore") else {
+        return;
+    };
     e.old_messages("lobby", 1);
     let file = e.dir.join("backup.db");
     e.key_cmd(KeyAct::Backup { file: file.clone() }).unwrap();
@@ -406,7 +463,9 @@ fn restore_brings_the_store_back_to_the_backup_and_keeps_the_old_one_aside() {
 
 #[test]
 fn rotate_key_changes_the_key_and_moves_the_archives_to_it() {
-    let e = Env::new("rotate");
+    let Some(e) = Env::begin(this_test!(), "rotate") else {
+        return;
+    };
     e.old_messages("lobby", 2);
     e.retention("lobby", "1").unwrap();
     e.archive("lobby").unwrap();
@@ -429,7 +488,9 @@ fn rotate_key_changes_the_key_and_moves_the_archives_to_it() {
 
 #[test]
 fn run_archive_reads_an_archive_of_a_run_and_audits_it() {
-    let e = Env::new("run-archive");
+    let Some(e) = Env::begin(this_test!(), "run-archive") else {
+        return;
+    };
     drop(e.store());
     let file = e.dir.join("run-1.archive");
     crate::run::write_archive(&file, &e.key(), "r1", &[]).unwrap();
@@ -453,7 +514,9 @@ fn run_archive_reads_an_archive_of_a_run_and_audits_it() {
 
 #[test]
 fn restore_and_backup_without_a_key_say_so() {
-    let e = Env::new("nokey");
+    let Some(e) = Env::begin(this_test!(), "nokey") else {
+        return;
+    };
     let file = e.dir.join("b.db");
     assert!(e.key_cmd(KeyAct::Backup { file: file.clone() }).is_err());
     assert!(!file.exists());
