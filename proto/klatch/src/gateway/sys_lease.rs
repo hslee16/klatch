@@ -24,11 +24,7 @@ impl SysLeaseSource {
                 dir: host.registry_dir.clone(),
             },
             host,
-            domain: if cfg!(target_os = "macos") {
-                "darwin"
-            } else {
-                std::env::consts::OS
-            },
+            domain: crate::harness::this_pid_domain(),
         }
     }
 }
