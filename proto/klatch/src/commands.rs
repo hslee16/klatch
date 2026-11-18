@@ -478,7 +478,20 @@ fn print_timeout(t: &dyn Transport, a: &WaitArgs, timeout: u64) {
     print_gone_askers(t, a, timeout);
 }
 
+/// Before a wait blocks, tell the caller of any cycle through asks it is part of in the rooms it waits on (#273,
+/// DESIGN item 90): a member about to wait for an answer that cannot come learns it now, not after the timeout.
+/// A room that cannot be read adds nothing.
+fn print_ask_cycle_notes(t: &dyn Transport, a: &WaitArgs) {
+    let (me, now) = a.caller;
+    a.rooms
+        .iter()
+        .filter_map(|(room, _)| Some((t.open_asks(room).ok()?, t.claims(room).ok()?)))
+        .flat_map(|(asks, claims)| klatch::domain::cycle_notes(&asks, &claims, me, now))
+        .for_each(|note| println!("{note}"));
+}
+
 fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
+    print_ask_cycle_notes(t, a);
     let (timeout, clamped) = effective_timeout(a.timeout);
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
@@ -616,7 +629,8 @@ fn my_refusals(ctx: &Ctx, limit: usize) -> Result<()> {
 }
 
 fn asks(ctx: &Ctx, room: &str) -> Result<()> {
-    for a in ctx.t.open_asks(room)? {
+    let open = ctx.t.open_asks(room)?;
+    for a in &open {
         let summary = a.summary(ctx.now);
         let gap = if summary.is_empty() { "" } else { " " };
         let state = if a.claimed { "claimed" } else { "unclaimed" };
@@ -627,6 +641,11 @@ fn asks(ctx: &Ctx, room: &str) -> Result<()> {
             klatch::domain::secs_between(ctx.now, a.ts),
             flat(&a.text)
         );
+    }
+    // a cycle through asks (#273): anyone can see it, and it names who yields
+    let claims = ctx.t.claims(room).unwrap_or_default();
+    for c in klatch::domain::ask_cycles(&open, &claims, ctx.now) {
+        println!("ask cycle: {}; {} yields", c.describe(), c.yielder());
     }
     Ok(())
 }
