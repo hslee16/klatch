@@ -161,5 +161,16 @@ expect_link "t" $'Refs #678\nfound (#733) while here' "678 False" "Refs links wi
 expect_link "t (#9)" "no keywords" "None False" "a (#N) in the title alone is not a link"
 expect_link "t" $'Part of #5\nCloses #6' "6 True" "Closes wins over Part of"
 
+# pr-ledger call savings and failure words (#754, #756): the pull is fetched only for a PR whose checks are all green, and
+# a rate limit is told from other failures by its words
+got=$(plpy "
+g = {'conclusion': 'success'}
+print(m.needs_mergeable_state([]), m.needs_mergeable_state([g]), m.needs_mergeable_state([g, {'conclusion': None}]),
+      m.needs_mergeable_state([g, {'conclusion': 'failure'}]), m.needs_mergeable_state([g, {'conclusion': 'cancelled'}]),
+      m.needs_mergeable_state([g, {'conclusion': 'skipped'}]))")
+if [ "$got" = "False True False False False True" ]; then ok "pr-ledger: the pull is wanted only when every check has finished and none is bad"; else bad "pr-ledger: needs_mergeable_state '$got'"; fi
+got=$(plpy "print(m.rate_limited('gh: API rate limit exceeded for user ID 1. (HTTP 403)'), m.rate_limited('read tcp: operation timed out'), m.rate_limited(None), m.rate_limited('You have exceeded a secondary rate limit'))")
+if [ "$got" = "True False False True" ]; then ok "pr-ledger: a rate limit is told from a network failure by its words"; else bad "pr-ledger: rate_limited '$got'"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi

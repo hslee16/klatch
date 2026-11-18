@@ -10,6 +10,7 @@ merged PR gets exactly one stage and one next action, so none sits unnoticed:
 
 Usage:
   pr-ledger [--repo OWNER/NAME] [--merged-days N] [--stale-hours H]   list the ledger (uses `gh api`, REST only)
+  pr-ledger [--budget-floor N]                                         skip with a message when fewer than N API calls are left
   pr-ledger --classify                                                 read one JSON record on stdin, print the stage
   pr-ledger --rerun-cancelled PR                                       rerun the jobs that were cancelled before they ran
   pr-ledger --post [--state-file F] [--only N,N]                       post the PRs needing a step to the lobby, only when the list changed
@@ -31,6 +32,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 DEFAULT_REPO = "hslee16/klatch"
 
@@ -138,11 +140,59 @@ def klatch_post(text):
         raise SystemExit("klatch post failed: %s" % out.stderr.strip())
 
 
+class GhFailed(Exception):
+    """A gh call that failed after its retries (a hang, a network error, a bad answer)."""
+
+
+class RateLimited(GhFailed):
+    """GitHub says the hourly API budget is used up. Retrying cannot help, so it is never retried."""
+
+
+def gh_timeout():
+    return float(os.environ.get("PR_LEDGER_GH_TIMEOUT", "60"))
+
+
+def rate_limited(text):
+    return "rate limit" in (text or "").lower()
+
+
+def rate_limit_state():
+    """(remaining, reset text) from `gh api rate_limit`, which costs no call; (None, 'reset time unknown') when unreadable."""
+    try:
+        out = subprocess.run(["gh", "api", "rate_limit"], capture_output=True, text=True, timeout=gh_timeout())
+        core = json.loads(out.stdout)["resources"]["core"]
+        reset = dt.datetime.fromtimestamp(core["reset"], dt.timezone.utc)
+        mins = max(0, int((reset - dt.datetime.now(dt.timezone.utc)).total_seconds() // 60))
+        return int(core["remaining"]), "resets at %s (in %d min)" % (reset.strftime("%Y-%m-%dT%H:%M:%SZ"), mins)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return None, "reset time unknown"
+
+
 def gh(path):
-    out = subprocess.run(["gh", "api", path], capture_output=True, text=True)
-    if out.returncode != 0:
-        raise SystemExit("gh api %s failed: %s" % (path, out.stderr.strip()))
-    return json.loads(out.stdout)
+    """The JSON of `gh api PATH`. Every call has a timeout (a hung call once stalled a pass for 33 minutes) and is tried
+    three times; a rate limit is not retried. Raises GhFailed or RateLimited, never SystemExit (#754)."""
+    tries = 1 + int(os.environ.get("PR_LEDGER_GH_RETRIES", "2"))
+    why = ""
+    for attempt in range(tries):
+        try:
+            out = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=gh_timeout())
+        except subprocess.TimeoutExpired:
+            why = "timed out after %gs" % gh_timeout()
+        except OSError as e:
+            raise GhFailed("gh api %s failed: %s" % (path, e))
+        else:
+            if out.returncode == 0:
+                try:
+                    return json.loads(out.stdout)
+                except ValueError:
+                    why = "the answer was not JSON"
+            else:
+                why = out.stderr.strip() or out.stdout.strip()
+                if rate_limited(out.stderr) or rate_limited(out.stdout):
+                    raise RateLimited("gh api %s failed: %s" % (path, why))
+        if attempt + 1 < tries:
+            time.sleep(float(os.environ.get("PR_LEDGER_GH_RETRY_SLEEP", "2")))
+    raise GhFailed("gh api %s failed: %s" % (path, why))
 
 
 def ticket_of(pr):
@@ -170,29 +220,48 @@ def error_of(repo, run):
     return first_error_line("%s\n%s" % (out.get("summary") or "", out.get("text") or ""))
 
 
+BAD = ("failure", "timed_out", "action_required", "cancelled")
+
+
+def needs_mergeable_state(checks):
+    """Only a PR whose checks are all finished and none bad can be 'conflict' or 'behind', so only then is the pull
+    (the one place GitHub reports mergeable_state) fetched."""
+    return bool(checks) and all(c["conclusion"] is not None and c["conclusion"] not in BAD for c in checks)
+
+
 def record(repo, pr, now, bench_ledger=None):
-    full = gh("repos/%s/pulls/%d" % (repo, pr["number"]))
-    runs = gh("repos/%s/commits/%s/check-runs" % (repo, full["head"]["sha"]))["check_runs"]
-    ticket, closes = ticket_of(full)
-    ticket_state = "none"
-    if ticket and closes:
-        ticket_state = gh("repos/%s/issues/%d" % (repo, ticket))["state"]
-    return {
-        "number": full["number"],
-        "branch": full["head"]["ref"],
+    """The record of one PR from its list entry (#756): a merged PR costs at most its ticket call, a draft nothing, an
+    open PR one check-runs call, plus one pull call when its checks are all green."""
+    ticket, closes = ticket_of(pr)
+    merged = bool(pr.get("merged_at"))
+    rec = {
+        "number": pr["number"],
+        "branch": pr["head"]["ref"],
         "ticket": ticket,
         "closes": closes,
-        "merged": bool(full.get("merged")),
-        "closed": full["state"] == "closed",
-        "draft": bool(full.get("draft")),
-        "mergeable_state": full.get("mergeable_state"),
-        "checks": [{"name": r["name"], "conclusion": r["conclusion"], "url": r.get("html_url", ""),
-                    "error": error_of(repo, r) if r["conclusion"] in ("failure", "timed_out", "action_required") else ""}
-                   for r in runs],
-        "ticket_state": ticket_state,
-        **({"benched": is_benched(bench_ledger, full["number"])} if bench_ledger and full.get("merged") else {}),
-        "idle_hours": hours_since(full["updated_at"], now),
+        "merged": merged,
+        "closed": pr["state"] == "closed",
+        "draft": bool(pr.get("draft")),
+        "mergeable_state": None,
+        "checks": [],
+        "ticket_state": "none",
+        "idle_hours": hours_since(pr["updated_at"], now),
     }
+    if merged:
+        if ticket and closes:
+            rec["ticket_state"] = gh("repos/%s/issues/%d" % (repo, ticket))["state"]
+        if bench_ledger:
+            rec["benched"] = is_benched(bench_ledger, pr["number"])
+        return rec
+    if rec["draft"] or rec["closed"]:
+        return rec
+    runs = gh("repos/%s/commits/%s/check-runs" % (repo, pr["head"]["sha"]))["check_runs"]
+    rec["checks"] = [{"name": r["name"], "conclusion": r["conclusion"], "url": r.get("html_url", ""),
+                      "error": error_of(repo, r) if r["conclusion"] in ("failure", "timed_out", "action_required") else ""}
+                     for r in runs]
+    if needs_mergeable_state(rec["checks"]):
+        rec["mergeable_state"] = gh("repos/%s/pulls/%d" % (repo, pr["number"])).get("mergeable_state")
+    return rec
 
 
 def rerun_cancelled(repo, number):
@@ -200,8 +269,11 @@ def rerun_cancelled(repo, number):
     reran = 0
     for run in gh("repos/%s/commits/%s/check-runs" % (repo, sha))["check_runs"]:
         if run["conclusion"] == "cancelled":
-            subprocess.run(["gh", "api", "-X", "POST", "repos/%s/actions/jobs/%d/rerun" % (repo, run["id"])],
-                           capture_output=True, text=True)
+            try:
+                subprocess.run(["gh", "api", "-X", "POST", "repos/%s/actions/jobs/%d/rerun" % (repo, run["id"])],
+                               capture_output=True, text=True, timeout=gh_timeout())
+            except subprocess.TimeoutExpired:
+                raise GhFailed("the rerun of job %d timed out" % run["id"])
             reran += 1
     print("reran %d cancelled job(s) on #%d" % (reran, number))
 
@@ -216,6 +288,8 @@ def main():
     ap.add_argument("--post", action="store_true", help="post the PRs needing a step to the lobby when the list changed")
     ap.add_argument("--only", metavar="N,N", help="show or post only these PR numbers")
     ap.add_argument("--state-file", default=os.path.join(os.environ.get("TMPDIR") or tempfile.gettempdir(), "pr-ledger-last-post"))
+    ap.add_argument("--budget-floor", type=int, metavar="N",
+                    help="skip with a message when `gh api rate_limit` (free) shows fewer than N calls left")
     ap.add_argument("--record-bench", type=int, metavar="PR", help="record a merged PR as benched (needs --bench-ledger)")
     ap.add_argument("--bench-ledger", metavar="FILE", help="JSON file of benched PRs; a merged PR not in it needs the bench")
     args = ap.parse_args()
@@ -230,10 +304,29 @@ def main():
         record_bench(args.bench_ledger, args.record_bench)
         print("recorded #%d as benched in %s" % (args.record_bench, args.bench_ledger))
         return
-    if args.rerun_cancelled:
-        rerun_cancelled(args.repo, args.rerun_cancelled)
-        return
+    if args.budget_floor is not None:
+        remaining, when = rate_limit_state()
+        if remaining is not None and remaining < args.budget_floor:
+            print("pr-ledger: skipped; only %d API calls are left (budget floor %d), %s" % (remaining, args.budget_floor, when))
+            return
+    try:
+        if args.rerun_cancelled:
+            rerun_cancelled(args.repo, args.rerun_cancelled)
+            return
+        rows, failures = gather(args)
+    except RateLimited:
+        _, when = rate_limit_state()
+        print("pr-ledger: GitHub API rate limit exhausted, %s; pass incomplete" % when)
+        raise SystemExit(1)
+    except GhFailed as e:
+        print("pr-ledger: %s" % e)
+        print("pr-ledger: 1 call(s) failed, pass incomplete")
+        raise SystemExit(1)
+    show(args, rows, failures)
 
+
+def gather(args):
+    """Every tracked PR as (record, stage, next), and the failures (a PR whose calls failed is left out and named)."""
     now = dt.datetime.now(dt.timezone.utc)
     prs = gh("repos/%s/pulls?state=open&per_page=100" % args.repo)
     cutoff = now - dt.timedelta(days=args.merged_days)
@@ -241,17 +334,33 @@ def main():
     for pr in recent:
         if pr.get("merged_at") and dt.datetime.fromisoformat(pr["merged_at"].replace("Z", "+00:00")) >= cutoff:
             prs.append(pr)
-    rows = []
+    rows, failures = [], []
     for pr in prs:
-        rec = record(args.repo, pr, now, args.bench_ledger)
+        try:
+            rec = record(args.repo, pr, now, args.bench_ledger)
+        except RateLimited:
+            raise
+        except GhFailed as e:
+            failures.append("could not read #%d: %s" % (pr["number"], e))
+            continue
         stage, nxt = classify(rec, args.stale_hours)
         rows.append((rec, stage, nxt))
+    return rows, failures
+
+
+def show(args, rows, failures):
+    """Print or post the PRs needing a step. A pass with a failed call says so and exits non-zero: it never reads as clean."""
     quiet = {"done"}
     shown = [r for r in rows if r[1] not in quiet]
     if args.only:
         wanted = {int(x) for x in args.only.split(",") if x.strip()}
         shown = [r for r in shown if r[0]["number"] in wanted]
     if args.post:
+        if failures:
+            for line in failures:
+                print("pr-ledger: %s" % line)
+            print("pr-ledger: %d call(s) failed, pass incomplete; no post" % len(failures))
+            raise SystemExit(1)
         text = post_text([(r[0], r[1], r[2]) for r in shown])
         if text is None:
             print("nothing needs a step; no post")
@@ -266,6 +375,11 @@ def main():
         print("#%-4d %-20s %-18s %-9s %s" % (rec["number"], stage, rec["branch"][:18], ticket, nxt))
         for job in failing(rec["checks"]):
             print("        %s" % job)
+    if failures:
+        for line in failures:
+            print("pr-ledger: %s" % line)
+        print("pr-ledger: %d call(s) failed, pass incomplete (%d read)" % (len(failures), len(rows)))
+        raise SystemExit(1)
     print("%d tracked, %d need a step, %d done" % (len(rows), len(shown), len(rows) - len(shown)))
 
 
