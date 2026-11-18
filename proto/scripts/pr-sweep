@@ -201,7 +201,7 @@ integrate() {
   if git merge -q --no-edit "refs/pr-sweep/$n" > /dev/null 2>&1; then
     say "#$n: merged main cleanly"
   else
-    bad="$(git diff --name-only --diff-filter=U | grep -vE '^(DESIGN.md|CHANGELOG.md|VERSIONING.md|proto/klatch-bench/src/scenarios/mod.rs)$')"
+    bad="$(git diff --name-only --diff-filter=U | grep -vE '^(DESIGN.md|CHANGELOG.md|VERSIONING.md|RESEARCH-NOTES.md|proto/klatch-bench/src/scenarios/mod.rs)$')"
     if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
       say "#$n: the merge failed without a conflict (see git merge by hand); not touched"
       git merge --abort 2> /dev/null
