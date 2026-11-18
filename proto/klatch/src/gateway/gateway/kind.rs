@@ -39,6 +39,22 @@ impl<S: Store> Gateway<S> {
             .and_then(declared))
     }
 
+    /// Fill in where each member listed was observed (#181): the repository id and the short directory name, from
+    /// the host's observations. Display only; the full directory path is dropped here and never leaves the store
+    /// through `who` or the board.
+    pub(super) fn with_places(&self, members: &mut [MemberInfo]) -> Result<()> {
+        for m in members {
+            m.place = self.store.member_attrs(&m.name)?.and_then(|a| {
+                let place = crate::domain::MemberPlace {
+                    repository: (!a.repository.is_empty()).then_some(a.repository),
+                    directory: crate::domain::short_dir_name(&a.directory),
+                };
+                (place.repository.is_some() || place.directory.is_some()).then_some(place)
+            });
+        }
+        Ok(())
+    }
+
     /// Fill in the kind of each member listed: a session record first, else the member's declaration. One read of
     /// the declarations for all of them.
     pub(super) fn with_kinds(&self, members: &mut [MemberInfo]) -> Result<()> {

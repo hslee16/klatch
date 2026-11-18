@@ -66,7 +66,7 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 | `read` | `read` | `Read` (advance unless `peek`) | GUARDED `read`; `labels.rs` |
 | `history` | `history` | `Read` without advance | GUARDED `history`; `history.rs` |
 | `invite` | `invite` | `Invite`, then `Post` in `via` | GUARDED `invite`; `room_capability.rs` |
-| `who` | `who` | `Who` | GUARDED `who` |
+| `who` | `who` | `Who` | GUARDED `who`; since #181 each member line also carries the observed repository id and the short directory name (never the path, `with_places`), under the same `admit` as the member list itself; display only, no check reads them (`gateway/tests/member_places.rs`: a reader below the room label gets neither `who` nor the board) |
 | `kind` | `set_kind` | none: the caller's own display word | OWN_RECORD `set_kind`; `member_kind.rs` |
 | `status` | `set_status` | `Status` | GUARDED `set_status` |
 | `claim` | `claim_ttl_for`, `claim` | `Claim` | GUARDED `claim`, `claim_ttl_for`; `claims.rs` |
@@ -104,7 +104,7 @@ wraps.
 | `history` | `history` | as wire `history` |
 | `wait` | `wait_poll`, `wait_seen` | GUARDED `wait_poll`, `wait_seen` |
 | `invite` | `invite` | as wire `invite` |
-| `router` | `join`, `open_asks`, `claims`, `who`, `invite`, repeated by the command, as the caller's own member (#189) | GUARDED each of those calls; the router holds no capability a member lacks: creating a room and inviting are the capability of #188 (`room-capability`, audited with the router's name), and `invite` refuses a member below the room's label (`clearance`, `gateway/tests/invite_clearance.rs`). It has no admin act, label or clearance call, posts only the invite pointer, and decides from claims, presence and the ask number, never message text (`domain/router.rs`: `AskFacts` has no text field). Proof: `router.rs` tests, `tests/router.rs` |
+| `router` | `join`, `open_asks`, `claims`, `who`, `invite`, repeated by the command, as the caller's own member (#189) | GUARDED each of those calls; the router holds no capability a member lacks: creating a room and inviting are the capability of #188 (`room-capability`, audited with the router's name), and `invite` refuses a member below the room's label (`clearance`, `gateway/tests/invite_clearance.rs`). It has no admin act, label or clearance call, posts only the invite pointer, and decides from claims, presence and the ask number, never message text (`domain/router.rs`: `AskFacts` has no text field); the observed repository (#890) only orders candidates the claims and rules already chose when more qualify than fit, and adds nobody. Proof: `router.rs` tests, `tests/router.rs` |
 | `wake` | `wake_mark`, `wakeable`, `wake_summary` | GUARDED, one each |
 | `who` | `who` | as wire `who` |
 | `receipt` | `receipt` | GUARDED `receipt` |
@@ -165,7 +165,7 @@ directly and meets only the terminal heuristic.
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
-| The member attributes (stable id, repository, directory; #181) add no wire method and no command: the host records them for a member that is already acting, and no check reads them. The repository value is an observation (a directory can name another repository's git directory), so it grants no clearance, room or access; the lowest clearance for a first-seen repository is pinned by `a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it` (#191). If a later change shows them in `who` or the board, that read needs a row here | #181 |
+| The member attributes (stable id, repository, directory; #181) add no wire method and no command: the host records them for a member that is already acting, and no check reads them. The repository value is an observation (a directory can name another repository's git directory), so it grants no clearance, room or access; the lowest clearance for a first-seen repository is pinned by `a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it` (#191). `who`, the board and the router now show or read them: see the `who` row (guarded by the existing `Who` and board `Read` admit, repository id and short directory name only) and the `router` row (the repository only orders members that claims and rules already chose) | #181 |
 
 Short-lived credentials exist already: a lifetime of 1 second to 30 days (`MAX_CREDENTIAL_TTL_SECS`), 3600 seconds by
 default in `klatch worker issue`, issued only by the human at a launcher, revoked at once by `klatch worker revoke` or

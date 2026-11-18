@@ -148,7 +148,15 @@ pub fn plan(view: &View) -> Vec<Route> {
             .collect();
         invites.sort();
         invites.dedup();
+        // when more qualify than fit, members of the asker's repository come first (#890). The repository is an
+        // observation used only to order candidates the claims and rules already chose; it adds nobody.
+        let asker_repo = repository_of(view.members, &a.sender);
+        invites.sort_by_key(|n| {
+            let same = asker_repo.is_some() && repository_of(view.members, n) == asker_repo;
+            !same
+        });
         invites.truncate(MAX_INVITES);
+        invites.sort();
         if !invites.is_empty() {
             routes.push(Route {
                 ask: a.seq,
@@ -159,6 +167,15 @@ pub fn plan(view: &View) -> Vec<Route> {
         }
     }
     routes
+}
+
+/// The repository id observed for a member of the view, if any.
+fn repository_of<'a>(members: &'a [MemberInfo], name: &str) -> Option<&'a str> {
+    members
+        .iter()
+        .find(|m| m.name == name)
+        .and_then(|m| m.place.as_ref())
+        .and_then(|p| p.repository.as_deref())
 }
 
 /// A member worth inviting now: seen lately, not done, not parked.
@@ -193,7 +210,16 @@ mod tests {
             parent: None,
             parked: None,
             kind: None,
+            place: None,
         }
+    }
+
+    fn in_repo(mut m: MemberInfo, repo: &str) -> MemberInfo {
+        m.place = Some(crate::domain::MemberPlace {
+            repository: Some(repo.into()),
+            directory: None,
+        });
+        m
     }
 
     fn ask(seq: i64, sender: &str) -> AskFacts {
@@ -372,5 +398,74 @@ mod tests {
         assert!(Rule::parse("=bo").is_err());
         assert!(Rule::parse("src=bad name").is_err());
         assert_eq!(Rule::parse("src/=bo").unwrap().prefix, "src");
+    }
+
+    #[test]
+    fn when_more_qualify_than_fit_the_askers_repository_comes_first_and_the_set_of_candidates_is_unchanged()
+     {
+        // everyone holds the topic; the asker and bo, cy, di are in repo r1 or r2; four candidates, three slots
+        let ms = vec![
+            member("router"),
+            in_repo(member("ann"), "git:r1"),
+            in_repo(member("bo"), "git:r2"),
+            in_repo(member("cy"), "git:r1"),
+            in_repo(member("di"), "git:r2"),
+            in_repo(member("ed"), "git:r1"),
+        ];
+        let claims = [
+            claim("ann", "x"),
+            claim("bo", "x"),
+            claim("cy", "x"),
+            claim("di", "x"),
+            claim("ed", "x"),
+        ];
+        let r = run(&[ask(1, "ann")], &claims, &ms, &[]);
+        // cy and ed share ann's repository so they come first; bo fills the last slot
+        assert_eq!(r[0].invites, vec!["bo", "cy", "ed"]);
+    }
+
+    #[test]
+    fn a_member_in_the_askers_repository_with_no_claim_on_the_topic_is_not_invited() {
+        // the repository attribute orders; it never adds a member the claims and rules would not
+        let ms = vec![
+            member("router"),
+            in_repo(member("ann"), "git:r1"),
+            in_repo(member("bo"), "git:r1"),
+            in_repo(member("cy"), "git:r2"),
+        ];
+        let claims = [claim("ann", "x"), claim("cy", "x")];
+        let r = run(&[ask(1, "ann")], &claims, &ms, &[]);
+        assert_eq!(r[0].invites, vec!["cy"]);
+    }
+
+    #[test]
+    fn with_no_attributes_known_the_order_is_by_name_as_before() {
+        let claims = [
+            claim("ann", "x"),
+            claim("di", "x"),
+            claim("bo", "x"),
+            claim("cy", "x"),
+        ];
+        let r = run(&[ask(1, "ann")], &claims, &lobby(), &[]);
+        assert_eq!(r[0].invites, vec!["bo", "cy", "di"]);
+    }
+
+    #[test]
+    fn members_with_no_repository_are_never_treated_as_sharing_one() {
+        let mut ann = in_repo(member("ann"), "");
+        ann.place.as_mut().unwrap().repository = None;
+        let mut ms = vec![member("router"), ann];
+        for n in ["bo", "cy", "di", "ed"] {
+            ms.push(member(n));
+        }
+        let claims = [
+            claim("ann", "x"),
+            claim("bo", "x"),
+            claim("cy", "x"),
+            claim("di", "x"),
+            claim("ed", "x"),
+        ];
+        let r = run(&[ask(1, "ann")], &claims, &ms, &[]);
+        assert_eq!(r[0].invites, vec!["bo", "cy", "di"]);
     }
 }

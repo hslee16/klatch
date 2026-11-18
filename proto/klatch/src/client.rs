@@ -77,6 +77,10 @@ pub struct Member {
     pub last_seen: i64,
     pub status: Option<String>,
     pub kind: Option<String>,
+    /// The repository id klatch observed for the member, if any (display only).
+    pub repository: Option<String>,
+    /// The short name of the member's starting directory, never a path.
+    pub directory: Option<String>,
 }
 
 /// A live claim as `claims` lists it.
@@ -501,6 +505,8 @@ impl Client {
             last_seen: m["last_seen"].as_i64().unwrap_or(0),
             status: opt_str(&m["status"]),
             kind: opt_str(&m["kind"]),
+            repository: opt_str(&m["repository"]),
+            directory: opt_str(&m["directory"]),
         }))
     }
 

@@ -4,7 +4,7 @@
 //! not been seen for a while (DESIGN section 25.8).
 
 use crate::domain::hook::clip;
-use crate::domain::{MemberInfo, MemberKind, Message, OpenAsk, Parked, flat};
+use crate::domain::{MemberInfo, MemberKind, MemberPlace, Message, OpenAsk, Parked, flat};
 
 /// A message whose body starts with this text is an offer.
 pub const OFFER_PREFIX: &str = "offering:";
@@ -63,6 +63,28 @@ pub struct BoardMember {
     pub parked: Option<Parked>,
     /// What sort of member this is (item 103), if known.
     pub kind: Option<MemberKind>,
+    /// Where the member was observed (#181), for display only.
+    pub place: Option<MemberPlace>,
+}
+
+/// The last component of a directory path, at most 40 characters, or `None` when there is none (the root, empty).
+/// This is all of a directory that `who` and the board show.
+pub fn short_dir_name(dir: &str) -> Option<String> {
+    let name = dir.trim_end_matches('/').rsplit('/').next()?;
+    (!name.is_empty()).then(|| name.chars().take(40).collect())
+}
+
+/// ` repo: ..., dir: ...` pieces of a member's place, tab separated, empty when it has none.
+fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
+    let Some(p) = place else { return Vec::new() };
+    let mut parts = Vec::new();
+    if let Some(r) = &p.repository {
+        parts.push(format!("repo: {}", flat(r)));
+    }
+    if let Some(d) = &p.directory {
+        parts.push(format!("dir: {}", flat(d)));
+    }
+    parts
 }
 
 /// The current state of a room derived from its log: open asks, current offers and members.
@@ -121,6 +143,9 @@ fn who_line(m: &MemberInfo, now: Now) -> String {
     }
     if let Some(kind) = m.kind {
         out.push_str(&format!("\tkind: {}", kind.word()));
+    }
+    for part in place_parts(m.place.as_ref()) {
+        out.push_str(&format!("\t{part}"));
     }
     if let Some(status) = &m.status {
         out.push_str(&format!("\tstatus: {}", flat(status)));
@@ -212,8 +237,12 @@ fn render_members(board: &Board, now: Now, out: &mut String) {
             .kind
             .map(|k| format!(", kind: {}", k.word()))
             .unwrap_or_default();
+        let place: String = place_parts(m.place.as_ref())
+            .iter()
+            .map(|p| format!(", {p}"))
+            .collect();
         out.push_str(&format!(
-            "  {} last seen {}s ago{parent}{kind}{status}{parked}\n",
+            "  {} last seen {}s ago{parent}{kind}{place}{status}{parked}\n",
             flat(&m.name),
             now.since(m.last_seen)
         ));

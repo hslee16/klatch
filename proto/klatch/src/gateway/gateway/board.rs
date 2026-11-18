@@ -46,6 +46,7 @@ impl<S: Store> Gateway<S> {
         let statuses = crate::domain::statuses(&messages);
         let mut all = self.store.members(room)?;
         self.with_kinds(&mut all)?;
+        self.with_places(&mut all)?;
         let done: Vec<String> = all
             .iter()
             .filter(|m| m.status.as_deref().is_some_and(|s| s.starts_with("done")))
@@ -72,6 +73,7 @@ impl<S: Store> Gateway<S> {
                 parent: m.parent,
                 parked: m.parked.filter(|p| p.holds(now)),
                 kind: m.kind,
+                place: m.place,
             })
             .collect::<Vec<crate::domain::BoardMember>>();
         // A task whose owner is not present (hidden, ended, pruned), not parked and holds no live claim is orphaned:
@@ -170,6 +172,7 @@ impl<S: Store> Gateway<S> {
         self.settle_leases(&who.member)?;
         let mut members = self.store.members(room)?;
         self.with_kinds(&mut members)?;
+        self.with_places(&mut members)?;
         Ok(members)
     }
 

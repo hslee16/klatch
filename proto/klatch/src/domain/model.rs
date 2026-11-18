@@ -51,6 +51,20 @@ pub struct MemberInfo {
     /// What sort of member this is (item 103), for display only. The store leaves it `None`; the gateway fills it from
     /// the session record (a session) or the member's own declaration.
     pub kind: Option<crate::domain::MemberKind>,
+    /// Where klatch observed the member (#181), for display and grouping only: the repository id and the short
+    /// name of the directory, never the path. The store leaves it `None`; the gateway fills it. Never authority.
+    pub place: Option<MemberPlace>,
+}
+
+/// What a reader of `who` or the board may learn of where a member works: the derived repository id and the last
+/// component of its starting directory. The full path is never shown (it can carry a user name or a client name,
+/// and a member that cannot see the member's files has no need of it). These are observations made by the host; a
+/// directory can name another repository's git directory, so a value can be made to match, and nothing may grant
+/// access because two members share one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberPlace {
+    pub repository: Option<String>,
+    pub directory: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

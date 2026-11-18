@@ -138,6 +138,7 @@ impl MemberStore for MemoryStore {
                     parent: None,
                     parked: None,
                     kind: None,
+                    place: None,
                 })
                 .collect()
         }))
