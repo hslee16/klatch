@@ -336,6 +336,9 @@ pub(crate) fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()>
 }
 
 #[cfg(test)]
+mod survivor_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Condvar, Mutex};
