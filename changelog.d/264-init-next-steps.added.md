@@ -1,0 +1,1 @@
+- `klatch init` now ends by saying where klatch keeps its data (`KLATCH_HOME` or `~/.klatch`, shown and never created or changed) and to run `klatch doctor` next (#264).
