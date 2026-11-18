@@ -83,8 +83,8 @@ pub(crate) fn classify(run: PsRun) -> Field {
     }
 }
 
-fn ps(program: &str, pid: u32, field: &str) -> Field {
-    let run = Command::new(program)
+fn ps(pid: u32, field: &str) -> Field {
+    let run = Command::new("ps")
         .env("TZ", "UTC")
         .args(["-o", field, "-p", &pid.to_string()])
         .output()
@@ -96,9 +96,10 @@ fn ps(program: &str, pid: u32, field: &str) -> Field {
     classify(run)
 }
 
-/// The process table as `program` (normally `ps`) reads it. A pid that vanishes between the fields is missing.
-pub(crate) fn lookup_via(program: &str, pid: u32) -> Lookup {
-    let ppid = match ps(program, pid, "ppid=") {
+/// The process table as `read` (one `ps -o FIELD -p PID` read) gives it. A pid that vanishes between the three
+/// fields is missing.
+pub(crate) fn lookup_with(read: &dyn Fn(&str) -> Field) -> Lookup {
+    let ppid = match read("ppid=") {
         Field::Value(v) => v,
         Field::Missing => return Lookup::Missing,
         Field::Unreadable => return Lookup::Unreadable,
@@ -106,21 +107,20 @@ pub(crate) fn lookup_via(program: &str, pid: u32) -> Lookup {
     let Ok(ppid) = ppid.parse() else {
         return Lookup::Unreadable;
     };
-    let mut rest = [ps(program, pid, "lstart="), ps(program, pid, "comm=")].into_iter();
-    match (rest.next(), rest.next()) {
-        (Some(Field::Value(start_utc)), Some(Field::Value(command))) => Lookup::Found(ProcInfo {
+    match (read("lstart="), read("comm=")) {
+        (Field::Value(start_utc), Field::Value(command)) => Lookup::Found(ProcInfo {
             ppid,
             start_utc,
             command,
         }),
-        (Some(Field::Unreadable), _) | (_, Some(Field::Unreadable)) => Lookup::Unreadable,
+        (Field::Unreadable, _) | (_, Field::Unreadable) => Lookup::Unreadable,
         _ => Lookup::Missing,
     }
 }
 
 impl ProcessTable for PsTable {
     fn lookup(&self, pid: u32) -> Lookup {
-        lookup_via("ps", pid)
+        lookup_with(&|field| ps(pid, field))
     }
 }
 
@@ -212,31 +212,75 @@ mod tests {
         );
     }
 
+    fn reads(ppid: Field, lstart: Field, comm: Field) -> Lookup {
+        let mut fields = [ppid, lstart, comm]
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        let by_name = |name: &str| match name {
+            "ppid=" => fields[0].take(),
+            "lstart=" => fields[1].take(),
+            _ => fields[2].take(),
+        };
+        let cell = std::cell::RefCell::new(by_name);
+        lookup_with(&|name| (cell.borrow_mut())(name).expect("each field is read at most once"))
+    }
+
+    fn value(v: &str) -> Field {
+        Field::Value(v.into())
+    }
+
     #[test]
-    fn a_program_that_does_not_exist_makes_the_table_unreadable() {
+    fn three_values_are_a_process() {
+        let got = reads(
+            value("7"),
+            value("Fri Nov 6 03:04:05 2026"),
+            value("claude"),
+        );
+        let Lookup::Found(info) = got else {
+            panic!("expected a process");
+        };
+        assert_eq!((info.ppid, info.command.as_str()), (7, "claude"));
+    }
+
+    #[test]
+    fn a_missing_first_field_is_a_missing_pid_and_an_unreadable_one_is_an_unreadable_table() {
         assert_eq!(
-            lookup_via("/nonexistent/klatch-no-such-ps", 1234),
+            reads(Field::Missing, value("x"), value("y")),
+            Lookup::Missing
+        );
+        assert_eq!(
+            reads(Field::Unreadable, value("x"), value("y")),
             Lookup::Unreadable
         );
     }
 
     #[test]
-    fn a_ps_that_exits_silently_with_failure_reads_as_a_missing_pid() {
-        let program = ["/usr/bin/false", "/bin/false"]
-            .into_iter()
-            .find(|p| std::path::Path::new(p).exists())
-            .expect("a false program");
-        assert_eq!(lookup_via(program, 1234), Lookup::Missing);
+    fn a_pid_that_ends_between_the_fields_is_missing_and_a_later_unreadable_field_wins() {
+        assert_eq!(
+            reads(value("7"), Field::Missing, value("y")),
+            Lookup::Missing
+        );
+        assert_eq!(
+            reads(value("7"), value("x"), Field::Missing),
+            Lookup::Missing
+        );
+        assert_eq!(
+            reads(value("7"), Field::Missing, Field::Unreadable),
+            Lookup::Unreadable
+        );
+        assert_eq!(
+            reads(value("7"), Field::Unreadable, value("y")),
+            Lookup::Unreadable
+        );
     }
 
     #[test]
-    fn a_ps_that_complains_makes_the_table_unreadable() {
-        // `ls` given ps's arguments names a file that is not there: a complaint on stderr and a failure exit
-        let program = ["/bin/ls", "/usr/bin/ls"]
-            .into_iter()
-            .find(|p| std::path::Path::new(p).exists())
-            .expect("an ls program");
-        assert_eq!(lookup_via(program, 1234), Lookup::Unreadable);
+    fn a_parent_that_is_not_a_number_is_unreadable() {
+        assert_eq!(
+            reads(value("seven"), value("x"), value("y")),
+            Lookup::Unreadable
+        );
     }
 
     #[test]
@@ -246,7 +290,7 @@ mod tests {
             Lookup::Found(_)
         ));
         // a process that has ended and been waited for is not there, and ps says so silently
-        let mut child = Command::new("true").spawn().unwrap();
+        let mut child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
         let pid = child.id();
         child.wait().unwrap();
         assert_eq!(PsTable.lookup(pid), Lookup::Missing);
