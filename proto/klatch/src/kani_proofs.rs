@@ -5,7 +5,8 @@
 //! harness leaves out is listed with it, and RESEARCH-NOTES section 52 collects them.
 
 use crate::domain::{
-    clean_bytes, dominates_in, overlaps, scopes_collide, valid_kind, valid_name, valid_scope,
+    clean_bytes, clean_path, dominates_in, overlaps, scopes_collide, valid_kind, valid_name,
+    valid_scope,
 };
 
 /// Text of at most `N` characters drawn from `alphabet`, with a symbolic length. The alphabet is the characters a
@@ -289,9 +290,103 @@ fn scopes_collide_is_symmetric_and_shared_collides_with_all() {
     assert_eq!(scopes_collide(&a, &b), scopes_collide(&b, &a));
     assert!(scopes_collide(&a, &a));
     assert!(scopes_collide(&a, "*") && scopes_collide("*", &a));
-    // two different scopes, neither shared, never collide
-    if a != b && a != "*" && b != "*" {
-        assert!(!scopes_collide(&a, &b));
+    // with neither scope shared, they collide exactly when they are the same scope
+    let neither_shared = a != "*" && b != "*";
+    if neither_shared {
+        assert_eq!(scopes_collide(&a, &b), a == b);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Larger bounds and the clean_path wrapper (#659, #660). Each of these was written to be one step past a bound the
+// first set stopped at; where a run did not finish in its time limit the harness was removed and RESEARCH-NOTES
+// section 52.8d says so.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// The wrapper adds nothing: `clean_path` (a `vec!` of the right size, `clean_bytes`, `String::from_utf8_lossy`) returns
+/// the bytes `clean_bytes` computes. Bound: path and cwd up to 2 bytes each from `/ . a`. Not covered: longer paths.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(10)]
+fn clean_path_returns_what_clean_bytes_computes() {
+    let (path, lp) = bytes_of::<2>(b"/.a");
+    let (cwd, lc) = bytes_of::<2>(b"/.a");
+    let (p, c) = (
+        std::str::from_utf8(&path[..lp]).unwrap(),
+        std::str::from_utf8(&cwd[..lc]).unwrap(),
+    );
+    let got = clean_path(p, c);
+    let mut out = [0u8; 6];
+    let n = clean_bytes(&path[..lp], &cwd[..lc], &mut out);
+    assert!(got.as_bytes() == &out[..n]);
+}
+
+/// The normal-form property one byte past the first set: path and cwd up to 4 bytes from `/ . a`, an output buffer of
+/// 10 bytes.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(12)]
+fn clean_path_is_normal_up_to_4_bytes() {
+    let (path, lp) = bytes_of::<4>(b"/.a");
+    let (cwd, lc) = bytes_of::<4>(b"/.a");
+    let mut out = [0u8; 10];
+    let n = clean_bytes(&path[..lp], &cwd[..lc], &mut out);
+    let r = &out[..n];
+    assert!(n >= 1 && r[0] == b'/');
+    assert!(r.windows(2).all(|w| w != b"//"));
+    assert!(n == 1 || r[n - 1] != b'/');
+    assert!(no_dot_segments(r));
+}
+
+/// `overlaps` is symmetric and reflexive one character past the first set: each path up to 4 characters from `/ a b`.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(14)]
+fn overlaps_is_symmetric_and_reflexive_up_to_4_bytes() {
+    let a = text::<4>(b"/ab");
+    let b = text::<4>(b"/ab");
+    assert_eq!(overlaps(a, b), overlaps(b, a));
+    assert!(overlaps(a, a));
+}
+
+/// A deeper component structure than the first harness (one directory and one child): `/d`, `/d/e`, `/d/e/r`, and the
+/// text-prefix sibling `/d/er`, names of one byte (a or b). A directory overlaps everything beneath it, a name that merely
+/// continues another is a different component, and a path overlaps its own parent and child.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(14)]
+fn overlaps_follows_components_two_levels_deep() {
+    let pick = |s: &[u8]| s[kani::any::<usize>() % s.len()];
+    let (d, e, r) = (pick(b"ab"), pick(b"ab"), pick(b"ab"));
+    let top = std::str::from_utf8(&[b'/', d]).unwrap().to_owned();
+    let mid = std::str::from_utf8(&[b'/', d, b'/', e]).unwrap().to_owned();
+    let low = std::str::from_utf8(&[b'/', d, b'/', e, b'/', r])
+        .unwrap()
+        .to_owned();
+    let sibling = std::str::from_utf8(&[b'/', d, b'/', e, r])
+        .unwrap()
+        .to_owned();
+    assert!(overlaps(&top, &mid) && overlaps(&mid, &top));
+    assert!(overlaps(&top, &low) && overlaps(&low, &top));
+    assert!(overlaps(&mid, &low) && overlaps(&low, &mid));
+    // `/d/er` is not under `/d/e`, but it is under `/d`
+    assert!(!overlaps(&mid, &sibling) && !overlaps(&sibling, &mid));
+    assert!(overlaps(&top, &sibling) && overlaps(&sibling, &top));
+    assert!(!overlaps(&low, &sibling) && !overlaps(&sibling, &low));
+}
+
+/// `scopes_collide` at 5 characters from `a b *`, two past the first set.
+#[kani::proof]
+#[kani::solver(cadical)]
+#[kani::unwind(8)]
+fn scopes_collide_up_to_5_bytes() {
+    let a = text::<5>(b"ab*");
+    let b = text::<5>(b"ab*");
+    assert_eq!(scopes_collide(a, b), scopes_collide(b, a));
+    assert!(scopes_collide(a, a));
+    let neither_shared = a != "*" && b != "*";
+    if neither_shared {
+        assert_eq!(scopes_collide(a, b), a == b);
     }
 }
 
