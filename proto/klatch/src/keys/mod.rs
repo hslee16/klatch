@@ -24,6 +24,8 @@ pub use file::FileKeys;
 pub use key::{KEY_LEN, Key};
 pub use labels::{LabelKeys, label_key_name};
 pub use recovery::{RecoveryError, recovery_code, restore};
+#[cfg(kani)]
+pub(crate) use recovery::{frame_with, unframe_with};
 pub use sealed::{
     RevealError, is_sealed_text, looks_protected, protect, protect_text, reveal, reveal_text,
 };
