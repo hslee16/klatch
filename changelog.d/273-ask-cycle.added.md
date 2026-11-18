@@ -1,0 +1,1 @@
+- A cycle through asks (two members each holding a claim on the other's ask, so each waits on the other) is named when a member starts a `klatch wait` and in `klatch asks`; the member whose name sorts first is told to yield by delivering what it has for the ask it holds, and the others are told who yields (#273).

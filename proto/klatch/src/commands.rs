@@ -73,7 +73,7 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             };
             let rooms =
                 klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
-            wait(t, &rooms, timeout, peek)?
+            wait(ctx, &rooms, timeout, peek)?
         }
         Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
         Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
@@ -377,12 +377,25 @@ fn look(
     Ok(seen.into_iter().filter(|m| filter.accepts(m)).collect())
 }
 
+/// Before a wait blocks, tell the caller of any cycle through asks it is part of in the rooms it waits on (#273,
+/// DESIGN item 90): a member about to wait for an answer that cannot come learns it now, not after the timeout.
+/// A room that cannot be read adds nothing.
+fn print_ask_cycle_notes(ctx: &Ctx, rooms: &[(String, klatch::domain::WaitFilter)]) {
+    rooms
+        .iter()
+        .filter_map(|(room, _)| Some((ctx.t.open_asks(room).ok()?, ctx.t.claims(room).ok()?)))
+        .flat_map(|(asks, claims)| klatch::domain::cycle_notes(&asks, &claims, ctx.me, ctx.now))
+        .for_each(|note| println!("{note}"));
+}
+
 fn wait(
-    t: &dyn Transport,
+    ctx: &Ctx,
     rooms: &[(String, klatch::domain::WaitFilter)],
     timeout: u64,
     peek: bool,
 ) -> Result<()> {
+    let t = ctx.t;
+    print_ask_cycle_notes(ctx, rooms);
     let (timeout, clamped) = effective_timeout(timeout);
     if clamped {
         eprintln!("klatch wait: timeout clamped to {timeout}s (the most one call may wait)");
@@ -541,7 +554,8 @@ fn my_refusals(ctx: &Ctx, limit: usize) -> Result<()> {
 }
 
 fn asks(ctx: &Ctx, room: &str) -> Result<()> {
-    for a in ctx.t.open_asks(room)? {
+    let open = ctx.t.open_asks(room)?;
+    for a in &open {
         let summary = a.summary(ctx.now);
         let gap = if summary.is_empty() { "" } else { " " };
         let state = if a.claimed { "claimed" } else { "unclaimed" };
@@ -552,6 +566,11 @@ fn asks(ctx: &Ctx, room: &str) -> Result<()> {
             klatch::domain::secs_between(ctx.now, a.ts),
             flat(&a.text)
         );
+    }
+    // a cycle through asks (#273): anyone can see it, and it names who yields
+    let claims = ctx.t.claims(room).unwrap_or_default();
+    for c in klatch::domain::ask_cycles(&open, &claims, ctx.now) {
+        println!("ask cycle: {}; {} yields", c.describe(), c.yielder());
     }
     Ok(())
 }
