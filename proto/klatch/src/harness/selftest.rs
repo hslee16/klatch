@@ -117,6 +117,7 @@ mod tests {
                 ppid: 1,
                 state: 'S',
                 cpu_ms: 1,
+                elapsed_ms: None,
             }]),
         }
     }
