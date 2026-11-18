@@ -164,6 +164,93 @@ fn session_id_of(v: &serde_json::Value) -> Option<String> {
     v.get("session_id")?.as_str().map(String::from)
 }
 
+/// A Codex session as klatch sees it: the evidence and the directory it works in.
+pub(crate) struct CodexSession {
+    evidence: PeerEvidence,
+    cwd: Option<String>,
+}
+
+/// Whether to walk up the process tree: asked for, and nothing else already says who is calling.
+fn walk_wanted(declared: &Option<String>, discover: bool, codex: &Option<CodexSession>) -> bool {
+    declared.is_none() && discover && codex.is_none()
+}
+
+/// The directory a session started in: the registry record's, else the Codex hook's.
+fn session_dir_of(session: Option<&Found>, codex: Option<&CodexSession>) -> Option<String> {
+    session
+        .map(|f| f.cwd.clone())
+        .or_else(|| codex.and_then(|c| c.cwd.clone()))
+}
+
+/// The Codex session behind this call when `--codex` was given and no name was typed; a typed name always wins.
+fn codex_for(
+    who: &WhoFlags,
+    named: bool,
+    is_hook: bool,
+    stdin: Option<&serde_json::Value>,
+) -> Option<CodexSession> {
+    if named || !who.codex {
+        return None;
+    }
+    codex_session(is_hook, stdin, std::env::var("CODEX_THREAD_ID").ok())
+}
+
+/// A session or thread id is a store key and part of a member name, so it is plain: letters, digits, `-` and `_`.
+fn plain_id(id: &str) -> Option<&str> {
+    let plain = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    (!id.is_empty() && id.len() <= 128 && id.chars().all(plain)).then_some(id)
+}
+
+/// The member name a Codex session starts with: `codex-` and the name of its working directory, as a valid name.
+fn codex_member_base(cwd: Option<&str>) -> String {
+    let dir = cwd
+        .and_then(|c| std::path::Path::new(c).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let clean: String = dir
+        .chars()
+        .map(
+            |c| match c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                true => c,
+                false => '-',
+            },
+        )
+        .collect();
+    let name = match clean.trim_matches('-') {
+        "" => "codex".to_string(),
+        dir => format!("codex-{dir}"),
+    };
+    name.chars().take(MAX_MEMBER_LEN).collect()
+}
+
+/// The Codex session behind a call (#341, RESEARCH-NOTES 37): for a hook, the `session_id` and `cwd` on standard
+/// input, else `CODEX_THREAD_ID`; for a command the agent runs, `CODEX_THREAD_ID` and the working directory. `None`
+/// when there is no usable id (an id with anything but letters, digits, `-` and `_` is ignored). The id is the
+/// same across `exec resume`, so a resumed session is the same member; `ensure_session_member` keeps the first name.
+fn codex_session(
+    is_hook: bool,
+    stdin: Option<&serde_json::Value>,
+    thread: Option<String>,
+) -> Option<CodexSession> {
+    let from_hook = stdin.filter(|_| is_hook);
+    let id = from_hook.and_then(session_id_of).or(thread)?;
+    let id = plain_id(&id)?.to_string();
+    let cwd = from_hook
+        .and_then(|v| v.get("cwd")?.as_str().map(String::from))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        });
+    Some(CodexSession {
+        evidence: PeerEvidence::Session {
+            session_id: id,
+            name: Some(codex_member_base(cwd.as_deref())),
+        },
+        cwd,
+    })
+}
+
 /// Look for the session above this process, using the real process table and the harness registry
 /// (`$HOME/.claude/sessions`). Reads nothing but the registry's .json files and never the environment.
 pub(crate) fn discover_session() -> Result<Found, Miss> {
@@ -258,13 +345,16 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
     let stdin = if is_hook { stdin_json() } else { None };
     let stdin_session = stdin.as_ref().and_then(session_id_of);
+    // A Codex session has no registry record: the hook's session id (or the thread id of a command) names it (#341).
+    let codex = codex_for(who, declared.is_some(), is_hook, stdin.as_ref());
     // What the walk up the process tree found, once: it gives the identity and, for a coding session, its directory.
-    let found = (declared.is_none() && discover).then(discover_session);
+    let found = walk_wanted(&declared, discover, &codex).then(discover_session);
     let session = found.as_ref().and_then(|r| r.as_ref().ok()).cloned();
-    let session_dir = session.as_ref().map(|f| f.cwd.clone());
+    let session_dir = session_dir_of(session.as_ref(), codex.as_ref());
     let probe = Probe {
         declared,
         found,
+        codex,
         is_hook,
         stdin_session: stdin_session.as_deref(),
     };
@@ -331,6 +421,7 @@ fn identify_by_credential(
 struct Probe<'a> {
     declared: Option<String>,
     found: Option<Result<Found, Miss>>,
+    codex: Option<CodexSession>,
     is_hook: bool,
     stdin_session: Option<&'a str>,
 }
@@ -338,6 +429,9 @@ struct Probe<'a> {
 impl Probe<'_> {
     /// The evidence and, when there is none, a notice saying how to give a name.
     fn evidence(self, store: &SqliteStore) -> (PeerEvidence, Option<String>) {
+        if let Some(codex) = self.codex {
+            return (codex.evidence, None);
+        }
         match (self.declared, self.found, self.is_hook) {
             (None, Some(f), true) => hook_evidence(self.stdin_session, f, &|sid| {
                 store.member_of_session(sid).ok().flatten()

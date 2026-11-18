@@ -55,6 +55,11 @@ struct WhoFlags {
     /// given (default: off, or set KLATCH_DISCOVER=1). Reads only the registry's .json files, never a key file.
     #[arg(long, global = true)]
     discover: bool,
+    /// This is a Codex session (it has no registry record): when no name is given, the member comes from the hook's
+    /// session id and working directory on standard input, or from CODEX_THREAD_ID for a command. A resumed session
+    /// keeps its member.
+    #[arg(long, global = true)]
+    codex: bool,
     /// The scope this member works in (default: $KLATCH_SCOPE, else a coding session's repository). Claims conflict
     /// only inside one scope, so two repositories or two bots can each claim `src/lib.rs`.
     #[arg(long = "member-scope", global = true)]
