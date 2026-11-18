@@ -52,6 +52,13 @@ const GUARDED: &[(&str, Call)] = &[
     ("claim", |g, w| {
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
+    ("invite", |g, w| refused(g.invite(w, "bob", "r", "r"))),
+    ("process_exited", |g, w| {
+        refused(g.process_exited(w, "r", "bob"))
+    }),
+    ("request_crossing", |g, w| {
+        refused(g.request_crossing(w, "r", 1, "r"))
+    }),
     // before admin_close_room below: a closed room refuses before the guard is asked
     ("member_card", |g, w| refused(g.member_card(w, "r", "bob"))),
     ("claim_ttl_for", |g, w| {
@@ -153,6 +160,36 @@ const GUARDED: &[(&str, Call)] = &[
         refused(g.admin_remove_scrub_term(w, "n"))
     }),
     ("admin_scrub_terms", |g, w| refused(g.admin_scrub_terms(w))),
+    // found by the directory scan (#161): these files were not in the hand-kept list before
+    ("admin_set_librarian", |g, w| {
+        refused(g.admin_set_librarian(w, "bob", true))
+    }),
+    ("admin_set_reviewer", |g, w| {
+        refused(g.admin_set_reviewer(w, "bob", true))
+    }),
+    ("admin_set_admin_agent", |g, w| {
+        refused(g.admin_set_admin_agent(w, "bob", true))
+    }),
+    ("admin_set_room_creation_granted", |g, w| {
+        refused(g.admin_set_room_creation_granted(w, true))
+    }),
+    ("admin_grant_room_capability", |g, w| {
+        refused(g.admin_grant_room_capability(w, "bob", true))
+    }),
+    ("admin_set_rate_limit", |g, w| {
+        refused(g.admin_set_rate_limit(w, Some((5, 60))))
+    }),
+    ("admin_set_lease_cap", |g, w| {
+        refused(g.admin_set_lease_cap(w, Some(60)))
+    }),
+    ("admin_set_lease_grace", |g, w| {
+        refused(g.admin_set_lease_grace(w, Some(60)))
+    }),
+    ("review_queue", |g, w| refused(g.review_queue(w, 5))),
+    ("review_next", |g, w| refused(g.review_next(w))),
+    ("review_verdict", |g, w| {
+        refused(g.review_verdict(w, 1, &crate::domain::Verdict::Allow))
+    }),
 ];
 
 /// Methods that are not an operation on shared state: building the gateway, the clock, or reading or writing only
@@ -231,32 +268,88 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "room_label",
         "a policy lookup the gateway uses on every call; takes no principal",
     ),
+    (
+        "role_of",
+        "a policy lookup the gateway uses on every call; takes no principal",
+    ),
+    ("is_admin_agent", "a role lookup; takes no principal"),
+    ("is_librarian", "a role lookup; takes no principal"),
+    (
+        "can_create_rooms",
+        "a policy lookup `check_room_capability` uses on every call; takes no principal",
+    ),
+    (
+        "lease_policy",
+        "a policy lookup the lease rules use; takes no principal",
+    ),
+    (
+        "rate_limit",
+        "a policy lookup the budget check uses on every post; takes no principal",
+    ),
+    (
+        "with_leases",
+        "builds the gateway: where liveness comes from",
+    ),
+    (
+        "delivery_view",
+        "the caller's own delivery view, a key built from the caller's own name",
+    ),
+    (
+        "set_delivery_view",
+        "the caller's own delivery view, a key built from the caller's own name",
+    ),
+    (
+        "release_crossings",
+        "applies only verdicts a reviewer or judge already recorded, with the floors checked again; it takes no principal and adds no authority. `klatch judge run --once` reaches it behind the launcher heuristic only, a gap kept in proto/AUTHZ-AUDIT.md",
+    ),
 ];
+
+/// The source files of the gateway, found by reading the directory so that a new file cannot be left out of the
+/// scan (#161): `gateway.rs` and every file beside it, tests excluded.
+fn gateway_sources() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gateway");
+    let mut files = vec![root.join("gateway.rs")];
+    for entry in std::fs::read_dir(root.join("gateway")).expect("the gateway directory") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            let text = std::fs::read_to_string(&p).expect("a gateway source file");
+            (p.display().to_string(), text)
+        })
+        .collect()
+}
+
+#[test]
+fn the_scan_reads_every_source_file_of_the_gateway() {
+    let seen = gateway_sources();
+    for name in [
+        "crossing.rs",
+        "lease.rs",
+        "librarian.rs",
+        "rate.rs",
+        "reviewer.rs",
+        "roles.rs",
+        "rooms.rs",
+        "delivery.rs",
+        "workers.rs",
+    ] {
+        assert!(
+            seen.iter().any(|(p, _)| p.ends_with(name)),
+            "{name} is not scanned"
+        );
+    }
+}
 
 /// The public methods in the gateway's source files (tests excluded).
 fn public_methods() -> Vec<String> {
-    let files = [
-        include_str!("../../gateway.rs"),
-        include_str!("../admin.rs"),
-        include_str!("../anchors.rs"),
-        include_str!("../board.rs"),
-        include_str!("../budget.rs"),
-        include_str!("../claims.rs"),
-        include_str!("../dm.rs"),
-        include_str!("../history.rs"),
-        include_str!("../kind.rs"),
-        include_str!("../room_settings.rs"),
-        include_str!("../policy.rs"),
-        include_str!("../presence.rs"),
-        include_str!("../reading.rs"),
-        include_str!("../runs.rs"),
-        include_str!("../scrub.rs"),
-        include_str!("../specs.rs"),
-        include_str!("../tripwire.rs"),
-        include_str!("../workers.rs"),
-    ];
     let mut names = Vec::new();
-    for src in files {
+    for (_, src) in gateway_sources() {
         for line in src.lines() {
             if let Some(rest) = line.strip_prefix("    pub fn ") {
                 names.push(rest.split(['(', '<']).next().unwrap_or("").to_string());
@@ -304,11 +397,37 @@ fn under_a_guard_that_refuses_everything_no_guarded_method_succeeds_or_touches_t
 }
 
 #[test]
+fn a_reviewer_is_still_refused_by_the_guard_for_both_review_operations() {
+    // the role lets a reviewer review; the guard still decides (rooms "" stands for an operation with no room)
+    let guard = Rc::new(SpyGuard::denying(&[""]));
+    let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
+    g.store.policy_set("role:rev", Some("reviewer"), 1).unwrap();
+    let rev = Principal::unattributed("rev");
+    assert!(refused(g.review_next(&rev)));
+    assert!(refused(g.review_verdict(
+        &rev,
+        1,
+        &crate::domain::Verdict::Allow
+    )));
+    let seen = guard.seen.borrow();
+    assert!(seen.contains(&Operation::ReviewNext), "{seen:?}");
+    assert!(
+        seen.contains(&Operation::ReviewVerdict { id: 1 }),
+        "{seen:?}"
+    );
+}
+
+#[test]
 fn the_guard_sees_every_guarded_method_exactly_once_per_call() {
     let guard = Rc::new(SpyGuard::allowing());
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
     let me = alice();
     for (name, call) in GUARDED {
+        // The two review operations are refused by the role (rule `reviewer`) before the guard is asked unless the
+        // caller is a reviewer; tests/reviewer.rs proves both the role and the guard for them.
+        if matches!(*name, "review_next" | "review_verdict") {
+            continue;
+        }
         let before = guard.seen.borrow().len();
         let _ = call(&g, &me);
         assert!(
