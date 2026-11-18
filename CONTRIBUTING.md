@@ -162,7 +162,7 @@ proto/scripts/kani clean_path_is_normal                      # one harness
 
 `proto/klatch/src/kani_proofs.rs` holds `#[kani::proof]` harnesses for the pure functions that carry the security
 decisions: `clean_path` (through `clean_bytes`), `overlaps`, `valid_name`, `valid_kind`, `valid_scope`,
-`scopes_collide`, `LabelChain::dominates`, `is_loopback`, `check_bind`, the sealed header parse and the recovery code.
+`scopes_collide`, `LabelChain::dominates`, `is_loopback`, `check_bind`, the sealed header parse and the framing of the recovery code (not its text handling or its hash).
 It is compiled only by `cargo kani` (`cfg(kani)`), so no build, test, CI run or gate step sees it, and they are not run
 on pull requests. Run them when you change one of these functions, or before a release.
 
