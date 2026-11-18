@@ -266,7 +266,7 @@ pub(crate) fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
     let registry = FsRegistry {
         dir: PathBuf::from(home).join(".claude").join("sessions"),
     };
-    Some((registry, crate::harness::this_pid_domain()))
+    Some((registry, klatch::harness::this_pid_domain()))
 }
 
 /// The session above `session`, with the real process table and registry.
