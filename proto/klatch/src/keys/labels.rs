@@ -83,6 +83,19 @@ mod tests {
     }
 
     #[test]
+    fn characters_outside_the_key_name_alphabet_are_folded_to_an_underscore_one_by_one() {
+        assert_eq!(label_key_name("s", "a/b"), "s.label.a_b");
+        assert_eq!(label_key_name("s", "a b"), "s.label.a_b");
+        assert_eq!(label_key_name("s", "a.b"), "s.label.a_b");
+        assert_eq!(label_key_name("s", "\u{e9}"), "s.label._");
+        assert_eq!(label_key_name("s", "../x"), "s.label.___x");
+        assert_eq!(label_key_name("s", "private"), "s.label.private");
+        assert_eq!(label_key_name("s", "a-b_C9"), "s.label.a-b_C9");
+        assert_eq!(label_key_name("s", "-"), "s.label.-");
+        assert_eq!(label_key_name("s", "_"), "s.label._");
+    }
+
+    #[test]
     fn loading_returns_only_the_keys_that_exist_and_never_prints_them() {
         let src = MemoryKeys::default();
         src.put(&label_key_name("s", "private"), &Key::from_bytes([5; 32]))
