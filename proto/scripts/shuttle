@@ -49,10 +49,26 @@ plants = [
      "klatch/src/client.rs", "    for line in BufReader::new(output).lines() {",
      "    let _ = tx.send(None);\n    for line in BufReader::new(output).lines() {",
      "shuttle_tests::the_client_reader"),
-    ("race: within gives up at once instead of waiting for the probe",
-     "klatch/src/sync.rs", "rx.recv_timeout(limit).ok()",
-     "{ let _ = limit; rx.try_recv().ok() }",
+    ("answer: within throws the probe answer away (always None)",
+     "klatch/src/sync.rs", "rx.recv().ok().flatten()",
+     "rx.recv().ok().and(None)",
      "shuttle_tests::within"),
+    ("time: within never sends the expiry, so a stuck probe leaves the waiter blocked (deadlock)",
+     "klatch/src/sync.rs", "let _ = clock.send(None);",
+     "let _ = &clock;",
+     "shuttle_tests::within_gives_up"),
+    ("ordering: within's probe thread unwraps the send, so an answer that arrives after the limit panics it",
+     "klatch/src/sync.rs", "let _ = tx.send(Some(probe()));",
+     "tx.send(Some(probe())).unwrap();",
+     "shuttle_tests::within_answers"),
+    ("ordering: the session reader unwraps the send, so a session that stops listening panics the reader",
+     "klatch/src/session/mod.rs", "            if tx.send(item).is_err() {",
+     "            tx.send(item).unwrap();\n            if false {",
+     "shuttle_tests::the_session_reader_ends_quietly"),
+    ("ordering: the client reader unwraps the send, so a dropped receiver panics the reader",
+     "klatch/src/client.rs", "        if tx.send(Some(frame)).is_err() {",
+     "        tx.send(Some(frame)).unwrap();\n        if false {",
+     "shuttle_tests::the_client_reader_ends_quietly"),
 ]
 env = {**os.environ}
 bad = 0
@@ -68,7 +84,9 @@ for name, path, old, new, flt in plants:
                            env=env, capture_output=True, text=True)
     finally:
         open(path, "w").write(src)
-    caught = r.returncode != 0 and "panicked at klatch/src/shuttle_tests.rs" in (r.stdout + r.stderr)
+    # caught: the named test ran and failed (a build error, which also exits non-zero, does not count)
+    out = r.stdout + r.stderr
+    caught = r.returncode != 0 and "test result: FAILED" in out and "could not compile" not in out
     print("caught " if caught else "MISSED ", name)
     bad |= 0 if caught else 1
 sys.exit(bad)

@@ -96,8 +96,9 @@ proto/scripts/shuttle mutations    plant each bug in the real code: every test m
 SHUTTLE_SEED=7 SHUTTLE_ITERS=50000 proto/scripts/shuttle
 ```
 
-A pass means no failing schedule among those tried, not that none exists. Shuttle does not model time and cannot see
-SQLite, `flock` or the OS (RESEARCH-NOTES section 53.5). A new test needs a planted bug in `mutations` that it catches.
+A pass means no failing schedule among those tried, not that none exists. Shuttle has no clock: only `sync::within`
+has a stand-in (a timer thread, so its limit can pass at any step), and every other time limit is untested by it. It
+cannot see SQLite, `flock` or the OS (RESEARCH-NOTES sections 53.5 and 53.7). A new test needs a planted bug in `mutations` that it catches.
 The Shuttle build uses its own `proto/target/shuttle` and the ordinary tests do not run in it.
 
 ## The Quint model of claims and leases (checked by hand; only the replay test runs in the gate)
