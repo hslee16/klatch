@@ -68,6 +68,22 @@ pub enum AdminCmd {
     Label { room: String, label: String },
     /// Set a member's clearance, at most the agent cap
     Clear { member: String, label: String },
+    /// Name a member the grantor of a room (it may grant room-scoped clearance there, `klatch grant`), replacing the
+    /// room's creator or any other; with --off take the role from that member
+    Grantor {
+        room: String,
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
+    /// Set a member's clearance in one room only, at most the agent cap; with --off revoke it
+    RoomClear {
+        room: String,
+        member: String,
+        label: Option<String>,
+        #[arg(long, conflicts_with = "label", required_unless_present = "label")]
+        off: bool,
+    },
     /// Make a member a read-only librarian (the interface for asking what happened), or with --off an ordinary member
     Librarian {
         member: String,

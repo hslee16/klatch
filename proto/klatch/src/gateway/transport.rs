@@ -83,6 +83,13 @@ pub trait Transport {
     fn admin_grant_room_capability(&self, member: &str, on: bool) -> Result<()>;
     /// Invite `member` to `room` with a pointer posted in `via` (#188): needs the capability, is audited.
     fn invite(&self, member: &str, room: &str, via: &str) -> Result<()>;
+    /// The room grantor grants `member` a clearance in `room` only, within its own clearance, the room label and the
+    /// agent cap (#893): audited, refused with the rule that failed.
+    fn grant_room_clearance(&self, room: &str, member: &str, label: &str) -> Result<()>;
+    /// The human names the grantor of a room, or takes the role away; and sets or revokes a room grant (#893).
+    fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()>;
+    fn admin_set_room_clearance(&self, room: &str, member: &str, label: Option<&str>)
+    -> Result<()>;
     /// Limit every member to `posts` posts in `secs` seconds over all rooms, or with `None` lift it (#187).
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()>;
     /// The lease cap and the grace period, in seconds, or with `None` back to the default (#537).
@@ -344,6 +351,23 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn invite(&self, member: &str, room: &str, via: &str) -> Result<()> {
         self.gateway.invite(&self.principal, member, room, via)
+    }
+    fn grant_room_clearance(&self, room: &str, member: &str, label: &str) -> Result<()> {
+        self.gateway
+            .grant_room_clearance(&self.principal, room, member, label)
+    }
+    fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()> {
+        self.gateway
+            .admin_set_room_grantor(&self.principal, room, member, on)
+    }
+    fn admin_set_room_clearance(
+        &self,
+        room: &str,
+        member: &str,
+        label: Option<&str>,
+    ) -> Result<()> {
+        self.gateway
+            .admin_set_room_clearance(&self.principal, room, member, label)
     }
     fn admin_set_cap(&self, label: &str) -> Result<()> {
         self.gateway.admin_set_cap(&self.principal, label)

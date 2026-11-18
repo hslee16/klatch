@@ -136,6 +136,7 @@ fn the_guard_runs_once_per_operation_in_order_before_the_store() {
             Operation::Admin { .. } => "admin",
             Operation::CreateRoom { .. } => "create_room",
             Operation::Invite { .. } => "invite",
+            Operation::GrantClearance { .. } => "grant_clearance",
             Operation::ReviewNext => "review_next",
             Operation::ReviewVerdict { .. } => "review_verdict",
         })

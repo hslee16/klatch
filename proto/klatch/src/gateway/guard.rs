@@ -62,6 +62,12 @@ pub enum Operation {
         member: String,
         room: String,
     },
+    /// The room grantor granting `member` a room-scoped clearance in `room` (#893). The label is not in the operation:
+    /// the gateway's own rules decide it from the policy table.
+    GrantClearance {
+        room: String,
+        member: String,
+    },
     /// A reviewer taking the next queued item to read (#51).
     ReviewNext,
     /// A reviewer recording its verdict on queued item `id` (#51).
@@ -113,6 +119,7 @@ impl Operation {
             Operation::Admin { .. } => "admin",
             Operation::CreateRoom { .. } => "create_room",
             Operation::Invite { .. } => "invite",
+            Operation::GrantClearance { .. } => "grant_clearance",
             Operation::ReviewNext => "review_next",
             Operation::ReviewVerdict { .. } => "review_verdict",
         }
@@ -133,6 +140,7 @@ impl Operation {
             | Operation::Mute { room, .. }
             | Operation::CreateRoom { room }
             | Operation::Invite { room, .. }
+            | Operation::GrantClearance { room, .. }
             | Operation::Ack { room } => Some(room),
             Operation::Admin { .. } | Operation::ReviewNext | Operation::ReviewVerdict { .. } => {
                 None
@@ -189,10 +197,18 @@ impl Guard for AllowAll {
     }
 }
 
-/// The admin acts that edit a floor (R29, D4): the agent cap, the label order, and the scrub and deny list.
+/// The admin acts that edit a floor (R29, D4): the agent cap, the label order, the scrub and deny list, and who may
+/// grant room-scoped clearance (the room grantor and the grants themselves, #893).
 /// Keep this list in step with the `administer` calls that write those policies; the floors tests fail when a
 /// listed act stops being refused.
-const FLOOR_ACTIONS: [&str; 4] = ["cap", "chain", "scrub-add", "scrub-remove"];
+const FLOOR_ACTIONS: [&str; 6] = [
+    "cap",
+    "chain",
+    "scrub-add",
+    "scrub-remove",
+    "grantor",
+    "room-clear",
+];
 
 /// Whether the admin act edits a floor.
 pub(crate) fn is_floor_act(action: &str) -> bool {

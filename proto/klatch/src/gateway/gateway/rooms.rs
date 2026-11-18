@@ -93,6 +93,7 @@ impl<S: Store> Gateway<S> {
         if !created {
             return Ok(());
         }
+        self.open_room_grants(room, &who.member)?;
         let detail = format!("created by {}", who.member);
         self.store
             .record_audit(&NewAudit::new("create-room", room, &detail), self.now())
@@ -102,7 +103,7 @@ impl<S: Store> Gateway<S> {
     /// refused, and an inviter that cannot see clearances (the router) must not need to. Fails closed on an unknown label.
     fn check_invitee_clearance(&self, member: &str, room: &str) -> Result<()> {
         let chain = self.chain()?;
-        let (label, held) = (self.room_label(room)?, self.clearance_of(member)?);
+        let (label, held) = (self.room_label(room)?, self.clearance_in(member, room)?);
         if chain.dominates(&held, &label) {
             return Ok(());
         }
