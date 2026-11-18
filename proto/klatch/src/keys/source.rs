@@ -232,6 +232,35 @@ mod tests {
         assert_eq!(a, b);
     }
 
+    /// A keystore that is locked: it cannot say whether a key exists, and it records any key put into it.
+    struct LockedKeys(std::cell::Cell<bool>);
+
+    impl KeySource for LockedKeys {
+        fn get(&self, _name: &str) -> Result<Option<Key>, Error> {
+            Err(Error::Locked("the keyring is locked".into()))
+        }
+        fn put(&self, _name: &str, _key: &Key) -> Result<(), Error> {
+            self.0.set(true);
+            Ok(())
+        }
+        fn delete(&self, _name: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        fn describe(&self) -> &'static str {
+            "locked"
+        }
+    }
+
+    #[test]
+    fn a_locked_keystore_never_leads_to_a_new_key_being_made() {
+        let src = LockedKeys(std::cell::Cell::new(false));
+        assert!(matches!(
+            open_or_create(&src, "store"),
+            Err(Error::Locked(_))
+        ));
+        assert!(!src.0.get(), "a key was made while the keystore was locked");
+    }
+
     #[test]
     fn each_store_directory_has_its_own_key_name_and_the_name_is_safe() {
         let a = store_key_name(std::path::Path::new("/tmp/klatch-a"));
