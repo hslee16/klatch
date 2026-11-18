@@ -15,6 +15,7 @@ mod dm;
 mod error;
 mod hook;
 mod judge;
+mod kind;
 mod labels;
 mod model;
 pub(crate) mod parked;
@@ -61,6 +62,7 @@ pub use hook::{
     render_hook_within,
 };
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
+pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]
 pub(crate) use labels::dominates_in;
 pub use labels::{DEFAULT_LABELS, LabelChain};

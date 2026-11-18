@@ -18,7 +18,8 @@ pub fn join_is_idempotent_and_lists_the_member<S: Store>(make: fn() -> S) {
             last_seen: 20,
             status: None,
             parent: None,
-            parked: None
+            parked: None,
+            kind: None
         }]
     );
     assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);

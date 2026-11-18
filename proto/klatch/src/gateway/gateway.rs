@@ -37,6 +37,7 @@ pub use lease::{
 };
 mod history;
 pub use history::{History, HistoryRange};
+mod kind;
 mod librarian;
 mod policy;
 mod reviewer;

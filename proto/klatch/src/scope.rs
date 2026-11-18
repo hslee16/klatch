@@ -99,6 +99,29 @@ pub(crate) fn ensure_member_scope(
     }
 }
 
+/// The kind a member declares: the flag, else `KLATCH_KIND` when it is not empty (#301).
+pub(crate) fn declared_kind(flag: Option<&str>) -> Option<String> {
+    flag.map(str::to_string)
+        .or_else(|| std::env::var("KLATCH_KIND").ok().filter(|k| !k.is_empty()))
+}
+
+/// Declare the caller's kind from `--member-kind` or `KLATCH_KIND` (#301): `bot`, `service` or `human`, or `off` to
+/// withdraw it. `session` is refused: klatch derives it from the session record. The kind is display only.
+pub(crate) fn declare_member_kind(
+    gateway: &Gateway<impl Store>,
+    who: &Principal,
+    word: &str,
+) -> Result<()> {
+    let kind =
+        match word {
+            "off" => None,
+            w => Some(klatch::domain::MemberKind::parse(w).with_context(|| {
+                format!("bad member kind {w:?}: use bot, service, human, or off")
+            })?),
+        };
+    Ok(gateway.set_kind(who, kind)?)
+}
+
 #[cfg(test)]
 mod scope_dir_tests {
     use super::*;
