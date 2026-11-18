@@ -1,7 +1,8 @@
 //! The real `Host` for the liveness probe: `ps` for the table, the registry file for the turn state, and file
 //! metadata (never content) for the transcript and the background-task output.
 
-use crate::harness::probe::{FileMeta, Host, ProcRow, Turn, parse_cpu_time, parse_turn};
+use crate::harness::probe::{FileMeta, Host, ProcRow, Turn, parse_turn};
+use crate::harness::pstime::{parse_cpu_time, parse_elapsed};
 use crate::harness::record::Record;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -64,7 +65,8 @@ fn meta_of(path: &Path) -> Option<FileMeta> {
     })
 }
 
-/// Rows of `ps -A -o pid=,ppid=,state=,time=`; a line that does not parse is skipped.
+/// Rows of `ps -A -o pid=,ppid=,state=,time=,etime=`; a line that does not parse is skipped, and a missing or bad
+/// elapsed time only leaves that field empty.
 pub(crate) fn parse_ps_rows(text: &str) -> Vec<ProcRow> {
     text.lines().filter_map(parse_ps_row).collect()
 }
@@ -75,11 +77,13 @@ fn parse_ps_row(line: &str) -> Option<ProcRow> {
     let ppid = f.next()?.parse().ok()?;
     let state = f.next()?.chars().next()?;
     let cpu_ms = parse_cpu_time(f.next()?)?;
+    let elapsed_ms = f.next().and_then(parse_elapsed);
     Some(ProcRow {
         pid,
         ppid,
         state,
         cpu_ms,
+        elapsed_ms,
     })
 }
 
@@ -93,7 +97,7 @@ impl Host for SysHost {
 
     fn procs(&self) -> Option<Vec<ProcRow>> {
         let out = Command::new("ps")
-            .args(["-A", "-o", "pid=,ppid=,state=,time="])
+            .args(["-A", "-o", "pid=,ppid=,state=,time=,etime="])
             .output()
             .ok()?;
         if !out.status.success() {
@@ -184,6 +188,27 @@ mod tests {
         assert_eq!(rows[0].state, 'S');
         assert_eq!(rows[1].cpu_ms, 780);
         assert_eq!(rows[2].state, 'Z');
+    }
+
+    #[test]
+    fn a_row_may_carry_the_elapsed_time_and_a_bad_one_only_loses_it() {
+        let rows = parse_ps_rows(
+            "  300     1 R+     0:00.78 2-03:04:05\n  301     1 S      0:00.10 garbage\n  302 1 S 0:00.10 05:30\n",
+        );
+        assert_eq!(rows.len(), 3, "a bad age never drops the row");
+        assert_eq!(rows[0].elapsed_ms, Some(183_845_000));
+        assert_eq!(rows[1].elapsed_ms, None);
+        assert_eq!(rows[2].elapsed_ms, Some(330_000));
+    }
+
+    #[test]
+    fn the_real_table_gives_this_process_an_age_that_is_not_in_the_future() {
+        let rows = host(Path::new("/nonexistent"))
+            .procs()
+            .expect("ps works here");
+        let me = rows.iter().find(|r| r.pid == std::process::id()).unwrap();
+        let age = me.elapsed_ms.expect("ps reports the elapsed time here");
+        assert!(age < 24 * 3_600_000, "a test process is young: {age}");
     }
 
     #[test]
