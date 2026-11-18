@@ -319,7 +319,10 @@ fn any_member_reads_the_label_order_and_the_agent_cap_over_the_wire() {
     let (ok, result, _) = response(&f, "l");
     assert!(ok);
     let r = result.unwrap();
-    assert_eq!(r["chain"], json!(["public", "internal", "private", "secret"]));
+    assert_eq!(
+        r["chain"],
+        json!(["public", "internal", "private", "secret"])
+    );
     assert_eq!(r["cap"], "private");
     g.admin_set_label_chain(&admin(), &["open", "closed", "sealed"])
         .unwrap();
@@ -333,7 +336,10 @@ fn any_member_reads_the_label_order_and_the_agent_cap_over_the_wire() {
 fn a_non_member_cannot_read_the_label_order_or_check_a_scrub() {
     let g = gateway();
     let stranger = Principal::unattributed("");
-    for (m, p) in [("label_order", json!({})), ("scrub_check", json!({"text":"x"}))] {
+    for (m, p) in [
+        ("label_order", json!({})),
+        ("scrub_check", json!({"text":"x"})),
+    ] {
         let f = run(&g, &stranger, &[req("s", m, p)]);
         assert!(!response(&f, "s").0, "{m}");
     }
