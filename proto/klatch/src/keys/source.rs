@@ -6,6 +6,9 @@ use std::collections::HashMap;
 pub enum Error {
     /// The keystore could not be reached or refused (the text says why, never a key).
     Store(String),
+    /// The keystore is there but locked, or has no login collection, so it cannot say whether a key exists. This is
+    /// never "no key": a caller that read it as missing could make a new key and orphan the store (#561).
+    Locked(String),
     /// A stored value is not a key (wrong length, or a file readable by others).
     Bad(String),
 }
@@ -14,6 +17,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Store(m) => write!(f, "key store: {m}"),
+            Self::Locked(m) => write!(f, "key store: {m}"),
             Self::Bad(m) => write!(f, "key store: {m}"),
         }
     }
@@ -258,6 +262,35 @@ mod tests {
         let (b, second) = open_or_create(&src, "store").unwrap();
         assert!(first.is_some() && second.is_none());
         assert_eq!(a, b);
+    }
+
+    /// A keystore that is locked: it cannot say whether a key exists, and it records any key put into it.
+    struct LockedKeys(std::cell::Cell<bool>);
+
+    impl KeySource for LockedKeys {
+        fn get(&self, _name: &str) -> Result<Option<Key>, Error> {
+            Err(Error::Locked("the keyring is locked".into()))
+        }
+        fn put(&self, _name: &str, _key: &Key) -> Result<(), Error> {
+            self.0.set(true);
+            Ok(())
+        }
+        fn delete(&self, _name: &str) -> Result<(), Error> {
+            Ok(())
+        }
+        fn describe(&self) -> &'static str {
+            "locked"
+        }
+    }
+
+    #[test]
+    fn a_locked_keystore_never_leads_to_a_new_key_being_made() {
+        let src = LockedKeys(std::cell::Cell::new(false));
+        assert!(matches!(
+            open_or_create(&src, "store"),
+            Err(Error::Locked(_))
+        ));
+        assert!(!src.0.get(), "a key was made while the keystore was locked");
     }
 
     #[test]

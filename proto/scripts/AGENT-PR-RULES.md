@@ -9,6 +9,7 @@ Paste this block into the prompt of any agent that is not started by `proto/scri
 - A stage of checks-cancelled means jobs were cancelled before they ran: rerun them with `python3 -I proto/scripts/pr-ledger --rerun-cancelled PR`.
 - A stage of checks-red is a real failure: read the failing job (the ledger shows its first error line), fix it, push. Never rerun a real red check.
 - At `ready`, post "ready: #PR" in the room and release your claims. You still never merge; the human or coordinator does.
+- A new DESIGN item goes in its own file `design/items/<ticket>-<slug>.md` (line 1 is the item title, the rest is the text; see design/items/README.md); never append to DESIGN.md and never pick an item number (#807). Refer to an item that is not yet assembled as "the design item for #NNN".
 - When you open the PR, in the same step post `pr: #PR <title>` in the room and run `K claim lobby pr:PR --shared`; renew it every 10 minutes until the PR is over (DESIGN item 84). A PR you never post is invisible on the board.
 - When it is merged (or closed without merging), post `merged: #PR` and release `pr:PR --note merged`. If you must stop first, release `pr:PR` without that note and say so in a `handoff:` post. When the lobby digest shows an open PR without an owner, claim it before starting new work.
 ```
