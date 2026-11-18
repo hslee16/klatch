@@ -99,7 +99,7 @@ fn measure_idle_waiters_and_wake_latency() {
         );
         let waiters: Vec<_> = (0..20)
             .map(|i| {
-                let (path, polls, stop) = (path.clone(), polls.clone(), stop.clone());
+                let (path, polls, stop) = (path.to_path_buf(), polls.clone(), stop.clone());
                 std::thread::spawn(move || {
                     waiter((&path, &format!("w{i}")), on_token, (&polls, &stop))
                 })

@@ -1,4 +1,4 @@
-//! Room settings (#242, DESIGN section 32 item 97): how long an ask may sit unclaimed before its asker is told, and
+//! Room settings (#242, DESIGN section 32 item 98): how long an ask may sit unclaimed before its asker is told, and
 //! the lease an `ask:<N>` claim gets when none is asked for, each per room. Both are admin-set policy keys with
 //! bounds, like `lease:cap` (#537): the human's alone, audited, and `off` puts the built-in value back. A stored
 //! value outside its bound reads as the built-in one, so a hand-written key cannot lift a limit. Neither setting

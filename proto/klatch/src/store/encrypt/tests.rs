@@ -8,11 +8,8 @@ use std::sync::mpsc;
 
 const VERSION: i64 = 7;
 
-fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("klatch-store-enc-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn scratch(tag: &str) -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new(&format!("enc-{tag}"))
 }
 
 /// A plaintext database of two tables (3 and 300 rows, the second spanning many pages) at `VERSION`.

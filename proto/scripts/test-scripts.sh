@@ -202,5 +202,17 @@ if [ "$got" = "True True False False False True" ]; then ok "pr-ledger: the pull
 got=$(plpy "print(m.rate_limited('gh: API rate limit exceeded for user ID 1. (HTTP 403)'), m.rate_limited('read tcp: operation timed out'), m.rate_limited(None), m.rate_limited('You have exceeded a secondary rate limit'))")
 if [ "$got" = "True False False True" ]; then ok "pr-ledger: a rate limit is told from a network failure by its words"; else bad "pr-ledger: rate_limited '$got'"; fi
 
+# the mutants runner refuses a TMPDIR over 60 bytes (#778, #683): a long one breaks the unix socket tests in the baseline
+# and the run would report zero mutants. The refusal comes before anything is copied or built.
+mutants="$here/mutants"
+long_tmp="$work/$(printf 'd%.0s' $(seq 1 70))"
+if env TMPDIR="$long_tmp" HOME="$work" PATH="/usr/bin:/bin" "$mutants" gateway-policy > "$work/out" 2>&1; then bad "mutants accepted a TMPDIR of ${#long_tmp} bytes"; else
+  if grep -q "TMPDIR is ${#long_tmp} bytes" "$work/out" && grep -q "60" "$work/out"; then ok "mutants refuses a TMPDIR over 60 bytes and says why"; else bad "mutants refusal text: $(cat "$work/out")"; fi
+fi
+short_tmp="/tmp/$(printf 'd%.0s' $(seq 1 55))"   # exactly 60 bytes
+if [ "${#short_tmp}" -ne 60 ]; then bad "test setup: short_tmp is ${#short_tmp} bytes"; fi
+env TMPDIR="$short_tmp" HOME="$work" PATH="/usr/bin:/bin" "$mutants" gateway-policy > "$work/out" 2>&1
+if ! grep -q "TMPDIR is" "$work/out"; then ok "mutants accepts a TMPDIR of exactly 60 bytes (it goes on to the next check)"; else bad "mutants refused 60 bytes: $(cat "$work/out")"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
