@@ -6,6 +6,7 @@
 //! - the librarian may only look (R30, rule `read-only`);
 //! - the quarantined reviewer (#51) may only review: read the queue and record a verdict (rule `reviewer`), and only
 //!   a reviewer may do that;
+//! - the facilitator (#190) may only look, create a room, invite and post the invite pointer (rule `facilitator`);
 //! - the admin agent (R30, #50) does the non-floor admin acts inside the floors: an act outside its list is refused
 //!   (`admin-scope`), a floor act is refused (`floors`), and every refusal is audited.
 
@@ -18,6 +19,7 @@ pub enum Role {
     Librarian,
     Admin,
     Reviewer,
+    Facilitator,
 }
 
 /// A grant or removal of a role: whose, which, and whether it is given (`on`) or taken away.
@@ -34,13 +36,19 @@ impl Role {
             Role::Librarian => "librarian",
             Role::Admin => "admin",
             Role::Reviewer => "reviewer",
+            Role::Facilitator => "facilitator",
         }
     }
 
     fn parse(text: &str) -> Option<Role> {
-        [Role::Librarian, Role::Admin, Role::Reviewer]
-            .into_iter()
-            .find(|r| r.word() == text)
+        [
+            Role::Librarian,
+            Role::Admin,
+            Role::Reviewer,
+            Role::Facilitator,
+        ]
+        .into_iter()
+        .find(|r| r.word() == text)
     }
 }
 
@@ -150,6 +158,11 @@ impl<S: Store> Gateway<S> {
         if let Some(e) = reviewer_refusal(role, who, op) {
             return Err(e);
         }
+        if role == Some(Role::Facilitator)
+            && let Some(e) = super::facilitator::refusal(who, op)
+        {
+            return Err(e);
+        }
         if self.for_members {
             self.check_member_admin(who, op, role)?;
         }
@@ -232,6 +245,7 @@ fn role_action(role: Role) -> &'static str {
         Role::Librarian => "librarian",
         Role::Admin => "admin-agent",
         Role::Reviewer => "reviewer",
+        Role::Facilitator => "facilitator",
     }
 }
 

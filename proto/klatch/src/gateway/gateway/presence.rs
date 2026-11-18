@@ -132,6 +132,7 @@ impl<S: Store> Gateway<S> {
     /// inside one scope (DESIGN section 27).
     pub fn set_scope(&self, who: &Principal, scope: &str) -> Result<()> {
         check_member(who)?;
+        self.refuse_facilitator(who, "scope")?;
         if !crate::domain::valid_scope(scope) {
             return Err(Error::Invalid(
                 "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),

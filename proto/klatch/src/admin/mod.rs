@@ -96,6 +96,13 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Make a member the facilitator (routes asks into topical rooms: it may read, create a room, invite and post the
+    /// invite pointer, and nothing else; it never grants or labels), or with --off an ordinary member
+    Facilitator {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Make a member the admin agent: it may do the non-floor admin acts (rooms, members, clearances inside the cap,
     /// room labels, upkeep) and is refused and audited on anything else, floors included; --off removes the role
     AdminAgent {

@@ -12,6 +12,7 @@ impl<S: Store> Gateway<S> {
     /// record, not claimed.
     pub fn set_kind(&self, who: &Principal, kind: Option<MemberKind>) -> Result<()> {
         check_member(who)?;
+        self.refuse_facilitator(who, "kind")?;
         if kind.is_some_and(|k| !k.declarable()) {
             return Err(Error::Invalid(
                 "a member cannot declare its kind as session: klatch derives that from the session record; \
