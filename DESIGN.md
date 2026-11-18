@@ -1537,6 +1537,13 @@ The first version writes only Claude Code hook entries (the human chose hooks on
 4. `--discover` is part of every command written: it is what lets the hook know the session, by reading the harness registry's `.json` files only (never the `.key` files), so the diff the user confirms shows it.
 5. Not built: the other questions of this section (presets, data location, clearance cap, scrubber, judges), `klatch doctor` (#66), the later switch (#256), the SessionEnd hook (#258).
 
+### 21.2 `klatch consent`: the switch after install (#256)
+
+1. **What it is.** `klatch consent` shows, per scope, the consents `klatch init` granted: `board` (a room's board shown before joining, or off), `join` (join the default lobby at session start), `session-end`, `enforce` (the claim hook) and `wake` (the asyncRewake watcher). `klatch consent <name> <on|off> --scope project|user|both` switches one; `board` takes `off` or a room name. A change needs `--scope` (nothing is changed by default) and is shown as a diff and asked for unless `--yes`.
+2. **Minimally invasive.** It writes only the files init already writes (`.claude/settings.local.json`, `~/.claude/settings.json`), only klatch's own hook entries, and never adds klatch where init did not install it (that says `run klatch init first`). It keeps the binary path the hooks already run. An entry klatch did not write is never touched, and a switch off then on again gives back the file byte for byte.
+3. **Effect.** A running session keeps the hooks it started with, so every change says it takes effect at the next session.
+4. **Not covered.** Codex's `hooks.json` has no consent switch yet (the Codex installer is #782); a team-wide checked-in setting is #257 and is not built.
+
 ### 25.10 Joining the default lobby at session start (#267, decided 2026-11-13)
 
 The human decided that a new session joins the default lobby automatically, so nobody has to tell it to ("minimise human activity"). This replaces the earlier choice of a read-only board with no join as the way to reach a session.
