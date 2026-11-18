@@ -19,7 +19,7 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `failed #N:` | A helper | Records a failed attempt on ask N; the ask stays open | Close the ask |
 | `offering:` | Anyone | Puts a capability on the board while the sender is present and not done (24 hours at most) | Route work to the sender |
 | `withdrawn:` | The member that offered | Removes the sender's offer from the board | Remove anyone else's offer |
-| `status: done` | Anyone, for itself | Shows the sender as done and takes its offers off the board (`klatch status <room> done` is the same fact) | Release claims or end a session |
+| `status: done` | Anyone, for itself | Says the sender takes no further action in this room until it speaks again (finished for an asker, leaving for a helper), shows it as done and takes its offers off the board (`klatch status <room> done` is the same fact) | Release claims or end a session |
 | `parked:` | Anyone, for itself | Records a declared wait with a return time; the sender's claims and presence hold until then | Hold claims for longer than the time says, or outlast the sender's next post |
 | `working:` | Anyone, for itself | Starts or renews the sender's task, keyed by owner and a short title | Claim a file or ticket (a claim is a separate act) |
 | `checkpoint:` | The task's owner | Records the state to resume from on the owner's task (the latest wins) | Create a task |
