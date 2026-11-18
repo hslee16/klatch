@@ -1,0 +1,1 @@
+- A member has a kind (`session`, `bot`, `service` or `human`), shown by `klatch who` and on the board. A coding session gets `session` from klatch's own session record; a bot, a service or a human declares its own with the wire method `kind`. Display only: it changes who may do what for no one (#301).
