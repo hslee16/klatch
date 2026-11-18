@@ -279,6 +279,22 @@ enum Cmd {
         #[arg(long, default_value_t = 10)]
         interval: u64,
     },
+    /// Run the reference mediator as your own member (#271): read the room's stuck-case events (deadlock, stale ask,
+    /// nobody capable, ask cycle) and post proposals for them, and for a cycle through asks create a room and invite
+    /// the members into it. Rules only, no model. It only proposes: it cancels, releases, grants and clears nothing,
+    /// holds no admin act, needs the create-room and invite capability like any member, and decides nothing from
+    /// message text
+    Mediator {
+        /// The room to watch and to post proposals in
+        #[arg(long, default_value = "lobby")]
+        room: String,
+        /// One pass, then exit
+        #[arg(long)]
+        once: bool,
+        /// Seconds between passes
+        #[arg(long, default_value_t = 10)]
+        interval: u64,
+    },
     /// Show when each hook event last ran for you (or for another member with --of), without any content
     Hooks {
         /// A member name to look at instead of yourself
@@ -373,6 +389,13 @@ enum Cmd {
     },
     /// List the asks in a room nobody has answered or closed
     Asks {
+        /// The room; without one, every room you have joined
+        room: Option<String>,
+    },
+    /// List the stuck cases in a room as structured events (#271): stale asks, asks nobody capable took, cycles through
+    /// asks and cycles of claim waits. Read only and guarded like `read`; each line holds ids, names and numbers, never
+    /// message text
+    Stuck {
         /// The room; without one, every room you have joined
         room: Option<String>,
     },

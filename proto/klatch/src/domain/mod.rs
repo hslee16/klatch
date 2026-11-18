@@ -19,12 +19,14 @@ mod hosted_judge;
 mod judge;
 mod kind;
 mod labels;
+mod mediator;
 mod model;
 pub(crate) mod parked;
 mod pr_lifecycle;
 mod receipt;
 mod router;
 mod scope;
+mod stuck;
 mod tasks;
 mod text;
 mod toolguard;
@@ -71,6 +73,7 @@ pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]
 pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, min_in};
 pub use labels::{DEFAULT_LABELS, LabelChain};
+pub use mediator::{MAX_PROPOSALS, Proposal, View as MediatorView, plan as plan_proposals};
 pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, MemberPlace, Message,
     Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
@@ -82,6 +85,7 @@ pub use router::{
 #[cfg(kani)]
 pub(crate) use scope::scope_bytes_ok;
 pub use scope::{MemberAttrs, SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
+pub use stuck::{StuckEvent, stuck_events};
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
 pub use text::{

@@ -52,6 +52,7 @@ const GUARDED: &[(&str, Call)] = &[
     ("receipt", |g, w| refused(g.receipt(w, "r", 1))),
     ("board", |g, w| refused(g.board(w, "r"))),
     ("open_asks", |g, w| refused(g.open_asks(w, "r"))),
+    ("stuck", |g, w| refused(g.stuck(w, "r"))),
     ("claim", |g, w| {
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
