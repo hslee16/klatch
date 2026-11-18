@@ -70,6 +70,24 @@ fn wait_for(path: &Path, what: &str) -> Result<(), String> {
     Err(format!("timed out waiting for {what} ({})", path.display()))
 }
 
+/// The shell loop of fake session `id`, with its files in `run`. The pid is written to a temporary file and renamed
+/// into place, so a reader that waits for the pid file to exist never reads it half written: `echo $$ > pid` creates
+/// the file before it writes, and a bench run read it empty in that gap ("bad pid file", #701).
+fn session_loop(run: &Path, id: u64) -> String {
+    let run = run.display();
+    format!(
+        r#"echo $$ > '{run}/.pid-{id}.tmp' && mv '{run}/.pid-{id}.tmp' '{run}/pid-{id}'
+hook() {{ printf '{{"session_id":"%s"}}' "$2" | "$KLATCH" --discover hook --event "$1"; }}
+while [ ! -f '{run}/stop-{id}' ]; do
+  for f in $(ls '{run}'/inbox-{id}-*.sh 2>/dev/null | sort); do
+    . "$f"
+    mv "$f" "$f.done"
+  done
+  sleep 0.02
+done"#
+    )
+}
+
 /// Who a fake session is: the id and name its registry record carries and the directory it started in.
 #[derive(Clone, Copy)]
 struct Identity<'a> {
@@ -112,19 +130,7 @@ impl FakeHarness {
     /// The shell loop a fake session runs: it records its pid, then runs each script file the test drops in its
     /// inbox, in name order, until told to stop.
     fn loop_script(&self, id: u64) -> String {
-        let run = self.root.join("run");
-        format!(
-            r#"echo $$ > '{run}/pid-{id}'
-hook() {{ printf '{{"session_id":"%s"}}' "$2" | "$KLATCH" --discover hook --event "$1"; }}
-while [ ! -f '{run}/stop-{id}' ]; do
-  for f in $(ls '{run}'/inbox-{id}-*.sh 2>/dev/null | sort); do
-    . "$f"
-    mv "$f" "$f.done"
-  done
-  sleep 0.02
-done"#,
-            run = run.display()
-        )
+        session_loop(&self.root.join("run"), id)
     }
 
     fn env(&self, c: &mut Command) {
@@ -368,5 +374,33 @@ impl Drop for FakeHarness {
             let _ = c.wait();
         }
         std::fs::remove_dir_all(&self.root).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reader that waits for the pid file to exist must never see it empty (#701): the first run of the bench found
+    /// `echo $$ > pid` creating the file before writing to it. The script must write elsewhere and rename.
+    #[test]
+    fn the_fake_session_publishes_its_pid_by_rename_so_the_file_is_never_seen_empty() {
+        let script = session_loop(Path::new("/r"), 7);
+        let first = script.lines().next().expect("a first line");
+        assert!(
+            !first.contains("> '/r/pid-7'"),
+            "writes the pid file in place: {first}"
+        );
+        assert!(
+            first.contains("> '/r/.pid-7.tmp'") && first.contains("mv '/r/.pid-7.tmp' '/r/pid-7'"),
+            "does not write a temp file and rename it: {first}"
+        );
+    }
+
+    #[test]
+    fn the_loop_still_runs_inbox_scripts_until_stopped() {
+        let script = session_loop(Path::new("/r"), 7);
+        assert!(script.contains("'/r'/inbox-7-*.sh"));
+        assert!(script.contains("/r/stop-7"));
     }
 }
