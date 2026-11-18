@@ -89,8 +89,21 @@ fn a_database_with_a_write_ahead_log_keeps_what_the_log_held() {
             "CREATE TABLE messages(id INTEGER PRIMARY KEY, room TEXT, body TEXT); INSERT INTO messages(room,body) VALUES('r','from-the-wal-xyz');",
         )
         .unwrap();
-        std::mem::forget(c); // leave the log in place, as a crash would
+        // leave the log in place, as a crash would: copy the files while the connection is open, and use the copy
+        for ext in ["", "-wal"] {
+            let from = format!("{}{ext}", path.display());
+            let to = format!("{}.crashed{ext}", path.display());
+            std::fs::copy(from, to).unwrap();
+        }
     }
+    std::fs::remove_file(format!("{}-wal", path.display())).ok();
+    std::fs::remove_file(format!("{}-shm", path.display())).ok();
+    std::fs::rename(format!("{}.crashed", path.display()), &path).unwrap();
+    std::fs::rename(
+        format!("{}.crashed-wal", path.display()),
+        format!("{}-wal", path.display()),
+    )
+    .unwrap();
     assert!(
         std::fs::metadata(format!("{}-wal", path.display()))
             .map(|m| m.len() > 0)
@@ -313,4 +326,126 @@ fn a_backup_made_under_another_key_or_damaged_is_refused_and_changes_nothing() {
         "{names:?}"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// A plaintext database in write-ahead mode with `rows` rows, the way an old klatch left it.
+fn old_plaintext_store(path: &std::path::Path, rows: i64) {
+    let c = Connection::open(path).unwrap();
+    c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER);")
+        .unwrap();
+    c.execute_batch("BEGIN").unwrap();
+    for i in 0..rows {
+        c.execute("INSERT INTO t(v) VALUES(?1)", [i]).unwrap();
+    }
+    c.execute_batch("COMMIT").unwrap();
+}
+
+#[test]
+fn a_write_in_the_gap_between_the_copy_and_the_lock_makes_the_copy_again_and_is_kept() {
+    let path = temp_db("pt-gap");
+    old_plaintext_store(&path, 100);
+    let (p, fired) = (
+        path.to_path_buf(),
+        std::rc::Rc::new(std::cell::Cell::new(false)),
+    );
+    crate::store::encrypt::between_copy_and_lock::set(move || {
+        if !fired.replace(true) {
+            // the old klatch gets in right after the copy was committed
+            let c = Connection::open(&p).unwrap();
+            c.execute("INSERT INTO t(v) VALUES(777)", []).unwrap();
+        }
+    });
+    ensure_encrypted(&path, &key()).unwrap();
+    let n: i64 = keyed(&path)
+        .query_row("SELECT count(*) FROM t WHERE v = 777", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1, "the write made in the gap was lost");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_store_another_klatch_keeps_open_is_refused_with_a_reason_and_left_as_it_was() {
+    let path = temp_db("pt-held");
+    old_plaintext_store(&path, 50);
+    let held = Connection::open(&path).unwrap();
+    held.execute_batch("PRAGMA journal_mode=WAL; SELECT count(*) FROM t;")
+        .unwrap();
+    let started = std::time::Instant::now();
+    let got = ensure_encrypted(&path, &key());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "it waited far past the limit"
+    );
+    let said = format!("{got:?}");
+    assert!(said.contains("another klatch"), "{said}");
+    assert!(crate::store::encrypt::is_plaintext(&path));
+    drop(held);
+    let n: i64 = Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 50);
+    assert_eq!(names(path.parent().unwrap()), vec!["rooms.db".to_string()]);
+    // and it converts once the other klatch is gone
+    assert!(matches!(
+        ensure_encrypted(&path, &key()).unwrap(),
+        Outcome::Encrypted { .. }
+    ));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+/// An old klatch (plaintext, no key, no directory lock) writing at the same time as a conversion: each write opens
+/// the file by its path and closes it, as a hook does. Every write that the old binary was told succeeded must be in
+/// the encrypted store afterwards: a conversion may make the old binary wait or fail, never lose a write it
+/// acknowledged (#373).
+#[test]
+fn a_write_an_old_binary_was_told_succeeded_is_never_lost_to_the_conversion() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (mut lost, mut acked_total) = (Vec::new(), 0);
+    for round in 0..12 {
+        let path = temp_db(&format!("pt-old-{round}"));
+        old_plaintext_store(&path, 20_000);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let writer = {
+            let (p, stop) = (path.to_path_buf(), stop.clone());
+            std::thread::spawn(move || {
+                let mut acked = Vec::new();
+                let mut n = 1_000_000;
+                while !stop.load(Ordering::Relaxed) {
+                    n += 1;
+                    let wrote = Connection::open(&p).and_then(|c| {
+                        c.busy_timeout(std::time::Duration::from_secs(10))?;
+                        c.execute("INSERT INTO t(v) VALUES(?1)", [n])
+                    });
+                    if wrote.is_ok() {
+                        acked.push(n);
+                    }
+                    // a hook writes now and then, not in a tight loop that no lock could ever get past
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                acked
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        ensure_encrypted(&path, &key()).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let acked = writer.join().unwrap();
+        let c = keyed(&path);
+        let kept: std::collections::HashSet<i64> = c
+            .prepare("SELECT v FROM t WHERE v >= 1000000")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        acked_total += acked.len();
+        lost.extend(acked.into_iter().filter(|n| !kept.contains(n)));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+    assert!(acked_total > 0, "the old writer never got a write in");
+    assert!(
+        lost.is_empty(),
+        "{} acknowledged writes lost: {lost:?}",
+        lost.len()
+    );
 }
