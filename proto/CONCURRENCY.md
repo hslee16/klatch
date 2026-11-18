@@ -54,6 +54,24 @@ runs `read` (which also writes the cursor) and `claims` (a pure read) every 10 m
   macOS only (CI also runs the tests on Linux), local disk only. A database on a network filesystem is still not
   supported (question 17).
 
+## Waking on a store change (tickets #616 and #148, 2026-11-17)
+
+`klatch wait` and the streaming session used to poll on a fixed timer (200 ms and 100 ms). They now sleep in 20 ms
+ticks and look at SQLite's `PRAGMA data_version` on their own connection, which differs after any other connection
+commits; the tables are polled only when it moved, a request came in or the old period ran out (DESIGN section 32
+item 92). Measured on a machine at load 9 to 17:
+
+| Measure | Timer | Change token |
+|---|---|---|
+| bench `many_waiters_wake_together`, 20 processes, `wake_ms` | 209 (and 207 earlier) | 31 |
+| 20 in-process waiters, worst wake after a post, two runs | 200, 208 ms | 32, 22 ms |
+| polls per idle waiter per second, 20 waiters, two runs | 5.0, 5.0 | 6.9, 6.8 |
+
+The idle cost rises a little in a crowd, not falls: each waiter writes its presence once a second (#128) and that commit
+moves every other waiter's token, so each polls about once more per second. A poll in the same second writes nothing.
+The streaming session no longer queries every subscribed room on each 100 ms tick when idle; it reads one pragma per
+20 ms tick. The measurement is `measure_idle_waiters_and_wake_latency` (`--ignored --nocapture`).
+
 ## With encryption (ticket #166, 2026-11-14)
 
 The store is now SQLCipher under a raw 256-bit key. The cost that matters is per process, because every command and

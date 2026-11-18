@@ -114,10 +114,10 @@ fn many_waiters(w: &World) -> Res {
     for i in 0..n {
         w.ok(&format!("w{i}"), &["join", "r"])?;
     }
-    // `klatch wait` polls every 200 ms (#607). Waiters spawned together poll in lockstep, so the wake time
-    // depended on where the post fell in that shared cycle and came out as about 28 or about 208 ms from run
-    // to run. Spreading the starts over one poll period puts some waiter just past its poll whenever the post
-    // lands, so wake_ms measures the worst case (one full period plus the read) on every run.
+    // `klatch wait` used to poll every 200 ms (#607): waiters spawned together polled in lockstep, so the wake
+    // time came out as about 28 or about 208 ms from run to run, and spreading the starts over one period made
+    // wake_ms the worst case. It now wakes on the store's change token within a 20 ms tick (#616), with the
+    // 200 ms poll as the fallback. The spread of starts is kept so a regression to the timer shows at once.
     let period_ms = 200;
     let t = Instant::now();
     let waiters: Vec<_> = (0..n)

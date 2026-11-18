@@ -163,6 +163,25 @@ fn a_live_message_is_pushed_after_caught_up() {
 }
 
 #[test]
+fn a_commit_by_another_connection_wakes_the_stream_long_before_the_poll_period() {
+    // The poll period is ten seconds, so only the change token can deliver this within the wait_for limit (#148).
+    let cfg = SessionConfig {
+        poll: Duration::from_secs(10),
+        ..fast()
+    };
+    let live = Live::start(alice(), cfg);
+    live.send(req("s", "subscribe", json!({"room":"r","from_seq":0})));
+    live.wait_for("the subscribe response", |f| {
+        f.iter()
+            .any(|x| matches!(x, ServerFrame::Response { id, .. } if id == "s"))
+    });
+    live.other().post(&bob(), "r", "woken").unwrap();
+    let f = live.wait_for("the live message", |f| !messages(f).is_empty());
+    assert_eq!(seqs(&f), vec![1]);
+    live.end();
+}
+
+#[test]
 fn an_idle_stream_sends_heartbeats() {
     let cfg = SessionConfig {
         heartbeat: Duration::from_millis(30),

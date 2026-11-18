@@ -96,6 +96,12 @@ impl<S: Store> Gateway<S> {
         self.store.tail(room, after_seq, limit)
     }
 
+    /// The store's change token (#616): differs after any other connection commits, says nothing about what. It is no
+    /// read, so it asks nothing of the guard; a wake still goes through the checked poll.
+    pub fn change_token(&self) -> Option<u64> {
+        self.store.change_token()
+    }
+
     /// The room's highest `seq`, 0 when empty; the guard sees a `Subscribe` operation.
     pub fn head(&self, who: &Principal, room: &str) -> Result<i64> {
         self.admit(who, room, Operation::Subscribe { room: room.into() })?;

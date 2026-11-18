@@ -498,14 +498,23 @@ fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
     }
     let deadline = Instant::now() + Duration::from_secs(timeout);
     loop {
+        // The token is taken before the poll, so a commit in between is a change the pause sees at once (#616).
+        let seen = t.change_token();
         if print_woken(t, a)? {
             return Ok(());
         }
-        if Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
             print_timeout(t, a, timeout);
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(200));
+        // Wake on a store change; the old 200 ms poll stays as the fallback for a store with no token.
+        klatch::gateway::pause_for_change(
+            &|| t.change_token(),
+            seen,
+            klatch::gateway::WAKE_FALLBACK.min(left),
+            klatch::gateway::WAKE_TICK,
+        );
     }
 }
 

@@ -128,19 +128,34 @@ impl<'a, S: Store> Session<'a, S> {
         let rx = read_in_background(input);
         let mut subs: Vec<Subscription> = Vec::new();
         let mut open = true;
+        // The store is polled when a request came in, the store's change token moved, or the poll period ran out:
+        // an idle session looks at one cheap token per tick instead of querying every room (#148).
+        let mut pacer = Pacer::new(self.gateway.change_token(), self.config.poll);
         while open {
-            let items = collect(&rx, self.config.poll, &mut open);
+            let items = collect(&rx, pacer.tick, &mut open);
+            let forced = !items.is_empty() || !open;
             for item in items {
                 self.dispatch(item, &mut subs, &mut out)?;
             }
-            self.pump(&mut subs, &mut out)?;
-            if !open {
-                // The input is closed: deliver what replay is immediately available, then end.
-                while self.pump(&mut subs, &mut out)? > 0 {}
-            } else if out.last.elapsed() >= self.config.heartbeat {
+            if pacer.due(self.gateway.change_token(), forced) {
+                self.deliver(&mut subs, &mut out, open)?;
+            }
+            if open && out.last.elapsed() >= self.config.heartbeat {
                 self.heartbeat(&mut out)?;
             }
         }
+        Ok(())
+    }
+
+    /// Poll the subscriptions once; with the input closed, keep going while replay is immediately available.
+    fn deliver<W: Write>(
+        &self,
+        subs: &mut Vec<Subscription>,
+        out: &mut Out<W>,
+        open: bool,
+    ) -> io::Result<()> {
+        self.pump(subs, out)?;
+        while !open && self.pump(subs, out)? > 0 {}
         Ok(())
     }
 
@@ -186,6 +201,8 @@ impl<'a, S: Store> Session<'a, S> {
         let from = i64::try_from(request.from_seq).unwrap_or(i64::MAX);
         let mut subs = vec![Subscription::new(request.room, from, usize::MAX / 2)];
         loop {
+            // taken before the poll, so a commit after it ends the pause below at once (#148)
+            let seen = self.gateway.change_token();
             self.pump(&mut subs, &mut out)?;
             if subs.is_empty() {
                 return Err(io::Error::other("the stream ended after a refusal"));
@@ -196,7 +213,12 @@ impl<'a, S: Store> Session<'a, S> {
             if request.follow && out.last.elapsed() >= self.config.heartbeat {
                 self.heartbeat(&mut out)?;
             }
-            std::thread::sleep(self.config.poll);
+            crate::gateway::pause_for_change(
+                &|| self.gateway.change_token(),
+                seen,
+                self.config.poll,
+                crate::gateway::WAKE_TICK.min(self.config.poll),
+            );
         }
     }
 
@@ -300,6 +322,42 @@ impl<'a, S: Store> Session<'a, S> {
             }
             Err(e) => failure(id, &e),
         }
+    }
+}
+
+/// When a session looks at the store: on a request, when the store's change token moved, or when the poll period ran
+/// out. A store with no token is looked at on the period alone, as before (#148).
+struct Pacer {
+    /// How long the session waits for input between looks at the token.
+    tick: Duration,
+    seen: Option<u64>,
+    last_poll: std::time::Instant,
+    period: Duration,
+}
+
+impl Pacer {
+    fn new(token: Option<u64>, period: Duration) -> Self {
+        let tick = match token {
+            Some(_) => period.min(crate::gateway::WAKE_TICK),
+            None => period,
+        };
+        Self {
+            tick,
+            seen: token,
+            last_poll: std::time::Instant::now(),
+            period,
+        }
+    }
+
+    /// Whether to poll now. When it says yes the token is recorded here, before the poll, so a commit after it shows
+    /// as a change on the next tick.
+    fn due(&mut self, token: Option<u64>, forced: bool) -> bool {
+        let due = forced || token != self.seen || self.last_poll.elapsed() >= self.period;
+        if due {
+            self.seen = token;
+            self.last_poll = std::time::Instant::now();
+        }
+        due
     }
 }
 
