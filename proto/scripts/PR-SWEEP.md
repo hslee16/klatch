@@ -8,6 +8,7 @@
 proto/scripts/pr-sweep --dry-run     # print what it would do; changes nothing
 proto/scripts/pr-sweep               # one real pass
 proto/scripts/pr-sweep --bench-ledger FILE   # keep the benched-PR list somewhere else
+proto/scripts/pr-sweep --budget-floor 1500   # skip the pass (exit 0, with a message) when fewer than 1500 API calls are left
 ```
 
 Use a clone or worktree that nobody else is editing in: integrating switches that checkout to a throwaway branch `alee/integ-N` (it refuses a dirty tree). Needs `gh` logged in, `python3`, and `cargo` (it adds `$HOME/.cargo/bin` to PATH itself; it never prints the environment).
@@ -26,6 +27,14 @@ The bench ledger defaults to `$TMPDIR/pr-sweep-bench.json`. A fresh ledger makes
 
 It exits 0 with one summary line (`nothing needs a step` when there is nothing to do).
 
+## When a call fails (#754, #756)
+
+- Every `gh` call has a 60 s timeout and two retries (a hung call once stalled a pass for 33 minutes). A rate limit (HTTP 403, "rate limit") is not retried.
+- A call that still fails, or a ledger that failed, makes the pass incomplete: the sweep prints `N call(s) failed, pass incomplete` (and `GitHub API rate limit exhausted; resets at TIME` for a rate limit) and exits 1. It never prints `nothing needs a step` after a failure, and a PR whose checks could not be read is never treated as "not green".
+- `--budget-floor N` reads `gh api rate_limit` (it costs no call) and skips the pass with exit 0 when fewer than N calls are left. Use 1500 in the loop.
+- A lock held by a live pid for over 30 minutes is reported as `held the lock for N minutes ... it may be hung: kill -9 PID` and the sweep exits 3, so the loop line shows it. The next pass takes the lock once that pid is gone.
+- `pr-ledger` makes few calls per PR: the open and recently merged lists once each, one check-runs call per open PR that is not a draft, the pull itself only for a PR whose checks are all green (for its mergeable state), and the ticket only for a merged PR. Agents poll it at most every 3 minutes with `--budget-floor 1000` (AGENT-PR-RULES.md).
+
 ## What it never does
 
 - Merge a PR whose checks are not all green on its latest push (the merge is pinned to the head it saw green), or one that is conflicted or has no ticket.
@@ -41,7 +50,7 @@ The recorded human reading on #706 is that a green PR may be merged without a pe
 In a Claude Code session, in the clone it should use:
 
 ```
-/loop 5m proto/scripts/pr-sweep
+/loop 10m proto/scripts/pr-sweep --budget-floor 1500
 ```
 
 Each tick is one pass. Run `--dry-run` first and read the output before switching the loop on.

@@ -22,6 +22,25 @@ for a in "$@"; do
   prev="$a"
 done
 if [ "$1" = pr ] && [ "$2" = merge ]; then echo true > "$FAKE_DIR/merged"; exit 0; fi
+# the rate limit endpoint is free and always answers (#756)
+if [ "$2" = rate_limit ]; then
+  case "$jq" in
+    *remaining*) echo "${FAKE_REMAINING:-5000}" ;;
+    *) echo 1999999999 ;;
+  esac
+  exit 0
+fi
+# failures on the check-runs endpoint (#754): error, ratelimit, hang, or flaky (the first call of each head fails)
+case "$path" in
+  */check-runs)
+    case "${FAKE_GH_MODE:-}" in
+      error) echo "gh: Get \"https://api.github.com/x\": read tcp: operation timed out" >&2; exit 1 ;;
+      ratelimit) echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2; exit 1 ;;
+      hang) exec /bin/sleep 30 ;;
+      flaky)
+        if [ ! -e "$FAKE_DIR/flaky-done" ]; then : > "$FAKE_DIR/flaky-done"; echo "gh: connection reset" >&2; exit 1; fi ;;
+    esac ;;
+esac
 case "$*" in
   *"-X PATCH"*"/issues/"*) t="${path##*/}"; echo closed > "$FAKE_DIR/issue-$t"; exit 0 ;;
 esac
@@ -66,6 +85,7 @@ case "$*" in
   *--rerun-cancelled*|*--record-bench*|*--post*) exit 0 ;;
 esac
 cat "$FAKE_DIR/ledger.txt"
+exit "${FAKE_LEDGER_RC:-0}"
 SH
 cat > "$bin/gate" <<'SH'
 #!/bin/sh
@@ -96,6 +116,7 @@ newenv() {
 runsweep() {
   env PATH="$bin:$PATH" FAKE_DIR="$fake" PR_SWEEP_LEDGER="$bin/ledger" PR_SWEEP_GATE="$bin/gate" PR_SWEEP_BENCH="$bin/bench" PR_SWEEP_KLATCH="$bin/klatch" \
     PR_SWEEP_REPO="$work/repo" TMPDIR="$work/tmp$n" PR_SWEEP_POLL_SECS=0 PR_SWEEP_SETTLE_SECS=0 PR_SWEEP_WAIT_TRIES=3 \
+    PR_SWEEP_GH_TIMEOUT="${PR_SWEEP_GH_TIMEOUT:-2}" PR_SWEEP_GH_RETRY_SLEEP=0 \
     "$sweep" "$@" > "$fake/out" 2>&1
   rc=$?
 }
@@ -252,6 +273,47 @@ wait "$holder" 2> /dev/null
 runsweep
 if [ "$(calls 'pr merge')" -eq 1 ] && [ ! -e "$work/tmp$n/pr-sweep.lock" ]; then ok "a dead holder's lock is taken over, and the lock is released afterwards"; else bad "stale lock: $(cat "$fake/out") $(cat "$log")"; fi
 
+# --- a failed gh call is a failed pass, never a clean one (#754)
+ready13() { printf '#13   ready                feat-13            #706      merge\n' > "$fake/ledger.txt"; }
+newenv; ready13
+FAKE_GH_MODE=error runsweep
+if [ "$rc" -ne 0 ] && grep -q "call(s) failed, pass incomplete" "$fake/out" && ! grep -q "nothing needs a step" "$fake/out" && [ "$(calls 'pr merge')" -eq 0 ]; then ok "a failing gh call fails the pass (non-zero, \"pass incomplete\", no merge), never \"nothing needs a step\""; else bad "failed call rc=$rc: $(cat "$fake/out")"; fi
+if [ "$(calls 'check-runs')" -eq 3 ]; then ok "a failing gh call is tried three times (one try and two retries)"; else bad "retries: $(calls 'check-runs') calls"; fi
+newenv; ready13
+FAKE_GH_MODE=flaky runsweep
+if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 1 ] && ! grep -q "pass incomplete" "$fake/out"; then ok "a call that fails once and then works is retried and the pass is clean"; else bad "flaky rc=$rc: $(cat "$fake/out") $(cat "$log")"; fi
+newenv; ready13
+start=$SECONDS
+PR_SWEEP_GH_TIMEOUT=1 FAKE_GH_MODE=hang runsweep
+if [ "$rc" -ne 0 ] && grep -q "pass incomplete" "$fake/out" && [ "$((SECONDS - start))" -lt 20 ] && [ "$(calls 'pr merge')" -eq 0 ]; then ok "a hung gh call is cut off by the timeout, retried, and fails the pass"; else bad "hang rc=$rc after $((SECONDS - start))s: $(cat "$fake/out")"; fi
+newenv; ready13
+FAKE_GH_MODE=ratelimit runsweep
+if [ "$rc" -ne 0 ] && grep -qi "rate limit" "$fake/out" && grep -q "resets at 2033-" "$fake/out" && grep -q "pass incomplete" "$fake/out" && ! grep -q "checks are not all green" "$fake/out" && [ "$(calls 'check-runs')" -eq 1 ]; then ok "a rate limit is its own failure: not \"not green\", no retry, the reset time is printed"; else bad "rate limit rc=$rc: $(cat "$fake/out") checks=$(calls 'check-runs')"; fi
+newenv
+printf '0 tracked, 0 need a step, 0 done\n' > "$fake/ledger.txt"
+FAKE_LEDGER_RC=1 runsweep
+if [ "$rc" -ne 0 ] && grep -q "pass incomplete" "$fake/out" && ! grep -q "nothing needs a step" "$fake/out"; then ok "a ledger that failed makes the pass incomplete even when it listed nothing"; else bad "ledger failed rc=$rc: $(cat "$fake/out")"; fi
+
+# --- a lock held for over 30 minutes by a live process is reported as stuck, and exits non-zero (#754)
+newenv; ready13
+mkdir -p "$work/tmp$n/pr-sweep.lock"
+/bin/sleep 60 &
+holder=$!
+echo "$holder" > "$work/tmp$n/pr-sweep.lock/pid"
+touch -t 202001010000 "$work/tmp$n/pr-sweep.lock"
+runsweep
+if [ "$rc" -ne 0 ] && grep -q "held the lock for" "$fake/out" && grep -q "kill -9 $holder" "$fake/out" && [ ! -s "$log" ]; then ok "a lock older than 30 minutes with a live pid is reported (with the kill command) and exits non-zero"; else bad "old lock rc=$rc: $(cat "$fake/out")"; fi
+kill -9 "$holder" 2> /dev/null
+wait "$holder" 2> /dev/null
+
+# --- --budget-floor N: skip with a message when too few API calls are left, read the limit for free (#756)
+newenv; ready13
+FAKE_REMAINING=100 runsweep --budget-floor 1500
+if [ "$rc" -eq 0 ] && grep -q "skipped" "$fake/out" && grep -q "100" "$fake/out" && grep -q "1500" "$fake/out" && [ "$(calls '^ledger')" -eq 0 ] && [ "$(calls 'repos/')" -eq 0 ]; then ok "--budget-floor skips the pass with a message when the budget is below it"; else bad "budget skip rc=$rc: $(cat "$fake/out") $(cat "$log")"; fi
+newenv; ready13
+FAKE_REMAINING=3000 runsweep --budget-floor 1500
+if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 1 ] && ! grep -q "skipped" "$fake/out"; then ok "--budget-floor lets the pass run when enough calls are left"; else bad "budget ok rc=$rc: $(cat "$fake/out")"; fi
+
 # --- across every run above: no force push, no push to main, no environment dump
 all="$work/all.log"
 cat "$work"/f*/calls.log > "$all"
@@ -288,16 +350,36 @@ D
 ( cd "$d" && "$sweep" --resolve-docs DESIGN.md > /dev/null 2>&1 )
 if ! grep -q '^[<>=]\{7\}' "$d/DESIGN.md" && [ "$(grep '^3[0-9]\.' "$d/DESIGN.md" | cut -d. -f1 | tr '\n' ' ')" = "30 31 32 " ]; then ok "the docs resolver keeps both sides and sorts DESIGN items by number"; else bad "resolver: $(cat "$d/DESIGN.md")"; fi
 
-# --- pr-ledger --post --only posts just the named PRs (real pr-ledger, fake gh and klatch)
+# --- pr-ledger with a fake gh and klatch: --only, the number of API calls, failures, the budget floor (#754, #756)
 lbin="$work/lbin"; mkdir -p "$lbin"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$lbin/gh" <<'SH'
 #!/bin/sh
+echo "$*" >> "$FAKE_DIR/gh.log"
 case "$2" in
-  *pulls?state=open*) echo '[{"number":5},{"number":6}]' ;;
-  *pulls?state=closed*) echo '[]' ;;
-  */pulls/5) echo '{"number":5,"head":{"ref":"b5","sha":"s5"},"state":"open","title":"t (#9)","body":"","mergeable_state":"dirty","updated_at":"2026-11-17T00:00:00Z"}' ;;
-  */pulls/6) echo '{"number":6,"head":{"ref":"b6","sha":"s6"},"state":"open","title":"t (#9)","body":"","mergeable_state":"dirty","updated_at":"2026-11-17T00:00:00Z"}' ;;
-  */check-runs) echo '{"check_runs":[{"id":1,"name":"build","conclusion":"success","html_url":"u"}]}' ;;
+  rate_limit) echo "{\"resources\":{\"core\":{\"remaining\":${FAKE_REMAINING:-5000},\"reset\":1999999999}}}"; exit 0 ;;
+esac
+case "$2" in
+  */check-runs)
+    case "${FAKE_GH_MODE:-}" in
+      error) echo "gh: Get x: read tcp: operation timed out" >&2; exit 1 ;;
+      ratelimit) echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2; exit 1 ;;
+      hang) exec /bin/sleep 30 ;;
+      flaky) if [ ! -e "$FAKE_DIR/flaky-done" ]; then : > "$FAKE_DIR/flaky-done"; echo "gh: connection reset" >&2; exit 1; fi ;;
+    esac ;;
+esac
+pr() { # number sha draft body merged_at
+  printf '{"number":%s,"head":{"ref":"b%s","sha":"%s"},"state":"open","draft":%s,"title":"t (#9)","body":"%s","updated_at":"2026-11-17T00:00:00Z","merged_at":%s}' "$1" "$1" "$2" "$3" "$4" "$5"
+}
+case "$2" in
+  *pulls?state=open*) echo "[$(pr 5 s5 false '' null),$(pr 6 s6 false '' null),$(pr 7 s7 false 'Closes #9' null),$(pr 8 s8 true '' null)]" ;;
+  *pulls?state=closed*) echo "[$(pr 20 s20 false 'Closes #9' "\"$FAKE_NOW\"")]" ;;
+  */pulls/5 | */pulls/6) echo '{"mergeable_state":"dirty"}' ;;
+  */check-runs)
+    case "$2" in
+      *s7/check-runs) echo '{"check_runs":[{"id":1,"name":"build","conclusion":"failure","html_url":"u","output":{"summary":"error: boom"}}]}' ;;
+      *) echo '{"check_runs":[{"id":1,"name":"build","conclusion":"success","html_url":"u"}]}' ;;
+    esac ;;
   */issues/9) echo '{"state":"open"}' ;;
 esac
 SH
@@ -306,9 +388,51 @@ cat > "$lbin/klatch" <<'SH'
 echo "$*" >> "$FAKE_DIR/klatch.log"
 SH
 chmod +x "$lbin/gh" "$lbin/klatch"
+runledger() { # args: the real pr-ledger against the fake gh; output in $fake/out, status in rc
+  env PATH="$lbin:$PATH" KLATCH="$lbin/klatch" FAKE_DIR="$fake" FAKE_NOW="$now" PR_LEDGER_GH_TIMEOUT="${PR_LEDGER_GH_TIMEOUT:-2}" PR_LEDGER_GH_RETRY_SLEEP=0 \
+    python3 -I "$here/pr-ledger" --state-file "$fake/state" "$@" > "$fake/out" 2>&1
+  rc=$?
+}
+ghcalls() { grep -c -- "$1" "$fake/gh.log" 2> /dev/null || true; }
+
 newenv
-PATH="$lbin:$PATH" KLATCH="$lbin/klatch" FAKE_DIR="$fake" python3 -I "$here/pr-ledger" --post --only 5 --state-file "$fake/state" > "$fake/out" 2>&1
+runledger --post --only 5
 if grep -q "#5 " "$fake/klatch.log" 2> /dev/null && ! grep -q "#6 " "$fake/klatch.log"; then ok "pr-ledger --post --only lists just the named PRs"; else bad "--only: $(cat "$fake/out") $(cat "$fake/klatch.log" 2>&1)"; fi
+
+# a plain pass: each stage is right, and the calls are few: both lists once, one check-runs call per open PR that is not a
+# draft, the pull itself only when its checks are all green (for mergeable_state), the ticket only for a merged PR
+newenv
+runledger
+if [ "$rc" -eq 0 ] && grep -q "^#5 .*conflict" "$fake/out" && grep -q "^#7 .*checks-red" "$fake/out" && grep -q "^#8 .*draft" "$fake/out" && grep -q "^#20 .*merged-open-ticket" "$fake/out"; then ok "pr-ledger classifies open, red, draft and merged PRs from the lists and the check runs"; else bad "stages rc=$rc: $(cat "$fake/out")"; fi
+if [ "$(ghcalls 'pulls?state=open')" -eq 1 ] && [ "$(ghcalls 'pulls?state=closed')" -eq 1 ] && [ "$(ghcalls 'check-runs')" -eq 3 ] \
+  && [ "$(ghcalls '/pulls/[0-9]')" -eq 2 ] && [ "$(ghcalls '/issues/')" -eq 1 ]; then ok "pr-ledger makes few calls: lists once, check-runs once per open non-draft PR, the pull only for PRs with green checks, the ticket only for a merged PR"; else bad "call counts: $(cat "$fake/gh.log")"; fi
+if [ "$(ghcalls 's20/check-runs')" -eq 0 ] && [ "$(ghcalls 's8/check-runs')" -eq 0 ] && [ "$(ghcalls 'pulls/7')" -eq 0 ] && [ "$(ghcalls 'pulls/8')" -eq 0 ] && [ "$(ghcalls 'pulls/20')" -eq 0 ]; then ok "a merged PR, a draft and a red PR need no check-runs, pull or ticket call they do not use"; else bad "needless calls: $(cat "$fake/gh.log")"; fi
+
+# a failing call: retried, counted, the pass is incomplete and exits non-zero
+newenv
+FAKE_GH_MODE=error runledger
+if [ "$rc" -ne 0 ] && grep -q "call(s) failed, pass incomplete" "$fake/out" && [ "$(ghcalls 'check-runs')" -eq 9 ]; then ok "pr-ledger retries a failing call twice, then says \"N call(s) failed, pass incomplete\" and exits non-zero"; else bad "failed ledger rc=$rc: $(cat "$fake/out") checks=$(ghcalls 'check-runs')"; fi
+newenv
+FAKE_GH_MODE=error runledger --post
+if [ "$rc" -ne 0 ] && ! grep -q "nothing needs a step" "$fake/out" && [ ! -e "$fake/klatch.log" ]; then ok "a failed pass never says \"nothing needs a step\" and posts nothing"; else bad "failed --post rc=$rc: $(cat "$fake/out")"; fi
+newenv
+FAKE_GH_MODE=flaky runledger
+if [ "$rc" -eq 0 ] && ! grep -q "pass incomplete" "$fake/out"; then ok "pr-ledger: a call that fails once and then works leaves the pass clean"; else bad "flaky ledger rc=$rc: $(cat "$fake/out")"; fi
+newenv
+start=$SECONDS
+PR_LEDGER_GH_TIMEOUT=1 FAKE_GH_MODE=hang runledger
+if [ "$rc" -ne 0 ] && grep -q "pass incomplete" "$fake/out" && [ "$((SECONDS - start))" -lt 40 ]; then ok "pr-ledger cuts off a hung gh call with a timeout and fails the pass"; else bad "hung ledger rc=$rc after $((SECONDS - start))s: $(cat "$fake/out")"; fi
+newenv
+FAKE_GH_MODE=ratelimit runledger
+if [ "$rc" -ne 0 ] && grep -qi "rate limit" "$fake/out" && grep -q "resets at 2033-" "$fake/out" && grep -q "pass incomplete" "$fake/out" && [ "$(ghcalls 'check-runs')" -eq 1 ]; then ok "pr-ledger: a rate limit stops the pass at once, prints the reset time and exits non-zero"; else bad "ledger rate limit rc=$rc: $(cat "$fake/out") checks=$(ghcalls 'check-runs')"; fi
+
+# --budget-floor N: read the limit (free) and skip with a message when fewer than N calls are left
+newenv
+FAKE_REMAINING=100 runledger --budget-floor 1500
+if [ "$rc" -eq 0 ] && grep -q "skipped" "$fake/out" && grep -q "100" "$fake/out" && [ "$(ghcalls 'repos/')" -eq 0 ] && [ "$(ghcalls 'pulls')" -eq 0 ]; then ok "pr-ledger --budget-floor skips with a message and makes no listing call when the budget is low"; else bad "ledger budget skip rc=$rc: $(cat "$fake/out") $(cat "$fake/gh.log")"; fi
+newenv
+FAKE_REMAINING=3000 runledger --budget-floor 1500
+if [ "$rc" -eq 0 ] && ! grep -q "skipped" "$fake/out" && grep -q "^#5 " "$fake/out"; then ok "pr-ledger --budget-floor lists as usual when enough calls are left"; else bad "ledger budget ok rc=$rc: $(cat "$fake/out")"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all sweep script tests passed"; else echo "$fails sweep script test(s) failed"; exit 1; fi
