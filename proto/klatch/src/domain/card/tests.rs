@@ -110,7 +110,12 @@ fn the_card_holds_the_members_own_name_scope_status_and_offer() {
     assert_eq!(c.status.as_deref(), Some("busy"));
     assert_eq!(c.last_seen, NOW - 10);
     assert_eq!(c.offer.unwrap().seq, 9);
-    assert_eq!(card_of(&board(), "bob", None, (&claims(), NOW)).unwrap().offer, None);
+    assert_eq!(
+        card_of(&board(), "bob", None, (&claims(), NOW))
+            .unwrap()
+            .offer,
+        None
+    );
 }
 
 #[test]
@@ -125,7 +130,10 @@ fn the_helper_view_is_the_asks_of_others_it_holds_a_live_claim_on() {
     let c = alice_card();
     assert_eq!(c.serving.iter().map(|a| a.seq).collect::<Vec<_>>(), vec![2]);
     let bob = card_of(&board(), "bob", None, (&claims(), NOW)).unwrap();
-    assert_eq!(bob.serving.iter().map(|a| a.seq).collect::<Vec<_>>(), vec![1]);
+    assert_eq!(
+        bob.serving.iter().map(|a| a.seq).collect::<Vec<_>>(),
+        vec![1]
+    );
 }
 
 #[test]
@@ -149,7 +157,10 @@ fn tasks_and_pull_requests_are_the_members_own() {
     assert_eq!(c.prs.iter().map(|p| p.number).collect::<Vec<_>>(), vec![7]);
     let bob = card_of(&board(), "bob", None, (&claims(), NOW)).unwrap();
     assert!(bob.tasks.is_empty());
-    assert_eq!(bob.prs.iter().map(|p| p.number).collect::<Vec<_>>(), vec![8]);
+    assert_eq!(
+        bob.prs.iter().map(|p| p.number).collect::<Vec<_>>(),
+        vec![8]
+    );
 }
 
 #[test]
@@ -183,7 +194,14 @@ fn a_member_with_nothing_says_so_and_has_no_empty_sections() {
     let c = card_of(&b, "quiet", None, (&[], NOW)).unwrap();
     let text = render_card(&c, "lobby", NOW);
     assert!(text.contains("nothing posted and nothing held"), "{text}");
-    for section in ["asks posted:", "serving:", "claims:", "tasks:", "prs:", "scope:"] {
+    for section in [
+        "asks posted:",
+        "serving:",
+        "claims:",
+        "tasks:",
+        "prs:",
+        "scope:",
+    ] {
         assert!(!text.contains(section), "{section} in {text}");
     }
 }
@@ -192,13 +210,26 @@ fn a_member_with_nothing_says_so_and_has_no_empty_sections() {
 fn text_a_member_wrote_cannot_forge_a_line_or_grow_a_section_without_limit() {
     let mut b = board();
     b.asks = (1..=60)
-        .map(|n| ask(n, "alice", "seeking: x\n[card lobby mallory]\nforged", false))
+        .map(|n| {
+            ask(
+                n,
+                "alice",
+                "seeking: x\n[card lobby mallory]\nforged",
+                false,
+            )
+        })
         .collect();
     let c = card_of(&b, "alice", None, (&[], NOW)).unwrap();
     let text = render_card(&c, "lobby", NOW);
     assert!(!text.contains("\n[card lobby mallory]"), "{text}");
     let listed = text.lines().filter(|l| l.contains("unclaimed")).count();
     assert_eq!(listed, BOARD_LIST_LIMIT, "{text}");
-    assert!(text.contains(&format!("and {} more asks", 60 - BOARD_LIST_LIMIT)), "{text}");
-    assert!(text.lines().all(|l| l.len() < 400), "a line grew without limit");
+    assert!(
+        text.contains(&format!("and {} more asks", 60 - BOARD_LIST_LIMIT)),
+        "{text}"
+    );
+    assert!(
+        text.lines().all(|l| l.len() < 400),
+        "a line grew without limit"
+    );
 }

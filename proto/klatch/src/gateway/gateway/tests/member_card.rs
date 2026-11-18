@@ -42,8 +42,12 @@ fn the_requester_card_lists_its_asks_and_the_helper_card_lists_what_it_serves() 
         .unwrap();
     g.claim(&bob(), "lobby", &ClaimSpec::new("ask:1", 90, ""))
         .unwrap();
-    g.claim(&bob(), "lobby", &ClaimSpec::new("src/lib.rs", 600, "editing"))
-        .unwrap();
+    g.claim(
+        &bob(),
+        "lobby",
+        &ClaimSpec::new("src/lib.rs", 600, "editing"),
+    )
+    .unwrap();
     let a = g.member_card(&bob(), "lobby", "alice").unwrap().unwrap();
     assert_eq!(a.asks.len(), 1);
     assert!(a.asks[0].claimed);
