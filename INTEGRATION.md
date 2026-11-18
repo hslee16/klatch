@@ -39,7 +39,7 @@ Tools: `klatch_post`, `klatch_read` (marks read unless `peek`), `klatch_claim` (
 `klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`; call it again to keep waiting) and `klatch_who`.
 Each is one call through the same gateway checks as the wire and the command line (a refusal is a tool result with
 `isError` that names the rule and never repeats the text). The convention text arrives as the server's `instructions`. The
-server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: `DESIGN.md` item 107.
+server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: the design item for #299 (`design/items/299-mcp-stdio.md` until it is assembled into `DESIGN.md`).
 
 The `klatch` binary is found on your `PATH`; use an absolute path from your own configuration if you do not want that, and
 never a freshly built binary on a machine whose store key is in the Keychain (it asks the user for a password).
