@@ -2,6 +2,7 @@
 # pr-sweep: ONE pass of the standing PR sweep (#706). A /loop job calls it every few minutes; see PR-SWEEP.md.
 #
 #   pr-sweep [--dry-run] [--batch [--max N]] [--bench-ledger FILE] [--budget-floor N]
+#   pr-sweep --timing                      per-step time summary from the timing log ($TMPDIR/pr-sweep-timing.log)
 #
 # It reads `pr-ledger` and acts per stage:
 #   checks-cancelled   rerun the cancelled jobs (never a real failure)
@@ -57,6 +58,18 @@ bench_ledger="$tmp/pr-sweep-bench.json"
 
 say() { printf 'pr-sweep: %s\n' "$*"; }
 
+# where each step spent its time (#855): one line per step "UTC-time step id seconds rc=N"; `pr-sweep --timing` summarises it
+timing_log="${PR_SWEEP_TIMING_LOG:-$tmp/pr-sweep-timing.log}"
+tlog() { # step, id, start epoch, rc
+  printf '%s %s %s %ss rc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(($(date +%s) - $3))" "$4" >> "$timing_log" 2> /dev/null || true
+}
+timing_summary() { # per step: runs, total, average, slowest seconds
+  [ -s "$timing_log" ] || { echo "pr-sweep: no timing log yet ($timing_log)"; return 0; }
+  awk '{ s=$2; v=$4; sub(/s$/, "", v); n[s]++; t[s]+=v; if (v>m[s]) m[s]=v }
+    END { printf "%-12s %5s %9s %9s %9s\n", "step", "runs", "total s", "avg s", "max s";
+          for (s in n) printf "%-12s %5d %9d %9d %9d\n", s, n[s], t[s], t[s]/n[s], m[s] }' "$timing_log" | sort
+}
+
 ledger() {
   if [ -n "${PR_SWEEP_LEDGER:-}" ]; then "$PR_SWEEP_LEDGER" "$@"; else python3 -I "$here/pr-ledger" "$@"; fi
 }
@@ -87,6 +100,7 @@ if [ "${1:-}" = "--resolve-docs" ]; then shift; resolve_docs "$@"; exit $?; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1 ;;
+    --timing) timing_summary; exit 0 ;;
     --batch) batch=1 ;;
     --max) shift; batch_max="${1:-}"; case "$batch_max" in '' | *[!0-9]*) echo "pr-sweep: --max needs a number" >&2; exit 2 ;; esac
       if [ "$batch_max" -lt 2 ]; then echo "pr-sweep: --max needs a number of at least 2" >&2; exit 2; fi
@@ -194,7 +208,15 @@ green_on() { # head sha
   return 0
 }
 
-wait_green() { # PR, a head sha it must differ from (or empty): echoes the green head, or returns 1
+wait_green() { # PR, a head sha it must differ from (or empty): echoes the green head, or returns 1; logs how long it waited
+  local t0 rc
+  t0=$(date +%s)
+  _wait_green "$@"
+  rc=$?
+  tlog wait-green "#$1" "$t0" "$rc"
+  return $rc
+}
+_wait_green() {
   local i=0 sha
   while [ "$i" -lt "$tries" ]; do
     sha="$(pr_field "$1" .head.sha)"
@@ -240,7 +262,12 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit
 }
 
 run_gate() { # the full gate; 0 passed
+  local t0 rc
+  t0=$(date +%s)
   if [ -n "${PR_SWEEP_GATE:-}" ]; then "$PR_SWEEP_GATE" > /dev/null 2>&1; else (cd proto && ./scripts/gate > /dev/null 2>&1); fi
+  rc=$?
+  tlog gate "$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo ?)" "$t0" "$rc"
+  return $rc
 }
 
 # merge origin/main into the PR branch on the throwaway branch alee/integ-N, gate, push to the PR's own branch.
@@ -274,7 +301,10 @@ bench_main() { # label: bench main as it now is, on a throwaway branch. 0 clean,
   local out
   git fetch -q origin main || return 2
   git checkout -q -B "alee/integ-$1" origin/main || return 2
+  local t0
+  t0=$(date +%s)
   if [ -n "${PR_SWEEP_BENCH:-}" ]; then out="$("$PR_SWEEP_BENCH" 2>&1)"; else out="$(cd proto && cargo run -q --release -p klatch-bench 2>&1)"; fi
+  tlog bench main "$t0" 0
   printf '%s\n' "$out" | grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed'
 }
 
