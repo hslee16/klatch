@@ -6,6 +6,7 @@
 //! stays unattributed.
 
 mod ancestry;
+mod capability;
 mod host;
 mod liveness;
 mod probe;
@@ -15,6 +16,10 @@ mod selftest;
 mod sessions;
 
 pub use ancestry::{Found, Miss, find_parent, find_session};
+pub use capability::{
+    ASYNC_REWAKE_FLOOR, Support, Version, parse_version, probe_claude_version, wake_support,
+    wake_support_here,
+};
 pub use host::SysHost;
 pub use liveness::{Liveness, check};
 pub use probe::{

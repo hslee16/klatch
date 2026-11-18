@@ -55,6 +55,11 @@ struct WhoFlags {
     /// given (default: off, or set KLATCH_DISCOVER=1). Reads only the registry's .json files, never a key file.
     #[arg(long, global = true)]
     discover: bool,
+    /// This is a Codex session (it has no registry record): when no name is given, the member comes from the hook's
+    /// session id and working directory on standard input, or from CODEX_THREAD_ID for a command. A resumed session
+    /// keeps its member.
+    #[arg(long, global = true)]
+    codex: bool,
     /// The scope this member works in (default: $KLATCH_SCOPE, else a coding session's repository). Claims conflict
     /// only inside one scope, so two repositories or two bots can each claim `src/lib.rs`.
     #[arg(long = "member-scope", global = true)]
@@ -543,8 +548,19 @@ fn run_cli(cli: Cli) -> Result<()> {
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         Cmd::Judge { cmd } => judge::run(cmd),
+        Cmd::Wake { .. } if !wake_is_on() => Ok(()),
         cmd => run_as_member(&cli.who, cmd),
     }
+}
+
+/// Whether the wake watcher may run: a harness probe that says the coding agent is too old for `asyncRewake` turns it
+/// off (and says so on standard error, which an async hook never shows); one that cannot tell leaves it on (#482).
+fn wake_is_on() -> bool {
+    let support = klatch::harness::wake_support_here();
+    if !support.wake_enabled() {
+        eprintln!("klatch: {}", support.say());
+    }
+    support.wake_enabled()
 }
 
 /// `klatch convention`: the brief for a child agent, with this binary's own path.
@@ -643,7 +659,11 @@ fn run_init(options: &init::Options) -> Result<()> {
     if !options.uninstall
         && let Some(dir) = codex::codex_home(std::env::var_os("CODEX_HOME"), home.as_deref())
     {
-        codex::init_notice(&dir, &mut std::io::stdout().lock())?;
+        codex::init_notice(
+            &dir,
+            &std::env::current_dir()?,
+            &mut std::io::stdout().lock(),
+        )?;
     }
     Ok(())
 }

@@ -8,14 +8,42 @@ use std::path::Path;
 /// Codex: whether klatch's hooks in its config are trusted (an untrusted hook is skipped silently, #544) and whether
 /// `codex queue` exists (#545). Reads the Codex files and runs `codex --version` and `codex queue --help`, which need
 /// no login; writes nothing.
-pub(super) fn check_codex(r: &mut Report, home: Option<&Path>) {
+pub(super) fn check_codex(r: &mut Report, home: Option<&Path>, project_dir: &Path) {
     let found = crate::codex::codex_home(std::env::var_os("CODEX_HOME"), home)
-        .and_then(|dir| crate::codex::hook_findings(&dir))
+        .map(|dir| crate::codex::hook_findings(&dir, Some(project_dir)))
+        .unwrap_or_default()
         .into_iter()
         .chain(std::iter::once(crate::codex::queue_finding()));
     for f in found {
         let status = if f.ok { Status::Ok } else { Status::Warn };
         r.add(status, f.line, f.fix.as_deref());
+    }
+}
+
+/// The harness probe (#482): what `claude --version` says about the features that depend on the harness version.
+/// A version below the floor is a warning (the wake hook is off, the rest works); no `claude` on the path is a plain
+/// ok line; an answer that is no version is a warning that turns nothing off.
+pub(super) fn check_harness(r: &mut Report) {
+    use klatch::harness::{Support, probe_claude_version, wake_support};
+    let answer = probe_claude_version();
+    let support = wake_support(answer.as_deref());
+    match (&support, answer) {
+        (Support::Supported(_), _) => r.add(Status::Ok, format!("harness: {}", support.say()), None),
+        (Support::Unsupported(_), _) => r.add(
+            Status::Warn,
+            format!("harness: {}", support.say()),
+            Some("upgrade Claude Code (the wake hook turns itself on again once the version is high enough)"),
+        ),
+        (Support::Unknown(_), None) => r.add(
+            Status::Ok,
+            "harness: claude is not on the PATH or did not answer `claude --version` (nothing to check; the wake hook is left as it is)",
+            None,
+        ),
+        (Support::Unknown(_), Some(_)) => r.add(
+            Status::Warn,
+            format!("harness: {}", support.say()),
+            Some("run `claude --version` yourself; klatch reads the first x.y.z in its answer"),
+        ),
     }
 }
 
