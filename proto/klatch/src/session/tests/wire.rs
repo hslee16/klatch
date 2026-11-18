@@ -495,3 +495,50 @@ fn every_output_line_is_one_valid_frame() {
     );
     assert!(f.len() >= 3); // decoding every line already proved validity
 }
+
+struct MovingClock(std::rc::Rc<std::cell::Cell<i64>>);
+impl crate::gateway::Clock for MovingClock {
+    fn now(&self) -> i64 {
+        self.0.get()
+    }
+}
+
+#[test]
+fn a_session_for_a_verified_member_whose_credential_has_ended_is_refused_on_every_request() {
+    // the process proved itself while the credential was live and kept running (#161): the session checks again
+    let now = std::rc::Rc::new(std::cell::Cell::new(1_000));
+    let g = Gateway::new(
+        SqliteStore::open_in_memory().unwrap(),
+        MovingClock(now.clone()),
+        AllowAll,
+    );
+    let spec = crate::gateway::CredentialSpec {
+        member: "w-1",
+        clearance: "internal",
+        ttl: 10,
+        parent: None,
+    };
+    g.admin_issue_credential(&alice(), &spec).unwrap();
+    let who = Principal::verified("w-1");
+    let live = run(
+        &g,
+        &who,
+        &[req("a", "post", json!({"room":"r","body":"x"}))],
+    );
+    assert!(response(&live, "a").0, "a live credential was refused");
+    now.set(1_010);
+    let f = run(
+        &g,
+        &who,
+        &[
+            req("a", "post", json!({"room":"r","body":"y"})),
+            req("b", "who", json!({"room":"r"})),
+            req("c", "claims", json!({"room":"r"})),
+        ],
+    );
+    for id in ["a", "b", "c"] {
+        let (ok, _, err) = response(&f, id);
+        assert!(!ok, "{id} was answered after the credential expired");
+        assert_eq!(err.unwrap().0, "refused");
+    }
+}
