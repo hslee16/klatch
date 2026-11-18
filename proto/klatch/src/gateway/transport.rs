@@ -35,6 +35,11 @@ pub trait Transport {
     fn wake_mark(&self, room: &str) -> Result<()>;
     /// A wait has looked at the room up to `seq`; the messages stay unread.
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
+    /// The store's change token (#616): differs after any other connection commits. A waiter takes it before it polls
+    /// and sleeps until it differs. The default has none, so a waiter polls on a timer.
+    fn change_token(&self) -> Option<u64> {
+        None
+    }
     fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
     /// Per-recipient liveness states for a message the caller sent (#546); no text, no read state.
     fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts>;
@@ -183,6 +188,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn wait_seen(&self, room: &str, seq: i64) -> Result<()> {
         self.gateway.wait_seen(&self.principal, room, seq)
+    }
+    fn change_token(&self) -> Option<u64> {
+        self.gateway.change_token()
     }
     fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts> {
         self.gateway.receipt(&self.principal, room, seq)

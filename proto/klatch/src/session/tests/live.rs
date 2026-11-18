@@ -7,9 +7,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-struct ChanReader {
-    rx: Receiver<Vec<u8>>,
-    pending: Vec<u8>,
+pub(super) struct ChanReader {
+    pub(super) rx: Receiver<Vec<u8>>,
+    pub(super) pending: Vec<u8>,
 }
 impl Read for ChanReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -27,7 +27,7 @@ impl Read for ChanReader {
 }
 
 #[derive(Clone)]
-struct SharedOut(Arc<Mutex<Vec<u8>>>);
+pub(super) struct SharedOut(pub(super) Arc<Mutex<Vec<u8>>>);
 impl Write for SharedOut {
     fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(b);
@@ -38,12 +38,13 @@ impl Write for SharedOut {
     }
 }
 
-fn fast() -> SessionConfig {
+pub(super) fn fast() -> SessionConfig {
     SessionConfig {
         poll: Duration::from_millis(5),
         heartbeat: Duration::from_secs(60),
         window: 100,
         batch: 64,
+        ..SessionConfig::default()
     }
 }
 
@@ -159,6 +160,25 @@ fn a_live_message_is_pushed_after_caught_up() {
         messages(&f),
         vec![("r".to_string(), 1, "hello live".to_string())]
     );
+    live.end();
+}
+
+#[test]
+fn a_commit_by_another_connection_wakes_the_stream_long_before_the_poll_period() {
+    // The poll period is ten seconds, so only the change token can deliver this within the wait_for limit (#148).
+    let cfg = SessionConfig {
+        poll: Duration::from_secs(10),
+        ..fast()
+    };
+    let live = Live::start(alice(), cfg);
+    live.send(req("s", "subscribe", json!({"room":"r","from_seq":0})));
+    live.wait_for("the subscribe response", |f| {
+        f.iter()
+            .any(|x| matches!(x, ServerFrame::Response { id, .. } if id == "s"))
+    });
+    live.other().post(&bob(), "r", "woken").unwrap();
+    let f = live.wait_for("the live message", |f| !messages(f).is_empty());
+    assert_eq!(seqs(&f), vec![1]);
     live.end();
 }
 

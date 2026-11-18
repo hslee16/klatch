@@ -51,6 +51,15 @@ impl MessageStore for SqliteStore {
         self.do_hook_read(at.room, at.member, now)
     }
 
+    fn change_token(&self) -> Option<u64> {
+        // SQLite's own change counter for this connection: it differs after any other connection commits. A failure
+        // is "no token", so the waiter falls back to its timer.
+        self.conn
+            .query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))
+            .ok()
+            .and_then(|v| u64::try_from(v).ok())
+    }
+
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
         self.rows(
             "SELECT ts FROM messages WHERE sender=?1 AND ts>=?2 ORDER BY ts",
