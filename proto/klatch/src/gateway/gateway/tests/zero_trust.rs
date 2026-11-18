@@ -52,6 +52,10 @@ const GUARDED: &[(&str, Call)] = &[
     ("claim", |g, w| {
         refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
     }),
+    // before admin_close_room below: a closed room refuses before the guard is asked
+    ("claim_ttl_for", |g, w| {
+        refused(g.claim_ttl_for(w, ("r", "ask:1"), None))
+    }),
     ("claims", |g, w| refused(g.claims(w, "r"))),
     ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),
     ("release", |g, w| refused(g.release(w, "r", "p"))),
@@ -130,6 +134,12 @@ const GUARDED: &[(&str, Call)] = &[
     }),
     ("admin_set_label_chain", |g, w| {
         refused(g.admin_set_label_chain(w, &["a", "b"]))
+    }),
+    ("admin_set_room_stale", |g, w| {
+        refused(g.admin_set_room_stale(w, "r", Some(120)))
+    }),
+    ("admin_set_room_ask_lease", |g, w| {
+        refused(g.admin_set_room_ask_lease(w, "r", Some(120)))
     }),
     ("admin_plant_canary", |g, w| {
         refused(g.admin_plant_canary(w, "r"))
@@ -231,6 +241,7 @@ fn public_methods() -> Vec<String> {
         include_str!("../claims.rs"),
         include_str!("../dm.rs"),
         include_str!("../history.rs"),
+        include_str!("../room_settings.rs"),
         include_str!("../policy.rs"),
         include_str!("../presence.rs"),
         include_str!("../reading.rs"),
