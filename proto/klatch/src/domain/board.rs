@@ -61,7 +61,7 @@ pub struct BoardMember {
     pub parent: Option<String>,
     /// A declared long wait that still holds.
     pub parked: Option<Parked>,
-    /// What sort of member this is (item 95), if known.
+    /// What sort of member this is (item 99), if known.
     pub kind: Option<MemberKind>,
 }
 

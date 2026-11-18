@@ -1,4 +1,4 @@
-//! A member's kind (DESIGN section 32 item 95, #301). A kind is display only and grants nothing. Where it comes
+//! A member's kind (DESIGN section 32 item 99, #301). A kind is display only and grants nothing. Where it comes
 //! from: a member with a session record is a `session` (klatch knows it; no declaration changes that); any other
 //! member shows what it declared, if it declared a kind that a member may declare. The declaration is the policy
 //! entry `kind:NAME`, written only for the caller's own name, so no member can set another's.

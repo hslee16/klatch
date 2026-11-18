@@ -1,4 +1,4 @@
-//! A member's kind (DESIGN section 32 item 95, #301): what sort of participant it is, so a requester can choose a
+//! A member's kind (DESIGN section 32 item 99, #301): what sort of participant it is, so a requester can choose a
 //! helper (a human is slower than a bot; a service may answer only fixed asks). Display only: no rule reads it, and
 //! it never changes who may do what. The vocabulary is closed. A coding session's kind comes from klatch's own
 //! session record, never from a claim; a bot, a service or a human declares its own.

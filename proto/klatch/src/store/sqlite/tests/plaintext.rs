@@ -174,7 +174,7 @@ fn several_processes_converting_at_once_convert_once_and_all_succeed() {
     std::fs::write(&path, RELEASE_V2).unwrap();
     let handles: Vec<_> = (0..6)
         .map(|_| {
-            let p = path.clone();
+            let p = path.to_path_buf();
             std::thread::spawn(move || ensure_encrypted(&p, &crate::store::insecure_test_key()))
         })
         .collect();
