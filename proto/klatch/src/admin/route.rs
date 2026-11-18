@@ -90,6 +90,11 @@ pub(super) enum PolicyAct {
         secs: Option<i64>,
         off: bool,
     },
+    RoomRequire {
+        room: String,
+        spec: Option<String>,
+        off: bool,
+    },
     Cap {
         label: String,
     },
@@ -195,6 +200,9 @@ impl From<AdminCmd> for Route {
             }
             C::RoomAskLease { room, secs, off } => {
                 Route::policy(PolicyAct::RoomAskLease { room, secs, off })
+            }
+            C::RoomRequire { room, spec, off } => {
+                Route::policy(PolicyAct::RoomRequire { room, spec, off })
             }
             C::Cap { label } => Route::policy(PolicyAct::Cap { label }),
             C::Chain { levels } => Route::policy(PolicyAct::Chain { levels }),

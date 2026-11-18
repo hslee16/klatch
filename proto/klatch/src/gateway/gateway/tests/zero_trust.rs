@@ -149,6 +149,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_set_room_ask_lease", |g, w| {
         refused(g.admin_set_room_ask_lease(w, "r", Some(120)))
     }),
+    ("admin_set_room_require", |g, w| {
+        refused(g.admin_set_room_require(w, "r", Some("flag:wake")))
+    }),
     ("admin_plant_canary", |g, w| {
         refused(g.admin_plant_canary(w, "r"))
     }),

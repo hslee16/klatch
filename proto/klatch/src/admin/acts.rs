@@ -163,6 +163,18 @@ fn room_ask_lease(t: &dyn Transport, room: &str, (secs, off): (Option<i64>, bool
     Ok(())
 }
 
+fn room_require(t: &dyn Transport, room: &str, (spec, off): (Option<String>, bool)) -> Result<()> {
+    let spec = match (off, spec) {
+        (true, None) => None,
+        (false, Some(s)) => Some(s),
+        _ => bail!("give MODE:CAPABILITIES (room-require ROOM refuse:wake), or --off alone"),
+    };
+    t.admin_set_room_require(room, spec.as_deref())?;
+    let said = spec.map(|s| format!("joining needs {s}"));
+    println!("{}", room_said(room, said, "no harness requirement"));
+    Ok(())
+}
+
 fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
     match act {
         PolicyAct::RoomCreation { policy } => {
@@ -207,6 +219,7 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
         }
         PolicyAct::RoomStale { room, secs, off } => room_stale(t, &room, (secs, off))?,
         PolicyAct::RoomAskLease { room, secs, off } => room_ask_lease(t, &room, (secs, off))?,
+        PolicyAct::RoomRequire { room, spec, off } => room_require(t, &room, (spec, off))?,
         PolicyAct::Cap { label } => {
             t.admin_set_cap(&label)?;
             println!("the agent cap is {label}");

@@ -142,7 +142,7 @@ directly and meets only the terminal heuristic.
 | Rooms | `pause`, `resume`, `close`, `reopen`, `label`, `canary` | `administer`: guard, audit |
 | Members | `remove`, `allow`, `clear`, `grant-rooms` | `administer` |
 | Roles | `librarian`, `reviewer`, `admin-agent` | `administer`; only the human at a terminal grants a role |
-| Policy | `room-creation`, `rate-limit`, `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `cap`, `chain` | `administer`; `cap` and `chain` are floors, refused to every agent by `ForbidFloors` |
+| Policy | `room-creation`, `rate-limit`, `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `room-require`, `cap`, `chain` | `administer`; `cap` and `chain` are floors, refused to every agent by `ForbidFloors` |
 | Scrub | `scrub-add`, `scrub-remove`, `scrub-list` | `administer`; the first two are floors |
 | Listing | `refusals`, `audit`, `review-queue` | guard (`Admin`, a query) |
 | Keystore | `recovery`, `recover`, `seal-label`, `rotate-key`, `backup`, `restore`, `run-archive`, `retention`, `archive`, `restore-archive`, `archives`, `export` | the key or the store file directly, no principal and no guard: only the terminal heuristic and the typed confirmation; `export` and the archive acts write an audit row. Part of #318 |

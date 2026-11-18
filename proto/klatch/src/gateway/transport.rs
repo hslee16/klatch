@@ -92,6 +92,8 @@ pub trait Transport {
     /// built-in value (#242).
     fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()>;
     fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()>;
+    /// Require harness capabilities of a room as `refuse:CAPS` or `flag:CAPS`, or with `None` lift it (#61).
+    fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()>;
     /// The lease a claim gets in a room: the one asked for, else the default for the path (the room's setting for an
     /// `ask:` claim) (#242).
     fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64>;
@@ -296,6 +298,10 @@ impl<S: Store> Transport for Direct<S> {
     fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()> {
         self.gateway
             .admin_set_room_stale(&self.principal, room, secs)
+    }
+    fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()> {
+        self.gateway
+            .admin_set_room_require(&self.principal, room, spec)
     }
     fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()> {
         self.gateway
