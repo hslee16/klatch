@@ -49,7 +49,8 @@ case "$path" in
     case "$jq" in
       .head.ref) echo "feat-${path##*/}" ;;
       .head.sha) cat "$FAKE_DIR/head" ;;
-      .mergeable_state) cat "$FAKE_DIR/mstate" ;;
+      .mergeable_state)
+        if [ -s "$FAKE_DIR/mstate-seq" ]; then head -1 "$FAKE_DIR/mstate-seq"; tail -n +2 "$FAKE_DIR/mstate-seq" > "$FAKE_DIR/mstate-seq.t"; mv "$FAKE_DIR/mstate-seq.t" "$FAKE_DIR/mstate-seq"; else cat "$FAKE_DIR/mstate"; fi ;;
       .merged) cat "$FAKE_DIR/merged" ;;
     esac ;;
   */compare/*) cat "$FAKE_DIR/behind_by" 2> /dev/null || echo 0 ;;
@@ -195,6 +196,18 @@ printf '#13   ready                feat-13            #706      merge, then run 
 echo 2 > "$fake/behind_by"
 runsweep
 if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls '^git merge')" -ge 1 ]; then ok "a ready PR that is behind main is integrated, never merged on its stale head"; else bad "stale head rc=$rc: $(cat "$log")"; fi
+
+# --- GitHub says "unknown" right after a merge: ask again, then merge (#793)
+newenv
+printf '#13   ready                feat-13            #706      merge, then run the bench\n' > "$fake/ledger.txt"
+printf 'unknown\nunknown\nclean\n' > "$fake/mstate-seq"
+runsweep
+if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 1 ]; then ok "an unknown mergeable state is asked again and the PR then merges"; else bad "unknown state rc=$rc: $(cat "$log")"; fi
+newenv
+printf '#13   ready                feat-13            #706      merge, then run the bench\n' > "$fake/ledger.txt"
+for _ in $(seq 1 40); do echo unknown; done > "$fake/mstate-seq"
+runsweep
+if [ "$rc" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ] && grep -q 'mergeable state is "unknown"' "$fake/out"; then ok "a state that stays unknown is not merged"; else bad "stuck unknown rc=$rc: $(cat "$log")"; fi
 
 # --- ready but behind: integrate on a throwaway branch, push to the PR branch, wait for green on the NEW head, merge
 newenv
