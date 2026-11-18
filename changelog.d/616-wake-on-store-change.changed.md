@@ -1,0 +1,1 @@
+- `klatch wait` and the streaming session now wake within about 20 ms of a commit by another process (the store's change counter) instead of up to 200 ms or 100 ms later, and an idle stream looks at one cheap counter per tick instead of querying every room; the old poll stays as the fallback and every check on what a wake shows is unchanged (#616, #148).

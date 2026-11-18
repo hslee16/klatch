@@ -16,6 +16,7 @@ mod notifier;
 mod subscription;
 mod sys_lease;
 mod transport;
+mod wake;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{
@@ -32,6 +33,7 @@ pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use sys_lease::SysLeaseSource;
 pub use transport::{Direct, Transport};
+pub use wake::{Pause, WAKE_FALLBACK, WAKE_TICK, pause_for_change};
 
 #[cfg(test)]
 mod test_support;

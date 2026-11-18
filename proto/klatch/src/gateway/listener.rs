@@ -12,6 +12,9 @@ pub struct Connection {
     pub input: Box<dyn BufRead + Send>,
     pub output: Box<dyn Write + Send>,
     pub evidence: PeerEvidence,
+    /// How to stop the streams when the session ends (shut the socket): it must make a blocked read of `input` and
+    /// a blocked write of `output` return (#146, #147). `None` for a stream that cannot be stopped from outside.
+    pub closer: Option<crate::session::Closer>,
 }
 
 /// The serving side of a transport: hands out one `Connection` per peer.

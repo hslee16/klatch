@@ -12,6 +12,8 @@ use std::time::Instant;
 pub(crate) struct Out<W: Write> {
     pub w: W,
     pub last: Instant,
+    /// Whether `healthy` may ask the writer (an empty write): true only for a queue that answers without blocking.
+    probe: bool,
 }
 
 impl<W: Write> Out<W> {
@@ -19,7 +21,24 @@ impl<W: Write> Out<W> {
         Self {
             w,
             last: Instant::now(),
+            probe: false,
         }
+    }
+
+    /// An output whose empty write reports a dead consumer without blocking (the guarded session's queue).
+    pub fn probing(w: W) -> Self {
+        Self {
+            probe: true,
+            ..Self::new(w)
+        }
+    }
+
+    /// An error when the consumer behind the output is known to be gone.
+    pub fn healthy(&mut self) -> io::Result<()> {
+        if self.probe {
+            self.w.write(&[]).map(drop)?;
+        }
+        Ok(())
     }
 
     pub fn send(&mut self, frame: &ServerFrame) -> io::Result<()> {
