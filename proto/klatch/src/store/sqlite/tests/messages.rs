@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn data_persists_across_connections_on_disk() {
-    let dir = std::env::temp_dir().join(format!("klatch-store-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("rooms.db");
+    let path = temp_db("persist");
     {
         let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
         s.post(Seat::new("r", "bob"), "kept", 1).unwrap();
@@ -15,7 +13,6 @@ fn data_persists_across_connections_on_disk() {
         s.read(Seat::new("r", "alice"), true, 3).unwrap()[0].body,
         "kept"
     );
-    std::fs::remove_dir_all(&dir).ok();
 }
 #[test]
 fn look_returns_the_unread_messages_and_touches_neither_presence_nor_membership() {

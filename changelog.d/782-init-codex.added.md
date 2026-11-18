@@ -1,0 +1,1 @@
+- `klatch init --codex`: installs klatch's synchronous hooks (SessionStart, UserPromptSubmit, PostToolUse) into Codex's `hooks.json` after a diff and a yes, never the wake hook and never a trust record, and ends by telling you to review them in `/hooks`; `--codex --uninstall` removes only klatch's entries (#782).
