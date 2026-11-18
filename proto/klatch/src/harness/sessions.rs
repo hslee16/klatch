@@ -105,6 +105,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_table_lists_no_live_session_and_does_not_call_any_dead() {
+        let d = dir();
+        put(&d, "10.json", &record(10, T, "darwin", ""));
+        let f = list(
+            &FsRegistry { dir: d.to_path_buf() },
+            &crate::harness::liveness::fake::UnreadableTable,
+            "darwin",
+        );
+        assert!(f.live.is_empty(), "nothing is vouched for without a table");
+        assert_eq!(f.ignored.len(), 1);
+        assert_eq!(f.ignored[0].1, Liveness::Unreadable);
+    }
+
+    #[test]
     fn an_old_updated_at_on_a_live_session_is_still_listed() {
         let d = dir();
         put(
