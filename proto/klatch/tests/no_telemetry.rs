@@ -101,6 +101,68 @@ fn no_networking_crate_is_in_the_dependency_tree() {
     assert!(deps.len() > 20, "the tree looks empty: {deps:?}");
 }
 
+/// Test-only modules that may run a program chosen at run time: they run the test binary again in a child process with
+/// a private environment, or start a stand-in for the coding agent's process, so key, registry and home paths can be
+/// tested without the real ones. Exact paths relative to the crate, never a suffix: a new file needs a new line here,
+/// and must be declared `#[cfg(test)] mod name;` in its parent so it is never part of the shipped binary (#771).
+const TEST_ONLY_SPAWNERS: &[&str] = &[
+    "src/admin/command_tests.rs",
+    "src/custody/survivor_tests.rs",
+    "src/identity/survivor_tests.rs",
+];
+
+/// The text of the file that declares the module at `rel` (`src/a/b.rs` is declared in `src/a.rs` or `src/a/mod.rs`),
+/// for the first of them that exists.
+fn parent_text(rel: &str) -> Option<String> {
+    let (dir, _) = rel.rsplit_once('/')?;
+    [format!("{dir}.rs"), format!("{dir}/mod.rs")]
+        .iter()
+        .find_map(|p| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).ok())
+}
+
+/// Whether `text` declares `mod name;` directly under `#[cfg(test)]` (other attributes may sit between them).
+fn declared_under_cfg_test(text: &str, name: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let want = format!("mod {name};");
+    lines.iter().enumerate().any(|(i, l)| {
+        *l == want
+            && lines[..i]
+                .iter()
+                .rev()
+                .take_while(|a| a.starts_with("#["))
+                .any(|a| *a == "#[cfg(test)]")
+    })
+}
+
+/// Whether the file at `rel` may run a program chosen at run time: it is listed in `exempt` by its exact path and
+/// `parent_text` (the declaring file) declares it under `#[cfg(test)]`.
+fn is_test_only_spawner(
+    rel: &str,
+    exempt: &[&str],
+    parent_text: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    let name = rel
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.strip_suffix(".rs"))
+        .unwrap_or("");
+    exempt.contains(&rel)
+        && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
+}
+
+/// What is wrong with a `Command::new(...)` on this line of code, if anything: it runs a program that is not on the
+/// list, or one chosen at run time outside the client and the test-only modules.
+fn command_problem(rel: &str, code: &str, programs: &[&str]) -> Option<String> {
+    let arg = &code[code.find("Command::new(")? + "Command::new(".len()..];
+    match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
+        Some(program) if programs.contains(&program) => None,
+        Some(program) => Some(format!("runs {program}")),
+        None if rel.ends_with("src/client.rs") => None,
+        None if is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text) => None,
+        None => Some("runs a program chosen at run time".to_string()),
+    }
+}
+
 #[test]
 fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
     const SOCKETS: &[&str] = [
@@ -131,28 +193,14 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
             .to_string();
         for (n, line) in text.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
-            for s in SOCKETS {
-                if code.contains(s) {
-                    problems.push(format!("{rel}:{}: uses {s}", n + 1));
-                }
-            }
-            if let Some(i) = code.find("Command::new(") {
-                let arg = &code[i + "Command::new(".len()..];
-                match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
-                    Some(program) if PROGRAMS.contains(&program) => {}
-                    Some(program) => problems.push(format!("{rel}:{}: runs {program}", n + 1)),
-                    None if rel.ends_with("src/client.rs") => {}
-                    // a unit test that runs its own test binary again, in a child process with its own environment
-                    None if rel.ends_with("src/admin/command_tests.rs") => {}
-                    // test-only modules that run the test binary again with a private environment, or a stand-in
-                    // for the coding agent's process, so key and registry paths can be tested without the real ones
-                    None if rel.ends_with("/survivor_tests.rs") => {}
-                    None => problems.push(format!(
-                        "{rel}:{}: runs a program chosen at run time",
-                        n + 1
-                    )),
-                }
-            }
+            let at = format!("{rel}:{}", n + 1);
+            problems.extend(
+                SOCKETS
+                    .iter()
+                    .filter(|s| code.contains(*s))
+                    .map(|s| format!("{at}: uses {s}")),
+            );
+            problems.extend(command_problem(&rel, code, PROGRAMS).map(|p| format!("{at}: {p}")));
         }
     }
     assert!(
@@ -223,5 +271,74 @@ fn the_installer_talks_only_to_github() {
                 "install.sh uses plain http: {word}"
             );
         }
+    }
+}
+
+#[test]
+fn a_test_module_is_exempt_only_by_exact_path_and_only_when_declared_under_cfg_test() {
+    let declared = |_: &str| Some("#[cfg(test)]\nmod survivor_tests;\n".to_string());
+    let exempt = ["src/a/survivor_tests.rs"];
+    assert!(is_test_only_spawner(
+        "src/a/survivor_tests.rs",
+        &exempt,
+        &declared
+    ));
+    // the same file name in another directory is not exempt, whatever its parent says
+    assert!(!is_test_only_spawner(
+        "src/b/survivor_tests.rs",
+        &exempt,
+        &declared
+    ));
+    assert!(!is_test_only_spawner(
+        "src/a/b/survivor_tests.rs",
+        &exempt,
+        &declared
+    ));
+    assert!(!is_test_only_spawner(
+        "src/a/survivor_tests.rs.bak",
+        &exempt,
+        &declared
+    ));
+    // listed, but the parent declares it without #[cfg(test)], with cfg(not(test)), or not at all
+    let plain = |_: &str| Some("mod survivor_tests;\n".to_string());
+    let not_test = |_: &str| Some("#[cfg(not(test))]\nmod survivor_tests;\n".to_string());
+    let other_mod = |_: &str| Some("#[cfg(test)]\nmod other_tests;\n".to_string());
+    let separated = |_: &str| Some("#[cfg(test)]\nfn f() {}\nmod survivor_tests;\n".to_string());
+    let none = |_: &str| None;
+    for parent in
+        [&plain, &not_test, &other_mod, &separated] as [&dyn Fn(&str) -> Option<String>; 4]
+    {
+        assert!(!is_test_only_spawner(
+            "src/a/survivor_tests.rs",
+            &exempt,
+            parent
+        ));
+    }
+    assert!(!is_test_only_spawner(
+        "src/a/survivor_tests.rs",
+        &exempt,
+        &none
+    ));
+    // another attribute between the cfg and the module is fine
+    let attr =
+        |_: &str| Some("#[cfg(test)]\n#[allow(dead_code)]\nmod survivor_tests;\n".to_string());
+    assert!(is_test_only_spawner(
+        "src/a/survivor_tests.rs",
+        &exempt,
+        &attr
+    ));
+}
+
+#[test]
+fn every_listed_test_only_spawner_exists_and_is_declared_under_cfg_test_in_the_real_source() {
+    for rel in TEST_ONLY_SPAWNERS {
+        assert!(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(rel).is_file(),
+            "{rel} is listed but does not exist: remove it from TEST_ONLY_SPAWNERS"
+        );
+        assert!(
+            is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text),
+            "{rel}: its parent does not declare it as #[cfg(test)] mod ...;"
+        );
     }
 }
