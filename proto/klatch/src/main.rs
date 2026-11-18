@@ -6,6 +6,7 @@ mod admin;
 mod anchor;
 mod codex;
 mod commands;
+mod consent;
 mod custody;
 mod doctor;
 mod identity;
@@ -297,6 +298,20 @@ enum Cmd {
         )]
         uninstall: bool,
     },
+    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake), or switch one on or off
+    /// later; edits only klatch's own hook entries, after a diff and a yes
+    Consent {
+        /// The consent to change: board, join, session-end, enforce or wake (none: show them all)
+        name: Option<String>,
+        /// on or off (for board: off or a room name)
+        value: Option<String>,
+        /// Which settings to read or change: project, user or both (a change needs it)
+        #[arg(long, value_enum)]
+        scope: Option<init::Scope>,
+        /// Ask nothing: the flags are the consent
+        #[arg(long)]
+        yes: bool,
+    },
     /// Print the klatch convention for any agent, to paste into a subagent's brief (needs no store and no name)
     Convention {
         /// The member name the child will use (letters, digits, - _ .); without one the text asks the child to pick
@@ -480,7 +495,11 @@ fn main() -> Result<()> {
     };
     let names_installed = !matches!(
         cli.cmd,
-        Cmd::Init { .. } | Cmd::Doctor | Cmd::Convention { .. } | Cmd::Sessions { .. }
+        Cmd::Init { .. }
+            | Cmd::Consent { .. }
+            | Cmd::Doctor
+            | Cmd::Convention { .. }
+            | Cmd::Sessions { .. }
     );
     match run_cli(cli) {
         // A hook never fails a session: it says what went wrong where the model reads it, and exits 0. The session
@@ -541,6 +560,17 @@ fn run_cli(cli: Cli) -> Result<()> {
             wake: init::Switch::from_flags(wake, no_wake),
             uninstall,
             codex: cli.who.codex,
+        }),
+        Cmd::Consent {
+            name,
+            value,
+            scope,
+            yes,
+        } => run_consent(&consent::Options {
+            scope,
+            name,
+            value,
+            yes,
         }),
         Cmd::Sessions { all } => run_sessions(all),
         Cmd::Doctor => run_doctor(),
@@ -642,6 +672,24 @@ fn run_sessions(all: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// `klatch consent`: show or switch the consents init granted.
+fn run_consent(options: &consent::Options) -> Result<()> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    consent::run(
+        options,
+        &mut init::Io {
+            input: &mut std::io::stdin().lock(),
+            out: &mut std::io::stdout().lock(),
+        },
+        &init::Places {
+            project_dir: &std::env::current_dir()?,
+            home: home.as_deref(),
+            bin: &std::env::current_exe()?,
+            codex_home: None,
+        },
+    )
 }
 
 fn run_init(options: &init::Options) -> Result<()> {
