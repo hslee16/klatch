@@ -73,6 +73,9 @@ pub trait Transport {
     fn invite(&self, member: &str, room: &str, via: &str) -> Result<()>;
     /// Limit every member to `posts` posts in `secs` seconds over all rooms, or with `None` lift it (#187).
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()>;
+    /// The lease cap and the grace period, in seconds, or with `None` back to the default (#537).
+    fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()>;
+    fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()>;
     fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
     /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
     fn admin_plant_canary(&self, room: &str) -> Result<()>;
@@ -245,6 +248,12 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()> {
         self.gateway.admin_set_rate_limit(&self.principal, limit)
+    }
+    fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()> {
+        self.gateway.admin_set_lease_cap(&self.principal, secs)
+    }
+    fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()> {
+        self.gateway.admin_set_lease_grace(&self.principal, secs)
     }
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
         self.gateway

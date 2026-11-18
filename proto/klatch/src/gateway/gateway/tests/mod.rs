@@ -26,6 +26,7 @@ mod handoff;
 mod history;
 mod labels;
 mod lease;
+mod lease_settings;
 mod librarian;
 mod member_surface;
 mod members;

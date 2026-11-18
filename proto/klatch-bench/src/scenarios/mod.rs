@@ -19,6 +19,7 @@ mod identity;
 mod judge;
 mod keys;
 mod labels;
+mod lease_admin;
 mod librarian;
 mod liveness;
 mod pr_lifecycle;
@@ -96,6 +97,7 @@ pub fn all() -> Vec<Scenario> {
         room_capability::all(),
         delivery_view::all(),
         rate_limit::all(),
+        lease_admin::all(),
         anchors::all(),
         roles_path::all(),
         hooks::all(),
