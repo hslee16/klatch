@@ -14,7 +14,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         if kind.is_some_and(|k| !k.declarable()) {
             return Err(Error::Invalid(
-                "a member cannot declare itself a session: klatch derives that from the session record; \
+                "a member cannot declare its kind as session: klatch derives that from the session record; \
                  declare bot, service or human"
                     .into(),
             ));
