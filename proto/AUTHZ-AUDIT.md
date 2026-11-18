@@ -97,7 +97,7 @@ wraps.
 
 | Command | Gateway call | Check |
 |---|---|---|
-| `join` | `join` | GUARDED `join` |
+| `join` | `join`, or `join_with_harness` when the walk verified a Claude Code session (#877) | GUARDED `join`; plus the room's harness requirement, with the harness taken only from the verified session (never from the caller), and every other caller the generic floor |
 | `dm` | `dm` | as wire `dm` |
 | `post` | `post_labeled` | as wire `post` |
 | `read` | `read` | as wire `read` |
@@ -162,6 +162,8 @@ directly and meets only the terminal heuristic.
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
 | `klatch admin` decides who may administer by a terminal and a process-tree walk, and its keystore family has no principal | #318 |
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
+| A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
+| A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |
 
 Short-lived credentials exist already: a lifetime of 1 second to 30 days (`MAX_CREDENTIAL_TTL_SECS`), 3600 seconds by
 default in `klatch worker issue`, issued only by the human at a launcher, revoked at once by `klatch worker revoke` or

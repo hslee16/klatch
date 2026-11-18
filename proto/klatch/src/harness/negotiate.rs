@@ -1,8 +1,8 @@
 //! The Harness adapter trait and capability negotiation (#61, DESIGN section 20 rules 2, 3 and 6).
 //!
 //! An adapter is an untrusted conveyor (rule 1): it only declares what its runtime can do, and the gateway decides
-//! what that means for a room. The trait is two methods on purpose (`id`, `level`), so the conformance suite for
-//! #62 has one thing to check per capability. A room's requirement is a list of capabilities and a mode; a harness
+//! what that means for a room. The trait is three methods on purpose (`id`, `level`, `basis`), so the conformance
+//! suite (`conformance.rs`, #62) has one thing to check per capability. A room's requirement is a list of capabilities and a mode; a harness
 //! that lacks one is refused or flagged. Only `Level::Native` satisfies a requirement: partial or unverified support
 //! never does, and a capability name this build does not know is an error everywhere, so a room that names one
 //! refuses every joiner (fail closed).
@@ -77,22 +77,43 @@ pub trait Harness {
     fn id(&self) -> &str;
     /// How well this harness does `c`. An adapter that does not know answers `Absent`.
     fn level(&self, c: Capability) -> Level;
+    /// What backs a `Native` level: a path from the repository root to the test or document that observed it. The
+    /// conformance suite reads it and checks the file exists, so a `native` with no evidence behind it cannot pass.
+    /// Anything below `Native` has none to give.
+    fn basis(&self, c: Capability) -> Option<&'static str>;
 }
 
 /// Claude Code through the hook tier that exists today (init, the hooks, wake, enforce, the liveness check).
 pub struct ClaudeCode {
-    wake: Level,
+    wake: std::cell::OnceCell<Level>,
+    probe: Option<fn() -> Support>,
+}
+
+/// Only a measured version at or above the floor makes the wake path native. A version known to be too old, and an
+/// answer that cannot be read, both leave it degraded: negotiation needs a measurement, unlike the watcher itself,
+/// which (#482) keeps running when the probe cannot tell.
+fn wake_level(support: &Support) -> Level {
+    match support {
+        Support::Supported(_) => Level::Native,
+        Support::Unsupported(_) | Support::Unknown(_) => Level::Degraded,
+    }
 }
 
 impl ClaudeCode {
-    /// `support` is the version probe's answer (#482): only a version known to be too old degrades the wake path.
+    /// `support` is the version probe's answer (#482).
     pub fn new(support: Support) -> ClaudeCode {
         ClaudeCode {
-            wake: if support.wake_enabled() {
-                Level::Native
-            } else {
-                Level::Degraded
-            },
+            wake: std::cell::OnceCell::from(wake_level(&support)),
+            probe: None,
+        }
+    }
+
+    /// The version probe runs once, the first time the wake level is asked for, so a join to a room that requires
+    /// nothing about wake never starts `claude --version`.
+    pub fn probing(probe: fn() -> Support) -> ClaudeCode {
+        ClaudeCode {
+            wake: std::cell::OnceCell::new(),
+            probe: Some(probe),
         }
     }
 }
@@ -103,11 +124,27 @@ impl Harness for ClaudeCode {
     }
     fn level(&self, c: Capability) -> Level {
         match c {
-            Capability::Wake => self.wake,
+            Capability::Wake => *self
+                .wake
+                .get_or_init(|| self.probe.map_or(Level::Degraded, |p| wake_level(&p()))),
             // `PreToolUse` covers Edit and Write; Bash is a warning only, which is why claims are on paths.
             Capability::PermissionMode => Level::Degraded,
             _ => Level::Native,
         }
+    }
+    fn basis(&self, c: Capability) -> Option<&'static str> {
+        if self.level(c) != Level::Native {
+            return None;
+        }
+        Some(match c {
+            Capability::ContextInjection => "proto/klatch/tests/hook_output.rs",
+            Capability::SessionIdentity => "proto/klatch/tests/hook_identity.rs",
+            Capability::Wake => "proto/klatch/tests/wake.rs",
+            Capability::PreActionEnforcement => "proto/klatch/tests/toolguard.rs",
+            Capability::HeadlessWorker => "proto/klatch/tests/worker.rs",
+            Capability::PullPath => "proto/klatch/tests/mcp.rs",
+            Capability::PermissionMode => return None,
+        })
     }
 }
 
@@ -156,6 +193,9 @@ impl Harness for Codex {
             Capability::PullPath => Level::Degraded,
         }
     }
+    fn basis(&self, c: Capability) -> Option<&'static str> {
+        (self.level(c) == Level::Native).then_some("RESEARCH-NOTES.md")
+    }
 }
 
 /// The floor (rule 3): the CLI and an instructions file. What a caller that names no harness is taken to be.
@@ -171,6 +211,9 @@ impl Harness for Generic {
             Capability::PullPath => Level::Native,
             _ => Level::Absent,
         }
+    }
+    fn basis(&self, c: Capability) -> Option<&'static str> {
+        (c == Capability::PullPath).then_some("proto/klatch/tests/cli.rs")
     }
 }
 
@@ -298,11 +341,31 @@ mod tests {
     }
 
     #[test]
+    fn a_probing_claude_code_asks_once_and_only_when_wake_is_asked_about() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ASKED: AtomicUsize = AtomicUsize::new(0);
+        fn probe() -> Support {
+            ASKED.fetch_add(1, Ordering::SeqCst);
+            Support::Supported(Version(2, 1, 325))
+        }
+        let h = ClaudeCode::probing(probe);
+        assert_eq!(h.level(Capability::PreActionEnforcement), Level::Native);
+        assert_eq!(
+            ASKED.load(Ordering::SeqCst),
+            0,
+            "no probe for another capability"
+        );
+        assert_eq!(h.level(Capability::Wake), Level::Native);
+        assert_eq!(h.level(Capability::Wake), Level::Native);
+        assert_eq!(ASKED.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn claude_code_wake_follows_the_version_probe() {
         let old = ClaudeCode::new(Support::Unsupported(Version(2, 1, 318)));
         assert_eq!(old.level(Capability::Wake), Level::Degraded);
         let unknown = ClaudeCode::new(Support::Unknown("no claude".into()));
-        assert_eq!(unknown.level(Capability::Wake), Level::Native);
+        assert_eq!(unknown.level(Capability::Wake), Level::Degraded);
     }
 
     #[test]
@@ -367,6 +430,12 @@ mod tests {
         let r = Requirement::parse("refuse:pre-action-enforcement,context-injection").unwrap();
         let h = ClaudeCode::new(Support::Unknown(String::new()));
         assert_eq!(negotiate(&r, &h), Admission::Admit);
+        let wake = Requirement::parse("refuse:wake").unwrap();
+        assert_eq!(
+            negotiate(&wake, &h),
+            Admission::Refuse(vec![Capability::Wake]),
+            "a probe that could not tell does not satisfy wake"
+        );
     }
 
     #[test]

@@ -292,6 +292,7 @@ fn caller_of(member: &str, session: Option<Found>) -> Caller {
         session_dir: None,
         stdin_session: None,
         stdin: None,
+        claude_code: false,
     }
 }
 
