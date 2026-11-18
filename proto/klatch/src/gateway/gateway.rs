@@ -38,6 +38,7 @@ pub use lease::{
 mod grantor;
 mod history;
 pub use history::{History, HistoryRange};
+mod facilitator;
 mod kind;
 mod librarian;
 mod policy;

@@ -150,7 +150,7 @@ impl<S: Store> Gateway<S> {
 }
 
 /// The text of an invite: names only, one pointer, and no way for the sender to add words (#133).
-fn invite_text(from: &str, member: &str, room: &str) -> String {
+pub(super) fn invite_text(from: &str, member: &str, room: &str) -> String {
     format!(
         "invite: @{member}, {from} invites you to room {room}. To accept, run `klatch join {room}`; to ignore it, do nothing."
     )

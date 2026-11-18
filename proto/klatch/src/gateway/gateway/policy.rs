@@ -203,6 +203,8 @@ impl<S: Store> Gateway<S> {
         if !valid_name(member) {
             return Err(Error::Invalid(format!("bad member name: {member}")));
         }
+        // a facilitator is refused for its role, not for the cap (#190)
+        self.refuse_facilitator(who, "clear")?;
         self.check_grantable(label)?;
         self.administer_policy(
             who,

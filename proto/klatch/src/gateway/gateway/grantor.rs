@@ -66,8 +66,10 @@ impl<S: Store> Gateway<S> {
         for (key, _) in self.store.policy_list(&format!("{GRANT}{room}:"))? {
             self.store.policy_set(&key, None, now)?;
         }
+        // a facilitator routes and never grants (#190): a room it creates starts with no grantor
+        let grantor = (!self.is_facilitator(creator)?).then_some(creator);
         self.store
-            .policy_set(&format!("{GRANTOR}{room}"), Some(creator), now)
+            .policy_set(&format!("{GRANTOR}{room}"), grantor, now)
     }
 
     /// The room grantor grants `member` a clearance of `label` in `room` only, within the rules in the module doc.

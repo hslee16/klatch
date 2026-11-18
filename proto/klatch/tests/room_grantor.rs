@@ -49,6 +49,8 @@ fn the_admin_acts_need_a_terminal_like_every_admin_command() {
         vec!["admin", "grantor", "design", "bob"],
         vec!["admin", "room-clear", "design", "bob", "internal"],
         vec!["admin", "room-clear", "design", "bob", "--off"],
+        vec!["admin", "facilitator", "bob"],
+        vec!["admin", "facilitator", "bob", "--off"],
     ] {
         assert!(!h.run("alice", &args).status.success(), "{args:?}");
     }
