@@ -23,6 +23,7 @@ mod model;
 pub(crate) mod parked;
 mod pr_lifecycle;
 mod receipt;
+mod router;
 mod scope;
 mod tasks;
 mod text;
@@ -75,6 +76,9 @@ pub use model::{
     RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
+pub use router::{
+    AskFacts, MAX_INVITES, Route, Rule, View as RouterView, plan as plan_routes, topic_room,
+};
 #[cfg(kani)]
 pub(crate) use scope::scope_bytes_ok;
 pub use scope::{MemberAttrs, SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};

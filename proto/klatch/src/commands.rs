@@ -154,6 +154,12 @@ fn run_agents(ctx: &Ctx, cmd: Cmd) -> Result<()> {
     let t = ctx.t;
     match cmd {
         Cmd::Hooks { of } => hooks(ctx, of)?,
+        Cmd::Router {
+            room,
+            rules,
+            once,
+            interval,
+        } => router(ctx, (&room, &rules), (once, interval))?,
         Cmd::Hook {
             event,
             board,
@@ -171,6 +177,33 @@ fn run_agents(ctx: &Ctx, cmd: Cmd) -> Result<()> {
         _ => unreachable!("handled before dispatch"),
     }
     Ok(())
+}
+
+/// `klatch router` (#189): passes of the reference router as the caller's own member.
+fn router(
+    ctx: &Ctx,
+    (room, rules): (&str, &[String]),
+    (once, interval): (bool, u64),
+) -> Result<()> {
+    let rules = rules
+        .iter()
+        .map(|r| klatch::domain::Rule::parse(r).map_err(|e| anyhow::anyhow!(e)))
+        .collect::<Result<Vec<_>>>()?;
+    let mut router = klatch::router::Router::new(ctx.me, room, rules);
+    let mut now = ctx.now;
+    loop {
+        for event in router.pass(ctx.t, now)? {
+            println!("{event}");
+        }
+        if once {
+            return Ok(());
+        }
+        // a pass already refreshed presence (it reads the room); between passes the router only waits
+        std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
+        now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(now, |d| i64::try_from(d.as_secs()).unwrap_or(now));
+    }
 }
 
 fn join(ctx: &Ctx, room: &str) -> Result<()> {

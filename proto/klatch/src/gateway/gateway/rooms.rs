@@ -98,6 +98,23 @@ impl<S: Store> Gateway<S> {
             .record_audit(&NewAudit::new("create-room", room, &detail), self.now())
     }
 
+    /// Refuse an invite to a room above the invitee's clearance (#189): the pointer would send the member where it is
+    /// refused, and an inviter that cannot see clearances (the router) must not need to. Fails closed on an unknown label.
+    fn check_invitee_clearance(&self, member: &str, room: &str) -> Result<()> {
+        let chain = self.chain()?;
+        let (label, held) = (self.room_label(room)?, self.clearance_of(member)?);
+        if chain.dominates(&held, &label) {
+            return Ok(());
+        }
+        let e = Error::Refused {
+            rule: "clearance".into(),
+            reason: format!(
+                "room {room} is labelled {label}, above {member}'s clearance; no invite is posted"
+            ),
+        };
+        Err(e)
+    }
+
     /// Invite `member` to `room` by posting a pointer in `via`, a room the member is already in. It joins nobody; the
     /// invited session decides. Needs the capability and is audited with the inviter's name.
     pub fn invite(&self, who: &Principal, member: &str, room: &str, via: &str) -> Result<()> {
@@ -115,6 +132,8 @@ impl<S: Store> Gateway<S> {
             room: room.into(),
         };
         self.authorize(who, &op)?;
+        self.check_invitee_clearance(member, room)
+            .inspect_err(|e| self.note_refusal(who, (room, "invite"), e))?;
         if !self.who(who, via)?.iter().any(|m| m.name == member) {
             return Err(Error::Invalid(format!(
                 "{member} is not in room {via}, so there is nowhere to reach them; name a room you share with --via"

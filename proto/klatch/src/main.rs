@@ -254,6 +254,23 @@ enum Cmd {
     },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
+    /// Run the reference router as your own member (#189): read the lobby's open asks, claims and presence and invite
+    /// the members that hold a claim on an asker's topic into a topic room. Rules only, no model; it needs the
+    /// create-room and invite capability like any member, and it decides nothing from message text.
+    Router {
+        /// The room to watch and to post invite pointers in
+        #[arg(long, default_value = "lobby")]
+        room: String,
+        /// An operator rule `claim-path-prefix=member`: invite that member for a topic under the prefix (repeatable)
+        #[arg(long = "rule")]
+        rules: Vec<String>,
+        /// One pass, then exit
+        #[arg(long)]
+        once: bool,
+        /// Seconds between passes
+        #[arg(long, default_value_t = 10)]
+        interval: u64,
+    },
     /// Show when each hook event last ran for you (or for another member with --of), without any content
     Hooks {
         /// A member name to look at instead of yourself

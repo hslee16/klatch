@@ -104,6 +104,7 @@ wraps.
 | `history` | `history` | as wire `history` |
 | `wait` | `wait_poll`, `wait_seen` | GUARDED `wait_poll`, `wait_seen` |
 | `invite` | `invite` | as wire `invite` |
+| `router` | `join`, `open_asks`, `claims`, `who`, `invite`, repeated by the command, as the caller's own member (#189) | GUARDED each of those calls; the router holds no capability a member lacks: creating a room and inviting are the capability of #188 (`room-capability`, audited with the router's name), and `invite` refuses a member below the room's label (`clearance`, `gateway/tests/invite_clearance.rs`). It has no admin act, label or clearance call, posts only the invite pointer, and decides from claims, presence and the ask number, never message text (`domain/router.rs`: `AskFacts` has no text field). Proof: `router.rs` tests, `tests/router.rs` |
 | `wake` | `wake_mark`, `wakeable`, `wake_summary` | GUARDED, one each |
 | `who` | `who` | as wire `who` |
 | `receipt` | `receipt` | GUARDED `receipt` |
