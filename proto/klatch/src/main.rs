@@ -654,7 +654,11 @@ fn run_init(options: &init::Options) -> Result<()> {
     if !options.uninstall
         && let Some(dir) = codex::codex_home(std::env::var_os("CODEX_HOME"), home.as_deref())
     {
-        codex::init_notice(&dir, &mut std::io::stdout().lock())?;
+        codex::init_notice(
+            &dir,
+            &std::env::current_dir()?,
+            &mut std::io::stdout().lock(),
+        )?;
     }
     Ok(())
 }
