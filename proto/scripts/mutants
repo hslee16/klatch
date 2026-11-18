@@ -9,6 +9,7 @@
 #   proto/scripts/mutants --file GLOB MODULE     only the files of the module that match GLOB (for a long module)
 #   proto/scripts/mutants --summary [MODULE...]  print the counts of the last run of each module (default: all)
 #   MUTANTS_DIR=/path proto/scripts/mutants ...  where the copies and the results go (default $TMPDIR/klatch-mutants)
+#   MUTANTS_MIN_FREE_GB=40 proto/scripts/mutants ...  refuse to start with less free disk than this (default 40)
 #
 # One module at a time per copy (cargo-mutants cannot run --in-place with --jobs, and each copy needs 1 to 2 GB of disk);
 # to use more cores start another run with a different MUTANTS_SLOT.
@@ -53,7 +54,7 @@ module_files() {
 }
 modules="gateway-policy domain-security gateway-claims keys custody store-crypto store-claims archive"
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # counts from outcomes.json of a finished run
 summary_of() {
@@ -111,6 +112,13 @@ if [ "${#tmp_root}" -gt 60 ]; then
   echo "mutants: TMPDIR is ${#tmp_root} bytes ($tmp_root); the limit is 60. The tests create unix sockets under it, a socket path must fit in about 100 bytes, and a longer one fails the baseline so the run would report zero mutants. Set TMPDIR to a short directory, for example TMPDIR=/tmp/mut" >&2
   exit 2
 fi
+# each module copy needs 1 to 2 GB and a runaway mutant can write far more (#683): refuse to start on a nearly full disk
+min_free_gb="${MUTANTS_MIN_FREE_GB:-40}"
+free_gb=$(($(df -Pk "$tmp_root" | awk 'NR == 2 { print $4 }') / 1048576))
+if [ "$free_gb" -lt "$min_free_gb" ]; then
+  echo "mutants: only $free_gb GB free where $tmp_root is; a run needs $min_free_gb GB (MUTANTS_MIN_FREE_GB changes the limit). Free some disk first." >&2
+  exit 2
+fi
 command -v cargo-mutants > /dev/null 2>&1 || { echo "mutants: cargo-mutants is not installed (see the header)" >&2; exit 2; }
 command -v rsync > /dev/null 2>&1 || { echo "mutants: rsync is needed to copy the repository" >&2; exit 2; }
 mkdir -p "$base/keys" || exit 2
@@ -147,8 +155,12 @@ for m in "${run[@]}"; do
   # writing without end (run them last, alone, under the ulimit above), or MUTANTS_ARGS='-F scrub_and_remove' for only them
   extra=()
   [ -n "${MUTANTS_ARGS:-}" ] && read -r -a extra <<< "$MUTANTS_ARGS"
-  (cd "$tree/proto/klatch" && cargo mutants --in-place --no-shuffle ${iter[@]+"${iter[@]}"} ${extra[@]+"${extra[@]}"} "${globs[@]}" -o "$out" > "$out/run.log" 2>&1)
+  # a private short temp directory per module (#683): the tests' scratch directories and sockets land here, and it is removed
+  # when the module ends, so nothing a killed or mutated test left behind outlives the module
+  mtmp="$(mktemp -d "$tmp_root/klm.XXXXXX")" || exit 2
+  (cd "$tree/proto/klatch" && TMPDIR="$mtmp" cargo mutants --in-place --no-shuffle ${iter[@]+"${iter[@]}"} ${extra[@]+"${extra[@]}"} "${globs[@]}" -o "$out" > "$out/run.log" 2>&1)
   rc=$?
+  rm -rf "$mtmp"
   # exit 0 all caught, 2 some missed, 3 some timed out; anything else is a run that did not happen
   case $rc in 0 | 2 | 3) ;; *) echo "mutants: module $m failed to run (exit $rc), see $out/run.log" >&2; failed=1 ;; esac
   summary_of "$m"
