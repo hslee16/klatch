@@ -159,6 +159,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ),
     ("now", "the clock"),
     (
+        "my_refusals",
+        "the caller's own refusal record: it reads only rows of the caller's principal name, so it is the same as reading its own hook record, and a member stopped by the breaker must still read why (#678)",
+    ),
+    (
         "digest",
         "asks the guard once per room and reports the rooms it refused",
     ),

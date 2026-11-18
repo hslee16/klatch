@@ -382,6 +382,10 @@ impl PolicyStore for SpyStore {
         self.inner.refusals(limit)
     }
 
+    fn refusals_of(&self, member: &str, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
+        self.inner.refusals_of(member, limit)
+    }
+
     fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
         self.inner.refusal_rules_since(member, since)
     }

@@ -85,6 +85,8 @@ pub trait Transport {
     fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>>;
     /// The latest refused calls, newest first.
     fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
+    /// The caller's own latest refusals, newest first (#678); never another member's.
+    fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
     /// The reviewer's two calls (#509): the oldest waiting item it may read, and a verdict on a waiting item.
     fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>>;
     fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()>;
@@ -291,6 +293,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
         self.gateway.admin_refusals(&self.principal, limit)
+    }
+    fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
+        self.gateway.my_refusals(&self.principal, limit)
     }
     fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>> {
         self.gateway.review_next(&self.principal)

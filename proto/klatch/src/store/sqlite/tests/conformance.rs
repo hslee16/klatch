@@ -449,6 +449,11 @@ fn policy_refusals_are_kept_newest_first_with_the_rule_and_no_text() {
 }
 
 #[test]
+fn policy_one_members_refusals_are_listed_newest_first_and_the_limit_counts_only_theirs() {
+    c::policy::one_members_refusals_are_listed_newest_first_and_the_limit_counts_only_theirs(store);
+}
+
+#[test]
 fn policy_the_rules_a_member_was_refused_under_since_a_time_are_counted_per_member() {
     c::policy::the_rules_a_member_was_refused_under_since_a_time_are_counted_per_member(store);
 }

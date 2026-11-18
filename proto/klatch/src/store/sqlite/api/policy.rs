@@ -74,6 +74,14 @@ impl PolicyStore for SqliteStore {
         )
     }
 
+    fn refusals_of(&self, member: &str, limit: usize) -> Result<Vec<RefusalRecord>> {
+        self.rows(
+            "SELECT ts,member,room,operation,rule FROM refusals WHERE member=?1 ORDER BY id DESC LIMIT ?2",
+            params![member, limit as i64],
+            refusal_from_row,
+        )
+    }
+
     fn refusal_rules_since(&self, member: &str, since: i64) -> Result<Vec<String>> {
         self.rows(
             "SELECT rule FROM refusals WHERE member=?1 AND ts>=?2 ORDER BY id",
