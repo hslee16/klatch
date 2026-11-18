@@ -520,8 +520,19 @@ fn run_cli(cli: Cli) -> Result<()> {
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         Cmd::Judge { cmd } => judge::run(cmd),
+        Cmd::Wake { .. } if !wake_is_on() => Ok(()),
         cmd => run_as_member(&cli.who, cmd),
     }
+}
+
+/// Whether the wake watcher may run: a harness probe that says the coding agent is too old for `asyncRewake` turns it
+/// off (and says so on standard error, which an async hook never shows); one that cannot tell leaves it on (#482).
+fn wake_is_on() -> bool {
+    let support = klatch::harness::wake_support_here();
+    if !support.wake_enabled() {
+        eprintln!("klatch: {}", support.say());
+    }
+    support.wake_enabled()
 }
 
 /// `klatch convention`: the brief for a child agent, with this binary's own path.
