@@ -367,7 +367,25 @@ pub fn run(options: &Options, io: &mut Io, places: &Places) -> anyhow::Result<()
     for plan in plans {
         apply(plan, options.yes, io)?;
     }
+    write!(
+        io.out,
+        "{}",
+        next_steps(std::env::var_os("KLATCH_HOME").as_deref(), places.home)
+    )?;
     Ok(())
+}
+
+/// What `init` ends with (DESIGN section 21): where klatch keeps its data, shown as data and never created or
+/// changed here, and the check to run next. A set `KLATCH_HOME` wins over `~/.klatch`, as it does for the store.
+pub(crate) fn next_steps(klatch_home: Option<&std::ffi::OsStr>, home: Option<&Path>) -> String {
+    let data = match (klatch_home, home) {
+        (Some(dir), _) => format!("{}", Path::new(dir).display()),
+        (None, Some(home)) => format!("{}", home.join(".klatch").display()),
+        (None, None) => "~/.klatch".to_string(),
+    };
+    format!(
+        "klatch keeps its data in {data} (set KLATCH_HOME to move it; init neither creates nor changes it).\nNext: run `klatch doctor` to check the install; it only reads.\n"
+    )
 }
 
 /// The Claude Code hook events klatch listens on.
@@ -1152,5 +1170,15 @@ mod tests {
             );
             assert_eq!(h["timeout"], 3600, "{event}");
         }
+    }
+
+    #[test]
+    fn the_data_location_is_klatch_home_when_set_else_dot_klatch_under_home() {
+        let set = next_steps(Some("/data/k".as_ref()), Some(Path::new("/h")));
+        assert!(set.contains("in /data/k "), "{set}");
+        let default = next_steps(None, Some(Path::new("/h")));
+        assert!(default.contains("in /h/.klatch "), "{default}");
+        assert!(next_steps(None, None).contains("~/.klatch"));
+        assert!(default.contains("klatch doctor") && !default.contains('\u{2014}'));
     }
 }
