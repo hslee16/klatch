@@ -6,6 +6,9 @@ use std::collections::HashMap;
 pub enum Error {
     /// The keystore could not be reached or refused (the text says why, never a key).
     Store(String),
+    /// The keystore is there but locked, or has no login collection, so it cannot say whether a key exists. This is
+    /// never "no key": a caller that read it as missing could make a new key and orphan the store (#561).
+    Locked(String),
     /// A stored value is not a key (wrong length, or a file readable by others).
     Bad(String),
 }
@@ -14,6 +17,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Store(m) => write!(f, "key store: {m}"),
+            Self::Locked(m) => write!(f, "key store: {m}"),
             Self::Bad(m) => write!(f, "key store: {m}"),
         }
     }
