@@ -6,6 +6,7 @@ mod ask_cycle;
 mod asker_gone;
 mod asks;
 mod board;
+mod card;
 mod claim_age;
 mod convention;
 mod convention_words;
@@ -43,6 +44,7 @@ pub use board::{
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, ask_reach_note,
     current_offers, is_offer, render_board, render_who, statuses,
 };
+pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
 pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
 pub use tasks::{
