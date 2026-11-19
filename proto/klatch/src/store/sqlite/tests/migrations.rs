@@ -98,7 +98,7 @@ fn a_fresh_database_is_at_schema_version_33() {
 }
 
 #[test]
-fn a_version_1_database_is_migrated_to_32_and_keeps_its_messages() {
+fn a_version_1_database_is_migrated_to_33_and_keeps_its_messages() {
     let path = temp_db("migrate-v1");
     {
         let c = keyed(&path);
@@ -138,7 +138,7 @@ fn a_version_1_database_is_migrated_to_32_and_keeps_its_messages() {
     let again = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(
         version(&again),
-        32,
+        33,
         "reopening a migrated database is a no-op"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
