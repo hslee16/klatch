@@ -156,6 +156,9 @@ impl klatch::store::areas::ReviewStore for Holders {}
 impl klatch::store::areas::CredentialStore for Holders {}
 impl klatch::store::areas::PolicyStore for Holders {}
 impl klatch::store::areas::RoomStore for Holders {
+    fn features(&self) -> klatch::store::Features {
+        klatch::store::Features::none()
+    }
     fn set_label_keys(&self, _: klatch::keys::LabelKeys) {
         unimplemented!()
     }

@@ -435,6 +435,9 @@ impl PolicyStore for FlakyStore {
     }
 }
 impl RoomStore for FlakyStore {
+    fn features(&self) -> crate::store::Features {
+        self.inner.features()
+    }
     fn set_room_state(&self, r: &str, s: Option<&str>, n: i64) -> Result<()> {
         self.inner.set_room_state(r, s, n)
     }
