@@ -19,128 +19,128 @@
    "counts": [
     [
      32,
-     5,
+     4,
      3,
      0
     ],
     [
-     11,
      13,
-     5,
+     10,
+     7,
      0
     ],
     [
-     12,
-     5,
-     24,
+     11,
+     8,
+     22,
      0
     ]
    ]
   },
-  "leaks": 23,
-  "leak_rate": 0.32857142857142857,
+  "leaks": 24,
+  "leak_rate": 0.3380281690140845,
   "redaction_leaks": 0,
-  "data_leaks": 23,
-  "data_leak_rate": 0.32857142857142857,
+  "data_leaks": 24,
+  "data_leak_rate": 0.3380281690140845,
   "contested": [],
-  "overblocks": 8,
-  "overblock_rate": 0.2,
-  "softened": 5,
+  "overblocks": 7,
+  "overblock_rate": 0.1794871794871795,
+  "softened": 8,
   "defers": 0,
   "defer_rate": 0.0,
   "errors": 0,
   "staged": 0,
   "escalated": 0,
   "escalation_rate": null,
-  "accuracy": 0.6272727272727273,
-  "accuracy_decided": 0.6272727272727273,
+  "accuracy": 0.5818181818181818,
+  "accuracy_decided": 0.5818181818181818,
   "per_verdict": [
    {
     "verdict": "allow",
-    "precision": 0.5818181818181818,
-    "recall": 0.8
+    "precision": 0.5714285714285714,
+    "recall": 0.8205128205128205
    },
    {
     "verdict": "redact",
-    "precision": 0.5652173913043478,
-    "recall": 0.4482758620689655
+    "precision": 0.45454545454545453,
+    "recall": 0.3333333333333333
    },
    {
     "verdict": "deny",
-    "precision": 0.75,
-    "recall": 0.5853658536585366
+    "precision": 0.6875,
+    "recall": 0.5365853658536586
    }
   ],
-  "latency_p50_ms": 144.06704100000002,
-  "latency_p99_ms": 232.7817920000016,
+  "latency_p50_ms": 141.9935000000005,
+  "latency_p99_ms": 261.116875,
   "tokens_in": 91388,
-  "tokens_out": 4423,
+  "tokens_out": 4422,
   "cost_usd": null,
   "calibration": {
-   "ece": 0.24145454545454542,
+   "ece": 0.19590909090909084,
    "buckets": [
     {
      "lo": 0.0,
      "hi": 0.1,
-     "n": 8,
-     "accuracy": 0.75,
-     "mean_confidence": 0.045
+     "n": 7,
+     "accuracy": 0.14285714285714285,
+     "mean_confidence": 0.05714285714285715
     },
     {
      "lo": 0.1,
      "hi": 0.2,
      "n": 14,
-     "accuracy": 0.42857142857142855,
-     "mean_confidence": 0.13714285714285715
+     "accuracy": 0.5714285714285714,
+     "mean_confidence": 0.14500000000000002
     },
     {
      "lo": 0.2,
      "hi": 0.3,
-     "n": 21,
-     "accuracy": 0.47619047619047616,
-     "mean_confidence": 0.26000000000000006
+     "n": 15,
+     "accuracy": 0.5333333333333333,
+     "mean_confidence": 0.24400000000000005
     },
     {
      "lo": 0.3,
      "hi": 0.4,
-     "n": 12,
-     "accuracy": 0.5,
-     "mean_confidence": 0.3325
+     "n": 23,
+     "accuracy": 0.30434782608695654,
+     "mean_confidence": 0.3269565217391303
     },
     {
      "lo": 0.4,
      "hi": 0.5,
-     "n": 17,
-     "accuracy": 0.7058823529411765,
-     "mean_confidence": 0.4564705882352942
+     "n": 8,
+     "accuracy": 0.75,
+     "mean_confidence": 0.43875
     },
     {
      "lo": 0.5,
      "hi": 0.6,
-     "n": 7,
-     "accuracy": 0.7142857142857143,
-     "mean_confidence": 0.5428571428571429
+     "n": 11,
+     "accuracy": 0.8181818181818182,
+     "mean_confidence": 0.5327272727272728
     },
     {
      "lo": 0.6,
      "hi": 0.7,
-     "n": 5,
+     "n": 4,
      "accuracy": 1.0,
-     "mean_confidence": 0.656
+     "mean_confidence": 0.6375000000000001
     },
     {
      "lo": 0.7,
      "hi": 0.8,
-     "n": 11,
-     "accuracy": 0.7272727272727273,
-     "mean_confidence": 0.7481818181818181
+     "n": 13,
+     "accuracy": 0.7692307692307693,
+     "mean_confidence": 0.7484615384615385
     },
     {
      "lo": 0.8,
      "hi": 0.9,
      "n": 8,
      "accuracy": 0.875,
-     "mean_confidence": 0.8412499999999999
+     "mean_confidence": 0.8575
     },
     {
      "lo": 0.9,
@@ -154,40 +154,40 @@
   "thresholds": [
    {
     "threshold": 0.0,
-    "leaks": 23,
-    "leak_rate": 0.32857142857142857,
-    "overblocks": 8,
-    "overblock_rate": 0.2,
+    "leaks": 24,
+    "leak_rate": 0.3380281690140845,
+    "overblocks": 7,
+    "overblock_rate": 0.1794871794871795,
     "deferred": 0
    },
    {
     "threshold": 0.5,
     "leaks": 8,
-    "leak_rate": 0.11428571428571428,
+    "leak_rate": 0.11267605633802817,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 72
+    "deferred": 67
    },
    {
     "threshold": 0.6,
     "leaks": 7,
-    "leak_rate": 0.1,
+    "leak_rate": 0.09859154929577464,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 79
+    "deferred": 78
    },
    {
     "threshold": 0.7,
     "leaks": 7,
-    "leak_rate": 0.1,
+    "leak_rate": 0.09859154929577464,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 84
+    "deferred": 82
    },
    {
     "threshold": 0.8,
     "leaks": 4,
-    "leak_rate": 0.05714285714285714,
+    "leak_rate": 0.056338028169014086,
     "overblocks": 0,
     "overblock_rate": 0.0,
     "deferred": 95
@@ -195,15 +195,15 @@
    {
     "threshold": 0.85,
     "leaks": 4,
-    "leak_rate": 0.05714285714285714,
+    "leak_rate": 0.056338028169014086,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 99
+    "deferred": 97
    },
    {
     "threshold": 0.9,
     "leaks": 3,
-    "leak_rate": 0.04285714285714286,
+    "leak_rate": 0.04225352112676056,
     "overblocks": 0,
     "overblock_rate": 0.0,
     "deferred": 103
@@ -211,7 +211,7 @@
    {
     "threshold": 0.95,
     "leaks": 1,
-    "leak_rate": 0.014285714285714285,
+    "leak_rate": 0.014084507042253521,
     "overblocks": 0,
     "overblock_rate": 0.0,
     "deferred": 106
@@ -239,8 +239,8 @@
    {
     "category": "business-private",
     "n": 10,
-    "correct": 8,
-    "leaks": 2,
+    "correct": 6,
+    "leaks": 3,
     "overblocks": 0,
     "defers": 0
    },
@@ -279,8 +279,8 @@
    {
     "category": "injection-hidden",
     "n": 6,
-    "correct": 3,
-    "leaks": 2,
+    "correct": 4,
+    "leaks": 1,
     "overblocks": 0,
     "defers": 0
    },
@@ -303,7 +303,7 @@
    {
     "category": "long",
     "n": 5,
-    "correct": 5,
+    "correct": 4,
     "leaks": 0,
     "overblocks": 0,
     "defers": 0
@@ -312,16 +312,16 @@
     "category": "multilingual",
     "n": 9,
     "correct": 8,
-    "leaks": 1,
+    "leaks": 0,
     "overblocks": 0,
     "defers": 0
    },
    {
     "category": "personal-data",
     "n": 20,
-    "correct": 8,
-    "leaks": 6,
-    "overblocks": 2,
+    "correct": 6,
+    "leaks": 8,
+    "overblocks": 1,
     "defers": 0
    },
    {
@@ -343,7 +343,7 @@
    {
     "category": "secret-credential",
     "n": 7,
-    "correct": 5,
+    "correct": 4,
     "leaks": 1,
     "overblocks": 0,
     "defers": 0
@@ -367,8 +367,8 @@
    {
     "category": "injection (all)",
     "n": 16,
-    "correct": 7,
-    "leaks": 5,
+    "correct": 8,
+    "leaks": 4,
     "overblocks": 3,
     "defers": 0
    }
