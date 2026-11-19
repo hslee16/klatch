@@ -1,51 +1,83 @@
 {
+  "a_backup_is_encrypted_a_restore_brings_it_back_and_a_readable_export_is_audited": {
+    "backup_ms": 22.4495,
+    "export_ms": 28.441958,
+    "restore_ms": 10.02225
+  },
+  "a_claimed_path_stops_a_second_editor_and_a_broken_store_never_stops_anyone": {
+    "claim_block_ms": 8.506583
+  },
   "a_hundred_rooms_with_news_still_print_a_digest_inside_the_byte_budget": {
-    "hook_ms": 77.038375
+    "hook_ms": 78.178625
+  },
+  "a_long_digest_stays_under_claude_codes_hook_output_cap_and_counts_what_it_cuts": {
+    "digest_hook_ms": 8.104417
   },
   "a_long_history_reads_and_streams_whole": {
-    "read_ms": 19.953834,
-    "stream_ms": 44.144625
+    "read_ms": 11.610333,
+    "stream_ms": 15.694583000000002
   },
   "a_receipt_for_a_room_of_three_hundred_members_answers_fast_and_prints_no_text": {
-    "receipt_ms": 9.001875
+    "receipt_ms": 6.546166
+  },
+  "a_session_start_with_a_big_board_stays_under_the_cap_and_counts_the_board_lines_it_cuts": {
+    "session_start_hook_ms": 8.945167
+  },
+  "an_idle_session_is_woken_by_a_pointer_that_carries_no_message_text": {
+    "wake_ms": 2507.670167
   },
   "archiving_fifty_thousand_messages_leaves_the_live_store_usable_and_restores_whole": {
-    "archive_ms": 296.75174999999996,
-    "archives_ms": 53.891542,
-    "doctor_ms": 54.407125,
-    "live_post_max_ms": 123.790416,
-    "restore_ms": 478.15774999999996
+    "archive_ms": 284.352375,
+    "archives_ms": 57.899,
+    "doctor_ms": 59.272084,
+    "live_post_max_ms": 140.294417,
+    "restore_ms": 257.847958
   },
   "board_with_many_members_and_asks": {
-    "asks_ms": 26.483542,
-    "board_ms": 26.756542
+    "asks_ms": 10.841958,
+    "board_ms": 12.394584
   },
   "fifty_credentialed_workers_post_claim_and_read_at_once": {
-    "post_p50_ms": 26.200417,
-    "post_p99_ms": 382.796083
+    "post_p50_ms": 27.480125,
+    "post_p99_ms": 305.725333
   },
   "fifty_members_renew_their_claims_by_activity_and_all_lapse_together_when_silent": {
-    "claims_list_ms": 7.946666
+    "claims_list_ms": 6.425417
+  },
+  "first_opens_race_without_locking_errors": {
+    "race_ms": 25.46425
   },
   "hook_across_many_rooms": {
-    "hook_ms": 29.325208
+    "hook_ms": 17.658292
   },
   "many_claimants_one_wins": {
-    "claim_ms": 64.31675
+    "claim_ms": 58.409000000000006
   },
   "many_waiters_wake_together": {
-    "total_ms": 1090.0,
-    "wake_ms": 40.0
+    "total_ms": 886.7088749999999,
+    "wake_ms": 22.505209
+  },
+  "new_session_joins_without_flood_and_is_taught": {
+    "session_start_ms": 7.924792
+  },
+  "old_databases_migrate_and_keep_their_messages": {
+    "migrate_ms": 42.34425
   },
   "paging_a_hundred_thousand_message_room_costs_the_same_at_the_head_and_the_tail": {
-    "head_ms": 8.454959,
-    "middle_ms": 8.11925,
-    "newest200_ms": 8.967709000000001,
-    "tail_ms": 7.95825
+    "head_ms": 7.264667,
+    "middle_ms": 6.540625,
+    "newest200_ms": 6.440125,
+    "tail_ms": 6.206584
+  },
+  "post_tool_use_hook_prints_json_context": {
+    "post_tool_use_ms": 6.945125
+  },
+  "rotating_the_key_keeps_every_message_and_retires_the_old_key": {
+    "rotate_ms": 25.177125
   },
   "the_board_renders_five_hundred_parked_members_and_two_hundred_tasks_in_bounded_text": {
-    "board_ms": 13.663083,
-    "tasks_ms": 13.997333000000001,
-    "who_ms": 10.921709
+    "board_ms": 14.818291,
+    "tasks_ms": 15.30025,
+    "who_ms": 13.17875
   }
 }
