@@ -99,6 +99,15 @@ enum Cmd {
         #[arg(long, requires = "kind")]
         payload: Option<String>,
     },
+    /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer
+    Ask { room: String, text: Vec<String> },
+    /// Answer an open ask in one call: claims `ask:<N>`, posts `answer to #N: <text>`, releases the claim (#241). If
+    /// another member holds the claim it says so and posts nothing
+    Answer {
+        room: String,
+        number: i64,
+        text: Vec<String>,
+    },
     /// Read unread messages in a room and advance the cursor
     Read {
         room: String,
