@@ -223,7 +223,13 @@ impl<S: Store> Gateway<S> {
             });
         }
         let members = self.store.members(room)?;
-        Ok(crate::domain::receipts_of(&members, &message, self.now()))
+        let cursors = self.store.member_cursors(room)?;
+        Ok(crate::domain::receipts_of(
+            &members,
+            &cursors,
+            &message,
+            self.now(),
+        ))
     }
 
     /// Unread messages and others' claims for every room the caller has joined. A room the guard refuses
