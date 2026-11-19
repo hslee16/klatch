@@ -195,8 +195,8 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
     let _ = writeln!(o, "\nby category");
     let _ = writeln!(
         o,
-        "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}  {}",
-        "category", "n", "correct", "leaks", "over-blocks", "defers", "correct rate (95% CI)"
+        "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}  correct rate (95% CI)",
+        "category", "n", "correct", "leaks", "over-blocks", "defers"
     );
     for r in s.by_category.iter().chain(std::iter::once(&s.injection)) {
         let _ = writeln!(
