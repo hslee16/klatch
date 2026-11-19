@@ -21,6 +21,16 @@ pub struct HostedConfig {
     pub max_label: Option<String>,
 }
 
+/// The one label gate every hosted reader shares: true only when the ceiling is set, and both it and `label` are in the
+/// chain, and `label` is strictly below the ceiling. Anything else is false (fail closed).
+pub fn label_below_ceiling(chain: &LabelChain, ceiling: Option<&str>, label: &str) -> bool {
+    let Some(max) = ceiling else { return false };
+    match (chain.rank(label), chain.rank(max)) {
+        (Some(held), Some(ceiling)) => held < ceiling,
+        _ => false,
+    }
+}
+
 pub struct HostedJudge<T: HostedTransport> {
     transport: T,
     chain: LabelChain,
@@ -38,16 +48,12 @@ impl<T: HostedTransport> HostedJudge<T> {
 
     /// True only when the judge is on and the item's label is known and strictly below the ceiling.
     fn may_see(&self, item: &ReviewItem) -> bool {
-        if !self.config.enabled {
-            return false;
-        }
-        let Some(max) = self.config.max_label.as_deref() else {
-            return false;
-        };
-        match (self.chain.rank(&item.from_label), self.chain.rank(max)) {
-            (Some(held), Some(ceiling)) => held < ceiling,
-            _ => false,
-        }
+        self.config.enabled
+            && label_below_ceiling(
+                &self.chain,
+                self.config.max_label.as_deref(),
+                &item.from_label,
+            )
     }
 }
 

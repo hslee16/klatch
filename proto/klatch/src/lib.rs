@@ -26,6 +26,9 @@ mod shuttle_tests;
 
 #[cfg(feature = "client")]
 pub mod client;
+// Jev as judge and facilitator advisor (#898): wire types, adapter over `HostedTransport`, threshold helper.
+#[cfg(feature = "client")]
+pub mod jev;
 #[cfg(feature = "client")]
 pub mod protocol;
 
