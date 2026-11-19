@@ -324,16 +324,39 @@ pub fn closed_target(body: &str) -> Option<i64> {
     number(body.strip_prefix("closed #")?).map(|(n, _)| n)
 }
 
+/// The ask number in `reopen #<N>:` at the start of a body.
+pub fn reopen_target(body: &str) -> Option<i64> {
+    let (n, after) = number(body.strip_prefix("reopen #")?)?;
+    after.starts_with(':').then_some(n)
+}
+
 /// The asks in `messages` that are still open. `live_claims` are unexpired claims.
 pub fn open_asks(messages: &[Message], live_claims: &[Claim]) -> Vec<OpenAsk> {
     let mut asks: Vec<&Message> = messages.iter().filter(|m| is_ask(&m.body)).collect();
     asks.sort_by_key(|m| m.seq);
     asks.into_iter()
         .filter(|a| {
-            !messages.iter().any(|m| {
-                (m.sender != a.sender && answer_target(&m.body) == Some(a.seq))
-                    || (m.sender == a.sender && closed_target(&m.body) == Some(a.seq))
-            })
+            // An answer by someone else or a close by the asker ends the ask; a `reopen` by the asker after the
+            // latest of those (#232) puts it back. Only the asker's reopen counts.
+            let latest = |ends: bool| {
+                messages
+                    .iter()
+                    .filter(|m| {
+                        if ends {
+                            (m.sender != a.sender && answer_target(&m.body) == Some(a.seq))
+                                || (m.sender == a.sender && closed_target(&m.body) == Some(a.seq))
+                        } else {
+                            m.sender == a.sender && reopen_target(&m.body) == Some(a.seq)
+                        }
+                    })
+                    .map(|m| m.seq)
+                    .max()
+            };
+            match (latest(true), latest(false)) {
+                (None, _) => true,
+                (Some(end), Some(reopen)) => reopen > end,
+                (Some(_), None) => false,
+            }
         })
         .map(|a| OpenAsk {
             seq: a.seq,
@@ -457,6 +480,88 @@ mod tests {
         for (text, expected) in cases {
             assert_eq!(closed_target(text), expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn reopens_name_their_ask_by_number() {
+        let cases = [
+            ("reopen #3: wrong version", Some(3)),
+            ("reopen #12:x", Some(12)),
+            ("reopen #3 no colon", None),
+            ("reopen #: x", None),
+            ("please reopen #3: x", None),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(reopen_target(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_asker_reopens_an_answered_ask() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "helper", "answer to #1: wrong", 6),
+            msg(3, "asker", "reopen #1: that is the wrong crate", 7),
+        ];
+        let o = open_asks(&m, &[]);
+        assert_eq!(o.len(), 1);
+        assert_eq!((o[0].seq, o[0].claimed), (1, false));
+    }
+
+    #[test]
+    fn the_asker_reopens_a_closed_ask() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "asker", "closed #1", 6),
+            msg(3, "asker", "reopen #1: closed too soon", 7),
+        ];
+        assert_eq!(open_asks(&m, &[]).len(), 1);
+    }
+
+    #[test]
+    fn only_the_asker_can_reopen() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "helper", "answer to #1: ok", 6),
+            msg(3, "other", "reopen #1: not yours", 7),
+        ];
+        assert!(open_asks(&m, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_reopen_before_the_answer_changes_nothing() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "asker", "reopen #1: still open", 6),
+            msg(3, "helper", "answer to #1: ok", 7),
+        ];
+        assert!(open_asks(&m, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_second_answer_ends_a_reopened_ask_again() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "h1", "answer to #1: a", 6),
+            msg(3, "asker", "reopen #1: no", 7),
+            msg(4, "h2", "answer to #1: b", 8),
+        ];
+        assert!(open_asks(&m, &[]).is_empty());
+        let mut m = m.to_vec();
+        m.push(msg(5, "asker", "reopen #1: still no", 9));
+        assert_eq!(open_asks(&m, &[]).len(), 1);
+    }
+
+    #[test]
+    fn a_reopened_ask_keeps_what_helpers_said_before() {
+        let m = [
+            msg(1, "asker", "seeking: slugify", 5),
+            msg(2, "h1", "failed #1: no luck", 6),
+            msg(3, "h1", "answer to #1: partial fix", 7),
+            msg(4, "asker", "reopen #1: not enough", 8),
+        ];
+        let o = open_asks(&m, &[]);
+        assert_eq!(o[0].outcomes.len(), 1);
     }
 
     #[test]
