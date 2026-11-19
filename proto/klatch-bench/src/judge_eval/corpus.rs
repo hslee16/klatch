@@ -353,7 +353,7 @@ pub fn default_hard_path() -> PathBuf {
 }
 
 /// The digest of the hard corpus's frozen test split (`judge-eval/README-hard.md`).
-pub const FROZEN_HARD_TEST_DIGEST: &str = "f12ed130999e174f";
+pub const FROZEN_HARD_TEST_DIGEST: &str = "c1e89ef3369b0ac7";
 
 /// The hard corpus's dev and test sizes.
 pub const HARD_SPLIT_SIZES: (usize, usize) = (161, 110);
