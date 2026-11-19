@@ -902,7 +902,7 @@ struct ClaimArgs {
 
 /// Nouns that are never a target on their own: `claim lobby ticket #602` reaches us as just `ticket` because the
 /// shell drops the comment, and would conflict every worker on the word (#610).
-const BARE_NOUNS: [&str; 6] = ["ticket", "issue", "pr", "task", "item", "design-item"];
+const BARE_NOUNS: [&str; 6] = klatch::domain::WORK_ITEM_NOUNS;
 
 /// The one target of a claim. Extra words and a bare noun are refused (never truncated, never joined: a joined
 /// "ticket 602" would still not match another member's `ticket:602`) with the form that works.

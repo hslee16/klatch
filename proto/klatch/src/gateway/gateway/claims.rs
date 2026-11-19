@@ -15,6 +15,9 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
+        // a work item name is compared in one form, so `Design-Item:66 ` and `design-item:66` are one claim (#632)
+        let path = crate::domain::canonical_claim_path(path);
+        let path = path.as_str();
         check_reason(reason)?;
         if let Some(a) = anchor
             && !valid_anchor(a)
@@ -59,6 +62,8 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
+        let path = crate::domain::canonical_claim_path(path);
+        let path = path.as_str();
         self.authorize(who, &Operation::release(room, path))?;
         self.store.release(room, &who.member, path)
     }
@@ -74,6 +79,8 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         check_path(path)?;
+        let path = crate::domain::canonical_claim_path(path);
+        let path = path.as_str();
         self.refuse_text(who, (room, "release"), note)?;
         let note = crate::domain::flat(note);
         if note.chars().count() > 300 {
@@ -97,7 +104,7 @@ impl<S: Store> Gateway<S> {
     ) -> Result<Option<crate::domain::ReleaseNote>> {
         self.admit(who, room, Operation::claims(room))?;
         check_path(path)?;
-        self.store.last_release(room, path)
+        self.store.last_release(room, &crate::domain::canonical_claim_path(path))
     }
 
     /// Release every claim the caller holds, in every room (its session ended, #277). Only ever the caller's own.

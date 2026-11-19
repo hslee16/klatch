@@ -93,7 +93,10 @@ pub use router::{
 };
 #[cfg(kani)]
 pub(crate) use scope::scope_bytes_ok;
-pub use scope::{MemberAttrs, SHARED_SCOPE, claim_scope, scopes_collide, valid_scope};
+pub use scope::{
+    MemberAttrs, SHARED_SCOPE, WORK_ITEM_NOUNS, canonical_claim_path, claim_scope, scopes_collide,
+    valid_scope, work_item_name,
+};
 pub use stuck::{StuckEvent, stuck_events};
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
