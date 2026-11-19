@@ -8,6 +8,7 @@
 //! bound on text and images. A refusal says which rule, never what the data was.
 
 use super::image::Image;
+use super::transport::{FilePart, MULTIPART_OVERHEAD};
 use crate::domain::{LabelChain, label_below_ceiling};
 use serde_json::{Map, Number, Value};
 use std::collections::BTreeSet;
@@ -466,6 +467,8 @@ impl std::error::Error for RequestError {}
 pub struct Prepared {
     body: String,
     images: bool,
+    /// The JSON whose assets name file parts (`part`), and the files, when the request holds images.
+    multipart: Option<(String, Vec<FilePart>)>,
 }
 
 impl fmt::Debug for Prepared {
@@ -480,13 +483,31 @@ impl fmt::Debug for Prepared {
 }
 
 impl Prepared {
+    /// The all-JSON body (images as `data_base64`). Not what the real transport sends for an image request (it sends
+    /// [`Prepared::multipart`]), and for an image request it is not checked against the 32 MiB limit, which is checked
+    /// on what is sent.
     pub fn body(&self) -> &str {
         &self.body
+    }
+    /// The multipart form of an image request: the JSON for the `request` part (each asset names its file part) and
+    /// the files, in order. `None` when the request holds no image.
+    pub fn multipart(&self) -> Option<(&str, &[FilePart])> {
+        self.multipart
+            .as_ref()
+            .map(|(j, f)| (j.as_str(), f.as_slice()))
     }
     /// True when the request holds an image or a box question, so `TypeSafe-Danger-Zone-Images: true` must be sent.
     pub fn images(&self) -> bool {
         self.images
     }
+}
+
+/// The size of a multipart body of a JSON part and files of these sizes (an upper bound).
+pub fn multipart_len(json_len: usize, file_lens: &[usize]) -> usize {
+    file_lens
+        .iter()
+        .fold(json_len, |a, n| a.saturating_add(*n))
+        .saturating_add(MULTIPART_OVERHEAD.saturating_mul(file_lens.len() + 1))
 }
 
 /// The size rules: the body at most 32 MiB, and the text plus every use of every image (each use adds the image again,
@@ -784,23 +805,48 @@ pub fn build_request(
     root.insert("model".into(), model.into());
     root.insert("state".into(), state_v);
     root.insert("questions".into(), Value::Object(qs));
+    let mut multipart = None;
     if !r.assets.is_empty() {
         let mut a = Map::new();
+        let mut pa = Map::new();
+        let mut files = vec![];
         for (i, img) in r.assets.iter().enumerate() {
+            let reference = format!("{REFERENCE_MARK}{i:04}-end");
             let mut o = Map::new();
             o.insert("type".into(), "image".into());
             o.insert("format".into(), img.format().name().into());
+            let mut p = o.clone();
             o.insert("data_base64".into(), img.to_base64().into());
-            a.insert(format!("{REFERENCE_MARK}{i:04}-end"), Value::Object(o));
+            a.insert(reference.clone(), Value::Object(o));
+            let part = format!("image-{i:04}");
+            p.insert("part".into(), part.clone().into());
+            pa.insert(reference, Value::Object(p));
+            files.push(FilePart::new(
+                part,
+                img.content_type(),
+                img.bytes().to_vec(),
+            ));
         }
+        let mut proot = root.clone();
         root.insert("assets".into(), Value::Object(a));
+        proot.insert("assets".into(), Value::Object(pa));
+        multipart = Some((Value::Object(proot).to_string(), files));
     }
     let body = Value::Object(root).to_string();
     debug_assert!(!body.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF]));
-    check_sizes(r.text_bytes, r.use_bytes, body.len())?;
+    // what is sent is the multipart form when there are images, so that is what the limit applies to
+    let sent_len = match &multipart {
+        Some((json, files)) => multipart_len(
+            json.len(),
+            &files.iter().map(|f| f.bytes().len()).collect::<Vec<_>>(),
+        ),
+        None => body.len(),
+    };
+    check_sizes(r.text_bytes, r.use_bytes, sent_len)?;
     Ok(Prepared {
         body,
         images: !r.assets.is_empty(),
+        multipart,
     })
 }
 

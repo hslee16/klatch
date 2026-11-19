@@ -1,5 +1,8 @@
 # cargo-deny policy (#162, R36): licences, advisories, sources and the crypto crates we refuse.
 [graph]
+# Every feature is checked, so the optional `jev-http` transport (ureq, rustls, ring, webpki-roots; #871) is held to the
+# same policy as the default build although no shipped binary links it.
+all-features = true
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
@@ -30,6 +33,11 @@ allow = [
     # libtomcrypt, which sqlcipher-src carries; SQLCipher is built to use the vendored OpenSSL instead
     "WTFPL",
 ]
+
+# One narrow exception: the Mozilla root certificates that webpki-roots bundles are data under the Community Data License
+# Agreement Permissive 2.0 (permissive, notice only). It is linked only with the optional `jev-http` feature. A build
+# that ships that feature must add its notice to THIRD-PARTY-LICENSES.txt (about.toml does not accept it yet, on purpose).
+exceptions = [{ allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" }]
 
 [bans]
 multiple-versions = "warn"

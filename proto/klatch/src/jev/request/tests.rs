@@ -589,3 +589,49 @@ fn a_model_that_is_not_pinned_is_never_sent() {
     // the config is the gate for the name; the builder refuses an empty one all the same
     assert!(build_request("", &text("x"), &[noul()], &gate(), &limits()).is_err());
 }
+
+#[test]
+fn an_image_request_also_carries_the_multipart_form_where_each_asset_names_its_part() {
+    let st = Entry::object(vec![
+        (Key::Fixed("a"), Entry::image("public", png(1))),
+        (Key::Fixed("b"), Entry::image("public", png(2))),
+    ]);
+    let p = build(&st, &[noul()]).unwrap();
+    let (json, files) = p
+        .multipart()
+        .expect("an image request has a multipart form");
+    let v: Value = serde_json::from_str(json).unwrap();
+    let assets = v["assets"].as_object().unwrap();
+    assert_eq!(assets.len(), 2);
+    assert_eq!(files.len(), 2);
+    let mut names = BTreeSet::new();
+    for (reference, a) in assets {
+        assert_eq!(a["type"], "image");
+        assert!(a.get("data_base64").is_none(), "no base64 beside a part");
+        let part = a["part"].as_str().unwrap();
+        assert!(!part.is_empty() && part != "request");
+        assert!(names.insert(part.to_string()), "part names are unique");
+        assert!(v["state"].to_string().contains(reference.as_str()));
+        let f = files
+            .iter()
+            .find(|f| f.name() == part)
+            .expect("file part exists");
+        assert_eq!(f.content_type(), "image/png");
+        assert_eq!(a["format"], "png");
+    }
+    assert_eq!(files[0].bytes(), png(1).bytes());
+    assert_eq!(files[1].bytes(), png(2).bytes());
+}
+
+#[test]
+fn a_text_only_request_has_no_multipart_form() {
+    assert!(build(&text("x"), &[noul()]).unwrap().multipart().is_none());
+}
+
+#[test]
+fn the_size_check_uses_what_is_sent_so_multipart_is_smaller_than_base64() {
+    // two 1 MiB images are about 2.7 MiB as base64 and 2 MiB as files
+    let (json_len, file_len) = (1000usize, 2 * 1024 * 1024usize);
+    assert!(multipart_len(json_len, &[file_len / 2, file_len / 2]) < file_len * 4 / 3);
+    assert!(multipart_len(json_len, &[file_len / 2, file_len / 2]) > file_len);
+}
