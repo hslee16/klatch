@@ -6,12 +6,18 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 32;
+pub const SCHEMA_VERSION: i64 = 33;
+
+/// A member's post times since a moment: the per-member rate limit (#187) runs it on every post, so it must be an
+/// index search (`messages_sender_ts`, #637), not a scan of the table.
+pub(super) const POSTS_SINCE_SQL: &str =
+    "SELECT ts FROM messages WHERE sender=?1 AND ts>=?2 ORDER BY ts";
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, status_ts INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public', kind TEXT, payload TEXT);
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
+ CREATE INDEX messages_sender_ts ON messages(sender, ts);
  CREATE TABLE claims(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT, path TEXT, owner TEXT, member TEXT, reason TEXT, expires INTEGER, scope TEXT NOT NULL DEFAULT '', anchor TEXT NOT NULL DEFAULT '', ttl INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0, age_noted INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
@@ -379,6 +385,13 @@ pub(super) fn migrate_v31(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 32 to 33: an index on who posted and when (#637), so the per-member rate limit counts a member's recent
+/// posts by searching it instead of scanning every message.
+pub(super) fn migrate_v32(conn: &Connection) -> Result<()> {
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS messages_sender_ts ON messages(sender, ts);")
+        .map_err(be)
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -395,7 +408,7 @@ pub(super) type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-pub(super) const MIGRATIONS: [Step; 32] = [
+pub(super) const MIGRATIONS: [Step; 33] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -428,6 +441,7 @@ pub(super) const MIGRATIONS: [Step; 32] = [
     migrate_v29,
     migrate_v30,
     migrate_v31,
+    migrate_v32,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

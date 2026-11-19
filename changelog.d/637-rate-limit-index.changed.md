@@ -1,0 +1,1 @@
+- The per-member rate limit counts a member's recent posts with an index search (new `messages(sender, ts)` index, store schema 33, migrated on first open) instead of scanning every message (#637).
