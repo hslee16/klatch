@@ -117,6 +117,8 @@ wraps.
 | `receipt` | `receipt` | GUARDED `receipt` |
 | `claim` | `claim_ttl_for`, `claim` | as wire `claim` |
 | `release` | `release`, `release_with_note` | as wire `release` |
+| `ask` | `post`, `who` | as wire `post` (GUARDED, the room's checks and content rules); `who` only for the reach note, as the `post` command does (#241) |
+| `answer` | `open_asks`, `claim_ttl_for`, `claim`, `post`, `release` | GUARDED each of those calls, in that order, as the caller's own member; it is the three commands `claim`, `post` and `release` in one process and holds no capability they lack. A claim held by another member is reported and nothing is posted; the claim is released after a failed post. No new wire method (#241). Proof: `tests/ask_answer.rs` |
 | `mute`, `unmute` | `set_muted` | as wire `mute` |
 | `view` | `delivery_view`, `set_delivery_view` | OWN_RECORD, the caller's own key |
 | `cross` | `request_crossing` | GUARDED `request_crossing`: read in the source, post in the target, floors |

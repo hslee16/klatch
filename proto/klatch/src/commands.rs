@@ -58,6 +58,8 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
                 handoff: kind.as_deref().map(|k| (k, payload.as_deref())),
             },
         )?,
+        Cmd::Ask { room, text } => ask(ctx, &room, &text)?,
+        Cmd::Answer { room, number, text } => answer(ctx, &room, number, &text)?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
         Cmd::History { room, last, since } => history_of(t, room, since, last)?,
         Cmd::Wait {
@@ -330,6 +332,74 @@ fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
             eprintln!("{note}");
         }
     }
+    Ok(())
+}
+
+/// `klatch ask ROOM TEXT`: the `seeking:` post and its number in one call (#241). The same `post` as the command
+/// of that name, so the guard, the labels and the content checks are the ones every post meets.
+fn ask(ctx: &Ctx, room: &str, text: &[String]) -> Result<()> {
+    let text = text.join(" ");
+    let text = text.trim();
+    let text = text
+        .strip_prefix(klatch::domain::ASK_PREFIX)
+        .unwrap_or(text)
+        .trim();
+    if text.is_empty() {
+        bail!("an ask needs text: klatch ask {room} <what you need>");
+    }
+    let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
+    let posted = ctx.t.post(room, &body)?;
+    println!(
+        "asked #{} in {room} (queued; `klatch wait {room}` for the answer)",
+        posted.seq
+    );
+    if let Some(note) = ctx
+        .t
+        .who(room)
+        .ok()
+        .and_then(|m| klatch::domain::ask_reach_note(&m, ctx.me, ctx.now))
+    {
+        eprintln!("{note}");
+    }
+    Ok(())
+}
+
+/// `klatch answer ROOM N TEXT`: claim `ask:N`, post `answer to #N:` and release, in one call (#241). Each step is the
+/// gateway call the command of that name makes, so each meets the guard. A claim held by someone else is a result,
+/// not a failure: nothing is posted and nothing of theirs is touched. The claim is released after a failed post too.
+fn answer(ctx: &Ctx, room: &str, n: i64, text: &[String]) -> Result<()> {
+    let text = text.join(" ");
+    if text.trim().is_empty() {
+        bail!("an answer needs text: klatch answer {room} {n} <your answer>");
+    }
+    if !ctx.t.open_asks(room)?.iter().any(|a| a.seq == n) {
+        bail!(
+            "#{n} is not an open ask in {room} (answered, closed or no such number); nothing was posted"
+        );
+    }
+    let path = format!("ask:{n}");
+    let ttl = ctx.t.claim_ttl(room, &path, None)?;
+    match ctx.t.claim(room, &ClaimSpec::new(&path, ttl, "")) {
+        Ok(()) => {}
+        Err(klatch::domain::Error::Conflict {
+            owner,
+            secs_left,
+            deadlock: false,
+            ..
+        }) => {
+            println!(
+                "not answered: #{n} is claimed by {} for another {secs_left}s; nothing was posted",
+                flat(&owner)
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    }
+    let posted = ctx.t.post(room, &format!("answer to #{n}: {text}"));
+    let released = ctx.t.release(room, &path);
+    posted?;
+    released?;
+    println!("answered #{n} in {room} (queued; claim released)");
     Ok(())
 }
 
