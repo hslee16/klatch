@@ -110,6 +110,20 @@ pub struct RefusalRecord {
     pub rule: String,
 }
 
+/// What became of one crossing the caller asked for (#516): a state and a fixed-form reason. Never the message text,
+/// the reviewer's own reason, a redaction or the name of a private term.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrossingStatus {
+    pub id: i64,
+    pub room: String,
+    pub seq: i64,
+    pub to_room: String,
+    /// `waiting`, `approved`, `denied`, `released` or `blocked`.
+    pub state: String,
+    /// One fixed sentence per state and category; empty while waiting.
+    pub why: String,
+}
+
 /// The latest release of a path that carried a note: who released it, what they said, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseNote {

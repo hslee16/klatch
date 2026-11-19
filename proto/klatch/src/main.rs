@@ -279,6 +279,12 @@ enum Cmd {
         #[arg(long)]
         to: String,
     },
+    /// List the crossings you asked for and what became of each: waiting, approved, released, denied or blocked, with a
+    /// fixed reason (the category of rule, never the text, a reviewer's words or a private term)
+    Crossings {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Set your status in a room (for example "done"), shown by who and the board
     Status { room: String, status: Vec<String> },
     /// Run the reference router as your own member (#189): read the lobby's open asks, claims and presence and invite

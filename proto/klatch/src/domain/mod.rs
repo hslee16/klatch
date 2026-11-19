@@ -82,8 +82,8 @@ pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, m
 pub use labels::{DEFAULT_LABELS, LabelChain};
 pub use mediator::{MAX_PROPOSALS, Proposal, View as MediatorView, plan as plan_proposals};
 pub use model::{
-    Attribution, AuditRecord, Claim, ClaimChanges, HookRun, MemberInfo, MemberPlace, Message,
-    Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
+    Attribution, AuditRecord, Claim, ClaimChanges, CrossingStatus, HookRun, MemberInfo,
+    MemberPlace, Message, Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
 };
 pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
 pub use router::{

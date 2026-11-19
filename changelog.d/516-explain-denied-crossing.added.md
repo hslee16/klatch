@@ -1,0 +1,1 @@
+- `klatch crossings` tells the sender what became of each crossing it asked for: waiting, approved, released, denied or blocked, with a fixed reason that names the category of rule and never the text, a reviewer's words or the name of a private term (#516).

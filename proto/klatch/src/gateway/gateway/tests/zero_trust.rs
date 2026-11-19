@@ -244,6 +244,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "the caller's own refusal record: it reads only rows of the caller's principal name, so it is the same as reading its own hook record, and a member stopped by the breaker must still read why (#678)",
     ),
     (
+        "my_crossings",
+        "the caller's own crossing requests: it reads only queue rows whose requester is the caller and returns a state and a fixed sentence, never the text, a redaction, a reviewer's reason or a scrub rule's name (#516)",
+    ),
+    (
         "digest",
         "asks the guard once per room and reports the rooms it refused",
     ),
