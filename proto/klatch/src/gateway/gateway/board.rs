@@ -62,6 +62,7 @@ impl<S: Store> Gateway<S> {
         let members = recent
             .into_iter()
             .map(|m| crate::domain::BoardMember {
+                status_ts: m.status_ts,
                 status: m.status.clone().or_else(|| {
                     statuses
                         .iter()

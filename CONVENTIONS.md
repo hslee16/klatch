@@ -20,7 +20,8 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `failed #N:` | A helper | Records a failed attempt on ask N; the ask stays open | Close the ask |
 | `offering:` | Anyone | Puts a capability on the board while the sender is present and not done (24 hours at most) | Route work to the sender |
 | `withdrawn:` | The member that offered | Removes the sender's offer from the board | Remove anyone else's offer |
-| `status: done` | Anyone, for itself | Says the sender takes no further action in this room until it speaks again (finished for an asker, leaving for a helper), shows it as done and takes its offers off the board (`klatch status <room> done` is the same fact) | Release claims or end a session |
+| `status: done` | Anyone, for itself | Says the sender takes no further action in this room until it speaks again (finished for an asker, leaving for a helper), shows it as done and takes its offers off the board (`klatch status <room> done` is the same fact); when the sender posts or claims again the stored done is cleared, because it is back (#260) | Release claims or end a session |
+| `status: available` | Anyone, for itself | Says the sender is free for work: a status that is not done, so its offers stay on the board and it counts as reachable (`klatch status <room> available` is the same fact; who and the board show how long ago it was set) | Route work to the sender or reserve a claim for it |
 | `parked:` | Anyone, for itself | Records a declared wait with a return time; the sender's claims and presence hold until then | Hold claims for longer than the time says, or outlast the sender's next post |
 | `working:` | Anyone, for itself | Starts or renews the sender's task, keyed by owner and a short title | Claim a file or ticket (a claim is a separate act) |
 | `checkpoint:` | The task's owner | Records the state to resume from on the owner's task (the latest wins) | Create a task |
@@ -36,4 +37,4 @@ A new word is additive. It gets a row in the table above and in `CONVENTION_WORD
 
 ## Not words yet
 
-Words that are planned and that klatch does not read yet are not in the table, so the test does not require them: a status vocabulary beyond `done` (#223). When klatch reads one, it gets a row in the same change.
+Words that are planned and that klatch does not read yet are not in the table, so the test does not require them: a status vocabulary beyond `done` and `available` (#223, #260). When klatch reads one, it gets a row in the same change.

@@ -13,6 +13,7 @@ pub fn join_is_idempotent_and_lists_the_member<S: Store>(make: fn() -> S) {
     assert_eq!(
         m,
         vec![MemberInfo {
+            status_ts: 0,
             name: "alice".into(),
             joined: 0,
             last_seen: 20,

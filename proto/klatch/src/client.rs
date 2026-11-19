@@ -76,6 +76,8 @@ pub struct Member {
     pub name: String,
     pub last_seen: i64,
     pub status: Option<String>,
+    /// When the status was set (seconds), if known.
+    pub status_ts: Option<i64>,
     pub kind: Option<String>,
     /// The repository id klatch observed for the member, if any (display only).
     pub repository: Option<String>,
@@ -504,6 +506,7 @@ impl Client {
             name: str_of(&m["name"]),
             last_seen: m["last_seen"].as_i64().unwrap_or(0),
             status: opt_str(&m["status"]),
+            status_ts: m["status_ts"].as_i64(),
             kind: opt_str(&m["kind"]),
             repository: opt_str(&m["repository"]),
             directory: opt_str(&m["directory"]),

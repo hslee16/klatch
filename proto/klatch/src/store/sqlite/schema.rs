@@ -6,9 +6,9 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 31;
+pub const SCHEMA_VERSION: i64 = 32;
 
-pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
+pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, status_ts INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public', kind TEXT, payload TEXT);
  CREATE UNIQUE INDEX messages_room_seq ON messages(room, seq);
  CREATE UNIQUE INDEX messages_mid ON messages(mid);
@@ -369,6 +369,16 @@ pub(super) fn migrate_v30(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 31 to 32: when a member's status was set (#260), so the board can show its age. A status set before this
+/// has 0, which means the age is unknown and none is shown.
+pub(super) fn migrate_v31(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "members", "status_ts")? {
+        conn.execute_batch("ALTER TABLE members ADD COLUMN status_ts INTEGER NOT NULL DEFAULT 0;")
+            .map_err(be)?;
+    }
+    Ok(())
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -385,7 +395,7 @@ type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 31] = [
+const MIGRATIONS: [Step; 32] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -417,6 +427,7 @@ const MIGRATIONS: [Step; 31] = [
     migrate_v28,
     migrate_v29,
     migrate_v30,
+    migrate_v31,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

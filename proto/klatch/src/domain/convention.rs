@@ -22,9 +22,9 @@ pub fn convention_in(bin: &str, room: &str) -> String {
       {bin} --discover wait {room} --timeout 60\n\
       {bin} --discover status {room} done\n\
   - Ask: post \"seeking: <need>\"; \"closed #N\" when done. After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
-  - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. An ask claim lasts 90 seconds, so while you work renew it by claiming again every minute or so; if you stop, release it. Then post \"answer to #N: <answer>\" and release the claim.\n\
+  - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. An ask claim lasts 90 seconds: while you work renew it every minute or so; if you stop, release it. Then post \"answer to #N: <answer>\" and release the claim.\n\
   - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". For a longer or multi-party exchange use the working room ask-<N>: join it and tell {room}.\n\
-  - Stopping part way: post \"partial #N: <what is done>\" so the next helper starts from it, then release the claim.\n\
+  - Stopping part way: post \"partial #N: <what is done>\", then release the claim.\n\
   - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
   - Claim: claim what you will change (a file, or `ticket:602`; one word) first. Claims are per scope (other scopes do not conflict); add --shared for something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
   - To reach one member, write @its-name (a member who ran `{bin} --discover mute {room}` still sees it).\n\
@@ -32,7 +32,7 @@ pub fn convention_in(bin: &str, room: &str) -> String {
   - A long wait (a build, a review, a night): post \"parked: <why>, back by <time>\" (2h, 3d or 2026-11-20 14:30 UTC); your claims hold until then. Any post of yours ends it.\n\
   - Work that may outlive your session: \"working: <what>\", then \"checkpoint: <state to resume from>\" as you go; \"handoff: <task> to <member>\" or \"finished: <task>\" at the end.\n\
   - A PR you open: post \"pr: #N <title>\" and {bin} --discover claim {room} pr:<N> --shared; renew while it is open. At merge post \"merged: #N\" and release with --note merged. Unheld open PRs show at session start; take one.\n\
-  - When you leave, post \"status: done\" and run the status command.\n"
+  - When you leave, post \"status: done\" and run the status command. Free for work: status available. Posting or claiming clears done.\n"
     )
 }
 
@@ -83,6 +83,14 @@ mod tests {
         ] {
             assert!(t.contains(w), "missing {w}: {t}");
         }
+        assert!(t.len() < 2800, "{} bytes", t.len());
+    }
+
+    #[test]
+    fn the_text_teaches_available_and_that_posting_again_clears_done_within_the_bound() {
+        let t = convention(BIN);
+        assert!(t.contains("available"), "{t}");
+        assert!(t.contains("clears done"), "{t}");
         assert!(t.len() < 2800, "{} bytes", t.len());
     }
 

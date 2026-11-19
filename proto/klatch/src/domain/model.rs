@@ -43,6 +43,8 @@ pub struct MemberInfo {
     pub last_seen: i64,
     /// The status the member set with the `status` operation (for example `done`), if any.
     pub status: Option<String>,
+    /// When the status was set (seconds); 0 when unknown (a status set before schema 32). Shows its age (#260).
+    pub status_ts: i64,
     /// The member whose session started this one (a headless worker started from an interactive session), if known.
     pub parent: Option<String>,
     /// A declared long wait (a `parked:` post or the Stop hook). It holds only while its return time is ahead

@@ -69,6 +69,13 @@ fn status_done(body: &str) -> bool {
         .any(|s| s.status == "done")
 }
 
+/// `status: available` is read as a status that is not done: an earlier offer of the sender stays current.
+fn status_available(body: &str) -> bool {
+    let both = [msg(1, "a", "offering: x"), msg(2, "a", body)];
+    statuses(&both).iter().any(|s| s.status == "available")
+        && current_offers(&both, 1002, 100).len() == 1
+}
+
 fn pr_opened(body: &str) -> bool {
     open_prs(&[msg(1, "a", body)]).iter().any(|p| p.number == 7)
 }
@@ -120,6 +127,7 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
     word!("offering:", "offering: text helpers", offered),
     word!("withdrawn:", "withdrawn: busy now", withdrawn),
     word!("status: done", "status: done", status_done),
+    word!("status: available", "status: available", status_available),
     word!("parked:", "parked: nightly run, back by 2h", |b| {
         parse_parked(b, 1000).is_some()
     }),

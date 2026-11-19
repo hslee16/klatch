@@ -164,6 +164,7 @@ mod tests {
 
     fn member(name: &str, quiet: i64) -> MemberInfo {
         MemberInfo {
+            status_ts: 0,
             name: name.into(),
             joined: 0,
             last_seen: NOW - quiet,
