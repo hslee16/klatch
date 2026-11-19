@@ -140,7 +140,10 @@ fn migrates_with_data_intact(version: usize, rows: usize, seed: u64) {
         "a database migrated from version {version} lacks what a fresh one has: {missing:?}"
     );
     assert_eq!(
-        extra.iter().map(|(t, n, _)| (t.as_str(), n.as_str())).collect::<Vec<_>>(),
+        extra
+            .iter()
+            .map(|(t, n, _)| (t.as_str(), n.as_str()))
+            .collect::<Vec<_>>(),
         LEGACY_COLUMNS,
         "a database migrated from version {version} has columns a fresh one does not"
     );
