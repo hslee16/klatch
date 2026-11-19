@@ -19,6 +19,7 @@ mod error;
 mod hook;
 mod hosted_judge;
 mod judge;
+mod judge_loop;
 mod kind;
 mod labels;
 mod mediator;
@@ -76,6 +77,7 @@ pub use hook::{
 };
 pub use hosted_judge::{HostedConfig, HostedJudge, HostedTransport, label_below_ceiling};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
+pub use judge_loop::{Breaker, Narrowed, RulesJudge};
 pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]
 pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, min_in};

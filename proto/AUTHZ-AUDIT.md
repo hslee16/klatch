@@ -142,7 +142,7 @@ wraps.
 | `worker` | `admin_issue_credential`, `admin_revoke_credential`, `admin_credentials` | the launcher heuristic, not a role: gap #834 |
 | `anchor` | `anchor_done`, `reap_anchors`, `github_events` | the launcher heuristic: gap #834 |
 | `run` | `admin_run_create`, `admin_run_end`, `admin_runs` | the launcher heuristic: gap #834 |
-| `judge` | `release_crossings` (no principal) | the launcher heuristic: gaps #834 and #836 |
+| `judge` | `pending_reviews`, `resolve_review`, `record_audit` (via `drain`, which runs the local rules judge: `rules_judge`, `RulesJudge`, `Breaker`; `run` is a resident loop unless `--once`), `release_crossings` (no principal) | the launcher heuristic: gaps #834 and #836. A verdict is data: the floors are checked again when a crossing is released, the rules judge only denies or defers, and no text leaves the machine |
 | `init`, `consent`, `convention`, `doctor`, `sessions` | none: they edit the human's own settings files or read the installation; none opens the store for a member | no member operation; `tests/init.rs`, `tests/doctor.rs` |
 
 ## `klatch admin`
