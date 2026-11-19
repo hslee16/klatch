@@ -12,10 +12,12 @@ mod sqlite;
 #[cfg(test)]
 pub(crate) mod test_dir;
 
+mod features;
 pub use area::{
     AskStore, ClaimStore, CredentialStore, MemberStore, MessageStore, PolicyStore, ReviewStore,
     RoomStore,
 };
+pub use features::{Feature, Features, require_features};
 /// Every area trait in one place, for code that holds a concrete store and calls its methods (a trait's methods need the trait in scope).
 pub mod areas {
     pub use super::{

@@ -202,6 +202,9 @@ impl PolicyStore for MemoryStore {}
 impl RoomStore for MemoryStore {
     // the spike keeps no sealed labels, and says so here instead of by a silent default (#485)
     fn set_label_keys(&self, _keys: crate::keys::LabelKeys) {}
+    fn features(&self) -> Features {
+        Features::none()
+    }
 }
 
 /// Runs every conformance test on the in-memory store and prints which pass. Not an assertion on the count: the

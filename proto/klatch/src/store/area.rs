@@ -5,6 +5,8 @@ mod claims;
 mod credentials;
 #[cfg(test)]
 mod default_tests;
+#[cfg(test)]
+mod feature_tests;
 mod members;
 mod messages;
 mod policy;

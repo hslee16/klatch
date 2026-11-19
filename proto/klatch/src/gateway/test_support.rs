@@ -428,6 +428,9 @@ impl PolicyStore for SpyStore {
     }
 }
 impl RoomStore for SpyStore {
+    fn features(&self) -> crate::store::Features {
+        self.inner.features()
+    }
     fn set_room_state(&self, room: &str, state: Option<&str>, now: i64) -> Result<()> {
         self.inner.set_room_state(room, state, now)
     }

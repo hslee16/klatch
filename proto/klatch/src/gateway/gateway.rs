@@ -92,7 +92,12 @@ pub struct Gateway<S: Store> {
 }
 
 impl<S: Store> Gateway<S> {
+    /// Panics when `store` does not declare every feature the gateway relies on (#485): a backend that skips one would
+    /// otherwise lose it without any error. It is a defect of the backend, found the first time it is wired.
     pub fn new(store: S, clock: impl Clock + 'static, guard: impl Guard + 'static) -> Self {
+        if let Err(e) = crate::store::require_features(&store) {
+            panic!("{e}");
+        }
         Self {
             store,
             clock: Box::new(clock),
