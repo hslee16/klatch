@@ -104,7 +104,8 @@ impl<S: Store> Gateway<S> {
     ) -> Result<Option<crate::domain::ReleaseNote>> {
         self.admit(who, room, Operation::claims(room))?;
         check_path(path)?;
-        self.store.last_release(room, &crate::domain::canonical_claim_path(path))
+        self.store
+            .last_release(room, &crate::domain::canonical_claim_path(path))
     }
 
     /// Release every claim the caller holds, in every room (its session ended, #277). Only ever the caller's own.

@@ -98,11 +98,21 @@ mod tests {
             Some("design-item:66")
         );
         assert_eq!(work_item_name("PR:7").as_deref(), Some("pr:7"));
-        for not in ["ticket", "ticket:", "src/ticket:1", "ticketing:1", "a:1", "ticket 1"] {
+        for not in [
+            "ticket",
+            "ticket:",
+            "src/ticket:1",
+            "ticketing:1",
+            "a:1",
+            "ticket 1",
+        ] {
             assert_eq!(work_item_name(not), None, "{not}");
             assert_eq!(canonical_claim_path(not), not);
         }
-        assert_eq!(claim_scope("Ticket:602", false, Some("git:a")), SHARED_SCOPE);
+        assert_eq!(
+            claim_scope("Ticket:602", false, Some("git:a")),
+            SHARED_SCOPE
+        );
         assert_eq!(claim_scope("src/ticket:1", false, Some("git:a")), "git:a");
     }
 
