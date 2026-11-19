@@ -171,6 +171,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_plant_canary", |g, w| {
         refused(g.admin_plant_canary(w, "r"))
     }),
+    ("admin_retire_canary", |g, w| {
+        refused(g.admin_retire_canary(w, "r"))
+    }),
     ("admin_refusals", |g, w| refused(g.admin_refusals(w, 5))),
     ("admin_add_scrub_term", |g, w| {
         refused(g.admin_add_scrub_term(w, "n", "t"))

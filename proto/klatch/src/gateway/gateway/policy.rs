@@ -135,7 +135,8 @@ impl<S: Store> Gateway<S> {
             who,
             ("label", &format!("{room}={label}")),
             (&format!("label:{room}"), Some(label)),
-        )
+        )?;
+        self.plant_on_label(who, room, label)
     }
 
     /// Seal a label: from now on a message under it is stored encrypted under the label's own key, and a principal

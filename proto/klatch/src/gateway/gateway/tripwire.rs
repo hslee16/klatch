@@ -8,6 +8,8 @@ use crate::domain::{Attribution, NEXT_STEP};
 use crate::store::NewAudit;
 
 const CANARY: &str = "canary:";
+/// The `kind` of a planted canary message.
+pub(super) const CANARY_KIND: &str = "canary";
 /// This many safety refusals within the window stop a member everywhere.
 pub const BREAKER_REFUSALS: usize = 5;
 pub const BREAKER_WINDOW_SECS: i64 = 300;
@@ -26,18 +28,79 @@ impl<S: Store> Gateway<S> {
     pub fn admin_plant_canary(&self, who: &Principal, room: &str) -> Result<()> {
         check_room(room)?;
         self.administer(who, ("canary", room), |now| {
-            let existing = self.store.policy_list(CANARY)?.len();
-            let token = canary_token(room, now, existing);
-            self.store
-                .policy_set(&format!("{CANARY}{token}"), Some(room), now)?;
-            let label = self.room_label(room)?;
-            let body = format!("internal credential, never copy it out of this room: {token}");
-            self.store.post_as(
-                &NewMessage::new((room, "canary"), Attribution::Unattributed, &label, &body),
-                now,
-            )?;
+            self.plant_canary(room, now)?;
             Ok(String::new())
         })
+    }
+
+    /// End the canary of a room (#347): the tripwire for it stops. A later label act by the human plants a new one.
+    pub fn admin_retire_canary(&self, who: &Principal, room: &str) -> Result<()> {
+        check_room(room)?;
+        self.administer(who, ("canary-retire", room), |now| {
+            let keys = self.canary_keys_of(room)?;
+            if keys.is_empty() {
+                return Err(Error::Invalid(format!("room {room} has no canary")));
+            }
+            for key in keys {
+                self.store.policy_set(&key, None, now)?;
+            }
+            Ok(String::new())
+        })
+    }
+
+    /// The label act of the human plants a canary when the room reaches the threshold (the default agent cap, which
+    /// is `private` in the default chain) and has none. An admin agent's label act plants nothing, and a room
+    /// labelled before this existed has none until the human labels it again.
+    pub(super) fn plant_on_label(&self, who: &Principal, room: &str, label: &str) -> Result<()> {
+        let chain = self.chain()?;
+        let threshold = match chain.rank("private") {
+            Some(_) => "private",
+            None => chain.default_cap(),
+        };
+        if !chain.dominates(label, threshold)
+            || self.is_admin_agent(&who.member)?
+            || !self.canary_keys_of(room)?.is_empty()
+        {
+            return Ok(());
+        }
+        let now = self.now();
+        self.plant_canary(room, now)?;
+        self.store.record_audit(
+            &NewAudit::new("canary", room, "planted with the label"),
+            now,
+        )
+    }
+
+    fn canary_keys_of(&self, room: &str) -> Result<Vec<String>> {
+        Ok(self
+            .store
+            .policy_list(CANARY)?
+            .into_iter()
+            .filter(|(_, home)| home == room)
+            .map(|(key, _)| key)
+            .collect())
+    }
+
+    fn plant_canary(&self, room: &str, now: i64) -> Result<()> {
+        let token = canary_token()?;
+        self.store
+            .policy_set(&format!("{CANARY}{token}"), Some(room), now)?;
+        let label = self.room_label(room)?;
+        let body = format!("internal credential, never copy it out of this room: {token}");
+        self.store.post_as(
+            &NewMessage::new((room, "canary"), Attribution::Unattributed, &label, &body)
+                .with_kind(CANARY_KIND),
+            now,
+        )?;
+        Ok(())
+    }
+
+    /// A message of a room's canary is shown once in the digest and nowhere else: every other view drops it.
+    pub(super) fn without_canary(messages: Vec<Message>) -> Vec<Message> {
+        messages
+            .into_iter()
+            .filter(|m| m.kind.as_deref() != Some(CANARY_KIND))
+            .collect()
     }
 
     /// Refuse text that carries a canary into any room but its own, and pause the room it was aimed at.
@@ -85,13 +148,14 @@ impl<S: Store> Gateway<S> {
     }
 }
 
-/// A token that looks like a credential and is unique to the plant (not secret: its use is to be recognised).
-fn canary_token(room: &str, now: i64, n: usize) -> String {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for byte in room.bytes().chain(now.to_le_bytes()).chain(n.to_le_bytes()) {
-        h = (h ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-    }
-    format!("kc-canary-{h:016x}")
+/// A token that looks like a credential: 128 random bits from the operating system, never derived from the room or
+/// the time and never written in the source (not secret: its use is to be recognised).
+fn canary_token() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|e| Error::Invalid(format!("no randomness for a canary: {e}")))?;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("kc-canary-{hex}"))
 }
 
 #[cfg(test)]
@@ -99,16 +163,11 @@ mod canary_token_tests {
     use super::canary_token;
 
     #[test]
-    fn the_token_is_pinned_by_a_golden_value() {
-        assert_eq!(canary_token("vault", 1000, 0), "kc-canary-db394614ab5656e2");
-    }
-
-    #[test]
-    fn every_input_changes_the_token_and_the_same_inputs_repeat_it() {
-        let base = canary_token("vault", 1000, 0);
-        assert_eq!(base, canary_token("vault", 1000, 0));
-        assert_eq!(canary_token("vault", 1000, 1), "kc-canary-fa340d1db645a103");
-        assert_eq!(canary_token("vault", 1001, 0), "kc-canary-4870bbf238d4462b");
-        assert_eq!(canary_token("other", 1000, 0), "kc-canary-faabbc6865401d4c");
+    fn a_token_has_the_prefix_and_128_bits_and_never_repeats() {
+        let a = canary_token().unwrap();
+        let b = canary_token().unwrap();
+        assert!(a.starts_with("kc-canary-"), "{a}");
+        assert_eq!(a.len(), "kc-canary-".len() + 32);
+        assert_ne!(a, b);
     }
 }

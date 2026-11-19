@@ -13,7 +13,9 @@ fn rev() -> Principal {
 /// private. Time moves so the breaker stays out of it.
 fn world() -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
     let (g, t) = timed();
-    g.admin_set_room_label(&admin(), "vault", "private")
+    // the label is set in the policy directly so no canary takes message 1 (the label act plants one, #347)
+    g.store
+        .policy_set("label:vault", Some("private"), 100)
         .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
     g.admin_set_clearance(&admin(), "rev", "private").unwrap();

@@ -24,16 +24,22 @@ impl<S: Store> Gateway<S> {
         let at = Seat::new(room, &who.member);
         // a librarian only looks: its peek must not refresh its presence or make it a member (#499)
         if !advance && self.is_librarian(&who.member)? {
-            return self.store.look(at, self.now());
+            return Ok(Self::without_canary(self.store.look(at, self.now())?));
         }
-        self.store.read(at, advance, self.now())
+        Ok(Self::without_canary(self.store.read(
+            at,
+            advance,
+            self.now(),
+        )?))
     }
 
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
     pub fn wait_poll(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, false))?;
-        self.store
-            .wait_poll(Seat::new(room, &who.member), self.now())
+        Ok(Self::without_canary(
+            self.store
+                .wait_poll(Seat::new(room, &who.member), self.now())?,
+        ))
     }
 
     /// How many unread messages would wake the caller in a room: from others, past both cursors, and only those
@@ -50,6 +56,7 @@ impl<S: Store> Gateway<S> {
         let unread = self
             .store
             .wake_poll(Seat::new(room, &who.member), self.now())?;
+        let unread = Self::without_canary(unread);
         let unread = self.in_view(who, room, unread)?;
         let muted = self.store.is_muted(Seat::new(room, &who.member))?;
         let counted = unread
@@ -93,7 +100,9 @@ impl<S: Store> Gateway<S> {
             return Err(Error::Invalid("bad tail range".into()));
         }
         self.check_guard(who, &Operation::Subscribe { room: room.into() })?;
-        self.store.tail(room, after_seq, limit)
+        Ok(Self::without_canary(
+            self.store.tail(room, after_seq, limit)?,
+        ))
     }
 
     /// The store's change token (#616): differs after any other connection commits, says nothing about what. It is no

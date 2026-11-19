@@ -34,6 +34,7 @@ pub(super) enum RoomAct {
     Reopen { room: String },
     Label { room: String, label: String },
     Canary { room: String },
+    CanaryRetire { room: String },
 }
 
 pub(super) enum MemberAct {
@@ -177,6 +178,7 @@ impl From<AdminCmd> for Route {
             C::Reopen { room } => Route::room(RoomAct::Reopen { room }),
             C::Label { room, label } => Route::room(RoomAct::Label { room, label }),
             C::Canary { room } => Route::room(RoomAct::Canary { room }),
+            C::CanaryRetire { room } => Route::room(RoomAct::CanaryRetire { room }),
             C::Remove {
                 member,
                 room,
