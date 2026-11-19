@@ -192,6 +192,34 @@ fn report_bad_archive(r: &mut Report, a: &klatch::store::ArchiveInfo) {
 /// What a socket nudge does to a member in permission mode `mode` (RESEARCH-NOTES 47.2, #553). A raw socket sender
 /// cannot attest a mode, so Claude Code holds its message for a session that bypasses prompts and accepts it for one
 /// that prompts. Only modes that were measured are called prompting; anything else is unknown, never fine.
+/// How many rows the tables that only grow hold (#487), so a store that is getting large is seen before it is slow.
+/// Information only, never a warning: how big is too big, and what to prune, is retention policy (#568, the human's).
+/// Read-only, and says nothing when there is no readable store.
+pub(super) fn check_growth(r: &mut Report, home: Option<&Path>) {
+    let Some(db) = store_path(home).filter(|d| d.exists()) else {
+        return;
+    };
+    if klatch::store::encrypt::is_plaintext(&db) {
+        return;
+    }
+    let asked = db.clone();
+    let counts = within(KEYSTORE_PATIENCE, move || {
+        let key = crate::custody::current_key(&asked).ok().flatten()?;
+        klatch::store::SqliteStore::read_growth(&asked, &key).ok()
+    })
+    .flatten();
+    let Some(counts) = counts else { return };
+    let parts: Vec<String> = counts.iter().map(|(l, n)| format!("{n} {l}")).collect();
+    r.add(
+        Status::Ok,
+        format!(
+            "growth: {} (live rows; nothing here is pruned automatically)",
+            parts.join(", ")
+        ),
+        None,
+    );
+}
+
 fn nudge_effect(mode: &str) -> Status {
     match mode {
         "bypassPermissions" => Status::Warn,
