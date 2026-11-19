@@ -1,0 +1,332 @@
+{
+ "judge": "claude:opus",
+ "split": "dev",
+ "corpus": "hard",
+ "summary": {
+  "n": 161,
+  "confusion": {
+   "rows": [
+    "allow",
+    "redact",
+    "deny"
+   ],
+   "columns": [
+    "allow",
+    "redact",
+    "deny",
+    "defer"
+   ],
+   "counts": [
+    [
+     66,
+     4,
+     1,
+     0
+    ],
+    [
+     0,
+     35,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     55,
+     0
+    ]
+   ]
+  },
+  "leaks": 25,
+  "leak_rate": 0.2777777777777778,
+  "redaction_leaks": 25,
+  "data_leaks": 0,
+  "data_leak_rate": 0.0,
+  "contested": [],
+  "overblocks": 5,
+  "overblock_rate": 0.07042253521126761,
+  "softened": 0,
+  "defers": 0,
+  "defer_rate": 0.0,
+  "errors": 0,
+  "accuracy": 0.8136645962732919,
+  "accuracy_decided": 0.8136645962732919,
+  "per_verdict": [
+   {
+    "verdict": "allow",
+    "precision": 1.0,
+    "recall": 0.9295774647887324
+   },
+   {
+    "verdict": "redact",
+    "precision": 0.2564102564102564,
+    "recall": 0.2857142857142857
+   },
+   {
+    "verdict": "deny",
+    "precision": 0.9821428571428571,
+    "recall": 1.0
+   }
+  ],
+  "latency_p50_ms": 3913.78033400001,
+  "latency_p99_ms": 39226.98125000007,
+  "tokens_in": 426007,
+  "tokens_out": 47190,
+  "cost_usd": 2.5309137999999995,
+  "calibration": {
+   "ece": 0.07503105590062081,
+   "buckets": [
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "n": 3,
+     "accuracy": 0.6666666666666666,
+     "mean_confidence": 0.6
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "n": 14,
+     "accuracy": 0.7142857142857143,
+     "mean_confidence": 0.7071428571428571
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "n": 47,
+     "accuracy": 1.0,
+     "mean_confidence": 0.848085106382979
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "n": 97,
+     "accuracy": 1.0,
+     "mean_confidence": 0.9521649484536087
+    }
+   ]
+  },
+  "thresholds": [
+   {
+    "threshold": 0.0,
+    "leaks": 25,
+    "leak_rate": 0.2777777777777778,
+    "overblocks": 5,
+    "overblock_rate": 0.07042253521126761,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.5,
+    "leaks": 25,
+    "leak_rate": 0.2777777777777778,
+    "overblocks": 5,
+    "overblock_rate": 0.07042253521126761,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.6,
+    "leaks": 25,
+    "leak_rate": 0.2777777777777778,
+    "overblocks": 5,
+    "overblock_rate": 0.07042253521126761,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.7,
+    "leaks": 25,
+    "leak_rate": 0.2777777777777778,
+    "overblocks": 4,
+    "overblock_rate": 0.056338028169014086,
+    "deferred": 3
+   },
+   {
+    "threshold": 0.8,
+    "leaks": 25,
+    "leak_rate": 0.2777777777777778,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 17
+   },
+   {
+    "threshold": 0.85,
+    "leaks": 23,
+    "leak_rate": 0.25555555555555554,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 26
+   },
+   {
+    "threshold": 0.9,
+    "leaks": 5,
+    "leak_rate": 0.05555555555555555,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 64
+   },
+   {
+    "threshold": 0.95,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 90
+   },
+   {
+    "threshold": 0.97,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 111
+   },
+   {
+    "threshold": 0.99,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 150
+   }
+  ],
+  "target_leak": 0.01,
+  "lowest_threshold": 0.95,
+  "by_category": [
+   {
+    "category": "business-private",
+    "n": 14,
+    "correct": 14,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-clean",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-secret",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "everyday-chat",
+    "n": 9,
+    "correct": 9,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "harmless-name",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-hidden",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-lookalike",
+    "n": 9,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   },
+   {
+    "category": "injection-overt",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "long",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "multilingual",
+    "n": 13,
+    "correct": 6,
+    "leaks": 7,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "personal-data",
+    "n": 29,
+    "correct": 9,
+    "leaks": 16,
+    "overblocks": 4,
+    "defers": 0
+   },
+   {
+    "category": "public-chatter",
+    "n": 5,
+    "correct": 4,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "scrub-term",
+    "n": 9,
+    "correct": 9,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-credential",
+    "n": 11,
+    "correct": 11,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-lookalike",
+    "n": 12,
+    "correct": 12,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "short",
+    "n": 7,
+    "correct": 6,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection (all)",
+    "n": 23,
+    "correct": 22,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   }
+  ]
+ }
+}

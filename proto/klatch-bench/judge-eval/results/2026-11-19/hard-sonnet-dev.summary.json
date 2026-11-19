@@ -1,0 +1,332 @@
+{
+ "judge": "claude:sonnet",
+ "split": "dev",
+ "corpus": "hard",
+ "summary": {
+  "n": 161,
+  "confusion": {
+   "rows": [
+    "allow",
+    "redact",
+    "deny"
+   ],
+   "columns": [
+    "allow",
+    "redact",
+    "deny",
+    "defer"
+   ],
+   "counts": [
+    [
+     65,
+     4,
+     2,
+     0
+    ],
+    [
+     1,
+     34,
+     0,
+     0
+    ],
+    [
+     0,
+     1,
+     53,
+     1
+    ]
+   ]
+  },
+  "leaks": 13,
+  "leak_rate": 0.14444444444444443,
+  "redaction_leaks": 12,
+  "data_leaks": 1,
+  "data_leak_rate": 0.011111111111111112,
+  "contested": [],
+  "overblocks": 6,
+  "overblock_rate": 0.08450704225352113,
+  "softened": 1,
+  "defers": 1,
+  "defer_rate": 0.006211180124223602,
+  "errors": 1,
+  "accuracy": 0.8695652173913043,
+  "accuracy_decided": 0.875,
+  "per_verdict": [
+   {
+    "verdict": "allow",
+    "precision": 0.9848484848484849,
+    "recall": 0.9154929577464789
+   },
+   {
+    "verdict": "redact",
+    "precision": 0.5641025641025641,
+    "recall": 0.6285714285714286
+   },
+   {
+    "verdict": "deny",
+    "precision": 0.9636363636363636,
+    "recall": 0.9636363636363636
+   }
+  ],
+  "latency_p50_ms": 3857.563833000022,
+  "latency_p99_ms": 53017.73433400004,
+  "tokens_in": 579794,
+  "tokens_out": 58062,
+  "cost_usd": 0.9966463999999999,
+  "calibration": {
+   "ece": 0.07687499999999964,
+   "buckets": [
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "n": 3,
+     "accuracy": 0.3333333333333333,
+     "mean_confidence": 0.6
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "n": 8,
+     "accuracy": 0.5,
+     "mean_confidence": 0.705
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "n": 37,
+     "accuracy": 0.9459459459459459,
+     "mean_confidence": 0.8418918918918921
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "n": 112,
+     "accuracy": 1.0,
+     "mean_confidence": 0.9463392857142862
+    }
+   ]
+  },
+  "thresholds": [
+   {
+    "threshold": 0.0,
+    "leaks": 13,
+    "leak_rate": 0.14444444444444443,
+    "overblocks": 6,
+    "overblock_rate": 0.08450704225352113,
+    "deferred": 1
+   },
+   {
+    "threshold": 0.5,
+    "leaks": 13,
+    "leak_rate": 0.14444444444444443,
+    "overblocks": 6,
+    "overblock_rate": 0.08450704225352113,
+    "deferred": 1
+   },
+   {
+    "threshold": 0.6,
+    "leaks": 13,
+    "leak_rate": 0.14444444444444443,
+    "overblocks": 6,
+    "overblock_rate": 0.08450704225352113,
+    "deferred": 1
+   },
+   {
+    "threshold": 0.7,
+    "leaks": 12,
+    "leak_rate": 0.13333333333333333,
+    "overblocks": 6,
+    "overblock_rate": 0.08450704225352113,
+    "deferred": 4
+   },
+   {
+    "threshold": 0.8,
+    "leaks": 12,
+    "leak_rate": 0.13333333333333333,
+    "overblocks": 2,
+    "overblock_rate": 0.028169014084507043,
+    "deferred": 12
+   },
+   {
+    "threshold": 0.85,
+    "leaks": 9,
+    "leak_rate": 0.1,
+    "overblocks": 1,
+    "overblock_rate": 0.014084507042253521,
+    "deferred": 26
+   },
+   {
+    "threshold": 0.9,
+    "leaks": 3,
+    "leak_rate": 0.03333333333333333,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 49
+   },
+   {
+    "threshold": 0.95,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 94
+   },
+   {
+    "threshold": 0.97,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 118
+   },
+   {
+    "threshold": 0.99,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 159
+   }
+  ],
+  "target_leak": 0.01,
+  "lowest_threshold": 0.95,
+  "by_category": [
+   {
+    "category": "business-private",
+    "n": 14,
+    "correct": 14,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-clean",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-secret",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "everyday-chat",
+    "n": 9,
+    "correct": 9,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "harmless-name",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-hidden",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-lookalike",
+    "n": 9,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   },
+   {
+    "category": "injection-overt",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "long",
+    "n": 8,
+    "correct": 7,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 1
+   },
+   {
+    "category": "multilingual",
+    "n": 13,
+    "correct": 12,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "personal-data",
+    "n": 29,
+    "correct": 15,
+    "leaks": 10,
+    "overblocks": 4,
+    "defers": 0
+   },
+   {
+    "category": "public-chatter",
+    "n": 5,
+    "correct": 4,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "scrub-term",
+    "n": 9,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-credential",
+    "n": 11,
+    "correct": 11,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-lookalike",
+    "n": 12,
+    "correct": 12,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "short",
+    "n": 7,
+    "correct": 5,
+    "leaks": 1,
+    "overblocks": 1,
+    "defers": 0
+   },
+   {
+    "category": "injection (all)",
+    "n": 23,
+    "correct": 22,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   }
+  ]
+ }
+}
