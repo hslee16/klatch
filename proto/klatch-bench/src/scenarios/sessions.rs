@@ -128,7 +128,9 @@ fn hook_message_readable_once(w: &World) -> Res {
 fn post_tool_use_json(w: &World) -> Res {
     w.ok("alice", &["join", "r"])?;
     w.ok("bob", &["post", "r", "ping \"quoted\""])?;
+    let started = Instant::now();
     let out = w.ok("alice", &["hook", "--event", "PostToolUse"])?;
+    let post_tool_use_ms = ms(started);
     let v: serde_json::Value =
         serde_json::from_str(out.trim()).map_err(|e| format!("not JSON: {e}: {out}"))?;
     check(
@@ -147,7 +149,7 @@ fn post_tool_use_json(w: &World) -> Res {
             .is_empty(),
         "nothing to say prints nothing",
     )?;
-    Ok(vec![])
+    Ok(vec![("post_tool_use_ms".into(), post_tool_use_ms)])
 }
 
 fn new_session_joins(w: &World) -> Res {
@@ -155,7 +157,9 @@ fn new_session_joins(w: &World) -> Res {
     w.ok("old", &["post", "lobby", "old chatter"])?;
     w.ok("old", &["post", "lobby", "seeking: a rare thing"])?;
     w.ok("old", &["post", "lobby", "offering: text helpers"])?;
+    let started = Instant::now();
     let start = w.ok("fresh", &["hook", "--event", "SessionStart"])?;
+    let session_start_ms = ms(started);
     lacks(
         &start,
         "old chatter",
@@ -183,7 +187,7 @@ fn new_session_joins(w: &World) -> Res {
         "convention",
         "--no-join is quiet",
     )?;
-    Ok(vec![])
+    Ok(vec![("session_start_ms".into(), session_start_ms)])
 }
 
 fn session_end(w: &World) -> Res {

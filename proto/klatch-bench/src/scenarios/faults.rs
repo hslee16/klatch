@@ -88,6 +88,7 @@ fn hostile_text(w: &World) -> Res {
 
 fn first_opens_race(w: &World) -> Res {
     let n = 8;
+    let started = Instant::now();
     let children: Vec<_> = (0..n)
         .map(|i| {
             w.spawn(&format!("m{i}"), &["join", "r"])
@@ -105,7 +106,10 @@ fn first_opens_race(w: &World) -> Res {
         failures.is_empty(),
         format!("{} of {n} first opens failed: {failures:?}", failures.len()),
     )?;
-    Ok(vec![("processes".into(), n as f64)])
+    Ok(vec![
+        ("processes".into(), n as f64),
+        ("race_ms".into(), ms(started)),
+    ])
 }
 
 fn ids_unique(w: &World) -> Res {
@@ -146,6 +150,8 @@ fn ids_unique(w: &World) -> Res {
 fn old_databases(w: &World) -> Res {
     let fixtures =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../klatch/fixtures/store");
+    // the first read of each old file migrates it: that read is the timing
+    let mut migrate_ms = 0.0;
     for (file, expect) in [
         ("prototype-v0.db", "alpha"),
         ("prototype-v2.db", "hello from v2"),
@@ -153,7 +159,9 @@ fn old_databases(w: &World) -> Res {
         let src = fixtures.join(file);
         check(src.exists(), format!("missing fixture {}", src.display()))?;
         std::fs::copy(&src, w.home.join("rooms.db")).map_err(|e| e.to_string())?;
+        let started = Instant::now();
         let out = w.ok("reader", &["read", "core"])?;
+        migrate_ms += ms(started);
         has(
             &out,
             expect,
@@ -165,7 +173,7 @@ fn old_databases(w: &World) -> Res {
             std::fs::remove_file(w.home.join(format!("rooms.db{ext}"))).ok();
         }
     }
-    Ok(vec![])
+    Ok(vec![("migrate_ms".into(), migrate_ms)])
 }
 
 fn killed_poster(w: &World) -> Res {

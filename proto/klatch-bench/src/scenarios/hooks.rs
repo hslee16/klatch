@@ -180,7 +180,9 @@ fn claim_hook(w: &World) -> Res {
         "a",
         &["claim", "r", "/w/src/api.rs", "--reason", "refactor"],
     )?;
+    let started = Instant::now();
     let (code, out, err) = pre_tool_use(w, "b", &tool_call("Edit", "/w/src/api.rs"))?;
+    let claim_block_ms = ms(started);
     check(
         code == Some(2),
         format!("a claimed edit was not blocked: {code:?}"),
@@ -200,7 +202,7 @@ fn claim_hook(w: &World) -> Res {
     let (code, out, _) = pre_tool_use(w, "b", &tool_call("Edit", "/w/src/api.rs"))?;
     check(code == Some(0), "a broken store blocked an edit")?;
     has(&out, "could not check claims", "the failure was silent")?;
-    Ok(vec![])
+    Ok(vec![("claim_block_ms".into(), claim_block_ms)])
 }
 
 fn wake(w: &World) -> Res {
@@ -214,8 +216,10 @@ fn wake(w: &World) -> Res {
         watcher.try_wait().map_err(|e| e.to_string())?.is_none(),
         "the watcher ended with nothing to say",
     )?;
+    let posted = Instant::now();
     w.ok("peer", &["post", "r", "the launch code is hunter2"])?;
     let o = watcher.wait_with_output().map_err(|e| e.to_string())?;
+    let wake_ms = ms(posted);
     check(
         o.status.code() == Some(2),
         format!("did not wake: {:?}", o.status.code()),
@@ -230,7 +234,7 @@ fn wake(w: &World) -> Res {
         "hunter2",
         "the watcher consumed the message",
     )?;
-    Ok(vec![])
+    Ok(vec![("wake_ms".into(), wake_ms)])
 }
 
 /// A `PostToolUse` hook as `who`, with the session id and, for a subagent's tool call, an agent id.
@@ -290,6 +294,7 @@ fn session_start_budget(w: &World) -> Res {
             &["post", "lobby", &format!("{i:02} {}", "z".repeat(250))],
         )?;
     }
+    let started = Instant::now();
     let mut child = w
         .spawn_piped(
             "reader",
@@ -303,6 +308,7 @@ fn session_start_budget(w: &World) -> Res {
         .write_all(br#"{"session_id":"s","hook_event_name":"SessionStart"}"#)
         .map_err(|e| e.to_string())?;
     let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let session_start_hook_ms = ms(started);
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     check(
         out.len() < 9_700,
@@ -314,7 +320,10 @@ fn session_start_budget(w: &World) -> Res {
         "more board lines not shown; run `klatch board lobby`",
         "the cut board lines are not counted",
     )?;
-    Ok(vec![])
+    Ok(vec![(
+        "session_start_hook_ms".into(),
+        session_start_hook_ms,
+    )])
 }
 
 /// Claude Code keeps only a 2 KB preview of hook output near 9.8 KB (measured); a digest must stay well under it.
@@ -328,6 +337,7 @@ fn digest_budget(w: &World) -> Res {
             &["post", "r", &format!("{i:02} {}", "z".repeat(900))],
         )?;
     }
+    let started = Instant::now();
     let mut child = w
         .spawn_piped("reader", &["hook", "--event", "UserPromptSubmit"])
         .map_err(|e| e.to_string())?;
@@ -338,6 +348,7 @@ fn digest_budget(w: &World) -> Res {
         .write_all(br#"{"session_id":"s","hook_event_name":"UserPromptSubmit"}"#)
         .map_err(|e| e.to_string())?;
     let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let digest_hook_ms = ms(started);
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     check(
         out.len() < 9_000,
@@ -353,7 +364,7 @@ fn digest_budget(w: &World) -> Res {
         "klatch read r --peek",
         "the line does not say how to read them",
     )?;
-    Ok(vec![])
+    Ok(vec![("digest_hook_ms".into(), digest_hook_ms)])
 }
 
 /// An owner that keeps working renews its claim forever; at two hours the hook says so, once, and a peer refused
