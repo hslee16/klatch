@@ -55,6 +55,10 @@ fn rooms(t: &dyn Transport, act: RoomAct) -> Result<()> {
             t.admin_plant_canary(&room)?;
             println!("a canary is planted in {room}; a copy of it anywhere else pauses that room");
         }
+        RoomAct::CanaryRetire { room } => {
+            t.admin_retire_canary(&room)?;
+            println!("the canary of {room} is retired");
+        }
     }
     Ok(())
 }

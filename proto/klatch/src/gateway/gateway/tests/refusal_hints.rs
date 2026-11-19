@@ -86,8 +86,7 @@ fn a_canary_refusal_says_to_tell_an_admin_and_names_neither_text_nor_home_room()
     g.admin_set_room_label(&admin(), "vault", "private")
         .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
-    g.admin_plant_canary(&admin(), "vault").unwrap();
-    let body = g.tail(&alice(), "vault", (0, 10)).unwrap()[0].body.clone();
+    let body = g.store.tail("vault", 0, 10).unwrap()[0].body.clone();
     let token = body.rsplit(' ').next().unwrap().to_string();
     let e = g
         .post(&alice(), "town", &format!("fyi {token}"))

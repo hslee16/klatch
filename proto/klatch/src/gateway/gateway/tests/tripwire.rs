@@ -6,8 +6,8 @@ fn planted() -> (Gateway<SpyStore>, String) {
     g.admin_set_room_label(&admin(), "vault", "private")
         .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
-    g.admin_plant_canary(&admin(), "vault").unwrap();
-    let body = g.tail(&alice(), "vault", (0, 10)).unwrap()[0].body.clone();
+    // labelling the room private planted the canary (#347); the views hide it, the raw store has it
+    let body = g.store.tail("vault", 0, 10).unwrap()[0].body.clone();
     let token = body.rsplit(' ').next().unwrap().to_string();
     (g, token)
 }
@@ -15,7 +15,7 @@ fn planted() -> (Gateway<SpyStore>, String) {
 #[test]
 fn a_canary_is_a_message_from_the_canary_member_at_the_rooms_label() {
     let (g, token) = planted();
-    let m = &g.tail(&alice(), "vault", (0, 10)).unwrap()[0];
+    let m = &g.store.tail("vault", 0, 10).unwrap()[0];
     assert_eq!((m.sender.as_str(), m.label.as_str()), ("canary", "private"));
     assert!(token.starts_with("kc-canary-"), "{token}");
 }

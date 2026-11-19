@@ -174,6 +174,9 @@ pub enum AdminCmd {
     /// Plant a canary (a fake credential) in a room; text carrying it into any other room is refused and pauses
     /// that room until `admin reopen`
     Canary { room: String },
+    /// End the canary of a room (planted by `admin label` to private or above, or by `admin canary`); a later
+    /// `admin label` plants a new one
+    CanaryRetire { room: String },
     /// Refuse posts, claim reasons, release notes and statuses that contain a private term, in rooms below the
     /// agent cap; matching ignores case and a refusal never repeats the term
     ScrubAdd { name: String, term: Vec<String> },

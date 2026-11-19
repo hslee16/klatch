@@ -48,6 +48,7 @@ impl<S: Store> Gateway<S> {
         let messages = rows
             .into_iter()
             .filter(|m| m.kind.as_deref() != Some("archived"))
+            .filter(|m| m.kind.as_deref() != Some(super::tripwire::CANARY_KIND))
             .collect();
         Ok(History { messages, more })
     }
