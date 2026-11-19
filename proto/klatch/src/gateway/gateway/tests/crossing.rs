@@ -205,3 +205,66 @@ fn a_crossing_uses_the_messages_own_label_not_the_label_its_room_has_now() {
     assert!(is_invalid(g.request_crossing(&alice(), "vault", 2, "open")));
     assert_eq!(g.store.pending_reviews(10).unwrap().len(), 1);
 }
+
+// the sender is told what became of a crossing (#516): a state and a fixed-form reason, never the text, the
+// reviewer's reason or the name of a private term
+
+#[test]
+fn a_sender_sees_a_waiting_crossing() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let list = g.my_crossings(&alice(), 10).unwrap();
+    assert_eq!((list[0].id, list[0].state.as_str()), (id, "waiting"));
+    assert_eq!(
+        (list[0].room.as_str(), list[0].to_room.as_str()),
+        ("vault", "open")
+    );
+}
+
+#[test]
+fn a_denied_crossing_says_it_was_denied_and_never_the_reviewers_reason() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.review_verdict(
+        &rev(),
+        id,
+        &Verdict::Deny("the plan is blue and leaks".into()),
+    )
+    .unwrap();
+    let list = g.my_crossings(&alice(), 10).unwrap();
+    assert_eq!(list[0].state, "denied");
+    assert!(list[0].why.contains("reviewer"), "{}", list[0].why);
+    assert!(!format!("{list:?}").contains("blue"), "{list:?}");
+}
+
+#[test]
+fn a_blocked_crossing_names_the_category_and_never_the_rule_name_or_term() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.admin_add_scrub_term(&admin(), "codename-zed", "blue")
+        .unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
+    let list = g.my_crossings(&alice(), 10).unwrap();
+    assert_eq!(list[0].state, "blocked");
+    assert!(list[0].why.contains("private-term"), "{}", list[0].why);
+    let all = format!("{list:?}");
+    assert!(
+        !all.contains("codename-zed") && !all.contains("blue"),
+        "{all}"
+    );
+}
+
+#[test]
+fn a_released_crossing_says_released() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
+    assert_eq!(g.my_crossings(&alice(), 10).unwrap()[0].state, "released");
+}
+
+#[test]
+fn a_member_sees_only_their_own_crossings() {
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    assert!(g.my_crossings(&bob(), 10).unwrap().is_empty());
+}

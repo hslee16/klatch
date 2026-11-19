@@ -118,6 +118,8 @@ pub trait Transport {
     fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
     /// The caller's own latest refusals, newest first (#678); never another member's.
     fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
+    /// The caller's own crossings with their state and a fixed reason (#516); never text or a reviewer's reason.
+    fn my_crossings(&self, limit: usize) -> Result<Vec<crate::domain::CrossingStatus>>;
     /// The reviewer's two calls (#509): the oldest waiting item it may read, and a verdict on a waiting item.
     fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>>;
     fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()>;
@@ -405,6 +407,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
         self.gateway.my_refusals(&self.principal, limit)
+    }
+    fn my_crossings(&self, limit: usize) -> Result<Vec<crate::domain::CrossingStatus>> {
+        self.gateway.my_crossings(&self.principal, limit)
     }
     fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>> {
         self.gateway.review_next(&self.principal)

@@ -142,6 +142,23 @@ fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             let id = t.request_crossing(&room, seq, &to)?;
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
         }
+        Cmd::Crossings { limit } => {
+            let list = t.my_crossings(limit)?;
+            if list.is_empty() {
+                println!("no crossings asked for by {}", ctx.me);
+            }
+            for c in list {
+                println!(
+                    "{}\t{}#{} to {}\t{}\t{}",
+                    c.id,
+                    flat(&c.room),
+                    c.seq,
+                    flat(&c.to_room),
+                    c.state,
+                    c.why
+                );
+            }
+        }
         Cmd::Board { room } => for_rooms(t, room, |room| {
             print!("{}", render_board(&t.board(room)?, ctx.now));
             Ok(())
