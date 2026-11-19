@@ -472,3 +472,9 @@ fn credentials_revoking_works_once_and_marks_the_record_without_deleting_it() {
 fn credentials_the_list_has_every_credential_by_member() {
     c::credentials::the_list_has_every_credential_by_member(store);
 }
+
+#[test]
+fn sqlite_declares_every_feature_and_keeps_each_one() {
+    assert!(store().features().missing().is_empty());
+    c::features::every_declared_feature_works(store);
+}

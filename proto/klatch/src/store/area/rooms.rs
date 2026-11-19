@@ -25,4 +25,8 @@ pub trait RoomStore {
     /// The label keys this principal holds (DESIGN section 32 item 8). Required, with no default (#485): a store that
     /// ignored them would keep sealed text in the clear.
     fn set_label_keys(&self, keys: crate::keys::LabelKeys);
+
+    /// The optional features this store keeps (#485). Required, with no default: a store must say what it keeps, the
+    /// gateway refuses one that does not declare them all, and the conformance suite checks each declaration.
+    fn features(&self) -> crate::store::Features;
 }

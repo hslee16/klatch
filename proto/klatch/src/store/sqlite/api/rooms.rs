@@ -14,6 +14,10 @@ impl RoomStore for SqliteStore {
         self.do_delete_rooms_with_prefix(prefix, _now)
     }
 
+    fn features(&self) -> crate::store::Features {
+        crate::store::Features::all()
+    }
+
     fn set_label_keys(&self, keys: crate::keys::LabelKeys) {
         *self.labels.borrow_mut() = keys;
     }

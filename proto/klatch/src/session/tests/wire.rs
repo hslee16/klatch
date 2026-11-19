@@ -470,6 +470,10 @@ impl PolicyStore for DownStore {
     }
 }
 impl RoomStore for DownStore {
+    // a double that fails or answers empty on purpose: it declares everything so the gateway accepts it
+    fn features(&self) -> crate::store::Features {
+        crate::store::Features::all()
+    }
     fn room_state(&self, _: &str) -> Result<Option<String>> {
         Ok(None)
     }
