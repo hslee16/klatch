@@ -131,6 +131,7 @@ impl MemberStore for MemoryStore {
             r.members
                 .iter()
                 .map(|(n, (seen, _))| MemberInfo {
+                    status_ts: 0,
                     name: n.clone(),
                     joined: 0,
                     last_seen: *seen,

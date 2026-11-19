@@ -145,6 +145,11 @@ impl MemberStore for SpyStore {
         self.inner.set_status(at, status, now)
     }
 
+    fn clear_done(&self, at: Seat, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.clear_done(at, now)
+    }
+
     fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.record_hook_run(run, now)

@@ -5,6 +5,7 @@ const NOW: i64 = 1_000;
 
 fn member(name: &str, last_seen: i64, status: Option<&str>) -> BoardMember {
     BoardMember {
+        status_ts: 0,
         name: name.into(),
         last_seen,
         status: status.map(Into::into),

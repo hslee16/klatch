@@ -97,6 +97,7 @@ mod tests {
 
     fn member(name: &str, joined: i64, last_seen: i64) -> MemberInfo {
         MemberInfo {
+            status_ts: 0,
             name: name.into(),
             joined,
             last_seen,

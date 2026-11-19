@@ -48,6 +48,12 @@ pub trait MemberStore {
         Ok(())
     }
 
+    /// A member that is back (it posted or claimed) is no longer `done` (#260): clears a status that starts with
+    /// `done`, leaving any other status alone. The default does nothing.
+    fn clear_done(&self, _at: Seat, _now: i64) -> Result<()> {
+        Ok(())
+    }
+
     /// The scope a member declared or was given, if any. The default knows none.
     fn member_scope(&self, _member: &str) -> Result<Option<String>> {
         Ok(None)

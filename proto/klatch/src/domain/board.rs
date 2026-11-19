@@ -57,6 +57,8 @@ pub struct BoardMember {
     pub last_seen: i64,
     /// The member's latest announced status text, if it ever announced one.
     pub status: Option<String>,
+    /// When the status was set; 0 when unknown (#260).
+    pub status_ts: i64,
     /// The member whose session started this one, if known.
     pub parent: Option<String>,
     /// A declared long wait that still holds.
@@ -148,12 +150,35 @@ fn who_line(m: &MemberInfo, now: Now) -> String {
         out.push_str(&format!("\t{part}"));
     }
     if let Some(status) = &m.status {
-        out.push_str(&format!("\tstatus: {}", flat(status)));
+        out.push_str(&format!(
+            "\tstatus: {}",
+            status_with_age(&flat(status), m.status_ts, now.0)
+        ));
     }
     if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now.0)) {
         out.push_str(&format!("\t{}", flat(&p.phrase(now.0))));
     }
     out
+}
+
+/// How long ago, in the largest whole unit: `59s`, `12m`, `3h`, `2d`.
+pub fn age_phrase(secs: i64) -> String {
+    let secs = secs.max(0);
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..86_400 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
+    }
+}
+
+/// A status with the time since it was set, `done (12m ago)`; the text alone when the time is unknown (0).
+pub fn status_with_age(status: &str, set_at: i64, now: i64) -> String {
+    if set_at > 0 {
+        format!("{status} ({} ago)", age_phrase(now - set_at))
+    } else {
+        status.to_string()
+    }
 }
 
 /// A parked member whose return time has not come stays listed however long since it was seen.
@@ -220,7 +245,12 @@ fn render_members(board: &Board, now: Now, out: &mut String) {
         let status = m
             .status
             .as_deref()
-            .map(|s| format!(", status: {}", clip(s)))
+            .map(|s| {
+                format!(
+                    ", status: {}",
+                    clip(&status_with_age(s, m.status_ts, now.0))
+                )
+            })
             .unwrap_or_default();
         let parked = m
             .parked

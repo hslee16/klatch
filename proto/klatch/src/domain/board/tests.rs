@@ -19,6 +19,7 @@ fn msg(seq: i64, said: (&str, &str), ts: i64) -> Message {
 
 fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
     MemberInfo {
+        status_ts: 0,
         name: name.into(),
         joined: 0,
         last_seen,
@@ -204,6 +205,7 @@ fn sample() -> Board {
         }],
         members: vec![
             BoardMember {
+                status_ts: 0,
                 name: "lib-1".into(),
                 last_seen: 98,
                 status: None,
@@ -213,6 +215,7 @@ fn sample() -> Board {
                 place: None,
             },
             BoardMember {
+                status_ts: 0,
                 name: "api-1".into(),
                 last_seen: 40,
                 status: Some("done leaving".into()),
@@ -377,6 +380,7 @@ fn no_age_is_printed_negative_when_the_reader_clock_is_behind() {
             ts: 1400,
         }],
         members: vec![BoardMember {
+            status_ts: 0,
             name: "alice".into(),
             last_seen: 1500,
             status: Some("busy".into()),
@@ -409,6 +413,7 @@ fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
     let board = Board {
         room: "lobby".into(),
         members: vec![BoardMember {
+            status_ts: 0,
             name: "worker".into(),
             last_seen: 990,
             status: None,
@@ -438,6 +443,7 @@ fn a_members_kind_is_shown_in_who_and_on_the_board_and_a_member_without_one_show
     let board = Board {
         room: "lobby".into(),
         members: vec![BoardMember {
+            status_ts: 0,
             name: "grok".into(),
             last_seen: 990,
             status: Some("busy".into()),
@@ -567,4 +573,50 @@ fn the_short_directory_name_is_the_last_component_and_nothing_more() {
             .len(),
         40
     );
+}
+
+fn aged(name: &str, status: &str, set_at: i64) -> MemberInfo {
+    MemberInfo {
+        status_ts: set_at,
+        ..peer(name, 990, Some(status))
+    }
+}
+
+#[test]
+fn a_status_shows_how_long_ago_it_was_set_on_who_and_the_board() {
+    let who = render_who(&[aged("a", "done", 1000 - 720)], 1000, false);
+    assert!(who.contains("status: done (12m ago)"), "{who}");
+    let mut b = sample();
+    b.members[1].status_ts = 100 - 45;
+    assert!(
+        render_board(&b, 100).contains("api-1 last seen 60s ago, status: done leaving (45s ago)")
+    );
+}
+
+#[test]
+fn a_status_of_unknown_age_shows_no_age() {
+    let who = render_who(&[aged("a", "done", 0)], 1000, false);
+    assert!(who.contains("status: done"), "{who}");
+    assert!(!who.contains("ago)"), "{who}");
+}
+
+#[test]
+fn the_age_is_in_the_largest_whole_unit() {
+    assert_eq!(age_phrase(59), "59s");
+    assert_eq!(age_phrase(60), "1m");
+    assert_eq!(age_phrase(3 * 3600 + 59), "3h");
+    assert_eq!(age_phrase(2 * 86_400 + 5), "2d");
+    assert_eq!(age_phrase(-5), "0s");
+}
+
+#[test]
+fn available_is_not_done_so_it_keeps_the_offer_and_the_reach() {
+    let offers = [
+        msg(1, ("a", "offering: help"), 1),
+        msg(2, ("a", "status: available"), 2),
+    ];
+    assert_eq!(current_offers(&offers, 10, 3600).len(), 1);
+    assert_eq!(statuses(&offers)[0].status, "available");
+    let m = [peer("helper", 4999, Some("available"))];
+    assert!(ask_reach_note(&m, "asker", 5000).is_none());
 }

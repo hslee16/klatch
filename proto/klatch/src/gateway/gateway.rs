@@ -218,6 +218,8 @@ impl<S: Store> Gateway<S> {
         self.note_creation(who, room, created)?;
         self.notifier.posted(room, posted.seq, &who.member);
         self.park_by_post(who, body);
+        self.store
+            .clear_done(Seat::new(room, &who.member), self.now())?;
         Ok(posted)
     }
 

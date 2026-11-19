@@ -49,7 +49,10 @@ impl<S: Store> Gateway<S> {
                 .scoped(&scope)
                 .anchored(&anchor),
             self.now(),
-        )
+        )?;
+        // a member that claims is back at work: a `done` it set earlier no longer holds (#260)
+        self.store
+            .clear_done(Seat::new(room, &who.member), self.now())
     }
 
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {

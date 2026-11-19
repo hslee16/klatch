@@ -173,3 +173,63 @@ fn an_open_pr_deep_in_a_busy_room_stays_on_the_board_and_in_the_digest_backlog()
     let owed: Vec<_> = d.rooms[0].unowned_prs.iter().map(|p| p.number).collect();
     assert_eq!(owed, [7, 9]);
 }
+
+fn offer_of(b: &crate::domain::Board, who: &str) -> bool {
+    b.offers.iter().any(|o| o.sender == who)
+}
+
+#[test]
+fn a_member_that_posts_again_after_done_is_back_on_the_board_with_its_offers() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    g.set_status(&bob(), "r", "done").unwrap();
+    g.post(&bob(), "r", "offering: helpers").unwrap();
+    let b = g.board(&alice(), "r").unwrap();
+    let bob_row = b.members.iter().find(|m| m.name == "bob").unwrap();
+    assert_eq!(bob_row.status, None, "done stayed after the member posted");
+    assert!(offer_of(&b, "bob"), "the returned member's offer is hidden");
+}
+
+#[test]
+fn a_member_that_claims_again_after_done_is_no_longer_done() {
+    let g = open();
+    g.join(&bob(), "r").unwrap();
+    g.set_status(&bob(), "r", "done leaving").unwrap();
+    g.claim(&bob(), "r", &ClaimSpec::new("src/a.rs", 100, ""))
+        .unwrap();
+    assert_eq!(g.who(&bob(), "r").unwrap()[0].status, None);
+}
+
+#[test]
+fn a_post_keeps_a_status_that_is_not_done_and_a_refused_post_keeps_done() {
+    let g = open();
+    g.join(&bob(), "r").unwrap();
+    g.set_status(&bob(), "r", "busy").unwrap();
+    g.post(&bob(), "r", "hello").unwrap();
+    assert_eq!(
+        g.who(&bob(), "r").unwrap()[0].status.as_deref(),
+        Some("busy")
+    );
+    g.set_status(&bob(), "r", "done").unwrap();
+    assert!(g.post(&bob(), "r", "   ").is_err());
+    assert_eq!(
+        g.who(&bob(), "r").unwrap()[0].status.as_deref(),
+        Some("done")
+    );
+}
+
+#[test]
+fn available_keeps_the_offers_on_the_board_and_a_set_status_carries_its_time() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.post(&bob(), "r", "offering: helpers").unwrap();
+    g.set_status(&bob(), "r", "available").unwrap();
+    let b = g.board(&alice(), "r").unwrap();
+    assert!(offer_of(&b, "bob"));
+    let bob_row = b.members.iter().find(|m| m.name == "bob").unwrap();
+    assert_eq!(
+        (bob_row.status.as_deref(), bob_row.status_ts),
+        (Some("available"), 100)
+    );
+}

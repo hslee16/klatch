@@ -139,6 +139,7 @@ mod tests {
 
     fn member(name: &str) -> MemberInfo {
         MemberInfo {
+            status_ts: 0,
             name: name.into(),
             joined: 0,
             last_seen: NOW - 10,
