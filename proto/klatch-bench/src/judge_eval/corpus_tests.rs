@@ -78,6 +78,140 @@ fn every_field_but_spans_is_required_and_unknown_fields_are_refused() {
 }
 
 #[test]
+fn contested_and_name_spans_are_optional_and_default_to_off() {
+    let item = parse_line(&line(&good())).unwrap();
+    assert!(!item.contested);
+    assert!(item.name_spans.is_empty());
+}
+
+#[test]
+fn contested_is_a_boolean() {
+    use serde_json::json;
+    let mut f = good();
+    f.push(("contested", json!(true)));
+    assert!(parse_line(&line(&f)).unwrap().contested);
+    let mut f = good();
+    f.push(("contested", json!(false)));
+    assert!(!parse_line(&line(&f)).unwrap().contested);
+    let mut f = good();
+    f.push(("contested", json!("yes")));
+    assert!(parse_line(&line(&f)).unwrap_err().contains("contested"));
+}
+
+fn redact_with_names(spans: serde_json::Value, names: serde_json::Value) -> String {
+    use serde_json::json;
+    line(&[
+        ("id", json!("t9")),
+        ("split", json!("dev")),
+        ("category", json!("personal-data")),
+        ("label", json!("private")),
+        ("to", json!("public")),
+        ("verdict", json!("redact")),
+        ("text", json!("ask Ana Kell, ana@example.com, about it")),
+        ("rationale", json!("a customer and her email")),
+        ("spans", spans),
+        ("name_spans", names),
+    ])
+}
+
+#[test]
+fn name_spans_are_a_subset_of_spans_and_leave_at_least_one_data_span() {
+    use serde_json::json;
+    let ok = parse_line(&redact_with_names(
+        json!(["ana@example.com", "Ana Kell"]),
+        json!(["Ana Kell"]),
+    ))
+    .unwrap();
+    assert_eq!(ok.name_spans, ["Ana Kell"]);
+    assert_eq!(ok.spans.len(), 2);
+    // a name span that is not one of the spans
+    let e = parse_line(&redact_with_names(
+        json!(["ana@example.com", "Ana Kell"]),
+        json!(["Ana"]),
+    ))
+    .unwrap_err();
+    assert!(e.contains("name_spans"), "{e}");
+    // every span a name: nothing but a name would be left to leak as data
+    let e = parse_line(&redact_with_names(json!(["Ana Kell"]), json!(["Ana Kell"]))).unwrap_err();
+    assert!(e.contains("name_spans"), "{e}");
+    // not an array of strings
+    assert!(parse_line(&redact_with_names(json!(["Ana Kell"]), json!("Ana Kell"))).is_err());
+    // only a redact item carries name spans
+    let mut f = good();
+    f.push(("name_spans", json!(["{{fake:github}}"])));
+    assert!(parse_line(&line(&f)).unwrap_err().contains("name_spans"));
+}
+
+/// Standard base64 decode, enough to check the PNG fixture without a dependency.
+fn b64_decode(s: &str) -> Vec<u8> {
+    let table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = vec![];
+    let mut acc = 0u32;
+    let mut bits = 0;
+    for c in s.trim_end_matches('=').chars() {
+        acc = (acc << 6) | table.find(c).unwrap() as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
+}
+
+#[test]
+fn the_committed_contested_and_name_labels_are_as_documented() {
+    let items = parse_corpus(&std::fs::read_to_string(default_path()).unwrap()).unwrap();
+    let by = |id: &str| items.iter().find(|i| i.id == id).unwrap();
+    let contested: Vec<&str> = items
+        .iter()
+        .filter(|i| i.contested)
+        .map(|i| i.id.as_str())
+        .collect();
+    assert_eq!(contested, ["short-007", "short-008"]);
+    for id in contested {
+        assert!(by(id).rationale.contains("contested"), "{id}");
+    }
+    // every name span is the name of a redact item that also has data to remove
+    let named: Vec<&str> = items
+        .iter()
+        .filter(|i| !i.name_spans.is_empty())
+        .map(|i| i.id.as_str())
+        .collect();
+    for id in [
+        "pii-001", "pii-004", "pii-008", "pii-011", "pii-016", "pii-018", "pii-019", "pii-020",
+        "pii-022", "pii-023", "ml-017",
+    ] {
+        assert!(named.contains(&id), "{id} has no name span");
+    }
+    assert_eq!(by("pii-016").name_spans, ["Wen Zhao"]);
+    assert!(by("pii-002").name_spans.is_empty());
+}
+
+#[test]
+fn look_014_carries_the_literal_base64_of_a_valid_one_pixel_png() {
+    let items = parse_corpus(&std::fs::read_to_string(default_path()).unwrap()).unwrap();
+    let i = items.iter().find(|i| i.id == "look-014").unwrap();
+    assert_eq!(i.verdict, Truth::Allow);
+    assert!(!i.raw_text.contains("{{"), "no random placeholder");
+    let blob = i
+        .text
+        .split_whitespace()
+        .find(|w| w.starts_with("iVBOR"))
+        .expect("the PNG base64")
+        .trim_end_matches(';');
+    let bytes = b64_decode(blob);
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&bytes[12..16], b"IHDR");
+    assert_eq!(&bytes[16..24], [0, 0, 0, 1, 0, 0, 0, 1], "1x1 pixels");
+    assert_eq!(&bytes[bytes.len() - 8..bytes.len() - 4], b"IEND");
+    // the literal is exempt from the credential scan only because it is exactly this public fixture
+    assert_eq!(looks_like_real_credential(&i.raw_text), None);
+    assert!(looks_like_real_credential("aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fG3hJ5kL7n").is_some());
+}
+
+#[test]
 fn the_vocabularies_are_closed() {
     use serde_json::json;
     assert!(parse_line(&with("verdict", json!("block"))).is_err());

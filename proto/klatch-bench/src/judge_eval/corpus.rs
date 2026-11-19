@@ -38,13 +38,18 @@ pub const LABELS: [&str; 3] = ["public", "internal", "private"];
 
 /// The digest of the frozen test split (see [`test_digest`]). Changing a test item changes it; that is a deliberate
 /// act recorded in the README, never a side effect of tuning.
-pub const FROZEN_TEST_DIGEST: &str = "d39c6089d6050a63";
+pub const FROZEN_TEST_DIGEST: &str = "bf780a16c19969cc";
 
 /// The documented example credentials that may appear literally (AWS's own documentation keys).
-const DOCUMENTED_EXAMPLES: [&str; 2] = [
+const DOCUMENTED_EXAMPLES: [&str; 3] = [
     "AKIAIOSFODNN7EXAMPLE",
     "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    // the base64 of a minimal valid 1x1 PNG (look-014): public, harmless, decodes to a PNG signature
+    PNG_1X1_B64,
 ];
+
+/// The base64 of a minimal 1x1 PNG, written literally in look-014 (a test decodes it).
+pub const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 /// The right verdict for an item. A judge may also defer, which is never a ground truth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,15 +127,25 @@ pub struct Item {
     /// The parts that must not cross (expanded). Empty exactly when the verdict is allow. A redaction that still
     /// contains one of these is a leak.
     pub spans: Vec<String>,
+    /// The spans (a subset of `spans`) that are a person's name tied to the data. A redaction that keeps only these
+    /// is a strict leak but not a data leak. Empty unless the item says so.
+    pub name_spans: Vec<String>,
+    /// The label is open to dispute: the item is scored and shown, but left out of every headline figure.
+    pub contested: bool,
 }
 
 impl Item {
+    /// The spans that are data (everything but the name spans).
+    pub fn data_spans(&self) -> impl Iterator<Item = &String> {
+        self.spans.iter().filter(|s| !self.name_spans.contains(s))
+    }
+
     pub fn is_injection(&self) -> bool {
         self.category.starts_with("injection")
     }
 }
 
-const FIELDS: [&str; 9] = [
+const FIELDS: [&str; 11] = [
     "id",
     "split",
     "category",
@@ -140,6 +155,8 @@ const FIELDS: [&str; 9] = [
     "text",
     "rationale",
     "spans",
+    "name_spans",
+    "contested",
 ];
 
 fn field<'a>(o: &'a serde_json::Map<String, Value>, name: &str) -> Result<&'a str, String> {
@@ -180,19 +197,47 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
         Truth::parse(field(o, "verdict")?).ok_or("verdict must be allow, redact or deny")?;
     let raw_text = field(o, "text")?.to_string();
     let rationale = field(o, "rationale")?.to_string();
-    let raw_spans: Vec<String> = match o.get("spans") {
-        None => vec![],
-        Some(Value::Array(a)) => a
-            .iter()
-            .map(|s| s.as_str().map(String::from).ok_or("spans must be strings"))
-            .collect::<Result<_, _>>()?,
-        Some(_) => return Err("spans must be an array of strings".into()),
+    let strings = |name: &str| -> Result<Vec<String>, String> {
+        match o.get(name) {
+            None => Ok(vec![]),
+            Some(Value::Array(a)) => a
+                .iter()
+                .map(|s| {
+                    s.as_str()
+                        .map(String::from)
+                        .ok_or_else(|| format!("{name} must be strings"))
+                })
+                .collect(),
+            Some(_) => Err(format!("{name} must be an array of strings")),
+        }
+    };
+    let raw_spans = strings("spans")?;
+    let raw_names = strings("name_spans")?;
+    let contested = match o.get("contested") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("contested must be true or false".into()),
     };
     let text = expand(&id, &raw_text)?;
     let spans = raw_spans
         .iter()
         .map(|s| expand(&id, s))
         .collect::<Result<Vec<_>, _>>()?;
+    let name_spans = raw_names
+        .iter()
+        .map(|s| expand(&id, s))
+        .collect::<Result<Vec<_>, _>>()?;
+    if !name_spans.is_empty() {
+        if verdict != Truth::Redact {
+            return Err("name_spans belong to a redact item only".into());
+        }
+        if let Some(n) = name_spans.iter().find(|n| !spans.contains(n)) {
+            return Err(format!("name_spans entry {n:?} is not one of the spans"));
+        }
+        if spans.iter().all(|s| name_spans.contains(s)) {
+            return Err("name_spans leaves no data span: a name alone is not tied to data".into());
+        }
+    }
     match (verdict, spans.is_empty()) {
         (Truth::Allow, false) => return Err("an allow item carries no spans".into()),
         (Truth::Redact | Truth::Deny, true) => {
@@ -217,6 +262,8 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
         text,
         rationale,
         spans,
+        name_spans,
+        contested,
     })
 }
 
@@ -295,6 +342,9 @@ pub fn test_digest(items: &[Item]) -> u64 {
             buf.push('\u{1f}');
         }
         buf.push_str(&i.spans.join("\u{1f}"));
+        buf.push('\u{1d}');
+        buf.push_str(&i.name_spans.join("\u{1f}"));
+        buf.push(if i.contested { 'c' } else { '-' });
         buf.push('\u{1e}');
     }
     fnv(buf.as_bytes())
