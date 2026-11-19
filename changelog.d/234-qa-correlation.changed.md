@@ -1,0 +1,1 @@
+- Question and answer correlation is decided: it stays by text (`answer to #N:`), a direct question is a `dm` starting `seeking:`, and several answers are all delivered with the first ending the ask; no `in_reply_to` field is added, and tests fix this (#234, #944).
