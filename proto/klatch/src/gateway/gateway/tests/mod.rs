@@ -16,6 +16,7 @@ mod budget;
 mod claim_age;
 mod claim_edges;
 mod claims;
+mod credential_renewal;
 mod credentials;
 mod crossing;
 mod delivery_view;

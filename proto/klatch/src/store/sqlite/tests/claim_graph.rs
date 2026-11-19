@@ -215,6 +215,7 @@ fn issue(s: &SqliteStore, member: &str, now: i64, ttl: i64) -> crate::domain::Re
             clearance: "private",
             parent: "lead",
             ttl,
+            max_life: 0,
         },
         now,
     )

@@ -134,6 +134,31 @@ fn a_credential_expires_on_its_own() {
 }
 
 #[test]
+fn a_credential_that_is_used_outlives_its_idle_timeout_up_to_its_cap() {
+    let h = Home::new();
+    // Idle timeout 3 s, cap 8 s: two posts 2 s apart keep it alive past the first 3 s, and it stops at the cap
+    // whatever is done. Margins are wide because a loaded runner is slow.
+    let b = issue(&h, "w-1", "internal", &["--ttl", "3", "--max-life", "8"]);
+    let mut worked = 0;
+    for i in 0..3 {
+        let o = h.worker(&b, &["post", "r", &format!("alive number {i}")]);
+        if o.status.success() {
+            worked += 1;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+    // 4.5 s have passed, beyond the 3 s idle timeout, so use renewed it (only a timeout of 3 s would have lapsed)
+    assert_eq!(worked, 3, "only {worked} posts worked");
+    std::thread::sleep(std::time::Duration::from_millis(4500));
+    let o = h.worker(&b, &["post", "r", "past the cap"]);
+    assert!(
+        !o.status.success() && text(&o).contains("expired"),
+        "{}",
+        text(&o)
+    );
+}
+
+#[test]
 fn a_bundle_other_users_can_read_is_refused() {
     let h = Home::new();
     let b = issue(&h, "w-1", "internal", &[]);
@@ -196,7 +221,12 @@ fn a_worker_at_the_lowest_clearance_works_and_a_hook_with_a_bad_bundle_says_so()
 fn the_lifetime_and_the_clearance_have_limits() {
     let h = Home::new();
     let out = h.0.join("x.bundle");
-    for extra in [["--ttl", "0"], ["--ttl", "99999999"]] {
+    for extra in [
+        ["--ttl", "0"],
+        ["--ttl", "99999999"],
+        ["--max-life", "0"],
+        ["--max-life", "99999999"],
+    ] {
         let mut args = vec![
             "worker",
             "issue",

@@ -9,6 +9,7 @@ fn spec(member: &str) -> CredentialSpec<'_> {
         member,
         clearance: "internal",
         ttl: 600,
+        max_life: None,
         parent: Some("lead"),
     }
 }
@@ -233,7 +234,12 @@ fn a_member_with_no_credential_ends_nothing_and_a_typed_name_cannot_end_a_worker
 #[test]
 fn a_verified_principal_is_refused_on_the_next_request_once_its_credential_expires() {
     let (g, t) = timed();
-    let token = g.admin_issue_credential(&admin(), &spec("w-1")).unwrap();
+    // capped at its idle timeout so the use below cannot renew it past the lifetime under test
+    let capped = CredentialSpec {
+        max_life: Some(600),
+        ..spec("w-1")
+    };
+    let token = g.admin_issue_credential(&admin(), &capped).unwrap();
     let who = g.verify_credential("w-1", &token).unwrap();
     g.join(&who, "r").unwrap();
     g.post(&who, "r", "while live").unwrap();

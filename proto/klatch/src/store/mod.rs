@@ -154,7 +154,10 @@ pub struct NewCredential<'a> {
     pub token_hash: &'a [u8],
     pub clearance: &'a str,
     pub parent: &'a str,
+    /// The idle timeout: the credential lives this long from issue and, while it is used, from each use.
     pub ttl: i64,
+    /// The hard cap in seconds from issue that renewal never passes; 0 means the credential is never renewed.
+    pub max_life: i64,
 }
 
 /// A registered credential.
@@ -167,6 +170,10 @@ pub struct CredentialRecord {
     pub issued: i64,
     pub expires: i64,
     pub revoked: bool,
+    /// The idle timeout renewal pushes the expiry out by (0 for a credential from before renewal existed).
+    pub idle: i64,
+    /// The moment renewal never passes (0: never renewed).
+    pub cap: i64,
 }
 
 /// A claim being released, with a note on what the holder changed (empty for none).

@@ -20,7 +20,9 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
    first in `check_guard`: a `Verified` principal whose member holds an issued credential is refused (rule
    `credential`) once the credential is expired or revoked, with the clock read at each request. Proof:
    `worker_credentials.rs` (expiry boundary at the last second and the first second after it, revocation, other
-   principals untouched, the breaker not counting it) and the wire test in `session/tests/wire.rs`. Gap: the
+   principals untouched, the breaker not counting it) and the wire test in `session/tests/wire.rs`. The same
+   step renews the credential on use (#161): the expiry moves to now plus the idle timeout, never past the hard cap
+   from issue, and each renewal is audited as `renew-credential`; proof in `credential_renewal.rs`. Gap: the
    own-record methods (#835).
 3. **Roles.** `check_role` in the same function: librarian may only look (`read-only`), reviewer may only review
    (`reviewer`), the facilitator (#190) may only look, create a room, invite, post the invite pointer and send one fixed-form need-info DM to the asker of an open ask (#902; `facilitator`,
@@ -177,7 +179,8 @@ directly and meets only the terminal heuristic.
 | `grant_room_clearance` reads the grantor, cap and labels and then writes, not in one transaction | #897 |
 | The member attributes (stable id, repository, directory; #181) add no wire method and no command: the host records them for a member that is already acting, and no check reads them. The repository value is an observation (a directory can name another repository's git directory), so it grants no clearance, room or access; the lowest clearance for a first-seen repository is pinned by `a_first_seen_repository_session_holds_the_lowest_clearance_and_cannot_read_above_it` (#191). `who`, the board and the router now show or read them: see the `who` row (guarded by the existing `Who` and board `Read` admit, repository id and short directory name only) and the `router` row (the repository only orders members that claims and rules already chose) | #181 |
 
-Short-lived credentials exist already: a lifetime of 1 second to 30 days (`MAX_CREDENTIAL_TTL_SECS`), 3600 seconds by
-default in `klatch worker issue`, issued only by the human at a launcher, revoked at once by `klatch worker revoke` or
-by the worker ending its own session, and reissued after a revoke (`worker_credentials.rs`). What the lifetime default
-should be, and whether a credential is renewed in place or reissued, is the human's decision.
+Short-lived credentials (#161): an issued credential lives for an idle timeout (`--ttl`, 3600 seconds by default) that
+each successful request pushes out again, up to a hard cap from issue (`--max-life`, 24 hours by default, at most 30
+days, `MAX_CREDENTIAL_TTL_SECS`) that renewal never passes. They are issued only by the human at a launcher, revoked at
+once by `klatch worker revoke` or by the worker ending its own session, and rotated by revoke and reissue
+(`worker_credentials.rs`, `credential_renewal.rs`). A credential issued before schema 31 is never renewed.
