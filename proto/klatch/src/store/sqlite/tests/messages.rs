@@ -1,5 +1,39 @@
 use super::*;
 
+/// The plan SQLite chooses for `sql`, as one string (the `detail` column of each row).
+fn plan_of(s: &SqliteStore, sql: &str) -> String {
+    let mut stmt = s
+        .conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .unwrap();
+    stmt.query_map(rusqlite::params!["bob", 0], |r| r.get::<_, String>(3))
+        .unwrap()
+        .map(|d| d.unwrap())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[test]
+fn the_per_member_post_count_is_an_index_search_not_a_table_scan() {
+    let s = store();
+    let plan = plan_of(&s, super::super::schema::POSTS_SINCE_SQL);
+    assert!(
+        plan.contains("USING COVERING INDEX messages_sender_ts"),
+        "the rate limit query must search messages_sender_ts, got: {plan}"
+    );
+    assert!(!plan.contains("SCAN"), "the rate limit query scans: {plan}");
+}
+
+#[test]
+fn the_per_member_post_count_returns_the_members_recent_posts_in_order() {
+    let s = store();
+    s.post(Seat::new("r", "bob"), "a", 10).unwrap();
+    s.post(Seat::new("r2", "bob"), "b", 30).unwrap();
+    s.post(Seat::new("r", "alice"), "c", 20).unwrap();
+    s.post(Seat::new("r", "bob"), "d", 5).unwrap();
+    assert_eq!(s.posts_since("bob", 6).unwrap(), vec![10, 30]);
+}
+
 #[test]
 fn data_persists_across_connections_on_disk() {
     let path = temp_db("persist");

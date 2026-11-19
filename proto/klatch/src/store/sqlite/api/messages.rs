@@ -1,5 +1,6 @@
 //! The SQLite side of the `MessageStore` area.
 
+use super::super::schema::POSTS_SINCE_SQL;
 use super::super::{MESSAGE_COLUMNS, SqliteStore, be};
 use crate::domain::{Message, Posted, Result};
 use crate::store::MessageStore;
@@ -61,11 +62,7 @@ impl MessageStore for SqliteStore {
     }
 
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
-        self.rows(
-            "SELECT ts FROM messages WHERE sender=?1 AND ts>=?2 ORDER BY ts",
-            params![member, since],
-            |r| r.get(0),
-        )
+        self.rows(POSTS_SINCE_SQL, params![member, since], |r| r.get(0))
     }
 
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
