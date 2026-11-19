@@ -18,6 +18,9 @@ The schema is the first corpus's (README.md, "An item") plus one field:
 |---|---|
 | `origin` | `design`: written to be hard by construction; `search`: kept because claude:sonnet got it wrong (below) |
 
+`name_spans` (README.md) tags the outside person's name in every redact item that has one (43 items), so the
+report's data-leak figure (a redaction that kept the data, not only the name) is available; no item is `contested`.
+
 Ids are `h<prefix>-<nnn>` for design items and `x<prefix>-<nnn>` for search items, with the first corpus's category
 prefixes; no id is shared with the first corpus. Search items keep the id they had in the candidate file, so the
 numbering has gaps and each item expands to exactly the text the judge saw during the search.
@@ -168,7 +171,7 @@ hshort-004, hlong-002, hlong-007). The category is the item's main topic; person
 
 Within each origin and category, positions 1 and 3 of every five (counting from 0, in file order) are `test`, the rest
 `dev`: 161 dev and 110 test (design 146 and 101, search 15 and 9). **The test split is frozen**: tune judges and prompts on dev only. The validity test pins a digest
-of every test item, origin included (`FROZEN_HARD_TEST_DIGEST` in `corpus.rs`, now `cc3f8bc924d4351a`), and the split sizes
+of every test item, origin included (`FROZEN_HARD_TEST_DIGEST` in `corpus.rs`, now `337345ebf37b93f5`), and the split sizes
 (`HARD_SPLIT_SIZES`). A deliberate change updates both and is recorded below with its reason. The first corpus's digest
 is unchanged: an item without an origin hashes as it did before the field existed.
 
