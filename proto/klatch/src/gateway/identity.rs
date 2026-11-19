@@ -2,7 +2,7 @@
 //! `PeerEvidence` about the peer and an `Identity` maps it to the `Principal` the gateway takes. A client
 //! never chooses its own name; the caller of the gateway is whoever the evidence supports.
 
-use crate::domain::{Error, Principal, Result, valid_name};
+use crate::domain::{Error, Principal, Result, is_reserved_name, valid_name};
 
 /// What a transport knows about its peer. New kinds of evidence (a session found from the process tree, an
 /// SSH key, a certificate) are added as variants, which is why the enum is not exhaustive.
@@ -97,7 +97,7 @@ const NAME_HINT: &str = "set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za
 impl Identity for DeclaredName {
     fn resolve(&self, evidence: &PeerEvidence) -> Result<Principal> {
         match evidence {
-            PeerEvidence::DeclaredName(name) if valid_name(name) => {
+            PeerEvidence::DeclaredName(name) if valid_name(name) && !is_reserved_name(name) => {
                 Ok(Principal::unattributed(name))
             }
             PeerEvidence::DeclaredName(_) => Err(Error::Invalid(format!(
@@ -126,7 +126,7 @@ fn member_name_from(raw: &str) -> Option<String> {
         .collect();
     let cut: String = mapped.trim_matches('-').chars().take(40).collect();
     let cut = cut.trim_matches('-').to_string();
-    valid_name(&cut).then_some(cut)
+    (valid_name(&cut) && !is_reserved_name(&cut)).then_some(cut)
 }
 
 impl Identity for LocalIdentity {
@@ -143,7 +143,9 @@ impl Identity for LocalIdentity {
                     .ok_or_else(|| Error::Invalid("the session has no usable name or id".into()))?;
                 Ok(Principal::unattributed(&member))
             }
-            PeerEvidence::Credential { member } if valid_name(member) => {
+            PeerEvidence::Credential { member }
+                if valid_name(member) && !is_reserved_name(member) =>
+            {
                 Ok(Principal::verified(member))
             }
             PeerEvidence::Credential { .. } => Err(Error::Invalid(
@@ -209,7 +211,6 @@ mod tests {
     fn a_typed_name_can_never_be_verified_whatever_it_says() {
         for name in [
             "root",
-            "admin",
             "verified",
             "klatch",
             "gateway",
@@ -276,6 +277,33 @@ mod tests {
         PeerEvidence::Session {
             session_id: id.into(),
             name: name.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_reserved_name_is_refused_on_every_way_in_and_a_session_falls_back_to_its_id() {
+        // #523: `admin` is the human and `canary` the tripwire; no typed name, credential or session may be either
+        for name in ["admin", "canary"] {
+            let typed = declared(name);
+            assert!(matches!(
+                DeclaredName.resolve(&typed),
+                Err(Error::Invalid(_))
+            ));
+            assert!(matches!(
+                LocalIdentity.resolve(&typed),
+                Err(Error::Invalid(_))
+            ));
+            let cred = PeerEvidence::Credential {
+                member: name.into(),
+            };
+            assert!(matches!(
+                LocalIdentity.resolve(&cred),
+                Err(Error::Invalid(_))
+            ));
+            let p = LocalIdentity
+                .resolve(&session("abc12345-xyz", Some(name)))
+                .unwrap();
+            assert_eq!(p.member, "session-abc12345", "{name}");
         }
     }
 

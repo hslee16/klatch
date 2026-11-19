@@ -176,6 +176,13 @@ impl<S: Store> Gateway<S> {
     }
 
     fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
+        // #523: on a members' gateway the system's own names are nobody's, so a typed one gets no standing
+        if self.for_members && crate::domain::is_reserved_name(&who.member) {
+            return Err(Error::Refused {
+                rule: "reserved-name".into(),
+                reason: "that name is the system's and no member may act as it".into(),
+            });
+        }
         let role = self.role_of(&who.member)?;
         if let Some(e) = reviewer_refusal(role, who, op) {
             return Err(e);

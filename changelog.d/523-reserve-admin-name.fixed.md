@@ -1,0 +1,1 @@
+The member names `admin` and `canary` are reserved: a typed name, a credential or a session can no longer be either, and a members' gateway refuses them as the caller (#523).

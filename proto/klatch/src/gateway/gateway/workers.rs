@@ -19,9 +19,6 @@ pub const MAX_CREDENTIAL_TTL_SECS: i64 = 30 * 24 * 3600;
 /// never passes it.
 pub const DEFAULT_CREDENTIAL_MAX_LIFE_SECS: i64 = 24 * 3600;
 
-/// Names a worker may not take: they would pass for the system.
-const RESERVED: [&str; 2] = ["admin", "canary"];
-
 /// What a launcher asks for.
 pub struct CredentialSpec<'a> {
     pub member: &'a str,
@@ -88,7 +85,7 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
         max_life,
         ..
     } = *spec;
-    if !valid_name(member) || RESERVED.contains(&member) {
+    if !valid_name(member) || crate::domain::is_reserved_name(member) {
         return Err(Error::Invalid(format!(
             "not a usable worker name: {member}"
         )));

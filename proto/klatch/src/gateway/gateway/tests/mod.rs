@@ -47,6 +47,7 @@ mod qa_correlation;
 mod rate_limit;
 mod receipt;
 mod refusal_hints;
+mod reserved_names;
 mod reviewer;
 mod room_canary;
 mod room_capability;

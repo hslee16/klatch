@@ -3,6 +3,15 @@ pub fn valid_name(s: &str) -> bool {
     safe_name_bytes(s.as_bytes())
 }
 
+/// The names the system acts under (#523): `admin` is the human and `canary` the tripwire. No member, worker or
+/// session may be named one, so nothing that later keys on a member name can be forged by typing it.
+pub const RESERVED_NAMES: [&str; 2] = ["admin", "canary"];
+
+/// Whether `name` is one the system acts under and no member may take.
+pub fn is_reserved_name(name: &str) -> bool {
+    RESERVED_NAMES.contains(&name)
+}
+
 /// The rule behind `valid_name` and `valid_kind`, over bytes: 1 to 40 bytes, each a letter, digit, dot, dash or
 /// underscore. A byte fold, so the Kani proofs (#657) can run it on arrays; a multi-byte character has only bytes of
 /// 0x80 and up, none of them in the set, so refusing by byte refuses the same text as refusing by character.
