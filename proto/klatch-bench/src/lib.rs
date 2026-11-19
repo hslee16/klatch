@@ -3,6 +3,7 @@
 //! catches a panic or an error as a failure, and prints a table and a JSON record.
 
 mod harness;
+pub mod judge_eval;
 pub mod mp;
 pub mod mp_run;
 mod scenarios;
