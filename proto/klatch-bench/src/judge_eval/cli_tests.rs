@@ -91,11 +91,27 @@ fn the_judge_is_required_and_each_spelling_is_checked() {
 }
 
 #[test]
-fn jev_reports_that_its_transport_is_not_available_and_sends_nothing() {
-    let o = parse(&["--judge", "jev"]).unwrap();
+fn jev_needs_a_pinned_model_and_a_sane_threshold() {
+    let e = build_judge(&parse(&["--judge", "jev"]).unwrap(), &[])
+        .err()
+        .unwrap();
+    assert!(e.contains("pinned model"), "{e}");
+    let e = build_judge(&parse(&["--judge", "jev:latest"]).unwrap(), &[])
+        .err()
+        .unwrap();
+    assert!(e.contains("pinned version"), "{e}");
+    let e = build_judge(&parse(&["--judge", "jev:jev-1.14.0:2"]).unwrap(), &[])
+        .err()
+        .unwrap();
+    assert!(e.contains("threshold"), "{e}");
+}
+
+#[cfg(not(feature = "jev-http"))]
+#[test]
+fn without_the_feature_jev_says_to_build_with_it_and_sends_nothing() {
+    let o = parse(&["--judge", "jev:jev-1.14.0:0.8"]).unwrap();
     let e = build_judge(&o, &[]).err().unwrap();
-    assert!(e.contains("transport not available"), "{e}");
-    assert!(e.contains("#871"), "{e}");
+    assert!(e.contains("build with --features jev-http"), "{e}");
 }
 
 #[test]

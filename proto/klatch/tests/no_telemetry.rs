@@ -111,6 +111,22 @@ const TEST_ONLY_SPAWNERS: &[&str] = &[
     "src/identity/survivor_tests.rs",
 ];
 
+/// Test-only modules that may open a loopback socket: the unit tests of the optional real Jev transport (`jev-http`,
+/// #871) start a server on 127.0.0.1 inside the test and talk to it, so the transport can be tested without leaving the
+/// machine. Exact paths, and each must be declared `#[cfg(test)] mod name;` in its parent so it is never part of a
+/// shipped binary. The transport itself (`src/jev/http.rs`) names no socket type and is not exempt.
+const TEST_ONLY_LOOPBACK_SERVERS: &[&str] = &["src/jev/http/tests.rs"];
+
+fn may_open_loopback_socket(rel: &str) -> bool {
+    let name = rel
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.strip_suffix(".rs"))
+        .unwrap_or("");
+    TEST_ONLY_LOOPBACK_SERVERS.contains(&rel)
+        && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
+}
+
 /// The text of the file that declares the module at `rel` (`src/a/b.rs` is declared in `src/a.rs` or `src/a/mod.rs`),
 /// for the first of them that exists.
 fn parent_text(rel: &str) -> Option<String> {
@@ -199,7 +215,7 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
             problems.extend(
                 SOCKETS
                     .iter()
-                    .filter(|s| code.contains(*s))
+                    .filter(|s| code.contains(*s) && !may_open_loopback_socket(&rel))
                     .map(|s| format!("{at}: uses {s}")),
             );
             problems.extend(command_problem(&rel, code, PROGRAMS).map(|p| format!("{at}: {p}")));
@@ -215,6 +231,14 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
 #[test]
 fn std_net_is_only_used_to_read_addresses() {
     for (path, text) in rust_sources() {
+        let rel = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .display()
+            .to_string();
+        if may_open_loopback_socket(&rel) {
+            continue;
+        }
         for line in text.lines().filter(|l| l.contains("std::net")) {
             for item in [
                 "TcpStream",
@@ -227,6 +251,47 @@ fn std_net_is_only_used_to_read_addresses() {
             }
         }
     }
+}
+
+/// The real Jev transport is an outbound network capability, so no default build may carry it: the feature is not in
+/// `default`, `client` or `cli`, and no shipped feature turns on the HTTP client (#871).
+#[test]
+fn the_optional_jev_http_transport_is_in_no_default_feature() {
+    let toml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    let mut in_features = false;
+    let mut current = String::new();
+    let mut shipped = std::collections::BTreeMap::<String, String>::new();
+    for line in toml.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_features = t == "[features]";
+            current.clear();
+            continue;
+        }
+        if !in_features || t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        if let Some((name, rest)) = t.split_once('=') {
+            current = name.trim().to_string();
+            shipped.entry(current.clone()).or_default().push_str(rest);
+        } else {
+            shipped.entry(current.clone()).or_default().push_str(t);
+        }
+    }
+    for name in ["default", "client", "cli"] {
+        let body = shipped
+            .get(name)
+            .unwrap_or_else(|| panic!("no feature {name}"));
+        assert!(
+            !body.contains("jev-http") && !body.contains("ureq"),
+            "{name} turns on the Jev HTTP client: {body}"
+        );
+    }
+    assert!(
+        shipped["jev-http"].contains("dep:ureq"),
+        "jev-http is where the HTTP client comes in"
+    );
 }
 
 #[test]

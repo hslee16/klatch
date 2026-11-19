@@ -3,6 +3,7 @@
 //! catches a panic or an error as a failure, and prints a table and a JSON record.
 
 mod harness;
+pub mod history;
 pub mod judge_eval;
 pub mod mp;
 pub mod mp_run;
@@ -203,7 +204,7 @@ pub fn check_budgets(
 ) -> Vec<Budget> {
     let mut out = Vec::new();
     for o in outcomes.iter().filter(|o| o.passed) {
-        for (metric, value) in o.metrics.iter().filter(|(k, _)| k.ends_with("_ms")) {
+        for (metric, value) in o.metrics.iter().filter(|(k, _)| history::is_timing(k)) {
             let recorded = baseline
                 .get(&o.name)
                 .and_then(|m| m.get(metric))
@@ -264,7 +265,7 @@ pub fn baseline_of(outcomes: &[Outcome]) -> serde_json::Value {
         let timings: serde_json::Map<String, serde_json::Value> = o
             .metrics
             .iter()
-            .filter(|(k, _)| k.ends_with("_ms"))
+            .filter(|(k, _)| history::is_timing(k))
             .map(|(k, v)| (k.clone(), serde_json::json!(v)))
             .collect();
         if !timings.is_empty() {
@@ -526,6 +527,62 @@ mod tests {
         let out = run_scenarios(&all(), &bin);
         let failed: Vec<_> = out.iter().filter(|o| !o.passed).collect();
         assert!(failed.is_empty(), "{}", table(&out));
+    }
+
+    #[test]
+    fn the_store_check_time_is_not_a_budget_baseline_or_history_metric() {
+        let o = [timed("s", &[("integrity_ms", 2.0), ("hook_ms", 5.0)], true)];
+        let budgets = check_budgets(&o, &serde_json::json!({}), 3.0, 200.0);
+        assert_eq!(budgets.len(), 1, "{budgets:?}");
+        assert_eq!(budgets[0].metric, "hook_ms");
+        assert_eq!(baseline_of(&o), serde_json::json!({"s": {"hook_ms": 5.0}}));
+        assert!(!history::is_timing("integrity_ms"));
+        assert!(history::is_timing("hook_ms"));
+        assert!(!history::is_timing("klatch_calls"));
+    }
+
+    /// The scenarios where a latency is the point report it (run with `--ignored`, against the real binary).
+    #[test]
+    #[ignore = "the bench runs locally, not in CI"]
+    fn the_latency_scenarios_report_their_timings() {
+        let wanted: &[(&str, &[&str])] = &[
+            (
+                "a_session_start_with_a_big_board",
+                &["session_start_hook_ms"],
+            ),
+            ("a_long_digest_stays_under", &["digest_hook_ms"]),
+            ("a_claimed_path_stops_a_second_editor", &["claim_block_ms"]),
+            ("an_idle_session_is_woken_by_a_pointer", &["wake_ms"]),
+            ("new_session_joins_without_flood", &["session_start_ms"]),
+            (
+                "post_tool_use_hook_prints_json_context",
+                &["post_tool_use_ms"],
+            ),
+            ("first_opens_race", &["race_ms"]),
+            ("old_databases_migrate", &["migrate_ms"]),
+            ("rotating_the_key_keeps_every_message", &["rotate_ms"]),
+            (
+                "a_backup_is_encrypted",
+                &["backup_ms", "restore_ms", "export_ms"],
+            ),
+        ];
+        let bin = find_binary().expect("the klatch binary");
+        for (name, metrics) in wanted {
+            let chosen: Vec<_> = all()
+                .into_iter()
+                .filter(|s| s.name.contains(name))
+                .collect();
+            assert_eq!(chosen.len(), 1, "{name} matches {} scenarios", chosen.len());
+            let out = run_scenarios(&chosen, &bin);
+            assert!(out[0].passed, "{name}: {}", out[0].message);
+            for m in *metrics {
+                assert!(
+                    out[0].metrics.iter().any(|(k, _)| k == m),
+                    "{name} does not report {m}: {:?}",
+                    out[0].metrics
+                );
+            }
+        }
     }
 
     fn timed(name: &str, metrics: &[(&str, f64)], passed: bool) -> Outcome {

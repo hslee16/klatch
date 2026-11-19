@@ -386,6 +386,9 @@ fn the_report_and_the_json_carry_the_numbers_and_never_the_text() {
         "p50",
         "injection",
         "everyday-chat",
+        "Wilson 95 percent",
+        "(n=",
+        "warning: n is below 30",
     ] {
         assert!(text.contains(needle), "{needle} missing:\n{text}");
     }

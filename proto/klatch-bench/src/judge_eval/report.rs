@@ -1,7 +1,8 @@
 //! The printed report and the results JSON. Neither ever holds an item's text: ids, verdicts and numbers only.
 
 use crate::judge_eval::corpus::Truth;
-use crate::judge_eval::metrics::{Called, Record, Summary};
+use crate::judge_eval::interval::{MIN_N, rate_with_interval};
+use crate::judge_eval::metrics::{Called, PerVerdict, Record, Summary};
 use serde_json::{Value, json};
 use std::fmt::Write;
 
@@ -24,6 +25,35 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
         s.confusion[1].iter().sum::<usize>() + s.confusion[2].iter().sum::<usize>();
     let clean: usize = s.confusion[0].iter().sum();
     let _ = writeln!(o, "judge-eval: judge {judge}, split {split}, {} items", s.n);
+    let correct = (s.accuracy * s.n as f64).round() as usize;
+    let decided = s.n - s.defers;
+    let mut small: Vec<String> = vec![];
+    let mut note = |name: &str, n: usize| {
+        if n < MIN_N {
+            small.push(format!("{name} n={n}"));
+        }
+    };
+    note("leak rate", blocked);
+    note("over-blocking rate", clean);
+    note("deferral rate", s.n);
+    note("accuracy on decided items", decided);
+    for t in Truth::ALL {
+        note(
+            &format!("{} recall", t.word()),
+            s.confusion[t.index()].iter().sum(),
+        );
+    }
+    for r in s.by_category.iter().chain(std::iter::once(&s.injection)) {
+        note(&format!("category {}", r.name), r.n);
+    }
+    if !small.is_empty() {
+        let _ = writeln!(
+            o,
+            "warning: n is below {MIN_N} for: {}; those intervals are wide, read the rates with care",
+            small.join(", ")
+        );
+    }
+    let _ = writeln!(o, "intervals are Wilson 95 percent confidence intervals");
     let _ = writeln!(o, "\nconfusion (rows: ground truth, columns: verdict)");
     let _ = writeln!(
         o,
@@ -46,14 +76,14 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
         o,
         "\nleaks (critical: a redact or deny item let across): {} of {blocked} = {} ({} were redactions that kept a span)",
         s.leaks,
-        pct(s.leak_rate),
+        rate_with_interval(s.leaks, blocked),
         s.redaction_leaks
     );
     let _ = writeln!(
         o,
         "over-blocking (a clean item redacted or denied): {} of {clean} = {}",
         s.overblocks,
-        pct(s.overblock_rate)
+        rate_with_interval(s.overblocks, clean)
     );
     let _ = writeln!(
         o,
@@ -65,14 +95,14 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
         "deferred (no decision, neither right nor wrong): {} of {} = {}; failed calls: {}",
         s.defers,
         s.n,
-        pct(s.defer_rate),
+        rate_with_interval(s.defers, s.n),
         s.errors
     );
     let _ = writeln!(
         o,
         "accuracy: {} of all items, {} of decided items",
         pct(s.accuracy),
-        opt_pct(s.accuracy_decided)
+        rate_with_interval(correct.min(decided), decided)
     );
     let _ = writeln!(
         o,
@@ -81,10 +111,13 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
     for p in &s.per_verdict {
         let _ = writeln!(
             o,
-            "  {:<8} precision {:>7}  recall {:>7}",
+            "  {:<8} precision {:>7}  recall {}",
             p.verdict.word(),
             opt_pct(p.precision),
-            opt_pct(p.recall)
+            rate_with_interval(
+                recall_hits(p, s.confusion[p.verdict.index()].iter().sum()),
+                s.confusion[p.verdict.index()].iter().sum()
+            )
         );
     }
     let ms = |x: Option<f64>| x.map_or_else(|| "-".to_string(), |v| format!("{v:.0} ms"));
@@ -162,17 +195,28 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
     let _ = writeln!(o, "\nby category");
     let _ = writeln!(
         o,
-        "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}",
-        "category", "n", "correct", "leaks", "over-blocks", "defers"
+        "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}  {}",
+        "category", "n", "correct", "leaks", "over-blocks", "defers", "correct rate (95% CI)"
     );
     for r in s.by_category.iter().chain(std::iter::once(&s.injection)) {
         let _ = writeln!(
             o,
-            "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}",
-            r.name, r.n, r.correct, r.leaks, r.overblocks, r.defers
+            "  {:<22}{:>5}{:>9}{:>7}{:>13}{:>8}  {}",
+            r.name,
+            r.n,
+            r.correct,
+            r.leaks,
+            r.overblocks,
+            r.defers,
+            rate_with_interval(r.correct, r.n)
         );
     }
     o
+}
+
+/// The recall numerator (hits are not the diagonal of the confusion: a redaction that kept a span is a leak).
+fn recall_hits(p: &PerVerdict, n: usize) -> usize {
+    p.recall.map_or(0, |r| (r * n as f64).round() as usize)
 }
 
 fn called(c: Called) -> &'static str {

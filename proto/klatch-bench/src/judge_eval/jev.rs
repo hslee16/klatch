@@ -2,8 +2,8 @@
 //! keeps the raw reply so the runner can also read Jev's own pick, confidence and token usage. The verdict is the
 //! production one, threshold and label gate included.
 //!
-//! The real HTTP transport is #871 and is not merged, so the command line reports "transport not available" for
-//! `--judge jev`; this type is ready for it (pass the transport to [`JevEval::new`]) and is tested with a fake.
+//! The command line builds it on the real transport (`klatch::jev::http`, the klatch-bench feature `jev-http`);
+//! tests build it on the fake transport. The key is read from `TYPESAFE_API_KEY` only and is never printed.
 
 use crate::judge_eval::corpus::Truth;
 use crate::judge_eval::judges::{EvalJudge, Judged};
@@ -11,21 +11,21 @@ use klatch::domain::{
     HostedConfig, HostedJudge, Judge, LabelChain, ReviewItem, Verdict, label_below_ceiling,
 };
 use klatch::jev::{
-    ApiKey, JUDGE_QUESTION_ID, JevClient, JevConfig, JevJudge, JevTransport, JevTransportError,
-    Question, parse_response,
+    ApiKey, JUDGE_QUESTION_ID, JevClient, JevConfig, JevJudge, JevRequest, JevTransport,
+    JevTransportError, judge_question, parse_response,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Passes every call through and keeps the last successful reply body.
-struct Recording<T> {
+pub struct Recording<T> {
     inner: T,
     last: Rc<RefCell<Option<String>>>,
 }
 
 impl<T: JevTransport> JevTransport for Recording<T> {
-    fn post(&self, key: &ApiKey, body: &str) -> Result<String, JevTransportError> {
-        let r = self.inner.post(key, body);
+    fn send(&self, key: &ApiKey, request: &JevRequest) -> Result<String, JevTransportError> {
+        let r = self.inner.send(key, request);
         if let Ok(reply) = &r {
             *self.last.borrow_mut() = Some(reply.clone());
         }
@@ -48,16 +48,25 @@ impl<T: JevTransport> JevEval<T> {
         ceiling: &str,
         key: Box<dyn Fn() -> Option<String>>,
     ) -> Self {
+        Self::with_client(transport, config, ceiling, |c| c.with_key_source(key))
+    }
+
+    /// Like [`JevEval::new`], with `setup` to adjust the client (the key source, retries) before it is used.
+    pub fn with_client(
+        transport: T,
+        config: JevConfig,
+        ceiling: &str,
+        setup: impl FnOnce(JevClient<Recording<T>>) -> JevClient<Recording<T>>,
+    ) -> Self {
         let last = Rc::new(RefCell::new(None));
         let model = config.model().to_string();
-        let client = JevClient::new(
+        let client = setup(JevClient::new(
             Recording {
                 inner: transport,
                 last: last.clone(),
             },
             config,
-        )
-        .with_key_source(key);
+        ));
         let judge = HostedJudge::new(
             JevJudge::new(client),
             LabelChain::default(),
@@ -85,7 +94,7 @@ impl<T: JevTransport> EvalJudge for JevEval<T> {
         let verdict = self.judge.judge(item);
         let reply = self.last.borrow_mut().take();
         let raw = reply.as_deref().and_then(|r| {
-            let answers = parse_response(r, &self.model, &[Question::judge()]).ok()?;
+            let answers = parse_response(r, &self.model, &[judge_question()]).ok()?;
             let a = answers.choice(JUDGE_QUESTION_ID)?;
             Some((Truth::parse(&a.choice)?, a.confidence))
         });

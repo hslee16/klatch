@@ -1,0 +1,46 @@
+{
+  "rule": "per metric the median of the runs; the worst (max) when the runs disagree (spread over 0.5 of the median and at least 20 ms)",
+  "sha": "e7e3573",
+  "runs": [
+    {
+      "time": "2026-11-19T01:48:20Z",
+      "sha": "e7e3573",
+      "passed": 110,
+      "total": 110,
+      "machine": {
+        "os": "Darwin 23.3.0",
+        "cores": 12,
+        "load1": 4.11
+      }
+    },
+    {
+      "time": "2026-11-19T01:50:13Z",
+      "sha": "e7e3573",
+      "passed": 110,
+      "total": 110,
+      "machine": {
+        "os": "Darwin 23.3.0",
+        "cores": 12,
+        "load1": 4.97
+      }
+    },
+    {
+      "time": "2026-11-19T01:52:15Z",
+      "sha": "e7e3573",
+      "passed": 110,
+      "total": 110,
+      "machine": {
+        "os": "Darwin 23.3.0",
+        "cores": 12,
+        "load1": 7.38
+      }
+    }
+  ],
+  "noisy": [
+    "a_backup_is_encrypted_a_restore_brings_it_back_and_a_readable_export_is_audited/export_ms",
+    "a_hundred_rooms_with_news_still_print_a_digest_inside_the_byte_budget/hook_ms",
+    "archiving_fifty_thousand_messages_leaves_the_live_store_usable_and_restores_whole/live_post_max_ms",
+    "fifty_credentialed_workers_post_claim_and_read_at_once/post_p99_ms",
+    "many_claimants_one_wins/claim_ms"
+  ]
+}

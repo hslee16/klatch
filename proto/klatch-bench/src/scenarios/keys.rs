@@ -161,7 +161,9 @@ fn rotation(w: &World) -> Res {
         w.ok("alice", &["post", "r", &format!("message number {i}")])?;
     }
     let old_key = std::fs::read(&key_files(w)[0]).map_err(|e| e.to_string())?;
+    let started = Instant::now();
     let rotated = w.admin(&["rotate-key"], "rotate");
+    let rotate_ms = ms(started);
     check(rotated.ok, format!("rotate failed: {}", rotated.stderr))?;
     has(
         &rotated.stdout,
@@ -184,7 +186,7 @@ fn rotation(w: &World) -> Res {
     )?;
     // put the new key back so the end-of-scenario store check can open the rotated store
     std::fs::write(&key_files(w)[0], &new_key).map_err(|e| e.to_string())?;
-    Ok(vec![])
+    Ok(vec![("rotate_ms".into(), rotate_ms)])
 }
 
 fn backup_and_export(w: &World) -> Res {
@@ -195,7 +197,9 @@ fn backup_and_export(w: &World) -> Res {
     )?;
     let file = w.home.join("archive.db");
     let file_s = file.to_string_lossy().into_owned();
+    let started = Instant::now();
     let made = w.admin(&["backup", &file_s], "");
+    let backup_ms = ms(started);
     check(made.ok, format!("backup failed: {}", made.stderr))?;
     let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
     check(
@@ -207,7 +211,9 @@ fn backup_and_export(w: &World) -> Res {
         "a backup overwrote a file",
     )?;
     w.ok("alice", &["post", "r", "posted after the backup"])?;
+    let started = Instant::now();
     let restored = w.admin(&["restore", &file_s], "restore");
+    let restore_ms = ms(started);
     check(restored.ok, format!("restore failed: {}", restored.stderr))?;
     let read = w.ok("bob", &["read", "r", "--peek"])?;
     has(
@@ -225,7 +231,9 @@ fn backup_and_export(w: &World) -> Res {
         "the replaced store was not kept",
     )?;
     // the readable export is the one deliberate way out, and it leaves a record
+    let started = Instant::now();
     let export = w.admin(&["export", "r"], "r");
+    let export_ms = ms(started);
     check(export.ok, format!("export failed: {}", export.stderr))?;
     has(&export.stdout, "hunter2", "the export is not readable")?;
     has(
@@ -237,7 +245,11 @@ fn backup_and_export(w: &World) -> Res {
         !w.admin(&["export", "r"], "wrong").ok,
         "an export ran without the room typed back",
     )?;
-    Ok(vec![])
+    Ok(vec![
+        ("backup_ms".into(), backup_ms),
+        ("restore_ms".into(), restore_ms),
+        ("export_ms".into(), export_ms),
+    ])
 }
 
 /// Clears alice and carol, seals the label `private` on the room `vault`, and checks a member with the key can use it.

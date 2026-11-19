@@ -139,6 +139,65 @@ impl Options {
     }
 }
 
+/// The threshold the Jev judge uses when the spec gives none (the Jev API has no default; this is the bench's).
+pub const DEFAULT_JEV_THRESHOLD: f64 = 0.8;
+
+/// The Jev settings from the spec: the model must be a pinned version, so a spec without one is refused.
+pub fn jev_config(
+    model: Option<&str>,
+    threshold: Option<f64>,
+) -> Result<klatch::jev::JevConfig, String> {
+    let model = model.ok_or(
+        "jev: name a pinned model, for example --judge jev:jev-1.14.0[:0.8] (never latest)",
+    )?;
+    klatch::jev::JevConfig::new(model, threshold.unwrap_or(DEFAULT_JEV_THRESHOLD))
+        .map_err(|e| format!("jev: {e}"))
+}
+
+#[cfg(feature = "jev-http")]
+fn build_jev(
+    model: Option<&str>,
+    threshold: Option<f64>,
+    ceiling: &str,
+) -> Result<Box<dyn EvalJudge>, String> {
+    use crate::judge_eval::jev::JevEval;
+    use klatch::jev::retry::{RetryPolicy, SystemClock, ThreadSleeper};
+    let config = jev_config(model, threshold)?;
+    if klatch::jev::ApiKey::from_env().is_none() {
+        return Err(format!(
+            "jev: set {} (the key is read from the environment only)",
+            klatch::jev::KEY_ENV
+        ));
+    }
+    let key: Box<dyn Fn() -> Option<String>> =
+        Box::new(|| klatch::jev::ApiKey::from_env().map(|k| k.expose().to_string()));
+    Ok(Box::new(JevEval::with_client(
+        klatch::jev::http::HttpTransport::new(),
+        config,
+        ceiling,
+        |c| {
+            c.with_key_source(key).with_retry(
+                RetryPolicy::default(),
+                Box::new(SystemClock::new()),
+                Box::new(ThreadSleeper),
+                Box::new(klatch::jev::http::OsJitter),
+            )
+        },
+    )))
+}
+
+#[cfg(not(feature = "jev-http"))]
+fn build_jev(
+    model: Option<&str>,
+    threshold: Option<f64>,
+    _ceiling: &str,
+) -> Result<Box<dyn EvalJudge>, String> {
+    jev_config(model, threshold)?;
+    Err("jev: the real transport is not built in: build with --features jev-http (cargo run -p klatch-bench \
+         --features jev-http -- judge-eval --judge jev:<model>); nothing was sent"
+        .into())
+}
+
 /// A fresh private directory for the claude sessions to run in.
 fn workdir() -> Result<std::path::PathBuf, String> {
     let d = std::env::temp_dir().join(format!("klatch-judge-eval-{}", std::process::id()));
@@ -154,7 +213,10 @@ fn workdir() -> Result<std::path::PathBuf, String> {
 pub fn build_judge(o: &Options, scrub: &[(String, String)]) -> Result<Box<dyn EvalJudge>, String> {
     match &o.judge {
         JudgeSpec::Null => Ok(Box::new(Seam::new("null", NullJudge))),
-        JudgeSpec::Rules => Ok(Box::new(Seam::new("rules", RulesJudge::new(scrub.to_vec())))),
+        JudgeSpec::Rules => Ok(Box::new(Seam::new(
+            "rules",
+            RulesJudge::new(scrub.to_vec()),
+        ))),
         JudgeSpec::Claude(model) => {
             let config = ClaudeConfig {
                 model: model.clone(),
@@ -167,13 +229,14 @@ pub fn build_judge(o: &Options, scrub: &[(String, String)]) -> Result<Box<dyn Ev
                 timeout: std::time::Duration::from_secs(300),
             };
             let lookup = |k: &str| std::env::var(k).ok();
-            Ok(Box::new(ClaudeJudge::new(config, runner, &workdir()?, &lookup)?))
+            Ok(Box::new(ClaudeJudge::new(
+                config,
+                runner,
+                &workdir()?,
+                &lookup,
+            )?))
         }
-        JudgeSpec::Jev { .. } => Err(
-            "jev: transport not available: the HTTP transport for Jev is #871 and is not merged, so nothing was \
-             sent. When it lands, build a JevEval with it in judge_eval::cli::build_judge (see the design item for #914)."
-                .into(),
-        ),
+        JudgeSpec::Jev { model, threshold } => build_jev(model.as_deref(), *threshold, &o.ceiling),
     }
 }
 

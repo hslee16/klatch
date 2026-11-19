@@ -2,7 +2,9 @@ use super::*;
 use crate::judge_eval::corpus::Truth;
 use crate::judge_eval::judges::EvalJudge;
 use klatch::domain::{HostedConfig, HostedJudge, Judge, LabelChain, ReviewItem, Verdict};
-use klatch::jev::{ApiKey, JevClient, JevConfig, JevJudge, JevTransport, JevTransportError};
+use klatch::jev::{
+    ApiKey, JevClient, JevConfig, JevJudge, JevRequest, JevTransport, JevTransportError,
+};
 use std::cell::RefCell;
 
 const MODEL: &str = "jev-1.14.0";
@@ -12,7 +14,7 @@ struct Fake {
     reply: Result<String, JevTransportError>,
 }
 impl JevTransport for &Fake {
-    fn post(&self, _key: &ApiKey, _body: &str) -> Result<String, JevTransportError> {
+    fn send(&self, _key: &ApiKey, _request: &JevRequest) -> Result<String, JevTransportError> {
         *self.calls.borrow_mut() += 1;
         self.reply.clone()
     }

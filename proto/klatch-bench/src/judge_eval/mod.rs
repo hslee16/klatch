@@ -9,6 +9,7 @@
 pub mod claude;
 pub mod cli;
 pub mod corpus;
+pub mod interval;
 pub mod jev;
 pub mod judges;
 pub mod metrics;
