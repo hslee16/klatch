@@ -32,5 +32,7 @@ pub const HOOK_MAX_BYTES: usize = 9400;
 pub const BOARD_FLOOR_BYTES: usize = 1000;
 /// The smallest budget a hook digest prints within (#602): room for the one line that says how many rooms have news.
 /// Below it the digest prints nothing rather than overshoot. No caller reaches it with the constants of today; the
-/// session start budget is `HOOK_MAX_BYTES` less the convention, the board floor and one line per refused room.
+/// session start budget is `HOOK_MAX_BYTES` less the convention, the board floor and the refused-room notes (at most `REFUSED_MAX_BYTES`).
+/// The most bytes the notes on refused rooms print at a session start (#612); the rest is a count.
+pub const REFUSED_MAX_BYTES: usize = 600;
 pub const DIGEST_MIN_BYTES: usize = 100;
