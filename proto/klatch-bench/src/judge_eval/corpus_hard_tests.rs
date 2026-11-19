@@ -227,6 +227,29 @@ fn the_committed_hard_corpus_is_valid() {
     );
 }
 
+/// H3 as revised (#931): a name tied to the last four digits of a card or account number is personal financial data.
+#[test]
+fn a_name_with_the_last_four_of_a_card_is_redacted_and_tagged() {
+    let items = hard();
+    let get = |id: &str| items.iter().find(|i| i.id == id).unwrap();
+    for id in ["hpii-008", "xpii-004", "xpii-064", "xpii-067", "xpii-069"] {
+        let i = get(id);
+        assert_eq!(i.verdict, Truth::Redact, "{id}");
+        assert!(!i.name_spans.is_empty(), "{id} has a name span");
+        assert!(i.data_spans().count() >= 1, "{id} has a data span");
+        assert!(!i.contested, "{id}");
+        for s in &i.spans {
+            assert!(i.text.contains(s.as_str()), "{id}: {s:?} is in the text");
+        }
+    }
+    // the last four digits with no person attached stay allow
+    assert_eq!(get("hpii-009").verdict, Truth::Allow);
+    // a borderline injection look-alike is set apart from the headline rates
+    let c = get("xinjl-005");
+    assert!(c.contested);
+    assert_eq!(c.verdict, Truth::Allow);
+}
+
 #[test]
 fn the_hard_split_sizes_are_pinned_and_stratified() {
     let items = hard();
