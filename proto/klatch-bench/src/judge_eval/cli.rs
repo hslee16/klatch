@@ -1,6 +1,6 @@
 //! `klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> [--split dev|test]
-//! [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] [--corpus FILE] [--scrub FILE]
-//! [--claude PATH]`
+//! [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] [--corpus FILE]
+//! [--origin design|search] [--scrub FILE] [--claude PATH]`
 //!
 //! A manual command: the claude judge costs tokens and the Jev judge needs a key, so this never runs in CI or in
 //! the gate. The null and rules judges are free and run in the unit tests.
@@ -15,7 +15,7 @@ use klatch::domain::NullJudge;
 
 pub const USAGE: &str = "usage: klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> \
 [--split dev|test] [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] \
-[--corpus FILE] [--scrub FILE] [--claude PATH]";
+[--corpus FILE] [--origin design|search] [--scrub FILE] [--claude PATH]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JudgeSpec {
@@ -69,6 +69,8 @@ pub struct Options {
     pub corpus: Option<String>,
     pub scrub: Option<String>,
     pub claude: String,
+    /// Hard corpus only: score just the items of one origin.
+    pub origin: Option<corpus::Origin>,
 }
 
 fn value(args: &mut dyn Iterator<Item = String>, flag: &str) -> Result<String, String> {
@@ -96,6 +98,7 @@ impl Options {
             corpus: None,
             scrub: None,
             claude: "claude".into(),
+            origin: None,
         };
         while let Some(a) = args.next() {
             let a = a.as_str();
@@ -131,6 +134,12 @@ impl Options {
                 "--corpus" => o.corpus = Some(value(&mut args, a)?),
                 "--scrub" => o.scrub = Some(value(&mut args, a)?),
                 "--claude" => o.claude = value(&mut args, a)?,
+                "--origin" => {
+                    o.origin = Some(
+                        corpus::Origin::parse(&value(&mut args, a)?)
+                            .ok_or("--origin is design or search")?,
+                    );
+                }
                 other => return Err(format!("unknown option {other}")),
             }
         }
@@ -255,7 +264,24 @@ pub fn run(o: &Options) -> Result<(Summary, Vec<Record>), String> {
         &std::fs::read_to_string(&scrub_path)
             .map_err(|e| format!("cannot read {}: {e}", scrub_path.display()))?,
     )?;
+    let items: Vec<corpus::Item> = match o.origin {
+        None => items,
+        Some(origin) => items
+            .into_iter()
+            .filter(|i| i.origin == Some(origin))
+            .collect(),
+    };
     let chosen = corpus::select(&items, Some(o.split), o.limit);
+    if o.origin.is_none()
+        && chosen
+            .iter()
+            .any(|i| i.origin == Some(corpus::Origin::Search))
+    {
+        eprintln!(
+            "judge-eval: this selection mixes design and search items; search items were kept because one judge \
+             got them wrong, so score them apart with --origin (see judge-eval/README-hard.md)"
+        );
+    }
     let judge = build_judge(o, &scrub)?;
     let started = std::time::Instant::now();
     let mut clock = || started.elapsed().as_secs_f64() * 1000.0;

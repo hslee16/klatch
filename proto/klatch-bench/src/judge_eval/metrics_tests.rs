@@ -23,6 +23,7 @@ fn item(id: &str, category: &str, truth: Truth) -> Item {
         text: format!("text of {id} SPAN-{id}"),
         rationale: "r".into(),
         spans,
+        origin: None,
     }
 }
 
