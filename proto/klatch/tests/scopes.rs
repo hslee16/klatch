@@ -103,3 +103,50 @@ fn a_hook_does_not_wait_forever_on_a_standard_input_that_never_closes() {
         "the hook hung on a standard input that never closed"
     );
 }
+
+/// #632: two members in different scopes held `design-item:66` at once. A work item name is one thing in the whole
+/// room, so it conflicts across scopes without `--shared`, and its case or stray spaces do not make it another name.
+#[test]
+fn a_work_item_name_conflicts_across_scopes_without_shared_and_ignoring_case() {
+    let h = Home::new();
+    assert!(
+        as_scope(&h, "a", "git:a", &["claim", "r", "design-item:66"])
+            .status
+            .success()
+    );
+    for other in ["design-item:66", "Design-Item:66", " design-item:66 "] {
+        let b = as_scope(&h, "b", "git:b", &["claim", "r", other]);
+        assert!(!b.status.success(), "{other:?} must conflict across scopes");
+    }
+    for other in ["ticket:7", "issue:7", "pr:7", "task:7", "item:7"] {
+        assert!(
+            as_scope(&h, "a", "git:a", &["claim", "r", other])
+                .status
+                .success()
+        );
+        assert!(
+            !as_scope(&h, "b", "git:b", &["claim", "r", &other.to_uppercase()])
+                .status
+                .success(),
+            "{other}"
+        );
+    }
+    // a path is still per scope
+    assert!(
+        as_scope(&h, "a", "git:a", &["claim", "r", "src/ticket:1"])
+            .status
+            .success()
+    );
+    assert!(
+        as_scope(&h, "b", "git:b", &["claim", "r", "src/ticket:1"])
+            .status
+            .success()
+    );
+    // the canonical name releases it, whatever case the holder typed
+    as_scope(&h, "a", "git:a", &["release", "r", "DESIGN-ITEM:66"]);
+    assert!(
+        as_scope(&h, "b", "git:b", &["claim", "r", "design-item:66"])
+            .status
+            .success()
+    );
+}

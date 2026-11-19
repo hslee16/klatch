@@ -23,10 +23,26 @@ pub(crate) fn scope_bytes_ok(b: &[u8]) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b':' | b'_' | b'-' | b'/'))
 }
 
-/// The scope a claim is stored under: shared for an explicit `--shared` and for room-wide names (`ask:<N>`),
-/// otherwise the member's own scope (empty when it has none).
+/// The nouns of a work item name (`ticket:602`, `design-item:66`). Such a name is one thing in the whole room (#632).
+pub const WORK_ITEM_NOUNS: [&str; 6] = ["ticket", "issue", "pr", "task", "item", "design-item"];
+
+/// The canonical form of a work item name: trimmed and lower case, when it is `<noun>:<rest>` with a noun from
+/// `WORK_ITEM_NOUNS` and no `/` (a path such as `src/ticket:1` is not one). `None` for anything else.
+pub fn work_item_name(path: &str) -> Option<String> {
+    let name = path.trim().to_lowercase();
+    let (noun, rest) = name.split_once(':')?;
+    (WORK_ITEM_NOUNS.contains(&noun) && !rest.is_empty() && !name.contains('/')).then_some(name)
+}
+
+/// The path as it is stored and compared: a work item name in its canonical form, anything else as typed.
+pub fn canonical_claim_path(path: &str) -> String {
+    work_item_name(path).unwrap_or_else(|| path.to_string())
+}
+
+/// The scope a claim is stored under: shared for an explicit `--shared`, for room-wide names (`ask:<N>`) and for work
+/// item names (`ticket:<N>`, #632), otherwise the member's own scope (empty when it has none).
 pub fn claim_scope(path: &str, shared: bool, member_scope: Option<&str>) -> String {
-    if shared || path.starts_with("ask:") {
+    if shared || path.starts_with("ask:") || work_item_name(path).is_some() {
         SHARED_SCOPE.to_string()
     } else {
         member_scope.unwrap_or("").to_string()
@@ -73,6 +89,31 @@ mod tests {
         assert!(!valid_scope("*"));
         assert!(valid_scope("a*") == valid_scope_by_chars("a*"));
         assert!(!valid_scope("a*"));
+    }
+
+    #[test]
+    fn a_work_item_name_is_canonical_and_shared_but_a_path_is_neither() {
+        assert_eq!(
+            work_item_name(" Design-Item:66 ").as_deref(),
+            Some("design-item:66")
+        );
+        assert_eq!(work_item_name("PR:7").as_deref(), Some("pr:7"));
+        for not in [
+            "ticket",
+            "ticket:",
+            "src/ticket:1",
+            "ticketing:1",
+            "a:1",
+            "ticket 1",
+        ] {
+            assert_eq!(work_item_name(not), None, "{not}");
+            assert_eq!(canonical_claim_path(not), not);
+        }
+        assert_eq!(
+            claim_scope("Ticket:602", false, Some("git:a")),
+            SHARED_SCOPE
+        );
+        assert_eq!(claim_scope("src/ticket:1", false, Some("git:a")), "git:a");
     }
 
     #[test]
