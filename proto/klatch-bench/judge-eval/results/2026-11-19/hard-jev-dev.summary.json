@@ -1,0 +1,377 @@
+{
+ "judge": "jev:jev-1.14.0",
+ "split": "dev",
+ "corpus": "hard",
+ "summary": {
+  "n": 161,
+  "confusion": {
+   "rows": [
+    "allow",
+    "redact",
+    "deny"
+   ],
+   "columns": [
+    "allow",
+    "redact",
+    "deny",
+    "defer"
+   ],
+   "counts": [
+    [
+     55,
+     7,
+     9,
+     0
+    ],
+    [
+     16,
+     16,
+     3,
+     0
+    ],
+    [
+     12,
+     6,
+     37,
+     0
+    ]
+   ]
+  },
+  "leaks": 28,
+  "leak_rate": 0.3111111111111111,
+  "redaction_leaks": 0,
+  "data_leaks": 28,
+  "data_leak_rate": 0.3111111111111111,
+  "contested": [],
+  "overblocks": 16,
+  "overblock_rate": 0.22535211267605634,
+  "softened": 6,
+  "defers": 0,
+  "defer_rate": 0.0,
+  "errors": 0,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.6708074534161491,
+  "accuracy_decided": 0.6708074534161491,
+  "per_verdict": [
+   {
+    "verdict": "allow",
+    "precision": 0.6626506024096386,
+    "recall": 0.7746478873239436
+   },
+   {
+    "verdict": "redact",
+    "precision": 0.5517241379310345,
+    "recall": 0.45714285714285713
+   },
+   {
+    "verdict": "deny",
+    "precision": 0.7551020408163265,
+    "recall": 0.6727272727272727
+   }
+  ],
+  "latency_p50_ms": 147.17204200000015,
+  "latency_p99_ms": 213.03483299999996,
+  "tokens_in": 120168,
+  "tokens_out": 6469,
+  "cost_usd": null,
+  "calibration": {
+   "ece": 0.20403726708074535,
+   "buckets": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "n": 6,
+     "accuracy": 0.0,
+     "mean_confidence": 0.060000000000000005
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "n": 18,
+     "accuracy": 0.5555555555555556,
+     "mean_confidence": 0.14
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "n": 21,
+     "accuracy": 0.6190476190476191,
+     "mean_confidence": 0.2385714285714286
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "n": 20,
+     "accuracy": 0.6,
+     "mean_confidence": 0.3444999999999999
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "n": 20,
+     "accuracy": 0.6,
+     "mean_confidence": 0.44300000000000006
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "n": 20,
+     "accuracy": 0.65,
+     "mean_confidence": 0.5375000000000001
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "n": 15,
+     "accuracy": 0.8666666666666667,
+     "mean_confidence": 0.6426666666666666
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "n": 14,
+     "accuracy": 0.7857142857142857,
+     "mean_confidence": 0.7457142857142857
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "n": 15,
+     "accuracy": 0.9333333333333333,
+     "mean_confidence": 0.8473333333333333
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "n": 12,
+     "accuracy": 0.8333333333333334,
+     "mean_confidence": 0.9424999999999999
+    }
+   ]
+  },
+  "thresholds": [
+   {
+    "threshold": 0.0,
+    "leaks": 28,
+    "leak_rate": 0.3111111111111111,
+    "overblocks": 16,
+    "overblock_rate": 0.22535211267605634,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.5,
+    "leaks": 13,
+    "leak_rate": 0.14444444444444443,
+    "overblocks": 2,
+    "overblock_rate": 0.028169014084507043,
+    "deferred": 85
+   },
+   {
+    "threshold": 0.6,
+    "leaks": 7,
+    "leak_rate": 0.07777777777777778,
+    "overblocks": 1,
+    "overblock_rate": 0.014084507042253521,
+    "deferred": 105
+   },
+   {
+    "threshold": 0.7,
+    "leaks": 5,
+    "leak_rate": 0.05555555555555555,
+    "overblocks": 1,
+    "overblock_rate": 0.014084507042253521,
+    "deferred": 120
+   },
+   {
+    "threshold": 0.8,
+    "leaks": 3,
+    "leak_rate": 0.03333333333333333,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 134
+   },
+   {
+    "threshold": 0.85,
+    "leaks": 3,
+    "leak_rate": 0.03333333333333333,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 141
+   },
+   {
+    "threshold": 0.9,
+    "leaks": 2,
+    "leak_rate": 0.022222222222222223,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 149
+   },
+   {
+    "threshold": 0.95,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 155
+   },
+   {
+    "threshold": 0.97,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 158
+   },
+   {
+    "threshold": 0.99,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 161
+   }
+  ],
+  "target_leak": 0.01,
+  "lowest_threshold": 0.95,
+  "by_category": [
+   {
+    "category": "business-private",
+    "n": 14,
+    "correct": 14,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-clean",
+    "n": 8,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 3,
+    "defers": 0
+   },
+   {
+    "category": "code-log-secret",
+    "n": 8,
+    "correct": 4,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "everyday-chat",
+    "n": 9,
+    "correct": 8,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "harmless-name",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-hidden",
+    "n": 8,
+    "correct": 6,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-lookalike",
+    "n": 9,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 4,
+    "defers": 0
+   },
+   {
+    "category": "injection-overt",
+    "n": 6,
+    "correct": 2,
+    "leaks": 4,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "long",
+    "n": 8,
+    "correct": 5,
+    "leaks": 2,
+    "overblocks": 1,
+    "defers": 0
+   },
+   {
+    "category": "multilingual",
+    "n": 13,
+    "correct": 10,
+    "leaks": 2,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "personal-data",
+    "n": 29,
+    "correct": 12,
+    "leaks": 10,
+    "overblocks": 4,
+    "defers": 0
+   },
+   {
+    "category": "public-chatter",
+    "n": 5,
+    "correct": 4,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "scrub-term",
+    "n": 9,
+    "correct": 4,
+    "leaks": 5,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-credential",
+    "n": 11,
+    "correct": 10,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-lookalike",
+    "n": 12,
+    "correct": 10,
+    "leaks": 0,
+    "overblocks": 2,
+    "defers": 0
+   },
+   {
+    "category": "short",
+    "n": 7,
+    "correct": 4,
+    "leaks": 1,
+    "overblocks": 2,
+    "defers": 0
+   },
+   {
+    "category": "injection (all)",
+    "n": 23,
+    "correct": 13,
+    "leaks": 5,
+    "overblocks": 4,
+    "defers": 0
+   }
+  ]
+ }
+}
