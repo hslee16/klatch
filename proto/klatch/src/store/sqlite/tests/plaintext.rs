@@ -405,7 +405,10 @@ fn convert_when_free(path: &std::path::Path, mut on_refusal: impl FnMut()) -> us
             Ok(_) => return refusals,
             Err(e) => {
                 let said = e.to_string();
-                assert!(said.contains("another klatch"), "not a busy refusal: {said}");
+                assert!(
+                    said.contains("another klatch"),
+                    "not a busy refusal: {said}"
+                );
                 assert!(
                     crate::store::encrypt::is_plaintext(path),
                     "a refusal changed the store"
