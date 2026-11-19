@@ -937,3 +937,23 @@ mod multipart {
         assert!(!format!("{f:?}").contains("SECRETBYTES"));
     }
 }
+
+// ---- the judge adapter as the first stage of a cascade (#936) ----
+
+#[test]
+fn the_first_stage_reading_carries_the_pick_the_probability_and_the_confidence() {
+    use crate::domain::{Lean, Reading, ReadingTransport};
+    let f = FakeTransport::saying(Ok(judge_reply("deny", 0.9)));
+    let r = JevJudge::new(client(&f)).read("hi").unwrap();
+    assert_eq!(r.lean, Lean::Deny);
+    assert!((r.probability - 0.9).abs() < 1e-9, "{r:?}");
+    assert!(r.confidence > 0.0 && r.confidence <= 1.0);
+    let _: Reading = r;
+}
+
+#[test]
+fn a_failed_or_unknown_first_stage_answer_is_no_reading() {
+    use crate::domain::ReadingTransport;
+    let f = FakeTransport::saying(Err(JevTransportError::Network));
+    assert!(JevJudge::new(client(&f)).read("hi").is_err());
+}

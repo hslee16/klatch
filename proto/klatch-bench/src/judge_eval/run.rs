@@ -51,6 +51,8 @@ pub fn run_items(
             redaction_data_leaked,
             contested: item.contested,
             raw: judged.raw,
+            probability: judged.probability,
+            stage: judged.stage,
             latency_ms,
             tokens_in: judged.tokens_in,
             tokens_out: judged.tokens_out,

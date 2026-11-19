@@ -93,11 +93,17 @@ impl<T: JevTransport> EvalJudge for JevEval<T> {
         self.last.borrow_mut().take();
         let verdict = self.judge.judge(item);
         let reply = self.last.borrow_mut().take();
-        let raw = reply.as_deref().and_then(|r| {
+        let answer = reply.as_deref().and_then(|r| {
             let answers = parse_response(r, &self.model, &[judge_question()]).ok()?;
-            let a = answers.choice(JUDGE_QUESTION_ID)?;
-            Some((Truth::parse(&a.choice)?, a.confidence))
+            answers.choice(JUDGE_QUESTION_ID).cloned()
         });
+        let raw = answer
+            .as_ref()
+            .and_then(|a| Some((Truth::parse(&a.choice)?, a.confidence)));
+        let probability = answer
+            .as_ref()
+            .filter(|_| raw.is_some())
+            .map(|a| a.chosen_probability());
         let usage = reply
             .as_deref()
             .and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok())
@@ -115,6 +121,8 @@ impl<T: JevTransport> EvalJudge for JevEval<T> {
         Judged {
             verdict,
             raw,
+            probability,
+            stage: None,
             tokens_in: usage["input_tokens"].as_u64(),
             tokens_out: usage["output_tokens"].as_u64(),
             cost_usd: None,

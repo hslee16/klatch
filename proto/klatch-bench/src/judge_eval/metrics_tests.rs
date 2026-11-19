@@ -251,6 +251,8 @@ fn rec(truth: Truth, pick: Truth, conf: f64) -> Record {
         redaction_data_leaked: false,
         contested: false,
         raw: Some((pick, conf)),
+        probability: None,
+        stage: None,
         latency_ms: 1.0,
         tokens_in: None,
         tokens_out: None,

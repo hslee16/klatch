@@ -6,6 +6,8 @@
 //! Everything here is deterministic without a model: the metric code, the loader and the claude judge (behind a
 //! process-runner trait) are tested with fakes. Running a real model is a manual command.
 
+pub mod cascade;
+pub mod cascade_sim;
 pub mod claude;
 pub mod cli;
 pub mod corpus;

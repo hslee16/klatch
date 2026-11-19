@@ -138,6 +138,16 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
             )
         );
     }
+    if s.staged > 0 {
+        let _ = writeln!(
+            o,
+            "\nescalated to the second judge: {} of {} = {} (the rest were decided by the first judge; \
+latency and cost below are end to end, summed over the stages actually called)",
+            s.escalated,
+            s.staged,
+            rate_with_interval(s.escalated, s.staged)
+        );
+    }
     let ms = |x: Option<f64>| x.map_or_else(|| "-".to_string(), |v| format!("{v:.0} ms"));
     let _ = writeln!(
         o,
@@ -297,6 +307,7 @@ pub fn to_json(s: &Summary, records: &[Record], judge: &str, split: &str) -> Val
                 "id": r.id, "category": r.category, "truth": r.truth.word(), "verdict": called(r.verdict),
                 "leak": r.is_leak(), "data_leak": r.is_data_leak(), "overblock": r.is_overblock(),
                 "contested": r.contested,
+                "stage": r.stage, "probability": r.probability,
                 "pick": r.raw.map(|(t, _)| t.word()), "confidence": r.raw.map(|(_, c)| c),
                 "latency_ms": r.latency_ms, "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
                 "cost_usd": r.cost_usd, "error": r.error
@@ -316,6 +327,8 @@ pub fn to_json(s: &Summary, records: &[Record], judge: &str, split: &str) -> Val
             })).collect::<Vec<_>>(),
             "overblocks": s.overblocks, "overblock_rate": s.overblock_rate, "softened": s.softened,
             "defers": s.defers, "defer_rate": s.defer_rate, "errors": s.errors,
+            "staged": s.staged, "escalated": s.escalated,
+            "escalation_rate": (s.staged > 0).then(|| s.escalated as f64 / s.staged as f64),
             "accuracy": s.accuracy, "accuracy_decided": s.accuracy_decided,
             "per_verdict": per_verdict,
             "latency_p50_ms": s.latency_p50_ms, "latency_p99_ms": s.latency_p99_ms,
