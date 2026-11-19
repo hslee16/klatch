@@ -12,6 +12,11 @@ pub struct Judged {
     pub verdict: Verdict,
     /// The judge's own pick and its confidence in it, before any threshold (for calibration).
     pub raw: Option<(Truth, f64)>,
+    /// The probability of the judge's own pick, when it reports one apart from the confidence (Jev does; the
+    /// confidence of a choice is never above it).
+    pub probability: Option<f64>,
+    /// For a judge made of stages: which stage decided (`first` or `second`).
+    pub stage: Option<String>,
     pub tokens_in: Option<u64>,
     pub tokens_out: Option<u64>,
     pub cost_usd: Option<f64>,
@@ -24,6 +29,8 @@ impl Judged {
         Judged {
             verdict,
             raw: None,
+            probability: None,
+            stage: None,
             tokens_in: None,
             tokens_out: None,
             cost_usd: None,

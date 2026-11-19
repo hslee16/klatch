@@ -172,3 +172,160 @@ fn the_rules_judge_runs_on_the_hard_corpus_by_origin() {
         "design ids start with h"
     );
 }
+
+// the cascade (#936)
+
+#[test]
+fn a_cascade_names_two_stages_and_only_judges_that_report_a_pick() {
+    let o = parse(&["--judge", "cascade:jev:jev-1.14.0:0.9,claude:sonnet"]).unwrap();
+    assert_eq!(
+        o.judge,
+        JudgeSpec::Cascade {
+            first: Box::new(JudgeSpec::Jev {
+                model: Some("jev-1.14.0".into()),
+                threshold: Some(0.9)
+            }),
+            second: Box::new(JudgeSpec::Claude("sonnet".into())),
+        }
+    );
+    for bad in [
+        "cascade:",
+        "cascade:claude:sonnet",
+        "cascade:claude:sonnet,",
+        "cascade:,claude:sonnet",
+        "cascade:rules,claude:sonnet",
+        "cascade:null,claude:sonnet",
+        "cascade:claude:haiku,rules",
+        "cascade:claude:a,claude:b,claude:c",
+        "cascade:cascade:claude:a,claude:b,claude:c",
+        "cascade:gpt,claude:sonnet",
+    ] {
+        assert!(parse(&["--judge", bad]).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn the_policy_defaults_are_conservative_and_each_knob_can_be_set() {
+    let o = parse(&["--judge", "cascade:claude:haiku,claude:sonnet"]).unwrap();
+    let p = o.cascade_policy().unwrap();
+    assert_eq!(p, klatch::domain::CascadePolicy::default());
+    assert_eq!(
+        p.redact_threshold, None,
+        "a redact is escalated unless asked"
+    );
+    let o = parse(&[
+        "--judge",
+        "cascade:claude:haiku,claude:sonnet",
+        "--deny-threshold",
+        "0.8",
+        "--allow-threshold",
+        "0.99",
+        "--redact-threshold",
+        "0.95",
+    ])
+    .unwrap();
+    let p = o.cascade_policy().unwrap();
+    assert_eq!(
+        (p.deny_threshold, p.allow_threshold, p.redact_threshold),
+        (Some(0.8), Some(0.99), Some(0.95))
+    );
+}
+
+#[test]
+fn the_first_judges_threshold_in_the_spec_is_the_deny_threshold_unless_a_flag_says_otherwise() {
+    let o = parse(&["--judge", "cascade:jev:jev-1.14.0:0.9,claude:sonnet"]).unwrap();
+    let p = o.cascade_policy().unwrap();
+    assert_eq!(p.deny_threshold, Some(0.9));
+    assert!(
+        p.allow_threshold >= p.deny_threshold,
+        "an allow is never easier than a deny"
+    );
+    let o = parse(&[
+        "--judge",
+        "cascade:jev:jev-1.14.0:0.9,claude:sonnet",
+        "--deny-threshold",
+        "0.7",
+    ])
+    .unwrap();
+    assert_eq!(o.cascade_policy().unwrap().deny_threshold, Some(0.7));
+    // an allow default never falls below the deny threshold taken from the spec
+    let o = parse(&["--judge", "cascade:jev:jev-1.14.0:0.99,claude:sonnet"]).unwrap();
+    assert_eq!(o.cascade_policy().unwrap().allow_threshold, Some(0.99));
+}
+
+#[test]
+fn bad_thresholds_and_thresholds_on_a_single_judge_are_refused() {
+    assert!(
+        parse(&[
+            "--judge",
+            "cascade:claude:a,claude:b",
+            "--deny-threshold",
+            "1.5"
+        ])
+        .and_then(|o| o.cascade_policy().map(|_| ()))
+        .is_err()
+    );
+    assert!(
+        parse(&[
+            "--judge",
+            "cascade:claude:a,claude:b",
+            "--allow-threshold",
+            "x"
+        ])
+        .is_err()
+    );
+    let e = parse(&["--judge", "rules", "--deny-threshold", "0.9"]).unwrap_err();
+    assert!(e.contains("cascade"), "{e}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cascade_runs_end_to_end_with_a_fake_claude_and_records_the_stage_and_the_summed_cost() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("klatch-cascade-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("claude");
+    let reply = serde_json::json!({
+        "type": "result", "subtype": "success", "is_error": false, "result": "",
+        "structured_output": {"verdict": "deny", "confidence": 0.97, "reason": "x"},
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 10, "output_tokens": 4}
+    });
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\ncat >/dev/null\nprintf '%s' '{reply}'\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let o = parse(&[
+        "--judge",
+        "cascade:claude:haiku,claude:sonnet",
+        "--limit",
+        "5",
+        "--claude",
+        script.to_str().unwrap(),
+    ])
+    .unwrap();
+    let (summary, records) = run(&o).unwrap();
+    assert_eq!(summary.n, 5);
+    // the fake denies with 0.97 every time, which the default policy takes at the first stage
+    assert!(records.iter().all(|r| r.stage.as_deref() == Some("first")));
+    assert_eq!((summary.staged, summary.escalated), (5, 0));
+    assert!(
+        (summary.cost_usd.unwrap() - 0.05).abs() < 1e-9,
+        "{:?}",
+        summary.cost_usd
+    );
+    // with a deny threshold above 0.97 every item is escalated and both stages are paid for
+    let mut o2 = o.clone();
+    o2.deny_threshold = Some(0.99);
+    let (summary, records) = run(&o2).unwrap();
+    assert!(records.iter().all(|r| r.stage.as_deref() == Some("second")));
+    assert_eq!(summary.escalated, 5);
+    assert!(
+        (summary.cost_usd.unwrap() - 0.10).abs() < 1e-9,
+        "{:?}",
+        summary.cost_usd
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -25,7 +25,9 @@
 //! else and never widen anything. The API key is read from `TYPESAFE_API_KEY` at call time and lives only in an
 //! [`ApiKey`], whose Debug and Display never show it.
 
-use crate::domain::{HostedTransport, LabelChain, Verdict, label_below_ceiling};
+use crate::domain::{
+    HostedTransport, LabelChain, Lean, Reading, ReadingTransport, Verdict, label_below_ceiling,
+};
 use std::fmt;
 
 pub mod answer;
@@ -310,18 +312,45 @@ impl<T: JevTransport> JevJudge<T> {
     }
 }
 
-impl<T: JevTransport> HostedTransport for JevJudge<T> {
-    fn screen(&self, text: &str) -> Result<Verdict, String> {
+impl<T: JevTransport> JevJudge<T> {
+    /// Ask the one judge question about `text` and return the choice answer.
+    fn ask_choice(&self, text: &str) -> Result<ChoiceAnswer, String> {
         let q = judge_question();
         let state = Entry::object(vec![(Key::Fixed("message"), Entry::cleared_text(text))]);
         let answers = self
             .client
             .ask(&state, std::slice::from_ref(&q))
             .map_err(|e| e.to_string())?;
-        let a = answers
+        answers
             .choice(JUDGE_QUESTION_ID)
-            .ok_or("no verdict answer")?;
-        Ok(judge_verdict(a, self.client.config().threshold()))
+            .cloned()
+            .ok_or_else(|| "no verdict answer".to_string())
+    }
+}
+
+impl<T: JevTransport> HostedTransport for JevJudge<T> {
+    fn screen(&self, text: &str) -> Result<Verdict, String> {
+        let a = self.ask_choice(text)?;
+        Ok(judge_verdict(&a, self.client.config().threshold()))
+    }
+}
+
+/// Jev as the first stage of a cascade (#936): the pick, the probability of the pick and the confidence, before any
+/// threshold (the cascade policy applies its own). An unknown choice is an error, which is no reading.
+impl<T: JevTransport> ReadingTransport for JevJudge<T> {
+    fn read(&self, text: &str) -> Result<Reading, String> {
+        let a = self.ask_choice(text)?;
+        let lean = match a.choice.as_str() {
+            "allow" => Lean::Allow,
+            "redact" => Lean::Redact,
+            "deny" => Lean::Deny,
+            _ => return Err("no usable verdict choice".to_string()),
+        };
+        Ok(Reading {
+            lean,
+            probability: a.chosen_probability(),
+            confidence: a.confidence,
+        })
     }
 }
 

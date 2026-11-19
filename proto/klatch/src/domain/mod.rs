@@ -7,6 +7,7 @@ mod asker_gone;
 mod asks;
 mod board;
 mod card;
+mod cascade_judge;
 mod claim_age;
 mod convention;
 mod convention_words;
@@ -56,6 +57,10 @@ pub use tasks::{
     Task, WORKING_PREFIX, open_tasks,
 };
 pub mod budget;
+pub use cascade_judge::{
+    CascadeJudge, CascadePolicy, Decided, FIRST_STAGE_REDACTION, GatedReader, Lean, Reader,
+    Reading, ReadingTransport, Stage,
+};
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
 pub use convention::{CONVENTION_MARKER, convention, convention_in, subagent_brief};
 pub use convention_words::{CONVENTION_WORDS, ConventionWord};

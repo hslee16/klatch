@@ -180,3 +180,15 @@ full claude:sonnet and claude:opus runs on dev and test (#923) predate it.
 
 On dev, `contested` marks short-008 and `name_spans` tags pii-001, pii-008, pii-011, pii-016, pii-018, pii-020 and
 pii-023. Dev items are not frozen, but dev runs recorded before this change are equally not comparable.
+
+## Cascade results and the simulator (#936)
+
+A cascade runs a fast first judge (Jev) and sends what it does not decide confidently to a stronger one (Claude);
+the second verdict is final. Run it with `--judge cascade:jev:jev-1.14.0:0.9,claude:sonnet` (flags
+`--deny-threshold`, `--allow-threshold`, `--redact-threshold`), or work out the same figures offline from two
+recorded runs with `klatch-bench judge-eval cascade-sim --first jev-dev.json --second sonnet-dev.json`, which prints
+accuracy, strict leaks, over-blocks, escalation rate, mean latency and cost with Wilson intervals for each threshold
+pair, and calls no judge. The simulation reuses the second judge's recorded verdicts and is not a substitute for a real
+run. Choose thresholds on dev and score on test once. Both files must be from the same corpus and split (the
+simulator refuses otherwise). No cascade figures are recorded here yet; the policy, its rationale and the limits are
+in the design item for #936.

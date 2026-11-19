@@ -1,21 +1,26 @@
 //! `klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> [--split dev|test]
 //! [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] [--corpus FILE]
-//! [--origin design|search] [--scrub FILE] [--claude PATH]`
+//! [--origin design|search] [--scrub FILE] [--claude PATH]`, and
+//! `--judge cascade:<first>,<second>` with `[--deny-threshold F] [--allow-threshold F] [--redact-threshold F]` (#936);
+//! `klatch-bench judge-eval cascade-sim` combines two recorded result files offline (see `cascade_sim`).
 //!
 //! A manual command: the claude judge costs tokens and the Jev judge needs a key, so this never runs in CI or in
 //! the gate. The null and rules judges are free and run in the unit tests.
 
+use crate::judge_eval::cascade::CascadeEval;
 use crate::judge_eval::claude::{ClaudeConfig, ClaudeJudge, RealRunner};
 use crate::judge_eval::corpus::{self, Split};
 use crate::judge_eval::judges::{EvalJudge, RulesJudge, Seam, parse_scrub};
 use crate::judge_eval::metrics::{Record, Summary, summarize};
 use crate::judge_eval::report;
 use crate::judge_eval::run::run_items;
-use klatch::domain::NullJudge;
+use klatch::domain::{CascadePolicy, NullJudge};
 
 pub const USAGE: &str = "usage: klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> \
 [--split dev|test] [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] \
-[--corpus FILE] [--origin design|search] [--scrub FILE] [--claude PATH]";
+[--corpus FILE] [--origin design|search] [--scrub FILE] [--claude PATH]
+       --judge cascade:<first>,<second> takes [--deny-threshold F] [--allow-threshold F] [--redact-threshold F]
+       klatch-bench judge-eval cascade-sim --first FIRST.json --second SECOND.json [--thresholds LIST] [--allow-thresholds LIST]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JudgeSpec {
@@ -26,10 +31,34 @@ pub enum JudgeSpec {
         model: Option<String>,
         threshold: Option<f64>,
     },
+    /// Two judges that report a pick (Jev or claude): the first for what it is sure of, the second for the rest.
+    Cascade {
+        first: Box<JudgeSpec>,
+        second: Box<JudgeSpec>,
+    },
 }
 
 impl JudgeSpec {
     fn parse(s: &str) -> Result<JudgeSpec, String> {
+        if let Some(pair) = s.strip_prefix("cascade:") {
+            let stages: Vec<&str> = pair.split(',').collect();
+            let [first, second] = stages.as_slice() else {
+                return Err(format!(
+                    "cascade needs exactly two judges: cascade:<first>,<second>, got {s:?}"
+                ));
+            };
+            let stage = |t: &str| match JudgeSpec::parse(t)? {
+                j @ (JudgeSpec::Claude(_) | JudgeSpec::Jev { .. }) => Ok(Box::new(j)),
+                _ => Err(format!(
+                    "cascade stage {t:?}: a stage must be claude:<model> or jev:<model>[:<threshold>] (the first \
+                     reports the pick the policy reads; null and rules report none)"
+                )),
+            };
+            return Ok(JudgeSpec::Cascade {
+                first: stage(first)?,
+                second: stage(second)?,
+            });
+        }
         let parts: Vec<&str> = s.split(':').collect();
         match parts.as_slice() {
             ["null"] => Ok(JudgeSpec::Null),
@@ -71,6 +100,10 @@ pub struct Options {
     pub claude: String,
     /// Hard corpus only: score just the items of one origin.
     pub origin: Option<corpus::Origin>,
+    /// Cascade only (#936): see [`Options::cascade_policy`].
+    pub deny_threshold: Option<f64>,
+    pub allow_threshold: Option<f64>,
+    pub redact_threshold: Option<f64>,
 }
 
 fn value(args: &mut dyn Iterator<Item = String>, flag: &str) -> Result<String, String> {
@@ -99,6 +132,9 @@ impl Options {
             scrub: None,
             claude: "claude".into(),
             origin: None,
+            deny_threshold: None,
+            allow_threshold: None,
+            redact_threshold: None,
         };
         while let Some(a) = args.next() {
             let a = a.as_str();
@@ -140,11 +176,47 @@ impl Options {
                             .ok_or("--origin is design or search")?,
                     );
                 }
+                "--deny-threshold" => o.deny_threshold = Some(number(&value(&mut args, a)?, a)?),
+                "--allow-threshold" => o.allow_threshold = Some(number(&value(&mut args, a)?, a)?),
+                "--redact-threshold" => {
+                    o.redact_threshold = Some(number(&value(&mut args, a)?, a)?);
+                }
                 other => return Err(format!("unknown option {other}")),
             }
         }
         o.judge = judge.ok_or("--judge is required")?;
+        let set = o.deny_threshold.is_some()
+            || o.allow_threshold.is_some()
+            || o.redact_threshold.is_some();
+        if set && !matches!(o.judge, JudgeSpec::Cascade { .. }) {
+            return Err(
+                "--deny-threshold, --allow-threshold and --redact-threshold apply to a cascade only"
+                    .into(),
+            );
+        }
         Ok(o)
+    }
+
+    /// The cascade policy: each flag as given; without `--deny-threshold` the first judge's own threshold in the spec
+    /// (`jev:<model>:0.9`), else the documented default; without `--allow-threshold` the default, raised to the deny
+    /// threshold when that is higher (an allow is never easier than a deny); a redact is escalated unless
+    /// `--redact-threshold` is given.
+    pub fn cascade_policy(&self) -> Result<CascadePolicy, String> {
+        let default = CascadePolicy::default();
+        let from_spec = match &self.judge {
+            JudgeSpec::Cascade { first, .. } => match first.as_ref() {
+                JudgeSpec::Jev { threshold, .. } => *threshold,
+                _ => None,
+            },
+            _ => None,
+        };
+        let deny = self.deny_threshold.or(from_spec).or(default.deny_threshold);
+        let allow = self.allow_threshold.or_else(|| {
+            default
+                .allow_threshold
+                .map(|a| deny.map_or(a, |d| a.max(d)))
+        });
+        CascadePolicy::new(deny, allow, self.redact_threshold)
     }
 }
 
@@ -220,7 +292,20 @@ fn workdir() -> Result<std::path::PathBuf, String> {
 }
 
 pub fn build_judge(o: &Options, scrub: &[(String, String)]) -> Result<Box<dyn EvalJudge>, String> {
-    match &o.judge {
+    build_spec(&o.judge, o, scrub)
+}
+
+fn build_spec(
+    spec: &JudgeSpec,
+    o: &Options,
+    scrub: &[(String, String)],
+) -> Result<Box<dyn EvalJudge>, String> {
+    match spec {
+        JudgeSpec::Cascade { first, second } => Ok(Box::new(CascadeEval::new(
+            build_spec(first, o, scrub)?,
+            build_spec(second, o, scrub)?,
+            o.cascade_policy()?,
+        ))),
         JudgeSpec::Null => Ok(Box::new(Seam::new("null", NullJudge))),
         JudgeSpec::Rules => Ok(Box::new(Seam::new(
             "rules",
@@ -285,14 +370,14 @@ pub fn run(o: &Options) -> Result<(Summary, Vec<Record>), String> {
     let judge = build_judge(o, &scrub)?;
     let started = std::time::Instant::now();
     let mut clock = || started.elapsed().as_secs_f64() * 1000.0;
-    let talk = matches!(o.judge, JudgeSpec::Claude(_) | JudgeSpec::Jev { .. });
+    let talk = !matches!(o.judge, JudgeSpec::Null | JudgeSpec::Rules);
     let mut progress = |done: usize, total: usize| {
         if talk {
             eprintln!("judge-eval: {done}/{total}");
         }
     };
     let records = run_items(judge.as_ref(), &chosen, &mut clock, &mut progress);
-    if matches!(o.judge, JudgeSpec::Claude(_)) {
+    if talk {
         let _ = std::fs::remove_dir_all(
             std::env::temp_dir().join(format!("klatch-judge-eval-{}", std::process::id())),
         );
@@ -300,17 +385,29 @@ pub fn run(o: &Options) -> Result<(Summary, Vec<Record>), String> {
     Ok((summarize(&records, o.target_leak), records))
 }
 
-fn judge_name(o: &Options) -> String {
-    match &o.judge {
+fn spec_name(spec: &JudgeSpec) -> String {
+    match spec {
         JudgeSpec::Null => "null".into(),
         JudgeSpec::Rules => "rules".into(),
         JudgeSpec::Claude(m) => format!("claude:{m}"),
         JudgeSpec::Jev { model, .. } => format!("jev:{}", model.as_deref().unwrap_or("?")),
+        JudgeSpec::Cascade { first, second } => {
+            format!("cascade:{},{}", spec_name(first), spec_name(second))
+        }
     }
+}
+
+fn judge_name(o: &Options) -> String {
+    spec_name(&o.judge)
 }
 
 /// The subcommand: print the report, write the results file, return the exit code.
 pub fn main(args: impl Iterator<Item = String>) -> i32 {
+    let mut args = args.peekable();
+    if args.peek().map(String::as_str) == Some("cascade-sim") {
+        args.next();
+        return crate::judge_eval::cascade_sim::main(args);
+    }
     let o = match Options::parse(args) {
         Ok(o) => o,
         Err(e) => {

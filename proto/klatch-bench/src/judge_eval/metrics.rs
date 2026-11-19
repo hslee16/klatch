@@ -67,6 +67,9 @@ pub struct Record {
     /// The item's label is disputed; it is excluded from the headline figures.
     pub contested: bool,
     pub raw: Option<(Truth, f64)>,
+    pub probability: Option<f64>,
+    /// For a cascade: the stage that decided (`first` or `second`).
+    pub stage: Option<String>,
     pub latency_ms: f64,
     pub tokens_in: Option<u64>,
     pub tokens_out: Option<u64>,
@@ -194,6 +197,9 @@ pub struct Summary {
     pub injection: CategoryRow,
     /// The contested items, in the order judged.
     pub contested: Vec<ContestedRow>,
+    /// Scored items judged by a judge made of stages (a cascade), and how many of them were escalated to the second.
+    pub staged: usize,
+    pub escalated: usize,
 }
 
 fn rate(part: usize, whole: usize) -> f64 {
@@ -406,6 +412,8 @@ pub fn summarize(all: &[Record], target_leak: f64) -> Summary {
         by_category,
         injection: category_row("injection (all)", &injected),
         contested,
+        staged: count(&|r| r.stage.is_some()),
+        escalated: count(&|r| r.stage.as_deref() == Some("second")),
     }
 }
 

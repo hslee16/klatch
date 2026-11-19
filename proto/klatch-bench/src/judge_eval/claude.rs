@@ -331,6 +331,8 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
         Judged {
             verdict,
             raw: Some((p.pick, p.confidence)),
+            probability: None,
+            stage: None,
             tokens_in: p.tokens_in,
             tokens_out: p.tokens_out,
             cost_usd: p.cost_usd,
