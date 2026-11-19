@@ -48,6 +48,7 @@ mod rate_limit;
 mod receipt;
 mod refusal_hints;
 mod reviewer;
+mod room_canary;
 mod room_capability;
 mod room_grantor;
 mod room_require;
