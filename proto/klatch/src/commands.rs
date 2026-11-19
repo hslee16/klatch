@@ -1119,16 +1119,16 @@ fn digest_text(d: &klatch::gateway::Digest) -> String {
     text
 }
 
-/// The notes on rooms the guard would not show, and their printed size.
+/// The notes on rooms the guard would not show, cut to a fixed budget with a count of the rest (#612), and their
+/// printed size.
 fn refused_text(d: &klatch::gateway::Digest) -> (String, usize) {
-    let mut text = String::new();
-    for r in &d.refused {
-        text.push_str(&format!(
-            "[klatch] room {} not shown: {}\n",
-            r.room,
-            flat(&r.reason)
-        ));
-    }
+    let pairs: Vec<(&str, &str)> = d
+        .refused
+        .iter()
+        .map(|r| (r.room.as_str(), r.reason.as_str()))
+        .collect();
+    let text =
+        klatch::domain::refused_lines_within(&pairs, klatch::domain::budget::REFUSED_MAX_BYTES);
     let n = klatch::domain::printed_len(&text);
     (text, n)
 }

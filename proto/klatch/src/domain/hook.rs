@@ -321,6 +321,28 @@ pub fn cut_lines_to_fit(text: &str, budget: usize, trailer: impl Fn(usize) -> St
     out
 }
 
+/// The line that counts refused rooms a session start left out (#612).
+fn refused_trailer(n: usize) -> String {
+    format!("[klatch] {n} more refused rooms not shown]\n")
+}
+
+/// One `[klatch] room X not shown: reason` line per refused room, cut by whole lines to `budget` printed bytes with a
+/// count of the rooms left out (#612). The trailer is inside the budget; a budget too small for even the trailer
+/// prints the trailer alone, so the count is never lost.
+pub fn refused_lines_within(refused: &[(&str, &str)], budget: usize) -> String {
+    let text: String = refused
+        .iter()
+        .map(|(room, reason)| {
+            format!(
+                "[klatch] room {room} not shown: {}\n",
+                crate::domain::text::flat(reason)
+            )
+        })
+        .collect();
+    let reserve = printed_len(&refused_trailer(usize::MAX));
+    cut_lines_to_fit(&text, budget.saturating_sub(reserve), refused_trailer)
+}
+
 /// How many leading units fit in `budget` bytes; the budget shrinks by what they take. Never splits a unit.
 fn fit(units: &[String], budget: &mut usize) -> usize {
     let mut kept = 0;
@@ -1404,5 +1426,42 @@ mod tests {
         assert_eq!(render_hook_within(&rooms, 0, DIGEST_MIN_BYTES - 1), "");
         let out = render_hook_within(&rooms, 0, DIGEST_MIN_BYTES);
         assert!(out.contains("5 more rooms have news"), "{out}");
+    }
+
+    #[test]
+    fn refused_room_lines_stay_inside_their_budget_with_a_count_of_the_rest() {
+        let refused: Vec<(String, String)> = (0..200)
+            .map(|i| (format!("room{i}"), "not a member of that scope".to_string()))
+            .collect();
+        let pairs: Vec<(&str, &str)> = refused
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        for budget in [0, 50, 200, 1000, 3000] {
+            let out = refused_lines_within(&pairs, budget);
+            assert!(
+                printed_len(&out) <= budget.max(printed_len(&refused_trailer(200))),
+                "budget {budget}: {}",
+                printed_len(&out)
+            );
+        }
+        let out = refused_lines_within(&pairs, 1000);
+        assert!(out.contains("[klatch] room room0 not shown: "), "{out}");
+        let kept = out.matches("not shown: ").count();
+        assert!(kept < 200);
+        assert!(
+            out.contains(&format!(
+                "[klatch] {} more refused rooms not shown]",
+                200 - kept
+            )),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn few_refused_rooms_print_whole_with_no_trailer() {
+        let out = refused_lines_within(&[("a", "why\nnot")], 1000);
+        assert_eq!(out, "[klatch] room a not shown: why not\n");
+        assert_eq!(refused_lines_within(&[], 1000), "");
     }
 }
