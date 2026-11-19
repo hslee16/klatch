@@ -127,3 +127,48 @@ fn the_null_and_rules_judges_run_end_to_end_on_the_committed_corpus() {
         rules.0.confusion[1].iter().sum::<usize>() + rules.0.confusion[2].iter().sum::<usize>();
     assert!(rules.0.leaks < blocked, "{} of {blocked}", rules.0.leaks);
 }
+
+#[test]
+fn origin_selects_design_or_search_items_and_is_checked() {
+    assert_eq!(parse(&["--judge", "null"]).unwrap().origin, None);
+    assert_eq!(
+        parse(&["--judge", "null", "--origin", "design"])
+            .unwrap()
+            .origin,
+        Some(corpus::Origin::Design)
+    );
+    assert_eq!(
+        parse(&["--judge", "null", "--origin", "search"])
+            .unwrap()
+            .origin,
+        Some(corpus::Origin::Search)
+    );
+    assert!(
+        parse(&["--judge", "null", "--origin", "all"])
+            .unwrap_err()
+            .contains("--origin")
+    );
+}
+
+#[test]
+fn the_rules_judge_runs_on_the_hard_corpus_by_origin() {
+    let path = corpus::default_hard_path();
+    let path = path.to_str().unwrap();
+    let all = run(&parse(&["--judge", "rules", "--corpus", path]).unwrap()).unwrap();
+    let design =
+        run(&parse(&["--judge", "rules", "--corpus", path, "--origin", "design"]).unwrap())
+            .unwrap();
+    let search =
+        run(&parse(&["--judge", "rules", "--corpus", path, "--origin", "search"]).unwrap())
+            .unwrap();
+    assert!(design.0.n > 0 && search.0.n > 0);
+    assert_eq!(design.0.n + search.0.n, all.0.n);
+    assert!(
+        search.1.iter().all(|r| r.id.starts_with('x')),
+        "search ids start with x"
+    );
+    assert!(
+        design.1.iter().all(|r| r.id.starts_with('h')),
+        "design ids start with h"
+    );
+}

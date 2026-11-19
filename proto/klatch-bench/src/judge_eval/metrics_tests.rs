@@ -25,6 +25,7 @@ fn item(id: &str, category: &str, truth: Truth) -> Item {
         spans,
         name_spans: vec![],
         contested: false,
+        origin: None,
     }
 }
 

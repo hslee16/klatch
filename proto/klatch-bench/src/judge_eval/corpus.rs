@@ -108,6 +108,31 @@ impl Split {
     }
 }
 
+/// Where an item came from (the hard corpus, #931): written to be hard (`design`), or kept because a reference judge
+/// got it wrong (`search`), which biases those items against that judge. The first corpus carries no origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Origin {
+    Design,
+    Search,
+}
+
+impl Origin {
+    pub fn parse(s: &str) -> Option<Origin> {
+        match s {
+            "design" => Some(Origin::Design),
+            "search" => Some(Origin::Search),
+            _ => None,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Origin::Design => "design",
+            Origin::Search => "search",
+        }
+    }
+}
+
 /// One labelled item, with its placeholders expanded in `text` and `spans`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -132,6 +157,8 @@ pub struct Item {
     pub name_spans: Vec<String>,
     /// The label is open to dispute: the item is scored and shown, but left out of every headline figure.
     pub contested: bool,
+    /// Hard corpus only: how the item was found.
+    pub origin: Option<Origin>,
 }
 
 impl Item {
@@ -145,7 +172,7 @@ impl Item {
     }
 }
 
-const FIELDS: [&str; 11] = [
+const FIELDS: [&str; 12] = [
     "id",
     "split",
     "category",
@@ -157,6 +184,7 @@ const FIELDS: [&str; 11] = [
     "spans",
     "name_spans",
     "contested",
+    "origin",
 ];
 
 fn field<'a>(o: &'a serde_json::Map<String, Value>, name: &str) -> Result<&'a str, String> {
@@ -218,6 +246,12 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("contested must be true or false".into()),
     };
+    let origin = match o.get("origin") {
+        None => None,
+        Some(_) => {
+            Some(Origin::parse(field(o, "origin")?).ok_or("origin must be design or search")?)
+        }
+    };
     let text = expand(&id, &raw_text)?;
     let spans = raw_spans
         .iter()
@@ -264,6 +298,7 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
         spans,
         name_spans,
         contested,
+        origin,
     })
 }
 
@@ -312,6 +347,75 @@ pub fn default_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("judge-eval/corpus.jsonl")
 }
 
+/// The hard corpus (#931): selected with `--corpus`.
+pub fn default_hard_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("judge-eval/corpus-hard.jsonl")
+}
+
+/// The digest of the hard corpus's frozen test split (`judge-eval/README-hard.md`).
+pub const FROZEN_HARD_TEST_DIGEST: &str = "337345ebf37b93f5";
+
+/// The hard corpus's dev and test sizes.
+pub const HARD_SPLIT_SIZES: (usize, usize) = (161, 110);
+
+/// Reshape a generated value, as `{{fake:KIND|T}}` asks, so the hard corpus can hold an encoded, spaced or split
+/// secret without storing it: `b64` (standard base64), `hex` (lower-case hex of the bytes), `pct` (every byte
+/// percent-encoded), `rev` (reversed), `sp4` (a space after every four characters), `sp1` (a space between every
+/// character), `zw` (a zero-width space after every three characters), `cut:A:B` (characters A to B, B optional).
+pub fn transform(t: &str, v: &str) -> Result<String, String> {
+    let chars: Vec<char> = v.chars().collect();
+    let grouped = |n: usize, sep: &str| {
+        chars
+            .chunks(n)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(sep)
+    };
+    Ok(match t {
+        "b64" => base64(v.as_bytes()),
+        "hex" => v.bytes().map(|b| format!("{b:02x}")).collect(),
+        "pct" => v.bytes().map(|b| format!("%{b:02X}")).collect(),
+        "rev" => chars.iter().rev().collect(),
+        "sp4" => grouped(4, " "),
+        "sp1" => grouped(1, " "),
+        "zw" => grouped(3, "\u{200b}"),
+        _ => {
+            let bad = || format!("unknown transform {t:?}");
+            let rest = t.strip_prefix("cut:").ok_or_else(bad)?;
+            let (a, b) = rest.split_once(':').ok_or_else(bad)?;
+            let a: usize = a.parse().map_err(|_| bad())?;
+            let b: usize = if b.is_empty() {
+                chars.len()
+            } else {
+                b.parse().map_err(|_| bad())?
+            };
+            if a > b {
+                return Err(bad());
+            }
+            let b = b.min(chars.len());
+            chars[a.min(b)..b].iter().collect()
+        }
+    })
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
+        for k in 0..4 {
+            if k <= c.len() {
+                out.push(A[((n >> (18 - 6 * k)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 pub fn default_scrub_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("judge-eval/scrub.txt")
 }
@@ -345,6 +449,11 @@ pub fn test_digest(items: &[Item]) -> u64 {
         buf.push('\u{1d}');
         buf.push_str(&i.name_spans.join("\u{1f}"));
         buf.push(if i.contested { 'c' } else { '-' });
+        // the first corpus has no origin, so its digest is what it was before the field existed
+        if let Some(o) = i.origin {
+            buf.push('\u{1f}');
+            buf.push_str(o.word());
+        }
         buf.push('\u{1e}');
     }
     fnv(buf.as_bytes())
@@ -384,7 +493,7 @@ const HEX: &str = "0123456789abcdef";
 
 /// The placeholder kinds and what each expands to. Secret kinds first, then look-alikes that are not secrets but
 /// would trip a conservative scanner if stored literally.
-pub const KINDS: [&str; 19] = [
+pub const KINDS: [&str; 20] = [
     "aws",
     "aws-secret",
     "github",
@@ -401,6 +510,7 @@ pub const KINDS: [&str; 19] = [
     "hex32",
     "bearer",
     "password",
+    "passphrase",
     "sri",
     "b64blob",
     "ssh-pub",
@@ -445,6 +555,15 @@ fn generate(kind: &str, s: &mut Stream) -> Option<String> {
             let core = s.take(ALNUM, 14);
             format!("{}{}{}", &core[..7], s.take("!#%*-_", 2), &core[7..])
         }
+        "passphrase" => {
+            const WORDS: [&str; 16] = [
+                "Marigold", "Tundra", "Harbor", "Lantern", "Copper", "Juniper", "Falcon", "Meadow",
+                "Quartz", "Saffron", "Willow", "Ember", "Glacier", "Orchid", "Thistle", "Cobalt",
+            ];
+            let w = |s: &mut Stream| WORDS[(s.next() % 16) as usize];
+            let (a, b) = (w(s), w(s));
+            format!("{a}-{b}-{}{}", s.take(DIGITS, 4), s.take("!#%*", 1))
+        }
         "sri" => format!("sha384-{}", s.take(B64, 64)),
         "b64blob" => format!("{}{}", s.take(UPPER, 2), s.take(B64, 58)),
         "ssh-pub" => format!("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI{}", s.take(B64, 43)),
@@ -453,7 +572,8 @@ fn generate(kind: &str, s: &mut Stream) -> Option<String> {
 }
 
 /// Replace every `{{fake:KIND}}` or `{{fake:KIND:N}}` in `raw` with its generated string. The same id, kind and
-/// index always give the same string; `{{fake:KIND}}` is index 1.
+/// index always give the same string; `{{fake:KIND}}` is index 1. `{{fake:KIND:N|T|...}}` reshapes it with
+/// [`transform`]s, left to right.
 pub fn expand(id: &str, raw: &str) -> Result<String, String> {
     const OPEN: &str = "{{fake:";
     let mut out = String::with_capacity(raw.len());
@@ -464,7 +584,8 @@ pub fn expand(id: &str, raw: &str) -> Result<String, String> {
         let end = after
             .find("}}")
             .ok_or_else(|| format!("unclosed placeholder in {id}"))?;
-        let inner = &after[..end];
+        let mut pipes = after[..end].split('|');
+        let inner = pipes.next().unwrap_or_default();
         let (kind, n) = match inner.split_once(':') {
             None => (inner, 1),
             Some((k, n)) => (
@@ -476,8 +597,11 @@ pub fn expand(id: &str, raw: &str) -> Result<String, String> {
             ),
         };
         let mut s = Stream::new(&format!("{id}|{kind}|{n}"));
-        let value = generate(kind, &mut s)
+        let mut value = generate(kind, &mut s)
             .ok_or_else(|| format!("unknown placeholder kind {kind:?} in {id}"))?;
+        for t in pipes {
+            value = transform(t, &value).map_err(|e| format!("{e} in {id}"))?;
+        }
         out.push_str(&value);
         rest = &after[end + 2..];
     }
@@ -525,3 +649,7 @@ pub fn looks_like_real_credential(text: &str) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "corpus_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "corpus_hard_tests.rs"]
+mod hard_tests;
