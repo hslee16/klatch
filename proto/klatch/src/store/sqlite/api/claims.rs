@@ -78,6 +78,10 @@ impl ClaimStore for SqliteStore {
         self.aged_claims(room, owner, now)
     }
 
+    fn wait_cycles(&self, room: &str, now: i64) -> Result<Vec<Vec<String>>> {
+        self.standing_wait_cycles(room, now)
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,

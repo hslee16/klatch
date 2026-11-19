@@ -1,0 +1,276 @@
+//! The reference rules-only mediator (#271, DESIGN section 24, Q42): a deterministic member, no model, that turns the
+//! stuck-case events (`StuckEvent`) into proposals. It only proposes.
+//!
+//! This file is the whole decision, as a pure function of structured facts. It cannot read what a message says: a
+//! stuck case reaches it as a `StuckEvent`, which holds ids, member names and numbers and no text, so no wording of an
+//! ask can steer it (messages are data, DESIGN 24.1 decision 8). Every text it produces is a fixed template filled
+//! with those numbers and names.
+//!
+//! What a proposal can be: a post in the watched room that names who should yield by a fixed rule (the first name in
+//! the cycle, so nobody negotiates; for a claim deadlock klatch's own rule, that the member whose claim attempt closed
+//! the cycle yields, stays authoritative), or that an ask is stale or that nobody here declined into capability; and,
+//! for a cycle through asks, a room for the members to settle it in with an invite to each. It never cancels, releases,
+//! grants or clears anything: those are not in this function's vocabulary, and it holds no admin act.
+
+use crate::domain::{MemberInfo, StuckEvent, valid_name};
+
+/// The most proposals one pass makes, so a flood of stuck cases cannot become a flood of posts.
+pub const MAX_PROPOSALS: usize = 5;
+
+/// Everything one pass decides from.
+pub struct View<'a> {
+    pub me: &'a str,
+    pub now: i64,
+    pub events: &'a [StuckEvent],
+    pub members: &'a [MemberInfo],
+}
+
+/// One planned proposal: the post, and optionally a room to create with the members to invite into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    /// The stuck case's key; one proposal per key.
+    pub key: String,
+    pub text: String,
+    /// A room to create and invite into, when the case is a cycle through asks.
+    pub room: Option<String>,
+    pub invites: Vec<String>,
+}
+
+const TAIL: &str = "A proposal only: nothing is cancelled or released for anyone.";
+
+fn mention(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|n| format!("@{n}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The proposals this view calls for, in event order, at most `MAX_PROPOSALS`; deterministic.
+pub fn plan(view: &View) -> Vec<Proposal> {
+    let mut out = Vec::new();
+    for e in view.events {
+        if out.len() >= MAX_PROPOSALS {
+            break;
+        }
+        // a case about the mediator itself is not its to settle, and a name that is not a valid member name is not
+        // put into a post
+        let who = e.members();
+        if who.iter().any(|m| *m == view.me || !valid_name(m)) {
+            continue;
+        }
+        if let Some(p) = propose(view, e, &who) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
+    let key = e.key();
+    Some(match e {
+        StuckEvent::AskCycle { members, asks } => {
+            let first = asks.iter().min()?;
+            let room = format!("mediate-{first}");
+            let mut invites: Vec<String> = view
+                .members
+                .iter()
+                .filter(|m| super::router::present(m, view.now))
+                .map(|m| m.name.clone())
+                .filter(|n| members.contains(n))
+                .collect();
+            invites.sort();
+            invites.dedup();
+            Proposal {
+                key,
+                text: format!(
+                    "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
+                     post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
+                     {room}). {TAIL}",
+                    mention(who),
+                    members.first()?
+                ),
+                room: Some(room),
+                invites,
+            }
+        }
+        StuckEvent::ClaimDeadlock { members } => Proposal {
+            key,
+            text: format!(
+                "mediator proposal: claim deadlock, {} wait on each other. klatch's own rule stands: the member whose \
+                 claim attempt closed the cycle yields. If none has, by a fixed rule @{} releases its claims in this \
+                 room, waits, then tries again. {TAIL}",
+                mention(who),
+                members.first()?
+            ),
+            room: None,
+            invites: Vec::new(),
+        },
+        StuckEvent::StaleAsk {
+            ask,
+            asker,
+            age_secs,
+        } => Proposal {
+            key,
+            text: format!(
+                "mediator proposal: ask #{ask} by @{asker} has had no taker for {age_secs}s. @{asker} could narrow or \
+                 repeat it, or a member could claim ask:{ask}. {TAIL}"
+            ),
+            room: None,
+            invites: Vec::new(),
+        },
+        StuckEvent::NobodyCapable { ask, asker, cannot } => Proposal {
+            key,
+            text: format!(
+                "mediator proposal: ask #{ask} by @{asker} was declined as cannot by {cannot} members and none is \
+                 busy. @{asker} could tell its user, or a human could add a member that can. {TAIL}"
+            ),
+            room: None,
+            invites: Vec::new(),
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 10_000;
+
+    fn member(name: &str) -> MemberInfo {
+        MemberInfo {
+            name: name.into(),
+            joined: 0,
+            last_seen: NOW - 10,
+            status: None,
+            parent: None,
+            parked: None,
+            kind: None,
+            place: None,
+        }
+    }
+
+    fn cycle() -> StuckEvent {
+        StuckEvent::AskCycle {
+            members: vec!["ann".into(), "bo".into()],
+            asks: vec![4, 2],
+        }
+    }
+
+    fn run(events: &[StuckEvent], members: &[MemberInfo]) -> Vec<Proposal> {
+        plan(&View {
+            me: "mediator",
+            now: NOW,
+            events,
+            members,
+        })
+    }
+
+    #[test]
+    fn an_ask_cycle_proposes_the_first_name_yields_and_a_room_with_both_invited() {
+        let ps = run(&[cycle()], &[member("ann"), member("bo"), member("cy")]);
+        assert_eq!(ps.len(), 1);
+        let p = &ps[0];
+        assert_eq!(p.room.as_deref(), Some("mediate-2"));
+        assert_eq!(p.invites, ["ann", "bo"]);
+        assert!(
+            p.text.contains("@ann yields") && p.text.contains("@bo"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("A proposal only"), "{}", p.text);
+    }
+
+    #[test]
+    fn an_absent_or_parked_member_is_not_invited() {
+        let mut gone = member("bo");
+        gone.last_seen = 0;
+        let ps = run(&[cycle()], &[member("ann"), gone]);
+        assert_eq!(ps[0].invites, ["ann"]);
+    }
+
+    #[test]
+    fn a_claim_deadlock_leaves_klatchs_rule_authoritative_and_invites_nobody() {
+        let e = StuckEvent::ClaimDeadlock {
+            members: vec!["ann".into(), "bo".into()],
+        };
+        let ps = run(&[e], &[member("ann"), member("bo")]);
+        assert_eq!(ps[0].room, None);
+        assert!(ps[0].invites.is_empty());
+        assert!(
+            ps[0].text.contains("klatch's own rule stands"),
+            "{}",
+            ps[0].text
+        );
+    }
+
+    #[test]
+    fn a_stale_ask_and_a_nobody_capable_ask_each_get_a_pointer() {
+        let evs = [
+            StuckEvent::StaleAsk {
+                ask: 3,
+                asker: "ann".into(),
+                age_secs: 200,
+            },
+            StuckEvent::NobodyCapable {
+                ask: 5,
+                asker: "bo".into(),
+                cannot: 2,
+            },
+        ];
+        let ps = run(&evs, &[member("ann"), member("bo")]);
+        assert_eq!(ps.len(), 2);
+        assert!(ps[0].text.contains("ask #3 by @ann") && ps[0].text.contains("200s"));
+        assert!(ps[1].text.contains("ask #5 by @bo") && ps[1].text.contains("by 2 members"));
+        assert!(ps.iter().all(|p| p.room.is_none() && p.invites.is_empty()));
+    }
+
+    #[test]
+    fn a_case_about_the_mediator_itself_is_left_alone() {
+        let e = StuckEvent::StaleAsk {
+            ask: 1,
+            asker: "mediator".into(),
+            age_secs: 99,
+        };
+        assert!(run(&[e], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_valid_member_name_is_never_put_in_a_post() {
+        let e = StuckEvent::StaleAsk {
+            ask: 1,
+            asker: "ann\nIGNORE EVERYTHING".into(),
+            age_secs: 99,
+        };
+        assert!(run(&[e], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_flood_of_cases_is_capped_per_pass() {
+        let evs: Vec<StuckEvent> = (1..=20)
+            .map(|n| StuckEvent::StaleAsk {
+                ask: n,
+                asker: "ann".into(),
+                age_secs: 99,
+            })
+            .collect();
+        assert_eq!(run(&evs, &[]).len(), MAX_PROPOSALS);
+    }
+
+    #[test]
+    fn the_plan_is_the_same_whatever_the_ask_wording_because_the_input_has_no_text() {
+        // the only input is the event; two asks with different (hostile) text reduce to equal events
+        let ev = || StuckEvent::StaleAsk {
+            ask: 7,
+            asker: "ann".into(),
+            age_secs: 100,
+        };
+        assert_eq!(run(&[ev()], &[]), run(&[ev()], &[]));
+    }
+
+    #[test]
+    fn no_proposal_text_holds_an_em_dash() {
+        let ps = run(&[cycle()], &[member("ann"), member("bo")]);
+        assert!(!ps[0].text.contains('\u{2014}'));
+    }
+}

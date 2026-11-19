@@ -174,6 +174,11 @@ class Client:
     def claims(self, room):
         return self.request("claims", room=room)["claims"]
 
+    def stuck(self, room):
+        """The stuck cases of a room as events (stale_ask, nobody_capable, ask_cycle, claim_deadlock): a kind, a stable
+        key, and ids, member names and numbers, never message text."""
+        return self.request("stuck", room=room)["events"]
+
     def who(self, room):
         return self.request("who", room=room)["members"]
 
