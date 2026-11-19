@@ -73,6 +73,7 @@ pub fn run(
     );
     store::check_store(&mut r, home);
     store::check_archives(&mut r, home);
+    store::check_growth(&mut r, home);
     store::check_modes(&mut r, home);
     session::check_codex(&mut r, home, project_dir);
     session::check_harness(&mut r);

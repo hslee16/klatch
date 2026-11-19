@@ -120,3 +120,35 @@ fn doctor_adds_no_files_to_the_archive_directory() {
         before
     );
 }
+
+fn growth_line(t: &str) -> &str {
+    t.lines()
+        .find(|l| l.contains("growth:"))
+        .unwrap_or_else(|| panic!("no 'growth' line in:\n{t}"))
+}
+
+#[test]
+fn doctor_reports_how_many_rows_the_unbounded_tables_hold() {
+    let s = Setup::new();
+    store_with_archive(&s, "lobby-100.db");
+    let t = doctor(&s);
+    let l = growth_line(&t);
+    assert!(l.starts_with("ok"), "{t}");
+    for word in ["messages", "audit", "refusals", "claim notes"] {
+        assert!(l.contains(word), "{t}");
+    }
+}
+
+#[test]
+fn growth_counts_live_messages_not_tombstones() {
+    let s = Setup::new();
+    store_with_archive(&s, "lobby-100.db");
+    let t = doctor(&s);
+    assert!(!growth_line(&t).contains("3 messages"), "{t}");
+}
+
+#[test]
+fn a_machine_with_no_store_has_no_growth_line() {
+    let s = Setup::new();
+    assert!(!doctor(&s).contains("growth:"));
+}
