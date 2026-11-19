@@ -211,3 +211,19 @@ fn a_filtered_or_peeking_wait_keeps_the_waiter_present_in_who() {
         );
     }
 }
+
+#[test]
+fn a_busy_lobby_wait_prints_a_bounded_digest_with_the_addressed_ones_first_and_a_count() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["post", "r", "@alice the one for you"]);
+    for i in 0..30 {
+        h.ok("bob", &["post", "r", &format!("chatter {i}")]);
+    }
+    let out = h.ok("alice", &["wait", "r", "--timeout", "5"]);
+    assert!(out.contains("the one for you"), "addressed kept: {out}");
+    assert!(out.contains("chatter 29"), "newest kept: {out}");
+    assert!(!out.contains("chatter 0\n"), "oldest cut: {out}");
+    assert!(out.contains("11 more messages not shown"), "count: {out}");
+    assert_eq!(out.matches("[r ").count(), 20, "bounded: {out}");
+}
