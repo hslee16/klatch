@@ -31,14 +31,15 @@ pub fn run_items(
         let started = clock();
         let judged = judge.evaluate(&review);
         let latency_ms = clock() - started;
-        let (verdict, redaction_leaked) = match &judged.verdict {
-            Verdict::Allow => (Called::Allow, false),
+        let (verdict, redaction_leaked, redaction_data_leaked) = match &judged.verdict {
+            Verdict::Allow => (Called::Allow, false, false),
             Verdict::Redact(text) => (
                 Called::Redact,
                 item.spans.iter().any(|s| text.contains(s.as_str())),
+                item.data_spans().any(|s| text.contains(s.as_str())),
             ),
-            Verdict::Deny(_) => (Called::Deny, false),
-            Verdict::Defer => (Called::Defer, false),
+            Verdict::Deny(_) => (Called::Deny, false, false),
+            Verdict::Defer => (Called::Defer, false, false),
         };
         out.push(Record {
             id: item.id.clone(),
@@ -47,6 +48,8 @@ pub fn run_items(
             truth: item.verdict,
             verdict,
             redaction_leaked,
+            redaction_data_leaked,
+            contested: item.contested,
             raw: judged.raw,
             latency_ms,
             tokens_in: judged.tokens_in,

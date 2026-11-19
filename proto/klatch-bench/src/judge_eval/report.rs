@@ -24,7 +24,19 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
     let blocked: usize =
         s.confusion[1].iter().sum::<usize>() + s.confusion[2].iter().sum::<usize>();
     let clean: usize = s.confusion[0].iter().sum();
-    let _ = writeln!(o, "judge-eval: judge {judge}, split {split}, {} items", s.n);
+    let held = if s.contested.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; {} contested excluded from every figure below",
+            s.contested.len()
+        )
+    };
+    let _ = writeln!(
+        o,
+        "judge-eval: judge {judge}, split {split}, {} items{held}",
+        s.n
+    );
     let correct = (s.accuracy * s.n as f64).round() as usize;
     let decided = s.n - s.defers;
     let mut small: Vec<String> = vec![];
@@ -78,6 +90,12 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
         s.leaks,
         rate_with_interval(s.leaks, blocked),
         s.redaction_leaks
+    );
+    let _ = writeln!(
+        o,
+        "data leaks (a leak only when a non-name span is left): {} of {blocked} = {} (a redaction that removes the data but keeps a person's name is a strict leak above, not one here)",
+        s.data_leaks,
+        rate_with_interval(s.data_leaks, blocked)
     );
     let _ = writeln!(
         o,
@@ -211,6 +229,23 @@ pub fn format(s: &Summary, judge: &str, split: &str) -> String {
             rate_with_interval(r.correct, r.n)
         );
     }
+    if !s.contested.is_empty() {
+        let _ = writeln!(
+            o,
+            "\ncontested items (scored apart: judged, but in no figure above; the label is open to dispute)"
+        );
+        let _ = writeln!(o, "  {:<12}{:>8}{:>10}  category", "id", "label", "verdict");
+        for r in &s.contested {
+            let _ = writeln!(
+                o,
+                "  {:<12}{:>8}{:>10}  {}",
+                r.id,
+                r.truth.word(),
+                r.verdict.word(),
+                r.category
+            );
+        }
+    }
     o
 }
 
@@ -260,7 +295,8 @@ pub fn to_json(s: &Summary, records: &[Record], judge: &str, split: &str) -> Val
         .map(|r| {
             json!({
                 "id": r.id, "category": r.category, "truth": r.truth.word(), "verdict": called(r.verdict),
-                "leak": r.is_leak(), "overblock": r.is_overblock(),
+                "leak": r.is_leak(), "data_leak": r.is_data_leak(), "overblock": r.is_overblock(),
+                "contested": r.contested,
                 "pick": r.raw.map(|(t, _)| t.word()), "confidence": r.raw.map(|(_, c)| c),
                 "latency_ms": r.latency_ms, "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
                 "cost_usd": r.cost_usd, "error": r.error
@@ -274,6 +310,10 @@ pub fn to_json(s: &Summary, records: &[Record], judge: &str, split: &str) -> Val
             "n": s.n,
             "confusion": {"rows": ["allow", "redact", "deny"], "columns": ["allow", "redact", "deny", "defer"], "counts": s.confusion},
             "leaks": s.leaks, "leak_rate": s.leak_rate, "redaction_leaks": s.redaction_leaks,
+            "data_leaks": s.data_leaks, "data_leak_rate": s.data_leak_rate,
+            "contested": s.contested.iter().map(|c| json!({
+                "id": c.id, "category": c.category, "label": c.truth.word(), "verdict": c.verdict.word()
+            })).collect::<Vec<_>>(),
             "overblocks": s.overblocks, "overblock_rate": s.overblock_rate, "softened": s.softened,
             "defers": s.defers, "defer_rate": s.defer_rate, "errors": s.errors,
             "accuracy": s.accuracy, "accuracy_decided": s.accuracy_decided,

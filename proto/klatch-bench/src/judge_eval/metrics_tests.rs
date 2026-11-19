@@ -23,6 +23,8 @@ fn item(id: &str, category: &str, truth: Truth) -> Item {
         text: format!("text of {id} SPAN-{id}"),
         rationale: "r".into(),
         spans,
+        name_spans: vec![],
+        contested: false,
     }
 }
 
@@ -245,6 +247,8 @@ fn rec(truth: Truth, pick: Truth, conf: f64) -> Record {
         truth,
         verdict,
         redaction_leaked: false,
+        redaction_data_leaked: false,
+        contested: false,
         raw: Some((pick, conf)),
         latency_ms: 1.0,
         tokens_in: None,
@@ -402,4 +406,186 @@ fn the_report_and_the_json_carry_the_numbers_and_never_the_text() {
         );
         assert!(!text.contains(&i.text));
     }
+}
+
+/// Redacts by deleting each listed string from the text.
+struct Strip(Vec<&'static str>);
+impl EvalJudge for Strip {
+    fn name(&self) -> String {
+        "strip".into()
+    }
+    fn evaluate(&self, item: &ReviewItem) -> Judged {
+        let mut t = item.text.clone();
+        for s in &self.0 {
+            t = t.replace(s, "");
+        }
+        Judged::of(Verdict::Redact(t))
+    }
+}
+
+/// A redact item whose text holds data (`DATA-n`) and a person's name (`NAME-n`), name tagged.
+fn named(id: &str) -> Item {
+    let mut i = item(id, "personal-data", Truth::Redact);
+    i.raw_text = format!("DATA-{id} for NAME-{id}");
+    i.text = i.raw_text.clone();
+    i.spans = vec![format!("DATA-{id}"), format!("NAME-{id}")];
+    i.name_spans = vec![format!("NAME-{id}")];
+    i
+}
+
+fn leaks_of(j: &dyn EvalJudge, items: &[Item]) -> (usize, usize) {
+    let s = summary_of(j, items);
+    (s.leaks, s.data_leaks)
+}
+
+#[test]
+fn a_redaction_that_keeps_only_the_name_is_a_strict_leak_but_not_a_data_leak() {
+    let items = vec![named("n1")];
+    // data removed, name kept
+    assert_eq!(leaks_of(&Strip(vec!["DATA-n1"]), &items), (1, 0));
+    // name removed, data kept
+    assert_eq!(leaks_of(&Strip(vec!["NAME-n1"]), &items), (1, 1));
+    // both removed
+    assert_eq!(leaks_of(&Strip(vec!["DATA-n1", "NAME-n1"]), &items), (0, 0));
+    // nothing removed
+    assert_eq!(leaks_of(&Strip(vec![]), &items), (1, 1));
+}
+
+#[test]
+fn an_allow_is_a_leak_in_both_and_a_deny_in_neither_for_a_redact_item() {
+    let items = vec![named("n1")];
+    assert_eq!(leaks_of(&Always(Verdict::Allow), &items), (1, 1));
+    assert_eq!(
+        leaks_of(&Always(Verdict::Deny("no".into())), &items),
+        (0, 0)
+    );
+    assert_eq!(leaks_of(&Always(Verdict::Defer), &items), (0, 0));
+    // a deny item has no name spans: any kept span is data, so the two figures agree
+    let d = vec![item("d1", "secret-credential", Truth::Deny)];
+    assert_eq!(leaks_of(&Always(Verdict::Allow), &d), (1, 1));
+}
+
+#[test]
+fn without_name_spans_the_two_leak_figures_are_equal() {
+    let c = corpus();
+    for j in [
+        &Always(Verdict::Allow) as &dyn EvalJudge,
+        &Strip(vec![]),
+        &Strip(vec!["SPAN-r1"]),
+    ] {
+        let s = summary_of(j, &c);
+        assert_eq!(s.leaks, s.data_leaks);
+        assert_eq!(s.leak_rate, s.data_leak_rate);
+    }
+}
+
+#[test]
+fn the_report_prints_both_leak_figures_with_intervals_and_n() {
+    let items = [named("n1"), named("n2"), named("n3")];
+    let refs: Vec<&Item> = items.iter().collect();
+    let records = run_items(
+        &Strip(vec!["DATA-n1", "DATA-n2", "DATA-n3"]),
+        &refs,
+        &mut clock(),
+        &mut |_, _| {},
+    );
+    let s = summarize(&records, 0.01);
+    let text = crate::judge_eval::report::format(&s, "strip", "dev");
+    assert!(text.contains("leaks (critical"), "{text}");
+    assert!(text.contains("3 of 3 = 100.0%"), "{text}");
+    let data = text
+        .lines()
+        .find(|l| l.starts_with("data leaks"))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        data.contains("0 of 3 = 0.0%") && data.contains("(n=3)"),
+        "{data}"
+    );
+    assert!(data.contains("name"), "one-line explanation: {data}");
+    let json = crate::judge_eval::report::to_json(&s, &records, "strip", "dev");
+    assert_eq!(json["summary"]["data_leaks"], 0);
+    assert_eq!(json["summary"]["leaks"], 3);
+}
+
+fn contested(mut i: Item) -> Item {
+    i.contested = true;
+    i
+}
+
+#[test]
+fn contested_items_are_judged_but_left_out_of_every_headline_figure() {
+    let mut c = corpus();
+    // r1 (redact) and a1 (allow) are contested; the judge allows everything
+    c[6] = contested(c[6].clone());
+    c[0] = contested(c[0].clone());
+    let s = summary_of(&Always(Verdict::Allow), &c);
+    assert_eq!(s.n, 8, "scored items only");
+    // blocked-in-truth scored: r2, d1, d2 = 3 (r1 is contested); all leak
+    assert_eq!(s.leaks, 3);
+    assert_eq!(s.leak_rate, 1.0);
+    assert_eq!(s.confusion[0], [5, 0, 0, 0]);
+    assert_eq!(s.confusion[1], [1, 0, 0, 0]);
+    assert_eq!(s.accuracy, 5.0 / 8.0);
+    let cat = |n: &str| s.by_category.iter().find(|r| r.name == n).unwrap().n;
+    assert_eq!(cat("everyday-chat"), 2);
+    assert_eq!(cat("personal-data"), 1);
+    // the contested items are listed with their label and the judge's verdict
+    assert_eq!(s.contested.len(), 2);
+    let ids: Vec<&str> = s.contested.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["a1", "r1"], "in the order judged");
+    assert!(s.contested.iter().all(|r| r.verdict == Called::Allow));
+    assert_eq!(s.contested[1].truth, Truth::Redact);
+}
+
+#[test]
+fn a_contested_leak_does_not_count_and_still_shows_in_the_item_rows() {
+    let mut c = corpus();
+    c[8] = contested(c[8].clone());
+    let refs: Vec<&Item> = c.iter().collect();
+    let records = run_items(&Always(Verdict::Allow), &refs, &mut clock(), &mut |_, _| {});
+    let s = summarize(&records, 0.01);
+    assert_eq!(s.leaks, 3, "d1 is contested: r1, r2, d2 leak");
+    let json = crate::judge_eval::report::to_json(&s, &records, "j", "dev");
+    let row = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "d1")
+        .unwrap();
+    assert_eq!(row["contested"], true);
+    assert_eq!(row["verdict"], "allow");
+    assert_eq!(json["summary"]["contested"][0]["id"], "d1");
+}
+
+#[test]
+fn the_report_has_a_contested_block_only_when_there_are_contested_items() {
+    let mut c = corpus();
+    let plain =
+        crate::judge_eval::report::format(&summary_of(&Always(Verdict::Allow), &c), "j", "dev");
+    assert!(!plain.contains("contested"), "{plain}");
+    c[9] = contested(c[9].clone());
+    let text =
+        crate::judge_eval::report::format(&summary_of(&Always(Verdict::Allow), &c), "j", "dev");
+    assert!(text.contains("contested items (scored apart"), "{text}");
+    assert!(
+        text.contains("9 items"),
+        "the header counts scored items: {text}"
+    );
+    let line = text.lines().find(|l| l.contains("d2")).unwrap();
+    assert!(
+        line.contains("deny") && line.contains("allow"),
+        "label and verdict: {line}"
+    );
+}
+
+#[test]
+fn contested_items_do_not_move_calibration_or_thresholds() {
+    let mut a = rec(Truth::Allow, Truth::Allow, 0.9);
+    let mut b = rec(Truth::Deny, Truth::Allow, 0.9);
+    b.contested = true;
+    a.id = "a".into();
+    let s = summarize(&[a, b], 0.01);
+    assert_eq!(s.n, 1);
+    assert_eq!(s.calibration.unwrap().buckets[0].n, 1);
+    assert!(s.thresholds.iter().all(|t| t.leaks == 0));
 }
