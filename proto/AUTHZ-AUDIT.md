@@ -121,7 +121,7 @@ wraps.
 | `answer` | `open_asks`, `claim_ttl_for`, `claim`, `post`, `release` | GUARDED each of those calls, in that order, as the caller's own member; it is the three commands `claim`, `post` and `release` in one process and holds no capability they lack. A claim held by another member is reported and nothing is posted; the claim is released after a failed post. No new wire method (#241). Proof: `tests/ask_answer.rs` |
 | `mute`, `unmute` | `set_muted` | as wire `mute` |
 | `view` | `delivery_view`, `set_delivery_view` | OWN_RECORD, the caller's own key |
-| `cross` | `request_crossing` | GUARDED `request_crossing`: read in the source, post in the target, floors |
+| `cross` | `request_crossing` | GUARDED `request_crossing`: read in the source, post in the target, the target must be one the caller has joined (#679), floors |
 | `status` | `set_status` | as wire `status` |
 | `scope` | `scope_of`, `set_scope` | OWN_RECORD |
 | `hooks` | `hook_runs` | GUARDED `hook_runs` (another member's record with `--of`) |
@@ -133,7 +133,7 @@ wraps.
 | `mcp` | the session of `serve --stdio`: each of its six tools (`klatch_post`, `klatch_read`, `klatch_claim`, `klatch_release`, `klatch_wait`, `klatch_who`) calls the wire method of the same name | GUARDED the same per-request checks as those wire methods (the caller is the process's member); no admin act and no other method is reachable through it |
 | `acp` | the session of `serve --stdio`: a prompt parses to one of four looks, each calling the wire method of that name (`read` always with `peek`, `who`, `claims`, `history`) | GUARDED the same per-request checks as those wire methods, and the librarian role refuses anything else; no write, no admin act and no other method is reachable (the prompt grammar has no verb for one, `src/session/acp_tests.rs`, `tests/acp.rs`) |
 | `claims` | `claims` | GUARDED `claims` |
-| `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room; the rest are OWN_RECORD |
+| `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room and, per room it shows, tells the caller once what became of its own crossings from that room (#679; the caller's own queue rows, pointers and fixed sentences, no text); the rest are OWN_RECORD |
 | `stream` | `Session::stream` (`head`, `tail`) | GUARDED `head`, `tail` |
 | `serve` | the wire methods above | one `Session` as the caller's principal, credential checked per request |
 | `act` | `admin_*` acts the role allows | the admin agent role (`session/role_tests.rs`, `roles/command_tests.rs`) |

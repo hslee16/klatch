@@ -41,4 +41,11 @@ pub trait ReviewStore {
     fn mark_review_applied(&self, _id: i64, _outcome: &str) -> Result<()> {
         Ok(())
     }
+
+    /// The member's own crossings that start in `room` and have news it was not told yet (#679): one `waiting` notice
+    /// while undecided, then one for the outcome (denied, released or blocked). Each is returned once per stage and
+    /// remembered. The default store has none.
+    fn crossing_notices(&self, _room: &str, _member: &str) -> Result<Vec<QueuedReview>> {
+        Ok(Vec::new())
+    }
 }

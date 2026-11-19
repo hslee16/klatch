@@ -268,3 +268,88 @@ fn a_member_sees_only_their_own_crossings() {
     g.request_crossing(&alice(), "vault", 1, "open").unwrap();
     assert!(g.my_crossings(&bob(), 10).unwrap().is_empty());
 }
+
+// the target room must be joined (#679): a crossing never makes a member of anyone
+
+#[test]
+fn a_crossing_into_a_room_the_asker_has_not_joined_is_refused_with_a_clear_message() {
+    let (g, _) = world();
+    g.admin_set_room_label(&admin(), "lobby", "public").unwrap();
+    let e = g
+        .request_crossing(&alice(), "vault", 1, "lobby")
+        .unwrap_err();
+    assert!(matches!(e, Error::Invalid(_)), "{e}");
+    assert!(
+        e.to_string().contains("join lobby"),
+        "the message names the fix: {e}"
+    );
+    assert!(g.store.pending_reviews(10).unwrap().is_empty());
+}
+
+// a released message is marked kind crossed with a pointer at the source, never the source text (#679)
+
+#[test]
+fn a_released_message_has_kind_crossed_and_a_reference_to_the_source() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Redact("the plan is [x]".into()))
+        .unwrap();
+    let m = &g.read(&bob(), "open", false).unwrap()[0];
+    assert_eq!(m.kind.as_deref(), Some("crossed"));
+    assert_eq!(m.payload.as_deref(), Some("vault#1"));
+    assert_eq!(m.body, "the plan is [x]");
+}
+
+// the requester is told once in its digest, nothing is posted in either room (#679)
+
+fn told(g: &Gateway<SpyStore>) -> Vec<String> {
+    g.digest(&alice())
+        .unwrap()
+        .rooms
+        .iter()
+        .flat_map(|r| r.crossings.iter().map(|c| c.state.clone()))
+        .collect()
+}
+
+#[test]
+fn the_requester_is_told_waiting_once_then_the_outcome_once() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    assert_eq!(told(&g), ["waiting"]);
+    assert!(told(&g).is_empty(), "waiting is said once");
+    g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
+    assert_eq!(told(&g), ["released"]);
+    assert!(told(&g).is_empty(), "the outcome is said once");
+}
+
+#[test]
+fn a_refusal_is_told_with_the_rule_never_the_text_and_posts_nothing() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Deny("blue leaks".into()))
+        .unwrap();
+    let d = g.digest(&alice()).unwrap();
+    let all: Vec<_> = d.rooms.iter().flat_map(|r| &r.crossings).collect();
+    assert_eq!((all.len(), all[0].state.as_str()), (1, "denied"));
+    assert!(!format!("{all:?}").contains("blue"), "{all:?}");
+    assert!(bob_sees(&g).is_empty());
+    assert_eq!(g.tail(&alice(), "vault", (0, 10)).unwrap().len(), 1);
+}
+
+#[test]
+fn a_blocked_release_is_told_to_the_requester() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.admin_add_scrub_term(&admin(), "codename-zed", "blue")
+        .unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
+    assert_eq!(told(&g), ["blocked"]);
+}
+
+#[test]
+fn another_member_is_not_told_about_a_crossing() {
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let d = g.digest(&bob()).unwrap();
+    assert!(d.rooms.iter().all(|r| r.crossings.is_empty()));
+}

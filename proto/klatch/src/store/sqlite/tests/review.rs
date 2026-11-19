@@ -116,3 +116,21 @@ fn a_version_23_queue_gains_the_crossing_columns() {
     let q = &s.pending_reviews(10).unwrap()[0];
     assert_eq!((q.reason.as_str(), q.to_room.as_str()), ("old", ""));
 }
+
+#[test]
+fn a_version_32_queue_gains_told_and_old_outcomes_are_not_told_again() {
+    let path = temp_db("review-migrate-32");
+    drop(SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap());
+    {
+        let c = keyed(&path);
+        c.execute_batch(
+            "DROP TABLE review_queue; CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT ''); INSERT INTO review_queue(room,seq,to_label,reason,ts,to_room,requester,verdict,applied) VALUES('v',1,'public','crossing',1,'o','alice','allow','released'); INSERT INTO review_queue(room,seq,to_label,reason,ts,to_room,requester) VALUES('v',2,'public','crossing',2,'o','alice'); PRAGMA user_version = 32;",
+        )
+        .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    let told = s.crossing_notices("v", "alice").unwrap();
+    assert_eq!(told.len(), 1, "only the waiting row has news: {told:?}");
+    assert_eq!(told[0].seq, 2);
+    assert!(s.crossing_notices("v", "alice").unwrap().is_empty());
+}

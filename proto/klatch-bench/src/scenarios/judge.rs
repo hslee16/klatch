@@ -55,6 +55,18 @@ fn crossing_waits(w: &World) -> Res {
     w.ok("alice", &["join", "vault"])?;
     w.ok("alice", &["post", "vault", "the plan is blue"])?;
     w.ok("bob", &["join", "open"])?;
+    // the target room must be joined by the asker (#679)
+    let unjoined = w.run("alice", &["cross", "vault", "1", "--to", "open"]);
+    check(
+        !unjoined.ok,
+        "a crossing into an unjoined room was accepted",
+    )?;
+    has(
+        &unjoined.stderr,
+        "not joined",
+        "the refusal does not say why",
+    )?;
+    w.ok("alice", &["join", "open"])?;
     let q = w.ok("alice", &["cross", "vault", "1", "--to", "open"])?;
     has(&q, "queued", "the request was not queued")?;
     // the queue lists a pointer and its state, never the text

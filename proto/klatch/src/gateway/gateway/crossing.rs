@@ -15,6 +15,8 @@ pub type Applied = (i64, &'static str);
 
 const RELEASED: &str = "released";
 const BLOCKED: &str = "blocked";
+/// The message kind of a released crossing (#679); its payload is `room#seq` of the source.
+pub const CROSSED_KIND: &str = "crossed";
 
 impl<S: Store> Gateway<S> {
     /// Ask for message `seq` of `from` to be copied into `to`. The caller must be able to read the source and post
@@ -26,6 +28,11 @@ impl<S: Store> Gateway<S> {
         check_room(to)?;
         self.authorize(who, &Operation::read(from, false))?;
         self.authorize(who, &post_op(to))?;
+        if !self.store.rooms_of(&who.member)?.iter().any(|r| r == to) {
+            return Err(Error::Invalid(format!(
+                "you have not joined {to}: join it first (klatch join {to}), then ask again"
+            )));
+        }
         let probe = QueuedReview::pointer(from, seq);
         let Some(item) = load_item(&self.store, &probe)? else {
             return Err(Error::Invalid(format!("no message {seq} in room {from}")));
@@ -79,12 +86,15 @@ impl<S: Store> Gateway<S> {
             return Ok(blocked(category_of(&e)));
         }
         let label = self.room_label(&q.to_room)?;
+        // the handoff names the source by room and sequence number, never by its text (#679)
+        let source = format!("{}#{}", q.room, q.seq);
         let message = NewMessage::new(
             (&q.to_room, &q.requester),
             Attribution::Unattributed,
             &label,
             &text,
-        );
+        )
+        .with_handoff(CROSSED_KIND, &source);
         let posted = self.store.post_as(&message, self.now())?;
         self.notifier.posted(&q.to_room, posted.seq, &q.requester);
         Ok(RELEASED.into())
@@ -118,17 +128,18 @@ impl<S: Store> Gateway<S> {
             .iter()
             .filter(|q| q.requester == who.member)
             .take(limit)
-            .map(|q| {
-                let (state, why) = status_of(q);
-                CrossingStatus {
-                    id: q.id,
-                    room: q.room.clone(),
-                    seq: q.seq,
-                    to_room: q.to_room.clone(),
-                    state: state.into(),
-                    why: why.into(),
-                }
-            })
+            .map(crossing_status)
+            .collect())
+    }
+
+    /// What the caller has not yet been told about its crossings that start in `room` (#679): `waiting` once after
+    /// the request, then the outcome once. It reads only the caller's rows and posts nothing anywhere.
+    pub(crate) fn crossing_notices(&self, room: &str, member: &str) -> Result<Vec<CrossingStatus>> {
+        Ok(self
+            .store
+            .crossing_notices(room, member)?
+            .iter()
+            .map(crossing_status)
             .collect())
     }
 
@@ -157,6 +168,18 @@ fn category_of(e: &Error) -> &'static str {
         Error::Refused { rule, .. } if rule == "canary" => "canary",
         Error::Refused { rule, .. } if rule.starts_with("credential") => "credential",
         _ => "floor",
+    }
+}
+
+fn crossing_status(q: &QueuedReview) -> CrossingStatus {
+    let (state, why) = status_of(q);
+    CrossingStatus {
+        id: q.id,
+        room: q.room.clone(),
+        seq: q.seq,
+        to_room: q.to_room.clone(),
+        state: state.into(),
+        why: why.into(),
     }
 }
 

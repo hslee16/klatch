@@ -6,7 +6,7 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 32;
+pub const SCHEMA_VERSION: i64 = 33;
 
 pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAULT 'local', room TEXT, name TEXT, joined INTEGER, last_seen INTEGER, last_seq INTEGER DEFAULT 0, hook_seq INTEGER NOT NULL DEFAULT 0, wait_seq INTEGER NOT NULL DEFAULT 0, wake_seq INTEGER NOT NULL DEFAULT 0, status TEXT, status_ts INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,name));
  CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL DEFAULT 'local', room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL DEFAULT 'unattributed', label TEXT NOT NULL DEFAULT 'public', kind TEXT, payload TEXT);
@@ -29,7 +29,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);
  CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL); CREATE TABLE credentials(member TEXT PRIMARY KEY, token_hash BLOB NOT NULL, clearance TEXT NOT NULL, parent TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, idle INTEGER NOT NULL DEFAULT 0, cap INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '');
+ CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '', told INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);
  CREATE TABLE member_mode(member TEXT PRIMARY KEY, mode TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
@@ -379,6 +379,19 @@ pub(super) fn migrate_v31(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 32 to 33: how much of a crossing the requester has been told (#679): 0 nothing, 1 that it waits, 2 the
+/// outcome. A row that already has an outcome starts at 2 so an upgrade does not repeat old news.
+pub(super) fn migrate_v32(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "review_queue", "told")? {
+        conn.execute_batch(
+            "ALTER TABLE review_queue ADD COLUMN told INTEGER NOT NULL DEFAULT 0; \
+             UPDATE review_queue SET told=2 WHERE verdict='deny' OR applied<>'';",
+        )
+        .map_err(be)?;
+    }
+    Ok(())
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -395,7 +408,7 @@ pub(super) type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-pub(super) const MIGRATIONS: [Step; 32] = [
+pub(super) const MIGRATIONS: [Step; 33] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -428,6 +441,7 @@ pub(super) const MIGRATIONS: [Step; 32] = [
     migrate_v29,
     migrate_v30,
     migrate_v31,
+    migrate_v32,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.
