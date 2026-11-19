@@ -1,0 +1,1 @@
+- `klatch wait` prints at most 20 messages per room (the ones addressed to you first) and counts the rest, so a busy lobby cannot flood a waiting session.

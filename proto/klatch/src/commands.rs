@@ -641,7 +641,12 @@ fn timeout_notes(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Vec<String> {
 fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
     for (room, filter) in a.rooms {
         let found = look(t, room, filter, a.peek)?;
-        for m in &found {
+        let capped = klatch::domain::cap_wake(
+            &found,
+            a.caller.0,
+            klatch::domain::budget::DIGEST_MAX_MESSAGES,
+        );
+        for m in &capped.shown {
             println!(
                 "[{room} {} {} {}] {}{}",
                 m.seq,
@@ -649,6 +654,12 @@ fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
                 m.sender_label(),
                 flat(&m.body),
                 handoff_suffix(m)
+            );
+        }
+        if capped.omitted > 0 {
+            println!(
+                "[{room}: {} more messages not shown, the ones addressed to you first; run `klatch history {room}` for them]",
+                capped.omitted
             );
         }
         if !found.is_empty() {
