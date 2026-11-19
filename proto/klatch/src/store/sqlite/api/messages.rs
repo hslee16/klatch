@@ -62,11 +62,7 @@ impl MessageStore for SqliteStore {
     }
 
     fn posts_since(&self, member: &str, since: i64) -> Result<Vec<i64>> {
-        self.rows(
-            POSTS_SINCE_SQL,
-            params![member, since],
-            |r| r.get(0),
-        )
+        self.rows(POSTS_SINCE_SQL, params![member, since], |r| r.get(0))
     }
 
     fn tail(&self, room: &str, after_seq: i64, limit: usize) -> Result<Vec<Message>> {
