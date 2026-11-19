@@ -212,7 +212,10 @@ pub(super) fn check_growth(r: &mut Report, home: Option<&Path>) {
     let parts: Vec<String> = counts.iter().map(|(l, n)| format!("{n} {l}")).collect();
     r.add(
         Status::Ok,
-        format!("growth: {} (live rows; nothing here is pruned automatically)", parts.join(", ")),
+        format!(
+            "growth: {} (live rows; nothing here is pruned automatically)",
+            parts.join(", ")
+        ),
         None,
     );
 }
