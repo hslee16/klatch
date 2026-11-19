@@ -481,7 +481,7 @@ fn without_name_spans_the_two_leak_figures_are_equal() {
 
 #[test]
 fn the_report_prints_both_leak_figures_with_intervals_and_n() {
-    let items = vec![named("n1"), named("n2"), named("n3")];
+    let items = [named("n1"), named("n2"), named("n3")];
     let refs: Vec<&Item> = items.iter().collect();
     let records = run_items(
         &Strip(vec!["DATA-n1", "DATA-n2", "DATA-n3"]),
