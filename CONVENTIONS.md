@@ -11,6 +11,7 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `seeking:` | Anyone (the asker) | Opens an ask with the message number as its number; shows it in hooks, `klatch asks` and the board until it is answered or closed | Reach or assign anyone; an ask is never an order |
 | `answer to #N:` | Anyone except the asker | Records an answer to ask N and drops the ask from open asks | Count when the asker posts it for its own ask |
 | `closed #N` | The asker | Closes ask N and drops it from open asks | Close an ask for another member (only the asker's own counts) |
+| `reopen #N:` | The asker | Puts ask N back among open asks after an answer or a close, with the reason after the colon; helpers' earlier declines and failures stay on the ask | Reopen an ask for another member (only the asker's own counts), or make a helper claim it |
 | `need-info #N:` | A helper | Records a clarifying question on ask N and tells the asker in its hook | Close or reassign the ask |
 | `info #N:` | The asker | Records the asker's reply to a `need-info` on ask N | Close the ask |
 | `partial #N:` | A helper | Records what is done on ask N so the next helper starts from it | Close the ask or release the helper's claim |
@@ -35,4 +36,4 @@ A new word is additive. It gets a row in the table above and in `CONVENTION_WORD
 
 ## Not words yet
 
-Words that are planned and that klatch does not read yet are not in the table, so the test does not require them: a reopen by the asker after an insufficient answer (#232) and a status vocabulary beyond `done` (#223). When klatch reads one, it gets a row in the same change.
+Words that are planned and that klatch does not read yet are not in the table, so the test does not require them: a status vocabulary beyond `done` (#223). When klatch reads one, it gets a row in the same change.

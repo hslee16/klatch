@@ -9,7 +9,7 @@
 use crate::domain::{
     ASK_LEASE_DEFAULT_SECS, Message, OutcomeKind, answer_target, claim_ttl, closed_target,
     current_offers, is_ask, open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked,
-    statuses,
+    reopen_target, statuses,
 };
 
 /// One word: how it is written, an example, and the question "does the code read this example as this word".
@@ -94,6 +94,9 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
         answer_target(b) == Some(3)
     }),
     word!("closed #N", "closed #3", |b| closed_target(b) == Some(3)),
+    word!("reopen #N:", "reopen #3: that is the wrong crate", |b| {
+        reopen_target(b) == Some(3)
+    }),
     word!("need-info #N:", "need-info #3: which locale?", |b| {
         parse_clarification(b).is_some_and(|(need, n, _)| need && n == 3)
     }),

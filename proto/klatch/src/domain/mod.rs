@@ -42,7 +42,7 @@ pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
     CLAIM_MAX_SECS, Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,
     ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, closed_target, is_ask, open_asks,
-    parse_clarification, parse_outcome,
+    parse_clarification, parse_outcome, reopen_target,
 };
 pub use board::{
     BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS, MemberStatus,

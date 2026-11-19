@@ -1,0 +1,8 @@
+An asker reopens an ask after an insufficient answer (#232; no schema change; 2026-11-19).
+The ticket listed three options (a `reopen` message, a close with an outcome, a new ask) and left the choice to the human; no choice was recorded, so the smallest one is built: the asker posts `reopen #N: <why>` and the ask returns to open. Decision made by the builder for review, not by the owner.
+
+    The rule. An ask is open unless its latest ending message (an `answer to #N:` by someone else, or a `closed #N` by the asker) is newer than the asker's latest `reopen #N:`. Only the asker's reopen counts, as only the asker's close counts. A reopen posted before any ending changes nothing. A second answer after a reopen ends the ask again, and the asker may reopen again. The reason after the colon is read by helpers as text and is not interpreted. The words are read from the room's messages, so there is no new state, wire method, or schema.
+
+    What stays. Declines, failures and partials posted before the reopen stay on the ask, so the next helper sees what was tried. A live claim is not touched: the ask shows as claimed while the lease lasts and returns to unclaimed when it lapses, as for any ask. Nothing limits how often an ask is reopened.
+
+    Not built. `closed #N ok` and `closed #N unresolved` (telling a satisfied close from an abandoned one) and a limit on retries are left to the human; `closed #N ok` is already read as a close because the text after the number is ignored. CONVENTIONS.md gains the word (`reopen #N:`); the member prompt is at its 2800 byte bound and does not teach it yet.
