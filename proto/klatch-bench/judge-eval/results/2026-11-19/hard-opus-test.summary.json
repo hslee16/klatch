@@ -19,13 +19,13 @@
    "counts": [
     [
      37,
-     2,
+     1,
      1,
      0
     ],
     [
      0,
-     29,
+     30,
      0,
      0
     ],
@@ -37,30 +37,33 @@
     ]
    ]
   },
-  "leaks": 15,
-  "leak_rate": 0.21428571428571427,
-  "redaction_leaks": 15,
+  "leaks": 13,
+  "leak_rate": 0.18309859154929578,
+  "redaction_leaks": 13,
   "data_leaks": 0,
   "data_leak_rate": 0.0,
   "contested": [],
-  "overblocks": 3,
-  "overblock_rate": 0.075,
+  "overblocks": 2,
+  "overblock_rate": 0.05128205128205128,
   "softened": 0,
   "defers": 0,
   "defer_rate": 0.0,
   "errors": 0,
-  "accuracy": 0.8363636363636363,
-  "accuracy_decided": 0.8363636363636363,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.8636363636363636,
+  "accuracy_decided": 0.8636363636363636,
   "per_verdict": [
    {
     "verdict": "allow",
     "precision": 1.0,
-    "recall": 0.925
+    "recall": 0.9487179487179487
    },
    {
     "verdict": "redact",
-    "precision": 0.45161290322580644,
-    "recall": 0.4827586206896552
+    "precision": 0.5483870967741935,
+    "recall": 0.5666666666666667
    },
    {
     "verdict": "deny",
@@ -68,100 +71,100 @@
     "recall": 1.0
    }
   ],
-  "latency_p50_ms": 4160.9613750000135,
-  "latency_p99_ms": 6424.241207999934,
+  "latency_p50_ms": 3858.0746659999713,
+  "latency_p99_ms": 9483.254791999992,
   "tokens_in": 294682,
-  "tokens_out": 31661,
-  "cost_usd": 1.7465540000000002,
+  "tokens_out": 31333,
+  "cost_usd": 1.7399940000000007,
   "calibration": {
-   "ece": 0.0753636363636364,
+   "ece": 0.08227272727272714,
    "buckets": [
     {
      "lo": 0.6,
      "hi": 0.7,
      "n": 2,
      "accuracy": 0.5,
-     "mean_confidence": 0.61
+     "mean_confidence": 0.625
     },
     {
      "lo": 0.7,
      "hi": 0.8,
      "n": 3,
      "accuracy": 0.6666666666666666,
-     "mean_confidence": 0.7133333333333333
+     "mean_confidence": 0.7166666666666667
     },
     {
      "lo": 0.8,
      "hi": 0.9,
-     "n": 39,
-     "accuracy": 0.9743589743589743,
-     "mean_confidence": 0.8464102564102567
+     "n": 36,
+     "accuracy": 1.0,
+     "mean_confidence": 0.849444444444445
     },
     {
      "lo": 0.9,
      "hi": 1.0,
-     "n": 66,
+     "n": 69,
      "accuracy": 1.0,
-     "mean_confidence": 0.9554545454545452
+     "mean_confidence": 0.9531884057971014
     }
    ]
   },
   "thresholds": [
    {
     "threshold": 0.0,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
-    "overblocks": 3,
-    "overblock_rate": 0.075,
+    "leaks": 13,
+    "leak_rate": 0.18309859154929578,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
     "deferred": 0
    },
    {
     "threshold": 0.5,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
-    "overblocks": 3,
-    "overblock_rate": 0.075,
+    "leaks": 13,
+    "leak_rate": 0.18309859154929578,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
     "deferred": 0
    },
    {
     "threshold": 0.6,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
-    "overblocks": 3,
-    "overblock_rate": 0.075,
+    "leaks": 13,
+    "leak_rate": 0.18309859154929578,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
     "deferred": 0
    },
    {
     "threshold": 0.7,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
-    "overblocks": 2,
-    "overblock_rate": 0.05,
+    "leaks": 13,
+    "leak_rate": 0.18309859154929578,
+    "overblocks": 1,
+    "overblock_rate": 0.02564102564102564,
     "deferred": 2
    },
    {
     "threshold": 0.8,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
+    "leaks": 13,
+    "leak_rate": 0.18309859154929578,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
     "deferred": 5
    },
    {
     "threshold": 0.85,
-    "leaks": 15,
-    "leak_rate": 0.21428571428571427,
+    "leaks": 12,
+    "leak_rate": 0.16901408450704225,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 12
+    "deferred": 10
    },
    {
     "threshold": 0.9,
-    "leaks": 2,
-    "leak_rate": 0.02857142857142857,
+    "leaks": 3,
+    "leak_rate": 0.04225352112676056,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 44
+    "deferred": 41
    },
    {
     "threshold": 0.95,
@@ -185,7 +188,7 @@
     "leak_rate": 0.0,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 109
+    "deferred": 108
    }
   ],
   "target_leak": 0.01,
@@ -274,9 +277,9 @@
    {
     "category": "personal-data",
     "n": 20,
-    "correct": 6,
-    "leaks": 12,
-    "overblocks": 2,
+    "correct": 9,
+    "leaks": 10,
+    "overblocks": 1,
     "defers": 0
    },
    {

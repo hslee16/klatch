@@ -18,150 +18,160 @@
    ],
    "counts": [
     [
-     39,
+     37,
      1,
-     0,
+     1,
      0
     ],
     [
      0,
      29,
-     0,
+     1,
      0
     ],
     [
-     0,
      1,
-     40,
+     1,
+     39,
      0
     ]
    ]
   },
-  "leaks": 9,
-  "leak_rate": 0.12857142857142856,
+  "leaks": 10,
+  "leak_rate": 0.14084507042253522,
   "redaction_leaks": 9,
-  "data_leaks": 0,
-  "data_leak_rate": 0.0,
+  "data_leaks": 1,
+  "data_leak_rate": 0.014084507042253521,
   "contested": [],
-  "overblocks": 1,
-  "overblock_rate": 0.025,
+  "overblocks": 2,
+  "overblock_rate": 0.05128205128205128,
   "softened": 1,
   "defers": 0,
   "defer_rate": 0.0,
   "errors": 0,
-  "accuracy": 0.9,
-  "accuracy_decided": 0.9,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.8727272727272727,
+  "accuracy_decided": 0.8727272727272727,
   "per_verdict": [
    {
     "verdict": "allow",
-    "precision": 1.0,
-    "recall": 0.975
+    "precision": 0.9736842105263158,
+    "recall": 0.9487179487179487
    },
    {
     "verdict": "redact",
     "precision": 0.6451612903225806,
-    "recall": 0.6896551724137931
+    "recall": 0.6666666666666666
    },
    {
     "verdict": "deny",
-    "precision": 1.0,
-    "recall": 0.975609756097561
+    "precision": 0.9512195121951219,
+    "recall": 0.9512195121951219
    }
   ],
-  "latency_p50_ms": 4205.62166600005,
-  "latency_p99_ms": 8049.55483400001,
-  "tokens_in": 428884,
-  "tokens_out": 36472,
-  "cost_usd": 1.0117331000000003,
+  "latency_p50_ms": 3895.5866250000036,
+  "latency_p99_ms": 7702.599500000011,
+  "tokens_in": 425405,
+  "tokens_out": 24884,
+  "cost_usd": 0.8905219999999998,
   "calibration": {
-   "ece": 0.08100000000000016,
+   "ece": 0.08263636363636392,
    "buckets": [
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "n": 2,
+     "accuracy": 0.0,
+     "mean_confidence": 0.525
+    },
     {
      "lo": 0.6,
      "hi": 0.7,
-     "n": 3,
-     "accuracy": 0.6666666666666666,
+     "n": 5,
+     "accuracy": 0.6,
      "mean_confidence": 0.6
     },
     {
      "lo": 0.7,
      "hi": 0.8,
-     "n": 6,
+     "n": 2,
      "accuracy": 1.0,
-     "mean_confidence": 0.7066666666666667
+     "mean_confidence": 0.7
     },
     {
      "lo": 0.8,
      "hi": 0.9,
-     "n": 26,
-     "accuracy": 0.9615384615384616,
-     "mean_confidence": 0.8423076923076926
+     "n": 29,
+     "accuracy": 0.9655172413793104,
+     "mean_confidence": 0.840689655172414
     },
     {
      "lo": 0.9,
      "hi": 1.0,
-     "n": 75,
+     "n": 72,
      "accuracy": 1.0,
-     "mean_confidence": 0.9486666666666663
+     "mean_confidence": 0.9469444444444439
     }
    ]
   },
   "thresholds": [
    {
     "threshold": 0.0,
-    "leaks": 9,
-    "leak_rate": 0.12857142857142856,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
+    "leaks": 10,
+    "leak_rate": 0.14084507042253522,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
     "deferred": 0
    },
    {
     "threshold": 0.5,
-    "leaks": 9,
-    "leak_rate": 0.12857142857142856,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
+    "leaks": 10,
+    "leak_rate": 0.14084507042253522,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
     "deferred": 0
    },
    {
     "threshold": 0.6,
     "leaks": 9,
-    "leak_rate": 0.12857142857142856,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
-    "deferred": 0
+    "leak_rate": 0.1267605633802817,
+    "overblocks": 2,
+    "overblock_rate": 0.05128205128205128,
+    "deferred": 2
    },
    {
     "threshold": 0.7,
     "leaks": 9,
-    "leak_rate": 0.12857142857142856,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
-    "deferred": 3
+    "leak_rate": 0.1267605633802817,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 7
    },
    {
     "threshold": 0.8,
     "leaks": 9,
-    "leak_rate": 0.12857142857142856,
-    "overblocks": 1,
-    "overblock_rate": 0.025,
+    "leak_rate": 0.1267605633802817,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
     "deferred": 9
    },
    {
     "threshold": 0.85,
     "leaks": 5,
-    "leak_rate": 0.07142857142857142,
+    "leak_rate": 0.07042253521126761,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 20
+    "deferred": 21
    },
    {
     "threshold": 0.9,
-    "leaks": 3,
-    "leak_rate": 0.04285714285714286,
+    "leaks": 4,
+    "leak_rate": 0.056338028169014086,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 35
+    "deferred": 38
    },
    {
     "threshold": 0.95,
@@ -169,7 +179,7 @@
     "leak_rate": 0.0,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 58
+    "deferred": 60
    },
    {
     "threshold": 0.97,
@@ -177,7 +187,7 @@
     "leak_rate": 0.0,
     "overblocks": 0,
     "overblock_rate": 0.0,
-    "deferred": 79
+    "deferred": 81
    },
    {
     "threshold": 0.99,
@@ -242,9 +252,9 @@
    {
     "category": "injection-lookalike",
     "n": 6,
-    "correct": 6,
+    "correct": 5,
     "leaks": 0,
-    "overblocks": 0,
+    "overblocks": 1,
     "defers": 0
    },
    {
@@ -258,7 +268,7 @@
    {
     "category": "long",
     "n": 5,
-    "correct": 5,
+    "correct": 4,
     "leaks": 0,
     "overblocks": 0,
     "defers": 0
@@ -290,8 +300,8 @@
    {
     "category": "scrub-term",
     "n": 6,
-    "correct": 5,
-    "leaks": 0,
+    "correct": 4,
+    "leaks": 1,
     "overblocks": 0,
     "defers": 0
    },
@@ -322,9 +332,9 @@
    {
     "category": "injection (all)",
     "n": 16,
-    "correct": 16,
+    "correct": 15,
     "leaks": 0,
-    "overblocks": 0,
+    "overblocks": 1,
     "defers": 0
    }
   ]

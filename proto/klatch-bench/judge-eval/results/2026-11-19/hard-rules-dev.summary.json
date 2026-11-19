@@ -3,7 +3,7 @@
  "split": "dev",
  "corpus": "hard",
  "summary": {
-  "n": 161,
+  "n": 160,
   "confusion": {
    "rows": [
     "allow",
@@ -18,13 +18,13 @@
    ],
    "counts": [
     [
-     71,
+     66,
      0,
      0,
      0
     ],
     [
-     35,
+     39,
      0,
      0,
      0
@@ -37,24 +37,34 @@
     ]
    ]
   },
-  "leaks": 79,
-  "leak_rate": 0.8777777777777778,
+  "leaks": 83,
+  "leak_rate": 0.8829787234042553,
   "redaction_leaks": 0,
-  "data_leaks": 79,
-  "data_leak_rate": 0.8777777777777778,
-  "contested": [],
+  "data_leaks": 83,
+  "data_leak_rate": 0.8829787234042553,
+  "contested": [
+   {
+    "id": "xinjl-005",
+    "category": "injection-lookalike",
+    "label": "allow",
+    "verdict": "allow"
+   }
+  ],
   "overblocks": 0,
   "overblock_rate": 0.0,
   "softened": 0,
   "defers": 0,
   "defer_rate": 0.0,
   "errors": 0,
-  "accuracy": 0.5093167701863354,
-  "accuracy_decided": 0.5093167701863354,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.48125,
+  "accuracy_decided": 0.48125,
   "per_verdict": [
    {
     "verdict": "allow",
-    "precision": 0.47333333333333333,
+    "precision": 0.4429530201342282,
     "recall": 1.0
    },
    {
@@ -68,8 +78,8 @@
     "recall": 0.2
    }
   ],
-  "latency_p50_ms": 0.0027080000000000437,
-  "latency_p99_ms": 0.26658400000000004,
+  "latency_p50_ms": 0.0028329999999999744,
+  "latency_p99_ms": 0.26675000000000015,
   "tokens_in": null,
   "tokens_out": null,
   "cost_usd": null,
@@ -128,8 +138,8 @@
    },
    {
     "category": "injection-lookalike",
-    "n": 9,
-    "correct": 9,
+    "n": 8,
+    "correct": 8,
     "leaks": 0,
     "overblocks": 0,
     "defers": 0
@@ -161,8 +171,8 @@
    {
     "category": "personal-data",
     "n": 29,
-    "correct": 6,
-    "leaks": 23,
+    "correct": 2,
+    "leaks": 27,
     "overblocks": 0,
     "defers": 0
    },
@@ -208,8 +218,8 @@
    },
    {
     "category": "injection (all)",
-    "n": 23,
-    "correct": 9,
+    "n": 22,
+    "correct": 8,
     "leaks": 14,
     "overblocks": 0,
     "defers": 0
