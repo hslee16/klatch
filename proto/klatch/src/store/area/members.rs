@@ -98,6 +98,12 @@ pub trait MemberStore {
         Ok(())
     }
 
+    /// Each member's read cursor, hook shown-mark and mute flag in a room (#675), for the sender's receipt. The
+    /// default reports none, so a store without cursors claims nothing about shown or read.
+    fn member_cursors(&self, _room: &str) -> Result<Vec<crate::domain::MemberCursor>> {
+        Ok(Vec::new())
+    }
+
     /// Whether the member muted the room. The default says no.
     fn is_muted(&self, _at: Seat) -> Result<bool> {
         Ok(false)

@@ -120,6 +120,10 @@ impl MemberStore for SpyStore {
         self.inner.set_muted(at, muted, now)
     }
 
+    fn member_cursors(&self, room: &str) -> Result<Vec<crate::domain::MemberCursor>> {
+        self.inner.member_cursors(room)
+    }
+
     fn is_muted(&self, at: Seat) -> Result<bool> {
         self.inner.is_muted(at)
     }

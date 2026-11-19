@@ -88,7 +88,9 @@ pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, CrossingStatus, HookRun, MemberInfo,
     MemberPlace, Message, Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
 };
-pub use receipt::{Receipt, Receipts, receipt_of, receipts_of, render_receipts};
+pub use receipt::{
+    MemberCursor, Receipt, Receipts, Taken, receipt_of, receipts_of, render_receipts, taken_of,
+};
 pub use router::{
     AskFacts, MAX_INVITES, Route, Rule, View as RouterView, plan as plan_routes, topic_room,
 };

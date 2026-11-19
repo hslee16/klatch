@@ -33,5 +33,15 @@ fn receipt(w: &World) -> Res {
         "only the sender",
         "a recipient could ask",
     )?;
+    // shown and read (#675): the active member peeked (read cursor untouched, hook not run), so neither flag is set
+    has(&out, "active: seen 0m after the post", "active line")?;
+    has(&out, "shown: no, read: no", "untouched cursors")?;
+    w.ok("silent", &["read", "r"])?;
+    let out = w.ok("sender", &["receipt", "r", "2"])?;
+    let silent = out
+        .lines()
+        .find(|l| l.contains("silent:"))
+        .ok_or("no silent line")?;
+    has(silent, "read: yes", "the silent member read it")?;
     Ok(vec![])
 }
