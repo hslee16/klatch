@@ -1,7 +1,8 @@
-//! What a sender can learn about each recipient of one message (#546). Every state is derived from what members
-//! already see of each other in `who` (last seen, parked), compared with the message time; none comes from a read
-//! cursor or a hook shown-mark. Those say more about a member than `who` does, and whether a sender may see them is
-//! a human decision (DESIGN item 61). No state is proof that a model read the message, and none carries its text.
+//! What a sender can learn about each recipient of one message (#546, #675). The liveness state is derived from what
+//! members already see of each other in `who` (last seen, parked), compared with the message time. The `shown` and
+//! `read` flags come from the hook shown-mark and the read cursor; they say more about a member than `who` does, so
+//! the gateway gives them to the sender of the message only (decided on #585, DESIGN item 61). A transport write
+//! never counts (#555). No state carries message text.
 
 use crate::domain::parked::span;
 use crate::domain::{MemberInfo, Message};
@@ -54,22 +55,65 @@ pub fn receipt_of(member: &MemberInfo, message: &Message, now: i64) -> Option<Re
     }
 }
 
+/// One member's cursors in a room, as the store keeps them: the read cursor, the hook shown-mark and whether the
+/// room is muted for the member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberCursor {
+    pub name: String,
+    pub read: i64,
+    pub hook: i64,
+    pub muted: bool,
+}
+
+/// Whether a recipient was shown a message by its hook, and whether it has read it past its read cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Taken {
+    pub shown: bool,
+    pub read: bool,
+}
+
+/// `shown`: the hook mark reached the message and, for a muted room, the message mentions the member (a muted hook
+/// shows only mentions, so the mark passing a message does not mean it was shown). `read`: the read cursor reached it.
+pub fn taken_of(cursor: &MemberCursor, message: &Message) -> Taken {
+    let visible = !cursor.muted || crate::domain::mentions(&message.body, &cursor.name);
+    Taken {
+        shown: cursor.hook >= message.seq && visible,
+        read: cursor.read >= message.seq,
+    }
+}
+
 /// The states of a message for each recipient, in member order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipts {
     pub seq: i64,
     pub posted: i64,
     pub rows: Vec<(String, Receipt)>,
+    /// Shown and read per recipient, by name. A recipient missing here has no cursor the store could report.
+    pub taken: Vec<(String, Taken)>,
 }
 
-pub fn receipts_of(members: &[MemberInfo], message: &Message, now: i64) -> Receipts {
+pub fn receipts_of(
+    members: &[MemberInfo],
+    cursors: &[MemberCursor],
+    message: &Message,
+    now: i64,
+) -> Receipts {
+    let rows: Vec<(String, Receipt)> = members
+        .iter()
+        .filter_map(|m| receipt_of(m, message, now).map(|r| (m.name.clone(), r)))
+        .collect();
+    let taken = rows
+        .iter()
+        .filter_map(|(name, _)| {
+            let c = cursors.iter().find(|c| &c.name == name)?;
+            Some((name.clone(), taken_of(c, message)))
+        })
+        .collect();
     Receipts {
         seq: message.seq,
         posted: message.ts,
-        rows: members
-            .iter()
-            .filter_map(|m| receipt_of(m, message, now).map(|r| (m.name.clone(), r)))
-            .collect(),
+        rows,
+        taken,
     }
 }
 
@@ -81,12 +125,17 @@ pub fn render_receipts(r: &Receipts, now: i64) -> String {
         span(now - r.posted)
     );
     for (name, state) in &r.rows {
-        out.push_str(&format!("  {name}: {}\n", state.phrase(now)));
+        out.push_str(&format!("  {name}: {}", state.phrase(now)));
+        if let Some((_, t)) = r.taken.iter().find(|(n, _)| n == name) {
+            let yn = |b: bool| if b { "yes" } else { "no" };
+            out.push_str(&format!("; shown: {}, read: {}", yn(t.shown), yn(t.read)));
+        }
+        out.push('\n');
     }
     if r.rows.is_empty() {
         out.push_str("  (nobody else was in the room)\n");
     }
-    out.push_str("shown and read state are not reported: they are not shared between members (DESIGN item 61)\n");
+    out.push_str("shown: the recipient's hook showed it (a muted room shows only mentions); read: its read cursor reached it. Only you, the sender, can see this (DESIGN item 61)\n");
     out
 }
 
@@ -157,14 +206,79 @@ mod tests {
     fn the_text_has_no_message_content_and_says_what_it_cannot_say() {
         let m = message("alice", 100);
         let rows = vec![member("bob", 1, 130), member("carol", 1, 40)];
-        let out = render_receipts(&receipts_of(&rows, &m, 400), 400);
+        let cursors = vec![MemberCursor {
+            name: "bob".into(),
+            read: 0,
+            hook: 4,
+            muted: false,
+        }];
+        let out = render_receipts(&receipts_of(&rows, &cursors, &m, 400), 400);
         assert!(!out.contains("secret"), "{out}");
         assert!(out.contains("bob: seen 0m after the post"), "{out}");
         assert!(out.contains("carol: not seen since the post"), "{out}");
         assert!(out.contains("not proof it was shown or read"), "{out}");
         assert!(
-            out.contains("shown and read state are not reported"),
+            out.contains("bob: seen 0m after the post (liveness only; not proof it was shown or read); shown: yes, read: no"),
             "{out}"
+        );
+        let carol = out.lines().find(|l| l.contains("carol:")).unwrap();
+        assert!(!carol.contains("shown"), "no cursor, no claim: {out}");
+    }
+
+    fn cursor(read: i64, hook: i64, muted: bool) -> MemberCursor {
+        MemberCursor {
+            name: "bob".into(),
+            read,
+            hook,
+            muted,
+        }
+    }
+
+    #[test]
+    fn shown_follows_the_hook_mark_and_read_follows_the_read_cursor() {
+        let m = message("alice", 100); // seq 4
+        let t = |c| taken_of(&c, &m);
+        let none = Taken {
+            shown: false,
+            read: false,
+        };
+        assert_eq!(t(cursor(0, 0, false)), none);
+        assert_eq!(t(cursor(0, 3, false)), none);
+        assert_eq!(
+            t(cursor(0, 4, false)),
+            Taken {
+                shown: true,
+                read: false
+            }
+        );
+        assert_eq!(
+            t(cursor(4, 0, false)),
+            Taken {
+                shown: false,
+                read: true
+            }
+        );
+        assert_eq!(
+            t(cursor(9, 9, false)),
+            Taken {
+                shown: true,
+                read: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_muted_room_counts_as_shown_only_for_a_mention() {
+        let mut m = message("alice", 100);
+        assert!(
+            !taken_of(&cursor(0, 9, true), &m).shown,
+            "muted, no mention"
+        );
+        m.body = "ping @bob".into();
+        assert!(taken_of(&cursor(0, 9, true), &m).shown, "muted, mentioned");
+        assert!(
+            !taken_of(&cursor(0, 3, true), &m).shown,
+            "mark not there yet"
         );
     }
 }

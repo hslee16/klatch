@@ -97,3 +97,84 @@ fn a_room_the_guard_refuses_gives_no_receipt() {
     );
     assert!(is_refused(g.receipt(&alice(), "locked", 1)));
 }
+
+fn taken(
+    g: &Gateway<SpyStore>,
+    who: &Principal,
+    seq: i64,
+    name: &str,
+) -> Option<crate::domain::Taken> {
+    let r = g.receipt(who, "r", seq).unwrap();
+    r.taken.into_iter().find(|(n, _)| n == name).map(|(_, t)| t)
+}
+
+#[test]
+fn shown_follows_the_hook_and_read_follows_the_read_cursor() {
+    let (g, _t) = room_of_three();
+    let seq = g.post(&alice(), "r", "hello").unwrap().seq;
+    let none = crate::domain::Taken {
+        shown: false,
+        read: false,
+    };
+    assert_eq!(taken(&g, &alice(), seq, "bob"), Some(none));
+    g.digest(&bob()).unwrap();
+    assert_eq!(
+        taken(&g, &alice(), seq, "bob"),
+        Some(crate::domain::Taken {
+            shown: true,
+            read: false
+        }),
+        "the hook showed it"
+    );
+    assert_eq!(
+        taken(&g, &alice(), seq, "carol"),
+        Some(none),
+        "carol is untouched"
+    );
+    g.read(&carol(), "r", true).unwrap();
+    assert_eq!(
+        taken(&g, &alice(), seq, "carol"),
+        Some(crate::domain::Taken {
+            shown: false,
+            read: true
+        })
+    );
+}
+
+#[test]
+fn a_muted_recipient_was_shown_only_a_message_that_mentions_it() {
+    let (g, _t) = room_of_three();
+    g.set_muted(&bob(), "r", true).unwrap();
+    let plain = g.post(&alice(), "r", "hello").unwrap().seq;
+    let ping = g.post(&alice(), "r", "hello @bob").unwrap().seq;
+    g.digest(&bob()).unwrap();
+    assert_eq!(
+        taken(&g, &alice(), plain, "bob").map(|t| t.shown),
+        Some(false)
+    );
+    assert_eq!(
+        taken(&g, &alice(), ping, "bob").map(|t| t.shown),
+        Some(true)
+    );
+}
+
+#[test]
+fn a_post_by_the_recipient_moves_neither_flag() {
+    let (g, _t) = room_of_three();
+    let seq = g.post(&alice(), "r", "hello").unwrap().seq;
+    g.post(&bob(), "r", "unrelated").unwrap();
+    let t = taken(&g, &alice(), seq, "bob").unwrap();
+    assert!(
+        !t.shown && !t.read,
+        "a write by the recipient is not a read (#555)"
+    );
+}
+
+#[test]
+fn only_the_sender_gets_the_flags() {
+    let (g, _t) = room_of_three();
+    let seq = g.post(&alice(), "r", "hello").unwrap().seq;
+    g.digest(&bob()).unwrap();
+    assert!(is_refused(g.receipt(&bob(), "r", seq)));
+    assert!(is_refused(g.receipt(&carol(), "r", seq)));
+}

@@ -114,7 +114,7 @@ wraps.
 | `grant` | `grant_room_clearance` | GUARDED `grant_room_clearance`: the operation `GrantClearance`, then the room's checks (stops, the caller's own clearance for the room), the role (a librarian or reviewer is refused) and the grantor rules (#893): the caller is the room's grantor now (`grantor`), not the grantee (`self-grant`), the label is not the top level (`top-level`), at most the agent cap (`agent-cap`), the room's label (`room-label`) and the caller's own global clearance (`own-clearance`, room grants are not passed on). Audited (`grant-clearance`: grantor, grantee, room, label); a refusal keeps a refusal row. The decision reads the policy table and roles only, never text. No wire method yet (#895). Proof: `gateway/tests/room_grantor.rs`, `tests/room_grantor.rs` |
 | `wake` | `wake_mark`, `wakeable`, `wake_summary` | GUARDED, one each |
 | `who` | `who` | as wire `who` |
-| `receipt` | `receipt` | GUARDED `receipt` |
+| `receipt` | `receipt` | GUARDED `receipt`; refuses anyone but the sender of the message (`receipt-sender-only`), which is what lets it return per-recipient `shown` and `read` flags (cursors, #675) to that one member; no message text is returned |
 | `claim` | `claim_ttl_for`, `claim` | as wire `claim` |
 | `release` | `release`, `release_with_note` | as wire `release` |
 | `ask` | `post`, `who` | as wire `post` (GUARDED, the room's checks and content rules); `who` only for the reach note, as the `post` command does (#241) |
