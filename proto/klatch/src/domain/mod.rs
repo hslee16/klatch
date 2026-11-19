@@ -36,6 +36,7 @@ mod toolguard;
 #[cfg(test)]
 mod toolguard_tests;
 mod wait_filter;
+mod wake_cap;
 
 pub use ask_bounds::{ASK_GIVE_UP_SECS, give_up_notes};
 pub use ask_cycle::{AskCycle, ask_cycles, cycle_notes};
@@ -111,3 +112,4 @@ pub use toolguard::{
     patch_targets,
 };
 pub use wait_filter::{Filter as WaitFilter, room_filters};
+pub use wake_cap::{Capped, cap_wake};
