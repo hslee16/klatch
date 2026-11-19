@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// What a narrowed view held back: the count and the newest seq, `None` when nothing (#673).
+type Hidden = Option<(usize, i64)>;
+
 impl<S: Store> Gateway<S> {
     /// The messages a hook shows for a room: all of them, or only those that mention the caller when it muted the
     /// room. A hook shows each message once and leaves the read cursor alone, so a muted-out message stays readable.
@@ -10,7 +13,7 @@ impl<S: Store> Gateway<S> {
         who: &Principal,
         room: &str,
         now: i64,
-    ) -> Result<(Vec<Message>, Option<(usize, i64)>)> {
+    ) -> Result<(Vec<Message>, Hidden)> {
         let messages = self.store.hook_read(Seat::new(room, &who.member), now)?;
         let outside = self.hidden_count(who, room, messages.clone())?;
         let messages = self.in_view(who, room, messages)?;

@@ -92,7 +92,7 @@ impl<S: Store> Gateway<S> {
             .store
             .wake_poll(Seat::new(room, &who.member), self.now())?;
         let unread = Self::without_canary(unread);
-        Ok(self.hidden_count(who, room, unread)?)
+        self.hidden_count(who, room, unread)
     }
 
     /// The count and newest `seq` of what the view hides from `messages`. A muted room reports none: mute already
