@@ -1,7 +1,8 @@
 //! Jev as a judge and a facilitator advisor, its own integration (#898, epic #180 and #10).
 //!
 //! Jev (Typesafe) is a decision model, not a text generator: one request carries a pinned `model`, a `state` and a
-//! list of `questions`; the reply is keyed by question id and carries no reasoning. This file holds only the pure
+//! dictionary of `questions` keyed by id; the reply is `{model, answers, usage}`, `answers` keyed by question id,
+//! and carries no reasoning (shapes verified by the live check of 2026-11-19, #911). This file holds only the pure
 //! parts, so nothing here touches a network: the wire types, a strict reply parser, the adapter that plugs Jev into
 //! the hosted judge's [`HostedTransport`], the confidence-threshold helper for the facilitator path, and the label
 //! gate for structured facts. A real HTTP transport is #871; the [`JevTransport`] trait is where it goes.
@@ -83,15 +84,16 @@ pub struct JevConfig {
 }
 
 impl JevConfig {
-    /// `model` is a pinned version, `1.14.0` or `jev-1.14.0`; never `latest` or anything that is not a three-part
-    /// number. `threshold` is in (0, 1].
+    /// `model` is a pinned version in the form the API accepts, `jev-X.Y.Z` with three numeric parts (the bare
+    /// `1.14.0` is refused by the API); never `latest`, `jev-latest`, `jev-preview` or anything else. `threshold`
+    /// is in (0, 1].
     pub fn new(model: &str, threshold: f64) -> Result<JevConfig, String> {
-        let version = model.strip_prefix("jev-").unwrap_or(model);
+        let version = model.strip_prefix("jev-").unwrap_or("");
         let parts: Vec<&str> = version.split('.').collect();
         let numeric = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
         if parts.len() != 3 || !parts.iter().all(numeric) {
             return Err(
-                "the Jev model must be a pinned version such as 1.14.0, never latest".into(),
+                "the Jev model must be a pinned version such as jev-1.14.0, never latest".into(),
             );
         }
         if !threshold.is_finite() || threshold <= 0.0 || threshold > 1.0 {
@@ -121,31 +123,34 @@ pub struct Question {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuestionKind {
-    /// Pick one of `choices`.
+    /// Pick one option; `criteria` is (option, description) in the order given.
     Choice {
-        prompt: String,
-        choices: Vec<String>,
+        instructions: String,
+        criteria: Vec<(String, String)>,
     },
     /// Is the statement true, as a probability.
-    Noul { statement: String },
+    Noul { instructions: String },
 }
 
 impl Question {
-    pub fn choice(id: &str, prompt: &str, choices: &[&str]) -> Question {
+    pub fn choice(id: &str, instructions: &str, criteria: &[(&str, &str)]) -> Question {
         Question {
             id: id.into(),
             kind: QuestionKind::Choice {
-                prompt: prompt.into(),
-                choices: choices.iter().map(|c| c.to_string()).collect(),
+                instructions: instructions.into(),
+                criteria: criteria
+                    .iter()
+                    .map(|(o, d)| (o.to_string(), d.to_string()))
+                    .collect(),
             },
         }
     }
 
-    pub fn noul(id: &str, statement: &str) -> Question {
+    pub fn noul(id: &str, instructions: &str) -> Question {
         Question {
             id: id.into(),
             kind: QuestionKind::Noul {
-                statement: statement.into(),
+                instructions: instructions.into(),
             },
         }
     }
@@ -154,32 +159,41 @@ impl Question {
     pub fn judge() -> Question {
         Question::choice(
             JUDGE_QUESTION_ID,
-            "Should the message in the state cross to a reader of lower clearance? allow sends it unchanged, \
-             redact withholds the wording, deny blocks it.",
-            &["allow", "redact", "deny"],
+            "Should the message in the state cross to a reader of lower clearance?",
+            &[
+                ("allow", "send the message unchanged"),
+                ("redact", "withhold the wording of the message"),
+                ("deny", "block the message"),
+            ],
         )
     }
 
     fn to_json(&self) -> Value {
         match &self.kind {
-            QuestionKind::Choice { prompt, choices } => {
-                json!({"id": self.id, "type": "choice", "question": prompt, "choices": choices})
+            QuestionKind::Choice {
+                instructions,
+                criteria,
+            } => {
+                let c: Map<String, Value> = criteria
+                    .iter()
+                    .map(|(o, d)| (o.clone(), json!(d)))
+                    .collect();
+                json!({"type": "choice", "instructions": instructions, "criteria": c})
             }
-            QuestionKind::Noul { statement } => {
-                json!({"id": self.id, "type": "noul", "statement": statement})
+            QuestionKind::Noul { instructions } => {
+                json!({"type": "noul", "instructions": instructions})
             }
         }
     }
 }
 
-/// The request body: `{model, state, questions}`.
+/// The request body: `{model, state, questions}` with `questions` a dictionary keyed by question id.
 pub fn request_json(model: &str, state: &Value, questions: &[Question]) -> String {
-    json!({
-        "model": model,
-        "state": state,
-        "questions": questions.iter().map(Question::to_json).collect::<Vec<_>>(),
-    })
-    .to_string()
+    let qs: Map<String, Value> = questions
+        .iter()
+        .map(|q| (q.id.clone(), q.to_json()))
+        .collect();
+    json!({"model": model, "state": state, "questions": qs}).to_string()
 }
 
 /// A parsed choice answer; every field has been checked.
@@ -223,11 +237,38 @@ impl Answers {
     }
 }
 
-/// Why a call produced no usable answer. No variant ever holds the key or any part of a reply body.
+/// How a transport failed. It carries a response body only so [`http_error`] can read the `error_type` of the known
+/// shapes; the Debug of it shows the status and never the body (a 422 body echoes the request, message text included).
+#[derive(Clone, PartialEq)]
+pub enum JevTransportError {
+    /// No answer at all (connect, TLS, timeout). Carries no detail.
+    Network,
+    /// A non-success HTTP answer.
+    Status { status: u16, body: String },
+}
+
+impl fmt::Debug for JevTransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JevTransportError::Network => f.write_str("Network"),
+            JevTransportError::Status { status, .. } => {
+                write!(f, "Status {{ status: {status}, body: <withheld> }}")
+            }
+        }
+    }
+}
+
+/// Why a call produced no usable answer. No variant ever holds the key, the state or any part of a reply body.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JevError {
     NoKey,
-    Transport(String),
+    /// No answer from the network.
+    Unreachable,
+    /// An HTTP error: the status, and the `error_type` only for the known shapes (see [`http_error`]).
+    Http {
+        status: u16,
+        error_type: Option<&'static str>,
+    },
     Malformed(&'static str),
 }
 
@@ -235,7 +276,15 @@ impl fmt::Display for JevError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JevError::NoKey => write!(f, "no {KEY_ENV} in the environment"),
-            JevError::Transport(why) => write!(f, "the Jev transport failed: {why}"),
+            JevError::Unreachable => write!(f, "Jev could not be reached"),
+            JevError::Http {
+                status,
+                error_type: None,
+            } => write!(f, "Jev answered HTTP {status}"),
+            JevError::Http {
+                status,
+                error_type: Some(kind),
+            } => write!(f, "Jev answered HTTP {status} ({kind})"),
             JevError::Malformed(why) => write!(f, "the Jev reply was refused: {why}"),
         }
     }
@@ -243,24 +292,47 @@ impl fmt::Display for JevError {
 
 impl std::error::Error for JevError {}
 
+/// The `error_type` values the API was seen to send, and the only ones ever reported.
+const KNOWN_ERROR_TYPES: [&str; 2] = ["authentication_error", "api_usage_error"];
+
+/// Turn an HTTP error into a [`JevError`]. Only the status is reported, plus the `error_type` for the 401, 403 and
+/// 400 shapes (`{"detail": {"error_type": ...}}`) when it is one of [`KNOWN_ERROR_TYPES`]; the body is never read for
+/// any other status (a 422 echoes the whole request) and never reported.
+pub fn http_error(status: u16, body: &str) -> JevError {
+    let error_type = if matches!(status, 400 | 401 | 403) {
+        serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|v| {
+                v.get("detail")?
+                    .get("error_type")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .and_then(|s| KNOWN_ERROR_TYPES.iter().find(|k| **k == s).copied())
+    } else {
+        None
+    };
+    JevError::Http { status, error_type }
+}
+
 fn unit(v: &Value) -> Option<f64> {
     v.as_f64()
         .filter(|x| x.is_finite() && (0.0..=1.0).contains(x))
 }
 
-fn parse_choice(v: &Value, choices: &[String]) -> Result<ChoiceAnswer, JevError> {
+fn parse_choice(v: &Value, choices: &[&String]) -> Result<ChoiceAnswer, JevError> {
     let bad = JevError::Malformed;
     let o = v.as_object().ok_or(bad("an answer is not an object"))?;
-    if o.len() != 3 {
+    if o.len() != 4 || o.get("type").and_then(Value::as_str) != Some("choice") {
         return Err(bad(
-            "a choice answer has other fields than choice, probabilities, confidence",
+            "a choice answer is not exactly type, choice, confidence, probabilities",
         ));
     }
     let choice = o
         .get("choice")
         .and_then(Value::as_str)
         .ok_or(bad("no choice"))?;
-    if !choices.iter().any(|c| c == choice) {
+    if !choices.iter().any(|c| c.as_str() == choice) {
         return Err(bad("a choice that was not offered"));
     }
     let confidence = o
@@ -277,10 +349,10 @@ fn parse_choice(v: &Value, choices: &[String]) -> Result<ChoiceAnswer, JevError>
     let mut probabilities = BTreeMap::new();
     for c in choices {
         let p = raw
-            .get(c)
+            .get(c.as_str())
             .and_then(unit)
             .ok_or(bad("a probability is missing or outside 0..1"))?;
-        probabilities.insert(c.clone(), p);
+        probabilities.insert((*c).clone(), p);
     }
     let sum: f64 = probabilities.values().sum();
     if (sum - 1.0).abs() > SUM_TOLERANCE {
@@ -297,50 +369,69 @@ fn parse_choice(v: &Value, choices: &[String]) -> Result<ChoiceAnswer, JevError>
     })
 }
 
-/// Parse a reply strictly against the questions asked: an object with exactly the asked ids, each answer exactly the
-/// shape of its kind. Anything else is an error.
-pub fn parse_response(body: &str, questions: &[Question]) -> Result<Answers, JevError> {
-    let v: Value = serde_json::from_str(body).map_err(|_| JevError::Malformed("not JSON"))?;
-    let o: &Map<String, Value> = v
-        .as_object()
-        .ok_or(JevError::Malformed("the reply is not an object"))?;
-    if o.len() != questions.len() {
-        return Err(JevError::Malformed(
-            "the answers do not match the questions",
-        ));
+/// Parse a reply strictly against the pinned `model` and the questions asked: an object with exactly `model` (equal
+/// to the pinned one), `answers` (exactly the asked ids, each exactly the shape of its kind) and optionally `usage`
+/// (an object, otherwise ignored). Anything else is an error.
+pub fn parse_response(
+    body: &str,
+    model: &str,
+    questions: &[Question],
+) -> Result<Answers, JevError> {
+    let bad = JevError::Malformed;
+    let v: Value = serde_json::from_str(body).map_err(|_| bad("not JSON"))?;
+    let o = v.as_object().ok_or(bad("the reply is not an object"))?;
+    if o.keys()
+        .any(|k| !matches!(k.as_str(), "model" | "answers" | "usage"))
+    {
+        return Err(bad("the reply has an unexpected field"));
+    }
+    if o.get("model").and_then(Value::as_str) != Some(model) {
+        return Err(bad("the reply model is not the pinned model"));
+    }
+    if o.get("usage").is_some_and(|u| !u.is_object()) {
+        return Err(bad("usage is not an object"));
+    }
+    let answers = o
+        .get("answers")
+        .and_then(Value::as_object)
+        .ok_or(bad("no answers"))?;
+    if answers.len() != questions.len() {
+        return Err(bad("the answers do not match the questions"));
     }
     let mut out = BTreeMap::new();
     for q in questions {
-        let a = o
-            .get(&q.id)
-            .ok_or(JevError::Malformed("an answer is missing"))?;
+        let a = answers.get(&q.id).ok_or(bad("an answer is missing"))?;
         let parsed = match &q.kind {
-            QuestionKind::Choice { choices, .. } => Answer::Choice(parse_choice(a, choices)?),
+            QuestionKind::Choice { criteria, .. } => {
+                let choices: Vec<&String> = criteria.iter().map(|(o, _)| o).collect();
+                Answer::Choice(parse_choice(a, &choices)?)
+            }
             QuestionKind::Noul { .. } => {
                 let ob = a
                     .as_object()
-                    .filter(|ob| ob.len() == 1)
-                    .ok_or(JevError::Malformed("a noul answer is not {probability}"))?;
+                    .filter(|ob| {
+                        ob.len() == 2 && ob.get("type").and_then(Value::as_str) == Some("noul")
+                    })
+                    .ok_or(bad("a noul answer is not {type, noul}"))?;
                 let p = ob
-                    .get("probability")
+                    .get("noul")
                     .and_then(unit)
-                    .ok_or(JevError::Malformed(
-                        "a probability is missing or outside 0..1",
-                    ))?;
+                    .ok_or(bad("a probability is missing or outside 0..1"))?;
                 Answer::Noul(p)
             }
         };
         if out.insert(q.id.clone(), parsed).is_some() {
-            return Err(JevError::Malformed("a question id repeats"));
+            return Err(bad("a question id repeats"));
         }
     }
     Ok(Answers(out))
 }
 
-/// How a request body reaches Jev (POST, with the key as the bearer credential). `Err` is any failure. The real
+/// How a request body reaches Jev (POST, with the key as the bearer credential). `Err` is any failure; a transport
+/// reports a non-success HTTP answer as [`JevTransportError::Status`] and anything else as `Network`. The real
 /// HTTP transport is #871.
 pub trait JevTransport {
-    fn post(&self, key: &ApiKey, body: &str) -> Result<String, String>;
+    fn post(&self, key: &ApiKey, body: &str) -> Result<String, JevTransportError>;
 }
 
 type KeySource = Box<dyn Fn() -> Option<ApiKey>>;
@@ -373,13 +464,19 @@ impl<T: JevTransport> JevClient<T> {
 
     /// Ask the questions about `state`.
     pub fn ask(&self, state: &Value, questions: &[Question]) -> Result<Answers, JevError> {
+        let mut ids: Vec<&str> = questions.iter().map(|q| q.id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.len() != questions.len() {
+            return Err(JevError::Malformed("a question id repeats"));
+        }
         let key = (self.key_source)().ok_or(JevError::NoKey)?;
         let body = request_json(self.config.model(), state, questions);
-        let reply = self.transport.post(&key, &body).map_err(|why| {
-            let scrubbed = why.replace(key.expose(), "<redacted>");
-            JevError::Transport(scrubbed.chars().take(200).collect())
+        let reply = self.transport.post(&key, &body).map_err(|e| match e {
+            JevTransportError::Network => JevError::Unreachable,
+            JevTransportError::Status { status, body } => http_error(status, &body),
         })?;
-        parse_response(&reply, questions)
+        parse_response(&reply, self.config.model(), questions)
     }
 }
 
@@ -487,12 +584,15 @@ pub fn route_question(
     if sent.is_empty() {
         return None;
     }
-    let mut choices: Vec<&str> = sent.iter().map(String::as_str).collect();
-    choices.push(NONE_CHOICE);
+    let mut criteria: Vec<(&str, &str)> = sent
+        .iter()
+        .map(|c| (c.as_str(), "route the ask to this candidate"))
+        .collect();
+    criteria.push((NONE_CHOICE, "route the ask to no candidate"));
     let question = Question::choice(
         ROUTE_QUESTION_ID,
         "Which candidate should the sender's ask be routed to, or none?",
-        &choices,
+        &criteria,
     );
     let state = json!({"sender": sender.value, "topic": topic.value});
     Some((RouteQuestion { state, question }, sent))
