@@ -1,5 +1,7 @@
-//! `klatch-bench [--layer functional|scale|fault] [--json <file>] [name...]`: run the scripted scenarios against the
+//! `klatch-bench [--layer functional|scale|fault] [--json <file>] [--record] [name...]`: run the scripted scenarios against the
 //! real binary, print a table, write a JSON record, and exit non-zero when one fails.
+
+mod history_cli;
 
 /// What the command line asked for.
 struct Options {
@@ -10,6 +12,11 @@ struct Options {
     save_baseline: Option<String>,
     factor: f64,
     floor: f64,
+    /// Append this run to the history (`--record`), read it (`--trend`, `--rebaseline N`).
+    record: bool,
+    trend: bool,
+    history: Option<String>,
+    rebaseline: Option<usize>,
 }
 
 impl Options {
@@ -22,6 +29,10 @@ impl Options {
             save_baseline: None,
             factor: 3.0,
             floor: 200.0,
+            record: false,
+            trend: false,
+            history: None,
+            rebaseline: None,
         };
         while let Some(a) = args.next() {
             match a.as_str() {
@@ -31,6 +42,10 @@ impl Options {
                 "--save-baseline" => o.save_baseline = args.next(),
                 "--factor" => o.factor = number(args.next(), o.factor),
                 "--floor" => o.floor = number(args.next(), o.floor),
+                "--record" => o.record = true,
+                "--trend" => o.trend = true,
+                "--history" => o.history = args.next(),
+                "--rebaseline" => o.rebaseline = args.next().and_then(|v| v.parse().ok()),
                 other => o.names.push(other.to_string()),
             }
         }
@@ -81,8 +96,30 @@ fn check_budgets(outcomes: &[klatch_bench::Outcome], path: &str, o: &Options) ->
         .any(|b| b.status == klatch_bench::BudgetStatus::Regression)
 }
 
+/// `--trend` and `--rebaseline N` read the history and never run the bench.
+fn history_only(o: &Options) -> ! {
+    let path = history_cli::path(&o.history);
+    if let Some(n) = o.rebaseline {
+        let out = o
+            .save_baseline
+            .as_deref()
+            .unwrap_or_else(|| fail("--rebaseline needs --save-baseline FILE".into()));
+        history_cli::rebaseline(&path, n, out);
+        std::process::exit(0);
+    }
+    let baseline = o
+        .budgets
+        .clone()
+        .unwrap_or_else(|| concat!(env!("CARGO_MANIFEST_DIR"), "/baseline.json").into());
+    let crept = history_cli::trend(&path, &baseline, klatch_bench::history::TREND_RUNS);
+    std::process::exit(i32::from(crept));
+}
+
 fn main() {
     let options = Options::parse(std::env::args().skip(1));
+    if options.trend || options.rebaseline.is_some() {
+        history_only(&options);
+    }
     let bin = klatch_bench::find_binary().unwrap_or_else(|e| {
         eprintln!("klatch-bench: {e}");
         std::process::exit(2);
@@ -107,6 +144,10 @@ fn main() {
             serde_json::to_string_pretty(&klatch_bench::baseline_of(&outcomes)).unwrap_or_default();
         write_file(path, format!("{text}\n"));
         println!("baseline written to {path}");
+    }
+    if options.record {
+        let partial = options.layer.is_some() || !options.names.is_empty();
+        history_cli::record(&history_cli::path(&options.history), &outcomes, partial);
     }
     let regressed = options
         .budgets
