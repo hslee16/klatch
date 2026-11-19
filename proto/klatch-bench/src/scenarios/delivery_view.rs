@@ -1,18 +1,20 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
-    vec![Scenario {
-        name: "a_narrowed_view_shows_own_scope_addressed_and_broadcast_news_and_read_shows_all",
-        origin: "#186, DESIGN 24.1 decision 5",
-        layer: "fault",
-        run: delivery_view,
-    },
-    Scenario {
-        name: "a_lobby_shared_by_many_repositories_counts_what_a_narrowed_view_hides",
-        origin: "#673, #635",
-        layer: "scale",
-        run: many_repository_lobby,
-    }]
+    vec![
+        Scenario {
+            name: "a_narrowed_view_shows_own_scope_addressed_and_broadcast_news_and_read_shows_all",
+            origin: "#186, DESIGN 24.1 decision 5",
+            layer: "fault",
+            run: delivery_view,
+        },
+        Scenario {
+            name: "a_lobby_shared_by_many_repositories_counts_what_a_narrowed_view_hides",
+            origin: "#673, #635",
+            layer: "scale",
+            run: many_repository_lobby,
+        },
+    ]
 }
 
 fn delivery_view(w: &World) -> Res {
@@ -113,8 +115,13 @@ fn many_repository_lobby(w: &World) -> Res {
     };
     let (wake_all_ms, wake_all) = wake_ms("all-view")?;
     let (wake_scope_ms, wake_scope) = wake_ms("scoped")?;
-    lacks(&wake_all, "outside your view", "the all view has nothing outside")?;
-    let wake_hidden = outside_count(&wake_scope).ok_or("the wake pointer lacks the hidden count")?;
+    lacks(
+        &wake_all,
+        "outside your view",
+        "the all view has nothing outside",
+    )?;
+    let wake_hidden =
+        outside_count(&wake_scope).ok_or("the wake pointer lacks the hidden count")?;
     check(
         wake_hidden == hidden_expected,
         format!("wake says {wake_hidden} hidden, the room holds {hidden_expected}"),
@@ -130,7 +137,11 @@ fn many_repository_lobby(w: &World) -> Res {
         hook_hidden == hidden_expected,
         format!("the hook says {hook_hidden} hidden, the room holds {hidden_expected}"),
     )?;
-    lacks(&all_out, "outside your view", "the all view has nothing outside")?;
+    lacks(
+        &all_out,
+        "outside your view",
+        "the all view has nothing outside",
+    )?;
     lacks(&scope_out, "repo 5 member", "the pointer carried a message")?;
     // Both digests sit at the byte budget (#549), so scope does not print fewer bytes; it spends them on the member's
     // own repository instead of the newest messages of every repository.
