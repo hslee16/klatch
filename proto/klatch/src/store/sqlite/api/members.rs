@@ -171,6 +171,7 @@ impl MemberStore for SqliteStore {
                     }),
                     kind: None,
                     place: None,
+                    mode: None,
                 })
             },
         )

@@ -37,6 +37,7 @@ mod toolguard;
 mod toolguard_tests;
 mod wait_filter;
 mod wake_cap;
+mod wake_path;
 
 pub use ask_bounds::{ASK_GIVE_UP_SECS, give_up_notes};
 pub use ask_cycle::{AskCycle, ask_cycles, cycle_notes};
@@ -51,7 +52,8 @@ pub use asks::{
 pub use board::{
     BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS, MemberStatus,
     OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, ask_reach_note,
-    current_offers, is_offer, render_board, render_who, short_dir_name, statuses,
+    current_offers, is_offer, nudge_skipped_note, render_board, render_who, short_dir_name,
+    statuses,
 };
 pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
@@ -115,3 +117,4 @@ pub use toolguard::{
 };
 pub use wait_filter::{Filter as WaitFilter, room_filters};
 pub use wake_cap::{Capped, cap_wake};
+pub use wake_path::{PROMPTING_MODES, WakePath, wake_path};

@@ -83,6 +83,8 @@ pub struct Member {
     pub repository: Option<String>,
     /// The short name of the member's starting directory, never a path.
     pub directory: Option<String>,
+    /// The permission mode the member last reported (#677), if any hook has.
+    pub mode: Option<String>,
 }
 
 /// A live claim as `claims` lists it.
@@ -510,6 +512,7 @@ impl Client {
             kind: opt_str(&m["kind"]),
             repository: opt_str(&m["repository"]),
             directory: opt_str(&m["directory"]),
+            mode: opt_str(&m["mode"]),
         }))
     }
 

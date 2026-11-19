@@ -56,6 +56,21 @@ impl<S: Store> Gateway<S> {
         Ok(())
     }
 
+    /// Fill in the permission mode each member last reported (#677), for display and for choosing a wake path. One
+    /// read of the recorded modes for all of them; a member whose hooks never ran keeps `None`.
+    pub(super) fn with_modes(&self, members: &mut [MemberInfo]) -> Result<()> {
+        let modes: HashMap<String, String> = self
+            .store
+            .member_modes()?
+            .into_iter()
+            .map(|(member, mode, _)| (member, mode))
+            .collect();
+        for m in members {
+            m.mode = modes.get(&m.name).cloned();
+        }
+        Ok(())
+    }
+
     /// Fill in the kind of each member listed: a session record first, else the member's declaration. One read of
     /// the declarations for all of them.
     pub(super) fn with_kinds(&self, members: &mut [MemberInfo]) -> Result<()> {

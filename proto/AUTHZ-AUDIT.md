@@ -69,7 +69,7 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 | `read` | `read` | `Read` (advance unless `peek`) | GUARDED `read`; `labels.rs` |
 | `history` | `history` | `Read` without advance | GUARDED `history`; `history.rs` |
 | `invite` | `invite` | `Invite`, then `Post` in `via` | GUARDED `invite`; `room_capability.rs` |
-| `who` | `who` | `Who` | GUARDED `who`; since #181 each member line also carries the observed repository id and the short directory name (never the path, `with_places`), under the same `admit` as the member list itself; display only, no check reads them (`gateway/tests/member_places.rs`: a reader below the room label gets neither `who` nor the board) |
+| `who` | `who` | `Who` | GUARDED `who`; since #181 each member line also carries the observed repository id and the short directory name (never the path, `with_places`), under the same `admit` as the member list itself; since #677 it also carries each member's last reported permission mode (`with_modes`, one read of `member_modes`, display and wake-path choice only, never authority), under the same `admit`; display only, no check reads them (`gateway/tests/member_places.rs`: a reader below the room label gets neither `who` nor the board) |
 | `kind` | `set_kind` | none: the caller's own display word | OWN_RECORD `set_kind`; `member_kind.rs` |
 | `status` | `set_status` | `Status` | GUARDED `set_status` |
 | `claim` | `claim_ttl_for`, `claim` | `Claim` | GUARDED `claim`, `claim_ttl_for`; `claims.rs` |

@@ -145,6 +145,9 @@ fn members_json(ms: &[MemberInfo]) -> Value {
         if let Some(kind) = m.kind {
             v["kind"] = json!(kind.word());
         }
+        if let Some(mode) = &m.mode {
+            v["mode"] = json!(mode);
+        }
         if let Some(place) = &m.place {
             if let Some(r) = &place.repository {
                 v["repository"] = json!(r);

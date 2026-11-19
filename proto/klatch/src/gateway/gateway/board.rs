@@ -193,6 +193,7 @@ impl<S: Store> Gateway<S> {
         let mut members = self.store.members(room)?;
         self.with_kinds(&mut members)?;
         self.with_places(&mut members)?;
+        self.with_modes(&mut members)?;
         Ok(members)
     }
 
