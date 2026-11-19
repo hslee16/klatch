@@ -394,6 +394,49 @@ fn a_store_another_klatch_keeps_open_is_refused_with_a_reason_and_left_as_it_was
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
+/// Convert the store the way a person told "another klatch has the store open; stop it and run this again" does: run
+/// it again. A refusal is the correct answer while an old klatch keeps the store open (the test above), so a test
+/// that races a writer against a conversion must not treat one refusal as a failure: how many times the writer is in
+/// the way depends on how loaded the machine is (#904). Each refusal must leave the plaintext as it was. `on_refusal`
+/// runs after each one; returns how many there were.
+fn convert_when_free(path: &std::path::Path, mut on_refusal: impl FnMut()) -> usize {
+    for refusals in 0..500 {
+        match ensure_encrypted(path, &key()) {
+            Ok(_) => return refusals,
+            Err(e) => {
+                let said = e.to_string();
+                assert!(said.contains("another klatch"), "not a busy refusal: {said}");
+                assert!(
+                    crate::store::encrypt::is_plaintext(path),
+                    "a refusal changed the store"
+                );
+                on_refusal();
+            }
+        }
+    }
+    panic!("refused 500 times in a row");
+}
+
+/// The retry above, with no clock in it: an old klatch holds the store open until the first refusal, then lets go.
+/// The conversion is refused exactly once, the refusal changes nothing, and the second run converts every row.
+#[test]
+fn a_conversion_refused_for_a_busy_store_converts_when_run_again() {
+    let path = temp_db("pt-retry");
+    old_plaintext_store(&path, 50);
+    let mut held = Some(Connection::open(&path).unwrap());
+    held.as_ref()
+        .unwrap()
+        .execute_batch("PRAGMA journal_mode=WAL; SELECT count(*) FROM t;")
+        .unwrap();
+    let refusals = convert_when_free(&path, || drop(held.take()));
+    assert_eq!(refusals, 1);
+    let n: i64 = keyed(&path)
+        .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 50);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
 /// An old klatch (plaintext, no key, no directory lock) writing at the same time as a conversion: each write opens
 /// the file by its path and closes it, as a hook does. Every write that the old binary was told succeeded must be in
 /// the encrypted store afterwards: a conversion may make the old binary wait or fail, never lose a write it
@@ -427,7 +470,7 @@ fn a_write_an_old_binary_was_told_succeeded_is_never_lost_to_the_conversion() {
             })
         };
         std::thread::sleep(std::time::Duration::from_millis(20));
-        ensure_encrypted(&path, &key()).unwrap();
+        convert_when_free(&path, || {});
         stop.store(true, Ordering::Relaxed);
         let acked = writer.join().unwrap();
         let c = keyed(&path);
