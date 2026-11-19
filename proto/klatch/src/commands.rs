@@ -60,6 +60,7 @@ fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
         )?,
         Cmd::Read { room, peek } => read(t, &room, peek)?,
         Cmd::History { room, last, since } => history_of(t, room, since, last)?,
+        Cmd::Find { room, text } => find(t, &room, &text.join(" "))?,
         Cmd::Wait {
             rooms,
             timeout,
@@ -428,6 +429,62 @@ fn history(t: &dyn Transport, room: &str, since: Option<i64>, last: Option<usize
     if left > 0 {
         let resume = found.messages[shown - 1].seq;
         println!("[{left} more messages not shown; run `klatch history {room} --since {resume}`]");
+    }
+    Ok(())
+}
+
+/// How many matches `klatch find` prints; the rest are counted.
+const FIND_MAX_SHOWN: usize = 10;
+/// The most messages `klatch find` looks through, oldest first, so a very long room cannot make one command run on.
+const FIND_MAX_MESSAGES: usize = 5000;
+
+/// `klatch find ROOM TEXT` (#239): earlier answered asks that look like TEXT, read only (it pages `history`).
+fn find(t: &dyn Transport, room: &str, text: &str) -> Result<()> {
+    if text.trim().is_empty() {
+        bail!("give some text to look for: `klatch find ROOM TEXT`");
+    }
+    let mut messages = Vec::new();
+    let mut since = 0;
+    while messages.len() < FIND_MAX_MESSAGES {
+        let page = t.history(
+            room,
+            klatch::gateway::HistoryRange {
+                since: Some(since),
+                last: None,
+            },
+        )?;
+        let Some(last) = page.messages.last().map(|m| m.seq) else {
+            break;
+        };
+        since = last;
+        messages.extend(page.messages);
+        if page.more == 0 {
+            break;
+        }
+    }
+    let found = klatch::domain::find_answered(&messages, text);
+    if found.is_empty() {
+        eprintln!("klatch: no answered ask in {room} looks like that.");
+        return Ok(());
+    }
+    eprintln!("{DATA_RULE}");
+    for a in found.iter().take(FIND_MAX_SHOWN) {
+        println!(
+            "#{} {} [{}] answered by {} (#{}): {} => {}",
+            a.seq,
+            a.sender,
+            a.why,
+            a.answer_by,
+            a.answer_seq,
+            flat(&a.text),
+            flat(&a.answer)
+        );
+    }
+    if found.len() > FIND_MAX_SHOWN {
+        println!(
+            "[{} more matches not shown; narrow the text]",
+            found.len() - FIND_MAX_SHOWN
+        );
     }
     Ok(())
 }
