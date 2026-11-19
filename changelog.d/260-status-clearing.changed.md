@@ -1,0 +1,1 @@
+- A member's `done` status clears when it posts or claims again, `who` and the board show how long ago a status was set (`status: done (12m ago)`), and `available` is a new convention word for a member free for work that keeps its offers on the board. Store schema version 32 adds `members.status_ts`; the wire `who` response carries `status_ts` when known (#260).

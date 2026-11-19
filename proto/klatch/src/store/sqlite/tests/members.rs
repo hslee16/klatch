@@ -94,3 +94,18 @@ fn member_attributes_survive_reopening_keep_the_first_id_and_group_by_repository
     );
     assert!(s.members_in_repository("").unwrap().is_empty());
 }
+
+#[test]
+fn a_status_remembers_when_it_was_set_and_a_return_clears_only_done() {
+    let s = SqliteStore::open(&temp_db("status-ts"), &crate::store::insecure_test_key()).unwrap();
+    let at = Seat::new("r", "alice");
+    s.set_status(at, "busy", 7).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].status_ts, 7);
+    s.clear_done(at, 8).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].status.as_deref(), Some("busy"));
+    s.set_status(at, "done leaving", 9).unwrap();
+    assert_eq!(s.members("r").unwrap()[0].status_ts, 9);
+    s.clear_done(at, 10).unwrap();
+    let m = &s.members("r").unwrap()[0];
+    assert_eq!((m.status.as_deref(), m.status_ts), (None, 0));
+}

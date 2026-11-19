@@ -138,6 +138,9 @@ fn members_json(ms: &[MemberInfo]) -> Value {
         let mut v = json!({"name": m.name, "last_seen": m.last_seen});
         if let Some(status) = &m.status {
             v["status"] = json!(status);
+            if m.status_ts > 0 {
+                v["status_ts"] = json!(m.status_ts);
+            }
         }
         if let Some(kind) = m.kind {
             v["kind"] = json!(kind.word());

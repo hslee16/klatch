@@ -85,11 +85,24 @@ impl MemberStore for SqliteStore {
     }
 
     fn set_status(&self, at: Seat, status: &str, now: i64) -> Result<()> {
-        self.update_member(
-            (at.room, at.member, now),
-            "UPDATE members SET status=?3 WHERE room=?1 AND name=?2",
-            &status,
+        self.immediate(|| {
+            self.touch(at.room, at.member, now)?;
+            self.exec(
+                "UPDATE members SET status=?3, status_ts=?4 WHERE room=?1 AND name=?2",
+                params![at.room, at.member, status, now],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn clear_done(&self, at: Seat, _now: i64) -> Result<()> {
+        // no `touch`: this runs on a post or claim that already refreshed presence, and a member that is not in
+        // the room has no status to clear
+        self.exec(
+            "UPDATE members SET status=NULL, status_ts=0 WHERE room=?1 AND name=?2 AND status LIKE 'done%'",
+            params![at.room, at.member],
         )
+        .map(|_| ())
     }
 
     fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
@@ -138,7 +151,7 @@ impl MemberStore for SqliteStore {
 
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.rows(
-            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by,m.joined FROM members m
+            "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by,m.joined,m.status_ts FROM members m
              LEFT JOIN member_parent p ON p.member=m.name
              LEFT JOIN member_parked k ON k.member=m.name WHERE m.room=?1 ORDER BY m.name",
             params![room],
@@ -146,6 +159,7 @@ impl MemberStore for SqliteStore {
                 let why: Option<String> = r.get(4)?;
                 let back_by: Option<i64> = r.get(5)?;
                 Ok(MemberInfo {
+                    status_ts: r.get::<_, Option<i64>>(7)?.unwrap_or(0),
                     name: r.get(0)?,
                     joined: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
                     last_seen: r.get(1)?,

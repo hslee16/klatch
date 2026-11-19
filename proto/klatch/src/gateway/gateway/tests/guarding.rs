@@ -66,8 +66,8 @@ fn claim_paths_and_reasons_are_checked() {
         &ClaimSpec::new("src/a b.rs", 10, "a fine reason"),
     )
     .unwrap();
-    // Only the valid claim reached the store: it looks up the member's scope, then claims.
-    assert_eq!(g.store.calls.get(), 2);
+    // Only the valid claim reached the store: it looks up the member's scope, claims, then clears a done status (#260).
+    assert_eq!(g.store.calls.get(), 3);
 }
 
 #[test]
