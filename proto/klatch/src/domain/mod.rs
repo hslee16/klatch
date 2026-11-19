@@ -96,7 +96,8 @@ pub use stuck::{StuckEvent, stuck_events};
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
 pub use text::{
-    MAX_PAYLOAD_BYTES, flat, mentions, norm, overlaps, secs_between, valid_kind, valid_name,
+    MAX_PAYLOAD_BYTES, RESERVED_NAMES, flat, is_reserved_name, mentions, norm, overlaps,
+    secs_between, valid_kind, valid_name,
 };
 #[cfg(kani)]
 pub(crate) use toolguard::clean_bytes;
