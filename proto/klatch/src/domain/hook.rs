@@ -5,6 +5,9 @@ use crate::domain::{Claim, Message, OpenAsk, ReleasedClaim, flat};
 pub struct RoomDigest {
     pub room: String,
     pub messages: Vec<Message>,
+    /// How many messages the member's narrowed view held back, and the newest one's `seq` (#673). A count only, never
+    /// a sender or text; `None` when nothing was held back.
+    pub outside_view: Option<(usize, i64)>,
     /// The `seq`s of `messages` that are addressed to the member (a mention, `@all`, or any message of a direct
     /// message room): when not all messages fit, these are kept before newer ones (#185).
     pub addressed: Vec<i64>,
@@ -98,6 +101,7 @@ impl RoomDigest {
         self.has_no_traffic()
             && self.backlog.is_empty()
             && self.unowned_prs.is_empty()
+            && self.outside_view.is_none()
             && !has_own_items(self)
     }
 
@@ -233,6 +237,23 @@ fn render_crossing_notices(d: &RoomDigest, out: &mut String) {
     }
 }
 
+/// What a narrowed view held back (#673): a count and the newest seq, the same words the wake pointer uses.
+fn render_outside_view(d: &RoomDigest, out: &mut String) {
+    if let Some((n, newest)) = d.outside_view {
+        out.push_str(&format!("  {}\n", outside_view_line(&d.room, n, newest)));
+    }
+}
+
+/// "N messages outside your view in room R, newest #SEQ", with a way to read them. Counts only.
+pub fn outside_view_line(room: &str, n: usize, newest: i64) -> String {
+    let noun = if n == 1 { "message" } else { "messages" };
+    format!(
+        "{n} {noun} outside your view in room {}, newest #{newest}; `klatch read {} --peek` shows them",
+        flat(room),
+        flat(room)
+    )
+}
+
 /// The member's own asks that need its attention: gone stale, escalated, or whose claim lapsed.
 fn render_own_asks(d: &RoomDigest, now: i64, out: &mut String) {
     for a in &d.stale {
@@ -298,6 +319,7 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     render_aged_claims(d, &mut text);
     render_cycle_notices(d, &mut text);
     render_crossing_notices(d, &mut text);
+    render_outside_view(d, &mut text);
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
@@ -1015,6 +1037,7 @@ mod tests {
                 sender: "eve".into(),
                 ..msg(1, evil)
             }],
+            outside_view: None,
             addressed: Vec::new(),
             claims: vec![Claim {
                 path: evil.into(),

@@ -1477,8 +1477,16 @@ fn wake(t: &dyn Transport, (me, timeout): (&str, u64)) -> Result<()> {
             // Remember what it pointed at, so the same messages never wake the session again (a watcher
             // started again after every turn would otherwise loop on a message nobody read). They stay
             // unread: the hook, `read` and `wait` still show them.
+            // What the view holds back is counted first: marking moves the wake cursor past it.
+            let outside = t.outside_view(&room).ok().flatten();
             t.wake_mark(&room)?;
-            eprintln!("{}", wake_pointer(&room, unread, newest));
+            let mut pointer = wake_pointer(&room, unread, newest);
+            if let Some((n, last)) = outside {
+                pointer.push(' ');
+                pointer.push_str(&klatch::domain::outside_view_line(&room, n, last));
+                pointer.push('.');
+            }
+            eprintln!("{pointer}");
             std::process::exit(2);
         }
         if Instant::now() >= deadline {

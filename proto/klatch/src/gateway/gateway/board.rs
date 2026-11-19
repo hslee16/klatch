@@ -10,16 +10,20 @@ impl<S: Store> Gateway<S> {
         who: &Principal,
         room: &str,
         now: i64,
-    ) -> Result<Vec<Message>> {
+    ) -> Result<(Vec<Message>, Option<(usize, i64)>)> {
         let messages = self.store.hook_read(Seat::new(room, &who.member), now)?;
+        let outside = self.hidden_count(who, room, messages.clone())?;
         let messages = self.in_view(who, room, messages)?;
         if !self.store.is_muted(Seat::new(room, &who.member))? {
-            return Ok(messages);
+            return Ok((messages, outside));
         }
-        Ok(messages
-            .into_iter()
-            .filter(|m| crate::domain::mentions(&m.body, &who.member))
-            .collect())
+        Ok((
+            messages
+                .into_iter()
+                .filter(|m| crate::domain::mentions(&m.body, &who.member))
+                .collect(),
+            outside,
+        ))
     }
 
     /// The `seq`s of `messages` that are addressed to the caller: it is mentioned, or the room is a direct message with
@@ -256,7 +260,7 @@ impl<S: Store> Gateway<S> {
                 });
                 continue;
             }
-            let messages = self.digest_messages(who, &room, now)?;
+            let (messages, outside_view) = self.digest_messages(who, &room, now)?;
             let addressed = self.addressed_seqs(who, &room, &messages)?;
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             let stale_after = self.settings_of(&room)?.stale_secs;
@@ -287,6 +291,7 @@ impl<S: Store> Gateway<S> {
             rooms.push(RoomDigest {
                 room,
                 messages,
+                outside_view,
                 addressed,
                 claims: changes.added,
                 released: changes.released,

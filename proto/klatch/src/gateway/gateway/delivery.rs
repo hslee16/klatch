@@ -46,12 +46,23 @@ impl<S: Store> Gateway<S> {
         room: &str,
         messages: Vec<Message>,
     ) -> Result<Vec<Message>> {
+        Ok(self.split_view(who, room, messages)?.0)
+    }
+
+    /// `in_view` with the messages it held back: what a narrowed view hides from a member is counted, never shown (#673).
+    pub(super) fn split_view(
+        &self,
+        who: &Principal,
+        room: &str,
+        messages: Vec<Message>,
+    ) -> Result<(Vec<Message>, Vec<Message>)> {
         if self.delivery_view(who)? == DeliveryView::All || self.dm_pair(room)?.is_some() {
-            return Ok(messages);
+            return Ok((messages, Vec::new()));
         }
         let mine = self.store.member_scope(&who.member)?;
         let mut scopes: HashMap<String, Option<String>> = HashMap::new();
         let mut kept = Vec::new();
+        let mut hidden = Vec::new();
         for m in messages {
             let addressed = crate::domain::mentions(&m.body, &who.member)
                 || crate::domain::mentions(&m.body, BROADCAST);
@@ -66,8 +77,40 @@ impl<S: Store> Gateway<S> {
             };
             if addressed || same_scope {
                 kept.push(m);
+            } else {
+                hidden.push(m);
             }
         }
-        Ok(kept)
+        Ok((kept, hidden))
+    }
+
+    /// How many unread messages the caller's narrowed view holds back in a room, with the newest `seq`; `None` when
+    /// none (always, on the `all` view). Counts only: no sender and no text. Moves no cursor (#673).
+    pub fn outside_view(&self, who: &Principal, room: &str) -> Result<Option<(usize, i64)>> {
+        self.admit(who, room, Operation::read(room, false))?;
+        let unread = self
+            .store
+            .wake_poll(Seat::new(room, &who.member), self.now())?;
+        let unread = Self::without_canary(unread);
+        Ok(self.hidden_count(who, room, unread)?)
+    }
+
+    /// The count and newest `seq` of what the view hides from `messages`. A muted room reports none: mute already
+    /// holds back what is not addressed to the member.
+    pub(super) fn hidden_count(
+        &self,
+        who: &Principal,
+        room: &str,
+        messages: Vec<Message>,
+    ) -> Result<Option<(usize, i64)>> {
+        if self.store.is_muted(Seat::new(room, &who.member))? {
+            return Ok(None);
+        }
+        let hidden = self.split_view(who, room, messages)?.1;
+        Ok(hidden
+            .iter()
+            .map(|m| m.seq)
+            .max()
+            .map(|newest| (hidden.len(), newest)))
     }
 }

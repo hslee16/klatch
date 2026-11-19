@@ -31,6 +31,8 @@ pub trait Transport {
     fn wakeable(&self, room: &str) -> Result<usize>;
     /// The wakeable count and the newest wakeable seq (0 when none).
     fn wake_summary(&self, room: &str) -> Result<(usize, i64)>;
+    /// How many unread messages the caller's narrowed view holds back in a room, and the newest seq (#673).
+    fn outside_view(&self, room: &str) -> Result<Option<(usize, i64)>>;
     /// Record that a watcher pointed at what is unread in the room; it stays unread and `wait` still sees it.
     fn wake_mark(&self, room: &str) -> Result<()>;
     /// A wait has looked at the room up to `seq`; the messages stay unread.
@@ -236,6 +238,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn wake_summary(&self, room: &str) -> Result<(usize, i64)> {
         self.gateway.wake_summary(&self.principal, room)
+    }
+    fn outside_view(&self, room: &str) -> Result<Option<(usize, i64)>> {
+        self.gateway.outside_view(&self.principal, room)
     }
     fn wait_poll(&self, room: &str) -> Result<Vec<Message>> {
         self.gateway.wait_poll(&self.principal, room)
