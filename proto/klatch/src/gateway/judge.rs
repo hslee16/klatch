@@ -2,7 +2,7 @@
 //! gets its verdict recorded and audited. A daemon is just a loop around `drain`. Nothing here enforces labels: that
 //! stays inline in the gateway and fails closed, so an absent or unreachable judge only leaves the queue longer.
 
-use crate::domain::{Judge, Result, ReviewItem, Verdict};
+use crate::domain::{Judge, LabelChain, Result, ReviewItem, RulesJudge, Verdict};
 use crate::store::{NewAudit, QueuedReview, ReviewResolution, Store};
 
 /// How many items one drain looks at, so a run is bounded.
@@ -64,6 +64,15 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
         }
     }
     Ok(out)
+}
+
+/// The local rules judge as the store configures it: the label chain and the scrub list, read once for a pass.
+pub fn rules_judge<S: Store>(store: &S) -> Result<RulesJudge> {
+    let chain = match store.policy_get("chain")? {
+        Some(text) => LabelChain::parse(&text).map_err(crate::domain::Error::Backend)?,
+        None => LabelChain::default(),
+    };
+    Ok(RulesJudge::new(store.policy_list("scrub:")?, chain))
 }
 
 /// Keep the verdict word and a reason; never the text, which the audit must not hold. `action` says who ruled.
@@ -155,6 +164,23 @@ mod tests {
         assert_eq!(out.denied, 2);
         let log = s.audit_log(5).unwrap();
         assert!(log.iter().any(|l| l.detail.contains("message missing")));
+    }
+
+    #[test]
+    fn the_store_rules_judge_denies_a_scrub_match_and_defers_clean_text_and_a_failing_judge_allows_nothing()
+     {
+        let s = queued();
+        s.policy_set("scrub:acme", Some("hello"), 1).unwrap();
+        let rules = rules_judge(&s).unwrap();
+        let out = drain(&s, &rules, 10).unwrap();
+        assert_eq!((out.denied, out.allowed), (1, 0));
+        let s = queued();
+        let out = drain(&s, &rules_judge(&s).unwrap(), 10).unwrap();
+        assert_eq!((out.decided(), out.deferred), (0, 1));
+        let flaky = crate::domain::Breaker::new(&NullJudge, 1);
+        let out = drain(&s, &flaky, 11).unwrap();
+        assert_eq!((out.decided(), out.deferred), (0, 1));
+        assert_eq!(s.pending_reviews(10).unwrap().len(), 1);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+`klatch judge run` is now a resident loop (`--once` for one pass, `--interval-secs`) backed by a local rules judge that denies credential and scrub-list matches and leaves clean text for the reviewer; `Breaker` and `Narrowed` keep a failing or wider judge from allowing anything by default (#517).
