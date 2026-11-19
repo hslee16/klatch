@@ -95,4 +95,54 @@ impl SqliteStore {
             .map_err(be)?;
         Ok(changed == 1)
     }
+
+    /// The member's crossings from `room` with news not yet told (#679). Stage 1 is `waiting` (no verdict, or a
+    /// verdict not applied yet), stage 2 is final (denied, or applied as released or blocked); a row is returned
+    /// when its stage is past what was told, and `told` then moves up to that stage.
+    pub(super) fn crossing_notice_rows(
+        &self,
+        room: &str,
+        member: &str,
+    ) -> Result<Vec<QueuedReview>> {
+        self.immediate(|| {
+            let rows = self.rows(
+                "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied,told \
+                 FROM review_queue WHERE room=?1 AND requester=?2 AND told<2 AND to_room<>'' ORDER BY id",
+                params![room, member],
+                |r| {
+                    let q = QueuedReview {
+                        id: r.get(0)?,
+                        room: r.get(1)?,
+                        seq: r.get(2)?,
+                        to_label: r.get(3)?,
+                        reason: r.get(4)?,
+                        ts: r.get(5)?,
+                        to_room: r.get(6)?,
+                        requester: r.get(7)?,
+                        verdict: r.get(8)?,
+                        detail: r.get(9)?,
+                        redacted: r.get(10)?,
+                        applied: r.get(11)?,
+                    };
+                    Ok((q, r.get::<_, i64>(12)?))
+                },
+            )?;
+            let mut out = Vec::new();
+            for (q, told) in rows {
+                let stage = if q.verdict == "deny" || !q.applied.is_empty() {
+                    2
+                } else {
+                    1
+                };
+                if stage > told {
+                    self.exec(
+                        "UPDATE review_queue SET told=?2 WHERE id=?1",
+                        params![q.id, stage],
+                    )?;
+                    out.push(q);
+                }
+            }
+            Ok(out)
+        })
+    }
 }

@@ -33,6 +33,10 @@ impl ReviewStore for SqliteStore {
         self.mark_review_applied_row(id, outcome)
     }
 
+    fn crossing_notices(&self, room: &str, member: &str) -> Result<Vec<QueuedReview>> {
+        self.crossing_notice_rows(room, member)
+    }
+
     fn resolve_review(&self, resolution: &ReviewResolution, now: i64) -> Result<bool> {
         self.resolve_review_row(resolution, now)
     }

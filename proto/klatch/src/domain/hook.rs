@@ -25,6 +25,9 @@ pub struct RoomDigest {
     /// The member's own refused claims that a claim someone else took turned into a cycle of waits, reported once
     /// (#648).
     pub cycles: Vec<crate::domain::CycleNotice>,
+    /// The member's own crossings that start in this room and have news, reported once per stage (#679): that the
+    /// request waits, then the outcome. Pointers and fixed sentences, never text.
+    pub crossings: Vec<crate::domain::CrossingStatus>,
     /// Pull requests said to be open that no live `pr:N` claim holds (shown at session start, item 84).
     pub unowned_prs: Vec<crate::domain::OpenPr>,
 }
@@ -212,6 +215,24 @@ fn render_cycle_notices(d: &RoomDigest, out: &mut String) {
     }
 }
 
+/// What became of the member's own crossings (#679): one line each, a state and the fixed reason, never the text.
+fn render_crossing_notices(d: &RoomDigest, out: &mut String) {
+    for c in &d.crossings {
+        let head = format!(
+            "  your crossing of message {} to {}:",
+            c.seq,
+            flat(&c.to_room)
+        );
+        match c.state.as_str() {
+            "waiting" | "approved" => out.push_str(&format!(
+                "{head} waiting for a decision; you will be told when it is made\n"
+            )),
+            "released" => out.push_str(&format!("{head} released\n")),
+            _ => out.push_str(&format!("{head} refused, {}\n", flat(&c.why))),
+        }
+    }
+}
+
 /// The member's own asks that need its attention: gone stale, escalated, or whose claim lapsed.
 fn render_own_asks(d: &RoomDigest, now: i64, out: &mut String) {
     for a in &d.stale {
@@ -276,6 +297,7 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     render_claims(d, now, &mut text);
     render_aged_claims(d, &mut text);
     render_cycle_notices(d, &mut text);
+    render_crossing_notices(d, &mut text);
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
@@ -416,7 +438,8 @@ fn has_own_items(d: &RoomDigest) -> bool {
         && d.escalated.is_empty()
         && d.lapsed.is_empty()
         && d.aged.is_empty()
-        && d.cycles.is_empty())
+        && d.cycles.is_empty()
+        && d.crossings.is_empty())
 }
 
 /// The newest message time of the room, or 0 when it has only claims and asks.
@@ -1016,6 +1039,14 @@ mod tests {
             cycles: vec![crate::domain::CycleNotice {
                 path: evil.into(),
                 holder: evil.into(),
+            }],
+            crossings: vec![crate::domain::CrossingStatus {
+                id: 1,
+                room: "r".into(),
+                seq: 1,
+                to_room: evil.into(),
+                state: "blocked".into(),
+                why: evil.into(),
             }],
             unowned_prs: vec![crate::domain::OpenPr::new(5, evil, evil, 0)],
         };
