@@ -42,7 +42,7 @@ impl FakeSecond {
         }
     }
 }
-impl Judge for &FakeSecond {
+impl Judge for FakeSecond {
     fn judge(&self, _: &ReviewItem) -> Verdict {
         *self.asked.borrow_mut() += 1;
         self.verdict.clone()

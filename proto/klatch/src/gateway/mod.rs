@@ -28,7 +28,7 @@ pub use gateway::{
 };
 pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence, Secret};
-pub use judge::{DRAIN_LIMIT, Drained, drain};
+pub use judge::{DRAIN_LIMIT, Drained, drain, rules_judge};
 pub use listener::{Connection, Connector, EvidenceTable, Listener};
 pub use notifier::{NoNotifier, Notifier};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};

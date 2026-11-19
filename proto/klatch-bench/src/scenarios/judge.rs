@@ -26,10 +26,19 @@ fn null_judge(w: &World) -> Res {
     has(&once.stdout, "judged 0 item(s)", "wrong summary")?;
     has(&once.stdout, "0 left queued", "wrong queue count")?;
     has(&w.ok("bob", &["read", "r"])?, "hello", "reading broke")?;
-    // there is no daemon: a bare `judge run` says so instead of looping
-    let bare = w.run("launcher", &["judge", "run"]);
-    check(!bare.ok, "judge run without --once was accepted")?;
-    has(&bare.stderr, "--once", "the refusal does not say why")?;
+    // the resident loop runs bounded passes and exits; a clean item is left queued, never allowed by default
+    let looped = w.run(
+        "launcher",
+        &["judge", "run", "--max-passes", "2", "--interval-secs", "1"],
+    );
+    check(
+        looped.ok,
+        format!("judge run loop failed: {}", looped.stderr),
+    )?;
+    check(
+        looped.stdout.matches("judged 0 item(s)").count() == 2,
+        "the loop did not make two passes",
+    )?;
     Ok(vec![])
 }
 
