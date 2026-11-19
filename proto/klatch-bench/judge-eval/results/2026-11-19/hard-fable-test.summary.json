@@ -1,0 +1,342 @@
+{
+ "judge": "claude:claude-fable-5-2",
+ "split": "test",
+ "corpus": "hard",
+ "summary": {
+  "n": 110,
+  "confusion": {
+   "rows": [
+    "allow",
+    "redact",
+    "deny"
+   ],
+   "columns": [
+    "allow",
+    "redact",
+    "deny",
+    "defer"
+   ],
+   "counts": [
+    [
+     38,
+     0,
+     1,
+     0
+    ],
+    [
+     0,
+     30,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     41,
+     0
+    ]
+   ]
+  },
+  "leaks": 11,
+  "leak_rate": 0.15492957746478872,
+  "redaction_leaks": 11,
+  "data_leaks": 0,
+  "data_leak_rate": 0.0,
+  "contested": [],
+  "overblocks": 1,
+  "overblock_rate": 0.02564102564102564,
+  "softened": 0,
+  "defers": 0,
+  "defer_rate": 0.0,
+  "errors": 0,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.8909090909090909,
+  "accuracy_decided": 0.8909090909090909,
+  "per_verdict": [
+   {
+    "verdict": "allow",
+    "precision": 1.0,
+    "recall": 0.9743589743589743
+   },
+   {
+    "verdict": "redact",
+    "precision": 0.6333333333333333,
+    "recall": 0.6333333333333333
+   },
+   {
+    "verdict": "deny",
+    "precision": 0.9761904761904762,
+    "recall": 1.0
+   }
+  ],
+  "latency_p50_ms": 3100.5148749999935,
+  "latency_p99_ms": 7892.58483300003,
+  "tokens_in": 294682,
+  "tokens_out": 35243,
+  "cost_usd": 3.6045100000000008,
+  "calibration": {
+   "ece": 0.09245454545454553,
+   "buckets": [
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "n": 1,
+     "accuracy": 1.0,
+     "mean_confidence": 0.55
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "n": 3,
+     "accuracy": 0.6666666666666666,
+     "mean_confidence": 0.6133333333333333
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "n": 3,
+     "accuracy": 1.0,
+     "mean_confidence": 0.7066666666666667
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "n": 28,
+     "accuracy": 1.0,
+     "mean_confidence": 0.8321428571428575
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "n": 75,
+     "accuracy": 1.0,
+     "mean_confidence": 0.9469333333333331
+    }
+   ]
+  },
+  "thresholds": [
+   {
+    "threshold": 0.0,
+    "leaks": 11,
+    "leak_rate": 0.15492957746478872,
+    "overblocks": 1,
+    "overblock_rate": 0.02564102564102564,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.5,
+    "leaks": 11,
+    "leak_rate": 0.15492957746478872,
+    "overblocks": 1,
+    "overblock_rate": 0.02564102564102564,
+    "deferred": 0
+   },
+   {
+    "threshold": 0.6,
+    "leaks": 11,
+    "leak_rate": 0.15492957746478872,
+    "overblocks": 1,
+    "overblock_rate": 0.02564102564102564,
+    "deferred": 1
+   },
+   {
+    "threshold": 0.7,
+    "leaks": 11,
+    "leak_rate": 0.15492957746478872,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 4
+   },
+   {
+    "threshold": 0.8,
+    "leaks": 11,
+    "leak_rate": 0.15492957746478872,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 7
+   },
+   {
+    "threshold": 0.85,
+    "leaks": 9,
+    "leak_rate": 0.1267605633802817,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 19
+   },
+   {
+    "threshold": 0.9,
+    "leaks": 2,
+    "leak_rate": 0.028169014084507043,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 35
+   },
+   {
+    "threshold": 0.95,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 60
+   },
+   {
+    "threshold": 0.97,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 78
+   },
+   {
+    "threshold": 0.99,
+    "leaks": 0,
+    "leak_rate": 0.0,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
+    "deferred": 109
+   }
+  ],
+  "target_leak": 0.01,
+  "lowest_threshold": 0.95,
+  "by_category": [
+   {
+    "category": "business-private",
+    "n": 10,
+    "correct": 10,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-clean",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-secret",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "everyday-chat",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "harmless-name",
+    "n": 3,
+    "correct": 3,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-hidden",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-lookalike",
+    "n": 6,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   },
+   {
+    "category": "injection-overt",
+    "n": 4,
+    "correct": 4,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "long",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "multilingual",
+    "n": 9,
+    "correct": 7,
+    "leaks": 2,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "personal-data",
+    "n": 20,
+    "correct": 11,
+    "leaks": 9,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "public-chatter",
+    "n": 3,
+    "correct": 3,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "scrub-term",
+    "n": 6,
+    "correct": 6,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-credential",
+    "n": 7,
+    "correct": 7,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-lookalike",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "short",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection (all)",
+    "n": 16,
+    "correct": 15,
+    "leaks": 0,
+    "overblocks": 1,
+    "defers": 0
+   }
+  ]
+ }
+}
