@@ -140,6 +140,18 @@ impl Image {
         self.bytes.is_empty()
     }
 
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The content type of the multipart file part.
+    pub fn content_type(&self) -> &'static str {
+        match self.format {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+        }
+    }
+
     pub fn to_base64(&self) -> String {
         base64_encode(&self.bytes)
     }

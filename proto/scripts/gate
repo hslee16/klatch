@@ -55,7 +55,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=9
+total=10
 n=0
 started=$SECONDS
 replay_hint() {
@@ -88,6 +88,8 @@ step() {
 proto="$root/proto"
 step "fmt"                          no    "$proto" cargo fmt --all --check
 step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --all-targets --locked -- -D warnings
+# the optional real Jev transport (#871) is behind a feature no default build compiles: lint and test it here
+step "jev-http feature"             no    "$proto" bash -c 'cargo clippy -p klatch --features jev-http --all-targets --locked -- -D warnings && cargo test -p klatch --features jev-http --lib --locked jev::'
 step "workspace tests"              hegel "$proto" cargo test --workspace --locked
 # a credentialed worker runs this gate with KLATCH_IDENTITY_FILE set (#613); set a throwaway one on purpose and run
 # the suites that build their own homes, to prove they are immune to it

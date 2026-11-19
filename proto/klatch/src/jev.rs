@@ -32,6 +32,8 @@ pub mod answer;
 pub mod decision;
 pub mod error;
 pub mod fake;
+#[cfg(feature = "jev-http")]
+pub mod http;
 pub mod image;
 pub mod models;
 pub mod request;

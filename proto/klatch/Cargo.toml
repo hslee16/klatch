@@ -51,6 +51,10 @@ cli = [
 # A test build only: lets KLATCH_NOW set the clock so time-dependent behaviour can be tested end to end. The
 # shipped binary is built without it and has no way to move its clock (DESIGN section 26.5).
 test-clock = []
+# The real HTTPS transport to Jev (`klatch::jev::http`, #871): ureq 3 with rustls and the bundled web PKI roots, no
+# other feature (no gzip, no proxy, no platform verifier, no cookies, no json). OFF by default and not in `cli` or
+# `client`, so the shipped binary, the wheels and the npm package do not link an HTTP client.
+jev-http = ["client", "dep:ureq"]
 
 [lints.rust]
 # cfg(kani) is set by `cargo kani` only (proto/scripts/kani); cfg(shuttle) by RUSTFLAGS in proto/scripts/shuttle only
@@ -69,6 +73,7 @@ sha2 = { version = "0.10", optional = true }
 data-encoding = { version = "2", optional = true }
 subtle = { version = "2", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true }
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"], optional = true }
 
 # Randomized-schedule tests of the std-thread code (#406, proto/scripts/shuttle). Only a build with
 # RUSTFLAGS="--cfg shuttle" compiles it in; a normal build never links it.
