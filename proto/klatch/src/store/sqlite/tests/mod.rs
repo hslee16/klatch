@@ -21,6 +21,7 @@ mod encryption;
 mod long_tasks;
 mod members;
 mod messages;
+mod migration_property;
 mod migrations;
 mod plaintext;
 mod review;

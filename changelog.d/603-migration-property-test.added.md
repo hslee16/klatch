@@ -1,0 +1,1 @@
+- A test that builds a store at every older schema version (the prototype schema plus the first N migrations), fills every table with generated rows, migrates to the current version and checks every row keeps every value it had and the schema matches a fresh store, as an exhaustive test and a Hegel property (#603).

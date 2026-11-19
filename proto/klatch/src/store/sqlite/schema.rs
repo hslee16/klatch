@@ -391,11 +391,11 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     Ok(n > 0)
 }
 
-type Step = fn(&Connection) -> Result<()>;
+pub(super) type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-const MIGRATIONS: [Step; 32] = [
+pub(super) const MIGRATIONS: [Step; 32] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
