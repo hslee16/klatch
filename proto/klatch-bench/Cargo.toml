@@ -13,5 +13,10 @@ serde_json.workspace = true
 # the read-only store check at the end of each scenario (#621) uses the engine's own reader
 klatch = { path = "../klatch" }
 
+[features]
+# `judge-eval --judge jev` on the real HTTPS transport (klatch's `jev-http`); off by default so a plain build, and the
+# no-network audit of default builds, never carry an HTTP client
+jev-http = ["klatch/jev-http"]
+
 [dev-dependencies]
 rusqlite.workspace = true

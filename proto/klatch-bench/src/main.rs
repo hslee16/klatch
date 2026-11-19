@@ -1,5 +1,8 @@
 //! `klatch-bench [--layer functional|scale|fault] [--json <file>] [--record] [name...]`: run the scripted scenarios against the
 //! real binary, print a table, write a JSON record, and exit non-zero when one fails.
+//!
+//! `klatch-bench judge-eval --judge ...` grades a judge against the labelled corpus instead (#914; see
+//! `judge-eval/README.md`). It is a manual command and never part of CI or the gate.
 
 mod history_cli;
 
@@ -116,7 +119,12 @@ fn history_only(o: &Options) -> ! {
 }
 
 fn main() {
-    let options = Options::parse(std::env::args().skip(1));
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().map(String::as_str) == Some("judge-eval") {
+        args.next();
+        std::process::exit(klatch_bench::judge_eval::cli::main(args));
+    }
+    let options = Options::parse(args);
     if options.trend || options.rebaseline.is_some() {
         history_only(&options);
     }

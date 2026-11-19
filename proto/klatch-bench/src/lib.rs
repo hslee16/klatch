@@ -4,6 +4,7 @@
 
 mod harness;
 pub mod history;
+pub mod judge_eval;
 pub mod mp;
 pub mod mp_run;
 mod scenarios;
