@@ -53,6 +53,39 @@ impl SqliteStore {
     /// Every member's last reported permission mode, read from the file without opening it for writing: no migration,
     /// no journal switch, nothing created (`klatch doctor` must change nothing). A store from before the table
     /// existed has no modes yet.
+    /// Row counts of the tables that only grow: live messages (tombstones left by archiving are not counted), the
+    /// audit log, refusals and claim notes. Read-only (#487); a table the store does not have yet counts as 0.
+    pub fn read_growth(path: &Path, key: &Key) -> Result<Vec<(&'static str, i64)>> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(be)?;
+        Self::unlock(&conn, key)?;
+        let mut out = Vec::new();
+        for (label, table, filter) in [
+            ("messages", "messages", " WHERE kind IS NOT 'archived'"),
+            ("audit", "admin_audit", ""),
+            ("refusals", "refusals", ""),
+            ("claim notes", "claim_notes", ""),
+        ] {
+            let has: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .map_err(be)?;
+            let n = if has == 0 {
+                0
+            } else {
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}{filter}"), [], |r| {
+                    r.get(0)
+                })
+                .map_err(be)?
+            };
+            out.push((label, n));
+        }
+        Ok(out)
+    }
+
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;
