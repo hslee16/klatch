@@ -14,10 +14,14 @@ use data_encoding::{BASE32_NOPAD, BASE64URL_NOPAD, HEXLOWER};
 use hegel::TestCase;
 use hegel::generators as gs;
 use klatch::keys::{
-    KEY_LEN, Key, RecoveryError, Token, protect, protect_text, recovery_code, restore, reveal,
-    reveal_text,
+    Bundle, KEY_LEN, Key, RecoveryError, Token, label_key_name, protect, protect_text,
+    recovery_code, restore, reveal, reveal_text,
 };
+use klatch::store::MessageStore;
+use klatch::store::{Seat, SqliteStore};
 use sha2::{Digest, Sha256};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::PathBuf;
 
 fn hex(s: &str) -> Vec<u8> {
     HEXLOWER.decode(s.as_bytes()).unwrap()
@@ -385,4 +389,188 @@ fn the_sqlcipher_key_of_a_pinned_key_is_the_pinned_pragma() {
         counting_key().sqlcipher_pragma().as_str(),
         "x'000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'"
     );
+}
+
+// ---- #622: key bundles, label key names and archive files ----
+
+fn scratch(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let d = std::env::temp_dir().join(format!(
+        "klatch-crypto622-{tag}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+const BUNDLE_TEXT: &str = "klatch-bundle 1\nmember w-1\ntoken KLATCH-CRED-AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPQ\nstore 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\nlabel private 1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100\n";
+
+fn bundle_file(dir: &std::path::Path, name: &str, text: &[u8]) -> PathBuf {
+    use std::io::Write;
+    let path = dir.join(name);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    f.write_all(text).unwrap();
+    path
+}
+
+#[test]
+fn a_pinned_key_bundle_reads_to_the_pinned_fields_and_writes_back_to_the_same_bytes() {
+    let dir = scratch("bundle-pinned");
+    let b = Bundle::read(&bundle_file(&dir, "in", BUNDLE_TEXT.as_bytes())).unwrap();
+    assert_eq!(b.member, "w-1");
+    assert_eq!(
+        HEXLOWER.encode(&b.token.hash()),
+        "1980803f12a92800e0b518de617db18c4f8eb5b0e5ca1fb0897ef266cbcc0ce5"
+    );
+    assert!(b.store_key == counting_key());
+    assert_eq!(b.label_keys.len(), 1);
+    assert_eq!(b.label_keys[0].0, "private");
+    let rev: Vec<u8> = (0..KEY_LEN as u8).rev().collect();
+    assert!(b.label_keys[0].1 == key_of(&rev));
+    let out = dir.join("out");
+    b.write(&out).unwrap();
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), BUNDLE_TEXT);
+}
+
+#[hegel::test(test_cases = 20)]
+fn a_key_bundle_reads_back_what_was_written(tc: TestCase) {
+    let dir = scratch("bundle-rt");
+    let token = Token::parse(&format!(
+        "KLATCH-CRED-{}",
+        BASE32_NOPAD.encode(&tc.draw(bytes(KEY_LEN)))
+    ))
+    .unwrap();
+    let store_raw = tc.draw(bytes(KEY_LEN));
+    let label_raw = tc.draw(bytes(KEY_LEN));
+    let bundle = Bundle {
+        member: "m.1_x-2".into(),
+        token,
+        store_key: key_of(&store_raw),
+        label_keys: vec![("secret".into(), key_of(&label_raw))],
+    };
+    let path = dir.join("b");
+    bundle.write(&path).unwrap();
+    let back = Bundle::read(&path).unwrap();
+    assert_eq!(back.member, bundle.member);
+    assert_eq!(back.token.hash(), bundle.token.hash());
+    assert!(back.store_key == bundle.store_key);
+    assert!(back.label_keys[0].1 == bundle.label_keys[0].1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn any_one_bit_flipped_in_a_key_bundle_is_refused_or_reads_as_a_different_bundle() {
+    let dir = scratch("bundle-flip");
+    let original = Bundle::read(&bundle_file(&dir, "orig", BUNDLE_TEXT.as_bytes())).unwrap();
+    let mut silent = 0;
+    for at in 0..BUNDLE_TEXT.len() {
+        for bit in 0..8 {
+            let mut text = BUNDLE_TEXT.as_bytes().to_vec();
+            // a hex number is read in either case, so a case flip of a-f is the same key (not an integrity gap: a
+            // bundle is a plain 0600 file with no checksum, and what it holds is the keys themselves)
+            if bit == 5 && matches!(text[at], b'a'..=b'f') && at > 100 {
+                continue;
+            }
+            text[at] ^= 1 << bit;
+            let path = bundle_file(&dir, &format!("f{at}-{bit}"), &text);
+            let same = match Bundle::read(&path) {
+                Err(_) => false,
+                Ok(b) => {
+                    b.member == original.member
+                        && b.token.hash() == original.token.hash()
+                        && b.store_key == original.store_key
+                        && b.label_keys == original.label_keys
+                }
+            };
+            if same {
+                silent += 1;
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    assert_eq!(silent, 0, "{silent} flips read back as the original bundle");
+}
+
+#[test]
+fn label_key_names_are_pinned_and_always_inside_the_key_name_alphabet() {
+    assert_eq!(label_key_name("store", "private"), "store.label.private");
+    assert_eq!(label_key_name("s", "a b/c.d"), "s.label.a_b_c_d");
+    assert_eq!(label_key_name("s", "Ok-1_x"), "s.label.Ok-1_x");
+}
+
+#[hegel::test]
+fn a_label_key_name_is_deterministic_and_safe_for_any_label(tc: TestCase) {
+    let label = tc.draw(gs::text().max_size(40));
+    let name = label_key_name("store", &label);
+    assert_eq!(name, label_key_name("store", &label));
+    let tail = name.strip_prefix("store.label.").unwrap();
+    assert_eq!(tail.chars().count(), label.chars().count());
+    assert!(
+        tail.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    );
+}
+
+/// An archive file of two messages, written under `key`.
+fn an_archive(dir: &std::path::Path, key: &Key) -> PathBuf {
+    let s = SqliteStore::open(&dir.join("live.db"), key).unwrap();
+    s.join("r", "alice", 1).unwrap();
+    s.post(Seat::new("r", "alice"), "archived-needle-one", 10)
+        .unwrap();
+    s.post(Seat::new("r", "alice"), "archived-needle-two", 11)
+        .unwrap();
+    let out = dir.join("a.db");
+    assert_eq!(s.archive_before("r", 500, &out, key).unwrap(), 2);
+    out
+}
+
+#[test]
+fn an_archive_file_holds_no_plaintext_and_opens_only_under_its_key() {
+    let dir = scratch("archive-key");
+    let key = counting_key();
+    let file = an_archive(&dir, &key);
+    let raw = std::fs::read(&file).unwrap();
+    assert!(!raw.starts_with(b"SQLite format 3"));
+    for needle in ["archived-needle", "alice"] {
+        assert!(!raw.windows(needle.len()).any(|w| w == needle.as_bytes()));
+    }
+    let other = key_of(&[9u8; KEY_LEN]);
+    let live = SqliteStore::open(&dir.join("live.db"), &key).unwrap();
+    assert!(live.restore_archive(&file, &other).is_err());
+    assert_eq!(live.restore_archive(&file, &key).unwrap(), 2);
+}
+
+#[test]
+fn a_bit_flipped_anywhere_in_an_archive_file_is_never_restored_as_data() {
+    let dir = scratch("archive-flip");
+    let key = counting_key();
+    let file = an_archive(&dir, &key);
+    let good = std::fs::read(&file).unwrap();
+    // the first byte, the salt, the middle and last byte of every 4096 byte page, and the very end
+    let mut spots: Vec<usize> = vec![0, 15, 16, 100];
+    for page in 0..good.len() / 4096 {
+        spots.extend([page * 4096 + 2000, page * 4096 + 4095]);
+    }
+    spots.push(good.len() - 1);
+    let live = SqliteStore::open(&dir.join("live.db"), &key).unwrap();
+    for at in spots {
+        let mut bad = good.clone();
+        bad[at] ^= 0x10;
+        let path = dir.join(format!("bad{at}.db"));
+        std::fs::write(&path, &bad).unwrap();
+        // refused outright, or it restores nothing (the live rows are tombstones of exactly these messages)
+        let restored = live.restore_archive(&path, &key);
+        assert!(
+            restored.is_err(),
+            "a flip at byte {at} of {} was accepted: {restored:?}",
+            good.len()
+        );
+    }
 }
