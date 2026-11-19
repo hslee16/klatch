@@ -382,6 +382,10 @@ impl CredentialStore for SpyStore {
         self.inner.revoke_credential(member, now)
     }
 
+    fn renew_credential(&self, member: &str, now: i64, step: i64) -> Result<Option<i64>> {
+        self.inner.renew_credential(member, now, step)
+    }
+
     fn credentials(&self) -> Result<Vec<crate::store::CredentialRecord>> {
         self.inner.credentials()
     }

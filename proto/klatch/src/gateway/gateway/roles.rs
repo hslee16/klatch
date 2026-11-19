@@ -145,12 +145,34 @@ impl<S: Store> Gateway<S> {
         } else if self.now() >= rec.expires {
             "the credential expired"
         } else {
-            return Ok(());
+            return self.renew_credential_on_use(&who.member);
         };
         Err(Error::Refused {
             rule: "credential".into(),
             reason: why.into(),
         })
+    }
+
+    /// A successful request renews its credential (#161): the expiry moves to now plus the idle timeout, never past
+    /// the cap from issue. A renewal gains at least a tenth of the timeout (at most a minute) or reaches the cap, so a
+    /// burst of requests writes and audits once. Each renewal is audited, with the new expiry and never the token.
+    fn renew_credential_on_use(&self, member: &str) -> Result<()> {
+        let now = self.now();
+        let Some(rec) = self.store.credential(member)? else {
+            return Ok(());
+        };
+        let step = (rec.idle / 10).clamp(1, 60);
+        if let Some(expires) = self.store.renew_credential(member, now, step)? {
+            self.store.record_audit(
+                &crate::store::NewAudit::new(
+                    "renew-credential",
+                    member,
+                    &format!("expires={expires} cap={}", rec.cap),
+                ),
+                now,
+            )?;
+        }
+        Ok(())
     }
 
     fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {

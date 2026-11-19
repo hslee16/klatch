@@ -11,6 +11,7 @@ fn issue<S: Store>(s: &S, member: &str, now: i64, ttl: i64) -> Result<()> {
             clearance: "private",
             parent: "lead",
             ttl,
+            max_life: 0,
         },
         now,
     )

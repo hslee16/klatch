@@ -54,7 +54,10 @@ pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
 mod tripwire;
 mod workers;
-pub use workers::{CredentialInfo, CredentialSpec, MAX_CREDENTIAL_TTL_SECS, check_credential};
+pub use workers::{
+    CredentialInfo, CredentialSpec, DEFAULT_CREDENTIAL_MAX_LIFE_SECS, MAX_CREDENTIAL_TTL_SECS,
+    check_credential,
+};
 
 mod board;
 mod checks;

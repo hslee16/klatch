@@ -54,8 +54,10 @@ Identity comes from the process, never from a frame: a `member` or `sender` fiel
 - **A key bundle.** A launcher (a script or factory, never the worker itself) runs
   `klatch worker issue my-bot --clearance internal --ttl 3600 --out /path/to/my-bot.bundle`, then starts the worker with
   `KLATCH_IDENTITY_FILE=/path/to/my-bot.bundle` (the path, never the contents). The first frame is then
-  `hello` with `"attribution":"verified"`, and the member's messages read `verified` to everyone. The credential expires
-  after its ttl (1 second to 30 days) and `klatch worker revoke my-bot` ends it at once. A typed name on top of a bundle
+  `hello` with `"attribution":"verified"`, and the member's messages read `verified` to everyone. The credential
+  renews on use: `--ttl` is an idle timeout (default 3600 seconds, 1 second to 30 days) that each successful request
+  pushes out again, up to a hard cap from issue that `--max-life` sets (default 24 hours, at most 30 days), so a worker
+  that keeps working needs no human step and an idle one lapses. `klatch worker revoke my-bot` ends it at once. A typed name on top of a bundle
   is refused, and a bundle other users can read is refused. Read what a bundle is and is not in SECURITY.md: it is
   issued, expiring, revocable and audited identity, not isolation from a hostile process of the same user.
 

@@ -115,6 +115,7 @@ const GUARDED: &[(&str, Call)] = &[
                 member: "w-1",
                 clearance: "internal",
                 ttl: 60,
+                max_life: None,
                 parent: None,
             },
         ))

@@ -534,6 +534,7 @@ fn a_session_for_a_verified_member_whose_credential_has_ended_is_refused_on_ever
         member: "w-1",
         clearance: "internal",
         ttl: 10,
+        max_life: None,
         parent: None,
     };
     g.admin_issue_credential(&alice(), &spec).unwrap();
