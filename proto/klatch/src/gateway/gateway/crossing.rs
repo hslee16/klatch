@@ -6,7 +6,7 @@
 //! still stops it, and every outcome is audited without the text.
 
 use super::*;
-use crate::domain::Attribution;
+use crate::domain::{Attribution, CrossingStatus};
 use crate::gateway::judge::load_item;
 use crate::store::{NewAudit, NewMessage, NewReview, QueuedReview};
 
@@ -58,23 +58,25 @@ impl<S: Store> Gateway<S> {
         let mut out = Vec::new();
         for q in self.store.unapplied_reviews(crate::gateway::DRAIN_LIMIT)? {
             let outcome = self.apply_one(&q)?;
-            self.store.mark_review_applied(q.id, outcome)?;
-            self.audit_crossing(&q, outcome)?;
-            out.push((q.id, outcome));
+            self.store.mark_review_applied(q.id, &outcome)?;
+            let word = if outcome == RELEASED {
+                RELEASED
+            } else {
+                BLOCKED
+            };
+            self.audit_crossing(&q, word)?;
+            out.push((q.id, word));
         }
         Ok(out)
     }
 
-    fn apply_one(&self, q: &QueuedReview) -> Result<&'static str> {
+    fn apply_one(&self, q: &QueuedReview) -> Result<String> {
         let Some(text) = self.text_to_release(q)? else {
-            return Ok(BLOCKED);
+            return Ok(blocked("gone"));
         };
         let asker = Principal::unattributed(&q.requester);
-        if self
-            .refuse_text(&asker, (&q.to_room, "crossing"), &text)
-            .is_err()
-        {
-            return Ok(BLOCKED);
+        if let Err(e) = self.refuse_text(&asker, (&q.to_room, "crossing"), &text) {
+            return Ok(blocked(category_of(&e)));
         }
         let label = self.room_label(&q.to_room)?;
         let message = NewMessage::new(
@@ -85,7 +87,7 @@ impl<S: Store> Gateway<S> {
         );
         let posted = self.store.post_as(&message, self.now())?;
         self.notifier.posted(&q.to_room, posted.seq, &q.requester);
-        Ok(RELEASED)
+        Ok(RELEASED.into())
     }
 
     /// The text a verdict lets across: the redaction, or the original for `allow`; none if the original is gone.
@@ -106,6 +108,30 @@ impl<S: Store> Gateway<S> {
             .record_audit(&NewAudit::new("crossing", &target, &note), self.now())
     }
 
+    /// The caller's own crossings, newest first, each with its state and a fixed reason (#516). It reads only the
+    /// caller's rows and takes no guard, like `my_refusals`: a member stopped by the breaker can still learn why.
+    /// A deny reason, a redaction, the text and the name of a private term never appear.
+    pub fn my_crossings(&self, who: &Principal, limit: usize) -> Result<Vec<CrossingStatus>> {
+        check_member(who)?;
+        let rows = self.store.reviews(crate::gateway::DRAIN_LIMIT)?;
+        Ok(rows
+            .iter()
+            .filter(|q| q.requester == who.member)
+            .take(limit)
+            .map(|q| {
+                let (state, why) = status_of(q);
+                CrossingStatus {
+                    id: q.id,
+                    room: q.room.clone(),
+                    seq: q.seq,
+                    to_room: q.to_room.clone(),
+                    state: state.into(),
+                    why: why.into(),
+                }
+            })
+            .collect())
+    }
+
     /// Every queue item, newest first, with its verdict and what became of it. Pointers and outcomes, never text.
     pub fn review_queue(&self, who: &Principal, limit: usize) -> Result<Vec<QueuedReview>> {
         check_member(who)?;
@@ -115,6 +141,53 @@ impl<S: Store> Gateway<S> {
             r.redacted.clear();
         }
         Ok(rows)
+    }
+}
+
+/// The applied word a blocked crossing is stored under: `blocked:<category>`, a category and never a rule name.
+fn blocked(category: &str) -> String {
+    format!("{BLOCKED}:{category}")
+}
+
+/// The kind of floor that stopped a crossing, from the refusal's rule. The scrub rule's own name and its term stay
+/// with the human: the sender learns only that a private term matched.
+fn category_of(e: &Error) -> &'static str {
+    match e {
+        Error::Refused { rule, .. } if rule.starts_with("scrub:") => "private-term",
+        Error::Refused { rule, .. } if rule == "canary" => "canary",
+        Error::Refused { rule, .. } if rule.starts_with("credential") => "credential",
+        _ => "floor",
+    }
+}
+
+/// The state and the fixed reason for one queue row, from its verdict and what became of it.
+fn status_of(q: &QueuedReview) -> (&'static str, &'static str) {
+    let category = q.applied.strip_prefix("blocked:");
+    match (q.verdict.as_str(), q.applied.as_str(), category) {
+        ("", ..) => ("waiting", ""),
+        ("deny", ..) => (
+            "denied",
+            "the reviewer decided this message should not cross to the lower room; ask a human if it is needed there",
+        ),
+        (_, "released", _) => ("released", ""),
+        (_, _, Some("private-term")) => (
+            "blocked",
+            "the text matches a private-term rule that keeps it out of the lower room (private-term); reword the part that matches and ask again",
+        ),
+        (_, _, Some("credential")) => (
+            "blocked",
+            "the text looks like a credential, which never crosses (credential); remove it and ask again",
+        ),
+        (_, _, Some("canary")) => (
+            "blocked",
+            "the text carries a planted marker that must not leave its room (canary)",
+        ),
+        (_, _, Some("gone")) => ("blocked", "the message is no longer there to copy (gone)"),
+        (_, _, Some(_)) => (
+            "blocked",
+            "a safety rule stopped the text when it was released (floor); reword it and ask again",
+        ),
+        _ => ("approved", "approved; waiting to be released"),
     }
 }
 
