@@ -15,6 +15,10 @@ use crate::store::NewCredential;
 /// The longest a credential may live: a worker is short-lived, and a long-lived one should be reissued.
 pub const MAX_CREDENTIAL_TTL_SECS: i64 = 30 * 24 * 3600;
 
+/// How long a credential lives from issue at most, when the launcher asks for no other cap (#161): renewal on use
+/// never passes it.
+pub const DEFAULT_CREDENTIAL_MAX_LIFE_SECS: i64 = 24 * 3600;
+
 /// Names a worker may not take: they would pass for the system.
 const RESERVED: [&str; 2] = ["admin", "canary"];
 
@@ -23,8 +27,10 @@ pub struct CredentialSpec<'a> {
     pub member: &'a str,
     /// The highest label the worker may read and post, at most the agent cap.
     pub clearance: &'a str,
-    /// Seconds the credential lives.
+    /// The idle timeout in seconds: the credential lives this long from issue and, while it is used, from each use.
     pub ttl: i64,
+    /// The hard cap in seconds from issue that renewal never passes; `None` is the default (24 hours), at most 30 days.
+    pub max_life: Option<i64>,
     /// The member that launched the worker, shown in the audit.
     pub parent: Option<&'a str>,
 }
@@ -79,6 +85,7 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
         member,
         ttl,
         parent,
+        max_life,
         ..
     } = *spec;
     if !valid_name(member) || RESERVED.contains(&member) {
@@ -91,6 +98,13 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
             "a credential lives from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
         )));
     }
+    if let Some(m) = max_life
+        && !(1..=MAX_CREDENTIAL_TTL_SECS).contains(&m)
+    {
+        return Err(Error::Invalid(format!(
+            "a credential's cap is from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
+        )));
+    }
     match parent {
         Some(p) if !valid_name(p) || p == member => Err(Error::Invalid("bad parent member".into())),
         _ => Ok(()),
@@ -101,8 +115,10 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
 fn issue_detail(spec: &CredentialSpec) -> String {
     let parent = spec.parent.filter(|p| !p.is_empty()).unwrap_or("none");
     format!(
-        "clearance={} parent={parent} ttl={}s",
-        spec.clearance, spec.ttl
+        "clearance={} parent={parent} ttl={}s max-life={}s",
+        spec.clearance,
+        spec.ttl,
+        spec.max_life.unwrap_or(DEFAULT_CREDENTIAL_MAX_LIFE_SECS)
     )
 }
 
@@ -115,6 +131,7 @@ impl<S: Store> Gateway<S> {
             member,
             clearance,
             ttl,
+            max_life,
             parent,
         } = *spec;
         self.check_grantable(clearance)?;
@@ -129,6 +146,7 @@ impl<S: Store> Gateway<S> {
                     clearance,
                     parent: parent_text,
                     ttl,
+                    max_life: max_life.unwrap_or(DEFAULT_CREDENTIAL_MAX_LIFE_SECS),
                 },
                 now,
             )?;

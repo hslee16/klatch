@@ -21,6 +21,13 @@ pub trait CredentialStore {
         Ok(false)
     }
 
+    /// Renew a live credential on use: move its expiry to `now + idle`, never past its cap, and only when that gains
+    /// at least `step` seconds (or reaches the cap), so a burst of requests writes once. Returns the new expiry, or
+    /// `None` when nothing changed: no credential, revoked, expired, not renewable (cap 0) or no gain worth writing.
+    fn renew_credential(&self, _member: &str, _now: i64, _step: i64) -> Result<Option<i64>> {
+        Ok(None)
+    }
+
     fn credentials(&self) -> Result<Vec<CredentialRecord>> {
         Ok(Vec::new())
     }

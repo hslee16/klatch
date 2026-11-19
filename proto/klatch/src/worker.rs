@@ -20,9 +20,14 @@ pub enum WorkerCmd {
         /// The highest label the worker may read and post, at most the agent cap
         #[arg(long)]
         clearance: String,
-        /// Seconds the credential lives (1 to 30 days)
+        /// The idle timeout in seconds (1 to 30 days): a credential lives this long from issue and, each time it is
+        /// used, this long from that use, up to `--max-life`
         #[arg(long, default_value_t = 3600)]
         ttl: i64,
+        /// The most seconds a credential lives from issue, which renewal on use never passes (1 second to 30
+        /// days; default 24 hours)
+        #[arg(long)]
+        max_life: Option<i64>,
         /// The member that launched the worker, recorded in the audit
         #[arg(long)]
         parent: Option<String>,
@@ -92,7 +97,7 @@ fn plan_issue(
 fn issue_all(
     (gateway, launcher, db): (&Gateway<SqliteStore>, &Principal, &std::path::Path),
     plan: &[(String, PathBuf)],
-    (clearance, ttl, parent): (&str, i64, Option<&str>),
+    (clearance, ttl, parent, max_life): (&str, i64, Option<&str>, Option<i64>),
 ) -> Result<Vec<(String, PathBuf)>> {
     if let Some(dir) = plan
         .first()
@@ -106,7 +111,7 @@ fn issue_all(
         if let Err(e) = issue_one(
             (gateway, launcher, db),
             (member, path),
-            (clearance, ttl, parent),
+            (clearance, ttl, parent, max_life),
         ) {
             for (m, p) in &done {
                 let _ = std::fs::remove_file(p);
@@ -122,12 +127,13 @@ fn issue_all(
 fn issue_one(
     (gateway, launcher, db): (&Gateway<SqliteStore>, &Principal, &std::path::Path),
     (member, out): (&str, &std::path::Path),
-    (clearance, ttl, parent): (&str, i64, Option<&str>),
+    (clearance, ttl, parent, max_life): (&str, i64, Option<&str>, Option<i64>),
 ) -> Result<()> {
     let spec = CredentialSpec {
         member,
         clearance,
         ttl,
+        max_life,
         parent,
     };
     let token = gateway.admin_issue_credential(launcher, &spec)?;
@@ -180,6 +186,7 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
             member,
             clearance,
             ttl,
+            max_life,
             parent,
             out,
             count,
@@ -190,11 +197,12 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
             let issued = issue_all(
                 (&gateway, &launcher, &db),
                 &plan,
-                (&clearance, ttl, parent.as_deref()),
+                (&clearance, ttl, parent.as_deref(), max_life),
             )?;
+            let cap = max_life.unwrap_or(klatch::gateway::DEFAULT_CREDENTIAL_MAX_LIFE_SECS);
             for (member, path) in &issued {
                 println!(
-                    "wrote the key bundle for {member} to {} (expires in {ttl}s)",
+                    "wrote the key bundle for {member} to {} (idle timeout {ttl}s, renewed on use, at most {cap}s from now)",
                     path.display()
                 );
             }

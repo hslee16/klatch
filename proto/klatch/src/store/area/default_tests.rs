@@ -92,9 +92,11 @@ fn the_default_credential_area_registers_nothing_and_says_so() {
         clearance: "private",
         parent: "lead",
         ttl: 60,
+        max_life: 0,
     };
     assert!(matches!(s.issue_credential(&c, 5), Err(Error::Invalid(_))));
     assert_eq!(s.credential("w-1").unwrap(), None);
     assert!(!s.revoke_credential("w-1", 5).unwrap());
+    assert_eq!(s.renew_credential("w-1", 5, 60).unwrap(), None);
     assert!(s.credentials().unwrap().is_empty());
 }

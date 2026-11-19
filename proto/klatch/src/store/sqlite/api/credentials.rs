@@ -13,7 +13,7 @@ impl CredentialStore for SqliteStore {
     fn credential(&self, member: &str) -> Result<Option<crate::store::CredentialRecord>> {
         Ok(self
             .rows(
-                "SELECT member,token_hash,clearance,parent,issued,expires,revoked FROM credentials WHERE member=?1",
+                "SELECT member,token_hash,clearance,parent,issued,expires,revoked,idle,cap FROM credentials WHERE member=?1",
                 params![member],
                 credential_from_row,
             )?
@@ -28,9 +28,13 @@ impl CredentialStore for SqliteStore {
         )? > 0)
     }
 
+    fn renew_credential(&self, member: &str, now: i64, step: i64) -> Result<Option<i64>> {
+        self.do_renew_credential(member, now, step)
+    }
+
     fn credentials(&self) -> Result<Vec<crate::store::CredentialRecord>> {
         self.rows(
-            "SELECT member,token_hash,clearance,parent,issued,expires,revoked FROM credentials ORDER BY member",
+            "SELECT member,token_hash,clearance,parent,issued,expires,revoked,idle,cap FROM credentials ORDER BY member",
             params![],
             credential_from_row,
         )

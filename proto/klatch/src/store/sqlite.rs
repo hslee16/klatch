@@ -53,6 +53,8 @@ fn credential_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::store::
         issued: r.get(4)?,
         expires: r.get(5)?,
         revoked: r.get::<_, i64>(6)? != 0,
+        idle: r.get(7)?,
+        cap: r.get(8)?,
     })
 }
 
