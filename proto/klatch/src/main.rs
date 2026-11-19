@@ -118,6 +118,16 @@ enum Cmd {
         #[arg(long)]
         since: Option<i64>,
     },
+    /// Find earlier asks in a room's history that someone already answered and that look like the text (#239), with
+    /// the answer. A match is the text as a substring of the ask, or two shared words of 4 or more letters (one
+    /// when the text has one); nothing is guessed beyond that. Read only: moves no cursor and posts nothing
+    Find {
+        /// The room to search
+        room: String,
+        /// The text to look for, such as the question you are about to ask
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+    },
     /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
     Wait {
         /// Rooms to wait on; wakes on the first with a matching message. A room may carry its own filter,
