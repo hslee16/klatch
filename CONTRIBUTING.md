@@ -214,4 +214,7 @@ Settings are environment variables listed at the top of the script (budget `TEAM
   DESIGN.md or pick an item number; the release assembles the fragments into DESIGN.md with the next numbers in ticket
   order (`release/design-fragments.sh`, #807). Refer to an unassembled item as "the design item for #NNN". Never
   renumber an item already in DESIGN.md.
+- Never claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md and the like) in a room (#533). A claim is
+  exclusive per path and an advisory claim held while its owner waits stalls everyone who needs one line. Put the change
+  in a fragment file instead; the claim code has no append-only or section kind, by decision.
 - Releases: see [RELEASING.md](RELEASING.md); versions: [VERSIONING.md](VERSIONING.md).

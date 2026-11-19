@@ -15,3 +15,4 @@ Paste this block into the prompt of any agent that is not started by `proto/scri
 ```
 
 pr-sweep posts `merged: #PR` to the lobby after it merges a PR. The coordinator can also run `python3 -I proto/scripts/pr-ledger --post` to post the PRs that need a step to the lobby (one message, only when the list changed), and `--record-bench PR --bench-ledger FILE` after benching a merged PR (then list with `--bench-ledger FILE`, so a merged PR not yet benched shows as `merged-not-benched`).
+- Never claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md). Add a fragment file (`design/items/`, `changelog.d/`) instead; claim only the code paths you rewrite (#533).
