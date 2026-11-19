@@ -440,7 +440,7 @@ pub fn pick(
     if answer.choice == NONE_CHOICE {
         return None;
     }
-    if candidates.iter().any(|c| *c == answer.choice) {
+    if candidates.contains(&answer.choice) {
         return Some(answer.choice.clone());
     }
     rules
