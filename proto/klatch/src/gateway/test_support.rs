@@ -374,6 +374,14 @@ impl ReviewStore for SpyStore {
         self.inner.mark_review_applied(id, outcome)
     }
 
+    fn crossing_notices(
+        &self,
+        room: &str,
+        member: &str,
+    ) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.crossing_notices(room, member)
+    }
+
     fn resolve_review(&self, resolution: &ReviewResolution, now: i64) -> Result<bool> {
         self.inner.resolve_review(resolution, now)
     }

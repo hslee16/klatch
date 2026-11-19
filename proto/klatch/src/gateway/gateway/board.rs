@@ -267,6 +267,7 @@ impl<S: Store> Gateway<S> {
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;
             let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
+            let crossings = self.crossing_notices(&room, &who.member)?;
             let unowned_prs = if backlog {
                 let mut prs = self.open_prs_of(&room, now)?;
                 prs.retain(|p| p.holder.is_none());
@@ -295,6 +296,7 @@ impl<S: Store> Gateway<S> {
                 lapsed,
                 aged,
                 cycles,
+                crossings,
                 unowned_prs,
             });
         }
