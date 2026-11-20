@@ -21,7 +21,7 @@ fn store_path(home: Option<&Path>) -> Option<PathBuf> {
 fn key_within_patience(db: &Path) -> Option<Key> {
     let asked = db.to_path_buf();
     within(KEYSTORE_PATIENCE, move || {
-        crate::custody::current_key(&asked).ok().flatten()
+        klatch::member::custody::current_key(&asked).ok().flatten()
     })
     .flatten()
 }
@@ -33,7 +33,7 @@ type KeyProbe = (Option<String>, Result<bool, String>);
 fn probe_key(db: &Path) -> Option<KeyProbe> {
     let asked = db.to_path_buf();
     within(KEYSTORE_PATIENCE, move || {
-        let key = crate::custody::key_home(&asked);
+        let key = klatch::member::custody::key_home(&asked);
         let found = key
             .source
             .get(&key.name)
@@ -204,7 +204,9 @@ pub(super) fn check_growth(r: &mut Report, home: Option<&Path>) {
     }
     let asked = db.clone();
     let counts = within(KEYSTORE_PATIENCE, move || {
-        let key = crate::custody::current_key(&asked).ok().flatten()?;
+        let key = klatch::member::custody::current_key(&asked)
+            .ok()
+            .flatten()?;
         klatch::store::SqliteStore::read_growth(&asked, &key).ok()
     })
     .flatten();
@@ -232,7 +234,9 @@ fn nudge_effect(mode: &str) -> Status {
 fn recorded_modes(db: &Path) -> Option<Vec<(String, String, i64)>> {
     let asked = db.to_path_buf();
     within(KEYSTORE_PATIENCE, move || {
-        let key = crate::custody::current_key(&asked).ok().flatten()?;
+        let key = klatch::member::custody::current_key(&asked)
+            .ok()
+            .flatten()?;
         klatch::store::SqliteStore::read_member_modes(&asked, &key).ok()
     })
     .flatten()

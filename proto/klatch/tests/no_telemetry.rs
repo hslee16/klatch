@@ -107,8 +107,8 @@ fn no_networking_crate_is_in_the_dependency_tree() {
 /// and must be declared `#[cfg(test)] mod name;` in its parent so it is never part of the shipped binary (#771).
 const TEST_ONLY_SPAWNERS: &[&str] = &[
     "src/admin/command_tests.rs",
-    "src/custody/survivor_tests.rs",
-    "src/identity/survivor_tests.rs",
+    "src/member/custody/survivor_tests.rs",
+    "src/member/identity/survivor_tests.rs",
 ];
 
 /// Test-only modules that may open a loopback socket: the unit tests of the optional real Jev transport (`jev-http`,

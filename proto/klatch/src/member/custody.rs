@@ -2,15 +2,15 @@
 //! database, and open the store. The key is never printed here, and a hook never prints a recovery code: showing it
 //! is `klatch admin recovery`, behind the terminal gate.
 
+use crate::keys::{Key, KeySource};
+use crate::store::SqliteStore;
+use crate::store::encrypt::{ensure_encrypted, is_plaintext};
 use anyhow::{Result, bail};
-use klatch::keys::{Key, KeySource};
-use klatch::store::SqliteStore;
-use klatch::store::encrypt::{ensure_encrypted, is_plaintext};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 /// Where this store's key lives and under what name.
-pub(crate) struct KeyHome {
+pub struct KeyHome {
     pub source: Box<dyn KeySource>,
     pub name: String,
     pub warning: Option<String>,
@@ -29,12 +29,12 @@ fn state_dir() -> PathBuf {
 /// The key source for the store at `db`. `KLATCH_KEY_DIR` names a directory of key files: how an unattended worker
 /// is keyed (the service manager or the parent hands over a path, never the key) and how the tests are. Otherwise
 /// the operating-system keystore, with a key file as the stand-in where there is none.
-pub(crate) fn key_home(db: &Path) -> KeyHome {
+pub fn key_home(db: &Path) -> KeyHome {
     let home = db.parent().unwrap_or(Path::new("."));
-    let name = klatch::keys::store_key_name(home);
+    let name = crate::keys::store_key_name(home);
     // A worker is handed the path of its key bundle and reads no keystore: its keys are the ones the launcher chose.
     if let Some(path) = std::env::var_os("KLATCH_IDENTITY_FILE") {
-        let source: Box<dyn KeySource> = match klatch::keys::Bundle::read(Path::new(&path)) {
+        let source: Box<dyn KeySource> = match crate::keys::Bundle::read(Path::new(&path)) {
             Ok(bundle) => Box::new(bundle.into_source(&name)),
             Err(e) => Box::new(BrokenKeys(e.to_string())),
         };
@@ -46,12 +46,12 @@ pub(crate) fn key_home(db: &Path) -> KeyHome {
     }
     if let Some(dir) = std::env::var_os("KLATCH_KEY_DIR") {
         return KeyHome {
-            source: Box::new(klatch::keys::FileKeys::new(Path::new(&dir))),
+            source: Box::new(crate::keys::FileKeys::new(Path::new(&dir))),
             name,
             warning: None,
         };
     }
-    let (source, warning) = klatch::keys::default_source(&state_dir(), &name);
+    let (source, warning) = crate::keys::default_source(&state_dir(), &name);
     KeyHome {
         source,
         name,
@@ -63,14 +63,14 @@ pub(crate) fn key_home(db: &Path) -> KeyHome {
 struct BrokenKeys(String);
 
 impl KeySource for BrokenKeys {
-    fn get(&self, _name: &str) -> Result<Option<Key>, klatch::keys::Error> {
-        Err(klatch::keys::Error::Bad(self.0.clone()))
+    fn get(&self, _name: &str) -> Result<Option<Key>, crate::keys::Error> {
+        Err(crate::keys::Error::Bad(self.0.clone()))
     }
-    fn put(&self, _name: &str, _key: &Key) -> Result<(), klatch::keys::Error> {
-        Err(klatch::keys::Error::Bad(self.0.clone()))
+    fn put(&self, _name: &str, _key: &Key) -> Result<(), crate::keys::Error> {
+        Err(crate::keys::Error::Bad(self.0.clone()))
     }
-    fn delete(&self, _name: &str) -> Result<(), klatch::keys::Error> {
-        Err(klatch::keys::Error::Bad(self.0.clone()))
+    fn delete(&self, _name: &str) -> Result<(), crate::keys::Error> {
+        Err(crate::keys::Error::Bad(self.0.clone()))
     }
     fn describe(&self) -> &'static str {
         "key bundle"
@@ -88,7 +88,7 @@ fn has_data(db: &Path) -> bool {
 
 /// Open the encrypted store at `db`: get its key (making one for a new store, never for an existing encrypted store
 /// whose key is missing), convert a plaintext database first, and finish a rotation a crash interrupted.
-pub(crate) fn open_store(db: &Path) -> Result<SqliteStore> {
+pub fn open_store(db: &Path) -> Result<SqliteStore> {
     open_store_in(db, &key_home(db))
 }
 
@@ -98,7 +98,7 @@ pub(crate) fn open_store(db: &Path) -> Result<SqliteStore> {
 /// made saw an encrypted store with no key and called it lost (#596). Many processes starting at once each make
 /// no key of their own: the others wait here, look again, and find it.
 fn make_key_under_lock(db: &Path, kh: &KeyHome) -> Result<(Key, bool, Option<std::fs::File>)> {
-    let lock = klatch::store::encrypt::lock_dir(db)?;
+    let lock = crate::store::encrypt::lock_dir(db)?;
     // another process may have made both the key and the store while this one waited for the lock
     if let Some(k) = kh.source.get(&kh.name)? {
         return Ok((k, false, None));
@@ -109,7 +109,7 @@ fn make_key_under_lock(db: &Path, kh: &KeyHome) -> Result<(Key, bool, Option<std
             kh.source.describe()
         );
     }
-    let key = klatch::keys::create(kh.source.as_ref(), &kh.name)?.0;
+    let key = crate::keys::create(kh.source.as_ref(), &kh.name)?.0;
     // A plaintext database is converted by `ensure_encrypted`, which takes this lock itself, so the lock is kept
     // only when the store file is about to be created fresh.
     let keep = (!db.exists()).then_some(lock);
@@ -156,13 +156,13 @@ fn open_beside_rotation(db: &Path, kh: &KeyHome, key: Key) -> Result<SqliteStore
     if dir.is_some_and(|d| !d.exists()) {
         return open_keyed(db, kh, key);
     }
-    let shared = klatch::store::encrypt::lock_dir_shared(db)?;
+    let shared = crate::store::encrypt::lock_dir_shared(db)?;
     let key = kh.source.get(&kh.name)?.unwrap_or(key);
     if let Ok(store) = SqliteStore::open(db, &key) {
         return Ok(store);
     }
     drop(shared);
-    let _exclusive = klatch::store::encrypt::lock_dir(db)?;
+    let _exclusive = crate::store::encrypt::lock_dir(db)?;
     let key = kh.source.get(&kh.name)?.unwrap_or(key);
     open_keyed(db, kh, key)
 }
@@ -173,7 +173,7 @@ fn lock_store_dir(db: &Path) -> Result<Option<std::fs::File>> {
     if dir.is_some_and(|d| !d.exists()) {
         return Ok(None);
     }
-    Ok(Some(klatch::store::encrypt::lock_dir(db)?))
+    Ok(Some(crate::store::encrypt::lock_dir(db)?))
 }
 
 /// Open the store with `key`. The caller holds the directory lock.
@@ -196,7 +196,7 @@ fn open_keyed(db: &Path, kh: &KeyHome, key: Key) -> Result<SqliteStore> {
 }
 
 /// The current key, if there is one (for showing its recovery code).
-pub(crate) fn current_key(db: &Path) -> Result<Option<Key>> {
+pub fn current_key(db: &Path) -> Result<Option<Key>> {
     let kh = key_home(db);
     Ok(kh.source.get(&kh.name)?)
 }
@@ -207,7 +207,7 @@ fn opens_existing_store(db: &Path, key: &Key) -> bool {
 }
 
 /// Put `key` in as the store's key, after checking that it opens the store when one exists.
-pub(crate) fn restore_key(db: &Path, key: &Key) -> Result<()> {
+pub fn restore_key(db: &Path, key: &Key) -> Result<()> {
     let kh = key_home(db);
     if !opens_existing_store(db, key) {
         bail!("that recovery code does not open this store; nothing was changed");
@@ -232,7 +232,7 @@ pub(crate) fn restore_key(db: &Path, key: &Key) -> Result<()> {
 /// re-keyed; then the new key takes the main name and the second one goes. `open_store` finishes a run that died
 /// after the store was re-keyed, and a repeated `rotate-key` finishes one that died before: it reuses the stored
 /// second key and skips the archives already moved. Returns the new key.
-pub(crate) fn rotate_key(db: &Path) -> Result<Key> {
+pub fn rotate_key(db: &Path) -> Result<Key> {
     rotate_key_in(db, &key_home(db))
 }
 
@@ -256,9 +256,9 @@ fn rotate_key_in(db: &Path, kh: &KeyHome) -> Result<Key> {
         Some(n) => n,
         None => Key::generate().map_err(|e| anyhow::anyhow!("no random source: {e}"))?,
     };
-    klatch::store::archives_to_rekey(&archives, &old, &new)?;
+    crate::store::archives_to_rekey(&archives, &old, &new)?;
     kh.source.put(&next_name(&kh.name), &new)?;
-    klatch::store::rekey_archives(&archives, &old, &new)?;
+    crate::store::rekey_archives(&archives, &old, &new)?;
     store.rekey(&new)?;
     kh.source.put(&kh.name, &new)?;
     kh.source.delete(&next_name(&kh.name))?;
@@ -268,12 +268,7 @@ fn rotate_key_in(db: &Path, kh: &KeyHome) -> Result<Key> {
 /// After `admin archive` wrote `files` under `used`, the key it read at the start: if a rotation finished in the
 /// meantime, that rotation never saw these files and the store is under a newer key, so move them to it. Under the
 /// directory lock, so a rotation in progress finishes first, and one that starts later finds the files itself.
-pub(crate) fn settle_archive_keys(
-    db: &Path,
-    kh: &KeyHome,
-    used: &Key,
-    files: &[PathBuf],
-) -> Result<()> {
+pub fn settle_archive_keys(db: &Path, kh: &KeyHome, used: &Key, files: &[PathBuf]) -> Result<()> {
     let _lock = lock_store_dir(db)?;
     let Some(current) = kh.source.get(&kh.name)? else {
         return Ok(());
@@ -282,16 +277,16 @@ pub(crate) fn settle_archive_keys(
         return Ok(());
     }
     for f in files {
-        klatch::store::rekey_archives_in(f, used, &current)?;
+        crate::store::rekey_archives_in(f, used, &current)?;
     }
     Ok(())
 }
 
 /// The keys of `labels` this store has in its key source; a label with no key there is not held.
-pub(crate) fn label_ring(db: &Path, labels: &[String]) -> Result<klatch::keys::LabelKeys> {
+pub fn label_ring(db: &Path, labels: &[String]) -> Result<crate::keys::LabelKeys> {
     let kh = key_home(db);
     let names: Vec<&str> = labels.iter().map(String::as_str).collect();
-    Ok(klatch::keys::LabelKeys::load(
+    Ok(crate::keys::LabelKeys::load(
         kh.source.as_ref(),
         &kh.name,
         &names,
@@ -300,29 +295,29 @@ pub(crate) fn label_ring(db: &Path, labels: &[String]) -> Result<klatch::keys::L
 
 /// Make the key of a sealed label if there is none. Returns whether one was made. Under the directory lock, so two
 /// processes sealing at once make one key.
-pub(crate) fn ensure_label_key(db: &Path, label: &str) -> Result<bool> {
+pub fn ensure_label_key(db: &Path, label: &str) -> Result<bool> {
     let kh = key_home(db);
-    let name = klatch::keys::label_key_name(&kh.name, label);
-    let _lock = klatch::store::encrypt::lock_dir(db)?;
+    let name = crate::keys::label_key_name(&kh.name, label);
+    let _lock = crate::store::encrypt::lock_dir(db)?;
     if kh.source.get(&name)?.is_some() {
         return Ok(false);
     }
-    klatch::keys::create(kh.source.as_ref(), &name)?;
+    crate::keys::create(kh.source.as_ref(), &name)?;
     Ok(true)
 }
 
 /// The key of a sealed label, for showing its recovery code.
-pub(crate) fn label_key(db: &Path, label: &str) -> Result<Option<Key>> {
+pub fn label_key(db: &Path, label: &str) -> Result<Option<Key>> {
     let kh = key_home(db);
     Ok(kh
         .source
-        .get(&klatch::keys::label_key_name(&kh.name, label))?)
+        .get(&crate::keys::label_key_name(&kh.name, label))?)
 }
 
 /// Put a sealed label's key back from its recovery code. It is refused if a different key is already there.
-pub(crate) fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()> {
+pub fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()> {
     let kh = key_home(db);
-    let name = klatch::keys::label_key_name(&kh.name, label);
+    let name = crate::keys::label_key_name(&kh.name, label);
     if let Some(existing) = kh.source.get(&name)?
         && existing != *key
     {
@@ -369,23 +364,23 @@ mod tests {
     /// A file key source whose first `get` reports what it found and then stalls until told to go: the moment in
     /// #596 when one process has looked and found no key while another makes the key and the store.
     struct Stalled {
-        inner: klatch::keys::FileKeys,
+        inner: crate::keys::FileKeys,
         state: Gate, // (first get done, released)
         first: std::sync::atomic::AtomicBool,
     }
 
     impl KeySource for Stalled {
-        fn get(&self, name: &str) -> Result<Option<Key>, klatch::keys::Error> {
+        fn get(&self, name: &str) -> Result<Option<Key>, crate::keys::Error> {
             let found = self.inner.get(name)?;
             if !self.first.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 signal_and_wait(&self.state);
             }
             Ok(found)
         }
-        fn put(&self, name: &str, key: &Key) -> Result<(), klatch::keys::Error> {
+        fn put(&self, name: &str, key: &Key) -> Result<(), crate::keys::Error> {
             self.inner.put(name, key)
         }
-        fn delete(&self, name: &str) -> Result<(), klatch::keys::Error> {
+        fn delete(&self, name: &str) -> Result<(), crate::keys::Error> {
             self.inner.delete(name)
         }
         fn describe(&self) -> &'static str {
@@ -401,8 +396,8 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> crate::test_dir::TestDir {
-        crate::test_dir::TestDir::new(&format!("custody-{tag}"))
+    fn scratch(tag: &str) -> crate::store::test_dir::TestDir {
+        crate::store::test_dir::TestDir::new(&format!("custody-{tag}"))
     }
 
     #[test]
@@ -414,7 +409,7 @@ mod tests {
             let (db, keys, state) = (db.clone(), d.join("keys"), state.clone());
             std::thread::spawn(move || {
                 let src = Stalled {
-                    inner: klatch::keys::FileKeys::new(&keys),
+                    inner: crate::keys::FileKeys::new(&keys),
                     state,
                     first: false.into(),
                 };
@@ -423,7 +418,7 @@ mod tests {
         };
         // wait until the late process has looked and found no key
         wait_started(&state);
-        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        let keys = crate::keys::FileKeys::new(&d.join("keys"));
         open_store_in(&db, &home(Box::new(keys))).unwrap();
         release(&state);
         let r = late.join().unwrap();
@@ -434,10 +429,10 @@ mod tests {
     fn an_encrypted_store_without_a_key_still_says_how_to_recover() {
         let d = scratch("lost");
         let db = d.join("klatch.db");
-        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        let keys = crate::keys::FileKeys::new(&d.join("keys"));
         open_store_in(&db, &home(Box::new(keys))).unwrap();
         std::fs::remove_dir_all(d.join("keys")).unwrap();
-        let keys = klatch::keys::FileKeys::new(&d.join("keys"));
+        let keys = crate::keys::FileKeys::new(&d.join("keys"));
         let err = open_store_in(&db, &home(Box::new(keys)))
             .err()
             .unwrap()
@@ -446,7 +441,7 @@ mod tests {
     }
 
     fn file_home(d: &Path) -> KeyHome {
-        home(Box::new(klatch::keys::FileKeys::new(&d.join("keys"))))
+        home(Box::new(crate::keys::FileKeys::new(&d.join("keys"))))
     }
 
     /// A store in `d` with one archive file of an old message, made under the store's current key.
@@ -455,9 +450,9 @@ mod tests {
         let kh = file_home(d);
         let store = open_store_in(&db, &kh).unwrap();
         let key = kh.source.get(&kh.name).unwrap().unwrap();
-        klatch::store::MessageStore::join(&store, "r", "alice", 1).unwrap();
-        let seat = klatch::store::Seat::new("r", "alice");
-        klatch::store::MessageStore::post(&store, seat, "old words", 10).unwrap();
+        crate::store::MessageStore::join(&store, "r", "alice", 1).unwrap();
+        let seat = crate::store::Seat::new("r", "alice");
+        crate::store::MessageStore::post(&store, seat, "old words", 10).unwrap();
         let dir = d.join("archive");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("r-100.db");
@@ -471,9 +466,9 @@ mod tests {
         let file = store_with_archive(&d);
         let kh = file_home(&d);
         let new = rotate_key_in(&d.join("klatch.db"), &kh).unwrap();
-        let listed = klatch::store::list_archives(&d.join("archive"), &new).unwrap();
+        let listed = crate::store::list_archives(&d.join("archive"), &new).unwrap();
         assert!(
-            matches!(listed[0].state, klatch::store::ArchiveState::Ok { .. }),
+            matches!(listed[0].state, crate::store::ArchiveState::Ok { .. }),
             "{:?}",
             listed[0].state
         );
@@ -488,7 +483,7 @@ mod tests {
         std::fs::copy(&file, file.with_file_name("r-200.db")).unwrap();
         let strange = Key::generate().unwrap();
         let old = file_home(&d).source.get("store-test").unwrap().unwrap();
-        klatch::store::rekey_archives(&d.join("archive"), &old, &strange).unwrap();
+        crate::store::rekey_archives(&d.join("archive"), &old, &strange).unwrap();
         // both files are now under a third key: neither the current nor a new key opens them
         let kh = file_home(&d);
         let err = rotate_key_in(&d.join("klatch.db"), &kh)
@@ -508,22 +503,22 @@ mod tests {
     /// A key source that, when the rotation stores its new key, says so and then waits to be released: the rotation
     /// is then in the middle of its work, holding whatever it holds.
     struct HoldRotation {
-        inner: klatch::keys::FileKeys,
+        inner: crate::keys::FileKeys,
         state: Gate, // (rotation started, released)
     }
 
     impl KeySource for HoldRotation {
-        fn get(&self, name: &str) -> Result<Option<Key>, klatch::keys::Error> {
+        fn get(&self, name: &str) -> Result<Option<Key>, crate::keys::Error> {
             self.inner.get(name)
         }
-        fn put(&self, name: &str, key: &Key) -> Result<(), klatch::keys::Error> {
+        fn put(&self, name: &str, key: &Key) -> Result<(), crate::keys::Error> {
             self.inner.put(name, key)?;
             if name.ends_with("-next") {
                 signal_and_wait(&self.state);
             }
             Ok(())
         }
-        fn delete(&self, name: &str) -> Result<(), klatch::keys::Error> {
+        fn delete(&self, name: &str) -> Result<(), crate::keys::Error> {
             self.inner.delete(name)
         }
         fn describe(&self) -> &'static str {
@@ -539,7 +534,7 @@ mod tests {
             let (db, keys, state) = (d.join("klatch.db"), d.join("keys"), state.clone());
             std::thread::spawn(move || {
                 let src = HoldRotation {
-                    inner: klatch::keys::FileKeys::new(&keys),
+                    inner: crate::keys::FileKeys::new(&keys),
                     state,
                 };
                 rotate_key_in(&db, &home(Box::new(src)))
@@ -586,9 +581,9 @@ mod tests {
         let current = rotate_key_in(&d.join("klatch.db"), &kh).unwrap();
         // an archiver that read the key before the rotation finishes its file after it
         let store = open_store_in(&d.join("klatch.db"), &kh).unwrap();
-        klatch::store::MessageStore::post(
+        crate::store::MessageStore::post(
             &store,
-            klatch::store::Seat::new("r", "alice"),
+            crate::store::Seat::new("r", "alice"),
             "later old",
             20,
         )
@@ -602,12 +597,12 @@ mod tests {
             std::slice::from_ref(&late),
         )
         .unwrap();
-        let listed = klatch::store::list_archives(&d.join("archive"), &current).unwrap();
+        let listed = crate::store::list_archives(&d.join("archive"), &current).unwrap();
         assert_eq!(listed.len(), 2);
         assert!(
             listed
                 .iter()
-                .all(|a| matches!(a.state, klatch::store::ArchiveState::Ok { .. })),
+                .all(|a| matches!(a.state, crate::store::ArchiveState::Ok { .. })),
             "{listed:?}"
         );
         let _ = first;
@@ -638,7 +633,7 @@ mod tests {
         // the median post went from 26 ms to 170 ms. Another opener's (shared) lock must not hold an open back.
         let d = scratch("open-shared");
         store_with_archive(&d);
-        let other_opener = klatch::store::encrypt::lock_dir_shared(&d.join("klatch.db")).unwrap();
+        let other_opener = crate::store::encrypt::lock_dir_shared(&d.join("klatch.db")).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let opener = {
             let d = d.to_path_buf();
@@ -663,7 +658,7 @@ mod tests {
             let (d, state) = (d.to_path_buf(), state.clone());
             std::thread::spawn(move || {
                 let src = Stalled {
-                    inner: klatch::keys::FileKeys::new(&d.join("keys")),
+                    inner: crate::keys::FileKeys::new(&d.join("keys")),
                     state,
                     first: false.into(),
                 };

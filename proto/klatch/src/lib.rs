@@ -44,6 +44,9 @@ pub mod keys;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
 pub mod mediator;
+// The member setup `klatch mcp --stdio` and the other member commands share (#1062): a narrow facade.
+#[cfg(feature = "cli")]
+pub mod member;
 #[cfg(feature = "cli")]
 #[doc(hidden)]
 pub mod router;
