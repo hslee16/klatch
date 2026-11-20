@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::store::areas::*;
-use crate::store::{ClaimRequest, HookEvent, ReviewResolution};
+use crate::store::{ClaimRequest, HookEvent};
 use std::time::Duration;
 
 mod anchors;

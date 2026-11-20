@@ -82,3 +82,4 @@ pub mod features;
 pub mod members;
 pub mod messages;
 pub mod policy;
+pub mod reviews;

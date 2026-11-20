@@ -1,0 +1,1 @@
+- Park, unpark and the review queue now have shared store conformance tests, run for the MemberNotes and Reviews features, so a backend that declares them is fully backed; the small inline review probe is replaced by the real module (#956).
