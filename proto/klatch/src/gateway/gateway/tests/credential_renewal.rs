@@ -176,3 +176,16 @@ fn rotation_is_a_revoke_and_a_reissue_and_the_new_credential_has_a_fresh_cap() {
     g.post(&fresh, "r", "x").unwrap();
     assert_eq!(expires(&g), 2_800);
 }
+
+#[test]
+fn the_listing_shows_the_cap_and_the_last_renewal() {
+    let (g, t, who) = worker(Some(5_000));
+    let before = g.admin_credentials(&admin()).unwrap();
+    assert_eq!((before[0].cap, before[0].last_renewed), (6_000, None));
+    t.set(1_500);
+    g.post(&who, "r", "one").unwrap();
+    t.set(1_900);
+    g.post(&who, "r", "two").unwrap();
+    let after = g.admin_credentials(&admin()).unwrap();
+    assert_eq!((after[0].cap, after[0].last_renewed), (6_000, Some(1_900)));
+}
