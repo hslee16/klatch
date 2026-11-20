@@ -565,3 +565,38 @@ fn a_session_for_a_verified_member_whose_credential_has_ended_is_refused_on_ever
         assert_eq!(err.unwrap().0, "refused");
     }
 }
+
+#[test]
+fn read_carries_advisory_true_only_for_a_flagged_sender_and_omits_the_key_otherwise() {
+    use crate::harness::{ClaudeCode, Codex, HookTrust, Support};
+    let g = gateway();
+    let human = Principal::unattributed("admin");
+    g.admin_set_room_require(&human, "r", Some("flag:pre-action-enforcement"))
+        .unwrap();
+    g.join_with_harness(
+        &alice(),
+        "r",
+        &ClaudeCode::new(Support::Unknown(String::new())),
+    )
+    .unwrap();
+    g.join_with_harness(&bob(), "r", &Codex::paper(HookTrust::Unknown))
+        .unwrap();
+    g.post(&bob(), "r", "flagged hello").unwrap();
+    g.post(&alice(), "r", "clean hello").unwrap();
+    let carol = Principal::unattributed("carol");
+    let f = run(
+        &g,
+        &carol,
+        &[req("r", "read", json!({"room":"r","peek":true}))],
+    );
+    let (ok, result, _) = response(&f, "r");
+    assert!(ok);
+    let ms = &result.unwrap()["messages"];
+    assert_eq!(ms[0]["sender"], "bob");
+    assert_eq!(ms[0]["advisory"], true);
+    assert_eq!(ms[1]["sender"], "alice");
+    assert!(
+        ms[1].get("advisory").is_none(),
+        "an unflagged message looks as it always did"
+    );
+}

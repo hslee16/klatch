@@ -15,16 +15,29 @@ pub struct Message {
     /// and audits them and never interprets them.
     pub kind: Option<String>,
     pub payload: Option<String>,
+    /// Whether the sender was admitted in flag mode of a room-require and has not since been admitted cleanly (#990,
+    /// #878). Display only, never authority. The store leaves it `false`; the gateway sets it on what it returns for
+    /// `read`, `wait` and the hook digest, from the room's policy keys, so it is never read from a stored message
+    /// and never from a sender's text.
+    pub advisory: bool,
 }
+
+/// The fixed mark that follows a flagged sender's name. A constant, never built from member text.
+pub const ADVISORY_MARK: &str = "(advisory)";
 
 impl Message {
     /// The sender as a reader should see it: the name, and `(unverified)` after it when the gateway could not prove who
-    /// sent it (R23, ticket #28). A proven sender is the bare name.
+    /// sent it (R23, ticket #28), and `(advisory)` when the room flagged the sender (#990). A proven sender is the bare name.
     pub fn sender_label(&self) -> String {
-        match self.attribution {
+        let mut label = match self.attribution {
             Attribution::Verified => self.sender.clone(),
             Attribution::Unattributed => format!("{} (unverified)", self.sender),
+        };
+        if self.advisory {
+            label.push(' ');
+            label.push_str(ADVISORY_MARK);
         }
+        label
     }
 }
 

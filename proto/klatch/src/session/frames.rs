@@ -190,5 +190,9 @@ pub(crate) fn message_json(m: &Message) -> Value {
     if let Some(p) = &m.payload {
         v["payload"] = json!(p);
     }
+    // a flagged sender (#990) adds the key; an ordinary message does not carry it
+    if m.advisory {
+        v["advisory"] = json!(true);
+    }
     v
 }

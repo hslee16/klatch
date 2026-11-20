@@ -37,6 +37,7 @@ mod tests {
             ts: 0,
             kind: None,
             payload: None,
+            advisory: false,
         }
     }
 

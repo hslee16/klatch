@@ -159,6 +159,7 @@ mod tests {
             ts: NOW - 1_000,
             kind: None,
             payload: None,
+            advisory: false,
         }
     }
 

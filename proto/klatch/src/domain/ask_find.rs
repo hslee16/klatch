@@ -113,6 +113,7 @@ mod tests {
             ts: 1000 + seq,
             kind: None,
             payload: None,
+            advisory: false,
         }
     }
 

@@ -24,20 +24,17 @@ impl<S: Store> Gateway<S> {
         let at = Seat::new(room, &who.member);
         // a librarian only looks: its peek must not refresh its presence or make it a member (#499)
         if !advance && self.is_librarian(&who.member)? {
-            return Ok(Self::without_canary(self.store.look(at, self.now())?));
+            let seen = Self::without_canary(self.store.look(at, self.now())?);
+            return self.mark_advisory(room, seen);
         }
-        Ok(Self::without_canary(self.store.read(
-            at,
-            advance,
-            self.now(),
-        )?))
+        let seen = Self::without_canary(self.store.read(at, advance, self.now())?);
+        self.mark_advisory(room, seen)
     }
 
     /// What a librarian's peek returns without touching presence, membership or any position (#499, #750).
     fn peek_quietly(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
-        Ok(Self::without_canary(
-            self.store.look(Seat::new(room, &who.member), self.now())?,
-        ))
+        let seen = Self::without_canary(self.store.look(Seat::new(room, &who.member), self.now())?);
+        self.mark_advisory(room, seen)
     }
 
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
@@ -46,10 +43,11 @@ impl<S: Store> Gateway<S> {
         if self.is_librarian(&who.member)? {
             return self.peek_quietly(who, room);
         }
-        Ok(Self::without_canary(
+        let seen = Self::without_canary(
             self.store
                 .wait_poll(Seat::new(room, &who.member), self.now())?,
-        ))
+        );
+        self.mark_advisory(room, seen)
     }
 
     /// How many unread messages would wake the caller in a room: from others, past both cursors, and only those
