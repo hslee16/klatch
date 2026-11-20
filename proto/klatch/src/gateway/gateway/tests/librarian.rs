@@ -129,6 +129,64 @@ fn look_at_the_room(g: &Gateway<SpyStore>) {
     g.digest(&lib()).unwrap();
 }
 
+/// The waiting and watching paths a librarian may call (#750).
+fn wait_and_watch(g: &Gateway<SpyStore>) {
+    assert_eq!(g.wait_poll(&lib(), "r").unwrap().len(), 1);
+    assert_eq!(g.wakeable(&lib(), "r").unwrap(), 1);
+    assert_eq!(g.wake_summary(&lib(), "r").unwrap().0, 1);
+    g.wake_mark(&lib(), "r").unwrap();
+    g.wait_seen(&lib(), "r", 1).unwrap();
+}
+
+#[test]
+fn a_librarian_waiting_or_watching_does_not_join_the_room() {
+    let (g, t) = with_librarian();
+    t.set(t.get() + 5_000);
+    wait_and_watch(&g);
+    assert_eq!(lib_seen(&g), None, "waiting made the librarian a member");
+}
+
+#[test]
+fn a_librarian_that_was_a_member_keeps_its_last_seen_when_it_waits_or_watches() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.post(&alice(), "r", "what happened").unwrap();
+    g.join(&lib(), "r").unwrap();
+    let before = lib_seen(&g);
+    g.admin_set_librarian(&admin(), "lib", true).unwrap();
+    t.set(t.get() + 5_000);
+    wait_and_watch(&g);
+    assert_eq!(lib_seen(&g), before, "waiting refreshed the presence");
+}
+
+#[test]
+fn a_librarian_wait_and_wake_marks_write_no_position_so_the_next_poll_still_sees_it() {
+    let (g, _) = with_librarian();
+    g.wake_mark(&lib(), "r").unwrap();
+    g.wait_seen(&lib(), "r", 1).unwrap();
+    assert_eq!(g.wait_poll(&lib(), "r").unwrap().len(), 1);
+    assert_eq!(g.wakeable(&lib(), "r").unwrap(), 1);
+}
+
+#[test]
+fn an_ordinary_members_wait_and_watch_still_refresh_its_presence() {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    g.post(&alice(), "r", "hi").unwrap();
+    t.set(t.get() + 5_000);
+    g.wait_poll(&bob(), "r").unwrap();
+    g.wake_mark(&bob(), "r").unwrap();
+    let seen = g
+        .who(&alice(), "r")
+        .unwrap()
+        .iter()
+        .find(|m| m.name == "bob")
+        .map(|m| m.last_seen);
+    assert_eq!(seen, Some(t.get()));
+    assert_eq!(g.wakeable(&bob(), "r").unwrap(), 0, "the mark holds");
+}
+
 #[test]
 fn a_librarian_looking_does_not_join_the_room() {
     let (g, t) = with_librarian();
