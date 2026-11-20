@@ -49,8 +49,12 @@ fn a_waiting_and_a_denied_crossing_carry_state_and_pointers_never_text() {
     assert_eq!(list[0]["to_room"], "open");
     assert_eq!(list[0]["state"], "waiting");
     let rev = Principal::unattributed("rev");
-    g.review_verdict(&rev, id, &Verdict::Deny("the plan is blue and leaks".into()))
-        .unwrap();
+    g.review_verdict(
+        &rev,
+        id,
+        &Verdict::Deny("the plan is blue and leaks".into()),
+    )
+    .unwrap();
     let (_, result, _) = call(&g, &alice(), json!({}));
     let result = result.unwrap();
     assert_eq!(result["crossings"][0]["state"], "denied");
