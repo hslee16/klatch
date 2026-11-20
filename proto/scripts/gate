@@ -67,7 +67,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=10
+total=11
 n=0
 started=$SECONDS
 replay_hint() {
@@ -100,6 +100,9 @@ step() {
 proto="$root/proto"
 step "fmt"                          no    "$proto" cargo fmt --all --check
 step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --all-targets --locked -- -D warnings
+# The CI step "the client feature and the bare build compile on their own" (#910): a module declared without its
+# #[cfg(feature = "cli")] builds under the default features and breaks only these two, so CI alone caught it.
+step "feature and bare builds"      no    "$proto" bash -c 'cargo build -p klatch --no-default-features --features client --locked && cargo build -p klatch --no-default-features --locked'
 # the optional real Jev transport (#871) is behind a feature no default build compiles: lint and test it here
 step "jev-http feature"             no    "$proto" bash -c 'cargo clippy -p klatch --features jev-http --all-targets --locked -- -D warnings && cargo test -p klatch --features jev-http --lib --locked jev::'
 step "workspace tests"              hegel "$proto" cargo test --workspace --locked
@@ -138,6 +141,7 @@ repo_checks() {
     && experiments/variance/test-repeat.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh > /dev/null \
+    && { ! command -v actionlint > /dev/null 2>&1 || actionlint; } \
     && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/quint-check proto/scripts/shuttle; }
 }
 step "release and shell checks"     no    "$root" repo_checks

@@ -1,0 +1,1 @@
+- The local gate (`proto/scripts/gate`) now builds the client feature and the bare crate, as CI does, so a module missing its `cfg` attribute fails locally (#910). It is step 3 of 11, and runs actionlint when installed.
