@@ -8,8 +8,9 @@
 //! the prompt is not interpreted by a model: it is a fixed query grammar, so text another member wrote can never turn
 //! into a call. Who asks comes from the process (the `Principal` of the session), never from the prompt.
 //!
-//! Transport: JSON-RPC 2.0, one message per line, nothing but messages on the output. The ACP details used (written from
-//! memory of the public specification, not re-read against it; see the design item for #115): `initialize` with an
+//! Transport: JSON-RPC 2.0, one message per line, nothing but messages on the output. The ACP details used (first written
+//! from memory, then checked against the public specification text in #869, not against a real editor; see the design
+//! item for #869): `initialize` with an
 //! integer `protocolVersion` of 1, `session/new` returning a `sessionId`, `session/prompt` streaming the answer as
 //! `session/update` notifications of kind `agent_message_chunk` and ending with a `stopReason`, and `session/cancel`
 //! as a notification (nothing is ever running when it arrives, because a query is answered before the next line is read).
@@ -148,6 +149,11 @@ impl<'a, S: Store> AcpServer<'a, S> {
             "initialize" => Ok(initialize()),
             "session/new" => Ok(self.new_session()),
             "session/prompt" => self.prompt(&params, &mut out),
+            // Baseline method; its methodId must be one advertised, and none is (#869).
+            "authenticate" => Err((
+                INVALID_PARAMS,
+                "no authentication method is advertised".to_string(),
+            )),
             other => Err((METHOD_NOT_FOUND, format!("no method {other}"))),
         };
         out.push(match reply {
