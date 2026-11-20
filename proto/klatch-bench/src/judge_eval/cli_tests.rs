@@ -282,8 +282,7 @@ fn bad_thresholds_and_thresholds_on_a_single_judge_are_refused() {
 #[test]
 fn a_cascade_runs_end_to_end_with_a_fake_claude_and_records_the_stage_and_the_summed_cost() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("klatch-cascade-cli-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_dir::TestDir::new("cascade-cli");
     let script = dir.join("claude");
     let reply = serde_json::json!({
         "type": "result", "subtype": "success", "is_error": false, "result": "",
@@ -327,5 +326,4 @@ fn a_cascade_runs_end_to_end_with_a_fake_claude_and_records_the_stage_and_the_su
         "{:?}",
         summary.cost_usd
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

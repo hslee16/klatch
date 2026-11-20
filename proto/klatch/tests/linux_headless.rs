@@ -9,17 +9,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+
 struct Box_ {
     dir: PathBuf,
+    _guard: test_dir::TestDir,
 }
 
 impl Box_ {
     fn new(tag: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("klatch-headless-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Self { dir }
+        let guard = test_dir::TestDir::new(&format!("headless-{tag}"));
+        Self {
+            dir: guard.to_path_buf(),
+            _guard: guard,
+        }
     }
 
     fn state_keys(&self) -> PathBuf {
@@ -60,12 +65,6 @@ impl Box_ {
         let (ok, out, err) = self.run(who, args, &[]);
         assert!(ok, "{args:?} failed: {err}");
         out
-    }
-}
-
-impl Drop for Box_ {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

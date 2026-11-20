@@ -10,6 +10,11 @@ pub mod mp_run;
 mod scenarios;
 mod world;
 
+/// The scratch directory of the tests and of each world, shared with the klatch crate by a path attribute (#995).
+#[allow(dead_code)]
+#[path = "../../klatch/src/store/test_dir.rs"]
+mod test_dir;
+
 pub use harness::{FakeHarness, Session};
 pub use scenarios::all;
 pub use world::World;
@@ -453,7 +458,7 @@ mod tests {
 
     #[test]
     fn a_binary_in_use_survives_a_later_rebuild_that_removes_the_built_one() {
-        let tmp = std::env::temp_dir().join(format!("klatch-752-a-{}", std::process::id()));
+        let tmp = crate::test_dir::TestDir::new("752-a");
         let dir = tmp.join("bench-bin");
         std::fs::create_dir_all(&tmp).unwrap();
         let bin = tmp.join("klatch");
@@ -482,13 +487,12 @@ mod tests {
         go_tx.send(()).unwrap();
         let second = second.join().unwrap().unwrap();
         assert!(first.exists() && second.exists() && first != second);
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn builds_are_serialised_so_none_overlaps_another() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-        let tmp = std::env::temp_dir().join(format!("klatch-752-b-{}", std::process::id()));
+        let tmp = crate::test_dir::TestDir::new("752-b");
         let dir = tmp.join("bench-bin");
         std::fs::create_dir_all(&tmp).unwrap();
         let bin = tmp.join("klatch");
@@ -515,17 +519,15 @@ mod tests {
         assert_eq!(overlaps.load(SeqCst), 0);
         // Same content, same private copy: nothing accumulates.
         assert!(paths.iter().all(|p| p == &paths[0] && p.exists()));
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn a_failed_build_is_an_error_not_a_missing_file() {
-        let tmp = std::env::temp_dir().join(format!("klatch-752-c-{}", std::process::id()));
+        let tmp = crate::test_dir::TestDir::new("752-c");
         std::fs::create_dir_all(&tmp).unwrap();
         let err =
             obtain_binary(&tmp.join("bench-bin"), &tmp.join("klatch"), || Ok(())).unwrap_err();
         assert!(err.contains("could not build"), "{err}");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

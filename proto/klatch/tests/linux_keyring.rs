@@ -7,6 +7,10 @@ use klatch::keys::{Error, KEY_LEN, Key, KeySource, SecretService};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+
 static N: AtomicU32 = AtomicU32::new(0);
 
 fn service_name() -> String {
@@ -190,9 +194,7 @@ fn the_secret_never_appears_in_any_command_line() {
 #[ignore = "needs a real Secret Service; run proto/linux-keys/run.sh"]
 fn the_binary_keeps_its_key_in_the_keyring_and_writes_no_key_file() {
     let _ = backend(); // the bus must be there
-    let dir = std::env::temp_dir().join(format!("klatch-ring-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = test_dir::TestDir::new("ring");
     let run = |who: &str, args: &[&str]| {
         let o = Command::new(env!("CARGO_BIN_EXE_klatch"))
             .env_remove("KLATCH_KEY_DIR")
@@ -232,7 +234,6 @@ fn the_binary_keeps_its_key_in_the_keyring_and_writes_no_key_file() {
         .args(["clear", "service", "klatch", "name", &name])
         .status()
         .unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -6,6 +6,10 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+
 #[test]
 #[ignore = "needs a session bus with a locked keyring; run proto/linux-keys/run.sh locked"]
 fn a_locked_keyring_fails_fast_with_a_reason_and_leaves_no_key_file() {
@@ -13,8 +17,7 @@ fn a_locked_keyring_fails_fast_with_a_reason_and_leaves_no_key_file() {
         std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some(),
         "run proto/linux-keys/run.sh locked"
     );
-    let dir = std::env::temp_dir().join(format!("klatch-locked-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = test_dir::TestDir::new("locked");
     std::fs::create_dir_all(dir.join("home")).unwrap();
     let started = Instant::now();
     let o = Command::new(env!("CARGO_BIN_EXE_klatch"))
@@ -45,5 +48,4 @@ fn a_locked_keyring_fails_fast_with_a_reason_and_leaves_no_key_file() {
         !dir.join("state/klatch/keys").exists(),
         "a key file was written behind the keyring's back"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

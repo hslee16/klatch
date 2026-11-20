@@ -9,6 +9,11 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+use test_dir::TestDir;
+
 unsafe extern "C" {
     fn getsockopt(
         fd: i32,
@@ -58,11 +63,8 @@ fn socket_in(dir: &Path, name: &str) -> PathBuf {
     socket
 }
 
-fn temp(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("klatch-peer-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn temp(tag: &str) -> TestDir {
+    TestDir::new(&format!("peer-{tag}"))
 }
 
 /// A program named `claude` (a symlink to the shell, as the bench does) that runs `script`, so it is the "session"
@@ -134,7 +136,6 @@ fn the_server_learns_the_pid_of_the_process_that_connected_and_maps_it_to_its_se
     assert_eq!(found.pid, session.id());
     let _ = session.kill();
     let _ = session.wait();
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -155,7 +156,6 @@ fn a_process_with_no_session_above_it_maps_to_nothing() {
     assert!(find_session(pid, &PsTable, &FsRegistry { dir: registry }, domain()).is_err());
     let _ = client.kill();
     let _ = client.wait();
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

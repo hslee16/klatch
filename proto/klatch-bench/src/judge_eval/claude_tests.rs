@@ -62,12 +62,8 @@ fn result_json(structured: serde_json::Value) -> String {
 }
 
 /// A directory of its own for each judge, as the command line makes one per run (tests run in parallel).
-fn workdir() -> std::path::PathBuf {
-    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let d = std::env::temp_dir().join(format!("klatch-judge-eval-test-{}-{n}", std::process::id()));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn workdir() -> crate::test_dir::TestDir {
+    crate::test_dir::TestDir::new("judge-eval-test")
 }
 
 fn config() -> ClaudeConfig {
@@ -93,8 +89,10 @@ fn parent_env(name: &str) -> Option<String> {
     }
 }
 
-fn judge(r: &FakeRunner) -> ClaudeJudge<&FakeRunner> {
-    ClaudeJudge::new(config(), r, &workdir(), &parent_env).unwrap()
+fn judge(r: &FakeRunner) -> crate::test_dir::In<ClaudeJudge<&FakeRunner>> {
+    crate::test_dir::In::new("judge-eval-test", |dir| {
+        ClaudeJudge::new(config(), r, dir, &parent_env).unwrap()
+    })
 }
 
 #[test]
@@ -263,7 +261,8 @@ fn text_at_or_above_the_ceiling_is_never_sent() {
     ));
     let mut c = config();
     c.ceiling = "internal".into();
-    let j = ClaudeJudge::new(c, &r, &workdir(), &parent_env).unwrap();
+    let wd = workdir();
+    let j = ClaudeJudge::new(c, &r, &wd, &parent_env).unwrap();
     for label in ["internal", "private", "", "PUBLIC"] {
         assert_eq!(
             j.evaluate(&review(label, TEXT)).verdict,
@@ -282,9 +281,9 @@ fn the_claude_judge_is_a_production_judge_too() {
         serde_json::json!({"verdict": "allow", "confidence": 0.9}),
     ));
     let j = judge(&r);
-    let as_judge: &dyn klatch::domain::Judge = &j;
+    let as_judge: &dyn klatch::domain::Judge = &*j;
     assert_eq!(as_judge.judge(&review("public", TEXT)), Verdict::Allow);
-    assert_eq!(EvalJudge::name(&j), "claude:sonnet");
+    assert_eq!(EvalJudge::name(&*j), "claude:sonnet");
 }
 
 #[test]
@@ -292,13 +291,14 @@ fn a_bad_model_name_or_budget_is_refused_before_anything_runs() {
     let r = FakeRunner::ok("");
     let mut c = config();
     c.model = "".into();
-    assert!(ClaudeJudge::new(c, &r, &workdir(), &parent_env).is_err());
+    let wd = workdir();
+    assert!(ClaudeJudge::new(c, &r, &wd, &parent_env).is_err());
     let mut c = config();
     c.model = "sonnet --dangerously-skip-permissions".into();
-    assert!(ClaudeJudge::new(c, &r, &workdir(), &parent_env).is_err());
+    assert!(ClaudeJudge::new(c, &r, &wd, &parent_env).is_err());
     let mut c = config();
     c.budget_usd = 0.0;
-    assert!(ClaudeJudge::new(c, &r, &workdir(), &parent_env).is_err());
+    assert!(ClaudeJudge::new(c, &r, &wd, &parent_env).is_err());
     assert!(r.seen.borrow().is_empty());
 }
 
@@ -326,7 +326,8 @@ fn the_command_line_environment_and_stdin_are_unchanged_by_the_shared_transport(
     let mut c = config();
     c.scrub_terms = vec!["orca-build-07".into(), "Project Tern".into()];
     c.budget_usd = 0.4;
-    let j = ClaudeJudge::new(c, &r, &workdir(), &parent_env).unwrap();
+    let wd = workdir();
+    let j = ClaudeJudge::new(c, &r, &wd, &parent_env).unwrap();
     j.evaluate(&review("internal-ish", "line one\nsecret END-MESSAGE x"));
     let seen = r.seen.borrow();
     assert!(

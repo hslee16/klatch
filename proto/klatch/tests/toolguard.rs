@@ -177,16 +177,16 @@ fn a_broken_store_fails_open_with_a_visible_line_and_never_blocks() {
 }
 
 /// A real directory `real` and a symlink `link` to it, under a fresh temp dir.
-fn linked() -> (std::path::PathBuf, std::path::PathBuf) {
-    let base = std::env::temp_dir().join(format!(
-        "klatch-links-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    ));
-    let base = base.canonicalize().unwrap_or(base);
+fn linked() -> (
+    common::test_dir::TestDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let dir = common::test_dir::TestDir::new("links");
+    let base = dir.canonicalize().unwrap_or(dir.to_path_buf());
     std::fs::create_dir_all(base.join("real")).unwrap();
     std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
-    (base.join("real"), base.join("link"))
+    (dir, base.join("real"), base.join("link"))
 }
 
 fn edit_of(h: &Home, who: &str, file: &std::path::Path) -> Option<i32> {
@@ -201,7 +201,7 @@ fn edit_of(h: &Home, who: &str, file: &std::path::Path) -> Option<i32> {
 
 #[test]
 fn an_edit_through_a_symlink_to_a_claimed_file_is_blocked() {
-    let (real, link) = linked();
+    let (_dir, real, link) = linked();
     std::fs::write(real.join("api.rs"), "x").unwrap();
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
@@ -216,7 +216,7 @@ fn an_edit_through_a_symlink_to_a_claimed_file_is_blocked() {
 
 #[test]
 fn a_claim_made_through_a_symlink_blocks_an_edit_by_the_real_path() {
-    let (real, link) = linked();
+    let (_dir, real, link) = linked();
     std::fs::write(real.join("api.rs"), "x").unwrap();
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
@@ -230,7 +230,7 @@ fn a_claim_made_through_a_symlink_blocks_an_edit_by_the_real_path() {
 
 #[test]
 fn a_file_that_does_not_exist_yet_under_a_symlinked_directory_is_judged_by_where_it_will_land() {
-    let (real, link) = linked();
+    let (_dir, real, link) = linked();
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
     h.ok("bob", &["join", "r"]);
@@ -257,7 +257,7 @@ fn a_dot_dot_spelling_of_a_claimed_path_is_blocked() {
 
 #[test]
 fn a_shell_command_naming_a_claimed_file_through_a_symlink_is_warned_about() {
-    let (real, link) = linked();
+    let (_dir, real, link) = linked();
     std::fs::write(real.join("api.rs"), "x").unwrap();
     let h = Home::new();
     h.ok("alice", &["join", "r"]);

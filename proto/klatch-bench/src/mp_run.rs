@@ -34,18 +34,7 @@ pub struct RoundReport {
 }
 
 /// The store a round runs against: a directory of its own, removed afterwards unless the round found something.
-struct Home {
-    dir: PathBuf,
-    keep: bool,
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        if !self.keep {
-            std::fs::remove_dir_all(&self.dir).ok();
-        }
-    }
-}
+type Home = crate::test_dir::TestDir;
 
 /// The room every post and claim goes to.
 const ROOM: &str = "r";
@@ -486,21 +475,12 @@ fn seed_plaintext(home: &Path) -> Result<Vec<String>, String> {
 
 /// Run one round: plan, drive, then reopen the store and judge it. Even rounds start from a plaintext database.
 pub fn run_round(bin: &Path, cfg: &Config, round: usize) -> Result<RoundReport, String> {
-    let dir = std::env::temp_dir().join(format!(
-        "klatch-faults-{}-{}-{round}",
-        std::process::id(),
-        cfg.seed
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let mut home = Home { dir, keep: false };
-    let site = Site {
-        bin,
-        home: &home.dir,
-    };
+    let mut home = Home::new(&format!("faults-{}-{round}", cfg.seed));
+    let site = Site { bin, home: &home };
     let migrated = round.is_multiple_of(2);
     let mut ledger = Ledger::default();
     if migrated {
-        ledger.seeded = seed_plaintext(&home.dir)?;
+        ledger.seeded = seed_plaintext(&home)?;
     } else {
         site.finish(&["join", ROOM])?;
     }
@@ -536,11 +516,10 @@ pub fn run_round(bin: &Path, cfg: &Config, round: usize) -> Result<RoundReport, 
             .push("processes did not finish in 120 s (hung) and were killed".into());
     }
     verify(site, &ledger, &mut report);
-    home.keep = !report.violations.is_empty();
-    if home.keep {
+    if !report.violations.is_empty() {
         report.violations.push(format!(
             "the store is kept for a look: {}",
-            home.dir.display()
+            home.keep().display()
         ));
     }
     Ok(report)

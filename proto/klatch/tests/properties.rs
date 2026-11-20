@@ -7,6 +7,10 @@
 //! CONTRIBUTING.md. Draw plain integers and map them to values inside the test: Hegel prints and shrinks those without
 //! further setup.
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+
 use hegel::TestCase;
 use hegel::generators as gs;
 use klatch::domain::{SHARED_SCOPE, clean_path, overlaps, scopes_collide};
@@ -268,14 +272,10 @@ fn the_hook_output_is_always_valid_json_within_its_byte_budget(tc: TestCase) {
 
 // ---- archive and restore ---------------------------------------------------------------------------------------
 
-/// A file name no other case uses, in the system temp dir (the property runs many cases in one process).
-fn scratch_file(tag: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static N: AtomicUsize = AtomicUsize::new(0);
-    let n = N.fetch_add(1, Ordering::SeqCst);
-    let p = std::env::temp_dir().join(format!("klatch-prop-{tag}-{}-{n}.db", std::process::id()));
-    let _ = std::fs::remove_file(&p);
-    p
+/// A file path no other case uses, in a directory of its own that goes when the value is dropped (the property runs
+/// many cases in one process).
+fn scratch_file(tag: &str) -> test_dir::TempDb {
+    test_dir::temp_db(&format!("prop-{tag}"))
 }
 
 /// Archiving moves old messages out and leaves tombstones; restoring puts them back. For any messages (unicode
@@ -387,9 +387,6 @@ fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_n
         original,
         "restore is not the identity"
     );
-    for f in [file_a, file_b] {
-        let _ = std::fs::remove_file(f);
-    }
 }
 
 // ---- paging ----------------------------------------------------------------------------------------------------

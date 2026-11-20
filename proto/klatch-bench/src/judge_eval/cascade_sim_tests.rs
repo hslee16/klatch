@@ -251,8 +251,7 @@ fn files_of_different_splits_or_corpora_are_refused() {
 
 #[test]
 fn the_main_path_refuses_mismatched_files_and_prints_nothing_else() {
-    let dir = std::env::temp_dir().join(format!("klatch-sim-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::test_dir::TestDir::new("sim");
     let write = |name: &str, v: &Value| {
         let p = dir.join(name);
         std::fs::write(&p, v.to_string()).unwrap();
@@ -276,7 +275,6 @@ fn the_main_path_refuses_mismatched_files_and_prints_nothing_else() {
     std::fs::write(&bad, "not json").unwrap();
     let e = run(&Options::defaults(&dev, &bad.to_string_lossy())).unwrap_err();
     assert!(e.contains("bad.json"), "{e}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

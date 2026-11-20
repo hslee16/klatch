@@ -23,6 +23,11 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+use test_dir::TestDir;
+
 fn hex(s: &str) -> Vec<u8> {
     HEXLOWER.decode(s.as_bytes()).unwrap()
 }
@@ -393,16 +398,8 @@ fn the_sqlcipher_key_of_a_pinned_key_is_the_pinned_pragma() {
 
 // ---- #622: key bundles, label key names and archive files ----
 
-fn scratch(tag: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!(
-        "klatch-crypto622-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(tag: &str) -> TestDir {
+    TestDir::new(&format!("crypto622-{tag}"))
 }
 
 const BUNDLE_TEXT: &str = "klatch-bundle 1\nmember w-1\ntoken KLATCH-CRED-AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPQ\nstore 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\nlabel private 1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100\n";
@@ -462,7 +459,6 @@ fn a_key_bundle_reads_back_what_was_written(tc: TestCase) {
     assert_eq!(back.token.hash(), bundle.token.hash());
     assert!(back.store_key == bundle.store_key);
     assert!(back.label_keys[0].1 == bundle.label_keys[0].1);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
