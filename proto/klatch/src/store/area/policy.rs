@@ -18,6 +18,12 @@ pub trait PolicyStore {
         unsupported("an audit")
     }
 
+    /// The time of the newest audit entry of one action on one target at or after `since`, however far back it is
+    /// (#1007): a filtered read, so a busy audit does not hide an old entry.
+    fn last_audit_ts(&self, _action: &str, _target: &str, _since: i64) -> Result<Option<i64>> {
+        unsupported("an audit")
+    }
+
     /// Policy the administrator set: room labels, clearances, the label chain, scrub terms, tripwires (epic #9). One
     /// key and one value each; `None` clears a key.
     fn policy_get(&self, _key: &str) -> Result<Option<String>> {

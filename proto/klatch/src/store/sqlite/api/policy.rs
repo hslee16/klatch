@@ -28,6 +28,15 @@ impl PolicyStore for SqliteStore {
         )
     }
 
+    fn last_audit_ts(&self, action: &str, target: &str, since: i64) -> Result<Option<i64>> {
+        self.optional(
+            "SELECT MAX(ts) FROM admin_audit WHERE action=?1 AND target=?2 AND ts>=?3",
+            params![action, target, since],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .map(Option::flatten)
+    }
+
     fn policy_get(&self, key: &str) -> Result<Option<String>> {
         self.optional("SELECT value FROM policy WHERE key=?1", params![key], |r| {
             r.get(0)
