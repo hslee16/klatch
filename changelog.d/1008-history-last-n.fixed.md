@@ -1,0 +1,1 @@
+- `history --last N` returns N visible messages when they exist, even when the newest rows are a canary or an archived tombstone, and a hidden row at the edge of the window is no longer counted as "more" (#1008).
