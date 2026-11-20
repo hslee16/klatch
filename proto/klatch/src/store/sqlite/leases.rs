@@ -17,10 +17,12 @@ impl SqliteStore {
     }
 
     /// Set the expiry of `member`'s claims to `until` where it is earlier (`extend`) or later (otherwise). An
-    /// `ask:<N>` claim keeps its own short lease and is left alone. Returns how many rows changed.
+    /// `ask:<N>` claim keeps its own short lease and is left alone, and so does `merge:main` when it is extended: a
+    /// holder the probe sees waiting on a tool is not merging, and the claim must not outlive its lease (#865). Returns how many rows changed.
     pub(super) fn retime_claims(&self, member: &str, until: i64, extend: bool) -> Result<usize> {
         let sql = if extend {
-            "UPDATE claims SET expires=?2 WHERE owner=?1 AND expires<?2 AND path NOT LIKE 'ask:%'"
+            "UPDATE claims SET expires=?2 WHERE owner=?1 AND expires<?2 AND path NOT LIKE 'ask:%'
+             AND path<>'merge:main'"
         } else {
             "UPDATE claims SET expires=?2 WHERE owner=?1 AND expires>?2 AND path NOT LIKE 'ask:%'"
         };
@@ -100,5 +102,20 @@ mod tests {
         assert_eq!(s.retime_member_claims("alice", 900, true).unwrap(), 1);
         assert_eq!(expiry(&s, "r", 5, "ask:7"), Some(10));
         assert_eq!(expiry(&s, "r", 5, "b.rs"), Some(10));
+    }
+
+    #[test]
+    fn the_probe_never_stretches_the_merge_claim_but_can_still_shorten_it() {
+        // a holder seen waiting on a tool is not merging (#865, #533)
+        let s = store("merge");
+        s.claim(&ClaimRequest::new(("r", "ivy"), "merge:main", 600, ""), 0)
+            .unwrap();
+        s.claim(&ClaimRequest::new(("r", "ivy"), "a.rs", 600, ""), 0)
+            .unwrap();
+        assert_eq!(s.retime_member_claims("ivy", 5_000, true).unwrap(), 1);
+        assert_eq!(expiry(&s, "r", 1, "merge:main"), Some(600));
+        assert_eq!(expiry(&s, "r", 1, "a.rs"), Some(5_000));
+        s.retime_member_claims("ivy", 300, false).unwrap();
+        assert_eq!(expiry(&s, "r", 1, "merge:main"), Some(300));
     }
 }

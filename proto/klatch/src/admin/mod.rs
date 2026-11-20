@@ -103,6 +103,14 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Make a member an integrator (the one role that may take the `merge:main` claim that serializes merging; it is
+    /// otherwise an ordinary member, and the klatch binary does no code-host work for it), or with --off an ordinary
+    /// member
+    Integrator {
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Make a member the admin agent: it may do the non-floor admin acts (rooms, members, clearances inside the cap,
     /// room labels, upkeep) and is refused and audited on anything else, floors included; --off removes the role
     AdminAgent {

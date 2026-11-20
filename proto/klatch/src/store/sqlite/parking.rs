@@ -1,6 +1,7 @@
 //! A member stepping away (park) and coming back (unpark): what each does to its leases.
 
 use super::*;
+use crate::domain::{MERGE_CLAIM, MERGE_PARK_MAX_SECS};
 
 impl SqliteStore {
     pub(super) fn do_park(&self, member: &str, parked: &Parked, now: i64) -> Result<()> {
@@ -26,9 +27,23 @@ impl SqliteStore {
             self.exec(
                 &format!(
                     "UPDATE claims SET expires=CASE WHEN expires<?3 THEN ?3 ELSE {target} END
-                     WHERE owner=?1 AND expires>?2 AND (expires<?3 OR (expires>{target} AND expires<=?4))"
+                     WHERE owner=?1 AND expires>?2 AND path<>?5
+                       AND (expires<?3 OR (expires>{target} AND expires<=?4))"
                 ),
-                params![member, now, parked.back_by, held_until],
+                params![member, now, parked.back_by, held_until, MERGE_CLAIM],
+            )?;
+            // The merge claim is stretched only to the park bound, not to the return time, and never shortened here
+            // (#865): a holder that waits for an event and goes silent lapses at the bound.
+            self.exec(
+                "UPDATE claims SET expires=MIN(?3, ?2+?4) WHERE owner=?1 AND path=?5 AND expires>?2
+                 AND expires<MIN(?3, ?2+?4)",
+                params![
+                    member,
+                    now,
+                    parked.back_by,
+                    MERGE_PARK_MAX_SECS,
+                    MERGE_CLAIM
+                ],
             )?;
             self.exec(
                 "UPDATE ask_leases SET expires=?3 WHERE owner=?1 AND expires>?2 AND expires<?3",

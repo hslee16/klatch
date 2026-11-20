@@ -23,6 +23,8 @@ mod judge_loop;
 mod kind;
 mod labels;
 mod mediator;
+mod merge_claim;
+pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
 mod model;
 pub(crate) mod parked;
 mod pr_lifecycle;
