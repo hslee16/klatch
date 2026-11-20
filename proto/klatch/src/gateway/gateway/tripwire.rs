@@ -9,7 +9,7 @@ use crate::store::NewAudit;
 
 const CANARY: &str = "canary:";
 /// The `kind` of a planted canary message.
-pub(super) const CANARY_KIND: &str = "canary";
+pub(crate) const CANARY_KIND: &str = "canary";
 /// This many safety refusals within the window stop a member everywhere.
 pub const BREAKER_REFUSALS: usize = 5;
 pub const BREAKER_WINDOW_SECS: i64 = 300;

@@ -1,0 +1,1 @@
+- A room subscription no longer stalls or reports `caught_up` early on a room's canary, `receipt` and a crossing request no longer treat the canary as a message (a crossing request used to pause the target room), and every message-listing surface is covered by a canary test (#954).

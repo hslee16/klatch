@@ -108,21 +108,28 @@ impl<S: Store> Gateway<S> {
 
     /// Messages after `after_seq`, oldest first, at most `limit`, from every sender including the caller.
     /// No cursor or presence side effects; the guard sees a `Subscribe` operation.
-    pub fn tail(
+    pub fn tail(&self, who: &Principal, room: &str, range: (i64, usize)) -> Result<Vec<Message>> {
+        Ok(self.tail_scan(who, room, range)?.0)
+    }
+
+    /// `tail`, plus how far the scan went: the number of rows the store returned and the highest `seq` among them
+    /// (`after_seq` when none). A reader that pages by `seq` must advance by this, not by the last message shown, or a
+    /// page that held only a canary (#954) looks empty and the reader never moves on.
+    pub(crate) fn tail_scan(
         &self,
         who: &Principal,
         room: &str,
         (after_seq, limit): (i64, usize),
-    ) -> Result<Vec<Message>> {
+    ) -> Result<(Vec<Message>, usize, i64)> {
         check_member(who)?;
         check_room(room)?;
         if after_seq < 0 || limit == 0 {
             return Err(Error::Invalid("bad tail range".into()));
         }
         self.check_guard(who, &Operation::Subscribe { room: room.into() })?;
-        Ok(Self::without_canary(
-            self.store.tail(room, after_seq, limit)?,
-        ))
+        let rows = self.store.tail(room, after_seq, limit)?;
+        let (scanned, last) = (rows.len(), rows.last().map_or(after_seq, |m| m.seq));
+        Ok((Self::without_canary(rows), scanned, last))
     }
 
     /// The store's change token (#616): differs after any other connection commits, says nothing about what. It is no
