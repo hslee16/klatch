@@ -233,6 +233,8 @@ fn sample() -> Board {
         stale_members: 0,
         tasks: vec![],
         prs: vec![],
+        queue: vec![],
+        merge_holder: None,
     }
 }
 

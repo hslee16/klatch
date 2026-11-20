@@ -74,7 +74,7 @@ impl OpenPr {
 }
 
 /// The PR number a word names: `N`, `#N` or `PR N`, then the end of the text or a space; and the text after it.
-fn number_of(text: &str) -> Option<(u64, &str)> {
+pub(super) fn number_of(text: &str) -> Option<(u64, &str)> {
     let t = text.trim_start();
     let t = t.strip_prefix("PR ").unwrap_or(t).trim_start();
     let t = t.strip_prefix('#').unwrap_or(t);

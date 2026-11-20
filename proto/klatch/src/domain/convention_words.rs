@@ -7,9 +7,9 @@
 //! never post it, so nothing they do changes; a new word must never change what an existing word means.
 
 use crate::domain::{
-    ASK_LEASE_DEFAULT_SECS, Message, OutcomeKind, answer_target, claim_ttl, closed_target,
-    current_offers, is_ask, open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked,
-    reopen_target, statuses,
+    ASK_LEASE_DEFAULT_SECS, DropReason, Message, OutcomeKind, QueueState, answer_target, claim_ttl,
+    closed_target, current_offers, is_ask, merge_queue, open_prs, open_tasks, parse_clarification,
+    parse_outcome, parse_parked, reopen_target, statuses,
 };
 
 /// One word: how it is written, an example, and the question "does the code read this example as this word".
@@ -85,6 +85,20 @@ fn pr_merged(body: &str) -> bool {
     open_prs(&[msg(1, "a", "pr: #7 t"), msg(2, "a", body)]).is_empty()
 }
 
+/// Whether `body` from a member enqueues PR 7.
+fn queue_ready(body: &str) -> bool {
+    let q = merge_queue(&[msg(1, "a", body)], &|_| false);
+    q.first().map(|e| (e.number, e.state)) == Some((7, QueueState::Waiting))
+}
+
+/// Whether `body` from the integrator `ivy` puts the enqueued PR 7 in state `want`.
+fn queue_state(body: &str, want: QueueState) -> bool {
+    let q = merge_queue(&[msg(1, "a", "ready: #7"), msg(2, "ivy", body)], &|w| {
+        w == "ivy"
+    });
+    q.first().map(|e| e.state) == Some(want)
+}
+
 macro_rules! word {
     ($form:expr, $example:expr, $reads:expr) => {
         ConventionWord {
@@ -138,6 +152,16 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
     word!("finished:", "finished: T", changes_tasks),
     word!("pr: #N", "pr: #7 add the thing", pr_opened),
     word!("merged: #N", "merged: #7", pr_merged),
+    word!("ready: #N", "ready: #7", queue_ready),
+    word!("integrating: #N", "integrating: #7", |b| {
+        queue_state(b, QueueState::Integrating)
+    }),
+    word!("checking: #N", "checking: #7", |b| {
+        queue_state(b, QueueState::Checking)
+    }),
+    word!("dropped: #N <reason>", "dropped: #7 conflict", |b| {
+        queue_state(b, QueueState::Dropped(DropReason::Conflict))
+    }),
     word!("ask:N", "ask:3", |p| claim_ttl(p, None)
         == ASK_LEASE_DEFAULT_SECS),
 ];
