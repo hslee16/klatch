@@ -156,7 +156,7 @@ fn rate_limit_of(
 
 /// One line per limit in force for `rate-limit --list`: `global` or `member NAME`, a tab, then the limit; one line
 /// saying so when there is none.
-fn rate_limit_lines(limits: &[(Option<String>, (usize, i64))]) -> Vec<String> {
+fn rate_limit_lines(limits: &[crate::gateway::RateLimitEntry]) -> Vec<String> {
     if limits.is_empty() {
         return vec!["no rate limit".to_string()];
     }

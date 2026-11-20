@@ -98,7 +98,7 @@ pub trait Transport {
     /// One member's own limit, over the global one; `None` makes it inherit again (#972).
     fn admin_set_member_rate_limit(&self, member: &str, limit: Option<(usize, i64)>) -> Result<()>;
     /// The global limit (member `None`) and every member limit in force, sorted by name (#1023).
-    fn admin_rate_limits(&self) -> Result<Vec<(Option<String>, (usize, i64))>>;
+    fn admin_rate_limits(&self) -> Result<Vec<crate::gateway::RateLimitEntry>>;
     /// The lease cap and the grace period, in seconds, or with `None` back to the default (#537).
     fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()>;
     fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()>;
@@ -335,7 +335,7 @@ impl<S: Store> Transport for Direct<S> {
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()> {
         self.gateway.admin_set_rate_limit(&self.principal, limit)
     }
-    fn admin_rate_limits(&self) -> Result<Vec<(Option<String>, (usize, i64))>> {
+    fn admin_rate_limits(&self) -> Result<Vec<crate::gateway::RateLimitEntry>> {
         self.gateway.admin_rate_limits(&self.principal)
     }
     fn admin_set_member_rate_limit(&self, member: &str, limit: Option<(usize, i64)>) -> Result<()> {
