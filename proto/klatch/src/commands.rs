@@ -342,12 +342,13 @@ fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
     println!("posted (queued; not proof of read)");
     if klatch::domain::is_ask(&body) {
         // After the post, so a failed who never hides that the ask went in; on standard error like other notes.
-        if let Some(note) = t
-            .who(room)
-            .ok()
-            .and_then(|m| klatch::domain::ask_reach_note(&m, me, now))
-        {
-            eprintln!("{note}");
+        if let Ok(members) = t.who(room) {
+            if let Some(note) = klatch::domain::ask_reach_note(&members, me, now) {
+                eprintln!("{note}");
+            }
+            if let Some(note) = klatch::domain::nudge_skipped_note(&members, me, now) {
+                eprintln!("{note}");
+            }
         }
     }
     Ok(())

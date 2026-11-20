@@ -72,6 +72,20 @@ fn a_member_with_no_parent_is_recorded_as_looked_up_and_shows_none() {
     assert!(who.iter().all(|m| m.parent.is_none()));
 }
 
+/// #677: `who` carries the mode each member last reported, and none for a member whose hooks never ran.
+#[test]
+fn who_carries_the_last_reported_mode_and_none_for_a_member_that_never_reported() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    g.note_member_mode(&alice(), "default").unwrap();
+    g.note_member_mode(&alice(), "bypassPermissions").unwrap();
+    let who = g.who(&bob(), "r").unwrap();
+    let mode = |n: &str| who.iter().find(|m| m.name == n).unwrap().mode.clone();
+    assert_eq!(mode("alice").as_deref(), Some("bypassPermissions"));
+    assert_eq!(mode("bob"), None);
+}
+
 /// #800: the mode check is the only thing between a hook's input and the store, so a string that is not a short word
 /// is refused and never stored.
 #[test]

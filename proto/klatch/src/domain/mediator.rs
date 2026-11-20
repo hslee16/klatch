@@ -148,6 +148,7 @@ mod tests {
             parked: None,
             kind: None,
             place: None,
+            mode: None,
         }
     }
 
