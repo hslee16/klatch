@@ -1,0 +1,1 @@
+- `klatch worker list` and other lookups of the newest audit entry for one action and target use an index instead of scanning the audit table; the store schema is now 35 (#1018).
