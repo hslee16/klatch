@@ -13,14 +13,22 @@ pub struct SpyStore {
     inner: SqliteStore,
     pub calls: Cell<usize>,
     pub fail: Cell<bool>,
+    /// Called with the key just before a policy write reaches the store: a test uses it to make another connection
+    /// act in the window between a check and its write (#897).
+    pub before_policy_set: RefCell<Option<Box<dyn Fn(&str)>>>,
 }
 
 impl SpyStore {
     pub fn new() -> Self {
+        Self::over(SqliteStore::open_in_memory().unwrap())
+    }
+    /// A spy over a store on disk, so a second connection to the same file can race it.
+    pub fn over(inner: SqliteStore) -> Self {
         Self {
-            inner: SqliteStore::open_in_memory().unwrap(),
+            inner,
             calls: Cell::new(0),
             fail: Cell::new(false),
+            before_policy_set: RefCell::new(None),
         }
     }
     /// Put a member in a room directly, without going through the gateway.
@@ -413,7 +421,14 @@ impl PolicyStore for SpyStore {
     }
 
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        if let Some(hook) = self.before_policy_set.borrow().as_ref() {
+            hook(key);
+        }
         self.inner.policy_set(key, value, now)
+    }
+
+    fn atomically(&self, act: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+        self.inner.atomically(act)
     }
 
     fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {

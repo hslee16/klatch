@@ -28,6 +28,13 @@ pub trait PolicyStore {
         unsupported("policy")
     }
 
+    /// Run `act` as one write transaction (#897): every read and write it makes through this store is one atomic step,
+    /// taken under the write lock, so a check made inside it still holds when its write lands. An error from `act`
+    /// rolls everything back. The store's own single-statement writes made inside `act` join the transaction.
+    fn atomically(&self, _act: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+        unsupported("a transaction")
+    }
+
     /// Every policy entry whose key starts with `prefix`, in key order.
     fn policy_list(&self, _prefix: &str) -> Result<Vec<(String, String)>> {
         unsupported("policy")

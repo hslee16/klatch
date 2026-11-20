@@ -93,16 +93,31 @@ impl<S: Store> Gateway<S> {
             },
         )?;
         known_label(&self.chain()?, label)?;
-        self.check_grant_rules(who, room, member, label)
-            .inspect_err(|e| self.note_refusal(who, (room, "grant_clearance"), e))?;
-        let now = self.now();
-        self.store
-            .policy_set(&format!("{GRANT}{room}:{member}"), Some(label), now)?;
-        let detail = format!("{} granted {label} to {member} in {room}", who.member);
-        self.store.record_audit(
-            &NewAudit::new("grant-clearance", &format!("{room}/{member}"), &detail),
-            now,
-        )
+        // the checks and the writes are one store transaction (#897): a human's `grantor --off`, cap or label change
+        // lands before it (and the grant is refused) or after it, never between the check and the write
+        let mut refusal = None;
+        self.store.atomically(&mut || {
+            if let Err(e) = self.check_grant_rules(who, room, member, label) {
+                refusal = Some(e);
+                return Ok(());
+            }
+            let now = self.now();
+            self.store
+                .policy_set(&format!("{GRANT}{room}:{member}"), Some(label), now)?;
+            let detail = format!("{} granted {label} to {member} in {room}", who.member);
+            self.store.record_audit(
+                &NewAudit::new("grant-clearance", &format!("{room}/{member}"), &detail),
+                now,
+            )
+        })?;
+        match refusal {
+            // the refusal row is written after the transaction ends, so a refusal commits nothing else
+            Some(e) => {
+                self.note_refusal(who, (room, "grant_clearance"), &e);
+                Err(e)
+            }
+            None => Ok(()),
+        }
     }
 
     fn check_grant_rules(

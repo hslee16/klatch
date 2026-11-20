@@ -121,7 +121,12 @@ impl SqliteStore {
             .map_err(be)
     }
 
+    /// Run `f` as one write transaction. Inside one already open (a caller's `atomically`), `f` joins it and the
+    /// outer commit or rollback decides, so the single statements here nest without a second `BEGIN`.
     pub(super) fn immediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        if !self.conn.is_autocommit() {
+            return f();
+        }
         self.conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
         match f() {
             Ok(v) => {
