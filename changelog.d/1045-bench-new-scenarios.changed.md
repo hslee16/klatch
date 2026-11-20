@@ -1,0 +1,1 @@
+- `klatch-bench` gains ten functional scenarios: one-call ask and answer, find, reopen, status clearing and available, who mode and wake path, grant, member rate limits and their listing, crossings (command, wire and digest notice), a librarian's quiet wait, and the history window past canary rows.

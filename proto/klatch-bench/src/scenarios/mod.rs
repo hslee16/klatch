@@ -8,11 +8,13 @@ mod admin;
 mod admin_role;
 mod anchors;
 mod ask_bounds;
+mod ask_commands;
 mod ask_cycle;
 mod ask_gone;
 mod asks;
 mod bigstore;
 mod claims;
+mod crossing_view;
 mod delivery_view;
 mod factory;
 mod faults;
@@ -25,6 +27,7 @@ mod labels;
 mod lease_admin;
 mod librarian;
 mod liveness;
+mod member_state;
 mod pr_lifecycle;
 mod rate_limit;
 mod receipts;
@@ -85,6 +88,9 @@ pub(super) fn no_panic(text: &str, what: &str) -> Result<(), String> {
 pub fn all() -> Vec<Scenario> {
     [
         asks::all(),
+        ask_commands::all(),
+        member_state::all(),
+        crossing_view::all(),
         ask_cycle::all(),
         ask_gone::all(),
         ask_bounds::all(),
