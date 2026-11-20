@@ -8,8 +8,9 @@
 //! label and no clearance, and posts nothing but the content-free invite pointer. A refusal is reported and not retried
 //! in the same run, so a refused router does not fill the refusal record.
 
+use crate::domain::budget::HISTORY_MAX_MESSAGES;
 use crate::domain::{AskFacts, Result, RouterView, Rule, plan_routes};
-use crate::gateway::Transport;
+use crate::gateway::{HistoryRange, Transport, invite_text};
 use std::collections::HashSet;
 
 /// What one pass did, one line each.
@@ -41,6 +42,8 @@ pub struct Router {
     pub lobby: String,
     pub rules: Vec<Rule>,
     done: HashSet<(String, String)>,
+    /// Whether `done` has been seeded from the router's own earlier invite pointers (once per run, on the first pass).
+    seeded: bool,
 }
 
 impl Router {
@@ -50,6 +53,7 @@ impl Router {
             lobby: lobby.into(),
             rules,
             done: HashSet::new(),
+            seeded: false,
         }
     }
 
@@ -67,6 +71,32 @@ impl Router {
             members: &members,
             rules: &self.rules,
         });
+        if !self.seeded {
+            // a restart: the invite pointers this member itself posted earlier, read through the same guarded call a
+            // member's `history` makes, say which (room, member) invites were already made (#891, as the mediator in
+            // #906). Another member's post never counts, whatever its text.
+            let posted: HashSet<String> = t
+                .history(
+                    &self.lobby,
+                    HistoryRange {
+                        since: None,
+                        last: Some(HISTORY_MAX_MESSAGES),
+                    },
+                )?
+                .messages
+                .into_iter()
+                .filter(|m| m.sender == self.me)
+                .map(|m| m.body)
+                .collect();
+            for route in &routes {
+                for m in &route.invites {
+                    if posted.contains(&invite_text(&self.me, m, &route.room)) {
+                        self.done.insert((route.room.clone(), m.clone()));
+                    }
+                }
+            }
+            self.seeded = true;
+        }
         let mut events = Vec::new();
         for route in routes {
             let fresh: Vec<&String> = route
@@ -197,6 +227,38 @@ mod tests {
         let mut fresh = router();
         me(&g, "bo").join("topic-src-auth").unwrap();
         assert!(fresh.pass(&me(&g, "router"), 100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_restarted_router_does_not_invite_a_member_it_already_invited() {
+        let g = lobby();
+        router().pass(&me(&g, "router"), 100).unwrap();
+        // bo has not joined, so only the router's own earlier pointer says the invite was made (#891)
+        let mut restarted = router();
+        assert!(restarted.pass(&me(&g, "router"), 100).unwrap().is_empty());
+        let pointers = me(&g, "bo")
+            .read("lobby", false)
+            .unwrap()
+            .iter()
+            .filter(|m| m.body.starts_with("invite: @bo"))
+            .count();
+        assert_eq!(pointers, 1);
+    }
+
+    #[test]
+    fn another_members_copy_of_the_invite_text_does_not_stop_the_router_inviting() {
+        let g = lobby();
+        let forged = crate::gateway::invite_text("router", "bo", "topic-src-auth");
+        let _ = me(&g, "ann").post("lobby", &forged);
+        let events = router().pass(&me(&g, "router"), 100).unwrap();
+        assert_eq!(
+            events,
+            vec![Event::Invited {
+                member: "bo".into(),
+                room: "topic-src-auth".into(),
+                ask: 1
+            }]
+        );
     }
 
     #[test]
