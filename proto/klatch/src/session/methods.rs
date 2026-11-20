@@ -183,6 +183,19 @@ fn declare_kind<S: Store>(
     g.set_kind(who, kind)
 }
 
+/// The open asks of a room as the wire shows them (#901): number, asker, text (other members' words, so data), age
+/// anchor, whether a live claim exists, whether the ask waits on its asker, and the working room's name if any.
+fn asks_json(asks: &[crate::domain::OpenAsk]) -> Value {
+    let one = |a: &crate::domain::OpenAsk| {
+        json!({
+            "seq": a.seq, "sender": a.sender, "text": a.text, "ts": a.ts, "claimed": a.claimed,
+            "waiting_on_asker": a.waiting_on_asker.is_some(),
+            "room": a.room.as_ref().map(|r| r.name.clone()),
+        })
+    };
+    json!({ "asks": asks.iter().map(one).collect::<Vec<_>>() })
+}
+
 fn claims_json(cs: &[Claim]) -> Value {
     let one = |c: &Claim| {
         let mut v = json!({
@@ -272,6 +285,8 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
                 json!({ "messages": h.messages.iter().map(message_json).collect::<Vec<_>>(), "more": h.more })
             },
         ),
+        "join" => call.run(|p: RoomParams| g.join(who, &p.room), empty),
+        "asks" => call.run(|p: RoomParams| g.open_asks(who, &p.room), |a| asks_json(&a)),
         "invite" => call.run(
             |p: InviteParams| g.invite(who, &p.member, &p.room, &p.via),
             empty,

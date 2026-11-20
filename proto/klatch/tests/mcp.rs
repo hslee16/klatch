@@ -122,7 +122,7 @@ fn initialize_carries_the_room_convention_as_instructions() {
 }
 
 #[test]
-fn tools_list_names_the_six_tools_with_object_schemas() {
+fn tools_list_names_the_nine_tools_with_object_schemas() {
     let h = Home::new();
     let mut m = started(&h, "alice");
     let r = m.rpc("tools/list", json!({}));
@@ -132,7 +132,10 @@ fn tools_list_names_the_six_tools_with_object_schemas() {
     assert_eq!(
         names,
         [
+            "klatch_asks",
             "klatch_claim",
+            "klatch_invite",
+            "klatch_join",
             "klatch_post",
             "klatch_read",
             "klatch_release",
@@ -422,4 +425,53 @@ fn closing_standard_input_ends_the_server_cleanly() {
     drop(m.stdin.take());
     let status = m.child.wait().unwrap();
     assert!(status.success());
+}
+
+#[test]
+fn join_asks_and_invite_let_an_mcp_only_member_route() {
+    let h = Home::new();
+    let (mut a, mut b) = (started(&h, "alice"), started(&h, "bob"));
+    a.call("klatch_post", json!({"room": "lobby", "body": "hi"}));
+    b.call("klatch_post", json!({"room": "lobby", "body": "hi"}));
+    a.call(
+        "klatch_post",
+        json!({"room": "lobby", "body": "seeking: a parser review"}),
+    );
+    let r = b.call("klatch_asks", json!({"room": "lobby"}));
+    assert!(!is_error(&r), "{r}");
+    let asks = &r["result"]["structuredContent"]["asks"];
+    assert_eq!(asks[0]["sender"], "alice", "{r}");
+    assert!(
+        r["result"]["structuredContent"]["notice"]
+            .as_str()
+            .unwrap_or("")
+            .contains("data"),
+        "{r}"
+    );
+    let r = b.call("klatch_join", json!({"room": "ask-2"}));
+    assert!(!is_error(&r), "{r}");
+    let r = b.call(
+        "klatch_invite",
+        json!({"member": "alice", "room": "ask-2", "via": "lobby"}),
+    );
+    assert!(!is_error(&r), "{r}");
+    let r = a.call("klatch_read", json!({"room": "lobby"}));
+    assert!(
+        r["result"]["structuredContent"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"]
+                .as_str()
+                .unwrap_or("")
+                .contains("klatch join ask-2")),
+        "{r}"
+    );
+    let r = a.call(
+        "klatch_invite",
+        json!({"member": "alice", "room": "ask-2", "via": "lobby"}),
+    );
+    assert!(is_error(&r) && text(&r).contains("invalid"), "{r}");
+    let r = a.call("klatch_join", json!({}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
 }
