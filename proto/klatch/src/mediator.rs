@@ -10,8 +10,9 @@
 //! any message and no wording of an ask reaches it. A refusal is reported and not retried in the same run, so a
 //! refused mediator does not fill the refusal record.
 
+use crate::domain::budget::HISTORY_MAX_MESSAGES;
 use crate::domain::{MediatorView, Result, plan_proposals};
-use crate::gateway::Transport;
+use crate::gateway::{HistoryRange, Transport};
 use std::collections::HashSet;
 
 /// What one pass did, one line each.
@@ -47,6 +48,8 @@ pub struct Mediator {
     pub me: String,
     pub lobby: String,
     done: HashSet<String>,
+    /// Whether `done` has been seeded from the mediator's own earlier posts (once per run, on the first pass).
+    seeded: bool,
 }
 
 impl Mediator {
@@ -55,6 +58,7 @@ impl Mediator {
             me: me.into(),
             lobby: lobby.into(),
             done: HashSet::new(),
+            seeded: false,
         }
     }
 
@@ -69,6 +73,34 @@ impl Mediator {
             events: &events,
             members: &members,
         });
+        if !self.seeded {
+            // a restart: what this member itself posted earlier, read through the same guarded call a member's
+            // `history` makes, says which standing cases were already proposed on (#906). Another member's post
+            // never counts, whatever its text.
+            let posted: HashSet<String> = t
+                .history(
+                    &self.lobby,
+                    HistoryRange {
+                        since: None,
+                        last: Some(HISTORY_MAX_MESSAGES),
+                    },
+                )?
+                .messages
+                .into_iter()
+                .filter(|m| m.sender == self.me)
+                .map(|m| m.body)
+                .collect();
+            self.done.extend(
+                proposals
+                    .iter()
+                    .filter(|p| posted.contains(&p.text))
+                    .map(|p| p.key.clone()),
+            );
+            self.seeded = true;
+        }
+        // a case that no longer stands is forgotten, so one that ends and returns is proposed on again
+        let standing: HashSet<String> = events.iter().map(|e| e.key()).collect();
+        self.done.retain(|k| standing.contains(k));
         let mut out = Vec::new();
         for p in proposals {
             if !self.done.insert(p.key.clone()) {
@@ -213,6 +245,77 @@ mod tests {
         let mut m = mediator();
         m.pass(&me(&g, "mediator"), 100).unwrap();
         assert!(m.pass(&me(&g, "mediator"), 100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_restarted_mediator_does_not_repeat_a_proposal_for_a_standing_case() {
+        let (g, _) = lobby(&["mediator", "ann", "bo"]);
+        ask_cycle(&g, "seeking: x");
+        mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        // a new process: nothing in memory
+        let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(ev.is_empty(), "{ev:?}");
+        assert_eq!(proposals_seen(&g, "ann").len(), 1);
+    }
+
+    #[test]
+    fn a_case_that_ended_and_returned_is_proposed_on_again() {
+        let (g, t) = lobby(&["mediator", "ann", "bo"]);
+        me(&g, "ann")
+            .claim("lobby", &ClaimSpec::new("p", 900, ""))
+            .unwrap();
+        me(&g, "bo")
+            .claim("lobby", &ClaimSpec::new("q", 900, ""))
+            .unwrap();
+        let deadlock = || {
+            let _ = me(&g, "ann").claim("lobby", &ClaimSpec::new("q", 900, ""));
+            let _ = me(&g, "bo").claim("lobby", &ClaimSpec::new("p", 900, ""));
+        };
+        deadlock();
+        let mut m = mediator();
+        m.pass(&me(&g, "mediator"), 100).unwrap();
+        assert_eq!(proposals_seen(&g, "ann").len(), 1);
+        // the case ends: both release
+        me(&g, "ann").release("lobby", "p").unwrap();
+        me(&g, "bo").release("lobby", "q").unwrap();
+        assert!(m.pass(&me(&g, "mediator"), 100).unwrap().is_empty());
+        // and returns, after the duplicate window so the repeat guard does not refuse the repost
+        t.set(t.get() + 61);
+        me(&g, "ann")
+            .claim("lobby", &ClaimSpec::new("p", 900, ""))
+            .unwrap();
+        me(&g, "bo")
+            .claim("lobby", &ClaimSpec::new("q", 900, ""))
+            .unwrap();
+        deadlock();
+        let ev = m.pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
+        assert_eq!(proposals_seen(&g, "ann").len(), 2);
+    }
+
+    #[test]
+    fn another_members_post_that_copies_a_proposal_does_not_suppress_it() {
+        let (g, _) = lobby(&["mediator", "ann", "bo"]);
+        ask_cycle(&g, "seeking: x");
+        // the text the mediator would post, forged by a member
+        let forged = {
+            let m = me(&g, "mediator");
+            let ev = m.stuck("lobby").unwrap();
+            let members = m.who("lobby").unwrap();
+            let ps = plan_proposals(&MediatorView {
+                me: "mediator",
+                now: 100,
+                events: &ev,
+                members: &members,
+            });
+            ps[0].text.clone()
+        };
+        me(&g, "ann").post("lobby", &forged).unwrap();
+        let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(
+            ev.iter().any(|e| matches!(e, Event::Proposed { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]
