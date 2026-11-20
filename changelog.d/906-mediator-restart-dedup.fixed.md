@@ -1,0 +1,1 @@
+- `klatch mediator` no longer posts the same proposal again after a restart for a case that still stands: it reads its own earlier proposals from the room's history, and proposes again only when the case ended and returned (#906).
