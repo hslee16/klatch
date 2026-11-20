@@ -22,6 +22,11 @@ pub(crate) struct RoomParams {
     pub room: String,
 }
 #[derive(Deserialize)]
+struct CrossingsParams {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+#[derive(Deserialize)]
 struct PostParams {
     room: String,
     body: String,
@@ -196,6 +201,17 @@ fn asks_json(asks: &[crate::domain::OpenAsk]) -> Value {
     json!({ "asks": asks.iter().map(one).collect::<Vec<_>>() })
 }
 
+/// The caller's own crossings (#961): ids, the source pointer, the target room, a state and one fixed sentence. Never
+/// the text, a redaction, a reviewer's reason or the name of a rule or term.
+fn crossings_json(list: &[crate::domain::CrossingStatus]) -> Value {
+    let one = |c: &crate::domain::CrossingStatus| {
+        json!({
+            "id": c.id, "room": c.room, "seq": c.seq, "to_room": c.to_room, "state": c.state, "why": c.why,
+        })
+    };
+    json!({ "crossings": list.iter().map(one).collect::<Vec<_>>() })
+}
+
 fn claims_json(cs: &[Claim]) -> Value {
     let one = |c: &Claim| {
         let mut v = json!({
@@ -287,6 +303,10 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         ),
         "join" => call.run(|p: RoomParams| g.join(who, &p.room), empty),
         "asks" => call.run(|p: RoomParams| g.open_asks(who, &p.room), |a| asks_json(&a)),
+        "my_crossings" => call.run(
+            |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
+            |l| crossings_json(&l),
+        ),
         "invite" => call.run(
             |p: InviteParams| g.invite(who, &p.member, &p.room, &p.via),
             empty,

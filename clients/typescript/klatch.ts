@@ -230,6 +230,12 @@ export class Client {
     await this.request("grant_room_clearance", { room, member, label });
   }
 
+  /** Your own crossing requests, newest first, each `{id, room, seq, to_room, state, why}`. `state` is `waiting`,
+   * `approved`, `denied`, `released` or `blocked`; `why` is one fixed sentence, never the text or a reviewer's words. */
+  async myCrossings(limit = 20) {
+    return (await this.request("my_crossings", { limit })).crossings;
+  }
+
   /** Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict only
    * with claims in the same scope, and a shared claim conflicts with every scope. */
   async setScope(scope: string) {
