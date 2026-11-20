@@ -212,6 +212,13 @@ export class Client {
     await this.request("invite", { member, room, via });
   }
 
+  /** As the room's grantor, give `member` a clearance of `label` in `room` only. Refused unless you are the room's
+   * grantor, the label is not the top level, and it is within the agent cap, the room's label and your own clearance;
+   * the refusal names the rule. */
+  async grantRoomClearance(room: string, member: string, label: string) {
+    await this.request("grant_room_clearance", { room, member, label });
+  }
+
   /** Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict only
    * with claims in the same scope, and a shared claim conflicts with every scope. */
   async setScope(scope: string) {

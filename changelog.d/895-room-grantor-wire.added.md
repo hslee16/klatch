@@ -1,0 +1,1 @@
+- The room grantor can grant over the wire: the method `grant_room_clearance` (`room`, `member`, `label`) and a wrapper in the Python, TypeScript (`grantRoomClearance`) and Rust clients, with the same checks as `klatch grant` (#895).

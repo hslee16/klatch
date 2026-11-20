@@ -551,6 +551,17 @@ impl Client {
         .map(|_| ())
     }
 
+    /// As the room's grantor, give `member` a clearance of `label` in `room` only. Refused unless you are the room's
+    /// grantor, the label is not the top level, and it is within the agent cap, the room's label and your own
+    /// clearance; the refusal names the rule.
+    pub fn grant_room_clearance(&mut self, room: &str, member: &str, label: &str) -> Result<()> {
+        self.request(
+            "grant_room_clearance",
+            json!({"room": room, "member": member, "label": label}),
+        )
+        .map(|_| ())
+    }
+
     /// Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict
     /// only with claims in the same scope, and a shared claim conflicts with every scope.
     pub fn set_scope(&mut self, scope: &str) -> Result<()> {
