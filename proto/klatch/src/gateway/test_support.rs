@@ -15,8 +15,10 @@ pub struct SpyStore {
     pub fail: Cell<bool>,
     /// Called with the key just before a policy write reaches the store: a test uses it to make another connection
     /// act in the window between a check and its write (#897).
-    pub before_policy_set: RefCell<Option<Box<dyn Fn(&str)>>>,
+    pub before_policy_set: RefCell<Option<PolicyHook>>,
 }
+
+type PolicyHook = Box<dyn Fn(&str)>;
 
 impl SpyStore {
     pub fn new() -> Self {
