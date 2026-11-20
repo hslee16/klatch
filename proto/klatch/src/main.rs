@@ -758,11 +758,21 @@ fn run_doctor() -> Result<()> {
 /// `klatch sessions`: one tab separated line per live session (pid, name, directory, session id); with `--all` also the
 /// records that are not live and why.
 fn run_sessions(all: bool) -> Result<()> {
-    use klatch::harness::Liveness;
     let Some((registry, domain)) = identity::registry_and_domain() else {
         bail!("HOME is not set, so the harness registry cannot be found");
     };
     let found = klatch::harness::list(&registry, &PsTable, domain);
+    print_live_sessions(&found);
+    if all {
+        print_ignored_sessions(&found);
+    } else {
+        note_ignored_sessions(&found);
+    }
+    Ok(())
+}
+
+/// The live sessions, one tab-separated line each, or a note on stderr when there are none.
+fn print_live_sessions(found: &klatch::harness::Sessions) {
     for r in &found.live {
         println!(
             "{}\t{}\t{}\t{}",
@@ -775,32 +785,44 @@ fn run_sessions(all: bool) -> Result<()> {
     if found.live.is_empty() {
         eprintln!("no live sessions");
     }
-    if all {
-        for (r, why) in &found.ignored {
-            let why = match why {
-                Liveness::Dead => "not running",
-                Liveness::Reused => "pid reused by another process",
-                Liveness::NotHarness => "running, but not the harness",
-                Liveness::OtherDomain => "recorded on another machine",
-                Liveness::Live => "live",
-                Liveness::Unreadable => "could not be checked (the process table cannot be read)",
-            };
-            println!(
-                "ignored\t{}\t{why}\t{}\t{}",
-                r.pid,
-                r.name.as_deref().unwrap_or("-"),
-                r.cwd
-            );
-        }
-        println!("unreadable\t{}", found.malformed);
-    } else if !found.ignored.is_empty() || found.malformed > 0 {
+}
+
+/// Why a record was ignored, in words.
+fn liveness_reason(why: &klatch::harness::Liveness) -> &'static str {
+    use klatch::harness::Liveness;
+    match why {
+        Liveness::Dead => "not running",
+        Liveness::Reused => "pid reused by another process",
+        Liveness::NotHarness => "running, but not the harness",
+        Liveness::OtherDomain => "recorded on another machine",
+        Liveness::Live => "live",
+        Liveness::Unreadable => "could not be checked (the process table cannot be read)",
+    }
+}
+
+/// `sessions --all`: every ignored record with its reason, then the unreadable count.
+fn print_ignored_sessions(found: &klatch::harness::Sessions) {
+    for (r, why) in &found.ignored {
+        println!(
+            "ignored\t{}\t{}\t{}\t{}",
+            r.pid,
+            liveness_reason(why),
+            r.name.as_deref().unwrap_or("-"),
+            r.cwd
+        );
+    }
+    println!("unreadable\t{}", found.malformed);
+}
+
+/// `sessions` without `--all`: one stderr line counting what was left out, if anything was.
+fn note_ignored_sessions(found: &klatch::harness::Sessions) {
+    if !found.ignored.is_empty() || found.malformed > 0 {
         eprintln!(
             "{} other record(s) ignored (not running, a reused pid, not the harness or another machine) and {} unreadable; --all lists them",
             found.ignored.len(),
             found.malformed
         );
     }
-    Ok(())
 }
 
 /// `klatch consent`: show or switch the consents init granted.
