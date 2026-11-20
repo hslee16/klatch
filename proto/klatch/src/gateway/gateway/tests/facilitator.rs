@@ -424,6 +424,22 @@ fn a_second_dm_for_the_same_ask_is_refused_but_another_ask_is_its_own() {
 }
 
 #[test]
+fn the_one_need_info_rule_holds_in_a_dm_room_past_five_thousand_messages() {
+    let (g, _) = with_facilitator();
+    for i in 0..5100 {
+        g.store
+            .post(Seat::new("dm.alice.fac", "alice"), &format!("chatter {i}"), 50)
+            .unwrap();
+    }
+    g.dm(&fac(), "alice", "need-info #1: which-repo", None)
+        .unwrap();
+    assert_eq!(
+        rule_of_err(g.dm(&fac(), "alice", "need-info #1: which-file", None)),
+        "facilitator"
+    );
+}
+
+#[test]
 fn a_dm_about_a_closed_or_answered_ask_is_refused() {
     let (g, _) = with_facilitator();
     g.post(&alice(), "lobby", "closed #1").unwrap();
