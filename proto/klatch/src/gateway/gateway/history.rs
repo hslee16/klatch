@@ -77,6 +77,7 @@ impl<S: Store> Gateway<S> {
         };
         // what follows the scanned window; hidden rows at its edge are no "more"
         let more = (head - top).max(0) as usize;
+        let messages = self.mark_advisory(room, messages)?;
         Ok(History { messages, more })
     }
 }

@@ -33,7 +33,7 @@ export type Message = {
   ts: number;
   kind?: string;
   payload?: string;
-  /** Present and true on a `read` message whose sender the room flagged as advisory (#990). Display only. */
+  /** Present and true on a `read`, `history` or stream message whose sender the room flagged as advisory (#990). Display only. */
   advisory?: boolean;
   [key: string]: unknown;
 };
