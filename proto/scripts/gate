@@ -135,9 +135,10 @@ repo_checks() {
     && proto/scripts/test-sweep.sh > /dev/null \
     && sh install/test-install.sh > /dev/null \
     && experiments/gates/test-check-binary.sh > /dev/null \
+    && experiments/variance/test-repeat.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
     && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh > /dev/null \
-    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/quint-check proto/scripts/shuttle; }
+    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/quint-check proto/scripts/shuttle; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 
