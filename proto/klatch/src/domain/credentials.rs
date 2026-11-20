@@ -14,7 +14,7 @@ pub fn credential_kind(text: &str) -> Option<&'static str> {
         .map(|s| s.kind)
         .or_else(|| bearer_token(text).then_some("a bearer token"))
         .or_else(|| json_web_token(text).then_some("a JSON web token"))
-        .or_else(|| url_or_command_password(text).then_some("a password"))
+        .or_else(|| url_or_command_password(&blank_templates(text)).then_some("a password"))
         .or_else(|| labelled_secret(text).then_some("a labelled secret"))
 }
 
@@ -214,9 +214,11 @@ fn url_or_command_password(text: &str) -> bool {
 }
 
 /// A value that reads as a secret after a label: long enough, not a placeholder, and with a digit or a symbol
-/// (so a hyphenated name or a path such as `billing-db` or `secret/prod/db` is not one).
+/// (so a hyphenated name or a path such as `billing-db` or `secret/prod/db` is not one). A URL is not a value
+/// either: `url_or_command_password` judges the password inside it.
 fn secret_looking(value: &str) -> bool {
     value.len() >= 8
+        && !value.contains("://")
         && !placeholder(value)
         && value
             .chars()
@@ -257,16 +259,37 @@ fn word_after_label(rest: &str) -> &str {
     trim_value(first)
 }
 
+/// `{{ ... }}` template spans (a placeholder such as `{{fake:password|pct}}`) replaced by `{{}}`, so a label word
+/// inside one is not read as a label.
+fn blank_templates(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("{{") {
+        match rest[open..].find("}}") {
+            Some(len) => {
+                out.push_str(&rest[..open]);
+                out.push_str("{{}}");
+                rest = &rest[open + len + 2..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// A secret after a label such as `password`, `pw:`, `passphrase is`, `sessionid=` or `password = "..."`,
 /// or a long base64 value after `token`.
 fn labelled_secret(text: &str) -> bool {
+    let text = &blank_templates(text);
     let lower = text.to_ascii_lowercase();
     let plain = LABELS.iter().any(|label| {
         lower
             .match_indices(label)
             .filter(|(i, _)| whole_label(&lower, *i, label.len()))
             .any(|(i, _)| {
-                let rest = &text[i + label.len()..];
+                // Only the rest of the label's own line: `kind: Secret` in YAML is not the label of a later line.
+                let rest = text[i + label.len()..].lines().next().unwrap_or("");
                 if secret_looking(word_after_label(rest)) {
                     return true;
                 }
@@ -489,6 +512,9 @@ mod tests {
             "pw: ...",
             "password reset link expired",
             "zq9-secret-marker-7731",
+            "dsn = \"https://{{fake:hex32}}@o4508.ingest.example.io/77\"",
+            "kind: Secret\nmetadata:\n  name: x\ndata:\n  username: YmlsbGluZw==\n",
+            "the password is URL-encoded: postgresql://u:{{fake:password|pct}}@203.0.113.40:5432/db",
             "see client-secret-rotation-2026 for the plan",
             "the pass-through-2026 route",
             "password_hash: column added",
