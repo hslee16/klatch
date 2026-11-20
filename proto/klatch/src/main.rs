@@ -4,6 +4,7 @@
 //! All state goes through the `Store` trait; this file only parses arguments and prints.
 mod admin;
 mod anchor;
+mod args;
 mod codex;
 mod commands;
 mod consent;
@@ -39,6 +40,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use args::*;
 use commands::*;
 use identity::*;
 use scope::*;
@@ -79,265 +81,47 @@ struct WhoFlags {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Join a room (idempotent). Unread starts at the beginning of history.
-    Join { room: String },
-    /// Send a direct message to one member, in a room only the two of you can use
-    Dm {
-        member: String,
-        body: Vec<String>,
-        /// A label lower than the room's ceiling (the lower of the two clearances)
-        #[arg(long)]
-        label: Option<String>,
-    },
-    /// Post a message to a room
-    Post {
-        room: String,
-        body: Vec<String>,
-        /// A label lower than the room's own, for a message that is less sensitive than the room
-        #[arg(long)]
-        label: Option<String>,
-        /// Make this a handoff: a short kind (letters, digits, dot, dash, underscore) that klatch stores and
-        /// delivers and never interprets
-        #[arg(long)]
-        kind: Option<String>,
-        /// An opaque payload for the next member (at most 16 KiB; needs --kind); held to the same rules as the body
-        #[arg(long, requires = "kind")]
-        payload: Option<String>,
-    },
-    /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer
-    Ask { room: String, text: Vec<String> },
-    /// Answer an open ask in one call: claims `ask:<N>`, posts `answer to #N: <text>`, releases the claim (#241). If
-    /// another member holds the claim it says so and posts nothing
-    Answer {
-        room: String,
-        number: i64,
-        text: Vec<String>,
-    },
-    /// Read unread messages in a room and advance the cursor
-    Read {
-        room: String,
-        /// Do not advance the cursor
-        #[arg(long)]
-        peek: bool,
-    },
-    /// Look back in a room: the newest 20 messages, or `--last N`, or the next 20 after `--since SEQ`. Prints
-    /// everyone's messages as `read` does and moves no read cursor.
-    History {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-        /// The newest N messages (at most 200); with `--since`, the newest N after it
-        #[arg(long)]
-        last: Option<usize>,
-        /// Only messages after this seq; alone, the next 20, so a long room can be paged
-        #[arg(long)]
-        since: Option<i64>,
-    },
-    /// Find earlier asks in a room's history that someone already answered and that look like the text (#239), with
-    /// the answer. A match is the text as a substring of the ask, or two shared words of 4 or more letters (one
-    /// when the text has one); nothing is guessed beyond that. Read only: moves no cursor and posts nothing
-    Find {
-        /// The room to search
-        room: String,
-        /// The text to look for, such as the question you are about to ask
-        #[arg(required = true, num_args = 1..)]
-        text: Vec<String>,
-    },
-    /// Wait until another member posts in a room (or the timeout), then print and mark read what arrived
-    Wait {
-        /// Rooms to wait on; wakes on the first with a matching message. A room may carry its own filter,
-        /// `ROOM:only=PREFIX` or `ROOM:from=MEMBER` (name the room again for another), which replaces --only and
-        /// --from for that room, so a room of two can wake on anything while the lobby is filtered
-        #[arg(required = true)]
-        rooms: Vec<String>,
-        /// Seconds to wait (default 60, at most 300); 0 checks once
-        #[arg(long, default_value_t = 60)]
-        timeout: u64,
-        /// Only wake for messages whose body starts with this text; others stay unread. Repeat it to wake on any
-        /// of several prefixes
-        #[arg(long)]
-        only: Vec<String>,
-        /// Only wake for messages from this member; others stay unread
-        #[arg(long)]
-        from: Option<String>,
-        /// Return the messages without marking them read
-        #[arg(long)]
-        peek: bool,
-    },
-    /// Invite a member to a room: post a content-free pointer (`klatch join <room>`) in a room it is already in.
-    /// It joins nobody; the invited session decides. It reaches a session through the hooks or the watcher it has.
-    Invite {
-        member: String,
-        room: String,
-        /// The room both of you are in, where the pointer is posted
-        #[arg(long, default_value = "lobby")]
-        via: String,
-    },
-    /// Grant a member a clearance in one room (#893), as that room's grantor (its creator, unless the person at the
-    /// terminal named another). At most your own clearance, the room's label and the agent cap, never the top level,
-    /// never to yourself; it raises nobody's clearance anywhere else. Audited.
-    Grant {
-        room: String,
-        member: String,
-        label: String,
-    },
-    /// Watch for unread messages and, when one arrives, exit 2 with a one-line pointer (no content): the command
-    /// of an `asyncRewake` hook. Quiet at its timeout. Moves no read cursor; refreshes presence.
-    Wake {
-        /// Seconds to watch (default 3500, at most 3600)
-        #[arg(long, default_value_t = 3500)]
-        timeout: u64,
-    },
-    /// List members of a room with last activity
-    Who {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-        /// List every member, including those not seen for over 10 minutes
-        #[arg(long)]
-        all: bool,
-    },
-    /// Show what you can learn about each recipient of your message SEQ in ROOM: parked, seen active after the post,
-    /// or not seen since. Liveness only (what `who` already shows); not proof anyone was shown or read it
-    Receipt { room: String, seq: i64 },
-    /// Claim a path prefix (advisory lease with TTL)
-    Claim {
-        room: String,
-        /// ONE target: a path (quote it if it has spaces) or a name like `ticket:602`
-        path: String,
-        /// Extra words are refused with the form that works, never dropped (#610)
-        #[arg(hide = true)]
-        more: Vec<String>,
-        /// Seconds the claim lasts (default 600; an `ask:<N>` claim defaults to 90 and is capped at 300, so a helper
-        /// that fails frees the ask in about a minute: renew by claiming again)
-        #[arg(long)]
-        ttl: Option<i64>,
-        #[arg(long, default_value = "")]
-        reason: String,
-        /// Conflict with every scope, not only your own (an `ask:<N>` claim always does)
-        #[arg(long)]
-        shared: bool,
-        /// The work item this claim is for (a factory's work order, mission or ticket id); the claim is released when
-        /// a launcher reports the item done
-        #[arg(long)]
-        anchor: Option<String>,
-    },
+    #[command(flatten)]
+    Messaging(MessagingCmd),
+    #[command(flatten)]
+    Wait(WaitCmd),
+    #[command(flatten)]
+    Work(WorkCmd),
+    #[command(flatten)]
+    Agents(AgentsCmd),
     /// Issue, revoke and list the credentials of workers (for a launcher; see `klatch worker --help`)
+    #[command(display_order = 15)]
     Worker {
         #[command(subcommand)]
         cmd: worker::WorkerCmd,
     },
     /// Report a factory's work item done, or poll for finished ones, and release the claims anchored to them (for a
     /// launcher; see `klatch anchor --help`)
+    #[command(display_order = 16)]
     Anchor {
         #[command(subcommand)]
         cmd: anchor::AnchorCmd,
     },
     /// Open and end a factory run, whose rooms are `run.<id>.<name>` (for a launcher; see `klatch run --help`)
+    #[command(display_order = 17)]
     Run {
         #[command(subcommand)]
         cmd: run::RunCmd,
     },
     /// Controls for the person running klatch: pause, close, remove a member, audit (needs a real terminal)
+    #[command(display_order = 18)]
     Admin {
         #[command(subcommand)]
         cmd: admin::AdminCmd,
     },
     /// Run the review queue through the judge (for a launcher; see `klatch judge --help`)
+    #[command(display_order = 19)]
     Judge {
         #[command(subcommand)]
         cmd: judge::JudgeCmd,
     },
-    /// Call the acts your role allows, as yourself (admin agent; not `klatch admin`, which stays the person's)
-    Act {
-        #[command(subcommand)]
-        cmd: roles::ActCmd,
-    },
-    /// Read the review queue and record verdicts (reviewer only)
-    Review {
-        #[command(subcommand)]
-        cmd: roles::ReviewCmd,
-    },
-    /// Show the scope you work in, or set it
-    Scope { scope: Option<String> },
-    /// Release a claim you hold
-    Release {
-        room: String,
-        path: String,
-        /// What you changed, for the next member to claim it (re-read before editing)
-        #[arg(long)]
-        note: Option<String>,
-    },
-    /// Mute a room: your hook then shows only messages that mention you as @your-name (`read` still shows all)
-    Mute { room: String },
-    /// Unmute a room
-    Unmute { room: String },
-    /// Show or set what your hook and wake show without being asked: `all` (the default) or `scope` (only your own
-    /// scope, messages addressed to you as @your-name, and broadcasts as @all). `read` and `history` still show all
-    View {
-        /// `all` or `scope`; omit to show the current view
-        view: Option<String>,
-    },
-    /// Ask for message SEQ of ROOM to be copied into a lower-labelled room. It waits for a verdict from the judge or
-    /// the reviewer; nothing crosses until it is allowed (or redacted), and floors are checked again then
-    Cross {
-        room: String,
-        seq: i64,
-        #[arg(long)]
-        to: String,
-    },
-    /// List the crossings you asked for and what became of each: waiting, approved, released, denied or blocked, with a
-    /// fixed reason (the category of rule, never the text, a reviewer's words or a private term)
-    Crossings {
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-    },
-    /// Set your status in a room (for example "done"), shown by who and the board
-    Status { room: String, status: Vec<String> },
-    /// Run the reference router as your own member (#189): read the lobby's open asks, claims and presence and invite
-    /// the members that hold a claim on an asker's topic into a topic room. Rules only, no model; it needs the
-    /// create-room and invite capability like any member, and it decides nothing from message text.
-    Router {
-        /// The room to watch and to post invite pointers in
-        #[arg(long, default_value = "lobby")]
-        room: String,
-        /// An operator rule `claim-path-prefix=member`: invite that member for a topic under the prefix (repeatable)
-        #[arg(long = "rule")]
-        rules: Vec<String>,
-        /// One pass, then exit
-        #[arg(long)]
-        once: bool,
-        /// Seconds between passes
-        #[arg(long, default_value_t = 10)]
-        interval: u64,
-    },
-    /// Run the reference mediator as your own member (#271): read the room's stuck-case events (deadlock, stale ask,
-    /// nobody capable, ask cycle) and post proposals for them, and for a cycle through asks create a room and invite
-    /// the members into it. Rules only, no model. It only proposes: it cancels, releases, grants and clears nothing,
-    /// holds no admin act, needs the create-room and invite capability like any member, and decides nothing from
-    /// message text
-    Mediator {
-        /// The room to watch and to post proposals in
-        #[arg(long, default_value = "lobby")]
-        room: String,
-        /// One pass, then exit
-        #[arg(long)]
-        once: bool,
-        /// Seconds between passes
-        #[arg(long, default_value_t = 10)]
-        interval: u64,
-    },
-    /// Show when each hook event last ran for you (or for another member with --of), without any content
-    Hooks {
-        /// A member name to look at instead of yourself
-        #[arg(long)]
-        of: Option<String>,
-    },
-    /// List your own recent refusals: when, the rule, the room and the operation, never the text and never another
-    /// member's
-    Refusals {
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-    },
     /// Install klatch's hooks into Claude Code settings, after showing a diff and getting a yes per scope
+    #[command(display_order = 34)]
     Init {
         /// Where to write: project (.claude/settings.local.json here), user (~/.claude/settings.json) or both
         #[arg(long, value_enum)]
@@ -376,6 +160,7 @@ enum Cmd {
     },
     /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake), or switch one on or off
     /// later; edits only klatch's own hook entries, after a diff and a yes
+    #[command(display_order = 35)]
     Consent {
         /// The consent to change: board, join, session-end, enforce or wake (none: show them all)
         name: Option<String>,
@@ -389,6 +174,7 @@ enum Cmd {
         yes: bool,
     },
     /// Print the klatch convention for any agent, to paste into a subagent's brief (needs no store and no name)
+    #[command(display_order = 36)]
     Convention {
         /// The member name the child will use (letters, digits, - _ .); without one the text asks the child to pick
         #[arg(long)]
@@ -398,59 +184,17 @@ enum Cmd {
         room: Option<String>,
     },
     /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates nothing)
+    #[command(display_order = 37)]
     Doctor,
     /// List the live coding-agent sessions on this machine from the harness registry (read only; never a key file)
+    #[command(display_order = 38)]
     Sessions {
         /// Also list the records that are not live, with the reason, and how many files could not be read
         #[arg(long)]
         all: bool,
     },
-    /// Show a room's board: open asks, current offers and members with their status
-    Board {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-    },
-    /// Show one member's card in a room: its scope and status, the asks it posted, the asks it serves, its claims,
-    /// tasks and pull requests (the member defaults to you). Derived from the board and the claims, never stored
-    Card {
-        room: String,
-        /// The member to show; omit for yourself
-        member: Option<String>,
-    },
-    /// List the asks in a room nobody has answered or closed
-    Asks {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-    },
-    /// List the stuck cases in a room as structured events (#271): stale asks, asks nobody capable took, cycles through
-    /// asks and cycles of claim waits. Read only and guarded like `read`; each line holds ids, names and numbers, never
-    /// message text
-    Stuck {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-    },
-    /// List the open durable tasks in a room with their full latest checkpoint (working, checkpoint, handoff)
-    Tasks { room: String },
-    /// List active claims in a room
-    Claims {
-        /// The room; without one, every room you have joined
-        room: Option<String>,
-    },
-    /// Hook output for UserPromptSubmit/SessionStart: unread messages and claims across joined rooms
-    Hook {
-        /// Print JSON additional context for this Claude Code hook event (needed for PostToolUse, whose plain
-        /// stdout does not reach the model). Without it, plain text.
-        #[arg(long)]
-        event: Option<String>,
-        /// At session start also print this room's board (open asks, offers, members) without joining it.
-        /// Consent lives here: only a hook command that carries this flag reads a room before joining it.
-        #[arg(long)]
-        board: Option<String>,
-        /// At session start, do not join the default lobby (the default is to join it, as the session's first act)
-        #[arg(long)]
-        no_join: bool,
-    },
     /// Write the event stream of a room to standard output as newline-delimited JSON (PROTOCOL.md)
+    #[command(display_order = 46)]
     Stream {
         room: String,
         /// Start after this per-room sequence number (0 for the beginning)
@@ -464,6 +208,7 @@ enum Cmd {
         poll_ms: u64,
     },
     /// Speak the wire protocol (PROTOCOL.md) on standard input and output, as the member from the environment
+    #[command(display_order = 47)]
     Serve {
         /// Use standard input and output (the only transport so far)
         #[arg(long)]
@@ -471,6 +216,7 @@ enum Cmd {
     },
     /// Run an MCP (Model Context Protocol) server on standard input and output as the member from the environment, so
     /// an agent runtime that can attach a tool server can post, read, wait, claim and release without a harness
+    #[command(display_order = 48)]
     Mcp {
         /// Use standard input and output (the only transport so far)
         #[arg(long)]
@@ -478,6 +224,7 @@ enum Cmd {
     },
     /// Offer the read-only librarian to an editor as an ACP (Agent Client Protocol) agent on standard input and output,
     /// as the member from the environment; it can only look (read without marking read, history, who, claims)
+    #[command(display_order = 49)]
     Acp {
         /// Use standard input and output (the only transport so far)
         #[arg(long)]
@@ -619,7 +366,7 @@ fn main() -> Result<()> {
     }
     let cli = Cli::parse();
     let hook_event = match &cli.cmd {
-        Cmd::Hook { event, .. } => Some(event.clone()),
+        Cmd::Agents(AgentsCmd::Hook { event, .. }) => Some(event.clone()),
         _ => None,
     };
     let names_installed = !matches!(
@@ -709,7 +456,7 @@ fn run_cli(cli: Cli) -> Result<()> {
         Cmd::Anchor { cmd } => anchor::run(cmd),
         Cmd::Run { cmd } => run::run(cmd),
         Cmd::Judge { cmd } => judge::run(cmd),
-        Cmd::Wake { .. } if !wake_is_on() => Ok(()),
+        Cmd::Wait(WaitCmd::Wake { .. }) if !wake_is_on() => Ok(()),
         cmd => run_as_member(&cli.who, cmd),
     }
 }

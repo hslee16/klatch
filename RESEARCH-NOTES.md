@@ -1674,7 +1674,7 @@ bounded proof, "no counterexample up to N", not a proof for all inputs.
 
 ### 52.1 What was built
 
-`proto/klatch/src/kani_proofs.rs` (compiled only under `cfg(kani)`, declared in `lib.rs`, with `unexpected_cfgs`
+`proto/klatch/src/kani_proofs/` (compiled only under `cfg(kani)`, declared in `lib.rs`, with `unexpected_cfgs`
 told about `kani` in `Cargo.toml`), `proto/scripts/kani` (runs every harness one at a time with a time limit, prints
 pass or FAIL and the seconds; a harness that times out is a FAIL), and a section in CONTRIBUTING.md. Nothing in CI,
 the gate or any build runs them. Install: `cargo install --locked kani-verifier` (0.68.0) and `cargo kani setup`
