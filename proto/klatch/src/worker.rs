@@ -218,7 +218,7 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
             let now = now();
             for c in gateway.admin_credentials(&launcher)? {
                 println!(
-                    "{}\t{}\tclearance {}\tparent {}\texpires in {}s",
+                    "{}\t{}\tclearance {}\tparent {}\texpires in {}s\tcap in {}s\tlast renewed {}",
                     c.member,
                     c.state,
                     c.clearance,
@@ -227,7 +227,12 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
                     } else {
                         &c.parent
                     },
-                    (c.expires - now).max(0)
+                    (c.expires - now).max(0),
+                    (c.cap - now).max(0),
+                    c.last_renewed.map_or("never".to_string(), |t| format!(
+                        "{}s ago",
+                        (now - t).max(0)
+                    ))
                 );
             }
         }

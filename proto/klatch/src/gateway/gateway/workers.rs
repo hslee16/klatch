@@ -19,6 +19,9 @@ pub const MAX_CREDENTIAL_TTL_SECS: i64 = 30 * 24 * 3600;
 /// never passes it.
 pub const DEFAULT_CREDENTIAL_MAX_LIFE_SECS: i64 = 24 * 3600;
 
+/// How many audit entries the listing looks through for each credential's last renewal.
+const AUDIT_SCAN: usize = 10_000;
+
 /// What a launcher asks for.
 pub struct CredentialSpec<'a> {
     pub member: &'a str,
@@ -40,6 +43,11 @@ pub struct CredentialInfo {
     pub parent: String,
     pub issued: i64,
     pub expires: i64,
+    /// The moment renewal never passes (0: a credential from before renewal, which is never renewed).
+    pub cap: i64,
+    /// When the credential was last renewed on use, from the audit; `None` if it never was (or the audit no longer
+    /// reaches back that far).
+    pub last_renewed: Option<i64>,
     /// `live`, `expired` or `revoked`.
     pub state: &'static str,
 }
@@ -201,11 +209,20 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         self.check_guard(who, &Operation::admin("credentials", ""))?;
         let now = self.now();
+        let audit = self.store.audit_log(AUDIT_SCAN)?;
         Ok(self
             .store
             .credentials()?
             .into_iter()
             .map(|c| CredentialInfo {
+                // the audit is newest first; an entry from before this credential was issued is an earlier one's
+                last_renewed: audit
+                    .iter()
+                    .find(|a| {
+                        a.action == "renew-credential" && a.target == c.member && a.ts >= c.issued
+                    })
+                    .map(|a| a.ts),
+                cap: c.cap,
                 state: if c.revoked {
                     "revoked"
                 } else if now >= c.expires {
