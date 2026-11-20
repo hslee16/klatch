@@ -80,6 +80,52 @@ fn it_shows_everyones_messages_and_moves_no_cursor() {
     assert_eq!(unread.len(), 3, "history did not read anything for alice");
 }
 
+/// A room whose newest row is a canary (#1008): the label is set after the messages, so the canary lands last.
+fn room_with_a_newest_canary(n: usize) -> Gateway<SpyStore> {
+    let g = open();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    for i in 1..=n {
+        let sender = Principal::unattributed(&format!("s{}", i % 5));
+        g.post(&sender, "vault", &format!("m{i}")).unwrap();
+    }
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    assert_eq!(g.store.head("vault").unwrap(), n as i64 + 1, "canary last");
+    g
+}
+
+#[test]
+fn last_n_returns_n_visible_messages_when_the_newest_row_is_a_canary() {
+    let g = room_with_a_newest_canary(5);
+    let h = g.history(&alice(), "vault", range(None, Some(1))).unwrap();
+    assert_eq!(seqs(&h), vec![5]);
+    assert_eq!(h.more, 0, "the hidden canary is not counted as more");
+    let h = g.history(&alice(), "vault", range(None, Some(3))).unwrap();
+    assert_eq!(seqs(&h), vec![3, 4, 5]);
+    let h = g.history(&alice(), "vault", range(None, Some(50))).unwrap();
+    assert_eq!(seqs(&h), vec![1, 2, 3, 4, 5], "fewer exist than asked");
+}
+
+#[test]
+fn last_n_after_since_stops_at_since_when_hidden_rows_fill_the_window() {
+    let g = room_with_a_newest_canary(5);
+    let h = g
+        .history(&alice(), "vault", range(Some(3), Some(4)))
+        .unwrap();
+    assert_eq!(seqs(&h), vec![4, 5]);
+}
+
+#[test]
+fn a_forward_page_scans_past_a_hidden_row_to_fill_the_page() {
+    let g = room_with_a_newest_canary(5);
+    g.post(&alice(), "vault", "after").unwrap();
+    // seq 6 is the canary; the page from since=4 is m5 and "after"
+    let h = g.history(&alice(), "vault", range(Some(4), None)).unwrap();
+    assert_eq!(seqs(&h), vec![5, 7]);
+    assert_eq!(h.more, 0);
+}
+
 #[test]
 fn a_bad_range_is_invalid_before_the_store_is_asked() {
     let g = room_of(1);

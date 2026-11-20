@@ -36,20 +36,47 @@ impl<S: Store> Gateway<S> {
             .min(HISTORY_MAX_MESSAGES);
         let since = range.since.unwrap_or(0);
         let head = self.store.head(room)?;
-        // the newest `n` unless the caller only gave `since`, which pages forward from it
-        let start = if range.last.is_some() || range.since.is_none() {
-            since.max(head - n as i64)
-        } else {
-            since
+        let hidden = |m: &Message| {
+            // an archived message is a tombstone in the live store; `read` leaves it out, so does this
+            matches!(
+                m.kind.as_deref(),
+                Some("archived") | Some(super::tripwire::CANARY_KIND)
+            )
         };
-        let rows = self.store.tail(room, start, n)?;
-        let more = rows.last().map_or(0, |m| (head - m.seq).max(0)) as usize;
-        // an archived message is a tombstone in the live store; `read` leaves it out, so does this
-        let messages = rows
-            .into_iter()
-            .filter(|m| m.kind.as_deref() != Some("archived"))
-            .filter(|m| m.kind.as_deref() != Some(super::tripwire::CANARY_KIND))
-            .collect();
+        let (messages, top) = if range.last.is_some() || range.since.is_none() {
+            // the newest `n` visible rows: scan back a window at a time (#1008), so a canary or tombstone among the
+            // newest rows is stepped over instead of taking a place in the count
+            let mut kept: Vec<Message> = Vec::new();
+            let mut upper = head;
+            while kept.len() < n && upper > since {
+                let want = (n - kept.len()) as i64;
+                let lower = since.max(upper - want);
+                let rows = self.store.tail(room, lower, (upper - lower) as usize)?;
+                let mut visible: Vec<Message> = rows.into_iter().filter(|m| !hidden(m)).collect();
+                visible.append(&mut kept);
+                kept = visible;
+                upper = lower;
+            }
+            if kept.len() > n {
+                kept.drain(..kept.len() - n);
+            }
+            (kept, head)
+        } else {
+            // paging forward from `since`: scan on until the page holds `n` visible rows or the room ends
+            let mut kept: Vec<Message> = Vec::new();
+            let mut scanned = since;
+            while kept.len() < n && scanned < head {
+                let rows = self.store.tail(room, scanned, n - kept.len())?;
+                let Some(last) = rows.last().map(|m| m.seq) else {
+                    break;
+                };
+                scanned = last;
+                kept.extend(rows.into_iter().filter(|m| !hidden(m)));
+            }
+            (kept, scanned)
+        };
+        // what follows the scanned window; hidden rows at its edge are no "more"
+        let more = (head - top).max(0) as usize;
         Ok(History { messages, more })
     }
 }
