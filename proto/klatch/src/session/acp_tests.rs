@@ -230,3 +230,50 @@ fn unknown_methods_notifications_and_junk_are_handled() {
     let v: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(v["error"]["code"], -32700);
 }
+
+/// Spec check (#869): `authenticate` is a baseline agent method and its `methodId` must be one the agent advertised. This
+/// agent advertises none, so any id is invalid params (not "method not found", which says the method is missing).
+#[test]
+fn authenticate_with_no_advertised_method_is_invalid_params_not_method_not_found() {
+    let auth =
+        json!({"jsonrpc":"2.0","id":5,"method":"authenticate","params":{"methodId":"oauth"}});
+    let out = drive(&gateway(), "lib", &[auth]);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0]["error"]["code"], -32602, "{out:?}");
+    assert_eq!(out[0]["id"], 5);
+}
+
+/// Spec check (#869): stdio messages must not contain embedded newlines, and nothing but messages goes to stdout. The
+/// answer has several lines, so it must reach the client as JSON escapes on one physical line per message.
+#[test]
+fn every_message_is_one_physical_line_even_for_a_multiline_answer() {
+    let g = gateway();
+    let p = who("lib");
+    let config = SessionConfig::default();
+    let session = Session::new(&g, &p, &config);
+    let input = format!("{}\n{}\n", new_session(), prompt(3, "history r 5"));
+    let mut out = Vec::new();
+    AcpServer::new(&session)
+        .serve(Cursor::new(input), &mut out)
+        .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.ends_with('\n'));
+    assert_eq!(text.lines().count(), 3, "{text}");
+    for line in text.lines() {
+        serde_json::from_str::<Value>(line).unwrap();
+    }
+}
+
+/// Spec check (#869): `session/cancel` is a notification (no reply, even an error) and does not end the session; a later
+/// prompt on the same session is still answered with `end_turn`.
+#[test]
+fn a_cancel_notification_gets_no_reply_and_the_session_survives() {
+    let cancel = json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"klatch-librarian-1"}});
+    let out = drive(
+        &gateway(),
+        "lib",
+        &[new_session(), cancel, prompt(3, "help")],
+    );
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert_eq!(out[2]["result"]["stopReason"], "end_turn");
+}
