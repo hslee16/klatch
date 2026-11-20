@@ -9,7 +9,8 @@
 #
 # The gate checks the commit CI will see. cargo fmt, clippy and the tests read the working tree, so a file you edited
 # after committing could pass here and fail in CI (#763): the gate refuses when a tracked file has uncommitted changes
-# (staged or not; untracked files are not looked at), names them, and runs nothing. --allow-dirty checks the working tree
+# (staged or not), names them, and runs nothing; it also refuses an untracked, not ignored file under proto/, clients/
+# or release/ (#785: a new source file left out of the commit). --allow-dirty checks the working tree
 # anyway and says so.
 #
 # The Hegel seed is taken from the commit you are on, so a failure repeats exactly and each commit tries different
@@ -17,7 +18,7 @@
 # (opt in; never installed by default).
 set -uo pipefail
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/gate [--long] [--allow-dirty]"; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/gate [--long] [--allow-dirty]"; }
 long=0
 allow_dirty=0
 for arg in "$@"; do
@@ -44,6 +45,17 @@ if git -C "$root" rev-parse --git-dir > /dev/null 2>&1; then
     printf '%s\n' "$dirty" | head -n 20 | sed 's/^/    /' >&2
     echo "The gate reads the working tree but CI checks the commit, so a gate that passes here can fail there (#763)." >&2
     echo "Commit or discard the changes and run it again, or pass --allow-dirty to check the working tree anyway." >&2
+    exit 1
+  fi
+  # a new source file left out of the commit builds here and fails in CI (#785); ignored files are not listed
+  untracked="$(git -C "$root" ls-files --others --exclude-standard -- proto clients release 2> /dev/null)"
+  if [ -n "$untracked" ] && [ "$allow_dirty" -eq 1 ]; then
+    echo "gate: --allow-dirty: untracked files under proto/, clients/ or release/ are in the working tree but not in the commit"
+  elif [ -n "$untracked" ]; then
+    echo "gate: refusing to run: untracked files under proto/, clients/ or release/ (not in the commit CI checks):" >&2
+    printf '%s\n' "$untracked" | head -n 20 | sed 's/^/    /' >&2
+    echo "A file a committed mod line needs but that was never added builds here and fails in CI (#785)." >&2
+    echo "git add it (or delete it, or list it in .gitignore) and run again, or pass --allow-dirty to check the working tree anyway." >&2
     exit 1
   fi
 fi
