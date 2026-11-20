@@ -45,6 +45,10 @@ impl PolicyStore for SqliteStore {
         }
     }
 
+    fn atomically(&self, act: &mut dyn FnMut() -> Result<()>) -> Result<()> {
+        self.immediate(act)
+    }
+
     fn policy_list(&self, prefix: &str) -> Result<Vec<(String, String)>> {
         self.rows(
             "SELECT key,value FROM policy WHERE substr(key,1,length(?1))=?1 ORDER BY key",
