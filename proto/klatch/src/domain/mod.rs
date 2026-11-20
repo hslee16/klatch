@@ -44,16 +44,16 @@ pub use ask_cycle::{AskCycle, ask_cycles, cycle_notes};
 pub use ask_find::{AnsweredAsk, find_answered};
 pub use asker_gone::{Served, exited_asker_notes, gone_asker_notes, served_by};
 pub use asks::{
-    ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, AskRoom, CLAIM_DEFAULT_SECS,
+    ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, ASK_WORDS, AskRoom, CLAIM_DEFAULT_SECS,
     CLAIM_MAX_SECS, Clarification, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,
     ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, closed_target, is_ask, open_asks,
     parse_clarification, parse_outcome, reopen_target,
 };
 pub use board::{
-    BOARD_LIST_LIMIT, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS, MemberStatus,
-    OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX, ask_reach_note,
-    current_offers, is_offer, nudge_skipped_note, render_board, render_who, short_dir_name,
-    statuses,
+    BOARD_LIST_LIMIT, BOARD_WORDS, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS,
+    MemberStatus, OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX,
+    ask_reach_note, current_offers, is_offer, nudge_skipped_note, render_board, render_who,
+    short_dir_name, statuses,
 };
 pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};

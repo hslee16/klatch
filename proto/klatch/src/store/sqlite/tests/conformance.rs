@@ -344,6 +344,11 @@ fn asks_open_asks_follow_answers_and_claims_and_a_release_leaves_the_ask_open() 
 }
 
 #[test]
+fn asks_an_ask_and_its_answer_are_found_however_deep_they_are_in_the_room() {
+    c::asks::an_ask_and_its_answer_are_found_however_deep_they_are_in_the_room(store);
+}
+
+#[test]
 fn asks_a_reply_or_a_close_ends_an_open_ask() {
     c::asks::a_reply_or_a_close_ends_an_open_ask(store);
 }

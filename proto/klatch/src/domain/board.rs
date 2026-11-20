@@ -312,6 +312,10 @@ fn more(out: &mut String, total: usize, what: &str) {
     }
 }
 
+/// The prefixes of every word that `statuses` and `current_offers` fold, for a store query that reads only those
+/// messages at any depth (#731).
+pub const BOARD_WORDS: [&str; 3] = [OFFER_PREFIX, WITHDRAW_PREFIX, STATUS_PREFIX];
+
 pub fn is_offer(body: &str) -> bool {
     body.starts_with(OFFER_PREFIX)
 }

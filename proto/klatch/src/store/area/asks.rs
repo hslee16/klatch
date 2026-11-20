@@ -14,7 +14,8 @@ pub trait AskStore: MessageStore + ClaimStore {
     /// Asks nobody has answered or closed (DESIGN section 25.4), oldest first. A released claim does not end one.
     /// Each carries its working room, `ask-<N>`, if anyone has joined it.
     fn open_asks(&self, room: &str, now: i64) -> Result<Vec<OpenAsk>> {
-        let messages = self.tail(room, 0, 5000)?;
+        // by prefix at any depth, not from a tail window: an ask, an answer or a decline can be older than any window
+        let messages = self.words(room, &crate::domain::ASK_WORDS)?;
         let mut asks = open_asks(&messages, &self.claims(room, now)?);
         let rooms = self.rooms_with_prefix("ask-")?;
         for a in &mut asks {
