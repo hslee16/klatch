@@ -94,6 +94,7 @@ fn seqs(f: &[ServerFrame]) -> Vec<u64> {
 
 mod attributes;
 mod dm;
+mod grant;
 mod guarded;
 mod live;
 mod mute;

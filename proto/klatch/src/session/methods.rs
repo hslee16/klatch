@@ -97,6 +97,12 @@ struct InviteParams {
     via: String,
 }
 #[derive(Deserialize)]
+struct GrantParams {
+    room: String,
+    member: String,
+    label: String,
+}
+#[derive(Deserialize)]
 struct ReleaseParams {
     room: String,
     path: String,
@@ -268,6 +274,10 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
         ),
         "invite" => call.run(
             |p: InviteParams| g.invite(who, &p.member, &p.room, &p.via),
+            empty,
+        ),
+        "grant_room_clearance" => call.run(
+            |p: GrantParams| g.grant_room_clearance(who, &p.room, &p.member, &p.label),
             empty,
         ),
         "who" => call.run(|p: RoomParams| g.who(who, &p.room), |ms| members_json(&ms)),
