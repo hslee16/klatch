@@ -50,6 +50,7 @@ mod room_require;
 mod room_settings;
 mod rooms;
 mod runs;
+pub use rooms::invite_text;
 pub use runs::{Archive, RunInfo, run_prefix, valid_run_id};
 mod scrub;
 mod tripwire;
