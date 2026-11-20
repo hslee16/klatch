@@ -22,6 +22,7 @@ impl<S: Store> Gateway<S> {
     /// The caller's delivery view (`all` unless it narrowed it).
     pub fn delivery_view(&self, who: &Principal) -> Result<DeliveryView> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         Ok(
             match self.store.policy_get(&format!("{KEY}{}", who.member))? {
                 Some(v) if v == "scope" => DeliveryView::Scope,
@@ -33,6 +34,7 @@ impl<S: Store> Gateway<S> {
     /// Set the caller's own delivery view. Only its own: the key is built from the caller's name.
     pub fn set_delivery_view(&self, who: &Principal, view: DeliveryView) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         let value = (view == DeliveryView::Scope).then_some("scope");
         self.store
             .policy_set(&format!("{KEY}{}", who.member), value, self.now())

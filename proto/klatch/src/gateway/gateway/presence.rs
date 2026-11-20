@@ -22,6 +22,7 @@ impl<S: Store> Gateway<S> {
         crons: usize,
     ) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         let now = self.now();
         self.store.unpark(&who.member, now)?;
         if background_tasks + crons == 0 {
@@ -45,6 +46,7 @@ impl<S: Store> Gateway<S> {
     /// Any hook that runs is a sign of life: it ends a park.
     pub fn sign_of_life(&self, who: &Principal) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.store.unpark(&who.member, self.now())
     }
 
@@ -53,6 +55,7 @@ impl<S: Store> Gateway<S> {
     /// is kept.
     pub fn note_parent(&self, who: &Principal, parent: Option<&str>) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         let parent = parent.unwrap_or("");
         let acceptable = parent.is_empty() || (valid_name(parent) && parent != who.member);
         invalid(acceptable, "bad parent member".into())?;
@@ -63,6 +66,7 @@ impl<S: Store> Gateway<S> {
     /// session ending) must not use up the messages a digest would show the member's next session.
     pub fn rooms(&self, who: &Principal) -> Result<Vec<String>> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.store.rooms_of(&who.member)
     }
 
@@ -87,6 +91,10 @@ impl<S: Store> Gateway<S> {
     pub fn record_hook_run(&self, who: &Principal, event: &str, bytes: usize) -> Result<()> {
         check_member(who)?;
         check_event_name(event)?;
+        // the end of a session may record itself after its credential idled out; no other event may (#835)
+        if event != "SessionEnd" {
+            self.check_own_record_live(who)?;
+        }
         self.store.record_hook_run(
             &HookEvent::new(&who.member, event, bytes as i64),
             self.now(),
@@ -110,6 +118,7 @@ impl<S: Store> Gateway<S> {
     /// is refused rather than stored.
     pub fn note_member_mode(&self, who: &Principal, mode: &str) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         invalid(identifier(mode, 40, ""), "bad permission mode".into())?;
         self.store.note_member_mode(&who.member, mode, self.now())
     }
@@ -117,6 +126,7 @@ impl<S: Store> Gateway<S> {
     /// Remember that the caller is the member of harness session `session_id`.
     pub fn note_session(&self, who: &Principal, session_id: &str) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         check_session_id(session_id)?;
         self.store.note_session(session_id, &who.member, self.now())
     }
@@ -132,6 +142,7 @@ impl<S: Store> Gateway<S> {
     /// inside one scope (DESIGN section 27).
     pub fn set_scope(&self, who: &Principal, scope: &str) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.refuse_facilitator(who, "scope")?;
         if !crate::domain::valid_scope(scope) {
             return Err(Error::Invalid(
@@ -144,6 +155,7 @@ impl<S: Store> Gateway<S> {
     /// The scope the caller declared or was given, if any.
     pub fn scope_of(&self, who: &Principal) -> Result<Option<String>> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.store.member_scope(&who.member)
     }
 }

@@ -134,23 +134,45 @@ impl<S: Store> Gateway<S> {
     /// the next request, not only at start. A principal with no credential record (proven some other way) and an
     /// unattributed one are not touched; a store failure refuses, never allows.
     fn check_credential_live(&self, who: &Principal) -> Result<()> {
+        match self.credential_ended(who)? {
+            Some(why) => Err(credential_refusal(why)),
+            None if self.has_credential(who)? => self.renew_credential_on_use(&who.member),
+            None => Ok(()),
+        }
+    }
+
+    /// The same check for the methods that act only on the caller's own record (#835), where a verified principal
+    /// whose credential ended is refused too. It renews nothing: a hook writing its own record is not a request that
+    /// keeps a session alive. The few methods the end of a session needs do not call it (see AFTER_END in
+    /// `tests/zero_trust.rs`).
+    pub(super) fn check_own_record_live(&self, who: &Principal) -> Result<()> {
+        match self.credential_ended(who)? {
+            Some(why) => Err(credential_refusal(why)),
+            None => Ok(()),
+        }
+    }
+
+    /// Why the principal's credential no longer works, or `None` when it works or there is nothing to check (an
+    /// unattributed principal, or a verified one with no credential record). A store failure is an error: it refuses.
+    fn credential_ended(&self, who: &Principal) -> Result<Option<&'static str>> {
         if who.attribution != crate::domain::Attribution::Verified {
-            return Ok(());
+            return Ok(None);
         }
         let Some(rec) = self.store.credential(&who.member)? else {
-            return Ok(());
+            return Ok(None);
         };
-        let why = if rec.revoked {
-            "the credential was revoked"
+        Ok(if rec.revoked {
+            Some("the credential was revoked")
         } else if self.now() >= rec.expires {
-            "the credential expired"
+            Some("the credential expired")
         } else {
-            return self.renew_credential_on_use(&who.member);
-        };
-        Err(Error::Refused {
-            rule: "credential".into(),
-            reason: why.into(),
+            None
         })
+    }
+
+    fn has_credential(&self, who: &Principal) -> Result<bool> {
+        Ok(who.attribution == crate::domain::Attribution::Verified
+            && self.store.credential(&who.member)?.is_some())
     }
 
     /// A successful request renews its credential (#161): the expiry moves to now plus the idle timeout, never past
@@ -308,4 +330,11 @@ fn reviewer_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Opti
         rule: "reviewer".into(),
         reason,
     })
+}
+
+fn credential_refusal(why: &str) -> Error {
+    Error::Refused {
+        rule: "credential".into(),
+        reason: why.into(),
+    }
 }

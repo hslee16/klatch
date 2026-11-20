@@ -253,6 +253,7 @@ impl<S: Store> Gateway<S> {
     /// the breaker or a pause can still read why (#678).
     pub fn my_refusals(&self, who: &Principal, limit: usize) -> Result<Vec<RefusalRecord>> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.store.refusals_of(&who.member, limit)
     }
 
