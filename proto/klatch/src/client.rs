@@ -574,6 +574,14 @@ impl Client {
         .map(|_| ())
     }
 
+    /// Your own crossing requests, newest first, as the wire gives them: `{id, room, seq, to_room, state, why}` each.
+    /// `state` is `waiting`, `approved`, `denied`, `released` or `blocked`; `why` is one fixed sentence, never the
+    /// text or a reviewer's words.
+    pub fn my_crossings(&mut self, limit: usize) -> Result<Vec<Value>> {
+        let r = self.request("my_crossings", json!({"limit": limit}))?;
+        Ok(r["crossings"].as_array().cloned().unwrap_or_default())
+    }
+
     /// Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict
     /// only with claims in the same scope, and a shared claim conflicts with every scope.
     pub fn set_scope(&mut self, scope: &str) -> Result<()> {
