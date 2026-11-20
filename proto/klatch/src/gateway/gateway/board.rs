@@ -226,7 +226,7 @@ impl<S: Store> Gateway<S> {
             .store
             .tail(room, seq - 1, 1)?
             .into_iter()
-            .find(|m| m.seq == seq)
+            .find(|m| m.seq == seq && m.kind.as_deref() != Some(super::tripwire::CANARY_KIND))
             .ok_or_else(not_found)?;
         if message.sender != who.member {
             return Err(Error::Refused {

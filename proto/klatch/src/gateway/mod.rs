@@ -7,6 +7,7 @@ mod clock;
 // The Gateway itself keeps its own file; it was the crate's namesake before the crates became modules.
 #[allow(clippy::module_inception)]
 mod gateway;
+pub(crate) use gateway::CANARY_KIND;
 mod guard;
 mod identity;
 mod judge;

@@ -87,12 +87,16 @@ impl Subscription {
             });
         }
         let limit = budget.min(max).max(1);
-        let messages = gateway.tail(who, &self.room, (after, limit))?;
-        let after = messages.last().map_or(after, |m| m.seq);
+        // page by the rows scanned, not the messages shown: a canary is scanned and never shown (#954)
+        let (messages, scanned, after) = gateway.tail_scan(who, &self.room, (after, limit))?;
         self.after = Some(after);
+        if messages.is_empty() {
+            // nothing was sent (only a canary was scanned), so nothing is left for the consumer to acknowledge
+            self.acked = self.acked.max(after);
+        }
         let caught_up = if self.caught_up {
             None
-        } else if messages.len() < limit {
+        } else if scanned < limit {
             self.caught_up = true;
             Some(after)
         } else {
