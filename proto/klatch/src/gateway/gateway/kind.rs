@@ -12,6 +12,7 @@ impl<S: Store> Gateway<S> {
     /// record, not claimed.
     pub fn set_kind(&self, who: &Principal, kind: Option<MemberKind>) -> Result<()> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         self.refuse_facilitator(who, "kind")?;
         if kind.is_some_and(|k| !k.declarable()) {
             return Err(Error::Invalid(
@@ -30,6 +31,7 @@ impl<S: Store> Gateway<S> {
     /// The caller's kind as others see it: `session` when it has a session record, else its declaration.
     pub fn kind_of(&self, who: &Principal) -> Result<Option<MemberKind>> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         if self.store.session_of_member(&who.member)?.is_some() {
             return Ok(Some(MemberKind::Session));
         }

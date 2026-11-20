@@ -123,6 +123,7 @@ impl<S: Store> Gateway<S> {
     /// A deny reason, a redaction, the text and the name of a private term never appear.
     pub fn my_crossings(&self, who: &Principal, limit: usize) -> Result<Vec<CrossingStatus>> {
         check_member(who)?;
+        self.check_own_record_live(who)?;
         let rows = self.store.reviews(crate::gateway::DRAIN_LIMIT)?;
         Ok(rows
             .iter()

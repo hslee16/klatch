@@ -22,8 +22,9 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
    `worker_credentials.rs` (expiry boundary at the last second and the first second after it, revocation, other
    principals untouched, the breaker not counting it) and the wire test in `session/tests/wire.rs`. The same
    step renews the credential on use (#161): the expiry moves to now plus the idle timeout, never past the hard cap
-   from issue, and each renewal is audited as `renew-credential`; proof in `credential_renewal.rs`. Gap: the
-   own-record methods (#835).
+   from issue, and each renewal is audited as `renew-credential`; proof in `credential_renewal.rs`. The own-record
+   methods make the same check without the renewal (`check_own_record_live`, #835), except `release_all`, `record_hook_run`
+   for `SessionEnd` and `end_credential`, which the end of a session needs (`AFTER_END` in `zero_trust.rs`).
 3. **Roles.** `check_role` in the same function: librarian may only look (`read-only`), reviewer may only review
    (`reviewer`), the facilitator (#190) may only look, create a room, invite, post the invite pointer and send one fixed-form need-info DM to the asker of an open ask (#902; `facilitator`,
    enforced before any guard is asked), admin agent has an allowlist (`admin-scope`, `floors`), members' admin acts need a role on a
@@ -74,10 +75,10 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 | `grant_room_clearance` | `grant_room_clearance` | `GrantClearance`, then the room's checks and the grantor rules | GUARDED `grant_room_clearance` (#893, #895): `room`, `member` and `label` are params, the grantor is the transport's principal; rules `grantor`, `self-grant`, `top-level`, `agent-cap`, `room-label`, `own-clearance`; audited, a refusal keeps a refusal row; `session/tests/grant.rs`, `gateway/tests/room_grantor.rs` |
 | `my_crossings` | `my_crossings` | none (OWN_RECORD, no guard, like `refusals`) | OWN_RECORD `my_crossings` (#961): `limit` is the only param, the rows are the transport's principal's own (the requester of the queue row), no param names another member; ids, pointers, state and a fixed sentence, never text; `session/tests/crossings_wire.rs` |
 | `who` | `who` | `Who` | GUARDED `who`; since #181 each member line also carries the observed repository id and the short directory name (never the path, `with_places`), under the same `admit` as the member list itself; since #677 it also carries each member's last reported permission mode (`with_modes`, one read of `member_modes`, display and wake-path choice only, never authority), under the same `admit`; display only, no check reads them (`gateway/tests/member_places.rs`: a reader below the room label gets neither `who` nor the board) |
-| `kind` | `set_kind` | none: the caller's own display word | OWN_RECORD `set_kind`; `member_kind.rs` |
+| `kind` | `set_kind` | none: the caller's own display word | OWN_RECORD `set_kind`; `member_kind.rs`; refused after the credential ends (#835) |
 | `status` | `set_status` | `Status` | GUARDED `set_status` |
 | `claim` | `claim_ttl_for`, `claim` | `Claim` | GUARDED `claim`, `claim_ttl_for`; `claims.rs` |
-| `scope` | `set_scope` | none: the caller's own scope | OWN_RECORD `set_scope`; gap #835 for credential liveness |
+| `scope` | `set_scope` | none: the caller's own scope | OWN_RECORD `set_scope`; refused after the credential ends (#835, `AFTER_END`) |
 | `mute` | `set_muted` | `Mute` | GUARDED `set_muted`; `mute.rs` |
 | `release` | `release`, `release_with_note` | `Release` | GUARDED `release`, `release_with_note` |
 | `claims` | `claims` | `Claims` | GUARDED `claims` |
@@ -124,20 +125,20 @@ wraps.
 | `ask` | `post`, `who` | as wire `post` (GUARDED, the room's checks and content rules); `who` only for the reach note, as the `post` command does (#241) |
 | `answer` | `open_asks`, `claim_ttl_for`, `claim`, `post`, `release` | GUARDED each of those calls, in that order, as the caller's own member; it is the three commands `claim`, `post` and `release` in one process and holds no capability they lack. A claim held by another member is reported and nothing is posted; the claim is released after a failed post. No new wire method (#241). Proof: `tests/ask_answer.rs` |
 | `mute`, `unmute` | `set_muted` | as wire `mute` |
-| `view` | `delivery_view`, `set_delivery_view` | OWN_RECORD, the caller's own key |
+| `view` | `delivery_view`, `set_delivery_view` | OWN_RECORD, the caller's own key; refused after the credential ends (#835) |
 | `cross` | `request_crossing` | GUARDED `request_crossing`: read in the source, post in the target, the target must be one the caller has joined (#679), floors |
 | `status` | `set_status` | as wire `status` |
-| `scope` | `scope_of`, `set_scope` | OWN_RECORD |
+| `scope` | `scope_of`, `set_scope` | OWN_RECORD; refused after the credential ends (#835) |
 | `hooks` | `hook_runs` | GUARDED `hook_runs` (another member's record with `--of`) |
-| `refusals` | `my_refusals` | OWN_RECORD, only the caller's rows |
-| `crossings` | `my_crossings` | OWN_RECORD (#516), only the caller's rows (the requester of the queue row); no guard, like `refusals`. Returns the ids, the source pointer, the target room, a state (`waiting`, `approved`, `denied`, `released`, `blocked`) and one fixed sentence per state and category (`private-term`, `credential`, `canary`, `gone`, `floor`). Never the text, a redaction, the reviewer's or judge's own reason (it can describe the content) or the name of a scrub rule or term. Proof: `gateway/gateway/tests/crossing.rs` (`a_denied_crossing_says_it_was_denied_and_never_the_reviewers_reason`, `a_blocked_crossing_names_the_category_and_never_the_rule_name_or_term`). Wire method `my_crossings` (#961) |
+| `refusals` | `my_refusals` | OWN_RECORD, only the caller's rows; refused after the credential ends (#835) |
+| `crossings` | `my_crossings` | OWN_RECORD (#516), only the caller's rows (the requester of the queue row); no guard, like `refusals`. Returns the ids, the source pointer, the target room, a state (`waiting`, `approved`, `denied`, `released`, `blocked`) and one fixed sentence per state and category (`private-term`, `credential`, `canary`, `gone`, `floor`). Never the text, a redaction, the reviewer's or judge's own reason (it can describe the content) or the name of a scrub rule or term. Proof: `gateway/gateway/tests/crossing.rs` (`a_denied_crossing_says_it_was_denied_and_never_the_reviewers_reason`, `a_blocked_crossing_names_the_category_and_never_the_rule_name_or_term`). Wire method `my_crossings` (#961); refused after the credential ends (#835) |
 | `board`, `asks`, `tasks` | `board`, `open_asks` | GUARDED `board`, `open_asks` |
 | `find` | `history` (paged forward from seq 0, at most 5000 messages) | GUARDED `history`: the same read admit as `history` (a room above the caller's clearance is refused with `clearance`), read only (no cursor, no presence write, no message, no claim). The matching runs in the client on messages `history` already returned, so it sees nothing the caller could not read (`domain/ask_find.rs`). Proof: `tests/find.rs` |
 | `card` | `member_card`, which calls `board` first | GUARDED `member_card` and `board`: the same checks as `board` (a read-only view of one member in a room the caller may see) |
 | `mcp` | the session of `serve --stdio`: each of its six tools (`klatch_post`, `klatch_read`, `klatch_claim`, `klatch_release`, `klatch_wait`, `klatch_who`) calls the wire method of the same name | GUARDED the same per-request checks as those wire methods (the caller is the process's member); no admin act and no other method is reachable through it |
 | `acp` | the session of `serve --stdio`: a prompt parses to one of four looks, each calling the wire method of that name (`read` always with `peek`, `who`, `claims`, `history`) | GUARDED the same per-request checks as those wire methods, and the librarian role refuses anything else; no write, no admin act and no other method is reachable (the prompt grammar has no verb for one, `src/session/acp_tests.rs`, `tests/acp.rs`) |
 | `claims` | `claims` | GUARDED `claims` |
-| `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room and, per room it shows, tells the caller once what became of its own crossings from that room (#679; the caller's own queue rows, pointers and fixed sentences, no text); the rest are OWN_RECORD |
+| `hook` | `digest`, `record_hook_run`, `sign_of_life`, `record_stop`, `release_all` | `digest` asks the guard once per room and, per room it shows, tells the caller once what became of its own crossings from that room (#679; the caller's own queue rows, pointers and fixed sentences, no text); the rest are OWN_RECORD, refused after the credential ends except `release_all` and `record_hook_run` for `SessionEnd`, which a session end needs (#835) |
 | `stream` | `Session::stream` (`head`, `tail`) | GUARDED `head`, `tail` |
 | `serve` | the wire methods above | one `Session` as the caller's principal, credential checked per request |
 | `act` | `admin_*` acts the role allows | the admin agent role (`session/role_tests.rs`, `roles/command_tests.rs`) |
@@ -172,7 +173,8 @@ directly and meets only the terminal heuristic.
 | Gap | Ticket |
 |---|---|
 | The launcher commands (`worker`, `anchor`, `run`, `judge`) are gated by "no bundle in the environment and no session above the process"; no terminal is needed and a detached process has no session above it. `worker issue` makes verified identities | #834 |
-| The own-record gateway methods never reach `check_guard`, so a verified principal whose credential ended can still write its own record | #835 |
+| The own-record gateway methods never reached `check_guard`, so a verified principal whose credential ended could still write its own record | fixed in #835 (`check_own_record_live`); `release_all`, `record_hook_run` for `SessionEnd` and `end_credential` stay allowed after the end, each with its reason in `AFTER_END` |
+| `set_status` in the session-end hook is a guarded call, so an idle-expired credential cannot mark the member `done` at session end (claims are still freed) | #1027 |
 | `release_crossings` takes no principal; `klatch judge` runs it with `AllowAll` | #836 |
 | The scan of public gateway methods was a hand-kept list of files and missed eight | fixed here (`gateway_sources`) |
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
