@@ -125,3 +125,106 @@ fn a_nonsense_limit_is_refused() {
         );
     }
 }
+
+// #972: a limit for one member, set next to the global one; the member's own limit wins, and with none the
+// global limit (or no limit) applies.
+
+#[test]
+fn a_member_limit_applies_to_that_member_with_no_global_limit() {
+    let (g, t) = timed();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((2, 60)))
+        .unwrap();
+    post_n(&g, &t, &alice(), 2);
+    assert_eq!(
+        rule_of(g.post(&alice(), "x", "third").unwrap_err()),
+        "rate-limit"
+    );
+    post_n(&g, &t, &bob(), 30);
+}
+
+#[test]
+fn a_member_limit_wins_over_the_global_one_in_both_directions() {
+    let (g, t) = limited();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((5, 60)))
+        .unwrap();
+    g.admin_set_member_rate_limit(&admin(), "bob", Some((1, 60)))
+        .unwrap();
+    post_n(&g, &t, &alice(), 5);
+    assert!(g.post(&alice(), "x", "sixth").is_err());
+    g.post(&bob(), "y", "one").unwrap();
+    let e = g.post(&bob(), "y", "two").unwrap_err();
+    assert!(
+        matches!(&e, Error::Refused { reason, .. } if reason.contains("1 posts in 60 seconds")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn a_member_without_its_own_limit_inherits_the_global_one() {
+    let (g, t) = limited();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((5, 60)))
+        .unwrap();
+    post_n(&g, &t, &bob(), 3);
+    assert!(g.post(&bob(), "x", "fourth").is_err());
+}
+
+#[test]
+fn removing_a_member_limit_goes_back_to_inheriting() {
+    let (g, t) = limited();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((1, 60)))
+        .unwrap();
+    assert_eq!(g.rate_limit_for("alice").unwrap(), Some((1, 60)));
+    g.admin_set_member_rate_limit(&admin(), "alice", None)
+        .unwrap();
+    assert_eq!(g.rate_limit_for("alice").unwrap(), Some((3, 60)));
+    post_n(&g, &t, &alice(), 3);
+}
+
+#[test]
+fn a_member_limit_is_audited_and_validated() {
+    let (g, _) = timed();
+    for bad in [(0, 60), (3, 0), (3, 100_000), (100_000, 60)] {
+        assert!(
+            is_invalid(g.admin_set_member_rate_limit(&admin(), "alice", Some(bad))),
+            "{bad:?}"
+        );
+    }
+    assert!(is_invalid(g.admin_set_member_rate_limit(
+        &admin(),
+        "bad name!",
+        Some((3, 60))
+    )));
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((3, 60)))
+        .unwrap();
+    let audit = g.admin_audit(&admin(), 10).unwrap();
+    assert!(
+        audit.iter().any(|a| a.action == "member-rate-limit"),
+        "{audit:?}"
+    );
+}
+
+#[test]
+fn a_member_limit_is_a_floor_no_agent_can_set_or_lift() {
+    let (g, _) = timed();
+    g.admin_set_admin_agent(&admin(), "ada", true).unwrap();
+    assert_eq!(
+        rule_of(
+            g.admin_set_member_rate_limit(&ada(), "alice", Some((9, 60)))
+                .unwrap_err()
+        ),
+        "floors"
+    );
+    let agent = Gateway::new(
+        SpyStore::new(),
+        FixedClock(100),
+        crate::gateway::ForbidFloors::new(AllowAll),
+    );
+    assert_eq!(
+        rule_of(
+            agent
+                .admin_set_member_rate_limit(&alice(), "alice", None)
+                .unwrap_err()
+        ),
+        "floors"
+    );
+}
