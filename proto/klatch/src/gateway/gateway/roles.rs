@@ -20,6 +20,7 @@ pub enum Role {
     Admin,
     Reviewer,
     Facilitator,
+    Integrator,
 }
 
 /// A grant or removal of a role: whose, which, and whether it is given (`on`) or taken away.
@@ -37,6 +38,7 @@ impl Role {
             Role::Admin => "admin",
             Role::Reviewer => "reviewer",
             Role::Facilitator => "facilitator",
+            Role::Integrator => "integrator",
         }
     }
 
@@ -46,6 +48,7 @@ impl Role {
             Role::Admin,
             Role::Reviewer,
             Role::Facilitator,
+            Role::Integrator,
         ]
         .into_iter()
         .find(|r| r.word() == text)
@@ -219,6 +222,9 @@ impl<S: Store> Gateway<S> {
         {
             self.check_facilitator_dm_post(who, room, body)?;
         }
+        if let Some(e) = merge_claim_refusal(role, who, op) {
+            return Err(e);
+        }
         if self.for_members {
             self.check_member_admin(who, op, role)?;
         }
@@ -302,6 +308,7 @@ fn role_action(role: Role) -> &'static str {
         Role::Admin => "admin-agent",
         Role::Reviewer => "reviewer",
         Role::Facilitator => "facilitator",
+        Role::Integrator => "integrator",
     }
 }
 
@@ -329,6 +336,29 @@ fn reviewer_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Opti
     Some(Error::Refused {
         rule: "reviewer".into(),
         reason,
+    })
+}
+
+/// Only an integrator, or the human (the reserved name `admin`, which only the terminal path acts as), may take the
+/// `merge:main` claim (#865). Any other holder of a role, the admin agent included, and any plain member is refused
+/// with the rule `integrator` and the step that fixes it. None when the operation is not that claim or is allowed.
+fn merge_claim_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Option<Error> {
+    let Operation::Claim { path, .. } = op else {
+        return None;
+    };
+    if !crate::domain::is_merge_claim(path)
+        || role == Some(Role::Integrator)
+        || who.member == "admin"
+    {
+        return None;
+    }
+    Some(Error::Refused {
+        rule: "integrator".into(),
+        reason: format!(
+            "{} may not take merge:main, which only an integrator or the human may; ask the human to run \
+             `klatch admin integrator {}`",
+            who.member, who.member
+        ),
     })
 }
 

@@ -30,6 +30,11 @@ pub const ROOM_ACTIVE_SECS: i64 = 120;
 /// The lease to use for a claim: the one asked for, or the default for the path; an `ask:` claim never longer
 /// than `ASK_LEASE_MAX_SECS`.
 pub fn claim_ttl(path: &str, requested: Option<i64>) -> i64 {
+    if crate::domain::is_merge_claim(path) {
+        return requested
+            .unwrap_or(CLAIM_DEFAULT_SECS)
+            .min(crate::domain::MERGE_CLAIM_MAX_SECS);
+    }
     if path.starts_with("ask:") {
         requested
             .unwrap_or(ASK_LEASE_DEFAULT_SECS)
