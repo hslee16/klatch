@@ -121,12 +121,15 @@ pub enum AdminCmd {
     },
     /// Limit every member to POSTS posts in SECS seconds over all rooms together, for example `rate-limit 30 60`;
     /// `rate-limit --off` lifts it. Off by default. With `--member NAME` the limit is that member's own, which wins
-    /// over the global one (higher or lower); `rate-limit --member NAME --off` makes the member inherit again
+    /// over the global one (higher or lower); `rate-limit --member NAME --off` makes the member inherit again.
+    /// `rate-limit --list` shows the global limit and every member limit in force, one per line
     RateLimit {
         posts: Option<usize>,
         secs: Option<i64>,
         #[arg(long)]
         off: bool,
+        #[arg(long, conflicts_with_all = ["posts", "secs", "off", "member"])]
+        list: bool,
         #[arg(long)]
         member: Option<String>,
     },

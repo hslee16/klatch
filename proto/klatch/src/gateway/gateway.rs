@@ -46,6 +46,7 @@ mod reviewer;
 mod roles;
 pub use roles::Role;
 mod rate;
+pub use rate::RateLimitEntry;
 mod room_require;
 mod room_settings;
 mod rooms;
