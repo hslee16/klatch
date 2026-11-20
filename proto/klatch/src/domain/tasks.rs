@@ -201,6 +201,7 @@ mod tests {
             ts,
             kind: None,
             payload: None,
+            advisory: false,
         }
     }
 

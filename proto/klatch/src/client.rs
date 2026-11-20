@@ -54,6 +54,8 @@ pub struct Message {
     pub ts: i64,
     pub kind: Option<String>,
     pub payload: Option<String>,
+    /// The sender was admitted in flag mode of the room's requirement (#990); set by `read` only. Display only.
+    pub advisory: bool,
 }
 
 /// What `collect` returns.
@@ -327,6 +329,7 @@ impl Client {
                 ts,
                 kind,
                 payload,
+                advisory: false,
             }),
             ServerFrame::CaughtUp { seq, .. } => self.caught_up = Some(seq),
             ServerFrame::Refusal { rule, reason, .. } => self.refusals.push((rule, reason)),
@@ -741,5 +744,6 @@ fn message_of(m: &Value) -> Message {
         ts: m["ts"].as_i64().unwrap_or(0),
         kind: m["kind"].as_str().map(String::from),
         payload: m["payload"].as_str().map(String::from),
+        advisory: m["advisory"].as_bool().unwrap_or(false),
     }
 }

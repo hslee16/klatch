@@ -64,6 +64,7 @@ impl SqliteStore {
                     ts: r.get(4)?,
                     kind: None,
                     payload: None,
+                    advisory: false,
                 },
             ))
         })?;

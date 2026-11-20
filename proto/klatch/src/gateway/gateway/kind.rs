@@ -86,6 +86,28 @@ impl<S: Store> Gateway<S> {
         Ok(())
     }
 
+    /// The one overlay that marks flagged senders on what a reader is returned (#990, #878): `read`, `wait` and the
+    /// hook digest pass their messages through here. A message is marked when its sender holds the room's advisory
+    /// policy key, so the mark comes from the gateway's record and never from the message, and a stored message is
+    /// never changed. One prefix read, skipped when there is nothing to mark.
+    pub(super) fn mark_advisory(
+        &self,
+        room: &str,
+        mut messages: Vec<Message>,
+    ) -> Result<Vec<Message>> {
+        if messages.is_empty() {
+            return Ok(messages);
+        }
+        let prefix = super::room_require::advisory_prefix(room);
+        let flagged = self.store.policy_list(&prefix)?;
+        for m in &mut messages {
+            m.advisory = flagged
+                .iter()
+                .any(|(key, _)| key.strip_prefix(&prefix) == Some(m.sender.as_str()));
+        }
+        Ok(messages)
+    }
+
     /// Fill in the kind of each member listed: a session record first, else the member's declaration. One read of
     /// the declarations for all of them.
     pub(super) fn with_kinds(&self, members: &mut [MemberInfo]) -> Result<()> {
