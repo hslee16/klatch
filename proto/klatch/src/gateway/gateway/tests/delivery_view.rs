@@ -117,3 +117,58 @@ fn two_members_with_no_scope_share_one_and_see_each_other() {
     g.post(&bob(), "lobby", "no scope either").unwrap();
     assert_eq!(bodies(&g.digest(&alice()).unwrap()).len(), 1);
 }
+
+#[test]
+fn the_digest_counts_what_the_view_hides_with_the_newest_seq_and_no_content() {
+    let g = lobby();
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    g.post(&bob(), "lobby", "same repository").unwrap();
+    g.post(&carol(), "lobby", "secret chatter one").unwrap();
+    g.post(&carol(), "lobby", "secret chatter two").unwrap();
+    let d = g.digest(&alice()).unwrap();
+    assert_eq!(d.rooms[0].outside_view, Some((2, 3)));
+    let text = crate::domain::render_hook(&d.rooms, d.now);
+    assert!(
+        text.contains("2 messages outside your view in room lobby, newest #3"),
+        "{text}"
+    );
+    assert!(!text.contains("secret chatter"), "{text}");
+}
+
+#[test]
+fn a_member_on_the_all_view_or_with_nothing_hidden_gets_no_pointer() {
+    let g = lobby();
+    g.post(&carol(), "lobby", "chatter").unwrap();
+    assert_eq!(g.digest(&alice()).unwrap().rooms[0].outside_view, None);
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    g.post(&bob(), "lobby", "same repository").unwrap();
+    assert_eq!(g.digest(&alice()).unwrap().rooms[0].outside_view, None);
+}
+
+#[test]
+fn the_wake_reports_the_same_hidden_count_as_the_digest() {
+    let g = lobby();
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    g.post(&carol(), "lobby", "other repository chatter")
+        .unwrap();
+    g.post(&carol(), "lobby", "more chatter").unwrap();
+    assert_eq!(g.wakeable(&alice(), "lobby").unwrap(), 0);
+    assert_eq!(g.outside_view(&alice(), "lobby").unwrap(), Some((2, 2)));
+    assert_eq!(
+        g.digest(&alice()).unwrap().rooms[0].outside_view,
+        Some((2, 2))
+    );
+}
+
+#[test]
+fn a_singular_hidden_message_reads_correctly() {
+    let g = lobby();
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    g.post(&carol(), "lobby", "chatter").unwrap();
+    let d = g.digest(&alice()).unwrap();
+    let text = crate::domain::render_hook(&d.rooms, d.now);
+    assert!(
+        text.contains("1 message outside your view in room lobby, newest #1"),
+        "{text}"
+    );
+}

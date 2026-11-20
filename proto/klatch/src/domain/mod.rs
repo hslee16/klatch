@@ -73,8 +73,8 @@ pub use cycle_notice::CycleNotice;
 pub use dm::{DM_PREFIX, dm_room};
 pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
-    RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, printed_len,
-    refused_lines_within, render_hook, render_hook_within,
+    RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, outside_view_line,
+    printed_len, refused_lines_within, render_hook, render_hook_within,
 };
 pub use hosted_judge::{HostedConfig, HostedJudge, HostedTransport, label_below_ceiling};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};

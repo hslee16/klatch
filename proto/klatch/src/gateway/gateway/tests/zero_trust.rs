@@ -91,6 +91,7 @@ const GUARDED: &[(&str, Call)] = &[
     ("wake_mark", |g, w| refused(g.wake_mark(w, "r"))),
     ("wakeable", |g, w| refused(g.wakeable(w, "r"))),
     ("wake_summary", |g, w| refused(g.wake_summary(w, "r"))),
+    ("outside_view", |g, w| refused(g.outside_view(w, "r"))),
     // another member's data, and housekeeping that deletes other members
     ("hook_runs", |g, w| refused(g.hook_runs(w, "bob"))),
     ("label_order", |g, w| refused(g.label_order(w))),

@@ -1,0 +1,1 @@
+- A member on the narrowed `scope` view is now told how much its view holds back: the hook digest and the wake pointer add `N messages outside your view in room R, newest #SEQ` (a count and a seq, never text). The bench gains a many-repository lobby scenario that checks the count and measures hook bytes and wake time under both views (#673).
