@@ -570,6 +570,11 @@ fn failure_line(e: &anyhow::Error, event: &str) -> String {
 /// payload can hold text a caller sent), and a crash leaves no core file (it would hold keys and messages in memory).
 fn harden() {
     std::panic::set_hook(Box::new(|info| {
+        if is_closed_pipe(info.payload()) {
+            // The reader went away (`klatch who lobby | head`): end quietly, as a shell program killed by SIGPIPE
+            // does (128 + 13), instead of calling a normal ending a bug (#846).
+            std::process::exit(141);
+        }
         let at = info.location().map_or_else(
             || "unknown place".to_string(),
             |l| format!("{}:{}", l.file(), l.line()),
@@ -577,6 +582,17 @@ fn harden() {
         eprintln!("klatch: internal error at {at}; this is a bug (nothing you sent is shown here)");
     }));
     disable_core_dumps();
+}
+
+/// Whether a panic payload is the standard library's report that a print to a closed standard stream failed.
+/// SIGPIPE stays ignored (the socket code needs the write error), so `println!` panics on a closed pipe.
+fn is_closed_pipe(payload: &(dyn std::any::Any + Send)) -> bool {
+    let text = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    text.starts_with("failed printing to std") && text.contains("Broken pipe")
 }
 
 fn disable_core_dumps() {

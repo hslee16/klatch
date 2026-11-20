@@ -1,0 +1,1 @@
+- A command whose output reader closes the pipe early (`klatch wait lobby | head`) now ends quietly with exit status 141 instead of printing an internal-error panic message (#846).
