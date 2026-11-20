@@ -3,7 +3,7 @@
 //! each new conformance test is shown to pass on a sound store and to fail on a broken one.
 
 use super::*;
-use crate::domain::{Claim, MemberInfo, Message, Parked, Posted};
+use crate::domain::{Claim, HookRun, MemberInfo, Message, Parked, Posted};
 use crate::store::conformance as c;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -25,6 +25,9 @@ enum Fault {
     CrossingLosesItsRequester,
     DenyIsDueToApply,
     NoticesRepeat,
+    StatusIgnoresTheRoom,
+    LastParentWins,
+    HookRunsAreNotCounted,
 }
 
 thread_local! {
@@ -41,6 +44,11 @@ struct Faulty {
     queue: RefCell<Vec<QueuedReview>>,
     redacted: RefCell<BTreeMap<i64, String>>,
     told: RefCell<BTreeMap<i64, u8>>,
+    /// (room, member) -> (status, set at); the room is empty under `StatusIgnoresTheRoom`.
+    statuses: RefCell<BTreeMap<(String, String), (String, i64)>>,
+    parents: RefCell<BTreeMap<String, String>>,
+    /// (member, event) -> (last ts, runs, last bytes)
+    hooks: RefCell<BTreeMap<(String, String), (i64, i64, i64)>>,
     fault: Fault,
 }
 
@@ -52,7 +60,19 @@ impl Faulty {
             queue: Default::default(),
             redacted: Default::default(),
             told: Default::default(),
+            statuses: Default::default(),
+            parents: Default::default(),
+            hooks: Default::default(),
             fault: fault(),
+        }
+    }
+
+    /// The room a status is kept under: its own, or none at all when the status is wrongly shared across rooms.
+    fn status_room<'a>(&self, room: &'a str) -> &'a str {
+        if self.fault == Fault::StatusIgnoresTheRoom {
+            ""
+        } else {
+            room
         }
     }
 
@@ -100,11 +120,72 @@ impl MemberStore for Faulty {
                 m.parked = self.parks.borrow().get(&m.name).cloned();
             }
         }
+        let room_key = self.status_room(room);
+        for m in &mut out {
+            if let Some((text, at)) = self
+                .statuses
+                .borrow()
+                .get(&(room_key.to_string(), m.name.clone()))
+            {
+                m.status = Some(text.clone());
+                m.status_ts = *at;
+            }
+            m.parent = self.parents.borrow().get(&m.name).cloned();
+        }
         Ok(out)
     }
 
     fn rooms_of(&self, member: &str) -> Result<Vec<String>> {
         self.inner.rooms_of(member)
+    }
+
+    fn set_status(&self, at: Seat, status: &str, now: i64) -> Result<()> {
+        self.inner.join(at.room, at.member, now)?;
+        self.statuses.borrow_mut().insert(
+            (self.status_room(at.room).into(), at.member.into()),
+            (status.into(), now),
+        );
+        Ok(())
+    }
+
+    fn note_parent(&self, member: &str, parent: &str, _now: i64) -> Result<()> {
+        let mut p = self.parents.borrow_mut();
+        if self.fault == Fault::LastParentWins {
+            p.insert(member.into(), parent.into());
+        } else {
+            p.entry(member.into()).or_insert_with(|| parent.into());
+        }
+        Ok(())
+    }
+
+    fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
+        let mut h = self.hooks.borrow_mut();
+        let e = h
+            .entry((run.member.into(), run.event.into()))
+            .or_insert((now, 0, 0));
+        e.0 = now;
+        e.1 = if self.fault == Fault::HookRunsAreNotCounted {
+            1
+        } else {
+            e.1 + 1
+        };
+        e.2 = run.bytes;
+        Ok(())
+    }
+
+    fn hook_runs(&self, member: &str) -> Result<Vec<HookRun>> {
+        Ok(self
+            .hooks
+            .borrow()
+            .iter()
+            .filter(|((m, _), _)| m == member)
+            .map(|((_, event), (last_ts, runs, last_bytes))| HookRun {
+                event: event.clone(),
+                last_ts: *last_ts,
+                runs: *runs,
+                last_bytes: *last_bytes,
+            })
+            .collect())
     }
 
     fn park(&self, member: &str, parked: &Parked, now: i64) -> Result<()> {
@@ -341,4 +422,21 @@ fn the_feature_probe_runs_the_review_conformance_tests_and_catches_a_broken_decl
         ran.is_err(),
         "a broken review queue went unnoticed by the probe"
     );
+}
+
+#[test]
+fn the_feature_probe_runs_the_member_notes_tests_and_catches_a_broken_park() {
+    FAULT.with(|f| f.set(Fault::None));
+    c::features::probe(Feature::MemberNotes, Faulty::new);
+    for fault in [
+        Fault::ParkLeavesClaimsAlone,
+        Fault::StatusIgnoresTheRoom,
+        Fault::LastParentWins,
+        Fault::HookRunsAreNotCounted,
+    ] {
+        FAULT.with(|f| f.set(fault));
+        let ran = catch_unwind(|| c::features::probe(Feature::MemberNotes, Faulty::new));
+        FAULT.with(|f| f.set(Fault::None));
+        assert!(ran.is_err(), "the probe did not catch {fault:?}");
+    }
 }
