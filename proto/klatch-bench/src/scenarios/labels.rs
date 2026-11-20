@@ -189,12 +189,30 @@ fn canary_and_breaker(w: &World) -> Res {
         "clear failed",
     )?;
     check(w.admin(&["canary", "vault"], "").ok, "canary failed")?;
-    let seen = w.ok("priv", &["read", "vault"])?;
+    w.ok("priv", &["join", "vault"])?;
+    // the canary is shown once, in the member's first digest; read, history, tail and wait drop it (#347, #954); a read before the digest would hide it for good
+    let mut child = w
+        .spawn_piped("priv", &["hook", "--event", "UserPromptSubmit"])
+        .map_err(|e| e.to_string())?;
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .ok_or("no stdin")?
+            .write_all(br#"{"session_id":"s","hook_event_name":"UserPromptSubmit"}"#)
+            .map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let seen = String::from_utf8_lossy(&out.stdout).into_owned();
     let token = seen
-        .split_whitespace()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .find(|t| t.starts_with("kc-canary-"))
         .map(str::to_string)
-        .ok_or_else(|| format!("no canary in the room: {seen}"))?;
+        .ok_or_else(|| format!("no canary in the first digest: {seen}"))?;
+    // after the digest, read still does not show it
+    let read = w.ok("priv", &["read", "vault"])?;
+    lacks(&read, "kc-canary-", "read showed the canary")?;
     let refused = w.refused("priv", &["post", "town", &format!("see {token}")])?;
     has(
         &refused,
