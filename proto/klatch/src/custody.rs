@@ -401,11 +401,8 @@ mod tests {
         }
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-custody-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(tag: &str) -> crate::test_dir::TestDir {
+        crate::test_dir::TestDir::new(&format!("custody-{tag}"))
     }
 
     #[test]
@@ -431,7 +428,6 @@ mod tests {
         release(&state);
         let r = late.join().unwrap();
         assert!(r.is_ok(), "{:?}", r.err());
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -447,7 +443,6 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(err.contains("admin recover"), "{err}");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn file_home(d: &Path) -> KeyHome {
@@ -484,7 +479,6 @@ mod tests {
         );
         let store = open_store_in(&d.join("klatch.db"), &kh).unwrap();
         assert_eq!(store.restore_archive(&file, &new).unwrap(), 1);
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -509,7 +503,6 @@ mod tests {
         assert!(still == old, "the store key changed");
         assert!(kh.source.get("store-test-next").unwrap().is_none());
         assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// A key source that, when the rotation stores its new key, says so and then waits to be released: the rotation
@@ -563,7 +556,7 @@ mod tests {
         let (rotation, state) = rotation_held_half_way(&d);
         let (tx, rx) = std::sync::mpsc::channel();
         let opener = {
-            let d = d.clone();
+            let d = d.to_path_buf();
             std::thread::spawn(move || {
                 let r = open_store_in(&d.join("klatch.db"), &file_home(&d)).map(|_| ());
                 let _ = tx.send(());
@@ -582,7 +575,6 @@ mod tests {
         assert!(r.is_ok(), "{:?}", r.err());
         let now = file_home(&d).source.get("store-test").unwrap().unwrap();
         assert!(now == new);
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -619,7 +611,6 @@ mod tests {
             "{listed:?}"
         );
         let _ = first;
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -628,7 +619,7 @@ mod tests {
         store_with_archive(&d);
         let (first, state) = rotation_held_half_way(&d);
         let second = {
-            let d = d.clone();
+            let d = d.to_path_buf();
             std::thread::spawn(move || rotate_key_in(&d.join("klatch.db"), &file_home(&d)))
         };
         release(&state);
@@ -639,7 +630,6 @@ mod tests {
         assert!(now == last, "the stored key is not the last rotation's");
         assert!(kh.source.get("store-test-next").unwrap().is_none());
         assert!(open_store_in(&d.join("klatch.db"), &kh).is_ok());
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -651,7 +641,7 @@ mod tests {
         let other_opener = klatch::store::encrypt::lock_dir_shared(&d.join("klatch.db")).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let opener = {
-            let d = d.clone();
+            let d = d.to_path_buf();
             std::thread::spawn(move || {
                 let r = open_store_in(&d.join("klatch.db"), &file_home(&d)).map(|_| ());
                 let _ = tx.send(());
@@ -662,7 +652,6 @@ mod tests {
         drop(other_opener);
         assert!(opener.join().unwrap().is_ok());
         assert!(got_through, "an open waited for another open");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -671,7 +660,7 @@ mod tests {
         store_with_archive(&d);
         let state = Arc::new((Mutex::new((false, false)), Condvar::new()));
         let late = {
-            let (d, state) = (d.clone(), state.clone());
+            let (d, state) = (d.to_path_buf(), state.clone());
             std::thread::spawn(move || {
                 let src = Stalled {
                     inner: klatch::keys::FileKeys::new(&d.join("keys")),
@@ -686,6 +675,5 @@ mod tests {
         release(&state);
         let r = late.join().unwrap();
         assert!(r.is_ok(), "{:?}", r.err());
-        let _ = std::fs::remove_dir_all(&d);
     }
 }

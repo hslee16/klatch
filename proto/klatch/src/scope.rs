@@ -190,17 +190,28 @@ pub(crate) fn declare_member_kind(
 mod scope_dir_tests {
     use super::*;
 
-    fn tmp(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir()
-            .join(format!(
-                "klatch-scope-{}-{:?}",
-                std::process::id(),
-                std::thread::current().id()
-            ))
-            .join(name);
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::canonicalize(&d).unwrap()
+    /// A scratch directory, with its canonical path (the temp directory may be a symlink) kept apart from the guard.
+    struct Tmp {
+        path: std::path::PathBuf,
+        _dir: crate::test_dir::TestDir,
+    }
+    impl std::ops::Deref for Tmp {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+    impl AsRef<std::path::Path> for Tmp {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+    fn tmp(name: &str) -> Tmp {
+        let dir = crate::test_dir::TestDir::new("scope");
+        // the scope of a repository is made from the name of its directory, so the directory is named for the test
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        let path = std::fs::canonicalize(dir.join(name)).unwrap();
+        Tmp { path, _dir: dir }
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) -> bool {

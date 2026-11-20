@@ -50,18 +50,15 @@ impl Env {
         if let Some(dir) = std::env::var_os(CHILD_DIR) {
             return Some(Env { dir: dir.into() });
         }
-        let dir =
-            std::env::temp_dir().join(format!("klatch-admin-cmd-{}-{tag}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = crate::test_dir::TestDir::new(&format!("admin-cmd-{tag}"));
         std::fs::create_dir_all(dir.join("keys")).unwrap();
         let out = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", test, "--test-threads=1", "--nocapture"])
-            .env(CHILD_DIR, &dir)
+            .env(CHILD_DIR, &*dir)
             .env("KLATCH_KEY_DIR", dir.join("keys"))
             .env_remove("KLATCH_IDENTITY_FILE")
             .output()
             .unwrap();
-        std::fs::remove_dir_all(&dir).ok();
         assert!(
             out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
             "{}\n{}",
