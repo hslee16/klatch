@@ -193,7 +193,7 @@ fn a_park_extends_it_only_up_to_the_bound() {
     // any other claim is held to the return time; merge:main only to the bound
     assert_eq!(expiry(&g, "src/lib.rs"), Some(1_100 + 3 * 3600));
     assert_eq!(expiry(&g, MERGE), Some(1_100 + MERGE_PARK_MAX_SECS));
-    assert!(MERGE_PARK_MAX_SECS < 3600, "never an hour (#533)");
+    const { assert!(MERGE_PARK_MAX_SECS < 3600, "never an hour (#533)") };
     // a shorter park is honored as it is
     g.post(&ivy(), "lobby", "parked: one check, back by 5m")
         .unwrap();
