@@ -336,6 +336,14 @@ mod tests {
     }
 
     #[test]
+    fn an_asker_with_no_claim_is_not_routed_even_with_a_rule_and_busy_members() {
+        // the gap of #892: with no claim there is no topic, and an operator rule cannot supply one
+        let claims = [claim("bo", "x"), claim("cy", "x/y")];
+        let rules = [Rule::parse("x=bo").unwrap()];
+        assert!(run(&[ask(1, "ann")], &claims, &lobby(), &rules).is_empty());
+    }
+
+    #[test]
     fn an_ask_of_the_router_itself_is_not_routed() {
         let claims = [claim("router", "x"), claim("bo", "x")];
         assert!(run(&[ask(1, "router")], &claims, &lobby(), &[]).is_empty());

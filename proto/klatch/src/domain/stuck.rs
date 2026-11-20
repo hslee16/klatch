@@ -204,6 +204,21 @@ mod tests {
     }
 
     #[test]
+    fn an_ask_whose_asker_holds_no_claim_still_surfaces_as_stale() {
+        // the router leaves such an ask alone (#892); the mediator's stale case does not look at the asker's claims
+        let others = [lease("bo", 99)];
+        let ev = stuck_events(&[ask(3, "ann", NOW - 100)], &others, &[], NOW, 60);
+        assert_eq!(
+            ev,
+            [StuckEvent::StaleAsk {
+                ask: 3,
+                asker: "ann".into(),
+                age_secs: 100
+            }]
+        );
+    }
+
+    #[test]
     fn a_fresh_or_claimed_ask_is_not_stale() {
         let mut claimed = ask(2, "ann", NOW - 500);
         claimed.claimed = true;
