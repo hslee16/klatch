@@ -17,6 +17,9 @@ One release is one number, spelled three ways (`0.1.0-dev.2` for the crate and n
 - `DESIGN.md`: run `release/design-fragments.sh assemble`; it appends the fragments in `design/items/` as the next numbered
   items in ticket order and deletes them. It prints the number each ticket got; change references written as "the design
   item for #NNN" to the number
+- `RESEARCH-NOTES.md`: run `release/research-fragments.sh assemble`; it appends the fragments in `research/notes/` as the
+  next numbered sections in ticket order and deletes them. It prints the number each ticket got; change references written
+  as "the research note for #NNN" to the number
 - `README.md`: the version in the `cargo install` line and the pre-release notice
 - `VERSIONING.md`, if the protocol or store schema version changed
 
