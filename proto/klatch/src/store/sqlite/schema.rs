@@ -6,7 +6,7 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 34;
+pub const SCHEMA_VERSION: i64 = 35;
 
 /// A member's post times since a moment: the per-member rate limit (#187) runs it on every post, so it must be an
 /// index search (`messages_sender_ts`, #637), not a scan of the table.
@@ -33,6 +33,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE room_state(room TEXT PRIMARY KEY, state TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_blocks(room TEXT NOT NULL, member TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(room,member));
  CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL);
+ CREATE INDEX admin_audit_action_target_ts ON admin_audit(action, target, ts);
  CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL); CREATE TABLE credentials(member TEXT PRIMARY KEY, token_hash BLOB NOT NULL, clearance TEXT NOT NULL, parent TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, idle INTEGER NOT NULL DEFAULT 0, cap INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '', told INTEGER NOT NULL DEFAULT 0);
@@ -405,6 +406,15 @@ pub(super) fn migrate_v33(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Version 34 to 35: an index for the newest audit entry of one action on one target (#1018). `last_audit_ts` filters
+/// by action and target and takes the largest ts, so with ts last it is answered from the index alone.
+pub(super) fn migrate_v34(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS admin_audit_action_target_ts ON admin_audit(action, target, ts);",
+    )
+    .map_err(be)
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -421,7 +431,7 @@ pub(super) type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-pub(super) const MIGRATIONS: [Step; 34] = [
+pub(super) const MIGRATIONS: [Step; 35] = [
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -456,6 +466,7 @@ pub(super) const MIGRATIONS: [Step; 34] = [
     migrate_v31,
     migrate_v32,
     migrate_v33,
+    migrate_v34,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.
