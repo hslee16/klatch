@@ -53,10 +53,11 @@ fn crossing_waits(w: &World) -> Res {
         "clear failed",
     )?;
     w.ok("alice", &["join", "vault"])?;
+    // seq 1 of a private room is its canary (#347); the first real message is seq 2
     w.ok("alice", &["post", "vault", "the plan is blue"])?;
     w.ok("bob", &["join", "open"])?;
     // the target room must be joined by the asker (#679)
-    let unjoined = w.run("alice", &["cross", "vault", "1", "--to", "open"]);
+    let unjoined = w.run("alice", &["cross", "vault", "2", "--to", "open"]);
     check(
         !unjoined.ok,
         "a crossing into an unjoined room was accepted",
@@ -67,12 +68,12 @@ fn crossing_waits(w: &World) -> Res {
         "the refusal does not say why",
     )?;
     w.ok("alice", &["join", "open"])?;
-    let q = w.ok("alice", &["cross", "vault", "1", "--to", "open"])?;
+    let q = w.ok("alice", &["cross", "vault", "2", "--to", "open"])?;
     has(&q, "queued", "the request was not queued")?;
     // the queue lists a pointer and its state, never the text
     let list = w.admin(&["review-queue"], "");
     check(list.ok, format!("review-queue failed: {}", list.stderr))?;
-    has(&list.stdout, "vault#1", "the item is not listed")?;
+    has(&list.stdout, "vault#2", "the item is not listed")?;
     has(&list.stdout, "waiting", "the item is not waiting")?;
     check(!list.stdout.contains("blue"), "the listing shows text")?;
     // no judge is configured, so a pass decides nothing and the target room stays empty
@@ -83,7 +84,7 @@ fn crossing_waits(w: &World) -> Res {
         "text crossed without a verdict",
     )?;
     // a room at the same label is not a crossing
-    let same = w.run("alice", &["cross", "vault", "1", "--to", "vault"]);
+    let same = w.run("alice", &["cross", "vault", "2", "--to", "vault"]);
     check(!same.ok, "a same-label crossing was accepted")?;
     Ok(vec![])
 }
