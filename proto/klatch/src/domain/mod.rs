@@ -25,6 +25,11 @@ mod labels;
 mod mediator;
 mod merge_claim;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
+mod merge_queue;
+pub use merge_queue::{
+    CHECKING_PREFIX, DROPPED_PREFIX, DropReason, INTEGRATING_PREFIX, QUEUE_ENDED_SHOWN,
+    QUEUE_WORDS, QueueEntry, QueueState, READY_PREFIX, merge_queue,
+};
 mod model;
 pub(crate) mod parked;
 mod pr_lifecycle;

@@ -28,7 +28,11 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `handoff:` | The task's owner | Gives the task to the named member | Make the receiver accept it |
 | `finished:` | The task's owner | Ends the owner's task | End anyone else's task |
 | `pr: #N` | Anyone (the opener) | Lists PR N as open; unheld open PRs show at session start | Merge, review or approve the PR |
-| `merged: #N` | Anyone | Ends PR N and drops it from open PRs | Merge anything |
+| `merged: #N` | Anyone | Ends PR N and drops it from open PRs; in the merge queue it shows as merged when an integrator or the human posts it, and takes the PR out of the queue when anyone else does | Merge anything |
+| `ready: #N` | Anyone | Enqueues PR N in the merge queue on the board (a second one for a queued PR changes nothing; after a drop it enqueues it again at the back) | Merge, review or approve the PR |
+| `integrating: #N` | An integrator or the human | Shows queued PR N as being merged now; from anyone else it is ignored | Merge anything |
+| `checking: #N` | An integrator or the human | Shows queued PR N as having its checks run; from anyone else it is ignored | Merge anything |
+| `dropped: #N <reason>` | An integrator or the human | Takes queued PR N out of the queue and shows why (`conflict`, `checks-failed`, `closed`, `reverted`; any other word shows as other); from anyone else it is ignored | Close or revert anything |
 | `ask:N` | A helper, as a claim path (`claim lobby ask:N`) | Takes ask N for a short lease (90 seconds by default, renewed by claiming again) | Be held by two members at once |
 
 ## Adding a word

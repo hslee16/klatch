@@ -104,6 +104,10 @@ pub struct Board {
     pub tasks: Vec<crate::domain::Task>,
     /// Pull requests said to be open (item 84), with who holds each one's `pr:N` claim, if anyone.
     pub prs: Vec<crate::domain::OpenPr>,
+    /// The merge queue (#864): PRs said to be ready and how the integrator says each one is going.
+    pub queue: Vec<crate::domain::QueueEntry>,
+    /// The member holding the `merge:main` claim now, if any.
+    pub merge_holder: Option<String>,
 }
 
 /// `klatch who` as text: each member with last seen and status. Unless `all`, members not seen for
@@ -311,6 +315,12 @@ pub fn render_board(board: &Board, now: i64) -> String {
     render_list(&mut out, "tasks:", &tasks, "tasks");
     let prs: Vec<String> = board.prs.iter().map(|p| p.line(now.0)).collect();
     render_list(&mut out, "prs:", &prs, "prs");
+    let queue: Vec<String> = board.queue.iter().map(|e| e.line(now.0)).collect();
+    let heading = match &board.merge_holder {
+        Some(h) => format!("queue (merge:main held by {}):", flat(h)),
+        None => "queue (merge:main free):".to_string(),
+    };
+    render_list(&mut out, &heading, &queue, "queue entries");
     render_members(board, now, &mut out);
     out
 }
