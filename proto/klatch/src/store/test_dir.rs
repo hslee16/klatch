@@ -254,8 +254,10 @@ mod tests {
                     let text = std::fs::read_to_string(&p).unwrap();
                     for (i, line) in text.lines().enumerate() {
                         // a TMPDIR passed on to a child process and the live jev report file are not scratch directories
-                        let allowed =
-                            line.contains("\"TMPDIR\"") || line.contains("klatch-jev-live.txt");
+                        let allowed = line.contains("\"TMPDIR\"")
+                                || line.contains("klatch-jev-live.txt")
+                                // the hosted judge's own private working directory, removed on drop (#960)
+                                || line.contains("klatch-judge-run-");
                         if line.contains("temp_dir()") && !allowed {
                             hits.push(format!("{}:{}", p.display(), i + 1));
                         }

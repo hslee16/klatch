@@ -57,15 +57,9 @@ fn allow() -> String {
     result_json(serde_json::json!({"verdict": "allow", "confidence": 0.9}))
 }
 
-fn workdir() -> std::path::PathBuf {
-    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let d = std::env::temp_dir().join(format!(
-        "klatch-claude-judge-test-{}-{n}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+/// The judge only writes its settings file there when built, so the directory may go once the judge exists.
+fn workdir() -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new("claude-judge")
 }
 
 fn config(ceiling: &str) -> ClaudeConfig {

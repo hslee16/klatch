@@ -107,7 +107,8 @@ impl Scratch {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let dir = std::env::temp_dir().join(format!("klatch-judge-{}-{nanos}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("klatch-judge-run-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).context("cannot create the hosted judge's working directory")?;
         #[cfg(unix)]
         {
@@ -226,8 +227,8 @@ mod tests {
 
     #[test]
     fn the_hosted_stack_defers_on_failure_and_rejects_an_unknown_ceiling() {
-        let dir = std::env::temp_dir().join(format!("klatch-judge-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let scratch = Scratch::new().unwrap();
+        let dir = scratch.0.clone();
         let cfg = |ceiling: &str| ClaudeConfig {
             model: "sonnet".into(),
             program: "claude".into(),
@@ -246,6 +247,5 @@ mod tests {
             text: "t".into(),
         };
         assert_eq!(stack.judge(&item), klatch::domain::Verdict::Defer);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
