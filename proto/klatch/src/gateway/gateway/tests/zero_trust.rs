@@ -193,6 +193,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_set_facilitator", |g, w| {
         refused(g.admin_set_facilitator(w, "bob", true))
     }),
+    ("admin_set_integrator", |g, w| {
+        refused(g.admin_set_integrator(w, "bob", true))
+    }),
     ("admin_set_admin_agent", |g, w| {
         refused(g.admin_set_admin_agent(w, "bob", true))
     }),

@@ -132,6 +132,10 @@ fn roles(t: &dyn Transport, act: RoleAct) -> Result<()> {
             t.admin_set_facilitator(&member, !off)?;
             (member, off, "a facilitator")
         }
+        RoleAct::Integrator { member, off } => {
+            t.admin_set_integrator(&member, !off)?;
+            (member, off, "an integrator")
+        }
         RoleAct::AdminAgent { member, off } => {
             t.admin_set_admin_agent(&member, !off)?;
             (member, off, "the admin agent")

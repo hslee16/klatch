@@ -80,6 +80,7 @@ pub trait Transport {
     fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_facilitator(&self, member: &str, on: bool) -> Result<()>;
+    fn admin_set_integrator(&self, member: &str, on: bool) -> Result<()>;
     fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()>;
     /// Room creation and invites as a capability (#188): the policy and a member's grant, both the human's.
     fn admin_set_room_creation_granted(&self, on: bool) -> Result<()>;
@@ -331,6 +332,10 @@ impl<S: Store> Transport for Direct<S> {
     fn admin_set_facilitator(&self, member: &str, on: bool) -> Result<()> {
         self.gateway
             .admin_set_facilitator(&self.principal, member, on)
+    }
+    fn admin_set_integrator(&self, member: &str, on: bool) -> Result<()> {
+        self.gateway
+            .admin_set_integrator(&self.principal, member, on)
     }
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()> {
         self.gateway.admin_set_rate_limit(&self.principal, limit)

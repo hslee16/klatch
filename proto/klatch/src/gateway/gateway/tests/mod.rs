@@ -38,6 +38,7 @@ mod member_kind;
 mod member_places;
 mod member_surface;
 mod members;
+mod merge_claim;
 mod mute;
 mod notify;
 mod own_refusals;

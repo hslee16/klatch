@@ -14,7 +14,8 @@ pub(crate) enum WorkCmd {
         #[arg(hide = true)]
         more: Vec<String>,
         /// Seconds the claim lasts (default 600; an `ask:<N>` claim defaults to 90 and is capped at 300, so a helper
-        /// that fails frees the ask in about a minute: renew by claiming again)
+        /// that fails frees the ask in about a minute: renew by claiming again; `merge:main`, which only an integrator or
+        /// the human may take, is capped at 1800)
         #[arg(long)]
         ttl: Option<i64>,
         #[arg(long, default_value = "")]

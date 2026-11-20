@@ -28,6 +28,7 @@ mod lease_admin;
 mod librarian;
 mod liveness;
 mod member_state;
+mod merge_claim;
 mod pr_lifecycle;
 mod rate_limit;
 mod receipts;
@@ -120,6 +121,7 @@ pub fn all() -> Vec<Scenario> {
         judge::all(),
         retention::all(),
         pr_lifecycle::all(),
+        merge_claim::all(),
     ]
     .into_iter()
     .flatten()

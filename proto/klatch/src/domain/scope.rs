@@ -36,13 +36,20 @@ pub fn work_item_name(path: &str) -> Option<String> {
 
 /// The path as it is stored and compared: a work item name in its canonical form, anything else as typed.
 pub fn canonical_claim_path(path: &str) -> String {
+    if crate::domain::is_merge_claim(path) {
+        return crate::domain::MERGE_CLAIM.to_string();
+    }
     work_item_name(path).unwrap_or_else(|| path.to_string())
 }
 
 /// The scope a claim is stored under: shared for an explicit `--shared`, for room-wide names (`ask:<N>`) and for work
 /// item names (`ticket:<N>`, #632), otherwise the member's own scope (empty when it has none).
 pub fn claim_scope(path: &str, shared: bool, member_scope: Option<&str>) -> String {
-    if shared || path.starts_with("ask:") || work_item_name(path).is_some() {
+    if shared
+        || path.starts_with("ask:")
+        || work_item_name(path).is_some()
+        || crate::domain::is_merge_claim(path)
+    {
         SHARED_SCOPE.to_string()
     } else {
         member_scope.unwrap_or("").to_string()
