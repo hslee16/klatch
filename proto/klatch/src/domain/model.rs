@@ -60,6 +60,10 @@ pub struct MemberInfo {
     /// (#677). Self-reported and as new as its last hook, so never authority. The store leaves it `None`; the gateway
     /// fills it. `None` means no hook has reported.
     pub mode: Option<String>,
+    /// Whether the member was admitted in flag mode of a room-require (#61, #878): its harness lacks a capability the
+    /// room asked for, so its reliability is advisory. For display only, never authority. The store leaves it
+    /// `false`; the gateway fills it.
+    pub advisory: bool,
 }
 
 /// What a reader of `who` or the board may learn of where a member works: the derived repository id and the last

@@ -67,6 +67,8 @@ pub struct BoardMember {
     pub kind: Option<MemberKind>,
     /// Where the member was observed (#181), for display only.
     pub place: Option<MemberPlace>,
+    /// Admitted in flag mode of a room-require (#878), so its harness lacks a capability the room asked for.
+    pub advisory: bool,
 }
 
 /// The last component of a directory path, at most 40 characters, or `None` when there is none (the root, empty).
@@ -157,6 +159,9 @@ fn who_line(m: &MemberInfo, now: Now) -> String {
     }
     if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now.0)) {
         out.push_str(&format!("\t{}", flat(&p.phrase(now.0))));
+    }
+    if m.advisory {
+        out.push_str("\tadvisory: harness lacks a capability this room asked for");
     }
     out.push_str(&format!(
         "\tmode: {} (wake: {})",
@@ -276,8 +281,13 @@ fn render_members(board: &Board, now: Now, out: &mut String) {
             .iter()
             .map(|p| format!(", {p}"))
             .collect();
+        let advisory = if m.advisory {
+            ", advisory (harness lacks a capability this room asked for)"
+        } else {
+            ""
+        };
         out.push_str(&format!(
-            "  {} last seen {}s ago{parent}{kind}{place}{status}{parked}\n",
+            "  {} last seen {}s ago{parent}{kind}{place}{status}{parked}{advisory}\n",
             flat(&m.name),
             now.since(m.last_seen)
         ));

@@ -23,6 +23,7 @@ pub fn join_is_idempotent_and_lists_the_member<S: Store>(make: fn() -> S) {
             kind: None,
             place: None,
             mode: None,
+            advisory: false,
         }]
     );
     assert_eq!(s.rooms_of("alice").unwrap(), vec!["r".to_string()]);

@@ -213,6 +213,7 @@ mod tests {
             kind: None,
             place: None,
             mode: None,
+            advisory: false,
         }
     }
 
