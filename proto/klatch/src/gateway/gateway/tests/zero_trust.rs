@@ -325,6 +325,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
         "a policy lookup the budget check uses on every post; takes no principal",
     ),
     (
+        "rate_limit_for",
+        "the same lookup for one member's own limit (#972); takes no principal and changes nothing",
+    ),
+    (
         "with_leases",
         "builds the gateway: where liveness comes from",
     ),
