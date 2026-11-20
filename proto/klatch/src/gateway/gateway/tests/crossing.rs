@@ -5,6 +5,10 @@
 use super::*;
 use crate::domain::Verdict;
 
+fn judge() -> Principal {
+    Principal::unattributed("judge")
+}
+
 fn rev() -> Principal {
     Principal::unattributed("rev")
 }
@@ -110,7 +114,7 @@ fn a_deny_verdict_releases_nothing() {
     g.review_verdict(&rev(), id, &Verdict::Deny("leaks".into()))
         .unwrap();
     assert!(bob_sees(&g).is_empty());
-    assert!(g.release_crossings().unwrap().is_empty());
+    assert!(g.release_crossings(&judge()).unwrap().is_empty());
 }
 
 #[test]
@@ -138,7 +142,7 @@ fn a_verdict_releases_once_however_often_release_runs() {
     let (g, _) = world();
     let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
     g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
-    assert!(g.release_crossings().unwrap().is_empty());
+    assert!(g.release_crossings(&judge()).unwrap().is_empty());
     assert_eq!(bob_sees(&g).len(), 1);
 }
 
@@ -155,7 +159,7 @@ fn a_judge_verdict_is_applied_by_release_crossings() {
     g.request_crossing(&alice(), "vault", 1, "open").unwrap();
     crate::gateway::drain(&g.store, &Yes, 2_000).unwrap();
     assert!(bob_sees(&g).is_empty(), "a verdict alone moves nothing");
-    let out = g.release_crossings().unwrap();
+    let out = g.release_crossings(&judge()).unwrap();
     assert_eq!(out.len(), 1);
     assert_eq!(bob_sees(&g), vec!["the plan is blue"]);
 }
@@ -352,4 +356,63 @@ fn another_member_is_not_told_about_a_crossing() {
     g.request_crossing(&alice(), "vault", 1, "open").unwrap();
     let d = g.digest(&bob()).unwrap();
     assert!(d.rooms.iter().all(|r| r.crossings.is_empty()));
+}
+
+#[test]
+fn a_release_names_who_released_it_in_the_audit() {
+    use crate::domain::{Judge, ReviewItem};
+    struct Yes;
+    impl Judge for Yes {
+        fn judge(&self, _: &ReviewItem) -> Verdict {
+            Verdict::Allow
+        }
+    }
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    crate::gateway::drain(&g.store, &Yes, 2_000).unwrap();
+    g.release_crossings(&judge()).unwrap();
+    let log = g.admin_audit(&admin(), 10).unwrap();
+    assert!(
+        log.iter()
+            .any(|l| l.action == "crossing" && l.detail.contains("applied by judge")),
+        "{log:?}"
+    );
+}
+
+#[test]
+fn a_reviewers_own_verdict_names_the_reviewer_as_the_releaser() {
+    let (g, _) = world();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.review_verdict(&rev(), id, &Verdict::Allow).unwrap();
+    let log = g.admin_audit(&admin(), 10).unwrap();
+    assert!(
+        log.iter()
+            .any(|l| l.action == "crossing" && l.detail.contains("applied by rev")),
+        "{log:?}"
+    );
+}
+
+#[test]
+fn a_principal_without_the_role_cannot_release() {
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    // a reviewer may only review, so it may not drive the drain
+    assert_eq!(
+        rule_of(g.release_crossings(&rev()).unwrap_err()),
+        "reviewer"
+    );
+    // an admin agent has no release act on its list
+    g.admin_set_admin_agent(&admin(), "boss", true).unwrap();
+    let boss = Principal::unattributed("boss");
+    assert_eq!(
+        rule_of(g.release_crossings(&boss).unwrap_err()),
+        "admin-scope"
+    );
+    // on a members' gateway a plain member is refused too
+    let (m, _) = timed();
+    let m = m.for_members();
+    assert_eq!(
+        rule_of(m.release_crossings(&alice()).unwrap_err()),
+        "admin-scope"
+    );
 }

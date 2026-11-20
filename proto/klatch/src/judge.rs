@@ -70,7 +70,7 @@ fn pass(hosted: Option<&dyn Judge>) -> Result<()> {
         None => drain(&store, &rules, now())?,
     };
     let gateway = Gateway::new(store, CliClock, AllowAll);
-    let released = gateway.release_crossings()?;
+    let released = gateway.release_crossings(&Principal::unattributed("judge"))?;
     println!(
         "judged {} item(s): {} allowed, {} redacted, {} denied; {} left queued",
         out.decided(),
