@@ -93,6 +93,7 @@ fn seqs(f: &[ServerFrame]) -> Vec<u64> {
 }
 
 mod attributes;
+mod crossings_wire;
 mod dm;
 mod facilitator_wire;
 mod grant;
