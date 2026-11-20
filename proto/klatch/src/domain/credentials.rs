@@ -238,12 +238,13 @@ const LABELS: [&str; 8] = [
 /// Labels after which only a long base64 value counts (a bare word like `token` is too common in prose).
 const BLOB_LABELS: [&str; 3] = ["token", "apikey", "api_key"];
 
-/// The label starts a word (an `_` or `.` before it is fine) and is not the front of a longer word.
+/// The label starts a word (an `_` or `.` before it is fine) and is not the front of a longer word or a compound
+/// name (`secret-marker-7731`: a hyphen right after it is not a separator).
 fn whole_label(lower: &str, at: usize, len: usize) -> bool {
     let before = lower[..at].chars().next_back();
     let after = lower[at + len..].chars().next();
     !before.is_some_and(|c| c.is_ascii_alphabetic())
-        && !after.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '@'))
+        && !after.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '-'))
 }
 
 /// The word right after a label and its separator (`:`, `=`, spaces, an opening quote).
@@ -487,6 +488,9 @@ mod tests {
             "rotate the passphrase every year",
             "pw: ...",
             "password reset link expired",
+            "zq9-secret-marker-7731",
+            "see client-secret-rotation-2026 for the plan",
+            "the pass-through-2026 route",
             "password_hash: column added",
             "the token lives in the keychain under the item klatch-store; never paste it here",
             "test vector: HMAC-SHA256 of 'abc' with key 'key' is 9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab",
