@@ -25,6 +25,7 @@ pub(crate) struct TestDir {
     dir: PathBuf,
     stop: Option<mpsc::Sender<()>>,
     guard: Option<JoinHandle<()>>,
+    keep: bool,
 }
 
 impl TestDir {
@@ -65,7 +66,16 @@ impl TestDir {
             dir,
             stop: Some(stop),
             guard: Some(guard),
+            keep: false,
         }
+    }
+
+    /// Leave the directory behind when this value is dropped (the bench keeps the store of a round that found a
+    /// violation, for a look) and return its path. The size guard still stops with the drop.
+    #[allow(dead_code)] // only the bench keeps a directory
+    pub(crate) fn keep(&mut self) -> PathBuf {
+        self.keep = true;
+        self.dir.clone()
     }
 }
 
@@ -170,109 +180,8 @@ impl Drop for TestDir {
         if let Some(g) = self.guard.take() {
             let _ = g.join();
         }
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-
-    #[test]
-    fn the_directory_is_removed_when_the_value_is_dropped() {
-        let t = TestDir::new("drop-removes");
-        let dir = t.to_path_buf();
-        std::fs::write(dir.join("rooms.db"), b"data").unwrap();
-        std::fs::create_dir(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("sub").join("x"), b"more").unwrap();
-        assert!(dir.exists());
-        drop(t);
-        assert!(!dir.exists(), "the directory was left behind: {dir:?}");
-    }
-
-    #[test]
-    fn the_directory_is_removed_when_the_test_panics() {
-        let seen = Arc::new(std::sync::Mutex::new(PathBuf::new()));
-        let inner = seen.clone();
-        let result = std::panic::catch_unwind(move || {
-            let t = TestDir::new("panic-removes");
-            *inner.lock().unwrap() = t.to_path_buf();
-            std::fs::write(t.join("rooms.db"), b"data").unwrap();
-            panic!("a failing test");
-        });
-        assert!(result.is_err());
-        let dir = seen.lock().unwrap().clone();
-        assert!(!dir.as_os_str().is_empty());
-        assert!(!dir.exists(), "a panic left the directory behind: {dir:?}");
-    }
-
-    #[test]
-    fn two_directories_with_one_tag_are_different() {
-        let (a, b) = (TestDir::new("same"), TestDir::new("same"));
-        assert_ne!(&*a, &*b);
-        drop(a);
-        assert!(b.exists(), "dropping one removed the other");
-    }
-
-    #[test]
-    fn the_guard_fires_when_the_directory_passes_the_cap_and_not_before() {
-        let fired = Arc::new(AtomicBool::new(false));
-        let flag = fired.clone();
-        let t = TestDir::with_cap("guard-fires", 1024 * 1024, move |_| {
-            flag.store(true, Ordering::SeqCst)
-        });
-        std::fs::write(t.join("under"), vec![0u8; 512 * 1024]).unwrap();
-        std::thread::sleep(POLL * 5);
-        assert!(!fired.load(Ordering::SeqCst), "fired under the cap");
-        std::fs::create_dir(t.join("deep")).unwrap();
-        std::fs::write(t.join("deep").join("over"), vec![0u8; 1024 * 1024]).unwrap();
-        for _ in 0..200 {
-            if fired.load(Ordering::SeqCst) {
-                return;
-            }
-            std::thread::sleep(POLL);
+        if !self.keep {
+            let _ = std::fs::remove_dir_all(&self.dir);
         }
-        panic!("the guard did not fire on a directory over the cap");
-    }
-
-    /// #812: a test that makes its own directory under the temp directory cleans it on the happy path only and has no
-    /// size cap. The unit tests use `TestDir`; this scan keeps a new helper from going back to the by-hand form.
-    #[test]
-    fn no_unit_test_makes_a_temp_directory_by_hand() {
-        fn walk(dir: &Path, hits: &mut Vec<String>) {
-            for e in std::fs::read_dir(dir).unwrap().flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    walk(&p, hits);
-                } else if p.extension().is_some_and(|x| x == "rs") {
-                    let name = p.file_name().unwrap().to_string_lossy().into_owned();
-                    if name == "test_dir.rs" {
-                        continue;
-                    }
-                    let text = std::fs::read_to_string(&p).unwrap();
-                    for (i, line) in text.lines().enumerate() {
-                        // a TMPDIR passed on to a child process and the live jev report file are not scratch directories
-                        let allowed = line.contains("\"TMPDIR\"")
-                                || line.contains("klatch-jev-live.txt")
-                                // the hosted judge's own private working directory, removed on drop (#960)
-                                || line.contains("klatch-judge-run-");
-                        if line.contains("temp_dir()") && !allowed {
-                            hits.push(format!("{}:{}", p.display(), i + 1));
-                        }
-                    }
-                }
-            }
-        }
-        let mut hits = Vec::new();
-        walk(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut hits,
-        );
-        assert!(
-            hits.is_empty(),
-            "use TestDir instead of temp_dir(): {hits:#?}"
-        );
     }
 }

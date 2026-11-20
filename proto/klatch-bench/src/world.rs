@@ -3,14 +3,13 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub struct World {
     pub bin: PathBuf,
     /// The store directory every command of this world uses (`KLATCH_HOME`).
     pub home: PathBuf,
+    /// Holds the directory: removed with the world, also on a panic, and capped in size (#995).
+    _dir: crate::test_dir::TestDir,
     calls: Cell<u64>,
     clock: Cell<Option<i64>>,
     damaged: Cell<bool>,
@@ -31,13 +30,10 @@ pub enum CodexInput<'a> {
 
 impl World {
     pub fn new(bin: &Path) -> World {
-        let home = std::env::temp_dir().join(format!(
-            "klatch-bench-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::create_dir_all(&home).expect("create the world's store directory");
+        let dir = crate::test_dir::TestDir::new("bench");
+        let home = dir.to_path_buf();
         World {
+            _dir: dir,
             bin: bin.to_path_buf(),
             home,
             calls: Cell::new(0),
@@ -374,12 +370,6 @@ impl WorkerLauncher {
                 stderr: format!("could not start {}: {e}", self.bin.display()),
             },
         }
-    }
-}
-
-impl Drop for World {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.home).ok();
     }
 }
 

@@ -5,21 +5,21 @@ use klatch::protocol::{ServerFrame, decode_server_line};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
+
+#[path = "../../src/store/test_dir.rs"]
+pub mod test_dir;
+use test_dir::TestDir;
 
 pub static N: AtomicU32 = AtomicU32::new(0);
 
-pub struct Home(pub PathBuf);
+/// A throwaway KLATCH_HOME (removed when dropped, also when the test panics; #995). `.0` is the path, `.1` holds it.
+pub struct Home(pub PathBuf, TestDir);
 
 impl Home {
     pub fn new() -> Self {
-        let d = std::env::temp_dir().join(format!(
-            "klatch-cli-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        Home(d)
+        let dir = TestDir::new("cli");
+        Home(dir.to_path_buf(), dir)
     }
     pub fn run(&self, who: &str, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
@@ -97,12 +97,6 @@ impl Home {
         let o = self.run(who, args);
         assert!(!o.status.success(), "{args:?} unexpectedly succeeded");
         String::from_utf8_lossy(&o.stderr).into_owned()
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).ok();
     }
 }
 
@@ -186,16 +180,12 @@ pub fn without_a_name(home: &Home, fake_home: &std::path::Path, args: &[&str]) -
 }
 
 pub struct Setup {
-    root: PathBuf,
+    root: TestDir,
 }
 
 impl Setup {
     pub fn new() -> Self {
-        let d = std::env::temp_dir().join(format!(
-            "klatch-init-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
+        let d = TestDir::new("init");
         std::fs::create_dir_all(d.join("project")).unwrap();
         std::fs::create_dir_all(d.join("home")).unwrap();
         Setup { root: d }
@@ -240,12 +230,6 @@ impl Setup {
     }
     pub fn read(path: &std::path::Path) -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-    }
-}
-
-impl Drop for Setup {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).ok();
     }
 }
 

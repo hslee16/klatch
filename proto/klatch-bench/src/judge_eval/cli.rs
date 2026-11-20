@@ -10,11 +10,11 @@
 use crate::judge_eval::cascade::CascadeEval;
 use crate::judge_eval::claude::{ClaudeConfig, ClaudeJudge, RealRunner};
 use crate::judge_eval::corpus::{self, Split};
-use crate::judge_eval::judges::{EvalJudge, RulesJudge, Seam, parse_scrub};
+use crate::judge_eval::judges::{EvalJudge, Judged, RulesJudge, Seam, parse_scrub};
 use crate::judge_eval::metrics::{Record, Summary, summarize};
 use crate::judge_eval::report;
 use crate::judge_eval::run::run_items;
-use klatch::domain::{CascadePolicy, NullJudge};
+use klatch::domain::{CascadePolicy, NullJudge, ReviewItem};
 
 pub const USAGE: &str = "usage: klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> \
 [--split dev|test] [--limit N] [--out FILE] [--target-leak F] [--ceiling LABEL] [--budget-usd F] \
@@ -279,16 +279,31 @@ fn build_jev(
         .into())
 }
 
-/// A fresh private directory for the claude sessions to run in.
-fn workdir() -> Result<std::path::PathBuf, String> {
-    let d = std::env::temp_dir().join(format!("klatch-judge-eval-{}", std::process::id()));
-    std::fs::create_dir_all(&d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
+/// A fresh private directory for the claude sessions to run in. It is removed when the judge that holds it is dropped.
+fn workdir() -> Result<crate::test_dir::TestDir, String> {
+    let d = crate::test_dir::TestDir::new("judge-eval");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(&*d, std::fs::Permissions::from_mode(0o700));
     }
     Ok(d)
+}
+
+/// A judge together with the directory it runs in: the directory goes when the judge does.
+struct InDir<J> {
+    judge: J,
+    _dir: crate::test_dir::TestDir,
+}
+
+impl<J: EvalJudge> EvalJudge for InDir<J> {
+    fn name(&self) -> String {
+        self.judge.name()
+    }
+
+    fn evaluate(&self, item: &ReviewItem) -> Judged {
+        self.judge.evaluate(item)
+    }
 }
 
 pub fn build_judge(o: &Options, scrub: &[(String, String)]) -> Result<Box<dyn EvalJudge>, String> {
@@ -323,12 +338,9 @@ fn build_spec(
                 timeout: std::time::Duration::from_secs(300),
             };
             let lookup = |k: &str| std::env::var(k).ok();
-            Ok(Box::new(ClaudeJudge::new(
-                config,
-                runner,
-                &workdir()?,
-                &lookup,
-            )?))
+            let dir = workdir()?;
+            let judge = ClaudeJudge::new(config, runner, &dir, &lookup)?;
+            Ok(Box::new(InDir { judge, _dir: dir }))
         }
         JudgeSpec::Jev { model, threshold } => build_jev(model.as_deref(), *threshold, &o.ceiling),
     }
@@ -377,11 +389,8 @@ pub fn run(o: &Options) -> Result<(Summary, Vec<Record>), String> {
         }
     };
     let records = run_items(judge.as_ref(), &chosen, &mut clock, &mut progress);
-    if talk {
-        let _ = std::fs::remove_dir_all(
-            std::env::temp_dir().join(format!("klatch-judge-eval-{}", std::process::id())),
-        );
-    }
+    // the judge is dropped here, and takes its working directory with it
+    drop(judge);
     Ok((summarize(&records, o.target_leak), records))
 }
 

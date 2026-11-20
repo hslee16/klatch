@@ -11,6 +11,8 @@ mod memory_spike;
 mod sqlite;
 #[cfg(test)]
 pub(crate) mod test_dir;
+#[cfg(test)]
+mod test_dir_tests;
 
 mod features;
 pub use area::{
