@@ -2,6 +2,7 @@
 //! operation takes a `Principal`, validates its inputs, passes the `Guard` exactly once, and only then
 //! touches the store. The label check will live in the guard and nowhere else.
 
+mod claude_judge;
 mod clock;
 // The Gateway itself keeps its own file; it was the crate's namesake before the crates became modules.
 #[allow(clippy::module_inception)]
@@ -19,6 +20,9 @@ mod sys_lease;
 mod transport;
 mod wake;
 
+pub use claude_judge::{
+    BelowCeiling, ClaudeConfig, ClaudeJudge, Invocation, ProcessOutput, ProcessRunner, RealRunner,
+};
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{
     AnchorAdapter, Archive, ClaimSpec, CredentialInfo, CredentialSpec, DEFAULT_CAP_SECS,
