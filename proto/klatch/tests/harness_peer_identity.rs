@@ -40,6 +40,24 @@ fn peer_pid(stream: &UnixStream) -> Option<u32> {
     (rc == 0).then_some(value[0] as u32)
 }
 
+/// The longest unix socket path the platforms allow is about 104 bytes on macOS (108 on Linux), counting the
+/// terminating zero; stay under 100 so one limit works for both.
+const MAX_SOCKET_PATH: usize = 100;
+
+/// `dir/name` as a socket path, or a panic that names the limit: a long TMPDIR otherwise shows up only as the bare
+/// "path must be shorter than SUN_LEN" from `bind` (#778).
+fn socket_in(dir: &Path, name: &str) -> PathBuf {
+    let socket = dir.join(name);
+    let len = socket.as_os_str().len();
+    assert!(
+        len < MAX_SOCKET_PATH,
+        "the test socket path is {len} bytes ({}), over the unix socket limit (SUN_LEN, about 104 bytes on macOS); \
+         the temp directory is too long, so set TMPDIR to a short directory such as /tmp/k and run again",
+        socket.display()
+    );
+    socket
+}
+
 fn temp(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("klatch-peer-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -90,7 +108,7 @@ fn domain() -> &'static str {
 #[test]
 fn the_server_learns_the_pid_of_the_process_that_connected_and_maps_it_to_its_session() {
     let dir = temp("map");
-    let socket = dir.join("gateway.sock");
+    let socket = socket_in(&dir, "gateway.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let mut session = fake_session(&dir, &client_script(&socket));
     let (stream, _) = listener.accept().unwrap();
@@ -122,7 +140,7 @@ fn the_server_learns_the_pid_of_the_process_that_connected_and_maps_it_to_its_se
 #[test]
 fn a_process_with_no_session_above_it_maps_to_nothing() {
     let dir = temp("none");
-    let socket = dir.join("gateway.sock");
+    let socket = socket_in(&dir, "gateway.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let mut client = Command::new("sh")
         .arg("-c")
@@ -138,4 +156,19 @@ fn a_process_with_no_session_above_it_maps_to_nothing() {
     let _ = client.kill();
     let _ = client.wait();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+#[should_panic(expected = "SUN_LEN")]
+fn a_socket_path_over_the_limit_is_refused_with_a_message_that_names_it() {
+    let long = PathBuf::from("/tmp").join("x".repeat(120));
+    socket_in(&long, "gateway.sock");
+}
+
+#[test]
+fn a_short_socket_path_is_accepted() {
+    assert_eq!(
+        socket_in(Path::new("/tmp/k"), "gateway.sock"),
+        PathBuf::from("/tmp/k/gateway.sock")
+    );
 }
