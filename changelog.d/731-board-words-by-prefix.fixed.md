@@ -1,0 +1,1 @@
+- The board's member statuses and offers and the open asks no longer miss messages past the first 5000 of a busy room; they are read by prefix at any depth (#731).

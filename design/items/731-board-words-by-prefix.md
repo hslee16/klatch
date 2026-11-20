@@ -1,0 +1,4 @@
+The board reads statuses, offers and asks by prefix at any depth (#731; no schema change; 2026-11-19).
+`board()` derived member statuses and offers, and `AskStore::open_asks` derived the open asks, from `tail(room, 0, 5000)`, which returns the oldest 5000 messages of a room, not the latest. In a room past 5000 messages a newer ask, offer or status was invisible. They now use `MessageStore::words` (the prefix query the task and PR folds already use), so the fold sees every message that carries one of its words and none of the chatter. `BOARD_WORDS` (`offering:`, `withdrawn:`, `status:`) and `ASK_WORDS` (`seeking:`, `answer to #`, `closed #`, `reopen #`, `partial #`, `declined #`, `failed #`, `need-info #`, `info #`) list the prefixes beside the folds that read them; a new word the fold learns must be added to its list.
+
+The facilitator need-info checks still read a 5000-message window (#980).

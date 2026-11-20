@@ -233,3 +233,27 @@ fn available_keeps_the_offers_on_the_board_and_a_set_status_carries_its_time() {
         (Some("available"), 100)
     );
 }
+
+#[test]
+fn statuses_offers_and_asks_deep_in_a_busy_room_are_still_on_the_board() {
+    let g = Gateway::new(SpyStore::new(), FixedClock(1000), AllowAll);
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    bury(&g, "r");
+    g.store
+        .post(Seat::new("r", "alice"), "seeking: a late ask", 990)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "bob"), "offering: a late offer", 995)
+        .unwrap();
+    g.store
+        .post(Seat::new("r", "alice"), "status: reviewing", 996)
+        .unwrap();
+    let b = g.board(&bob(), "r").unwrap();
+    let asks: Vec<_> = b.asks.iter().map(|a| a.text.as_str()).collect();
+    assert_eq!(asks, ["seeking: a late ask"], "{asks:?}");
+    let offers: Vec<_> = b.offers.iter().map(|o| o.sender.as_str()).collect();
+    assert_eq!(offers, ["bob"], "{offers:?}");
+    let a = b.members.iter().find(|m| m.name == "alice").unwrap();
+    assert_eq!(a.status.as_deref(), Some("reviewing"));
+}
