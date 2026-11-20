@@ -495,6 +495,9 @@ fn the_last_audit_lookup_uses_the_audit_index() {
         .map(|r| r.unwrap())
         .collect();
     let plan = plan.join(" | ");
-    assert!(plan.contains("admin_audit_action_target_ts"), "plan: {plan}");
+    assert!(
+        plan.contains("admin_audit_action_target_ts"),
+        "plan: {plan}"
+    );
     assert!(!plan.contains("SCAN"), "plan: {plan}");
 }
