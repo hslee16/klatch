@@ -1080,9 +1080,10 @@ impl HookArgs {
 fn session_end(t: &dyn Transport) -> Result<()> {
     // Only the rooms are needed: a digest would mark unread messages as shown, and a resumed session would never
     // be shown them (#30).
-    let rooms = t.rooms()?;
-    // a member that has ended cannot be working: free what it held (#277)
+    // a member that has ended cannot be working: free what it held (#277). First, so a credential that idled out
+    // before the hook (which refuses `rooms`, #835) still frees the claims.
     let _ = t.release_all();
+    let rooms = t.rooms()?;
     for room in &rooms {
         let _ = t.set_status(room, "done session ended");
     }

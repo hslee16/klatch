@@ -478,3 +478,234 @@ fn the_guard_sees_every_guarded_method_exactly_once_per_call() {
         );
     }
 }
+
+/// Own-record methods that take no principal: building, the clock, policy lookups the gateway itself uses. Nothing
+/// of a caller's own record can be read or written through them, so there is no credential to look at (#835).
+const NO_PRINCIPAL: &[&str] = &[
+    "new",
+    "with_notifier",
+    "for_members",
+    "now",
+    "room_grantor",
+    "change_token",
+    "sealed_labels",
+    "sealed_labels_within",
+    "verify_credential",
+    "use_label_keys",
+    "clearance_of",
+    "room_label",
+    "role_of",
+    "is_admin_agent",
+    "is_librarian",
+    "is_facilitator",
+    "can_create_rooms",
+    "lease_policy",
+    "rate_limit",
+    "rate_limit_for",
+    "with_leases",
+    "release_crossings",
+    // asks the guard once per room, so a principal whose credential ended is refused for every room (#161)
+    "digest",
+    "digest_with",
+];
+
+/// Every own-record method that takes the caller's principal (#835): a verified principal whose credential ended
+/// (revoked, expired) is refused (`None`), unless the end of a worker's session needs the method (`Some(reason)`).
+/// A new own-record method that takes a principal must be added here, and the tests below prove each row.
+type OwnCall = fn(&Gateway<SpyStore>, &Principal) -> Result<()>;
+const AFTER_END: &[(&str, OwnCall, Option<&str>)] = &[
+    ("note_session", |g, w| g.note_session(w, "sess-1"), None),
+    ("note_parent", |g, w| g.note_parent(w, Some("lead")), None),
+    (
+        "note_member_mode",
+        |g, w| g.note_member_mode(w, "default"),
+        None,
+    ),
+    ("record_stop", |g, w| g.record_stop(w, 1, 0), None),
+    ("sign_of_life", |g, w| g.sign_of_life(w), None),
+    ("set_scope", |g, w| g.set_scope(w, "repo"), None),
+    ("scope_of", |g, w| g.scope_of(w).map(|_| ()), None),
+    (
+        "set_kind",
+        |g, w| g.set_kind(w, Some(crate::domain::MemberKind::Bot)),
+        None,
+    ),
+    ("kind_of", |g, w| g.kind_of(w).map(|_| ()), None),
+    ("my_refusals", |g, w| g.my_refusals(w, 5).map(|_| ()), None),
+    (
+        "my_crossings",
+        |g, w| g.my_crossings(w, 5).map(|_| ()),
+        None,
+    ),
+    ("delivery_view", |g, w| g.delivery_view(w).map(|_| ()), None),
+    (
+        "set_delivery_view",
+        |g, w| g.set_delivery_view(w, crate::gateway::DeliveryView::Scope),
+        None,
+    ),
+    ("rooms", |g, w| g.rooms(w).map(|_| ()), None),
+    (
+        "record_hook_run",
+        |g, w| g.record_hook_run(w, "SessionEnd", 0),
+        Some(
+            "only the `SessionEnd` event: a session whose credential idled out must still be able to record that it ended; any other event is refused (checked separately)",
+        ),
+    ),
+    (
+        "release_all",
+        |g, w| g.release_all(w).map(|_| ()),
+        Some(
+            "frees only the caller's own claims, and the end of a session must free what it held even when the credential idled out first (#277); refusing would leave the claims held until their leases run out",
+        ),
+    ),
+    (
+        "end_credential",
+        |g, w| g.end_credential(w).map(|_| ()),
+        Some(
+            "it only revokes the caller's own credential and does nothing when none is live, so a second call adds no authority",
+        ),
+    ),
+];
+
+#[test]
+fn every_own_record_method_is_classified_for_a_principal_whose_credential_ended() {
+    let in_table: Vec<&str> = AFTER_END.iter().map(|(n, _, _)| *n).collect();
+    for (name, _) in OWN_RECORD {
+        let no_principal = NO_PRINCIPAL.contains(name);
+        let with_principal = in_table.contains(name);
+        assert!(
+            no_principal != with_principal,
+            "own-record method {name}: list it in exactly one of NO_PRINCIPAL or AFTER_END (#835)"
+        );
+    }
+    let strays: Vec<&&str> = NO_PRINCIPAL
+        .iter()
+        .chain(in_table.iter())
+        .filter(|n| !OWN_RECORD.iter().any(|(o, _)| *o == **n))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "classified but not in OWN_RECORD: {strays:?}"
+    );
+}
+
+/// How a credential ends, so every row is proven for each way.
+#[derive(Clone, Copy, Debug)]
+enum Ending {
+    SessionEnd,
+    AdminRevoke,
+    Expiry,
+}
+
+fn worker_spec(max_life: Option<i64>) -> CredentialSpec<'static> {
+    CredentialSpec {
+        member: "w-1",
+        clearance: "internal",
+        ttl: 600,
+        max_life,
+        parent: None,
+    }
+}
+
+fn ended_worker(how: Ending) -> (Gateway<SpyStore>, Principal) {
+    let (g, t) = timed();
+    let token = g
+        .admin_issue_credential(&admin(), &worker_spec(Some(600)))
+        .unwrap();
+    let who = g.verify_credential("w-1", &token).unwrap();
+    match how {
+        Ending::SessionEnd => assert!(g.end_credential(&who).unwrap()),
+        Ending::AdminRevoke => g.admin_revoke_credential(&admin(), "w-1").unwrap(),
+        Ending::Expiry => t.set(t.get() + 601),
+    }
+    (g, who)
+}
+
+#[test]
+fn a_live_credential_may_call_every_own_record_method() {
+    for (name, call, _) in AFTER_END {
+        let (g, t) = timed();
+        let token = g
+            .admin_issue_credential(&admin(), &worker_spec(None))
+            .unwrap();
+        let who = g.verify_credential("w-1", &token).unwrap();
+        t.set(t.get() + 1);
+        let r = call(&g, &who);
+        assert!(
+            !matches!(r, Err(Error::Refused { .. })),
+            "{name} refused a live credential: {r:?}"
+        );
+    }
+}
+
+#[test]
+fn every_own_record_method_refuses_an_ended_credential_unless_it_is_listed_with_a_reason() {
+    for how in [Ending::SessionEnd, Ending::AdminRevoke, Ending::Expiry] {
+        for (name, call, allowed) in AFTER_END {
+            let (g, who) = ended_worker(how);
+            let r = call(&g, &who);
+            match allowed {
+                None => match r {
+                    Err(Error::Refused { rule, .. }) => {
+                        assert_eq!(rule, "credential", "{name} after {how:?}")
+                    }
+                    other => panic!("{name} was not refused after {how:?}: {other:?}"),
+                },
+                Some(_) => assert!(
+                    !matches!(r, Err(Error::Refused { .. })),
+                    "{name} is listed as allowed after the end but was refused after {how:?}: {r:?}"
+                ),
+            }
+        }
+    }
+}
+
+#[test]
+fn after_the_end_only_the_session_end_hook_run_is_recorded() {
+    let (g, who) = ended_worker(Ending::Expiry);
+    for event in ["Stop", "SessionStart", "PostToolUse"] {
+        assert!(is_refused(g.record_hook_run(&who, event, 0)), "{event}");
+    }
+    g.record_hook_run(&who, "SessionEnd", 0).unwrap();
+}
+
+#[test]
+fn the_session_end_sequence_still_frees_claims_and_ends_the_credential_after_an_idle_expiry() {
+    let (g, t) = timed();
+    let token = g
+        .admin_issue_credential(&admin(), &worker_spec(Some(600)))
+        .unwrap();
+    let who = g.verify_credential("w-1", &token).unwrap();
+    g.join(&who, "r").unwrap();
+    g.claim(&who, "r", &ClaimSpec::new("p", 3_000, "")).unwrap();
+    t.set(t.get() + 601);
+    assert!(g.release_all(&who).unwrap() >= 1, "the claim was not freed");
+    g.record_hook_run(&who, "SessionEnd", 0).unwrap();
+    g.end_credential(&who).unwrap();
+    assert!(g.claims(&admin(), "r").unwrap().is_empty());
+}
+
+#[test]
+fn a_verified_principal_proven_some_other_way_and_a_typed_name_are_not_touched_by_the_own_record_check()
+ {
+    let (g, t) = timed();
+    let token = g
+        .admin_issue_credential(&admin(), &worker_spec(None))
+        .unwrap();
+    let _ = g.verify_credential("w-1", &token).unwrap();
+    t.set(t.get() + 700);
+    let peer = Principal::verified("peer-1");
+    let typed = Principal::unattributed("w-1");
+    for (name, call, _) in AFTER_END {
+        if *name == "end_credential" {
+            continue;
+        }
+        for who in [&peer, &typed] {
+            let r = call(&g, who);
+            assert!(
+                !matches!(r, Err(Error::Refused { .. })),
+                "{name} refused {who:?}: {r:?}"
+            );
+        }
+    }
+}
