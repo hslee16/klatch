@@ -56,6 +56,10 @@ pub struct MemberInfo {
     /// Where klatch observed the member (#181), for display and grouping only: the repository id and the short
     /// name of the directory, never the path. The store leaves it `None`; the gateway fills it. Never authority.
     pub place: Option<MemberPlace>,
+    /// The permission mode the member last reported from a hook (#553), for display and for choosing a wake path
+    /// (#677). Self-reported and as new as its last hook, so never authority. The store leaves it `None`; the gateway
+    /// fills it. `None` means no hook has reported.
+    pub mode: Option<String>,
 }
 
 /// What a reader of `who` or the board may learn of where a member works: the derived repository id and the last

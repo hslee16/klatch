@@ -221,10 +221,9 @@ pub(super) fn check_growth(r: &mut Report, home: Option<&Path>) {
 }
 
 fn nudge_effect(mode: &str) -> Status {
-    match mode {
-        "bypassPermissions" => Status::Warn,
-        "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" => Status::Ok,
-        _ => Status::Warn,
+    match klatch::domain::wake_path(Some(mode)) {
+        klatch::domain::WakePath::Nudge => Status::Ok,
+        klatch::domain::WakePath::HookAndWatcher => Status::Warn,
     }
 }
 

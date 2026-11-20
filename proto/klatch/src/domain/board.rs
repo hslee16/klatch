@@ -158,6 +158,11 @@ fn who_line(m: &MemberInfo, now: Now) -> String {
     if let Some(p) = m.parked.as_ref().filter(|p| p.holds(now.0)) {
         out.push_str(&format!("\t{}", flat(&p.phrase(now.0))));
     }
+    out.push_str(&format!(
+        "\tmode: {} (wake: {})",
+        m.mode.as_deref().map_or("unknown".into(), flat),
+        crate::domain::wake_path(m.mode.as_deref()).word()
+    ));
     out
 }
 
@@ -386,6 +391,27 @@ pub fn ask_reach_note(members: &[MemberInfo], me: &str, now: i64) -> Option<Stri
          saved and a helper that joins later sees it at session start, but do not wait on it: run `klatch board` to \
          see who is around, or tell your human what is missing."
             .to_string()
+    })
+}
+
+/// What a poster should be told when a member that is present gets no socket nudge because its last reported
+/// permission mode bypasses prompts (#677): the nudge would be held and dropped, so it reaches that member through its
+/// hooks and the wake watcher. Names only members seen within `MEMBER_ACTIVE_SECS`, never the poster, and never a
+/// member whose mode is merely unknown (that would be noise for every member whose hooks have not run).
+pub fn nudge_skipped_note(members: &[MemberInfo], me: &str, now: i64) -> Option<String> {
+    let skipped: Vec<String> = members
+        .iter()
+        .filter(|m| m.name != me && now - m.last_seen <= MEMBER_ACTIVE_SECS)
+        .filter(|m| m.mode.as_deref() == Some("bypassPermissions"))
+        .map(|m| flat(&m.name))
+        .collect();
+    (!skipped.is_empty()).then(|| {
+        format!(
+            "klatch: no socket nudge for {} (permission mode bypassPermissions: Claude Code holds and drops it); it gets \
+             this from its hooks and the wake watcher (klatch init --wake), so it may take until its next prompt or \
+             watcher tick.",
+            skipped.join(", ")
+        )
     })
 }
 

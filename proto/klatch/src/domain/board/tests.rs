@@ -28,6 +28,7 @@ fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
         parked: None,
         kind: None,
         place: None,
+        mode: None,
     }
 }
 
@@ -619,4 +620,71 @@ fn available_is_not_done_so_it_keeps_the_offer_and_the_reach() {
     assert_eq!(statuses(&offers)[0].status, "available");
     let m = [peer("helper", 4999, Some("available"))];
     assert!(ask_reach_note(&m, "asker", 5000).is_none());
+}
+
+fn with_mode(name: &str, mode: Option<&str>) -> MemberInfo {
+    MemberInfo {
+        mode: mode.map(Into::into),
+        ..peer(name, 1000, None)
+    }
+}
+
+#[test]
+fn who_shows_the_mode_and_the_wake_path_and_says_unknown_when_no_hook_reported() {
+    let text = render_who(
+        &[
+            with_mode("byp", Some("bypassPermissions")),
+            with_mode("zed", Some("default")),
+            with_mode("new", None),
+        ],
+        1000,
+        true,
+    );
+    let line = |n: &str| text.lines().find(|l| l.starts_with(n)).unwrap().to_string();
+    assert!(
+        line("byp").contains("\tmode: bypassPermissions (wake: hook)"),
+        "{text}"
+    );
+    assert!(
+        line("zed").contains("\tmode: default (wake: nudge)"),
+        "{text}"
+    );
+    assert!(
+        line("new").contains("\tmode: unknown (wake: hook)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_mode_with_control_characters_cannot_break_the_who_line() {
+    let text = render_who(&[with_mode("x", Some("a\tb\nc"))], 1000, true);
+    assert_eq!(text.lines().count(), 1, "{text:?}");
+}
+
+#[test]
+fn the_ask_notice_names_a_bypassing_member_that_gets_no_nudge() {
+    let members = [
+        peer("asker", 1000, None),
+        with_mode("byp", Some("bypassPermissions")),
+        with_mode("zed", Some("default")),
+    ];
+    let note = nudge_skipped_note(&members, "asker", 1000).unwrap();
+    assert!(note.contains("byp"), "{note}");
+    assert!(note.contains("bypassPermissions"), "{note}");
+    assert!(!note.contains("zed"), "{note}");
+    assert!(!note.contains('\u{2014}'));
+}
+
+#[test]
+fn no_nudge_notice_for_prompting_unknown_gone_or_own_modes() {
+    let members = [
+        with_mode("asker", Some("bypassPermissions")),
+        with_mode("pro", Some("plan")),
+        with_mode("new", None),
+        MemberInfo {
+            mode: Some("bypassPermissions".into()),
+            ..peer("gone", 1000 - MEMBER_ACTIVE_SECS - 1, None)
+        },
+    ];
+    assert_eq!(nudge_skipped_note(&members, "asker", 1000), None);
 }
