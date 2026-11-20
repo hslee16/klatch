@@ -565,6 +565,31 @@ D
 ( cd "$d" && "$sweep" --resolve-docs DESIGN.md > /dev/null 2>&1 )
 if ! grep -q '^[<>=]\{7\}' "$d/DESIGN.md" && [ "$(grep '^3[0-9]\.' "$d/DESIGN.md" | cut -d. -f1 | tr '\n' ' ')" = "30 31 32 " ]; then ok "the docs resolver keeps both sides and sorts DESIGN items by number"; else bad "resolver: $(cat "$d/DESIGN.md")"; fi
 
+# --- a conflict on a numbered item that both sides carry with different text is not kept twice (#832)
+d="$work/res2"; mkdir -p "$d"
+cat > "$d/DESIGN.md" <<'D'
+head
+29. **a** old
+<<<<<<< HEAD
+97. **x** original text
+=======
+97. **x** edited text
+>>>>>>> pr
+D
+( cd "$d" && "$sweep" --resolve-docs DESIGN.md > /dev/null 2>&1 )
+if [ "$(grep -c '^97\.' "$d/DESIGN.md")" -le 1 ] || grep -q '^<<<<<<<' "$d/DESIGN.md"; then ok "an item edited on one side and present on the other is not duplicated (left as a conflict)"; else bad "duplicate item: $(cat "$d/DESIGN.md")"; fi
+d="$work/res3"; mkdir -p "$d"
+cat > "$d/DESIGN.md" <<'D'
+head
+<<<<<<< HEAD
+97. **x** same
+=======
+98. **y** other
+>>>>>>> pr
+D
+( cd "$d" && "$sweep" --resolve-docs DESIGN.md > /dev/null 2>&1 )
+if ! grep -q '^<<<<<<<' "$d/DESIGN.md" && [ "$(grep -c '^9[78]\.' "$d/DESIGN.md")" -eq 2 ]; then ok "two different new items still keep both sides"; else bad "two new items: $(cat "$d/DESIGN.md")"; fi
+
 # --- pr-ledger with a fake gh and klatch: --only, the number of API calls, failures, the budget floor (#754, #756)
 lbin="$work/lbin"; mkdir -p "$lbin"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -1,0 +1,1 @@
+- pr-sweep no longer keeps both copies of a DESIGN.md item that two PRs edited differently; it reports a conflict and stops (#832).
