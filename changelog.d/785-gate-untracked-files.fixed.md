@@ -1,0 +1,1 @@
+- The local gate refuses untracked, not ignored files under proto/, clients/ and release/ (a new source file left out of the commit passed locally and failed in CI); --allow-dirty overrides it (#785).
