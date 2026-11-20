@@ -219,10 +219,8 @@ mod tests {
 
     #[test]
     fn a_damaged_file_fails_the_page_check() {
-        let dir = std::env::temp_dir().join(format!("klatch-integrity-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::store::test_dir::TestDir::new("integrity");
         let path = dir.join("t.db");
-        let _ = std::fs::remove_file(&path);
         {
             let c = Connection::open(&path).unwrap();
             c.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE t(a TEXT, b INTEGER); CREATE INDEX ti ON t(a);")
@@ -247,6 +245,5 @@ mod tests {
         let c = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let p = page_check(&c).unwrap();
         assert!(!p.is_empty(), "a damaged file passed the page check");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

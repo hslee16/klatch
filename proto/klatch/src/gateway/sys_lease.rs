@@ -84,9 +84,8 @@ mod tests {
     use super::*;
     use crate::harness::{ProcessTable, Verdict};
 
-    fn home(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-syslease-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn home(tag: &str) -> crate::store::test_dir::TestDir {
+        let d = crate::store::test_dir::TestDir::new(&format!("syslease-{tag}"));
         std::fs::create_dir_all(d.join(".claude/sessions")).unwrap();
         d
     }

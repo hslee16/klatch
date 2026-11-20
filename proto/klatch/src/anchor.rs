@@ -170,40 +170,34 @@ mod tests {
 
     #[test]
     fn a_dot_file_is_never_a_done_marker() {
-        let d = std::env::temp_dir().join(format!("klatch-anchor-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = temp_dir("dot");
         std::fs::write(d.join("."), "").ok();
-        let a = DirAnchors(d.clone());
+        let a = DirAnchors(d.to_path_buf());
         assert!(!a.is_done(".").unwrap());
         assert!(!a.is_done("..").unwrap());
         std::fs::write(d.join("wo-1"), "").unwrap();
         assert!(a.is_done("wo-1").unwrap());
         assert!(!a.is_done("wo-2").unwrap());
-        std::fs::remove_dir_all(&d).ok();
     }
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-wt-{tag}-{}", std::process::id()));
-        std::fs::remove_dir_all(&d).ok();
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn temp_dir(tag: &str) -> crate::test_dir::TestDir {
+        crate::test_dir::TestDir::new(&format!("anchor-{tag}"))
     }
 
     #[test]
     fn a_worktree_anchor_is_done_when_its_directory_is_gone() {
         let root = temp_dir("gone");
         std::fs::create_dir(root.join("feature-x")).unwrap();
-        let a = WorktreeAnchors(root.clone());
+        let a = WorktreeAnchors(root.to_path_buf());
         assert!(!a.is_done("wt:feature-x").unwrap());
         std::fs::remove_dir(root.join("feature-x")).unwrap();
         assert!(a.is_done("wt:feature-x").unwrap());
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_worktree_anchor_that_is_a_path_or_a_missing_root_says_nothing() {
         let root = temp_dir("odd");
-        let a = WorktreeAnchors(root.clone());
+        let a = WorktreeAnchors(root.to_path_buf());
         for odd in ["wt:", "wt:../x", "wt:a/b", "wt:.hidden", "wo:7"] {
             assert!(a.is_done(odd).is_err(), "{odd}");
         }
@@ -212,7 +206,6 @@ mod tests {
             missing.is_done("wt:x").is_err(),
             "a wrong root freed a claim"
         );
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -221,23 +214,21 @@ mod tests {
         let marks = temp_dir("routed-marks");
         std::fs::write(marks.join("wo-1"), "").unwrap();
         let both = Routed {
-            dir: Some(DirAnchors(marks.clone())),
-            worktrees: Some(WorktreeAnchors(root.clone())),
+            dir: Some(DirAnchors(marks.to_path_buf())),
+            worktrees: Some(WorktreeAnchors(root.to_path_buf())),
         };
         assert!(both.is_done("wo-1").unwrap());
         assert!(both.is_done("wt:gone").unwrap());
         let only_dir = Routed {
-            dir: Some(DirAnchors(marks.clone())),
+            dir: Some(DirAnchors(marks.to_path_buf())),
             worktrees: None,
         };
         assert!(only_dir.is_done("wt:gone").is_err());
         let only_wt = Routed {
             dir: None,
-            worktrees: Some(WorktreeAnchors(root.clone())),
+            worktrees: Some(WorktreeAnchors(root.to_path_buf())),
         };
         assert!(only_wt.is_done("wo-1").is_err());
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::remove_dir_all(&marks).ok();
     }
 
     #[test]

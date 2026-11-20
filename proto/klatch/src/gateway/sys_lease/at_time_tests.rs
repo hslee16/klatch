@@ -4,15 +4,14 @@
 use super::*;
 use crate::harness::Status;
 
-fn tree(tag: &str) -> SysHost {
-    let d = std::env::temp_dir().join(format!("klatch-attime-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    SysHost {
+fn tree(tag: &str) -> (SysHost, crate::store::test_dir::TestDir) {
+    let d = crate::store::test_dir::TestDir::new(&format!("attime-{tag}"));
+    let host = SysHost {
         registry_dir: d.join("sessions"),
         projects_dir: d.join("projects"),
         task_root: d.join("tmp"),
-    }
+    };
+    (host, d)
 }
 
 fn rec(session: &str, cwd: &str) -> Record {
@@ -28,7 +27,7 @@ fn rec(session: &str, cwd: &str) -> Record {
 
 #[test]
 fn the_clock_is_the_one_given_not_the_real_one() {
-    let inner = tree("clock");
+    let (inner, _dir) = tree("clock");
     for ms in [0, 1, 1_234_000, u64::MAX] {
         let at = AtTime {
             inner: &inner,
@@ -40,7 +39,7 @@ fn the_clock_is_the_one_given_not_the_real_one() {
 
 #[test]
 fn the_process_table_is_the_real_one() {
-    let inner = tree("procs");
+    let (inner, _dir) = tree("procs");
     let at = AtTime {
         inner: &inner,
         now_ms: 1,
@@ -54,7 +53,7 @@ fn the_process_table_is_the_real_one() {
 
 #[test]
 fn the_turn_is_read_from_the_registry_file_of_the_pid() {
-    let inner = tree("turn");
+    let (inner, _dir) = tree("turn");
     std::fs::create_dir_all(&inner.registry_dir).unwrap();
     std::fs::write(
         inner.registry_dir.join("77.json"),
@@ -73,7 +72,7 @@ fn the_turn_is_read_from_the_registry_file_of_the_pid() {
 
 #[test]
 fn the_transcript_and_the_task_output_are_the_files_of_the_session() {
-    let inner = tree("files");
+    let (inner, _dir) = tree("files");
     let r = rec("abc-1", "/w/x");
     let at = AtTime {
         inner: &inner,

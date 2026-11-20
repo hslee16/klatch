@@ -33,11 +33,10 @@ mod tests {
     use crate::store::areas::*;
     use crate::store::{ClaimRequest, SqliteStore};
 
-    fn store(tag: &str) -> SqliteStore {
-        let path =
-            std::env::temp_dir().join(format!("klatch-leases-{tag}-{}.db", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap()
+    fn store(tag: &str) -> crate::store::test_dir::In<SqliteStore> {
+        crate::store::test_dir::In::new(&format!("leases-{tag}"), |dir| {
+            SqliteStore::open(&dir.join("rooms.db"), &crate::store::insecure_test_key()).unwrap()
+        })
     }
 
     fn expiry(s: &SqliteStore, room: &str, now: i64, path: &str) -> Option<i64> {

@@ -1,0 +1,1 @@
+- A long TMPDIR now fails the unix socket tests with a message that names the SUN_LEN limit and the fix, instead of a bare path error (#778).

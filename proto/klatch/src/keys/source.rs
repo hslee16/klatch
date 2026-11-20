@@ -184,8 +184,7 @@ mod tests {
 
     #[test]
     fn file_first_copies_an_older_keystore_key_into_the_file_once() {
-        let dir = std::env::temp_dir().join(format!("klatch-ff-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::store::test_dir::TestDir::new("ff");
         let legacy = MemoryKeys::default();
         let key = Key::from_bytes([9; 32]);
         legacy.put("store", &key).unwrap();
@@ -194,7 +193,6 @@ mod tests {
         // the file now holds it, so a keystore that is gone or stuck is not asked again
         let only_file = crate::keys::FileKeys::new(&dir);
         assert_eq!(only_file.get("store").unwrap().unwrap(), key);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A keystore that must never be asked: a read of the macOS Keychain by a binary it does not know is the one
@@ -218,21 +216,18 @@ mod tests {
 
     #[test]
     fn file_first_never_asks_the_older_keystore_for_a_key_the_file_holds() {
-        let dir = std::env::temp_dir().join(format!("klatch-ff3-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::store::test_dir::TestDir::new("ff3");
         let file = crate::keys::FileKeys::new(&dir);
         let key = Key::from_bytes([4; 32]);
         file.put("store", &key).unwrap();
         let src = FileFirst::new(file, Box::new(NeverAsked));
         assert_eq!(src.get("store").unwrap().unwrap(), key);
         assert_eq!(src.get("store").unwrap().unwrap(), key);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn file_first_writes_new_keys_to_the_file_not_the_keystore() {
-        let dir = std::env::temp_dir().join(format!("klatch-ff2-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::store::test_dir::TestDir::new("ff2");
         let src = FileFirst::new(
             crate::keys::FileKeys::new(&dir),
             Box::new(MemoryKeys::default()),
@@ -247,7 +242,6 @@ mod tests {
         );
         src.delete("store").unwrap();
         assert!(src.get("store").unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+- `klatch router` no longer posts the same invite pointer again after a restart for a member who has not joined: it reads its own earlier invite pointers from the lobby history (#891).

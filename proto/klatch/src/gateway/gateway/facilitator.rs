@@ -90,7 +90,8 @@ impl<S: Store> Gateway<S> {
                 "{to} did not ask #{n}; only the asker may be asked"
             ));
         }
-        let sent = self.store.tail(room, 0, 5000)?;
+        // the prefix query sees a need-info at any depth of the room, not only in its oldest 5000 messages (#980)
+        let sent = self.store.words(room, &["need-info #"])?;
         if sent.iter().any(|m| {
             m.sender == who.member && parse_need_info(&m.body).is_some_and(|(k, _, _)| k == n)
         }) {

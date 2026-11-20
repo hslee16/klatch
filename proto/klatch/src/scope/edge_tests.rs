@@ -36,11 +36,10 @@ fn the_root_of_a_dot_git_directory_is_its_parent_and_of_a_bare_one_itself() {
     assert_eq!(repository_root(Path::new("/")), Path::new("/"));
 }
 
-fn store(tag: &str) -> SqliteStore {
-    let d = std::env::temp_dir().join(format!("klatch-scope-edge-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    SqliteStore::open(&d.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+fn store(tag: &str) -> crate::test_dir::In<SqliteStore> {
+    crate::test_dir::In::new(&format!("scope-edge-{tag}"), |d| {
+        SqliteStore::open(&d.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+    })
 }
 
 #[test]
@@ -48,13 +47,13 @@ fn declaring_the_scope_a_member_already_has_is_a_no_op_even_when_it_would_not_pa
     let s = store("same");
     // a scope stored under an older, looser rule
     s.set_member_scope("alice", "has space", 5).unwrap();
-    ensure_member_scope(&s, "alice", (Some("has space"), None), 9).unwrap();
+    ensure_member_scope(&*s, "alice", (Some("has space"), None), 9).unwrap();
     assert_eq!(
         s.member_scope("alice").unwrap().as_deref(),
         Some("has space")
     );
     // a different declared scope is still checked and replaces it
-    assert!(ensure_member_scope(&s, "alice", (Some("also bad"), None), 9).is_err());
-    ensure_member_scope(&s, "alice", (Some("good"), None), 9).unwrap();
+    assert!(ensure_member_scope(&*s, "alice", (Some("also bad"), None), 9).is_err());
+    ensure_member_scope(&*s, "alice", (Some("good"), None), 9).unwrap();
     assert_eq!(s.member_scope("alice").unwrap().as_deref(), Some("good"));
 }

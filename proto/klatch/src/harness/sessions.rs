@@ -46,18 +46,8 @@ mod tests {
         )
     }
 
-    fn dir() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "klatch-sessions-{}-{}",
-            std::process::id(),
-            std::thread::current()
-                .name()
-                .unwrap_or("t")
-                .replace("::", "-")
-        ));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn dir() -> crate::store::test_dir::TestDir {
+        crate::store::test_dir::TestDir::new("sessions")
     }
     fn put(d: &Path, name: &str, text: &str) {
         std::fs::write(d.join(name), text).unwrap();

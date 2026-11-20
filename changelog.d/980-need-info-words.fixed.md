@@ -1,0 +1,1 @@
+- The facilitator one-need-info-per-ask rule now sees an earlier need-info at any depth of a DM room, not only in its oldest 5000 messages (#980).

@@ -5,11 +5,8 @@ use super::*;
 use crate::store::sqlite::archive::{ArchiveState, list_archives};
 use std::path::{Path, PathBuf};
 
-fn archive_dir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("klatch-archives-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn archive_dir(tag: &str) -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new(&format!("archives-{tag}"))
 }
 
 /// An archive of three old messages (times 10, 20, 30) of room `r`, made with the test key.
@@ -43,7 +40,6 @@ fn an_archive_is_listed_with_its_rooms_count_and_age_range() {
             newest: 30
         }
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -68,7 +64,6 @@ fn listing_is_in_name_order_and_ignores_files_that_are_not_archives() {
         .map(|a| a.path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, vec!["r-100.db", "r-200.db"]);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -82,7 +77,6 @@ fn an_archive_that_does_not_open_with_the_store_key_is_reported_not_skipped() {
         "{:?}",
         found[0].state
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -99,7 +93,6 @@ fn a_tampered_archive_is_reported_damaged() {
         "{:?}",
         found[0].state
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -115,7 +108,6 @@ fn a_plaintext_database_among_the_archives_is_reported_as_unencrypted() {
         "{:?}",
         found[0].state
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -124,7 +116,6 @@ fn a_partial_file_left_by_an_interrupted_archive_is_reported() {
     std::fs::write(dir.join("r-100.db.partial"), "half").unwrap();
     let found = list_archives(&dir, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(found[0].state, ArchiveState::Partial);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// #775: a dangling symlink at the target passes the `exists` check (it follows the link) but the hard link finds the
@@ -154,5 +145,4 @@ fn a_target_taken_after_the_exists_check_is_refused_as_already_existing() {
     );
     let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
     assert_eq!(left.len(), 1, "a partial file was left: {left:?}");
-    let _ = std::fs::remove_dir_all(dir);
 }
