@@ -580,6 +580,7 @@ mod tests {
             ts: 0,
             kind: None,
             payload: None,
+            advisory: false,
         }
     }
 
@@ -975,6 +976,32 @@ mod tests {
             !out.contains("secret-looking") && !out.contains("payload text"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn a_flagged_sender_is_marked_on_its_digest_line_and_an_unflagged_one_is_not() {
+        let mut flagged = Message {
+            sender: "bob".into(),
+            ..msg(1, "hi")
+        };
+        flagged.advisory = true;
+        let plain = Message {
+            sender: "carol".into(),
+            ..msg(2, "yo")
+        };
+        let out = render_hook(
+            &[RoomDigest {
+                room: "r".into(),
+                messages: vec![flagged, plain],
+                ..Default::default()
+            }],
+            0,
+        );
+        assert!(
+            out.contains("#1 from bob (unverified) (advisory): hi"),
+            "{out}"
+        );
+        assert!(out.contains("#2 from carol (unverified): yo"), "{out}");
     }
 
     #[test]

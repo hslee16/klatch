@@ -17,6 +17,7 @@ impl<S: Store> Gateway<S> {
         let messages = self.store.hook_read(Seat::new(room, &who.member), now)?;
         let outside = self.hidden_count(who, room, messages.clone())?;
         let messages = self.in_view(who, room, messages)?;
+        let messages = self.mark_advisory(room, messages)?;
         if !self.store.is_muted(Seat::new(room, &who.member))? {
             return Ok((messages, outside));
         }

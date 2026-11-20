@@ -157,6 +157,7 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
             ts: 1_000,
             kind: tc.draw(gs::booleans()).then(|| "note".to_string()),
             payload: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
+            advisory: false,
         });
     }
     for _ in 0..count(12) {
