@@ -47,8 +47,8 @@ struct Faulty {
     /// (room, member) -> (status, set at); the room is empty under `StatusIgnoresTheRoom`.
     statuses: RefCell<BTreeMap<(String, String), (String, i64)>>,
     parents: RefCell<BTreeMap<String, String>>,
-    /// (member, event) -> (last ts, runs, last bytes)
-    hooks: RefCell<BTreeMap<(String, String), (i64, i64, i64)>>,
+    /// (member, event) -> the run so far
+    hooks: RefCell<BTreeMap<(String, String), HookRun>>,
     fault: Fault,
 }
 
@@ -162,14 +162,19 @@ impl MemberStore for Faulty {
         let mut h = self.hooks.borrow_mut();
         let e = h
             .entry((run.member.into(), run.event.into()))
-            .or_insert((now, 0, 0));
-        e.0 = now;
-        e.1 = if self.fault == Fault::HookRunsAreNotCounted {
+            .or_insert_with(|| HookRun {
+                event: run.event.into(),
+                last_ts: now,
+                runs: 0,
+                last_bytes: 0,
+            });
+        e.last_ts = now;
+        e.runs = if self.fault == Fault::HookRunsAreNotCounted {
             1
         } else {
-            e.1 + 1
+            e.runs + 1
         };
-        e.2 = run.bytes;
+        e.last_bytes = run.bytes;
         Ok(())
     }
 
@@ -179,12 +184,7 @@ impl MemberStore for Faulty {
             .borrow()
             .iter()
             .filter(|((m, _), _)| m == member)
-            .map(|((_, event), (last_ts, runs, last_bytes))| HookRun {
-                event: event.clone(),
-                last_ts: *last_ts,
-                runs: *runs,
-                last_bytes: *last_bytes,
-            })
+            .map(|(_, r)| r.clone())
             .collect())
     }
 
