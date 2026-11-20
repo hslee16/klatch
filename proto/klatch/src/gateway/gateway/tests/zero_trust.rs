@@ -205,6 +205,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_set_rate_limit", |g, w| {
         refused(g.admin_set_rate_limit(w, Some((5, 60))))
     }),
+    ("admin_set_member_rate_limit", |g, w| {
+        refused(g.admin_set_member_rate_limit(w, "bob", Some((5, 60))))
+    }),
     ("admin_set_lease_cap", |g, w| {
         refused(g.admin_set_lease_cap(w, Some(60)))
     }),
@@ -320,6 +323,10 @@ const OWN_RECORD: &[(&str, &str)] = &[
     (
         "rate_limit",
         "a policy lookup the budget check uses on every post; takes no principal",
+    ),
+    (
+        "rate_limit_for",
+        "the same lookup for one member's own limit (#972); takes no principal and changes nothing",
     ),
     (
         "with_leases",

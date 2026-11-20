@@ -83,6 +83,7 @@ pub(super) enum PolicyAct {
         posts: Option<usize>,
         secs: Option<i64>,
         off: bool,
+        member: Option<String>,
     },
     LeaseCap {
         secs: Option<i64>,
@@ -217,9 +218,17 @@ impl From<AdminCmd> for Route {
             C::Facilitator { member, off } => Route::role(RoleAct::Facilitator { member, off }),
             C::AdminAgent { member, off } => Route::role(RoleAct::AdminAgent { member, off }),
             C::RoomCreation { policy } => Route::policy(PolicyAct::RoomCreation { policy }),
-            C::RateLimit { posts, secs, off } => {
-                Route::policy(PolicyAct::RateLimit { posts, secs, off })
-            }
+            C::RateLimit {
+                posts,
+                secs,
+                off,
+                member,
+            } => Route::policy(PolicyAct::RateLimit {
+                posts,
+                secs,
+                off,
+                member,
+            }),
             C::LeaseCap { secs, off } => Route::policy(PolicyAct::LeaseCap { secs, off }),
             C::LeaseGrace { secs, off } => Route::policy(PolicyAct::LeaseGrace { secs, off }),
             C::RoomStale { room, secs, off } => {
