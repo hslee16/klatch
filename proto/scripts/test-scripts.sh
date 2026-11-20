@@ -55,6 +55,16 @@ for pat in "fmt" "clippy" "test --workspace" "deny" "test-clock" "--test propert
 done
 if [ "$order_ok" -eq 1 ]; then ok "the steps run in order: fmt, clippy, tests, deny, test-clock, properties ($steps cargo calls)"; else bad "step order"; fi
 
+# the CI step "the client feature and the bare build compile on their own" is in the gate (#910): a module missing its
+# cfg attribute breaks only those builds, so a failure in either must fail the gate and say so
+for pat in "--features client" "--no-default-features --locked"; do
+  if run_gate "$pat"; then bad "the gate passed although the build '$pat' failed (#910)"; else
+    if grep -q "FAILED at step" "$work/out" && grep -q "feature and bare builds" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing '$pat' build fails the gate at its own step (#910)"; else bad "build step '$pat': $(cat "$work/out")"; fi
+  fi
+done
+run_gate ""
+if grep -q -- "build -p klatch --no-default-features --features client --locked" "$work/log" && grep -q -- "build -p klatch --no-default-features --locked" "$work/log"; then ok "the gate runs the client-feature build and the bare build, as CI does (#910)"; else bad "builds missing: $(cat "$work/log")"; fi
+
 run_gate "" --long
 if grep -q "cases=5000" "$work/log"; then ok "--long raises the case budget"; else bad "--long: $(cat "$work/log")"; fi
 run_gate ""
