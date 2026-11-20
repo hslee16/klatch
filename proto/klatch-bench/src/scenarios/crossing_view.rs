@@ -58,7 +58,7 @@ fn crossings(w: &World) -> Res {
     // the same rows over the wire: a state and a fixed sentence, never the text
     let req = serde_json::json!({"v": 1, "type": "request", "id": "1", "method": "my_crossings", "params": {}})
         .to_string();
-    let lines = w.serve("alice", &[req.clone()])?;
+    let lines = w.serve("alice", std::slice::from_ref(&req))?;
     let wire = lines.join("\n");
     has(&wire, "\"ok\":true", "the wire call")?;
     has(&wire, "\"state\":\"waiting\"", "the wire state")?;
