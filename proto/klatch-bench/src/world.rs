@@ -182,6 +182,58 @@ impl World {
         }
     }
 
+    /// Issue a credential for `member` inside this world's own temporary store, as a launcher would (`klatch worker
+    /// issue`), and return the path of the key bundle it wrote under the world's home. `life` is the idle timeout and
+    /// the optional most seconds from issue. The credential exists only in this world: its store, its key directory
+    /// and its bundle are all temporary, and nothing of the live keychain or `~/.klatch` is read or written. Run
+    /// commands as the worker with `as_worker`.
+    pub fn issue_worker(
+        &self,
+        member: &str,
+        clearance: &str,
+        life: (i64, Option<i64>),
+    ) -> Result<PathBuf, String> {
+        let out = self.home.join(format!("{member}.bundle"));
+        let (ttl, max_life) = life;
+        let (ttl, out_s) = (ttl.to_string(), out.to_string_lossy().into_owned());
+        let mut args = vec![
+            "worker",
+            "issue",
+            member,
+            "--clearance",
+            clearance,
+            "--ttl",
+            &ttl,
+            "--parent",
+            "lead",
+            "--out",
+            &out_s,
+        ];
+        let cap = max_life.map(|m| m.to_string());
+        if let Some(c) = &cap {
+            args.extend(["--max-life", c]);
+        }
+        self.ok("launcher", &args)?;
+        Ok(out)
+    }
+
+    /// Start `klatch <args>` as the worker holding `bundle`, with piped standard input and output, for a process that
+    /// proves its credential once at the start and stays up (`serve --stdio`) while the scenario ends the credential.
+    pub fn spawn_worker_piped(
+        &self,
+        bundle: &Path,
+        args: &[&str],
+    ) -> std::io::Result<std::process::Child> {
+        let mut c = self.command("unused", args);
+        c.env_remove("KLATCH_NAME")
+            .env_remove("KLATCH_KEY_DIR")
+            .env("KLATCH_IDENTITY_FILE", bundle)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+    }
+
     /// Run `klatch <args>` as member `who`.
     pub fn run(&self, who: &str, args: &[&str]) -> Run {
         match self.command(who, args).output() {

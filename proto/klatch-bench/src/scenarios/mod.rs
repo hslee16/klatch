@@ -14,6 +14,7 @@ mod ask_gone;
 mod asks;
 mod bigstore;
 mod claims;
+mod credentials;
 mod crossing_view;
 mod delivery_view;
 mod factory;
@@ -120,6 +121,7 @@ pub fn all() -> Vec<Scenario> {
         judge::all(),
         retention::all(),
         pr_lifecycle::all(),
+        credentials::all(),
     ]
     .into_iter()
     .flatten()
