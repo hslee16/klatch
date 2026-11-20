@@ -13,6 +13,7 @@ mod anchors;
 mod asks;
 mod board;
 mod budget;
+mod canary_surfaces;
 mod claim_age;
 mod claim_edges;
 mod claims;
