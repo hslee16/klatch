@@ -103,10 +103,27 @@ fn a_cycle_through_asks_gets_a_room_and_an_invite_pointer_for_each_member() {
     assert!(bo.contains("klatch join mediate-1"), "{bo}");
 }
 
+/// `claims` prints `<scope>\t<holder>\t<N>s left\t...`; the countdown moves with the wall clock, so a comparison across
+/// a second boundary drops that column (#979).
+fn without_time_left(out: &str) -> String {
+    out.lines()
+        .map(|l| {
+            l.split('\t')
+                .filter(|c| !c.ends_with("s left"))
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn the_mediator_leaves_the_claims_exactly_as_they_were() {
     let h = play(&cases()[1]);
     let before = h.ok("cy", &["claims", "lobby"]);
     h.ok("mediator", &["mediator", "--once"]);
-    assert_eq!(h.ok("cy", &["claims", "lobby"]), before);
+    assert_eq!(
+        without_time_left(&h.ok("cy", &["claims", "lobby"])),
+        without_time_left(&before)
+    );
 }
