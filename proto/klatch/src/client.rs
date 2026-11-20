@@ -318,6 +318,7 @@ impl Client {
                 ts,
                 kind,
                 payload,
+                advisory,
                 ..
             } => self.pending.push(Message {
                 seq,
@@ -329,7 +330,7 @@ impl Client {
                 ts,
                 kind,
                 payload,
-                advisory: false,
+                advisory,
             }),
             ServerFrame::CaughtUp { seq, .. } => self.caught_up = Some(seq),
             ServerFrame::Refusal { rule, reason, .. } => self.refusals.push((rule, reason)),

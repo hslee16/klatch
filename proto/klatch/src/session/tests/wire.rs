@@ -600,3 +600,66 @@ fn read_carries_advisory_true_only_for_a_flagged_sender_and_omits_the_key_otherw
         "an unflagged message looks as it always did"
     );
 }
+
+fn flagged_wire_room() -> Gateway<SqliteStore> {
+    use crate::harness::{ClaudeCode, Codex, HookTrust, Support};
+    let g = gateway();
+    let human = Principal::unattributed("admin");
+    g.admin_set_room_require(&human, "r", Some("flag:pre-action-enforcement"))
+        .unwrap();
+    g.join_with_harness(
+        &alice(),
+        "r",
+        &ClaudeCode::new(Support::Unknown(String::new())),
+    )
+    .unwrap();
+    g.join_with_harness(&bob(), "r", &Codex::paper(HookTrust::Unknown))
+        .unwrap();
+    g.post(&bob(), "r", "flagged hello").unwrap();
+    g.post(&alice(), "r", "clean hello").unwrap();
+    g
+}
+
+#[test]
+fn history_carries_advisory_true_only_for_a_flagged_sender() {
+    let g = flagged_wire_room();
+    let carol = Principal::unattributed("carol");
+    let f = run(&g, &carol, &[req("h", "history", json!({"room":"r"}))]);
+    let (ok, result, _) = response(&f, "h");
+    assert!(ok);
+    let ms = &result.unwrap()["messages"];
+    assert_eq!(ms[0]["sender"], "bob");
+    assert_eq!(ms[0]["advisory"], true);
+    assert!(ms[1].get("advisory").is_none());
+}
+
+#[test]
+fn the_live_stream_frame_carries_advisory_only_for_a_flagged_sender() {
+    let g = flagged_wire_room();
+    let f = run(
+        &g,
+        &Principal::unattributed("carol"),
+        &[req("s", "subscribe", json!({"room":"r","from_seq":0}))],
+    );
+    let flags: Vec<(String, bool)> = f
+        .iter()
+        .filter_map(|x| match x {
+            ServerFrame::Message {
+                sender, advisory, ..
+            } => Some((sender.clone(), *advisory)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        vec![("bob".to_string(), true), ("alice".to_string(), false)]
+    );
+    // on the wire the key exists only when true
+    let lines: Vec<String> = f
+        .iter()
+        .filter(|x| matches!(x, ServerFrame::Message { .. }))
+        .map(|x| serde_json::to_string(x).unwrap())
+        .collect();
+    assert!(lines[0].contains("\"advisory\":true"), "{}", lines[0]);
+    assert!(!lines[1].contains("advisory"), "{}", lines[1]);
+}

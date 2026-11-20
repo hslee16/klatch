@@ -2,6 +2,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attribution {
@@ -41,6 +45,10 @@ pub enum ServerFrame {
         kind: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         payload: Option<String>,
+        /// True when the sender was admitted in flag mode of the room's requirement (#1032, #990): present only
+        /// then, so a consumer that does not know it sees what it always saw. Display only, never authority.
+        #[serde(default, skip_serializing_if = "is_false")]
+        advisory: bool,
     },
     CaughtUp {
         v: u32,
