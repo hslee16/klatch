@@ -23,7 +23,7 @@
 # asyncRewake wake watcher). KLATCH_HOME and KLATCH_KEY_DIR are the room's and are used as they are set.
 set -uo pipefail
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/team start TASKS_FILE | status | logs NAME [LINES] | stop [NAME...] | smoke"; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/team start TASKS_FILE | status | logs NAME [LINES] | stop [NAME...] | smoke"; }
 die() { echo "team: $*" >&2; exit "${2:-1}"; }
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -38,6 +38,7 @@ clearance="${TEAM_CLEARANCE:-public}"
 ttl="${TEAM_TTL:-7200}"
 budget="${TEAM_MAX_BUDGET:-2}"
 max_secs="${TEAM_MAX_SECONDS:-3600}"
+total_cap="${TEAM_MAX_TOTAL_USD:-}"
 mode="${TEAM_PERMISSION_MODE:-bypassPermissions}"
 run="$dir/run"
 bundles="$dir/bundles"
@@ -155,9 +156,26 @@ alive() { [ -f "$run/$1.pid" ] && kill -0 "$(cat "$run/$1.pid")" 2> /dev/null; }
 
 private_dir() { mkdir -p "$1" && chmod 700 "$1"; }
 
+# The owner of a live claim on this ticket other than the worker itself, or nothing (#593). The board is read as the
+# launcher. A board that cannot be read warns and lets the launch go on: the room may not exist yet.
+ticket_holder() { # name ticket -> owner on stdout; returns 2 when the board could not be read
+  local out path owner rest
+  out="$(KLATCH_NAME="$launcher" "$klatch" claims "$room" 2>&1)" || { printf '%s' "$out"; return 2; }
+  while IFS=$'\t' read -r path owner rest; do
+    case "$path" in "ticket #$2" | "#$2") [ "$owner" != "$1" ] && { printf '%s' "$owner"; return 0; } ;; esac
+  done <<< "$out"
+  return 0
+}
+
 start_one() { # name ticket prompt; returns 1 when this worker could not start
   local name="$1" ticket="$2" prompt="$3" wt="$dir/worktrees/$1" r="$run/$1"
   if alive "$name"; then echo "team: $name is already running (pid $(cat "$r.pid")); stop it first" >&2; return 1; fi
+  if [ "$ticket" != "-" ]; then
+    local holder rc=0
+    holder="$(ticket_holder "$name" "$ticket")" || rc=$?
+    if [ "$rc" -eq 2 ]; then echo "team: $name: could not read the claims in $room ($holder); launching without the ticket check" >&2
+    elif [ -n "$holder" ]; then echo "team: $name: ticket #$ticket is already claimed by $holder in $room; not launched" >&2; return 1; fi
+  fi
   rm -f "$r.exit" "$r.stopped"
   local err
   if ! err="$("$klatch" worker issue "$name" --clearance "$clearance" --ttl "$ttl" --parent "$launcher" --out "$bundles/$name.bundle" 2>&1)"; then
@@ -181,6 +199,30 @@ start_one() { # name ticket prompt; returns 1 when this worker could not start
   echo "team: started $name (pid $!, branch alee/$name, log $r.log)"
 }
 
+# USD already spent by workers in TEAM_DIR: a running worker may still spend up to its cap, any other counts what its
+# log recorded. Prints a number.
+committed_usd() {
+  local p n sum=0 c
+  for p in "$run"/*.pid; do
+    [ -f "$p" ] || continue
+    n="$(basename "$p" .pid)"
+    if alive "$n"; then c="$budget"
+    else c="$(grep -o '"total_cost_usd": *[0-9.]*' "$run/$n.log" 2> /dev/null | tail -1 | sed 's/.*: *//')"; fi
+    sum="$(awk -v a="$sum" -v b="${c:-0}" 'BEGIN { print a + b }')"
+  done
+  printf '%s' "$sum"
+}
+
+check_team_budget() { # the number of workers about to start; dies with exit 2 when the team cap would be passed
+  [ -n "$total_cap" ] || return 0
+  [[ "$total_cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "TEAM_MAX_TOTAL_USD must be a number of dollars, got '$total_cap'" 2
+  local spent need; spent="$(committed_usd)"
+  need="$(awk -v s="$spent" -v n="$1" -v b="$budget" 'BEGIN { print s + n * b }')"
+  if awk -v need="$need" -v cap="$total_cap" 'BEGIN { exit !(need > cap) }'; then
+    die "TEAM_MAX_TOTAL_USD is $total_cap but $1 worker(s) at TEAM_MAX_BUDGET $budget plus \$$spent already spent or still allowed would reach \$$need; raise it or start fewer workers" 2
+  fi
+}
+
 cmd_start() {
   [ $# -eq 1 ] || { usage >&2; exit 2; }
   parse_tasks "$1"
@@ -189,6 +231,7 @@ cmd_start() {
   command -v "$claude" > /dev/null 2>&1 || die "no claude command ($claude); set TEAM_CLAUDE"
   git -C "$repo" rev-parse --git-dir > /dev/null 2>&1 || die "$repo is not a git repository (set TEAM_REPO)"
   private_dir "$dir"; private_dir "$bundles"; mkdir -p "$run"
+  check_team_budget "${#tasks_names[@]}"
   local i failed=0
   for i in "${!tasks_names[@]}"; do
     start_one "${tasks_names[$i]}" "${tasks_tickets[$i]}" "${tasks_prompts[$i]}" || failed=1
