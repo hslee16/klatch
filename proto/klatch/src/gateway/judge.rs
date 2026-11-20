@@ -28,9 +28,10 @@ impl Drained {
 /// deleted room keeps nothing).
 pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<ReviewItem>> {
     let found = store.tail(&q.room, q.seq - 1, 1)?;
+    // a room's canary is no message anyone may point at (#954)
     Ok(found
         .into_iter()
-        .find(|m| m.seq == q.seq)
+        .find(|m| m.seq == q.seq && m.kind.as_deref() != Some(crate::gateway::CANARY_KIND))
         .map(|m| ReviewItem {
             id: q.id,
             room: q.room.clone(),
