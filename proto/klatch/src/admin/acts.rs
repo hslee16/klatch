@@ -154,6 +154,23 @@ fn rate_limit_of(
     }
 }
 
+/// One line per limit in force for `rate-limit --list`: `global` or `member NAME`, a tab, then the limit; one line
+/// saying so when there is none.
+fn rate_limit_lines(limits: &[(Option<String>, (usize, i64))]) -> Vec<String> {
+    if limits.is_empty() {
+        return vec!["no rate limit".to_string()];
+    }
+    limits
+        .iter()
+        .map(|(who, (p, s))| {
+            let who = who
+                .as_ref()
+                .map_or("global".to_string(), |m| format!("member {m}"));
+            format!("{who}\t{p} posts in {s} seconds")
+        })
+        .collect()
+}
+
 /// SECS, or `--off` alone; anything else is a usage error.
 fn secs_or_off(secs: Option<i64>, off: bool, name: &str) -> Result<Option<i64>> {
     match (off, secs) {
@@ -219,8 +236,15 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
             posts,
             secs,
             off,
+            list,
             member,
         } => {
+            if list {
+                for line in rate_limit_lines(&t.admin_rate_limits()?) {
+                    println!("{line}");
+                }
+                return Ok(());
+            }
             let limit = rate_limit_of(posts, secs, off)?;
             if let Some(member) = member {
                 t.admin_set_member_rate_limit(&member, limit)?;
@@ -309,6 +333,19 @@ mod tests {
         assert_eq!(secs_or_off(None, true, "lease-cap").unwrap(), None);
         assert!(secs_or_off(Some(600), true, "lease-cap").is_err());
         assert!(secs_or_off(None, false, "lease-cap").is_err());
+    }
+
+    #[test]
+    fn the_rate_limit_listing_is_one_line_each_or_one_line_saying_none() {
+        assert_eq!(rate_limit_lines(&[]), vec!["no rate limit"]);
+        let lines = rate_limit_lines(&[(None, (30, 60)), (Some("alice".into()), (2, 10))]);
+        assert_eq!(
+            lines,
+            vec![
+                "global\t30 posts in 60 seconds",
+                "member alice\t2 posts in 10 seconds"
+            ]
+        );
     }
 
     #[test]

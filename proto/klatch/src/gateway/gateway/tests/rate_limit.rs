@@ -228,3 +228,43 @@ fn a_member_limit_is_a_floor_no_agent_can_set_or_lift() {
         "floors"
     );
 }
+
+#[test]
+fn the_listing_has_the_global_limit_then_every_member_limit_sorted_by_name() {
+    let (g, _) = timed();
+    assert!(g.admin_rate_limits(&admin()).unwrap().is_empty());
+    g.admin_set_member_rate_limit(&admin(), "zed", Some((9, 30)))
+        .unwrap();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((2, 60)))
+        .unwrap();
+    assert_eq!(
+        g.admin_rate_limits(&admin()).unwrap(),
+        vec![
+            (Some("alice".to_string()), (2, 60)),
+            (Some("zed".to_string()), (9, 30)),
+        ]
+    );
+    g.admin_set_rate_limit(&admin(), Some((5, 10))).unwrap();
+    g.admin_set_member_rate_limit(&admin(), "zed", None)
+        .unwrap();
+    assert_eq!(
+        g.admin_rate_limits(&admin()).unwrap(),
+        vec![(None, (5, 10)), (Some("alice".to_string()), (2, 60))]
+    );
+}
+
+#[test]
+fn listing_the_limits_is_a_read_so_it_is_not_a_floor_and_is_not_audited() {
+    let (g, _) = timed();
+    g.admin_set_member_rate_limit(&admin(), "alice", Some((2, 60)))
+        .unwrap();
+    let before = g.admin_audit(&admin(), 50).unwrap().len();
+    // a gateway that refuses every floor still lets the listing through
+    let agent = Gateway::new(
+        SpyStore::new(),
+        FixedClock(100),
+        crate::gateway::ForbidFloors::new(AllowAll),
+    );
+    agent.admin_rate_limits(&alice()).unwrap();
+    assert_eq!(g.admin_audit(&admin(), 50).unwrap().len(), before);
+}

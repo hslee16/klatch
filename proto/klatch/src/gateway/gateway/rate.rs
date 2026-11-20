@@ -15,6 +15,15 @@ fn in_bounds((posts, secs): (usize, i64)) -> bool {
     (1..=MAX_POSTS).contains(&posts) && (1..=MAX_SECS).contains(&secs)
 }
 
+/// One line of the listing: the member (`None` is the global limit) and its posts and seconds.
+pub type RateLimitEntry = (Option<String>, (usize, i64));
+
+/// `posts/secs` as stored.
+fn parse_limit(text: &str) -> Option<(usize, i64)> {
+    let (p, s) = text.split_once('/')?;
+    Some((p.parse().ok()?, s.parse().ok()?))
+}
+
 impl<S: Store> Gateway<S> {
     /// Only the human: limit every member to `posts` posts in `secs` seconds, or with `None` remove the limit.
     pub fn admin_set_rate_limit(&self, who: &Principal, limit: Option<(usize, i64)>) -> Result<()> {
@@ -57,6 +66,34 @@ impl<S: Store> Gateway<S> {
         })
     }
 
+    /// Every limit in force, for the human's terminal (#1023): the global one first (`None` for the member), then each
+    /// member's own sorted by name. A read, guarded as the admin action `rate-limit-list` like the scrub listing; it
+    /// is not a floor and writes no audit row. A stored value that does not parse is left out, as `rate_limit` does.
+    pub fn admin_rate_limits(&self, who: &Principal) -> Result<Vec<RateLimitEntry>> {
+        check_member(who)?;
+        self.check_guard(
+            who,
+            &Operation::Admin {
+                action: "rate-limit-list".into(),
+                target: String::new(),
+            },
+        )?;
+        let mut out: Vec<RateLimitEntry> =
+            self.rate_limit()?.map(|l| (None, l)).into_iter().collect();
+        let prefix = format!("{KEY}:member:");
+        let mut members: Vec<RateLimitEntry> = self
+            .store
+            .policy_list(&prefix)?
+            .into_iter()
+            .filter_map(|(k, v)| {
+                Some((Some(k.strip_prefix(&prefix)?.to_string()), parse_limit(&v)?))
+            })
+            .collect();
+        members.sort();
+        out.extend(members);
+        Ok(out)
+    }
+
     /// The global limit in force: posts and seconds, if one is set.
     pub fn rate_limit(&self) -> Result<Option<(usize, i64)>> {
         self.limit_at(KEY)
@@ -74,9 +111,7 @@ impl<S: Store> Gateway<S> {
         let Some(text) = self.store.policy_get(key)? else {
             return Ok(None);
         };
-        Ok(text
-            .split_once('/')
-            .and_then(|(p, s)| Some((p.parse().ok()?, s.parse().ok()?))))
+        Ok(parse_limit(&text))
     }
 
     /// Refuse a post from a member that has used up its limit; called before the post is stored.

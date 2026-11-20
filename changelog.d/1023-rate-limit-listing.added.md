@@ -1,0 +1,1 @@
+- `klatch admin rate-limit --list` shows the global post limit and every member limit in force, one line each (#1023).
