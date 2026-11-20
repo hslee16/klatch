@@ -28,6 +28,11 @@ if [ "$1 $2" = "worker issue" ]; then
   while [ $# -gt 0 ]; do [ "$1" = "--out" ] && out="$2"; shift; done
   ( umask 077; echo "member $member" > "$out" )
 fi
+if [ "$1" = claims ]; then
+  [ -n "${FAKE_CLAIMS_FAIL:-}" ] && { echo "no such room" >&2; exit 1; }
+  [ -n "${FAKE_CLAIMS:-}" ] && cat "$FAKE_CLAIMS"
+  echo "claims-as=${KLATCH_NAME:-} room=$2" >> "$FAKE_DIR/claims.env"
+fi
 exit 0
 SH
 cat > "$bin/claude" <<'SH'
@@ -177,6 +182,45 @@ run_team start "$work/ts" > "$work/out" 2>&1; rc=$?
 if [ "$rc" -eq 0 ] && [ "$(grep -c '^worker issue slow' "$fake/klatch.log")" -eq 2 ]; then ok "a finished worker can be started again"; else bad "restart rc=$rc: $(cat "$work/out")"; fi
 waitfor "$td/run/slow.exit"
 run_team stop > /dev/null 2>&1
+
+# --- TEAM_MAX_TOTAL_USD: a team-wide budget, checked before anything is issued (#593)
+newenv
+TEAM_MAX_TOTAL_USD=3 run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ] && grep -q "TEAM_MAX_TOTAL_USD" "$work/out" && [ ! -s "$fake/klatch.log" ] && [ ! -d "$td/worktrees/alpha" ]; then ok "two workers at 2 USD each are refused under a 3 USD team budget, exit 2, nothing issued"; else bad "team budget refusal rc=$rc: $(cat "$work/out")"; fi
+newenv
+TEAM_MAX_TOTAL_USD=4 run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/alpha.exit"; waitfor "$td/run/beta.exit"
+if [ "$rc" -eq 0 ] && [ -d "$fake/claude-alpha" ] && [ -d "$fake/claude-beta" ]; then ok "a team budget that covers every worker's cap lets the team start"; else bad "team budget ok rc=$rc: $(cat "$work/out")"; fi
+printf 'gamma | 13 | Do gamma.\n' > "$work/tg"
+TEAM_MAX_TOTAL_USD=2.01 run_team start "$work/tg" > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ] && grep -q "already spent" "$work/out" && [ ! -d "$fake/claude-gamma" ]; then ok "money already spent by earlier workers counts against the team budget"; else bad "team budget spent rc=$rc: $(cat "$work/out")"; fi
+TEAM_MAX_TOTAL_USD=2.5 run_team start "$work/tg" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/gamma.exit"
+if [ "$rc" -eq 0 ] && [ -d "$fake/claude-gamma" ]; then ok "the same launch fits under a larger team budget"; else bad "team budget fits rc=$rc: $(cat "$work/out")"; fi
+newenv
+TEAM_MAX_TOTAL_USD=abc run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$fake/klatch.log" ]; then ok "a non-numeric TEAM_MAX_TOTAL_USD is refused with exit 2"; else bad "bad total rc=$rc"; fi
+
+# --- a ticket someone else already holds on the board is not launched (#593)
+newenv
+printf 'ticket #11\tsomeone\t3000s left\tworking on it\nsrc/x.rs\tother\t100s left\t\n' > "$fake/claims.txt"
+FAKE_CLAIMS="$fake/claims.txt" run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/beta.exit"
+if [ "$rc" -eq 1 ] && grep -q "ticket #11 is already claimed by someone" "$work/out" && ! grep -q "^worker issue alpha" "$fake/klatch.log" && [ ! -d "$fake/claude-alpha" ] && [ -d "$fake/claude-beta" ]; then ok "a task whose ticket is claimed by another member starts nothing, says who holds it, and the rest still run"; else bad "claimed ticket rc=$rc: $(cat "$work/out")"; fi
+if grep -q "^claims-as=launcher room=lobby$" "$fake/claims.env"; then ok "the board is read as the launcher in the team room"; else bad "claims env: $(cat "$fake/claims.env" 2> /dev/null)"; fi
+newenv
+printf 'ticket #11\talpha\t3000s left\tmine\nticket #110\tsomeone\t10s left\t\n' > "$fake/claims.txt"
+FAKE_CLAIMS="$fake/claims.txt" run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/alpha.exit"
+if [ "$rc" -eq 0 ] && [ -d "$fake/claude-alpha" ]; then ok "a ticket held by the worker's own name, or a longer number that shares a prefix, does not block"; else bad "own claim rc=$rc: $(cat "$work/out")"; fi
+newenv
+FAKE_CLAIMS_FAIL=1 run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/alpha.exit"
+if [ "$rc" -eq 0 ] && [ -d "$fake/claude-alpha" ] && grep -q "could not read the claims" "$work/out"; then ok "a board that cannot be read warns and does not block the launch"; else bad "claims fail rc=$rc: $(cat "$work/out")"; fi
+newenv
+printf 'nt | - | No ticket.\n' > "$work/tn"
+FAKE_CLAIMS="$fake/claims.txt" run_team start "$work/tn" > "$work/out" 2>&1; waitfor "$td/run/nt.exit"
+if [ ! -f "$fake/claims.env" ]; then ok "a task with no ticket does not read the board"; else bad "read the board for no ticket"; fi
 
 # --- smoke runs one worker in a throwaway home, never the caller's KLATCH_HOME
 newenv
