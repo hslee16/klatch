@@ -210,6 +210,9 @@ impl RoomStore for MemoryStore {
     }
 }
 
+#[cfg(test)]
+mod faulty;
+
 /// Runs every conformance test on the in-memory store and prints which pass. Not an assertion on the count: the
 /// point is the list. Run with `cargo test --lib memory_spike -- --ignored --nocapture`.
 #[cfg(test)]

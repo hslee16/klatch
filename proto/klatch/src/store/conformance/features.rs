@@ -9,7 +9,7 @@ pub fn every_declared_feature_works<S: Store>(make: fn() -> S) {
     }
 }
 
-fn probe<S: Store>(feature: Feature, make: fn() -> S) {
+pub(in crate::store) fn probe<S: Store>(feature: Feature, make: fn() -> S) {
     use Feature::*;
     match feature {
         Sessions => {
@@ -22,6 +22,10 @@ fn probe<S: Store>(feature: Feature, make: fn() -> S) {
                 make,
             );
             members::the_first_parent_noted_for_a_member_is_kept_and_listed_with_it(make);
+            members::a_park_holds_live_claims_until_the_return_time_and_not_after(make);
+            members::a_parked_member_is_listed_with_why_and_return_time_until_unparked(make);
+            members::an_unpark_cuts_what_the_park_stretched_back_to_a_normal_lease(make);
+            members::an_unpark_of_a_member_that_is_not_parked_changes_nothing(make);
         }
         Mute => members::a_mute_is_kept_per_member_and_room_and_can_be_lifted(make),
         Pruning => {
@@ -49,12 +53,13 @@ fn probe<S: Store>(feature: Feature, make: fn() -> S) {
             asks::open_asks_follow_answers_and_claims_and_a_release_leaves_the_ask_open(make)
         }
         Reviews => {
-            let s = make();
-            s.join("r", "alice", 1).unwrap();
-            let id = s
-                .enqueue_review(&NewReview::new("r", 1, "private", "why"), 2)
-                .unwrap();
-            assert!(s.pending_reviews(10).unwrap().iter().any(|q| q.id == id));
+            reviews::queued_items_come_back_oldest_first_and_only_while_pending(make);
+            reviews::a_verdict_is_recorded_once(make);
+            reviews::the_limit_bounds_one_drain_and_the_same_message_queues_once_per_label(make);
+            reviews::the_listing_is_newest_first_and_keeps_resolved_items(make);
+            reviews::a_crossing_item_keeps_its_target_requester_and_outcome(make);
+            reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied(make);
+            reviews::a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome(make);
         }
         Credentials => {
             credentials::an_issued_credential_is_stored_with_its_hash_clearance_parent_and_expiry(

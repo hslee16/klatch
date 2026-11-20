@@ -187,3 +187,101 @@ pub fn the_first_parent_noted_for_a_member_is_kept_and_listed_with_it<S: Store>(
     assert_eq!(parent_of("worker").as_deref(), Some("lead"));
     assert_eq!(parent_of("lead"), None);
 }
+
+fn parked(why: &str, back_by: i64) -> Parked {
+    Parked {
+        why: why.into(),
+        back_by,
+    }
+}
+
+/// The paths of the claims in `room` that are live at `now`.
+fn live_paths<S: Store>(s: &S, room: &str, now: i64) -> Vec<String> {
+    s.claims(room, now)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.path)
+        .collect()
+}
+
+pub fn a_park_holds_live_claims_until_the_return_time_and_not_after<S: Store>(make: fn() -> S) {
+    let s = make();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "f.rs", 100, ""), 10)
+        .unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "old.rs", 20, ""), 10)
+        .unwrap();
+    s.park("alice", &parked("ci", 5_000), 50).unwrap();
+    assert_eq!(
+        live_paths(&s, "r", 4_999),
+        vec!["f.rs".to_string()],
+        "the live claim outlasts its lease and the expired one is not revived"
+    );
+    assert!(
+        live_paths(&s, "r", 5_000).is_empty(),
+        "at the return time the claim runs out"
+    );
+}
+
+pub fn a_parked_member_is_listed_with_why_and_return_time_until_unparked<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    s.join("r", "alice", 10).unwrap();
+    s.join("r", "bob", 10).unwrap();
+    s.park("alice", &parked("waiting", 3_000), 20).unwrap();
+    let parked_of = |name: &str| {
+        s.members("r")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.name == name)
+            .unwrap()
+            .parked
+    };
+    let p = parked_of("alice").expect("a parked member is not listed as parked");
+    assert_eq!((p.why.as_str(), p.back_by), ("waiting", 3_000));
+    assert!(
+        parked_of("bob").is_none(),
+        "a member that never parked is listed as parked"
+    );
+    s.park("alice", &parked("later", 4_000), 30).unwrap();
+    assert_eq!(
+        parked_of("alice").map(|p| (p.why, p.back_by)),
+        Some(("later".to_string(), 4_000)),
+        "a second park does not replace the first"
+    );
+    s.unpark("alice", 40).unwrap();
+    assert!(
+        parked_of("alice").is_none(),
+        "an unparked member is still listed as parked"
+    );
+}
+
+pub fn an_unpark_cuts_what_the_park_stretched_back_to_a_normal_lease<S: Store>(make: fn() -> S) {
+    let s = make();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "f.rs", 100, ""), 10)
+        .unwrap();
+    s.park("alice", &parked("ci", 1_000_000), 50).unwrap();
+    assert_eq!(live_paths(&s, "r", 500_000).len(), 1, "the park holds it");
+    s.unpark("alice", 1_000).unwrap();
+    assert_eq!(live_paths(&s, "r", 1_001).len(), 1, "it is not dropped");
+    assert!(
+        live_paths(&s, "r", 500_000).is_empty(),
+        "the stretch outlived the unpark"
+    );
+}
+
+pub fn an_unpark_of_a_member_that_is_not_parked_changes_nothing<S: Store>(make: fn() -> S) {
+    let s = make();
+    s.join("r", "alice", 10).unwrap();
+    s.claim(&ClaimRequest::new(("r", "alice"), "f.rs", 2_000, ""), 10)
+        .unwrap();
+    s.unpark("alice", 20).unwrap();
+    s.unpark("nobody", 20).unwrap();
+    assert_eq!(live_paths(&s, "r", 2_009), vec!["f.rs".to_string()]);
+    assert!(
+        live_paths(&s, "r", 2_010).is_empty(),
+        "the lease was changed"
+    );
+}

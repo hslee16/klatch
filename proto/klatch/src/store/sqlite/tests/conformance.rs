@@ -479,6 +479,63 @@ fn credentials_the_list_has_every_credential_by_member() {
 }
 
 #[test]
+fn members_a_park_holds_live_claims_until_the_return_time_and_not_after() {
+    c::members::a_park_holds_live_claims_until_the_return_time_and_not_after(store);
+}
+
+#[test]
+fn members_a_parked_member_is_listed_with_why_and_return_time_until_unparked() {
+    c::members::a_parked_member_is_listed_with_why_and_return_time_until_unparked(store);
+}
+
+#[test]
+fn members_an_unpark_cuts_what_the_park_stretched_back_to_a_normal_lease() {
+    c::members::an_unpark_cuts_what_the_park_stretched_back_to_a_normal_lease(store);
+}
+
+#[test]
+fn members_an_unpark_of_a_member_that_is_not_parked_changes_nothing() {
+    c::members::an_unpark_of_a_member_that_is_not_parked_changes_nothing(store);
+}
+
+#[test]
+fn reviews_queued_items_come_back_oldest_first_and_only_while_pending() {
+    c::reviews::queued_items_come_back_oldest_first_and_only_while_pending(store);
+}
+
+#[test]
+fn reviews_a_verdict_is_recorded_once() {
+    c::reviews::a_verdict_is_recorded_once(store);
+}
+
+#[test]
+fn reviews_the_limit_bounds_one_drain_and_the_same_message_queues_once_per_label() {
+    c::reviews::the_limit_bounds_one_drain_and_the_same_message_queues_once_per_label(store);
+}
+
+#[test]
+fn reviews_the_listing_is_newest_first_and_keeps_resolved_items() {
+    c::reviews::the_listing_is_newest_first_and_keeps_resolved_items(store);
+}
+
+#[test]
+fn reviews_a_crossing_item_keeps_its_target_requester_and_outcome() {
+    c::reviews::a_crossing_item_keeps_its_target_requester_and_outcome(store);
+}
+
+#[test]
+fn reviews_a_deny_or_a_plain_item_is_never_due_to_be_applied() {
+    c::reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied(store);
+}
+
+#[test]
+fn reviews_a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome() {
+    c::reviews::a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome(
+        store,
+    );
+}
+
+#[test]
 fn sqlite_declares_every_feature_and_keeps_each_one() {
     assert!(store().features().missing().is_empty());
     c::features::every_declared_feature_works(store);
