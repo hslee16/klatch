@@ -71,6 +71,19 @@ impl<S: Store> Gateway<S> {
         Ok(())
     }
 
+    /// Mark each member that was admitted in flag mode of the room's requirement and has not since been admitted
+    /// cleanly (#878). Display only: a mark is a note that the member's harness lacks a capability, not authority.
+    pub(super) fn with_advisory(&self, room: &str, members: &mut [MemberInfo]) -> Result<()> {
+        let prefix = super::room_require::advisory_prefix(room);
+        let flagged = self.store.policy_list(&prefix)?;
+        for m in members {
+            m.advisory = flagged
+                .iter()
+                .any(|(key, _)| key.strip_prefix(&prefix) == Some(m.name.as_str()));
+        }
+        Ok(())
+    }
+
     /// Fill in the kind of each member listed: a session record first, else the member's declaration. One read of
     /// the declarations for all of them.
     pub(super) fn with_kinds(&self, members: &mut [MemberInfo]) -> Result<()> {

@@ -29,6 +29,7 @@ fn peer(name: &str, last_seen: i64, status: Option<&str>) -> MemberInfo {
         kind: None,
         place: None,
         mode: None,
+        advisory: false,
     }
 }
 
@@ -214,6 +215,7 @@ fn sample() -> Board {
                 parked: None,
                 kind: None,
                 place: None,
+                advisory: false,
             },
             BoardMember {
                 status_ts: 0,
@@ -224,6 +226,7 @@ fn sample() -> Board {
                 parked: None,
                 kind: None,
                 place: None,
+                advisory: false,
             },
         ],
         stale_members: 0,
@@ -389,6 +392,7 @@ fn no_age_is_printed_negative_when_the_reader_clock_is_behind() {
             parked: None,
             kind: None,
             place: None,
+            advisory: false,
         }],
         ..Default::default()
     };
@@ -422,6 +426,7 @@ fn a_child_session_is_shown_with_its_parent_in_who_and_on_the_board() {
             parked: None,
             kind: None,
             place: None,
+            advisory: false,
         }],
         ..Default::default()
     };
@@ -452,6 +457,7 @@ fn a_members_kind_is_shown_in_who_and_on_the_board_and_a_member_without_one_show
             parked: None,
             kind: Some(crate::domain::MemberKind::Service),
             place: None,
+            advisory: false,
         }],
         ..Default::default()
     };
@@ -683,8 +689,27 @@ fn no_nudge_notice_for_prompting_unknown_gone_or_own_modes() {
         with_mode("new", None),
         MemberInfo {
             mode: Some("bypassPermissions".into()),
+            advisory: false,
             ..peer("gone", 1000 - MEMBER_ACTIVE_SECS - 1, None)
         },
     ];
     assert_eq!(nudge_skipped_note(&members, "asker", 1000), None);
+}
+
+#[test]
+fn who_marks_an_advisory_member_and_leaves_others_unmarked() {
+    let mut flagged = peer("flagged", 990, None);
+    flagged.advisory = true;
+    let out = render_who(&[flagged, peer("plain", 990, None)], 1000, false);
+    let line = |name: &str| {
+        out.lines()
+            .find(|l| l.starts_with(name))
+            .unwrap()
+            .to_string()
+    };
+    assert!(
+        line("flagged").contains("\tadvisory: harness lacks a capability this room asked for"),
+        "{out}"
+    );
+    assert!(!line("plain").contains("advisory"), "{out}");
 }

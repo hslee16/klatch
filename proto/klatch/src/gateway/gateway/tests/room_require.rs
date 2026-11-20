@@ -173,3 +173,36 @@ fn a_requirement_binds_only_its_own_room() {
     let g = required("refuse:wake");
     g.join(&alice(), "other").unwrap();
 }
+
+#[test]
+fn a_flagged_member_shows_as_advisory_in_who_and_a_clean_rejoin_clears_it() {
+    let g = required("flag:pre-action-enforcement");
+    g.join_with_harness(&bob(), "r", &Codex::paper(HookTrust::Unknown))
+        .unwrap();
+    let who = g.who(&bob(), "r").unwrap();
+    assert!(who.iter().find(|m| m.name == "bob").unwrap().advisory);
+    // a member admitted with the capability is not advisory
+    g.join_with_harness(&alice(), "r", &claude()).unwrap();
+    let who = g.who(&bob(), "r").unwrap();
+    assert!(!who.iter().find(|m| m.name == "alice").unwrap().advisory);
+    // the same member, rejoining with a trusted harness, is cleared
+    g.join_with_harness(&bob(), "r", &claude()).unwrap();
+    let who = g.who(&bob(), "r").unwrap();
+    assert!(!who.iter().find(|m| m.name == "bob").unwrap().advisory);
+}
+
+#[test]
+fn the_board_marks_a_flagged_member_too() {
+    let g = required("flag:pre-action-enforcement");
+    g.join_with_harness(&bob(), "r", &Codex::paper(HookTrust::Unknown))
+        .unwrap();
+    let board = g.board(&bob(), "r").unwrap();
+    assert!(
+        board
+            .members
+            .iter()
+            .find(|m| m.name == "bob")
+            .unwrap()
+            .advisory
+    );
+}

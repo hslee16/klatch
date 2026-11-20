@@ -83,7 +83,10 @@ impl<S: Store> Gateway<S> {
         harness: &dyn Harness,
     ) -> Result<Admission> {
         let req = match self.room_requirement(room) {
-            Ok(None) => return Ok(Admission::Admit),
+            Ok(None) => {
+                self.note_advisory(room, &who.member, false)?;
+                return Ok(Admission::Admit);
+            }
             Ok(Some(req)) => req,
             Err(e) => {
                 self.note_refusal(who, (room, "join"), &e);
@@ -92,8 +95,9 @@ impl<S: Store> Gateway<S> {
         };
         let admission = negotiate(&req, harness);
         match &admission {
-            Admission::Admit => {}
+            Admission::Admit => self.note_advisory(room, &who.member, false)?,
             Admission::Flag(_) => {
+                self.note_advisory(room, &who.member, true)?;
                 self.store.record_refusal(
                     &NewRefusal::new(&who.member, room, "join", FLAG_RULE),
                     self.now(),
@@ -110,4 +114,21 @@ impl<S: Store> Gateway<S> {
         }
         Ok(admission)
     }
+
+    /// Remember (or forget) that `member` was admitted to `room` in flag mode, so `who` and the board can show it as
+    /// advisory (#878). The latest admission decides: a clean rejoin clears it. Only writes when the mark changes.
+    fn note_advisory(&self, room: &str, member: &str, flagged: bool) -> Result<()> {
+        let key = format!("{}{member}", advisory_prefix(room));
+        let present = self.store.policy_get(&key)?.is_some();
+        if flagged != present {
+            self.store
+                .policy_set(&key, flagged.then_some("flag"), self.now())?;
+        }
+        Ok(())
+    }
+}
+
+/// The policy key prefix of a room's advisory marks (`room:ROOM:advisory:MEMBER`).
+pub(super) fn advisory_prefix(room: &str) -> String {
+    format!("room:{room}:advisory:")
 }
