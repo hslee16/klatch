@@ -12,11 +12,16 @@ fails=0
 ok() { printf '  ok    %s\n' "$1"; }
 bad() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 
-# a fake cargo: logs "args | seed | cases" and fails when the arguments contain $FAKE_FAIL
+# a fake cargo: logs "args | seed | cases" and fails when the arguments contain $FAKE_FAIL. The one exception is the
+# plain `build -p klatch --locked --manifest-path ...` that the gate's release and shell checks make so the README
+# recipes have a klatch binary (#982): it is passed to the real cargo, because a fake cannot produce the binary and a
+# fresh worktree has none (the main checkout only passed because an old build was lying in proto/target)
+real_cargo="$(command -v cargo || true)"
 shim="$work/shim"; mkdir -p "$shim"
 cat > "$shim/cargo" <<'SH'
 #!/bin/sh
 echo "$* | seed=${HEGEL_SEED:-} cases=${HEGEL_TEST_CASES:-}" >> "$FAKE_LOG"
+case "$*" in "build -p klatch --locked --manifest-path "*) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" > /dev/null 2>&1 ;; esac
 case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"; exit 1; } ;; esac
 exit 0
 SH
@@ -25,7 +30,7 @@ run_gate() { # fail-pattern, args...
   FAKE_LOG="$work/log"; : > "$FAKE_LOG"
   FAKE_FAIL="$1"; shift
   # --allow-dirty: these tests run in whatever checkout they are in, which may have uncommitted changes (#763)
-  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
+  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" REAL_CARGO="$real_cargo" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
 }
 
 # the seed the gate must derive from this commit
