@@ -84,6 +84,7 @@ pub(crate) fn message_frame(room: &str, m: &Message) -> ServerFrame {
         ts: m.ts,
         kind: m.kind.clone(),
         payload: m.payload.clone(),
+        advisory: m.advisory,
     }
 }
 

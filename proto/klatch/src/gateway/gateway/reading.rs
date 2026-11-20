@@ -127,7 +127,8 @@ impl<S: Store> Gateway<S> {
         self.check_guard(who, &Operation::Subscribe { room: room.into() })?;
         let rows = self.store.tail(room, after_seq, limit)?;
         let (scanned, last) = (rows.len(), rows.last().map_or(after_seq, |m| m.seq));
-        Ok((Self::without_canary(rows), scanned, last))
+        let shown = self.mark_advisory(room, Self::without_canary(rows))?;
+        Ok((shown, scanned, last))
     }
 
     /// The store's change token (#616): differs after any other connection commits, says nothing about what. It is no
