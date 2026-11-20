@@ -31,9 +31,47 @@ impl<S: Store> Gateway<S> {
         })
     }
 
-    /// The limit in force: posts and seconds, if one is set.
+    /// Only the human (a floor act, so no agent and no admin agent): give one member its own limit, which wins over
+    /// the global one in either direction, or with `None` take it away so the member inherits again (#972).
+    pub fn admin_set_member_rate_limit(
+        &self,
+        who: &Principal,
+        member: &str,
+        limit: Option<(usize, i64)>,
+    ) -> Result<()> {
+        check_member(&Principal::unattributed(member))?;
+        if limit.is_some_and(|l| !in_bounds(l)) {
+            return Err(Error::Invalid(format!(
+                "a rate limit is 1 to {MAX_POSTS} posts in 1 to {MAX_SECS} seconds"
+            )));
+        }
+        let shown = limit.map_or("inherit".to_string(), |(p, s)| format!("{p}/{s}"));
+        let target = format!("{member}={shown}");
+        self.administer(who, ("member-rate-limit", &target), |now| {
+            self.store.policy_set(
+                &format!("{KEY}:member:{member}"),
+                limit.map(|(p, s)| format!("{p}/{s}")).as_deref(),
+                now,
+            )?;
+            Ok(String::new())
+        })
+    }
+
+    /// The global limit in force: posts and seconds, if one is set.
     pub fn rate_limit(&self) -> Result<Option<(usize, i64)>> {
-        let Some(text) = self.store.policy_get(KEY)? else {
+        self.limit_at(KEY)
+    }
+
+    /// The limit that applies to one member: its own if it has one, else the global one, else none.
+    pub fn rate_limit_for(&self, member: &str) -> Result<Option<(usize, i64)>> {
+        match self.limit_at(&format!("{KEY}:member:{member}"))? {
+            Some(own) => Ok(Some(own)),
+            None => self.rate_limit(),
+        }
+    }
+
+    fn limit_at(&self, key: &str) -> Result<Option<(usize, i64)>> {
+        let Some(text) = self.store.policy_get(key)? else {
             return Ok(None);
         };
         Ok(text
@@ -43,7 +81,7 @@ impl<S: Store> Gateway<S> {
 
     /// Refuse a post from a member that has used up its limit; called before the post is stored.
     pub(super) fn check_rate(&self, who: &Principal, room: &str) -> Result<()> {
-        let Some((limit, secs)) = self.rate_limit()? else {
+        let Some((limit, secs)) = self.rate_limit_for(&who.member)? else {
             return Ok(());
         };
         let now = self.now();

@@ -215,8 +215,23 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
                 }
             );
         }
-        PolicyAct::RateLimit { posts, secs, off } => {
+        PolicyAct::RateLimit {
+            posts,
+            secs,
+            off,
+            member,
+        } => {
             let limit = rate_limit_of(posts, secs, off)?;
+            if let Some(member) = member {
+                t.admin_set_member_rate_limit(&member, limit)?;
+                match limit {
+                    Some((p, s)) => println!(
+                        "{member} may post {p} times in {s} seconds in all rooms, whatever the global limit is"
+                    ),
+                    None => println!("{member} has no limit of its own and follows the global one"),
+                }
+                return Ok(());
+            }
             t.admin_set_rate_limit(limit)?;
             match limit {
                 Some((p, s)) => {

@@ -205,6 +205,9 @@ const GUARDED: &[(&str, Call)] = &[
     ("admin_set_rate_limit", |g, w| {
         refused(g.admin_set_rate_limit(w, Some((5, 60))))
     }),
+    ("admin_set_member_rate_limit", |g, w| {
+        refused(g.admin_set_member_rate_limit(w, "bob", Some((5, 60))))
+    }),
     ("admin_set_lease_cap", |g, w| {
         refused(g.admin_set_lease_cap(w, Some(60)))
     }),

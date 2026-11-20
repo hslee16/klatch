@@ -120,12 +120,15 @@ pub enum AdminCmd {
         off: bool,
     },
     /// Limit every member to POSTS posts in SECS seconds over all rooms together, for example `rate-limit 30 60`;
-    /// `rate-limit --off` lifts it. Off by default
+    /// `rate-limit --off` lifts it. Off by default. With `--member NAME` the limit is that member's own, which wins
+    /// over the global one (higher or lower); `rate-limit --member NAME --off` makes the member inherit again
     RateLimit {
         posts: Option<usize>,
         secs: Option<i64>,
         #[arg(long)]
         off: bool,
+        #[arg(long)]
+        member: Option<String>,
     },
     /// How long a holder that is busy with no sign of progress keeps its claims, in seconds (1 to 604800), for
     /// example `lease-cap 86400`; `lease-cap --off` puts back the default of 4 hours
