@@ -493,3 +493,45 @@ fn ending_a_run_drops_the_grantor_and_the_grants_of_its_rooms_and_only_those() {
     assert_eq!(g.room_grantor("keep").unwrap().as_deref(), Some("alice"));
     assert!(g.store.policy_get("room-clear:keep:bob").unwrap().is_some());
 }
+
+/// #897: the grantor check and the grant write are one transaction. Another connection (the human's `grantor --off`)
+/// tries to remove the grantor in the window just before the grant row is written; it must not get in, so a grant
+/// row never outlives the grantor that was checked for it.
+#[test]
+fn the_grantor_check_and_the_grant_write_are_one_transaction() {
+    use crate::store::{SqliteStore, insecure_test_key};
+    use std::time::Duration;
+
+    let dir = crate::store::test_dir::temp_db("grant-atomic");
+    let key = insecure_test_key();
+    let open_at =
+        |ms| SqliteStore::open_with_timeout(&dir, &key, Duration::from_millis(ms)).unwrap();
+    let g = Gateway::new(SpyStore::over(open_at(5000)), FixedClock(100), AllowAll);
+    for p in [alice(), bob()] {
+        g.join(&p, "lobby").unwrap();
+    }
+    g.join(&alice(), "vault").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+
+    let rival = open_at(100);
+    let rival_result = Rc::new(std::cell::RefCell::new(None));
+    let seen = rival_result.clone();
+    *g.store.before_policy_set.borrow_mut() = Some(Box::new(move |key| {
+        if key.starts_with("room-clear:") {
+            *seen.borrow_mut() = Some(rival.policy_set("grantor:vault", None, 1));
+        }
+    }));
+
+    g.grant_room_clearance(&alice(), "vault", "bob", "private")
+        .unwrap();
+
+    let rival_outcome = rival_result.borrow_mut().take();
+    assert!(
+        matches!(rival_outcome, Some(Err(_))),
+        "the grantor was removed between the check and the write: {rival_outcome:?}"
+    );
+    assert_eq!(g.room_grantor("vault").unwrap().as_deref(), Some("alice"));
+    assert_eq!(grant_rows(&g).len(), 1);
+}
