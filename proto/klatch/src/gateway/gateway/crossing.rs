@@ -60,8 +60,23 @@ impl<S: Store> Gateway<S> {
 
     /// Apply every verdict that has not been applied: post allowed and redacted crossings into their target rooms,
     /// after checking the floors once more. Safe to run again; an item is applied once. Returns what happened to
-    /// each item it touched.
-    pub fn release_crossings(&self) -> Result<Vec<Applied>> {
+    /// each item it touched. It is made on behalf of `who` (#836): the launcher's judge, never nobody. It is an admin
+    /// act (`release-crossings`) that goes through the role check and the guard, and a refusal is kept; only the
+    /// human at a terminal has it (no role holder's list names it). Each audit row says who released it.
+    pub fn release_crossings(&self, who: &Principal) -> Result<Vec<Applied>> {
+        check_member(who)?;
+        self.check_guard(who, &Operation::admin("release-crossings", ""))
+            .inspect_err(|e| {
+                // the admin-scope refusal is already noted by the role check
+                if !matches!(e, Error::Refused { rule, .. } if rule == "admin-scope") {
+                    self.note_refusal(who, ("", "release-crossings"), e);
+                }
+            })?;
+        self.release_pending(&who.member)
+    }
+
+    /// The release itself, for a caller that has already been guarded: `by` is recorded as the releaser.
+    pub(super) fn release_pending(&self, by: &str) -> Result<Vec<Applied>> {
         let mut out = Vec::new();
         for q in self.store.unapplied_reviews(crate::gateway::DRAIN_LIMIT)? {
             let outcome = self.apply_one(&q)?;
@@ -71,7 +86,7 @@ impl<S: Store> Gateway<S> {
             } else {
                 BLOCKED
             };
-            self.audit_crossing(&q, word)?;
+            self.audit_crossing(&q, word, by)?;
             out.push((q.id, word));
         }
         Ok(out)
@@ -108,10 +123,10 @@ impl<S: Store> Gateway<S> {
         Ok(load_item(&self.store, q)?.map(|i| i.text))
     }
 
-    fn audit_crossing(&self, q: &QueuedReview, outcome: &str) -> Result<()> {
+    fn audit_crossing(&self, q: &QueuedReview, outcome: &str, by: &str) -> Result<()> {
         let target = format!("{}#{}", q.room, q.seq);
         let note = format!(
-            "{outcome} to {} by {} ({})",
+            "{outcome} to {} by {} ({}); applied by {by}",
             q.to_room, q.requester, q.verdict
         );
         self.store

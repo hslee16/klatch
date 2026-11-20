@@ -88,7 +88,8 @@ transport's principal; a `member`, `sender` or `from` param has no effect.
 | `prune` | `prune_members` | `Admin("prune")`, every member's, fixed retention | GUARDED `prune_members`; `admin_role.rs` |
 | `role_act` | the `admin_*` acts of the act named | `Admin(act)`, then the admin agent allowlist; floors refused | GUARDED `admin_close_room` and the rest; `session/role_tests.rs`, `floors.rs` |
 | `review_next` | `review_next` | `ReviewNext`, reviewer role only | GUARDED `review_next`; `reviewer.rs` |
-| `review_verdict` | `review_verdict` | `ReviewVerdict`, reviewer role only | GUARDED `review_verdict`; `reviewer.rs` |
+| `review_verdict` | `review_verdict` | `ReviewVerdict`, reviewer role only | GUARDED `review_verdict`; `reviewer.rs`. Releases what it recorded under the reviewer's own name (audit `applied by <reviewer>`) |
+| (no wire method) | `release_crossings` | `Admin(release-crossings)`, the human's gateway only | GUARDED `release_crossings`; a reviewer is refused `reviewer`, an admin agent and a plain member on a members' gateway `admin-scope`. Proof: `tests/crossing.rs` (`a_principal_without_the_role_cannot_release`, `a_release_names_who_released_it_in_the_audit`) |
 
 The client frame `ack` calls `ack` (`Ack`, GUARDED `ack`). An unknown method answers `unknown_method` and reaches no
 gateway call. The wire protocol has no floor act and no `admin` method of its own: `role_act` is the only way in and
@@ -147,7 +148,7 @@ wraps.
 | `worker` | `admin_issue_credential`, `admin_revoke_credential`, `admin_credentials` | the launcher heuristic, not a role: gap #834 |
 | `anchor` | `anchor_done`, `reap_anchors`, `github_events` | the launcher heuristic: gap #834 |
 | `run` | `admin_run_create`, `admin_run_end`, `admin_runs` | the launcher heuristic: gap #834 |
-| `judge` | `pending_reviews`, `resolve_review`, `record_audit` (via `drain`, which runs the local rules judge: `rules_judge`, `RulesJudge`, `Breaker`; `run` is a resident loop unless `--once`), `release_crossings` (no principal) | the launcher heuristic: gaps #834 and #836. A verdict is data: the floors are checked again when a crossing is released and the rules judge only denies or defers. By default no text leaves the machine; with the opt-in `--hosted-judge` and `--hosted-ceiling` (#960) text strictly below the ceiling label goes to an outside service, behind `Narrowed`, `BelowCeiling` and `Breaker` |
+| `judge` | `pending_reviews`, `resolve_review`, `record_audit` (via `drain`, which runs the local rules judge: `rules_judge`, `RulesJudge`, `Breaker`; `run` is a resident loop unless `--once`), `release_crossings` as the named principal `judge` (the admin act `release-crossings`: guarded, refusal kept, audit rows say `applied by judge`; no role holder's list names it) | the launcher heuristic: gap #834. A verdict is data: the floors are checked again when a crossing is released and the rules judge only denies or defers. By default no text leaves the machine; with the opt-in `--hosted-judge` and `--hosted-ceiling` (#960) text strictly below the ceiling label goes to an outside service, behind `Narrowed`, `BelowCeiling` and `Breaker` |
 | `init`, `consent`, `convention`, `doctor`, `sessions` | none: they edit the human's own settings files or read the installation; none opens the store for a member | no member operation; `tests/init.rs`, `tests/doctor.rs` |
 
 ## `klatch admin`
@@ -175,7 +176,7 @@ directly and meets only the terminal heuristic.
 | The launcher commands (`worker`, `anchor`, `run`, `judge`) are gated by "no bundle in the environment and no session above the process"; no terminal is needed and a detached process has no session above it. `worker issue` makes verified identities | #834 |
 | The own-record gateway methods never reached `check_guard`, so a verified principal whose credential ended could still write its own record | fixed in #835 (`check_own_record_live`); `release_all`, `record_hook_run` for `SessionEnd` and `end_credential` stay allowed after the end, each with its reason in `AFTER_END` |
 | `set_status` in the session-end hook is a guarded call, so an idle-expired credential cannot mark the member `done` at session end (claims are still freed) | #1027 |
-| `release_crossings` takes no principal; `klatch judge` runs it with `AllowAll` | #836 |
+| `release_crossings` took no principal; `klatch judge` ran it with `AllowAll` | fixed here (#836): it takes a principal, is the admin act `release-crossings`, and each crossing audit row says who applied it; the launcher heuristic that gates the `judge` command remains #834 |
 | The scan of public gateway methods was a hand-kept list of files and missed eight | fixed here (`gateway_sources`) |
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
 | `klatch admin` decides who may administer by a terminal and a process-tree walk, and its keystore family has no principal | #318 |

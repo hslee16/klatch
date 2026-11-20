@@ -66,6 +66,6 @@ impl<S: Store> Gateway<S> {
         };
         let note = format!("by {}: {}", who.member, why);
         record(&self.store, &q, (verdict, &note), (REVIEWER, self.now()))?;
-        self.release_crossings().map(|_| ())
+        self.release_pending(&who.member).map(|_| ())
     }
 }
