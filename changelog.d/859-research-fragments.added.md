@@ -1,0 +1,1 @@
+- New research notes are fragment files `research/notes/<ticket>-<slug>.md` instead of sections appended to RESEARCH-NOTES.md, so parallel pull requests no longer collide on section numbers; `release/research-fragments.sh check|collect|assemble` checks them (in the gate) and numbers them into RESEARCH-NOTES.md at release. Existing sections keep their numbers (#859).
