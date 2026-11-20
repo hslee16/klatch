@@ -298,6 +298,20 @@ pub fn parse_outcome(body: &str) -> Option<(OutcomeKind, i64, String)> {
     Some((OutcomeKind::Failed, n, reason(after.strip_prefix(':')?)))
 }
 
+/// The prefixes of every word that `open_asks` folds (the ask, its answer, close, reopen, decline, failure, partial
+/// and the clarification pair), for a store query that reads only those messages at any depth (#731).
+pub const ASK_WORDS: [&str; 9] = [
+    ASK_PREFIX,
+    "answer to #",
+    "closed #",
+    "reopen #",
+    "partial #",
+    "declined #",
+    "failed #",
+    "need-info #",
+    "info #",
+];
+
 pub fn is_ask(body: &str) -> bool {
     body.starts_with(ASK_PREFIX)
 }

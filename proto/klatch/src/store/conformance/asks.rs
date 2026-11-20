@@ -379,3 +379,43 @@ pub fn claim_changes_never_reports_a_claim_that_lapsed_before_it_was_seen<S: Sto
         .unwrap();
     assert_eq!(changes(&s, "r", "alice", 20), (vec![], vec![]));
 }
+pub fn an_ask_and_its_answer_are_found_however_deep_they_are_in_the_room<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    let old = s
+        .post(Seat::new("r", "alice"), "seeking: old", 1)
+        .unwrap()
+        .seq;
+    for i in 0..5100 {
+        s.post(Seat::new("r", "bob"), &format!("chatter {i}"), 2)
+            .unwrap();
+    }
+    let late = s
+        .post(Seat::new("r", "alice"), "seeking: late", 3)
+        .unwrap()
+        .seq;
+    s.post(Seat::new("r", "bob"), &format!("answer to #{old}: done"), 4)
+        .unwrap();
+    s.post(
+        Seat::new("r", "bob"),
+        &format!("declined #{late} busy: later"),
+        5,
+    )
+    .unwrap();
+    s.post(
+        Seat::new("r", "bob"),
+        &format!("need-info #{late}: which one"),
+        6,
+    )
+    .unwrap();
+    let open = s.open_asks("r", 7).unwrap();
+    assert_eq!(
+        open.len(),
+        1,
+        "the old ask was answered, the late one is open"
+    );
+    assert_eq!(open[0].seq, late);
+    assert_eq!(open[0].outcomes.len(), 1);
+    assert!(open[0].waiting_on_asker.is_some());
+}

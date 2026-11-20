@@ -49,7 +49,8 @@ impl<S: Store> Gateway<S> {
     pub fn board(&self, who: &Principal, room: &str) -> Result<crate::domain::Board> {
         self.admit(who, room, Operation::read(room, false))?;
         let now = self.now();
-        let messages = self.store.tail(room, 0, 5000)?;
+        // statuses and offers are read by prefix at any depth, not from a tail window (#731)
+        let messages = self.store.words(room, &crate::domain::BOARD_WORDS)?;
         let statuses = crate::domain::statuses(&messages);
         let mut all = self.store.members(room)?;
         self.with_kinds(&mut all)?;
