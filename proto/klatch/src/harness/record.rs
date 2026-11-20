@@ -132,29 +132,32 @@ mod tests {
         }
     }
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-reg-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn tmp(tag: &str) -> crate::store::test_dir::TestDir {
+        crate::store::test_dir::TestDir::new(&format!("reg-{tag}"))
     }
 
     #[test]
     fn reads_the_record_for_a_pid() {
         let d = tmp("read");
         std::fs::write(d.join("19479.json"), GOOD).unwrap();
-        let reg = FsRegistry { dir: d.clone() };
+        let reg = FsRegistry {
+            dir: d.to_path_buf(),
+        };
         assert_eq!(reg.record_for(19479).unwrap().session_id, "abc-123");
         assert_eq!(reg.record_for(1), None);
-        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]
     fn a_record_filed_under_another_pid_is_not_believed() {
         let d = tmp("mismatch");
         std::fs::write(d.join("555.json"), GOOD).unwrap();
-        assert_eq!(FsRegistry { dir: d.clone() }.record_for(555), None);
-        let _ = std::fs::remove_dir_all(d);
+        assert_eq!(
+            FsRegistry {
+                dir: d.to_path_buf()
+            }
+            .record_for(555),
+            None
+        );
     }
 
     #[test]
@@ -165,8 +168,13 @@ mod tests {
         std::fs::write(&key, "secret").unwrap();
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o000)).unwrap();
         // an unreadable key file proves it is not opened; the lookup still works
-        assert!(FsRegistry { dir: d.clone() }.record_for(19479).is_some());
+        assert!(
+            FsRegistry {
+                dir: d.to_path_buf()
+            }
+            .record_for(19479)
+            .is_some()
+        );
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let _ = std::fs::remove_dir_all(d);
     }
 }

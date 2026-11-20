@@ -218,11 +218,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    fn dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-bundle-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn dir(tag: &str) -> crate::store::test_dir::TestDir {
+        crate::store::test_dir::TestDir::new(&format!("bundle-{tag}"))
     }
 
     fn sample() -> Bundle {
@@ -278,7 +275,6 @@ mod tests {
         assert_eq!(back.store_key, b.store_key);
         assert_eq!(back.label_keys.len(), 1);
         assert_eq!(back.label_keys[0].1, Key::from_bytes([2; 32]));
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -293,7 +289,6 @@ mod tests {
             .expect("read a loose bundle")
             .to_string();
         assert!(err.contains("chmod 600"), "{err}");
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -329,7 +324,6 @@ mod tests {
                 "case {i}: {err}"
             );
         }
-        std::fs::remove_dir_all(&d).ok();
     }
 
     fn read_text(d: &std::path::Path, tag: &str, text: &str) -> Result<Bundle, Error> {
@@ -373,7 +367,6 @@ mod tests {
             let text = good.replace("member w-1", &format!("member {name}"));
             assert_eq!(read_text(&d, "legal", &text).unwrap().member, name);
         }
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -388,7 +381,6 @@ mod tests {
             read_text(&d, "twice", &twice).is_err(),
             "a second token line was accepted"
         );
-        std::fs::remove_dir_all(&d).ok();
     }
 
     /// #723: a second `store` line must not replace the first, as a second `token` or `member` line must not.
@@ -407,7 +399,6 @@ mod tests {
             read_text(&d, "once", &good).unwrap().store_key,
             Key::from_bytes([1; 32])
         );
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]

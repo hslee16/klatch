@@ -5,18 +5,29 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn tmp(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir()
-        .join(format!("klatch-attrs-{}-{tag}", std::process::id()))
-        .join(format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::canonicalize(&d).unwrap()
+/// A scratch directory and its canonical path (the temp directory may be a symlink); the guard removes it on drop.
+struct Tmp {
+    path: PathBuf,
+    _dir: crate::test_dir::TestDir,
+}
+
+impl std::ops::Deref for Tmp {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for Tmp {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn tmp(tag: &str) -> Tmp {
+    let dir = crate::test_dir::TestDir::new(&format!("attrs-{tag}"));
+    let path = std::fs::canonicalize(&*dir).unwrap();
+    Tmp { path, _dir: dir }
 }
 
 fn store(root: &Path) -> SqliteStore {

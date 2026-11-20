@@ -10,11 +10,8 @@ use std::process::Command;
 
 const NAME: &str = "store-test";
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("klatch-survivor-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(tag: &str) -> crate::test_dir::TestDir {
+    crate::test_dir::TestDir::new(&format!("survivor-{tag}"))
 }
 
 fn file_home(d: &Path) -> KeyHome {
@@ -84,7 +81,6 @@ fn a_file_with_no_bytes_is_not_data_and_one_byte_is() {
     assert!(!has_data(&db), "an empty file has data");
     std::fs::write(&db, b"x").unwrap();
     assert!(has_data(&db));
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -95,7 +91,6 @@ fn an_empty_store_file_gets_a_key_and_opens_instead_of_being_called_lost() {
     let kh = file_home(&d);
     open_store_in(&db, &kh).expect("an empty file is a store that was never written");
     assert!(kh.source.get(NAME).unwrap().is_some());
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -127,7 +122,6 @@ fn a_key_opens_a_store_only_when_it_is_missing_empty_plaintext_or_really_opened_
         "a key that does not open the encrypted store was accepted"
     );
     let _ = kh;
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -137,7 +131,6 @@ fn the_directory_lock_is_taken_only_where_the_store_directory_exists() {
     let missing = d.join("not-yet").join("klatch.db");
     assert!(lock_store_dir(&missing).unwrap().is_none());
     assert!(!d.join("not-yet").exists(), "the lock made the directory");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -152,7 +145,6 @@ fn opening_beside_a_rotation_in_a_directory_that_does_not_exist_skips_the_direct
         .to_string();
     assert!(!err.contains("store directory"), "{err}");
     assert!(err.contains("unable to open"), "{err}");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -170,7 +162,6 @@ fn a_rotation_that_died_after_the_store_was_rekeyed_is_finished_by_the_next_open
         kh.source.get(&next_name(NAME)).unwrap().is_none(),
         "the second key was left behind"
     );
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -190,7 +181,6 @@ fn a_second_key_equal_to_the_current_one_never_repairs_anything_and_is_left_alon
         kh.source.get(&next_name(NAME)).unwrap().is_some(),
         "the leftover was deleted by a repair that did not happen"
     );
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -205,7 +195,6 @@ fn rotating_again_after_a_crash_before_the_store_was_rekeyed_reuses_the_stored_s
     assert!(same(&new, &stored), "a fresh key replaced the stored one");
     assert!(same(&kh.source.get(NAME).unwrap().unwrap(), &stored));
     drop(open_store_in(&db, &kh).unwrap());
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -221,7 +210,6 @@ fn a_second_key_equal_to_the_current_one_is_not_rotated_to_again() {
     assert!(same(&kh.source.get(NAME).unwrap().unwrap(), &new));
     assert!(kh.source.get(&next_name(NAME)).unwrap().is_none());
     drop(open_store_in(&db, &kh).unwrap());
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -248,7 +236,6 @@ fn state_dir_follows_xdg_state_home_then_home_and_never_the_working_directory() 
             ),
         ],
     );
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -263,7 +250,6 @@ fn child_state_dir() {
 fn restoring_a_code_that_does_not_open_the_store_changes_nothing_and_refuses() {
     let d = scratch("restore");
     in_child("child_restore_key", &d, &[]);
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -305,7 +291,6 @@ fn child_restore_key() {
 fn the_label_key_commands_make_show_load_and_restore_the_key_of_a_sealed_label() {
     let d = scratch("labels");
     in_child("child_label_keys", &d, &[]);
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]

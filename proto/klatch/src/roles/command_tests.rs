@@ -9,14 +9,12 @@ use klatch::gateway::FixedClock;
 struct World {
     gateway: Rc<Gateway<SqliteStore>>,
     human: Gateway<SqliteStore>,
-    dir: std::path::PathBuf,
+    dir: crate::test_dir::TestDir,
 }
 
 impl World {
     fn new(tag: &str) -> World {
-        let dir = std::env::temp_dir().join(format!("klatch-roles-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_dir::TestDir::new(&format!("roles-{tag}"));
         let open = || SqliteStore::open(&dir.join("t.db"), &klatch::store::insecure_test_key());
         let gateway = Gateway::new(open().unwrap(), FixedClock(1_000), AllowAll).for_members();
         let human = Gateway::new(open().unwrap(), FixedClock(1_000), AllowAll);

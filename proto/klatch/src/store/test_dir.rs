@@ -105,6 +105,37 @@ impl AsRef<Path> for TempDb {
     }
 }
 
+/// A value that lives in a scratch directory (an open store, say), with the directory held until the value is gone. It
+/// derefs to the value, and the value is dropped before the directory is removed.
+pub(crate) struct In<T> {
+    value: T,
+    _dir: TestDir,
+}
+
+impl<T> In<T> {
+    /// Build the value from a new scratch directory tagged `tag`.
+    pub(crate) fn new(tag: &str, make: impl FnOnce(&Path) -> T) -> Self {
+        let dir = TestDir::new(tag);
+        In {
+            value: make(&dir),
+            _dir: dir,
+        }
+    }
+}
+
+impl<T> Deref for In<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> std::ops::DerefMut for In<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
 /// The bytes in every file under `dir`; a file that vanishes while it is counted counts as nothing.
 fn size_of(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -204,5 +235,42 @@ mod tests {
             std::thread::sleep(POLL);
         }
         panic!("the guard did not fire on a directory over the cap");
+    }
+
+    /// #812: a test that makes its own directory under the temp directory cleans it on the happy path only and has no
+    /// size cap. The unit tests use `TestDir`; this scan keeps a new helper from going back to the by-hand form.
+    #[test]
+    fn no_unit_test_makes_a_temp_directory_by_hand() {
+        fn walk(dir: &Path, hits: &mut Vec<String>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, hits);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                    if name == "test_dir.rs" {
+                        continue;
+                    }
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    for (i, line) in text.lines().enumerate() {
+                        // a TMPDIR passed on to a child process and the live jev report file are not scratch directories
+                        let allowed =
+                            line.contains("\"TMPDIR\"") || line.contains("klatch-jev-live.txt");
+                        if line.contains("temp_dir()") && !allowed {
+                            hits.push(format!("{}:{}", p.display(), i + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let mut hits = Vec::new();
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut hits,
+        );
+        assert!(
+            hits.is_empty(),
+            "use TestDir instead of temp_dir(): {hits:#?}"
+        );
     }
 }

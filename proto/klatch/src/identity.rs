@@ -674,28 +674,17 @@ mod hook_identity_tests {
 mod member_name_tests {
     use super::*;
 
-    fn store() -> SqliteStore {
-        let dir = std::env::temp_dir().join(format!(
-            "klatch-names-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join(format!(
-            "{}.db",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        SqliteStore::open(&p, &klatch::store::insecure_test_key()).unwrap()
+    fn store() -> crate::test_dir::In<SqliteStore> {
+        crate::test_dir::In::new("names", |dir| {
+            SqliteStore::open(&dir.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+        })
     }
 
     #[test]
     fn a_new_session_with_a_free_name_keeps_the_name_and_is_remembered() {
         let s = store();
         assert_eq!(
-            ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap(),
+            ensure_session_member(&*s, "sid-aaaa1111", Some("proj-20"), 1).unwrap(),
             "proj-20"
         );
         assert_eq!(
@@ -707,9 +696,9 @@ mod member_name_tests {
     #[test]
     fn a_renamed_session_keeps_its_first_name() {
         let s = store();
-        ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
+        ensure_session_member(&*s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
         assert_eq!(
-            ensure_session_member(&s, "sid-aaaa1111", Some("renamed-by-user"), 2).unwrap(),
+            ensure_session_member(&*s, "sid-aaaa1111", Some("renamed-by-user"), 2).unwrap(),
             "proj-20"
         );
     }
@@ -717,19 +706,19 @@ mod member_name_tests {
     #[test]
     fn a_second_session_with_the_same_name_gets_a_suffix_from_its_session_id_and_keeps_it() {
         let s = store();
-        ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
-        let second = ensure_session_member(&s, "sid-bbbb2222", Some("proj-20"), 2).unwrap();
+        ensure_session_member(&*s, "sid-aaaa1111", Some("proj-20"), 1).unwrap();
+        let second = ensure_session_member(&*s, "sid-bbbb2222", Some("proj-20"), 2).unwrap();
         assert_ne!(second, "proj-20");
         assert!(
             second.starts_with("proj-20-") && second.len() <= 40,
             "{second}"
         );
         assert_eq!(
-            ensure_session_member(&s, "sid-bbbb2222", Some("proj-20"), 3).unwrap(),
+            ensure_session_member(&*s, "sid-bbbb2222", Some("proj-20"), 3).unwrap(),
             second
         );
         assert_eq!(
-            ensure_session_member(&s, "sid-aaaa1111", Some("proj-20"), 4).unwrap(),
+            ensure_session_member(&*s, "sid-aaaa1111", Some("proj-20"), 4).unwrap(),
             "proj-20",
             "the first is untouched"
         );
@@ -739,11 +728,11 @@ mod member_name_tests {
     fn a_long_name_still_fits_with_a_suffix_and_a_session_with_no_name_is_named_from_its_id() {
         let s = store();
         let long = "n".repeat(40);
-        ensure_session_member(&s, "sid-aaaa1111", Some(&long), 1).unwrap();
-        let second = ensure_session_member(&s, "sid-bbbb2222", Some(&long), 2).unwrap();
+        ensure_session_member(&*s, "sid-aaaa1111", Some(&long), 1).unwrap();
+        let second = ensure_session_member(&*s, "sid-bbbb2222", Some(&long), 2).unwrap();
         assert!(second.len() <= 40 && second != long, "{second}");
         assert_eq!(
-            ensure_session_member(&s, "0123456789abcdef", None, 3).unwrap(),
+            ensure_session_member(&*s, "0123456789abcdef", None, 3).unwrap(),
             "session-01234567"
         );
     }
