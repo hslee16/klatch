@@ -129,6 +129,8 @@ repo_checks() {
     && release/test-changelog-fragments.sh > /dev/null \
     && release/design-fragments.sh check \
     && release/test-design-fragments.sh > /dev/null \
+    && release/research-fragments.sh check \
+    && release/test-research-fragments.sh > /dev/null \
     && proto/scripts/test-team.sh > /dev/null \
     && proto/scripts/test-sweep.sh > /dev/null \
     && sh install/test-install.sh > /dev/null \
