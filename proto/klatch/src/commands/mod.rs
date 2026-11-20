@@ -29,14 +29,13 @@ pub(crate) struct Ctx<'a> {
     pub stdin: Option<&'a serde_json::Value>,
 }
 
-/// Dispatch one command through any transport. Each family of commands has its own handler, which hands back a
-/// command that is not its own.
+/// Dispatch one command through any transport. Each family of commands has its own handler.
 pub(crate) fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
-    let Some(cmd) = run_messaging(ctx, cmd)? else {
-        return Ok(());
-    };
-    let Some(cmd) = run_work(ctx, cmd)? else {
-        return Ok(());
-    };
-    run_agents(ctx, cmd)
+    match cmd {
+        Cmd::Messaging(cmd) => run_messaging(ctx, cmd),
+        Cmd::Wait(cmd) => run_wait(ctx, cmd),
+        Cmd::Work(cmd) => run_work(ctx, cmd),
+        Cmd::Agents(cmd) => run_agents(ctx, cmd),
+        _ => unreachable!("handled before dispatch"),
+    }
 }

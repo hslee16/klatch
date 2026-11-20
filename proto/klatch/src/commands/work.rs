@@ -3,10 +3,10 @@
 use super::*;
 
 /// Claims, scopes and the board: the commands about who is working on what.
-pub(super) fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
+pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
     let t = ctx.t;
     match cmd {
-        Cmd::Claim {
+        WorkCmd::Claim {
             room,
             path,
             more,
@@ -25,13 +25,13 @@ pub(super) fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
                 anchor,
             },
         )?,
-        Cmd::Scope { scope } => scope_cmd(t, scope)?,
-        Cmd::Release { room, path, note } => release(t, &room, &path, note.as_deref())?,
-        Cmd::Cross { room, seq, to } => {
+        WorkCmd::Scope { scope } => scope_cmd(t, scope)?,
+        WorkCmd::Release { room, path, note } => release(t, &room, &path, note.as_deref())?,
+        WorkCmd::Cross { room, seq, to } => {
             let id = t.request_crossing(&room, seq, &to)?;
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
         }
-        Cmd::Crossings { limit } => {
+        WorkCmd::Crossings { limit } => {
             let list = t.my_crossings(limit)?;
             if list.is_empty() {
                 println!("no crossings asked for by {}", ctx.me);
@@ -48,28 +48,27 @@ pub(super) fn run_work(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
                 );
             }
         }
-        Cmd::Board { room } => for_rooms(t, room, |room| {
+        WorkCmd::Board { room } => for_rooms(t, room, |room| {
             print!("{}", render_board(&t.board(room)?, ctx.now));
             Ok(())
         })?,
-        Cmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
-        Cmd::Asks { room } => for_rooms(t, room, |room| asks(ctx, room))?,
-        Cmd::Stuck { room } => for_rooms(t, room, |room| {
+        WorkCmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
+        WorkCmd::Asks { room } => for_rooms(t, room, |room| asks(ctx, room))?,
+        WorkCmd::Stuck { room } => for_rooms(t, room, |room| {
             for e in t.stuck(room)? {
                 println!("{}", e.line());
             }
             Ok(())
         })?,
-        Cmd::Tasks { room } => {
+        WorkCmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
                 println!("{}", task.line(ctx.now, true));
             }
         }
-        Cmd::Claims { room } => for_rooms(t, room, |room| claims(ctx, room))?,
-        Cmd::Refusals { limit } => my_refusals(ctx, limit)?,
-        other => return Ok(Some(other)),
+        WorkCmd::Claims { room } => for_rooms(t, room, |room| claims(ctx, room))?,
+        WorkCmd::Refusals { limit } => my_refusals(ctx, limit)?,
     }
-    Ok(None)
+    Ok(())
 }
 
 /// What `klatch claim` was asked.

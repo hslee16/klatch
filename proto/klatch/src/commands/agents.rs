@@ -3,22 +3,22 @@
 use super::*;
 
 /// Hooks and the agent roles; every other command was handled before dispatch.
-pub(super) fn run_agents(ctx: &Ctx, cmd: Cmd) -> Result<()> {
+pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
     let t = ctx.t;
     match cmd {
-        Cmd::Hooks { of } => hooks(ctx, of)?,
-        Cmd::Router {
+        AgentsCmd::Hooks { of } => hooks(ctx, of)?,
+        AgentsCmd::Router {
             room,
             rules,
             once,
             interval,
         } => router(ctx, (&room, &rules), (once, interval))?,
-        Cmd::Mediator {
+        AgentsCmd::Mediator {
             room,
             once,
             interval,
         } => mediator(ctx, &room, (once, interval))?,
-        Cmd::Hook {
+        AgentsCmd::Hook {
             event,
             board,
             no_join,
@@ -30,9 +30,8 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: Cmd) -> Result<()> {
                 no_join,
             },
         )?,
-        Cmd::Act { cmd } => roles::act(t, cmd)?,
-        Cmd::Review { cmd } => roles::review(t, cmd)?,
-        _ => unreachable!("handled before dispatch"),
+        AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
+        AgentsCmd::Review { cmd } => roles::review(t, cmd)?,
     }
     Ok(())
 }

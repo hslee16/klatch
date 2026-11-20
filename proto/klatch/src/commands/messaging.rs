@@ -2,17 +2,17 @@
 
 use super::*;
 
-/// Joining, posting, reading and waiting: the commands about messages and the caller's own delivery.
-pub(super) fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
+/// Joining, posting, reading, asking and answering: the commands about messages.
+pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
     let t = ctx.t;
     match cmd {
-        Cmd::Join { room } => join(ctx, &room)?,
-        Cmd::Dm {
+        MessagingCmd::Join { room } => join(ctx, &room)?,
+        MessagingCmd::Dm {
             member,
             body,
             label,
         } => dm(t, &member, &body, label.as_deref())?,
-        Cmd::Post {
+        MessagingCmd::Post {
             room,
             body,
             label,
@@ -29,36 +29,13 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
                 handoff: kind.as_deref().map(|k| (k, payload.as_deref())),
             },
         )?,
-        Cmd::Ask { room, text } => ask(ctx, &room, &text)?,
-        Cmd::Answer { room, number, text } => answer(ctx, &room, number, &text)?,
-        Cmd::Read { room, peek } => read(t, &room, peek)?,
-        Cmd::History { room, last, since } => history_of(t, room, since, last)?,
-        Cmd::Find { room, text } => find(t, &room, &text.join(" "))?,
-        Cmd::Wait {
-            rooms,
-            timeout,
-            only,
-            from,
-            peek,
-        } => {
-            let global = klatch::domain::WaitFilter {
-                only,
-                from: from.into_iter().collect(),
-            };
-            let rooms =
-                klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
-            wait(
-                t,
-                &WaitArgs {
-                    rooms: &rooms,
-                    timeout,
-                    peek,
-                    caller: (ctx.me, ctx.now),
-                },
-            )?
-        }
-        Cmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
-        Cmd::Grant {
+        MessagingCmd::Ask { room, text } => ask(ctx, &room, &text)?,
+        MessagingCmd::Answer { room, number, text } => answer(ctx, &room, number, &text)?,
+        MessagingCmd::Read { room, peek } => read(t, &room, peek)?,
+        MessagingCmd::History { room, last, since } => history_of(t, room, since, last)?,
+        MessagingCmd::Find { room, text } => find(t, &room, &text.join(" "))?,
+        MessagingCmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
+        MessagingCmd::Grant {
             room,
             member,
             label,
@@ -66,22 +43,20 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: Cmd) -> Result<Option<Cmd>> {
             t.grant_room_clearance(&room, &member, &label)?;
             println!("{member} may now reach {label} in {room} only (audited)");
         }
-        Cmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
-        Cmd::Receipt { room, seq } => print!(
+        MessagingCmd::Receipt { room, seq } => print!(
             "{}",
             klatch::domain::render_receipts(&t.receipt(&room, seq)?, ctx.now)
         ),
-        Cmd::Who { room, all } => who(t, room.as_deref(), ctx.now, all)?,
-        Cmd::Status { room, status } => {
+        MessagingCmd::Who { room, all } => who(t, room.as_deref(), ctx.now, all)?,
+        MessagingCmd::Status { room, status } => {
             t.set_status(&room, &status.join(" "))?;
             println!("status set");
         }
-        Cmd::Mute { room } => mute(t, &room, true)?,
-        Cmd::Unmute { room } => mute(t, &room, false)?,
-        Cmd::View { view } => view_cmd(t, view.as_deref())?,
-        other => return Ok(Some(other)),
+        MessagingCmd::Mute { room } => mute(t, &room, true)?,
+        MessagingCmd::Unmute { room } => mute(t, &room, false)?,
+        MessagingCmd::View { view } => view_cmd(t, view.as_deref())?,
     }
-    Ok(None)
+    Ok(())
 }
 
 pub(super) fn join(ctx: &Ctx, room: &str) -> Result<()> {

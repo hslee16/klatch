@@ -50,8 +50,13 @@ fn the_brief_states_each_bound_of_the_role() {
 fn the_brief_names_only_commands_the_cli_has_and_no_em_dash() {
     let b = brief();
     assert!(!b.contains('\u{2014}'), "an em dash");
-    let main =
+    // the commands are defined in main.rs (`Cmd`) and in one file per family under src/args (#860)
+    let mut main =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs")).unwrap();
+    for entry in std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/args")).unwrap()
+    {
+        main.push_str(&std::fs::read_to_string(entry.unwrap().path()).unwrap());
+    }
     for line in b.lines() {
         for part in line.split('`') {
             let Some(rest) = part.strip_prefix("K ") else {

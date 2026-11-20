@@ -34,7 +34,11 @@ fn kebab(name: &str) -> String {
 fn variants(src: &str, name: &str) -> Vec<String> {
     let start = src
         .lines()
-        .position(|l| l == format!("enum {name} {{") || l == format!("pub enum {name} {{"))
+        .position(|l| {
+            l == format!("enum {name} {{")
+                || l == format!("pub enum {name} {{")
+                || l == format!("pub(crate) enum {name} {{")
+        })
         .unwrap_or_else(|| panic!("enum {name} not found"));
     src.lines()
         .skip(start + 1)
@@ -50,6 +54,22 @@ fn variants(src: &str, name: &str) -> Vec<String> {
             kebab(&word)
         })
         .collect()
+}
+
+/// Every command of the binary: those `Cmd` keeps in `main.rs` and the families in `src/args/` (#860).
+fn command_variants() -> Vec<String> {
+    // the four flattened families are not commands themselves
+    let mut all = variants(&read("src/main.rs"), "Cmd");
+    all.retain(|c| !["messaging", "wait", "work", "agents"].contains(&c.as_str()));
+    for (file, name) in [
+        ("messaging", "MessagingCmd"),
+        ("wait", "WaitCmd"),
+        ("work", "WorkCmd"),
+        ("agents", "AgentsCmd"),
+    ] {
+        all.extend(variants(&read(&format!("src/args/{file}.rs")), name));
+    }
+    all
 }
 
 /// The method names of the dispatch arms (`"post" => ...`, `"a" | "b" => ...`) in a source file.
@@ -86,8 +106,7 @@ fn missing(names: &[String], doc: &str) -> Vec<String> {
 
 #[test]
 fn the_parsers_find_what_they_should() {
-    let main = read("src/main.rs");
-    let cmds = variants(&main, "Cmd");
+    let cmds = command_variants();
     for known in ["join", "post", "serve", "worker", "admin", "hook"] {
         assert!(cmds.iter().any(|c| c == known), "{known} not in {cmds:?}");
     }
@@ -120,7 +139,7 @@ fn every_wire_method_is_in_the_audit() {
 
 #[test]
 fn every_command_is_in_the_audit() {
-    let cmds = variants(&read("src/main.rs"), "Cmd");
+    let cmds = command_variants();
     let gone = missing(&cmds, &audit());
     assert!(
         gone.is_empty(),

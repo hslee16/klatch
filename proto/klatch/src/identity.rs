@@ -357,7 +357,10 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     }
     // A hook gets the session it was started for on standard input. It acts only as that session: a registry
     // record for another session (the parent that started this one) is never used (ticket #284).
-    let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
+    let is_hook = matches!(
+        cmd,
+        Cmd::Agents(AgentsCmd::Hook { .. }) | Cmd::Wait(WaitCmd::Wake { .. })
+    );
     let stdin = if is_hook { stdin_json() } else { None };
     let stdin_session = stdin.as_ref().and_then(session_id_of);
     // A Codex session has no registry record: the hook's session id (or the thread id of a command) names it (#341).
@@ -377,7 +380,8 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let (evidence, notice) = probe.evidence(store);
     let claude_code = runs_claude_code(&evidence, is_codex);
     // A SessionEnd hook that cannot tell which session it ends does nothing, quietly.
-    let session_end = matches!(cmd, Cmd::Hook { event: Some(e), .. } if e == "SessionEnd");
+    let session_end =
+        matches!(cmd, Cmd::Agents(AgentsCmd::Hook { event: Some(e), .. }) if e == "SessionEnd");
     if session_end && matches!(evidence, PeerEvidence::None) {
         return Ok(None);
     }
@@ -420,7 +424,10 @@ fn identify_by_credential(
         );
         return Err(e.into());
     }
-    let is_hook = matches!(cmd, Cmd::Hook { .. } | Cmd::Wake { .. });
+    let is_hook = matches!(
+        cmd,
+        Cmd::Agents(AgentsCmd::Hook { .. }) | Cmd::Wait(WaitCmd::Wake { .. })
+    );
     let stdin = if is_hook { stdin_json() } else { None };
     let stdin_session = stdin.as_ref().and_then(session_id_of);
     let evidence = PeerEvidence::Credential {

@@ -2,6 +2,38 @@
 
 use super::*;
 
+/// `klatch wait` and `klatch wake`.
+pub(super) fn run_wait(ctx: &Ctx, cmd: WaitCmd) -> Result<()> {
+    let t = ctx.t;
+    match cmd {
+        WaitCmd::Wait {
+            rooms,
+            timeout,
+            only,
+            from,
+            peek,
+        } => {
+            let global = klatch::domain::WaitFilter {
+                only,
+                from: from.into_iter().collect(),
+            };
+            let rooms =
+                klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
+            wait(
+                t,
+                &WaitArgs {
+                    rooms: &rooms,
+                    timeout,
+                    peek,
+                    caller: (ctx.me, ctx.now),
+                },
+            )?
+        }
+        WaitCmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
+    }
+    Ok(())
+}
+
 /// The longest one `wait` may block, so an agent looks at its own state at least this often.
 pub(crate) const MAX_WAIT_SECONDS: u64 = 300;
 
