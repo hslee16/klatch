@@ -152,13 +152,39 @@ fn object_in(text: &str) -> Option<Value> {
     serde_json::from_str(text.get(start..=end)?).ok()
 }
 
-/// Read `claude -p --output-format json` output into a verdict. Errors never quote the reply, which can echo the
-/// message.
-pub fn parse_output(stdout: &str) -> Result<Verdict, String> {
+/// What the model chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    Allow,
+    Redact,
+    Deny,
+}
+
+/// What a reply said, checked, with the usage figures the reply reports (the bench accounts for them; the
+/// production judge ignores them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parsed {
+    pub pick: Pick,
+    pub confidence: f64,
+    pub redacted_text: Option<String>,
+    pub reason: Option<String>,
+    pub tokens_in: Option<u64>,
+    pub tokens_out: Option<u64>,
+    pub cost_usd: Option<f64>,
+}
+
+/// Read `claude -p --output-format json` output. Errors never quote the reply, which can echo the message.
+pub fn parse_reply(stdout: &str) -> Result<Parsed, String> {
     let outer: Value = serde_json::from_str(stdout.trim())
         .map_err(|_| "the claude output is not JSON".to_string())?;
     if outer["is_error"].as_bool() == Some(true) {
-        return Err("claude reported an error".into());
+        let sub = outer["subtype"].as_str().unwrap_or("unknown");
+        let sub: String = sub
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .take(40)
+            .collect();
+        return Err(format!("claude reported an error ({sub})"));
     }
     let v = match outer.get("structured_output") {
         Some(o @ Value::Object(_)) => o.clone(),
@@ -167,40 +193,74 @@ pub fn parse_output(stdout: &str) -> Result<Verdict, String> {
             .and_then(object_in)
             .ok_or("no verdict object in the reply")?,
     };
-    v["confidence"]
+    let pick = match v["verdict"].as_str() {
+        Some("allow") => Pick::Allow,
+        Some("redact") => Pick::Redact,
+        Some("deny") => Pick::Deny,
+        _ => return Err("the verdict is not allow, redact or deny".into()),
+    };
+    let confidence = v["confidence"]
         .as_f64()
         .filter(|c| (0.0..=1.0).contains(c))
         .ok_or("the confidence is missing or not between 0 and 1")?;
-    match v["verdict"].as_str() {
-        Some("allow") => Ok(Verdict::Allow),
-        Some("redact") => v["redacted_text"]
-            .as_str()
-            .map(|t| Verdict::Redact(t.to_string()))
-            .ok_or_else(|| "a redact verdict without redacted_text".to_string()),
-        Some("deny") => Ok(Verdict::Deny(v["reason"].as_str().map_or_else(
-            || "the hosted judge denied it".into(),
-            |r| r.chars().take(200).collect(),
-        ))),
-        _ => Err("the verdict is not allow, redact or deny".into()),
+    let redacted_text = v["redacted_text"].as_str().map(String::from);
+    if pick == Pick::Redact && redacted_text.is_none() {
+        return Err("a redact verdict without redacted_text".into());
     }
+    let usage = &outer["usage"];
+    let tokens_in = [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .iter()
+    .filter_map(|k| usage[*k].as_u64())
+    .fold(None, |a: Option<u64>, x| Some(a.unwrap_or(0) + x));
+    Ok(Parsed {
+        pick,
+        confidence,
+        redacted_text,
+        reason: v["reason"].as_str().map(String::from),
+        tokens_in,
+        tokens_out: usage["output_tokens"].as_u64(),
+        cost_usd: outer["total_cost_usd"].as_f64(),
+    })
 }
 
-/// The hosted judge. Any failure is a `Defer`, never an allow.
-pub struct ClaudeJudge<R: ProcessRunner> {
+/// Read `claude -p --output-format json` output into a verdict.
+pub fn parse_output(stdout: &str) -> Result<Verdict, String> {
+    let p = parse_reply(stdout)?;
+    Ok(match p.pick {
+        Pick::Allow => Verdict::Allow,
+        Pick::Redact => Verdict::Redact(p.redacted_text.unwrap_or_default()),
+        Pick::Deny => Verdict::Deny(p.reason.map_or_else(
+            || "the hosted judge denied it".into(),
+            |r| r.chars().take(200).collect(),
+        )),
+    })
+}
+
+/// One validated, isolated session shape: the throwaway settings file, the allow-listed environment, the system
+/// prompt and the ceiling gate. The production judge and `klatch-bench`'s `claude:<model>` judge both build their
+/// calls here, so the prompt and the isolation flags live in one place. The production judge never sends the scrub
+/// list (the local rules judge applies it first and the terms are private); the bench passes it to grade the model
+/// against the same rules it is told.
+pub struct Session {
     config: ClaudeConfig,
-    runner: R,
     workdir: PathBuf,
     settings: PathBuf,
     env: Vec<(String, String)>,
+    system_prompt: String,
     chain: LabelChain,
 }
 
-impl<R: ProcessRunner> ClaudeJudge<R> {
+impl Session {
     /// Check the settings and write the throwaway settings file into `workdir` (which must exist and should be a
-    /// fresh temporary directory). `env` looks up the parent's variables; only [`ENV_ALLOW`] are copied.
+    /// fresh temporary directory). `env` looks up the parent's variables; only [`ENV_ALLOW`] are copied. `scrub`
+    /// is appended to the system prompt when given.
     pub fn new(
         config: ClaudeConfig,
-        runner: R,
+        scrub: Option<&[String]>,
         workdir: &Path,
         env: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, String> {
@@ -221,14 +281,26 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
             .iter()
             .filter_map(|k| env(k).map(|v| (k.to_string(), v)))
             .collect();
-        Ok(ClaudeJudge {
+        let mut system_prompt = SYSTEM_PROMPT.to_string();
+        if let Some(terms) = scrub {
+            system_prompt.push_str("\n\nScrub list (private terms):\n");
+            for t in terms {
+                system_prompt.push_str(&format!("- {t}\n"));
+            }
+        }
+        Ok(Session {
             config,
-            runner,
             workdir: workdir.to_path_buf(),
             settings,
             env,
+            system_prompt,
             chain,
         })
+    }
+
+    /// Whether text posted in `item.from_label` may be sent at all: only strictly below the ceiling.
+    pub fn admits(&self, item: &ReviewItem) -> bool {
+        label_below_ceiling(&self.chain, Some(&self.config.ceiling), &item.from_label)
     }
 
     pub fn invocation(&self, item: &ReviewItem) -> Invocation {
@@ -246,7 +318,7 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
             "--disable-slash-commands",
             "--no-session-persistence",
             "--system-prompt",
-            SYSTEM_PROMPT,
+            &self.system_prompt,
             "--json-schema",
             VERDICT_SCHEMA,
             "--output-format",
@@ -265,14 +337,58 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
             stdin: user_prompt(item),
         }
     }
+
+    /// Run one call and read it. The caller has already checked [`Session::admits`]. The errors say why and never
+    /// quote the reply.
+    pub fn run<R: ProcessRunner>(&self, runner: &R, item: &ReviewItem) -> Result<Parsed, String> {
+        let out = runner
+            .run(&self.invocation(item))
+            .map_err(|e| format!("could not run claude: {e}"))?;
+        let parsed = parse_reply(&out.stdout);
+        if out.code != Some(0) {
+            let why = parsed.err().unwrap_or_else(|| "a reply came back".into());
+            let code = out
+                .code
+                .map_or_else(|| "a signal".to_string(), |c| c.to_string());
+            return Err(format!("claude exited with status {code}: {why}"));
+        }
+        parsed
+    }
+}
+
+/// The hosted judge. Any failure is a `Defer`, never an allow.
+pub struct ClaudeJudge<R: ProcessRunner> {
+    session: Session,
+    runner: R,
+}
+
+impl<R: ProcessRunner> ClaudeJudge<R> {
+    /// Check the settings and write the throwaway settings file into `workdir` (which must exist and should be a
+    /// fresh temporary directory). `env` looks up the parent's variables; only [`ENV_ALLOW`] are copied. The scrub
+    /// list is never sent.
+    pub fn new(
+        config: ClaudeConfig,
+        runner: R,
+        workdir: &Path,
+        env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<Self, String> {
+        Ok(ClaudeJudge {
+            session: Session::new(config, None, workdir, env)?,
+            runner,
+        })
+    }
+
+    pub fn invocation(&self, item: &ReviewItem) -> Invocation {
+        self.session.invocation(item)
+    }
 }
 
 impl<R: ProcessRunner> Judge for ClaudeJudge<R> {
     fn judge(&self, item: &ReviewItem) -> Verdict {
-        if !label_below_ceiling(&self.chain, Some(&self.config.ceiling), &item.from_label) {
+        if !self.session.admits(item) {
             return Verdict::Defer;
         }
-        let Ok(out) = self.runner.run(&self.invocation(item)) else {
+        let Ok(out) = self.runner.run(&self.session.invocation(item)) else {
             return Verdict::Defer;
         };
         if out.code != Some(0) {
@@ -318,55 +434,66 @@ pub struct RealRunner {
 
 impl ProcessRunner for RealRunner {
     fn run(&self, inv: &Invocation) -> Result<ProcessOutput, String> {
-        use std::io::{Read, Write};
-        use std::process::{Command, Stdio};
         // the real runner starts the `claude` binary by name and nothing else (the no_telemetry source scan keeps it so)
         if inv.program != "claude" {
             return Err("the real runner only starts claude".into());
         }
-        let mut child = Command::new("claude")
-            .args(&inv.args)
-            .env_clear()
-            .envs(inv.env.iter().map(|(k, v)| (k, v)))
-            .current_dir(&inv.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let mut stdout = child.stdout.take().ok_or("no stdout")?;
-        let mut stderr = child.stderr.take().ok_or("no stderr")?;
-        let out = std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = stdout.read_to_string(&mut s);
-            s
-        });
-        let err = std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = stderr.read_to_string(&mut s);
-            s
-        });
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(inv.stdin.as_bytes());
-        }
-        let started = std::time::Instant::now();
-        let status = loop {
-            if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-                break s;
-            }
-            if started.elapsed() > self.timeout {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("timed out after {} s", self.timeout.as_secs()));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        };
-        Ok(ProcessOutput {
-            code: status.code(),
-            stdout: out.join().unwrap_or_default(),
-            stderr: err.join().unwrap_or_default(),
-        })
+        run_command(std::process::Command::new("claude"), inv, self.timeout)
     }
+}
+
+/// Runs `cmd` (already named by the caller) with the invocation's arguments, an empty environment plus the given
+/// one, its working directory and stdin, killed after `timeout`. The one place the child is supervised: the
+/// production runner starts `claude` by name; `klatch-bench` passes the path its `--claude` option names.
+pub fn run_command(
+    mut cmd: std::process::Command,
+    inv: &Invocation,
+    timeout: std::time::Duration,
+) -> Result<ProcessOutput, String> {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    let mut child = cmd
+        .args(&inv.args)
+        .env_clear()
+        .envs(inv.env.iter().map(|(k, v)| (k, v)))
+        .current_dir(&inv.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let mut stderr = child.stderr.take().ok_or("no stderr")?;
+    let out = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stdout.read_to_string(&mut s);
+        s
+    });
+    let err = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stderr.read_to_string(&mut s);
+        s
+    });
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(inv.stdin.as_bytes());
+    }
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
+            break s;
+        }
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("timed out after {} s", timeout.as_secs()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    Ok(ProcessOutput {
+        code: status.code(),
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]

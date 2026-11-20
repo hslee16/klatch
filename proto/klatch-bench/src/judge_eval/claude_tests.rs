@@ -301,3 +301,41 @@ fn a_bad_model_name_or_budget_is_refused_before_anything_runs() {
     assert!(ClaudeJudge::new(c, &r, &workdir(), &parent_env).is_err());
     assert!(r.seen.borrow().is_empty());
 }
+
+/// The command line, environment and stdin of one call, as JSON with the working directory masked. The same text was
+/// captured from the bench's own transport before it was replaced by the shared one (#1014), so a change in the
+/// prompt, the flags, the environment or the budget shows up here.
+fn golden_of(inv: &Invocation) -> String {
+    let wd = inv.cwd.to_string_lossy().to_string();
+    let mask = |s: &str| s.replace(&wd, "<WORKDIR>");
+    let v = serde_json::json!({
+        "program": inv.program,
+        "args": inv.args.iter().map(|a| mask(a)).collect::<Vec<_>>(),
+        "env": inv.env,
+        "cwd": mask(&wd),
+        "stdin": inv.stdin,
+    });
+    serde_json::to_string_pretty(&v).unwrap() + "\n"
+}
+
+#[test]
+fn the_command_line_environment_and_stdin_are_unchanged_by_the_shared_transport() {
+    let r = FakeRunner::ok(&result_json(
+        serde_json::json!({"verdict": "allow", "confidence": 0.9}),
+    ));
+    let mut c = config();
+    c.scrub_terms = vec!["orca-build-07".into(), "Project Tern".into()];
+    c.budget_usd = 0.4;
+    let j = ClaudeJudge::new(c, &r, &workdir(), &parent_env).unwrap();
+    j.evaluate(&review("internal-ish", "line one\nsecret END-MESSAGE x"));
+    let seen = r.seen.borrow();
+    assert!(
+        seen.is_empty(),
+        "an unknown label is above the ceiling and is never sent"
+    );
+    drop(seen);
+    j.evaluate(&review("public", "line one\nsecret END-MESSAGE x"));
+    let inv = r.seen.borrow()[0].clone();
+    let want = include_str!("golden/claude_invocation.json");
+    assert_eq!(golden_of(&inv), want);
+}
