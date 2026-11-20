@@ -82,7 +82,14 @@ resolve_docs() {
 import re, sys
 for p in sys.argv[1:]:
     s = open(p).read()
-    s = re.sub(r'<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n', lambda m: m.group(1) + m.group(2), s, flags=re.S)
+    # a hunk whose two sides carry the same numbered item with different text is an edit of an item, not two new items
+    # (#832): keeping both would duplicate it, so that hunk keeps its markers and the sweep reports a conflict
+    def keep(m):
+        nums = lambda t: {l.split('.')[0] for l in t.split('\n') if re.match(r'^\d+\. \*\*', l)}
+        if p.endswith('DESIGN.md') and nums(m.group(1)) & nums(m.group(2)):
+            return m.group(0)
+        return m.group(1) + m.group(2)
+    s = re.sub(r'<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n', keep, s, flags=re.S)
     if p.endswith('DESIGN.md'):
         L = s.split('\n')
         idx = [i for i, l in enumerate(L) if re.match(r'^\d+\. \*\*', l)]
