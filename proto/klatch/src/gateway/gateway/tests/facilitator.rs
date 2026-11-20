@@ -428,7 +428,11 @@ fn the_one_need_info_rule_holds_in_a_dm_room_past_five_thousand_messages() {
     let (g, _) = with_facilitator();
     for i in 0..5100 {
         g.store
-            .post(Seat::new("dm.alice.fac", "alice"), &format!("chatter {i}"), 50)
+            .post(
+                Seat::new("dm.alice.fac", "alice"),
+                &format!("chatter {i}"),
+                50,
+            )
             .unwrap();
     }
     g.dm(&fac(), "alice", "need-info #1: which-repo", None)
