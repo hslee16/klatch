@@ -304,6 +304,59 @@ fn obtain_binary(
     built: &std::path::Path,
     build: impl FnOnce() -> Result<(), String>,
 ) -> Result<std::path::PathBuf, String> {
+    obtain_binary_pruning(dir, built, build, remove_file)
+}
+
+fn remove_file(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::remove_file(path)
+}
+
+/// How many content-named copies (the current one included) stay in `bench-bin` (#1026).
+const KEEP_COPIES: usize = 3;
+
+/// Removes old `klatch-<hash>` copies from `dir`, keeping the newest `keep` by modification time and always keeping
+/// `current`. Best effort: any failure is logged to stderr and the rest carries on, since a stale copy costs only disk.
+fn prune_copies(
+    dir: &std::path::Path,
+    current: &std::path::Path,
+    keep: usize,
+    remove: impl Fn(&std::path::Path) -> std::io::Result<()>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!(
+                "klatch-bench: could not list {} to prune ({e})",
+                dir.display()
+            );
+            return;
+        }
+    };
+    let mut copies: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("klatch-"))
+        .filter_map(|e| {
+            let modified = e.metadata().and_then(|m| m.modified()).ok()?;
+            Some((modified, e.path()))
+        })
+        .collect();
+    copies.sort_by_key(|a| std::cmp::Reverse(a.0));
+    for (_, path) in copies.into_iter().skip(keep) {
+        if path == current {
+            continue;
+        }
+        if let Err(e) = remove(&path) {
+            eprintln!("klatch-bench: could not prune {} ({e})", path.display());
+        }
+    }
+}
+
+fn obtain_binary_pruning(
+    dir: &std::path::Path,
+    built: &std::path::Path,
+    build: impl FnOnce() -> Result<(), String>,
+    remove: impl Fn(&std::path::Path) -> std::io::Result<()>,
+) -> Result<std::path::PathBuf, String> {
     use std::hash::{Hash, Hasher};
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
@@ -330,6 +383,7 @@ fn obtain_binary(
         std::fs::copy(built, &tmp).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &stable).map_err(|e| e.to_string())?;
     }
+    prune_copies(dir, &stable, KEEP_COPIES, remove);
     Ok(stable)
 }
 
@@ -519,6 +573,78 @@ mod tests {
         assert_eq!(overlaps.load(SeqCst), 0);
         // Same content, same private copy: nothing accumulates.
         assert!(paths.iter().all(|p| p == &paths[0] && p.exists()));
+    }
+
+    fn aged_copy(dir: &std::path::Path, name: &str, age_secs: u64) -> std::path::PathBuf {
+        let p = dir.join(name);
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(age_secs))
+            .unwrap();
+        p
+    }
+
+    fn fake_build(bin: &std::path::Path) -> impl FnOnce() -> Result<(), String> + '_ {
+        move || {
+            fake_uplift(bin, "current", Duration::ZERO);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn old_copies_beyond_the_cap_are_pruned_and_the_newest_and_current_stay() {
+        let tmp = crate::test_dir::TestDir::new("1026-a");
+        let dir = tmp.join("bench-bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = tmp.join("klatch");
+        let old: Vec<_> = (0..5)
+            .map(|i| aged_copy(&dir, &format!("klatch-old{i}"), 1000 + i * 100))
+            .collect();
+        let cur = obtain_binary(&dir, &bin, fake_build(&bin)).unwrap();
+        assert!(cur.exists());
+        // The current copy is newest; the two newest old ones stay with it.
+        assert!(old[0].exists() && old[1].exists());
+        assert!(
+            old[2..].iter().all(|p| !p.exists()),
+            "old copies not pruned"
+        );
+        assert!(dir.join(".build.lock").exists());
+    }
+
+    #[test]
+    fn the_current_copy_is_never_pruned_even_when_it_is_the_oldest() {
+        let tmp = crate::test_dir::TestDir::new("1026-b");
+        let dir = tmp.join("bench-bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let cur = aged_copy(&dir, "klatch-cur", 9999);
+        for i in 0..5 {
+            aged_copy(&dir, &format!("klatch-new{i}"), 10 + i);
+        }
+        prune_copies(&dir, &cur, 3, remove_file);
+        assert!(cur.exists());
+        assert!(dir.join("klatch-new0").exists() && dir.join("klatch-new2").exists());
+        assert!(!dir.join("klatch-new3").exists() && !dir.join("klatch-new4").exists());
+    }
+
+    #[test]
+    fn a_prune_error_does_not_fail_the_build() {
+        let tmp = crate::test_dir::TestDir::new("1026-c");
+        let dir = tmp.join("bench-bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = tmp.join("klatch");
+        for i in 0..5 {
+            aged_copy(&dir, &format!("klatch-old{i}"), 1000 + i);
+        }
+        let got = obtain_binary_pruning(&dir, &bin, fake_build(&bin), |_| {
+            Err(std::io::Error::other("denied"))
+        })
+        .unwrap();
+        assert!(got.exists());
+    }
+
+    #[test]
+    fn a_missing_directory_to_prune_does_not_panic() {
+        let tmp = crate::test_dir::TestDir::new("1026-d");
+        prune_copies(&tmp.join("none"), &tmp.join("klatch-x"), 3, remove_file);
     }
 
     #[test]
