@@ -33,9 +33,19 @@ impl<S: Store> Gateway<S> {
         )?))
     }
 
+    /// What a librarian's peek returns without touching presence, membership or any position (#499, #750).
+    fn peek_quietly(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
+        Ok(Self::without_canary(
+            self.store.look(Seat::new(room, &who.member), self.now())?,
+        ))
+    }
+
     /// What a `wait` should consider: unread messages it has not yet looked at. Moves no cursor; refreshes presence.
     pub fn wait_poll(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, false))?;
+        if self.is_librarian(&who.member)? {
+            return self.peek_quietly(who, room);
+        }
         Ok(Self::without_canary(
             self.store
                 .wait_poll(Seat::new(room, &who.member), self.now())?,
@@ -53,9 +63,12 @@ impl<S: Store> Gateway<S> {
     /// time (Claude Code drops a nudge identical to a recent one, #550).
     pub fn wake_summary(&self, who: &Principal, room: &str) -> Result<(usize, i64)> {
         self.admit(who, room, Operation::read(room, false))?;
-        let unread = self
-            .store
-            .wake_poll(Seat::new(room, &who.member), self.now())?;
+        let unread = if self.is_librarian(&who.member)? {
+            self.store.look(Seat::new(room, &who.member), self.now())?
+        } else {
+            self.store
+                .wake_poll(Seat::new(room, &who.member), self.now())?
+        };
         let unread = Self::without_canary(unread);
         let unread = self.in_view(who, room, unread)?;
         let muted = self.store.is_muted(Seat::new(room, &who.member))?;
@@ -69,6 +82,10 @@ impl<S: Store> Gateway<S> {
     /// again. The messages stay unread, and `wait` and `read` still see them.
     pub fn wake_mark(&self, who: &Principal, room: &str) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
+        // a librarian writes no position and refreshes no presence (#750)
+        if self.is_librarian(&who.member)? {
+            return Ok(());
+        }
         let now = self.now();
         let unread = self.store.wake_poll(Seat::new(room, &who.member), now)?;
         match unread.iter().map(|m| m.seq).max() {
@@ -82,6 +99,9 @@ impl<S: Store> Gateway<S> {
     /// Record that a `wait` looked at the room up to `seq`; the messages stay unread.
     pub fn wait_seen(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         self.admit(who, room, Operation::read(room, false))?;
+        if self.is_librarian(&who.member)? {
+            return Ok(());
+        }
         self.store
             .wait_seen(Seat::new(room, &who.member), Seq(seq), self.now())
     }
