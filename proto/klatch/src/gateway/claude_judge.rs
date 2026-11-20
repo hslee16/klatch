@@ -320,7 +320,11 @@ impl ProcessRunner for RealRunner {
     fn run(&self, inv: &Invocation) -> Result<ProcessOutput, String> {
         use std::io::{Read, Write};
         use std::process::{Command, Stdio};
-        let mut child = Command::new(&inv.program)
+        // the real runner starts the `claude` binary by name and nothing else (the no_telemetry source scan keeps it so)
+        if inv.program != "claude" {
+            return Err("the real runner only starts claude".into());
+        }
+        let mut child = Command::new("claude")
             .args(&inv.args)
             .env_clear()
             .envs(inv.env.iter().map(|(k, v)| (k, v)))

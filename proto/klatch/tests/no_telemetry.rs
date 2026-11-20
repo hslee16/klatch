@@ -191,7 +191,7 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
     ]
     .as_slice();
     // Programs klatch starts by name: git (to find a repository), ps (the process table), secret-tool, busctl (only to ask whether a locked keyring hid a key, #561) and security
-    // (the keystores), codex (only `--version` and `queue --help`, in `klatch doctor`: no login, no model call), claude (only `--version`, in `klatch doctor` and before `klatch wake`, #482: no login, no model call), and sh only in a unit test that waits for a fake keystore script to be executable. None of them is asked to talk to a network. The Rust client starts the binary the caller names.
+    // (the keystores), codex (only `--version` and `queue --help`, in `klatch doctor`: no login, no model call), claude (`--version` in `klatch doctor` and before `klatch wake`, #482: no login, no model call; and, only when an operator opts in with `klatch judge run --hosted-judge`, one headless call per queued item, #960), and sh only in a unit test that waits for a fake keystore script to be executable. None of them is asked to talk to a network. The Rust client starts the binary the caller names.
     const PROGRAMS: &[&str] = &[
         "git",
         "ps",
