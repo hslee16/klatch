@@ -80,7 +80,25 @@ if grep -q "fmt" "$work/log" && grep -qi "working tree, not the commit" "$work/o
 git -C "$g" checkout -q -- tracked.txt
 printf 'scratch\n' > "$g/untracked.txt"
 gate_in_g "fmt"
-if grep -q "fmt" "$work/log" && ! grep -q "uncommitted" "$work/out"; then ok "a clean tree (an untracked file only) runs the gate"; else bad "clean tree: $(cat "$work/out") log: $(cat "$work/log")"; fi
+if grep -q "fmt" "$work/log" && ! grep -q "uncommitted" "$work/out"; then ok "an untracked file outside proto/, clients/ and release/ does not stop the gate"; else bad "clean tree: $(cat "$work/out") log: $(cat "$work/log")"; fi
+# a new source file left out of the commit builds here and fails in CI (#785): refuse untracked, not ignored files in the source trees
+rm -f "$g/untracked.txt"; mkdir -p "$g/proto/src" "$g/clients/x" "$g/release"
+printf 'fn main() {}\n' > "$g/proto/src/new_mod.rs"
+gate_in_g "fmt"
+rc=$?
+if [ "$rc" -ne 0 ] && [ ! -s "$work/log" ] && grep -q "untracked" "$work/out" && grep -q "proto/src/new_mod.rs" "$work/out" && grep -q "allow-dirty" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "an untracked file under proto/ is refused, named, and nothing runs (#785)"; else bad "untracked proto rc=$rc: $(cat "$work/out") log: $(cat "$work/log")"; fi
+gate_in_g "fmt" --allow-dirty
+if grep -q "fmt" "$work/log"; then ok "--allow-dirty runs the gate despite an untracked source file"; else bad "allow-dirty untracked: $(cat "$work/out")"; fi
+rm -f "$g/proto/src/new_mod.rs"
+for d in clients/x release; do
+  printf 'x\n' > "$g/$d/new.txt"
+  gate_in_g "fmt"
+  if [ ! -s "$work/log" ] && grep -q "$d/new.txt" "$work/out"; then ok "an untracked file under $d is refused too (#785)"; else bad "untracked $d: $(cat "$work/out")"; fi
+  rm -f "$g/$d/new.txt"
+done
+printf 'ignored\n' > "$g/proto/ignored.log"; printf '*.log\n' > "$g/.gitignore"; git -C "$g" add .gitignore; git -C "$g" -c user.name=t -c user.email=t@example.com commit -q -m ignore
+gate_in_g "fmt"
+if grep -q "fmt" "$work/log" && ! grep -q "untracked" "$work/out"; then ok "an ignored file under proto/ does not stop the gate"; else bad "ignored: $(cat "$work/out")"; fi
 printf 'staged\n' > "$g/tracked.txt"; git -C "$g" add tracked.txt
 gate_in_g "fmt"
 if [ ! -s "$work/log" ] && grep -q "uncommitted" "$work/out"; then ok "a staged but uncommitted change is refused too"; else bad "staged: $(cat "$work/out") log: $(cat "$work/log")"; fi
