@@ -1,0 +1,1 @@
+- `klatch worker list` reports a credential's last renewal however many audit entries came after it (#1007).

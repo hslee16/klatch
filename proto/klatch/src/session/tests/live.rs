@@ -407,6 +407,9 @@ impl PolicyStore for FlakyStore {
     fn audit_log(&self, l: usize) -> Result<Vec<crate::domain::AuditRecord>> {
         self.inner.audit_log(l)
     }
+    fn last_audit_ts(&self, a: &str, t: &str, s: i64) -> Result<Option<i64>> {
+        self.inner.last_audit_ts(a, t, s)
+    }
     fn policy_get(&self, k: &str) -> Result<Option<String>> {
         self.inner.policy_get(k)
     }

@@ -460,6 +460,10 @@ impl PolicyStore for SpyStore {
     fn audit_log(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
         self.inner.audit_log(limit)
     }
+
+    fn last_audit_ts(&self, action: &str, target: &str, since: i64) -> Result<Option<i64>> {
+        self.inner.last_audit_ts(action, target, since)
+    }
 }
 impl RoomStore for SpyStore {
     fn features(&self) -> crate::store::Features {

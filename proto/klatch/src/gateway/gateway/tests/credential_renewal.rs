@@ -189,3 +189,20 @@ fn the_listing_shows_the_cap_and_the_last_renewal() {
     let after = g.admin_credentials(&admin()).unwrap();
     assert_eq!((after[0].cap, after[0].last_renewed), (6_000, Some(1_900)));
 }
+
+#[test]
+fn a_renewal_older_than_ten_thousand_audit_entries_is_still_reported() {
+    let (g, t, who) = worker(Some(5_000));
+    t.set(1_500);
+    g.post(&who, "r", "one").unwrap();
+    for i in 0..10_050 {
+        g.store
+            .record_audit(
+                &crate::store::NewAudit::new("noise", "other", "x"),
+                1_600 + i,
+            )
+            .unwrap();
+    }
+    let listed = g.admin_credentials(&admin()).unwrap();
+    assert_eq!(listed[0].last_renewed, Some(1_500));
+}
