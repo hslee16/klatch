@@ -230,3 +230,55 @@ fn rules_deny_first_and_the_hosted_judge_never_sees_that_text() {
     assert_eq!(stack.judge(&review("public", "hello")), Verdict::Allow);
     assert_eq!(r.calls(), 1);
 }
+
+#[test]
+fn a_session_sends_the_scrub_list_only_when_the_caller_names_it_and_keeps_the_gate_and_budget() {
+    let dir = workdir();
+    let terms = vec!["orca-build-07".to_string()];
+    let item = review("public", "x");
+    let plain = Session::new(config("private"), None, &dir, &env).unwrap();
+    let with = Session::new(config("private"), Some(&terms), &dir, &env).unwrap();
+    let arg = |s: &Session, flag: &str| {
+        let a = s.invocation(&item).args;
+        a[a.iter().position(|x| x == flag).unwrap() + 1].clone()
+    };
+    assert_eq!(arg(&plain, "--system-prompt"), SYSTEM_PROMPT);
+    let prompt = arg(&with, "--system-prompt");
+    assert!(prompt.starts_with(SYSTEM_PROMPT));
+    assert!(prompt.contains("Scrub list (private terms):\n- orca-build-07\n"));
+    for s in [&plain, &with] {
+        assert!(s.admits(&item));
+        assert!(!s.admits(&review("private", "x")));
+        assert!(!s.admits(&review("nonsense", "x")));
+        assert_eq!(arg(s, "--max-budget-usd"), "0.25");
+    }
+    let mut bad = config("private");
+    bad.budget_usd = f64::NAN;
+    assert!(Session::new(bad, None, &dir, &env).is_err());
+}
+
+#[test]
+fn a_reply_reports_usage_and_a_failed_run_says_why_without_quoting_the_reply() {
+    let stdout = serde_json::json!({
+        "is_error": false, "total_cost_usd": 0.5,
+        "structured_output": {"verdict": "deny", "confidence": 0.8, "reason": "a key"},
+        "usage": {"input_tokens": 1, "cache_read_input_tokens": 2, "output_tokens": 3}
+    })
+    .to_string();
+    let p = parse_reply(&stdout).unwrap();
+    assert_eq!(p.pick, Pick::Deny);
+    assert_eq!(
+        (p.tokens_in, p.tokens_out, p.cost_usd),
+        (Some(3), Some(3), Some(0.5))
+    );
+    let dir = workdir();
+    let s = Session::new(config("private"), None, &dir, &env).unwrap();
+    let r = FakeRunner::failing(Ok(ProcessOutput {
+        code: Some(2),
+        stdout: "SECRET-ECHO".into(),
+        stderr: String::new(),
+    }));
+    let e = s.run(&&r, &review("public", "x")).unwrap_err();
+    assert!(e.starts_with("claude exited with status 2"), "{e}");
+    assert!(!e.contains("SECRET-ECHO"));
+}
