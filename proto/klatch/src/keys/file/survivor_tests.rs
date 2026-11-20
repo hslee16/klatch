@@ -3,11 +3,8 @@
 
 use super::*;
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("klatch-keys-survivor-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(tag: &str) -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new(&format!("keys-survivor-{tag}"))
 }
 
 #[test]
@@ -20,7 +17,6 @@ fn a_read_that_fails_for_a_reason_other_than_not_found_is_an_error_not_a_missing
         FileKeys::new(&blocker).get("store").is_err(),
         "an unreadable key location read as no key"
     );
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -32,5 +28,4 @@ fn a_delete_that_fails_for_a_reason_other_than_not_found_is_an_error() {
         "a failed removal was reported as done"
     );
     assert!(d.join("store.key").is_dir(), "the directory was touched");
-    let _ = std::fs::remove_dir_all(&d);
 }

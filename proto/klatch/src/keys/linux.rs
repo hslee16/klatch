@@ -278,11 +278,8 @@ mod tests {
     }
 
     /// A stand-in `secret-tool`: a shell script with the given body, in a directory of its own.
-    fn fake(body: &str) -> (std::ffi::OsString, std::path::PathBuf) {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("klatch-fake-{n}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+    fn fake(body: &str) -> (std::ffi::OsString, crate::store::test_dir::TestDir) {
+        let dir = crate::store::test_dir::TestDir::new("fake");
         let path = dir.join("secret-tool");
         // The probe line lets the helper run the script once and return at once: see below.
         std::fs::write(
@@ -335,7 +332,7 @@ mod tests {
     }
 
     /// A silent miss from `secret-tool` and a `busctl` that says `bus_body`.
-    fn with_fake_bus(bus_body: &str) -> (SecretService, std::path::PathBuf) {
+    fn with_fake_bus(bus_body: &str) -> (SecretService, crate::store::test_dir::TestDir) {
         let (svc, dir) = with_fake("exit 1", CALL_LIMIT);
         install_busctl(&dir, bus_body);
         (svc, dir)
@@ -345,51 +342,45 @@ mod tests {
 
     #[test]
     fn a_silent_miss_on_a_locked_keyring_is_a_locked_error_not_no_key() {
-        let (svc, dir) = with_fake_bus("echo 'b true'");
+        let (svc, _dir) = with_fake_bus("echo 'b true'");
         let got = svc.get("store-a");
         assert!(
             matches!(&got, Err(Error::Locked(m)) if m.contains("locked") && m.contains("no new key")),
             "{got:?}"
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_silent_miss_with_no_login_collection_is_a_locked_error_not_no_key() {
-        let (svc, dir) = with_fake_bus(GONE);
+        let (svc, _dir) = with_fake_bus(GONE);
         let got = svc.get("store-a");
         assert!(
             matches!(&got, Err(Error::Locked(m)) if m.contains("no default collection")),
             "{got:?}"
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_silent_miss_on_an_unlocked_keyring_is_still_no_key() {
-        let (svc, dir) = with_fake_bus("echo 'b false'");
+        let (svc, _dir) = with_fake_bus("echo 'b false'");
         assert!(svc.get("store-a").unwrap().is_none());
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_silent_miss_when_the_lock_state_cannot_be_read_is_still_no_key() {
         // custody refuses to make a key for an existing encrypted store, so this only costs a less specific message
         for body in ["echo 'busctl: boom' >&2; exit 1", "echo 'something else'"] {
-            let (svc, dir) = with_fake_bus(body);
+            let (svc, _dir) = with_fake_bus(body);
             assert!(svc.get("store-a").unwrap().is_none(), "{body}");
-            let _ = std::fs::remove_dir_all(dir);
         }
     }
 
     #[test]
     fn clearing_on_a_locked_keyring_is_a_locked_error_not_a_quiet_success() {
-        let (svc, dir) = with_fake_bus("echo 'b true'");
+        let (svc, _dir) = with_fake_bus("echo 'b true'");
         assert!(matches!(svc.delete("store-a"), Err(Error::Locked(_))));
-        let (svc2, dir2) = with_fake_bus("echo 'b false'");
+        let (svc2, _dir2) = with_fake_bus("echo 'b false'");
         svc2.delete("store-a").unwrap();
-        let _ = std::fs::remove_dir_all(dir);
-        let _ = std::fs::remove_dir_all(dir2);
     }
 
     #[test]
@@ -399,7 +390,6 @@ mod tests {
         install_busctl(&dir, "touch \"$0.ran\"");
         assert_eq!(svc.get("store-a").unwrap().unwrap().expose(), &[7; KEY_LEN]);
         assert!(!dir.join("busctl.ran").exists());
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Detect against the stand-ins in `path`.
@@ -413,7 +403,7 @@ mod tests {
         .probe("store-a")
     }
 
-    fn with_fake(body: &str, limit: Duration) -> (SecretService, std::path::PathBuf) {
+    fn with_fake(body: &str, limit: Duration) -> (SecretService, crate::store::test_dir::TestDir) {
         let (path, dir) = fake(body);
         let svc = SecretService {
             service: "klatch-unit".into(),
@@ -426,7 +416,7 @@ mod tests {
 
     #[test]
     fn a_call_that_never_answers_is_ended_and_reported_not_waited_for() {
-        let (svc, dir) = with_fake("sleep 30", Duration::from_millis(300));
+        let (svc, _dir) = with_fake("sleep 30", Duration::from_millis(300));
         let started = Instant::now();
         let got = svc.get("store-a");
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -435,12 +425,11 @@ mod tests {
             "{got:?}"
         );
         assert!(svc.put("store-a", &Key::from_bytes([1; KEY_LEN])).is_err());
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_service_that_complains_is_not_detected_and_a_silent_miss_is() {
-        let (path, d1) = fake("echo 'Could not connect' >&2; exit 1");
+        let (path, _d1) = fake("echo 'Could not connect' >&2; exit 1");
         assert!(detect_fake(path).is_none());
         let (path, d2) = fake("exit 1");
         install_busctl(&d2, "echo 'b false'");
@@ -448,12 +437,10 @@ mod tests {
             detect_fake(path).is_some(),
             "a lookup that finds nothing is a service that answers"
         );
-        let _ = std::fs::remove_dir_all(d1);
-        let _ = std::fs::remove_dir_all(d2);
     }
 
     /// A `secret-tool` that counts its calls in a file beside it and answers `body`.
-    fn counting(body: &str) -> (std::ffi::OsString, std::path::PathBuf) {
+    fn counting(body: &str) -> (std::ffi::OsString, crate::store::test_dir::TestDir) {
         let (path, dir) = fake(&format!("echo x >> \"$(dirname \"$0\")/calls\"\n{body}"));
         install_busctl(&dir, "echo 'b false'");
         (path, dir)
@@ -472,7 +459,6 @@ mod tests {
         assert_eq!(calls(&dir), 1, "the first get reuses what detect read");
         assert_eq!(svc.get("store-a").unwrap().unwrap().expose(), &[5; KEY_LEN]);
         assert_eq!(calls(&dir), 2, "a second get asks again: never a stale key");
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -487,8 +473,6 @@ mod tests {
         svc.delete("store-a").unwrap();
         svc.get("store-a").unwrap();
         assert_eq!(calls(&dir2), 3, "detect, clear, then a fresh get");
-        let _ = std::fs::remove_dir_all(dir);
-        let _ = std::fs::remove_dir_all(dir2);
     }
 
     #[test]
@@ -497,7 +481,6 @@ mod tests {
         let svc = detect_fake(path).unwrap();
         svc.get("store-b").unwrap();
         assert_eq!(calls(&dir), 2);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -510,23 +493,19 @@ mod tests {
         install_busctl(&dir2, "echo 'b true'");
         let svc = detect_fake(path).unwrap();
         assert!(matches!(svc.get("store-a"), Err(Error::Locked(_))));
-        let _ = std::fs::remove_dir_all(dir);
-        let _ = std::fs::remove_dir_all(dir2);
     }
 
     #[test]
     fn a_failure_to_reach_the_service_is_an_error_not_a_missing_key() {
-        let (svc, dir) = with_fake("echo 'Cannot connect' >&2; exit 1", CALL_LIMIT);
+        let (svc, _dir) = with_fake("echo 'Cannot connect' >&2; exit 1", CALL_LIMIT);
         assert!(matches!(svc.get("store-a"), Err(Error::Store(_))));
         assert!(matches!(svc.delete("store-a"), Err(Error::Store(_))));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn a_missing_item_is_none_and_clearing_it_is_fine() {
-        let (svc, dir) = with_fake("exit 1", CALL_LIMIT);
+        let (svc, _dir) = with_fake("exit 1", CALL_LIMIT);
         assert!(svc.get("store-a").unwrap().is_none());
         svc.delete("store-a").unwrap();
-        let _ = std::fs::remove_dir_all(dir);
     }
 }

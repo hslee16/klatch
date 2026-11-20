@@ -96,10 +96,8 @@ mod survivor_tests;
 mod tests {
     use super::*;
 
-    fn dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("klatch-keys-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        d
+    fn dir(tag: &str) -> crate::store::test_dir::TestDir {
+        crate::store::test_dir::TestDir::new(&format!("keys-{tag}"))
     }
 
     #[test]
@@ -110,7 +108,6 @@ mod tests {
         let k = Key::generate().unwrap();
         src.put("store", &k).unwrap();
         assert_eq!(src.get("store").unwrap().unwrap(), k);
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -121,7 +118,6 @@ mod tests {
         let dm = std::fs::metadata(&d).unwrap().mode() & 0o777;
         let fm = std::fs::metadata(d.join("store.key")).unwrap().mode() & 0o777;
         assert_eq!((dm, fm), (0o700, 0o600));
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -136,7 +132,6 @@ mod tests {
             err.contains("readable by other users") && err.contains("chmod 600"),
             "{err}"
         );
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -152,7 +147,6 @@ mod tests {
             err.contains("not a 32-byte key") && !err.contains("too short"),
             "{err}"
         );
-        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
@@ -171,6 +165,5 @@ mod tests {
         src.delete("store").unwrap();
         assert!(src.get("store").unwrap().is_none());
         src.delete("store").unwrap();
-        std::fs::remove_dir_all(&d).ok();
     }
 }

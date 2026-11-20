@@ -6,14 +6,10 @@ use super::*;
 use klatch::harness::{ProcessTable, PsTable};
 use std::process::{Command, Stdio};
 
-fn store(tag: &str) -> SqliteStore {
-    let dir = std::env::temp_dir().join(format!(
-        "klatch-survivor-names-{}-{tag}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    SqliteStore::open(&dir.join("klatch.db"), &klatch::store::insecure_test_key()).unwrap()
+fn store(tag: &str) -> crate::test_dir::In<SqliteStore> {
+    crate::test_dir::In::new(&format!("survivor-names-{tag}"), |dir| {
+        SqliteStore::open(&dir.join("klatch.db"), &klatch::store::insecure_test_key()).unwrap()
+    })
 }
 
 /// Run `f` on its own thread and fail, instead of hanging, when it does not finish.
@@ -311,33 +307,21 @@ fn found_at(pid: u32) -> Found {
 #[test]
 fn a_caller_whose_parent_was_already_noted_is_not_looked_up_again() {
     let s = store("noted");
-    klatch::store::MemberStore::note_parent(&s, "kid", "boss", 1).unwrap();
+    klatch::store::MemberStore::note_parent(&*s, "kid", "boss", 1).unwrap();
     let caller = caller_of("kid", Some(found_at(std::process::id())));
     assert_eq!(pending_parent(&s, &caller), None);
 }
 
 #[test]
 fn a_session_with_no_session_above_it_records_that_it_has_no_parent() {
-    let d = std::env::temp_dir().join(format!(
-        "klatch-survivor-parent-{}-none",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+    let d = crate::test_dir::TestDir::new("survivor-parent-none");
     in_child("child_no_parent", &d);
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
 fn a_session_started_from_another_session_names_that_session_as_its_parent() {
-    let d = std::env::temp_dir().join(format!(
-        "klatch-survivor-parent-{}-boss",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+    let d = crate::test_dir::TestDir::new("survivor-parent-boss");
     in_child("child_parent_found", &d);
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 fn in_child(name: &str, dir: &std::path::Path) {

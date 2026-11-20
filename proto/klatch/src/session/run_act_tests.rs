@@ -92,7 +92,8 @@ fn a_run_end_over_the_wire_never_writes_an_archive_file() {
     let g = gateway();
     act(&g, "ada", json!({"act":"run-create","run":"r1"}));
     call(&g, "alice", "post", json!({"room":"run.r1.a","body":"x"}));
-    let dir = std::env::temp_dir().join(format!("klatch-no-archive-{}", std::process::id()));
+    let scratch = crate::store::test_dir::TestDir::new("no-archive");
+    let dir = scratch.join("never-made");
     let f = act(
         &g,
         "ada",

@@ -71,11 +71,8 @@ impl Drop for NeverEnds {
     }
 }
 
-fn new_db(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("klatch-guard-{}-{tag}", std::process::id()));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("rooms.db");
+fn new_db(tag: &str) -> crate::store::test_dir::TempDb {
+    let path = crate::store::test_dir::temp_db(&format!("guard-{tag}"));
     Sqlite::open(&path, &crate::store::insecure_test_key()).unwrap();
     path
 }
@@ -154,7 +151,7 @@ fn a_consumer_that_stops_reading_ends_the_session_with_a_refusal_instead_of_stal
         ..fast()
     };
     let started = Instant::now();
-    let result = start(path.clone(), config, (input, out, None));
+    let result = start(path.to_path_buf(), config, (input, out, None));
     let ended = result
         .recv_timeout(Duration::from_secs(10))
         .expect("the session must end, not stall behind the blocked write");
@@ -176,7 +173,6 @@ fn a_consumer_that_stops_reading_ends_the_session_with_a_refusal_instead_of_stal
             .contains("stream.slow_consumer"),
         "the refusal is the last frame"
     );
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
@@ -191,7 +187,7 @@ fn a_consumer_that_reads_slowly_but_keeps_reading_is_not_refused() {
         stall: Duration::from_secs(5),
         ..fast()
     };
-    let result = start(path.clone(), config, (input, out, None));
+    let result = start(path.to_path_buf(), config, (input, out, None));
     let deadline = Instant::now() + Duration::from_secs(10);
     while !the_text(&seen).contains("caught_up") {
         assert!(Instant::now() < deadline, "never caught up");
@@ -205,7 +201,6 @@ fn a_consumer_that_reads_slowly_but_keeps_reading_is_not_refused() {
             .is_ok()
     );
     assert!(!the_text(&seen).contains("slow_consumer"));
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
@@ -216,7 +211,7 @@ fn the_end_of_input_still_delivers_everything_queued_before_returning() {
     drop(keep_open);
     let out = SharedOut(Arc::new(Mutex::new(Vec::new())));
     let seen = out.0.clone();
-    let result = start(path.clone(), fast(), (input, out, None));
+    let result = start(path.to_path_buf(), fast(), (input, out, None));
     assert!(
         result
             .recv_timeout(Duration::from_secs(10))
@@ -229,7 +224,6 @@ fn the_end_of_input_still_delivers_everything_queued_before_returning() {
         "{text}"
     );
     assert_eq!(text.matches("\"type\":\"message\"").count(), 5);
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
@@ -245,7 +239,7 @@ fn the_reader_thread_ends_with_the_session_when_the_transport_can_close_the_inpu
     // The input never closes. The output is gone, so the session ends on its first write after the hello; the closer
     // is what lets the blocked reader go.
     let closer: Closer = Box::new(move || drop(unblock));
-    let result = start(path.clone(), fast(), (input, BrokenOut, Some(closer)));
+    let result = start(path.to_path_buf(), fast(), (input, BrokenOut, Some(closer)));
     let ended = result.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(ended.is_err(), "a dead output ends the session");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -256,7 +250,6 @@ fn the_reader_thread_ends_with_the_session_when_the_transport_can_close_the_inpu
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
@@ -268,10 +261,9 @@ fn a_session_whose_transport_has_no_closer_still_returns_while_the_input_stays_o
         wake,
         dropped: Arc::new(AtomicBool::new(false)),
     });
-    let result = start(path.clone(), fast(), (input, BrokenOut, None));
+    let result = start(path.to_path_buf(), fast(), (input, BrokenOut, None));
     let ended = result
         .recv_timeout(Duration::from_secs(10))
         .expect("the session must not wait for an input that never ends");
     assert!(ended.is_err());
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

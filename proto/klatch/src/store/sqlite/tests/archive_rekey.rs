@@ -9,11 +9,8 @@ use crate::store::sqlite::archive::{
 };
 use std::path::{Path, PathBuf};
 
-fn archive_dir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("klatch-rekey-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn archive_dir(tag: &str) -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new(&format!("rekey-{tag}"))
 }
 
 /// An archive of three old messages of room `r`, made with the test key.
@@ -59,7 +56,6 @@ fn rekeying_moves_every_archive_to_the_new_key_and_keeps_its_messages() {
         2,
         "a temp file was left behind"
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -74,7 +70,6 @@ fn a_rekeyed_archive_still_restores_into_the_store() {
     rekey_archives(&dir, &old, &new).unwrap();
     assert_eq!(s.restore_archive(&out, &new).unwrap(), 1);
     assert_eq!(s.tail("r", 0, 10).unwrap()[0].body, "old one");
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -91,7 +86,6 @@ fn an_archive_that_opens_with_neither_key_stops_the_rekey_before_anything_change
     assert!(err.contains("r-200.db"), "{err}");
     assert!(opens_with(&good, &old), "the good file was changed");
     assert!(!opens_with(&good, &new), "the good file was changed");
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -119,7 +113,6 @@ fn a_rekey_that_died_half_way_leaves_every_file_under_one_of_the_two_keys_and_ca
     // the second run skips what is done and finishes the rest
     assert_eq!(rekey_archives(&dir, &old, &new).unwrap(), 2);
     assert!(files.iter().all(|f| opens_with(f, &new)));
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -135,7 +128,6 @@ fn a_partial_file_and_files_that_are_not_archives_are_left_alone_by_a_rekey() {
         std::fs::read(dir.join("r-100.db.partial")).unwrap(),
         b"half"
     );
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

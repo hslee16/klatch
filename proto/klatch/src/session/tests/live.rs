@@ -53,6 +53,7 @@ struct Live {
     out: SharedOut,
     handle: Option<std::thread::JoinHandle<std::io::Result<()>>>,
     path: std::path::PathBuf,
+    _dir: crate::store::test_dir::TestDir,
 }
 
 impl Live {
@@ -61,13 +62,7 @@ impl Live {
     }
 
     fn start_with(who: Principal, config: SessionConfig, flaky: Option<Arc<Flaky>>) -> Self {
-        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "klatch-live-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::store::test_dir::TestDir::new("live");
         let path = dir.join("rooms.db");
         Sqlite::open(&path, &crate::store::insecure_test_key()).unwrap();
         let (tx, rx) = channel();
@@ -99,6 +94,7 @@ impl Live {
             out,
             handle: Some(handle),
             path,
+            _dir: dir,
         }
     }
 
@@ -141,7 +137,6 @@ impl Live {
     fn end(mut self) {
         drop(self.tx.take());
         self.handle.take().unwrap().join().unwrap().unwrap();
-        std::fs::remove_dir_all(self.path.parent().unwrap()).ok();
     }
 }
 

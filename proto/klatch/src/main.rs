@@ -16,6 +16,11 @@ mod judge;
 mod roles;
 mod run;
 mod scope;
+/// The scratch-directory guard of the library's store tests, compiled into the binary's tests too (#812).
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "store/test_dir.rs"]
+mod test_dir;
 mod worker;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
