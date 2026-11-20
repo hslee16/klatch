@@ -290,9 +290,54 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     args
 }
 
+/// Runs `build` under an exclusive file lock (so no two threads or processes build at once) and returns a private copy
+/// of the binary it produced, named by its content and renamed into place atomically. Cargo removes and re-links the
+/// built binary on every build, even a fresh one, so a test that had been handed the built path could find it gone
+/// while another test or test binary was rebuilding (#752). The copy is never touched by cargo.
+fn obtain_binary(
+    dir: &std::path::Path,
+    built: &std::path::Path,
+    build: impl FnOnce() -> Result<(), String>,
+) -> Result<std::path::PathBuf, String> {
+    use std::hash::{Hash, Hasher};
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(".build.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.lock().map_err(|e| e.to_string())?;
+    // The lock is released when `lock` drops, on every exit path.
+    build()?;
+    let bytes =
+        std::fs::read(built).map_err(|e| format!("could not build {} ({e})", built.display()))?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let name = format!(
+        "klatch-{:016x}{}",
+        hasher.finish(),
+        if cfg!(windows) { ".exe" } else { "" }
+    );
+    let stable = dir.join(name);
+    if !stable.exists() {
+        let tmp = dir.join(format!(".tmp-{}", std::process::id()));
+        std::fs::copy(built, &tmp).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &stable).map_err(|e| e.to_string())?;
+    }
+    Ok(stable)
+}
+
 /// The klatch binary the workspace builds, next to the test or bench executable's directory. Builds it with cargo
 /// when it is missing (running only this crate's tests does not build the other crates' binaries).
+/// Built once per process; every later call returns the same private copy.
 pub fn find_binary() -> Result<std::path::PathBuf, String> {
+    static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
+        std::sync::OnceLock::new();
+    BINARY.get_or_init(build_binary).clone()
+}
+
+fn build_binary() -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The profile directory (target/debug or target/release) is the nearest ancestor with that name; the executable
     // can sit several levels below it, and where depends on the cargo version.
@@ -310,30 +355,35 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     // The bench drives a test build (`--features test-clock`, which lets it set klatch's clock), built into its own
     // target directory so it never replaces the normal debug binary.
     let dir = target.join("bench-bin");
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let status = std::process::Command::new(cargo)
-        .args(build_args(
-            profile
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("debug"),
-            &dir,
-        ))
-        .status()
-        .map_err(|e| e.to_string())?;
-    let bin = dir
+    let built = dir
         .join(profile.file_name().unwrap_or_default())
         .join(if cfg!(windows) {
             "klatch.exe"
         } else {
             "klatch"
         });
-    if !status.success() || !bin.exists() {
-        return Err(format!(
-            "could not build {} (cargo {status}; its own error is printed above)",
-            bin.display()
-        ));
-    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let args = build_args(
+        profile
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("debug"),
+        &dir,
+    );
+    let bin = obtain_binary(&dir, &built, || {
+        let status = std::process::Command::new(cargo)
+            .args(args)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "could not build {} (cargo {status}; its own error is printed above)",
+                built.display()
+            ))
+        }
+    })?;
     let version = std::process::Command::new(&bin)
         .arg("--version")
         .output()
@@ -392,6 +442,90 @@ mod tests {
 
     fn bin() -> std::path::PathBuf {
         std::path::PathBuf::from("/nonexistent/klatch")
+    }
+
+    /// A stand-in for cargo's uplift, which removes the binary and links a fresh one in (#752).
+    fn fake_uplift(bin: &std::path::Path, content: &str, slow: Duration) {
+        let _ = std::fs::remove_file(bin);
+        std::thread::sleep(slow);
+        std::fs::write(bin, content).unwrap();
+    }
+
+    #[test]
+    fn a_binary_in_use_survives_a_later_rebuild_that_removes_the_built_one() {
+        let tmp = std::env::temp_dir().join(format!("klatch-752-a-{}", std::process::id()));
+        let dir = tmp.join("bench-bin");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let bin = tmp.join("klatch");
+        let first = obtain_binary(&dir, &bin, || {
+            fake_uplift(&bin, "v1", Duration::ZERO);
+            Ok(())
+        })
+        .unwrap();
+        let (in_build_tx, in_build_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let (dir2, bin2) = (dir.clone(), bin.clone());
+        let second = std::thread::spawn(move || {
+            obtain_binary(&dir2, &bin2, || {
+                let _ = std::fs::remove_file(&bin2);
+                in_build_tx.send(()).unwrap();
+                go_rx.recv().unwrap();
+                std::fs::write(&bin2, "v2").unwrap();
+                Ok(())
+            })
+        });
+        // The rebuild has removed the built file and has not yet written the new one.
+        in_build_rx.recv().unwrap();
+        assert!(!bin.exists());
+        assert!(first.exists(), "the binary in use vanished mid-rebuild");
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "v1");
+        go_tx.send(()).unwrap();
+        let second = second.join().unwrap().unwrap();
+        assert!(first.exists() && second.exists() && first != second);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn builds_are_serialised_so_none_overlaps_another() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let tmp = std::env::temp_dir().join(format!("klatch-752-b-{}", std::process::id()));
+        let dir = tmp.join("bench-bin");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let bin = tmp.join("klatch");
+        let running = std::sync::Arc::new(AtomicUsize::new(0));
+        let overlaps = std::sync::Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (dir, bin) = (dir.clone(), bin.clone());
+                let (running, overlaps) = (running.clone(), overlaps.clone());
+                std::thread::spawn(move || {
+                    obtain_binary(&dir, &bin, || {
+                        if running.fetch_add(1, SeqCst) != 0 {
+                            overlaps.fetch_add(1, SeqCst);
+                        }
+                        fake_uplift(&bin, "v1", Duration::from_millis(60));
+                        running.fetch_sub(1, SeqCst);
+                        Ok(())
+                    })
+                    .unwrap()
+                })
+            })
+            .collect();
+        let paths: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(overlaps.load(SeqCst), 0);
+        // Same content, same private copy: nothing accumulates.
+        assert!(paths.iter().all(|p| p == &paths[0] && p.exists()));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_failed_build_is_an_error_not_a_missing_file() {
+        let tmp = std::env::temp_dir().join(format!("klatch-752-c-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let err =
+            obtain_binary(&tmp.join("bench-bin"), &tmp.join("klatch"), || Ok(())).unwrap_err();
+        assert!(err.contains("could not build"), "{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
