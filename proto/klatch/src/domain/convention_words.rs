@@ -7,9 +7,10 @@
 //! never post it, so nothing they do changes; a new word must never change what an existing word means.
 
 use crate::domain::{
-    ASK_LEASE_DEFAULT_SECS, DropReason, Message, OutcomeKind, QueueState, answer_target, claim_ttl,
-    closed_target, current_offers, is_ask, merge_queue, open_prs, open_tasks, parse_clarification,
-    parse_outcome, parse_parked, reopen_target, statuses,
+    ASK_LEASE_DEFAULT_SECS, DropReason, HaltReason, Message, OutcomeKind, QueueState,
+    answer_target, claim_ttl, closed_target, current_offers, is_ask, merge_halt, merge_queue,
+    open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked, reopen_target,
+    statuses,
 };
 
 /// One word: how it is written, an example, and the question "does the code read this example as this word".
@@ -99,6 +100,11 @@ fn queue_state(body: &str, want: QueueState) -> bool {
     q.first().map(|e| e.state) == Some(want)
 }
 
+/// The halt that `body` from the integrator `ivy` shows, as its reason and PR number.
+fn halt_of(body: &str) -> Option<(HaltReason, u64)> {
+    merge_halt(&[msg(1, "ivy", body)], &|w| w == "ivy").map(|h| (h.reason, h.number))
+}
+
 macro_rules! word {
     ($form:expr, $example:expr, $reads:expr) => {
         ConventionWord {
@@ -162,6 +168,27 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
     word!("dropped: #N <reason>", "dropped: #7 conflict", |b| {
         queue_state(b, QueueState::Dropped(DropReason::Conflict))
     }),
+    word!("reverted: #N", "reverted: #7", |b| {
+        let q = merge_queue(
+            &[
+                msg(1, "a", "ready: #7"),
+                msg(2, "ivy", "merged: #7"),
+                msg(3, "ivy", b),
+            ],
+            &|w| w == "ivy",
+        );
+        q.first().map(|e| e.state) == Some(QueueState::Reverted)
+    }),
+    word!(
+        "halted: main red after #N",
+        "halted: main red after #7",
+        |b| halt_of(b) == Some((HaltReason::MainRed, 7))
+    ),
+    word!(
+        "halted: main not verified after #N",
+        "halted: main not verified after #7",
+        |b| halt_of(b) == Some((HaltReason::MainNotVerified, 7))
+    ),
     word!("ask:N", "ask:3", |p| claim_ttl(p, None)
         == ASK_LEASE_DEFAULT_SECS),
 ];

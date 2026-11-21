@@ -48,6 +48,8 @@ pub struct Board {
     pub queue: Vec<crate::domain::QueueEntry>,
     /// The member holding the `merge:main` claim now, if any.
     pub merge_holder: Option<String>,
+    /// The integrator's halt (#1094), while no later integrator word says it is running again.
+    pub halt: Option<crate::domain::Halt>,
 }
 
 /// A section heading, with a line naming the section when it is empty so a reader can see there is nothing.
