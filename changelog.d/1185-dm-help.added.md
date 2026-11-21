@@ -1,0 +1,1 @@
+- `klatch help dm` (and `klatch dm --help`) now teach the direct message: the room, how to wait, who can read it, that no grant is needed, and two example flows kept in step with the CLI by a test; the top-level help points to it (#1185).

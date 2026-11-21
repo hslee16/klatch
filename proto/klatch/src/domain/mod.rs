@@ -127,6 +127,6 @@ pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,
 };
-pub use wait_filter::{Filter as WaitFilter, room_filters};
+pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{Capped, cap_wake};
 pub use wake_path::{PROMPTING_MODES, WakePath, wake_path};

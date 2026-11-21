@@ -1,0 +1,1 @@
+- `klatch dm` ends its output with the exact wait command for the room (`klatch wait dm.<a>.<b>`), and `klatch wait` accepts `dm:NAME` (also in a list such as `lobby dm:NAME`, and with a filter, `dm:NAME:from=NAME`); an unknown or invalid name is refused with a fixed message (#1186).

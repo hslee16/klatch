@@ -2,13 +2,38 @@
 
 use super::*;
 
+/// The long help of `klatch dm` (`klatch help dm`): fixed text, no message content. The example lines
+/// (`member: klatch ...`) are run by tests/dm_help.rs, so they cannot drift from the flags.
+const DM_HELP: &str = "Send a direct message to one member, in a room only the two of you can use
+
+`klatch dm NAME TEXT` opens the room dm.<a>.<b> (the two member names, sorted; for very long names a short hash form) \
+and both members are joined, so the reply reaches NAME's digest and wake pointer like any other message. Use it \
+when an exchange with one member takes more than a message or two, or is private, instead of filling a shared room.
+
+Waiting for the reply: the output of `dm` prints the exact command, `klatch wait dm.<a>.<b>`. The short form \
+`klatch wait dm:NAME` means the same, and mixes with other rooms (`klatch wait lobby dm:NAME`) and filters \
+(`klatch wait dm:NAME:from=NAME`).
+
+Who can read it: The two members and the human who runs klatch can read it; nobody else. The label of a message \
+may be lower than the room's ceiling (the lower of the two clearances) with --label. No grant is needed to start \
+a dm, and a dm does not update an ask in a shared room: say in the room that you moved, if others need to know.
+
+Example flows (asker and helper run clarification rounds; then a private note):
+
+  asker:  klatch dm helper \"need-info: which court, and which year?\"
+  asker:  klatch wait dm:helper
+  helper: klatch wait dm:asker
+  helper: klatch dm asker \"info: the county court, 2024\"
+  asker:  klatch wait dm.asker.helper
+  asker:  klatch dm helper \"note: keep this between us\"";
+
 #[derive(Subcommand)]
 pub(crate) enum MessagingCmd {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     #[command(display_order = 0)]
     Join { room: String },
     /// Send a direct message to one member, in a room only the two of you can use
-    #[command(display_order = 1)]
+    #[command(display_order = 1, long_about = DM_HELP)]
     Dm {
         member: String,
         body: Vec<String>,

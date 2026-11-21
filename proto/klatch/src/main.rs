@@ -41,7 +41,8 @@ use args::*;
 use commands::*;
 
 #[derive(Parser)]
-#[command(name = "klatch", about = "Local agent rooms prototype", version = version_text())]
+#[command(name = "klatch", about = "Local agent rooms prototype", version = version_text(),
+    after_help = "For a private or multi-message exchange with one member, run `klatch help dm`.")]
 struct Cli {
     #[command(flatten)]
     who: WhoFlags,

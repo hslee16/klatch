@@ -5,6 +5,41 @@ use super::{Message, valid_name};
 
 const FORM: &str = "write a room alone (`lobby`) or with one filter (`lobby:only=seeking:` or `lobby:from=bob`; name the room again for another)";
 
+const DM_FORM: &str =
+    "write `dm:NAME` for your direct messages with that member (`dm:bob`, or `dm:bob:from=bob`)";
+
+/// Rewrite each `dm:NAME` (optionally `dm:NAME:only=PREFIX` or `dm:NAME:from=MEMBER`) to the caller's dm room with
+/// NAME, `dm.<a>.<b>` (#1186). `dm:only=...` and `dm:from=...` stay a room named `dm` with a filter. The error
+/// names only the argument and a fixed form, never message text.
+pub fn resolve_dm_targets(args: &[String], me: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        let rest = match arg.strip_prefix("dm:") {
+            Some(rest) if !rest.starts_with("only=") && !rest.starts_with("from=") => rest,
+            _ => {
+                out.push(arg.clone());
+                continue;
+            }
+        };
+        let (name, spec) = match rest.split_once(':') {
+            Some((name, spec)) => (name, Some(spec)),
+            None => (rest, None),
+        };
+        if !valid_name(name) {
+            return Err(format!("`{arg}` is not a member name; {DM_FORM}"));
+        }
+        if name == me {
+            return Err(format!("`{arg}` is yourself; {DM_FORM}"));
+        }
+        let room = super::dm_room(me, name);
+        out.push(match spec {
+            Some(spec) => format!("{room}:{spec}"),
+            None => room,
+        });
+    }
+    Ok(out)
+}
+
 /// What one room's wait accepts. An empty list accepts everything; a non-empty one accepts any of its entries.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Filter {
