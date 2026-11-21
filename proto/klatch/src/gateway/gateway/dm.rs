@@ -51,23 +51,13 @@ impl<S: Store> Gateway<S> {
         let head = self.store.head(room)?;
         let after = (head - WINDOW as i64).max(0);
         let rows = Self::without_canary(self.store.tail(room, after, WINDOW)?);
-        let Some(last) = rows.last() else {
+        let senders: Vec<&str> = rows.iter().map(|m| m.sender.as_str()).collect();
+        let Some((last, other, len)) = crate::domain::exchange_run(&senders) else {
             return Ok(None);
         };
-        let first_other = rows.iter().rev().find(|m| m.sender != last.sender);
-        let Some(other) = first_other.map(|m| m.sender.as_str()) else {
-            return Ok(None);
-        };
-        let pair = [last.sender.as_str(), other];
-        let run: Vec<&Message> = rows
-            .iter()
-            .rev()
-            .take_while(|m| pair.contains(&m.sender.as_str()))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        if run.len() < N || !pair.contains(&who.member.as_str()) {
+        let pair = [last, other];
+        let run = &rows[rows.len() - len..];
+        if len < N || !pair.contains(&who.member.as_str()) {
             return Ok(None);
         }
         let peer = if pair[0] == who.member {
@@ -83,7 +73,40 @@ impl<S: Store> Gateway<S> {
         let crossing = run.iter().skip(N - 1).find(|m| m.sender == peer);
         Ok(crossing
             .filter(|m| shown.iter().any(|s| s.seq == m.seq))
-            .map(|_| (peer.to_string(), run.len())))
+            .map(|_| (peer.to_string(), len)))
+    }
+
+    /// The long exchange standing in `room` as a stuck-case event for the mediator (#1191): the same newest run of
+    /// messages from only two members that the digest nudge counts (`exchange_run`), at or past the threshold, in a room
+    /// of three or more whose two members are both still in it and have no dm yet. Ids, names and numbers only.
+    pub(super) fn exchange_event(&self, room: &str) -> Result<Option<crate::domain::StuckEvent>> {
+        use crate::domain::{DM_NUDGE_MESSAGES as N, DM_NUDGE_WINDOW as WINDOW};
+        let members = self.store.members(room)?;
+        if members.len() < 3 {
+            return Ok(None);
+        }
+        let head = self.store.head(room)?;
+        let after = (head - WINDOW as i64).max(0);
+        let rows = Self::without_canary(self.store.tail(room, after, WINDOW)?);
+        let senders: Vec<&str> = rows.iter().map(|m| m.sender.as_str()).collect();
+        let Some((last, other, len)) = crate::domain::exchange_run(&senders) else {
+            return Ok(None);
+        };
+        let mut pair = vec![last.to_string(), other.to_string()];
+        pair.sort();
+        let inside = pair.iter().all(|p| members.iter().any(|m| &m.name == p));
+        if len < N
+            || !inside
+            || !pair.iter().all(|p| valid_name(p))
+            || self.dm_pair(&dm_room(&pair[0], &pair[1]))?.is_some()
+        {
+            return Ok(None);
+        }
+        Ok(Some(crate::domain::StuckEvent::LongExchange {
+            room: room.to_string(),
+            members: pair,
+            messages: len,
+        }))
     }
 
     /// Only the two members use a direct-message room, and a name made like one that `dm` did not make is reserved.

@@ -55,6 +55,48 @@
       "detectable": false,
       "expect_kinds": [],
       "expect_proposals": 0
+    },
+    {
+      "name": "long-exchange",
+      "source": "#1191, epic #1183",
+      "note": "ann and bo trade four messages in a lobby of four; the mediator proposes a dm",
+      "steps": [
+        ["ann", "post", "lobby", "round 0"],
+        ["bo", "post", "lobby", "round 1"],
+        ["ann", "post", "lobby", "round 2"],
+        ["bo", "post", "lobby", "round 3"]
+      ],
+      "detectable": true,
+      "expect_kinds": ["long_exchange"],
+      "expect_proposals": 1
+    },
+    {
+      "name": "long-exchange-with-a-dm",
+      "source": "#1191, epic #1183",
+      "note": "the same pair already has a dm: nothing is shown or proposed",
+      "steps": [
+        ["ann", "post", "lobby", "round 0"],
+        ["bo", "post", "lobby", "round 1"],
+        ["ann", "post", "lobby", "round 2"],
+        ["bo", "post", "lobby", "round 3"],
+        ["ann", "dm", "bo", "moving here"]
+      ],
+      "detectable": true,
+      "expect_kinds": [],
+      "expect_proposals": 0
+    },
+    {
+      "name": "short-exchange",
+      "source": "#1191, epic #1183",
+      "note": "three messages are not a long exchange",
+      "steps": [
+        ["ann", "post", "lobby", "round 0"],
+        ["bo", "post", "lobby", "round 1"],
+        ["ann", "post", "lobby", "round 2"]
+      ],
+      "detectable": true,
+      "expect_kinds": [],
+      "expect_proposals": 0
     }
   ]
 }

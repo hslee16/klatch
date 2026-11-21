@@ -31,6 +31,13 @@ pub enum StuckEvent {
     },
     /// A cycle of claim waits (25.12): the members that wait on each other, sorted by name.
     ClaimDeadlock { members: Vec<String> },
+    /// Two members of a room of three or more have exchanged `messages` messages in a row with no dm between them
+    /// (#1191): `members` sorted by name. Not stuck for a rule to settle; a fact the mediator may propose a dm on.
+    LongExchange {
+        room: String,
+        members: Vec<String>,
+        messages: usize,
+    },
 }
 
 impl StuckEvent {
@@ -41,6 +48,7 @@ impl StuckEvent {
             StuckEvent::NobodyCapable { .. } => "nobody_capable",
             StuckEvent::AskCycle { .. } => "ask_cycle",
             StuckEvent::ClaimDeadlock { .. } => "claim_deadlock",
+            StuckEvent::LongExchange { .. } => "long_exchange",
         }
     }
 
@@ -58,6 +66,9 @@ impl StuckEvent {
             StuckEvent::ClaimDeadlock { members } => {
                 format!("claim_deadlock:{}", members.join(","))
             }
+            StuckEvent::LongExchange { room, members, .. } => {
+                format!("long_exchange:{room}:{}", members.join(","))
+            }
         }
     }
 
@@ -67,7 +78,9 @@ impl StuckEvent {
             StuckEvent::StaleAsk { asker, .. } | StuckEvent::NobodyCapable { asker, .. } => {
                 vec![asker.as_str()]
             }
-            StuckEvent::AskCycle { members, .. } | StuckEvent::ClaimDeadlock { members } => {
+            StuckEvent::AskCycle { members, .. }
+            | StuckEvent::ClaimDeadlock { members }
+            | StuckEvent::LongExchange { members, .. } => {
                 members.iter().map(String::as_str).collect()
             }
         }
@@ -95,6 +108,14 @@ impl StuckEvent {
             StuckEvent::ClaimDeadlock { members } => {
                 format!("claim_deadlock members {}", members.join(","))
             }
+            StuckEvent::LongExchange {
+                room,
+                members,
+                messages,
+            } => format!(
+                "long_exchange room {room} members {} messages {messages}",
+                members.join(",")
+            ),
         }
     }
 }
@@ -189,6 +210,22 @@ mod tests {
             expires: NOW + 60,
             scope: String::new(),
         }
+    }
+
+    #[test]
+    fn a_long_exchange_has_a_key_per_room_and_pair_and_a_line_without_text() {
+        let e = StuckEvent::LongExchange {
+            room: "lobby".into(),
+            members: vec!["ann".into(), "bo".into()],
+            messages: 4,
+        };
+        assert_eq!(e.kind(), "long_exchange");
+        assert_eq!(e.key(), "long_exchange:lobby:ann,bo");
+        assert_eq!(e.members(), ["ann", "bo"]);
+        assert_eq!(
+            e.line(),
+            "long_exchange room lobby members ann,bo messages 4"
+        );
     }
 
     #[test]
