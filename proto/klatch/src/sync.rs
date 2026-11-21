@@ -51,3 +51,30 @@ pub fn within<T: Send + 'static>(
     });
     rx.recv().ok().flatten()
 }
+
+/// Wait up to `wait` for the next item on `rx`: `rx.recv_timeout(wait)`.
+#[cfg(not(shuttle))]
+pub fn recv_within<T>(
+    rx: &mpsc::Receiver<T>,
+    wait: std::time::Duration,
+) -> Result<T, mpsc::RecvTimeoutError> {
+    rx.recv_timeout(wait)
+}
+
+/// `recv_within` in a Shuttle build. Shuttle's `recv_timeout` never times out (#666), so a loop that wakes on a period
+/// (the session's poll and heartbeat) would block on an idle input for ever. Here time may pass whenever nothing is
+/// waiting: the waiter yields once, so the other threads can run first, then takes what has arrived or reports a
+/// timeout. A schedule therefore sees both an answer that beats the period and a period that beats the answer. It
+/// does not model how long `wait` is.
+#[cfg(shuttle)]
+pub fn recv_within<T>(
+    rx: &mpsc::Receiver<T>,
+    _wait: std::time::Duration,
+) -> Result<T, mpsc::RecvTimeoutError> {
+    thread::yield_now();
+    match rx.try_recv() {
+        Ok(item) => Ok(item),
+        Err(mpsc::TryRecvError::Empty) => Err(mpsc::RecvTimeoutError::Timeout),
+        Err(mpsc::TryRecvError::Disconnected) => Err(mpsc::RecvTimeoutError::Disconnected),
+    }
+}

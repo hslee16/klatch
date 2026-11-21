@@ -3,8 +3,8 @@
 //! different random order of the threads' steps, and fails a run when an assertion breaks or the threads deadlock. A pass
 //! means no failing schedule among those tried, not that none exists. Shuttle has no clock (a timeout never fires), so
 //! `sync::within` stands a timer thread in for its limit under Shuttle (#666, DESIGN item 102): the limit can pass at any
-//! step, which the tests below use; how long the limit is, and every other time limit (heartbeats, poll intervals, the
-//! SQLite busy retries), is not covered. Shuttle also cannot see SQLite, `flock` or the OS; see CONTRIBUTING.md.
+//! step, which the tests below use; `sync::recv_within` does the same for the session's poll period and heartbeat (the
+//! `time` module). How long any limit is, the wake and wait polling and the SQLite busy retries are not covered. Shuttle also cannot see SQLite, `flock` or the OS; see CONTRIBUTING.md.
 
 use crate::sync::{mpsc, thread};
 use std::collections::HashSet;
@@ -12,6 +12,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as StdOrdering};
 use std::time::Duration;
+
+mod time;
 
 /// Run `f` under Shuttle with a fixed seed, so a failure repeats. `SHUTTLE_SEED` and `SHUTTLE_ITERS` override.
 fn explore<F: Fn() + Send + Sync + 'static>(f: F) {
