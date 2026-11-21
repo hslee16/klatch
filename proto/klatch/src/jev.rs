@@ -33,6 +33,7 @@ use std::fmt;
 pub mod answer;
 pub mod decision;
 pub mod error;
+pub mod facilitate;
 pub mod fake;
 #[cfg(feature = "jev-http")]
 pub mod http;
