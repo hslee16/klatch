@@ -55,6 +55,13 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!(
+                "daemon log of {}:\n{}",
+                self.0.display(),
+                std::fs::read_to_string(self.0.join("err.log")).unwrap_or_default()
+            );
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -62,6 +69,7 @@ impl Drop for Dir {
 struct Daemon {
     child: Child,
     sock: PathBuf,
+    log: PathBuf,
 }
 
 impl Daemon {
@@ -82,20 +90,31 @@ impl Daemon {
             .env("KLATCH_KEY_DIR", dir.home().join("keys"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::from(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(dir.0.join("err.log"))
+                    .unwrap(),
+            ))
             .spawn()
             .expect("start klatch-server");
         Daemon {
             child,
             sock: sock.to_path_buf(),
+            log: dir.0.join("err.log"),
         }
     }
 
-    /// Wait until the socket accepts a connection.
+    /// Wait until the daemon says it listens (its log), then until the socket accepts a connection. The log first: a
+    /// connect to a stale socket file must not count as the daemon being up.
     fn ready(&self) {
-        let until = Instant::now() + Duration::from_secs(20);
+        let until = Instant::now() + Duration::from_secs(30);
         while Instant::now() < until {
-            if UnixStream::connect(&self.sock).is_ok() {
+            let said = std::fs::read_to_string(&self.log)
+                .map(|l| l.contains("daemon listening on"))
+                .unwrap_or(false);
+            if said && UnixStream::connect(&self.sock).is_ok() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -119,10 +138,7 @@ impl Daemon {
             assert!(Instant::now() < until, "the daemon did not stop");
             std::thread::sleep(Duration::from_millis(20));
         };
-        let mut err = String::new();
-        if let Some(mut e) = self.child.stderr.take() {
-            std::io::Read::read_to_string(&mut e, &mut err).unwrap();
-        }
+        let err = std::fs::read_to_string(&self.log).unwrap_or_default();
         (status, err)
     }
 
@@ -508,8 +524,20 @@ fn a_first_line_over_the_cap_closes_the_connection_with_a_refusal() {
 fn the_connection_cap_refuses_the_excess_with_a_frame_and_frees_a_slot_when_one_closes() {
     let dir = Dir::new();
     let d = Daemon::started(&dir, &["--max-connections", "2"]);
-    let (a, _) = Conn::hello(&d.sock);
-    let (b, _) = Conn::hello(&d.sock);
+    // the readiness probe may still hold a slot for a moment: take a slot by trying until the hello comes
+    let slot = |sock: &Path| -> Conn {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut c = Conn::open(sock);
+            if c.recv().is_some_and(|f| f["type"] == "hello") {
+                return c;
+            }
+            assert!(Instant::now() < until, "no slot");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let a = slot(&d.sock);
+    let b = slot(&d.sock);
     let mut third = Conn::open(&d.sock);
     let f = third.recv().expect("a refusal frame");
     assert_eq!(f["type"], "refusal", "{f}");
@@ -696,14 +724,33 @@ fn the_same_scenario_through_the_daemon_and_through_the_session_loop_gives_the_s
     let direct = direct_run(&Dir::new());
     let over_daemon = daemon_run(&Dir::new());
     assert!(direct.0.len() > 10 && direct.1.len() > 10, "{direct:?}");
+    // Responses come in request order in both. A stream's messages and caught_up arrive between them at moments that
+    // depend on timing (a socket delivers a request at a time; the in-process script is read at once), so those are
+    // compared as a sorted set, not by position.
+    let split = |frames: &Vec<Value>| -> (Vec<Value>, Vec<String>) {
+        let responses = frames
+            .iter()
+            .filter(|f| f["type"] == "response")
+            .cloned()
+            .collect();
+        let mut rest: Vec<String> = frames
+            .iter()
+            .filter(|f| f["type"] != "response")
+            .map(|f| f.to_string())
+            .collect();
+        rest.sort();
+        (responses, rest)
+    };
     for (name, a, b) in [
         ("alice", &direct.0, &over_daemon.0),
         ("bob", &direct.1, &over_daemon.1),
     ] {
-        assert_eq!(a.len(), b.len(), "{name}: {a:#?}\nvs\n{b:#?}");
-        for (x, y) in a.iter().zip(b) {
-            assert_eq!(x, y, "{name}");
-        }
+        let (ra, sa) = split(a);
+        let (rb, sb) = split(b);
+        assert!(ra.len() >= 10, "{name}: {ra:?}");
+        assert_eq!(ra, rb, "{name}: responses");
+        assert!(!sa.is_empty(), "{name}: a stream was seen");
+        assert_eq!(sa, sb, "{name}: stream frames");
     }
     // bob's posts follow alice's: the sequence numbers go on from 5, in both
     let seqs = |frames: &Vec<Value>| -> Vec<i64> {
