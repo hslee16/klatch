@@ -3,8 +3,51 @@
 //! Only well known shapes are matched, each with a prefix and a minimum length, so ordinary prose, hashes and
 //! identifiers pass. A match names the kind of credential and never the text.
 
+//!
+//! Mechanical decodings (#987) catch the same credential wrapped to dodge a scan: zero-width characters inside it,
+//! a value spaced out or cut over lines, base64 or hex of it, or written backwards. Each decoded or joined form is
+//! matched with the same rules as plain text, so nothing is flagged that is not credential-shaped after the
+//! decoding. What stays out of reach on purpose: a passphrase of plain words and a secret that only the
+//! surrounding talk marks as one; the rules judge does not guess at those, so they are left to the opt-in hosted
+//! judge (the owner's own use).
+
+/// Longest text the decodings are tried on; beyond it only the plain match runs.
+const MAX_DECODE_TEXT: usize = 64 * 1024;
+
 /// What kind of credential `text` appears to carry, if any.
 pub fn credential_kind(text: &str) -> Option<&'static str> {
+    if let Some(kind) = plain_kind(text) {
+        return Some(kind);
+    }
+    if text.len() > MAX_DECODE_TEXT {
+        return None;
+    }
+    let cleaned = strip_invisible(text);
+    if cleaned != text
+        && let Some(kind) = plain_kind(&cleaned)
+    {
+        return Some(kind);
+    }
+    if spelled_out_secret(&cleaned) {
+        return Some("a spelled-out secret");
+    }
+    [joined_spaces(&cleaned), joined_lines(&cleaned)]
+        .iter()
+        .flatten()
+        .find_map(|variant| plain_kind(variant))
+        .or_else(|| decoded_kind(&cleaned))
+}
+
+/// The match on the text as it stands, with no decoding.
+fn plain_kind(text: &str) -> Option<&'static str> {
+    shape_kind(text)
+        .or_else(|| url_or_command_password(&blank_templates(text)).then_some("a password"))
+        .or_else(|| labelled_secret(text).then_some("a labelled secret"))
+        .or_else(|| secret_field(text).then_some("a labelled secret"))
+}
+
+/// A key, token or web token by its fixed shape alone, with no label or context.
+fn shape_kind(text: &str) -> Option<&'static str> {
     if text.contains("-----BEGIN") && text.contains("PRIVATE KEY-----") {
         return Some("a private key");
     }
@@ -14,8 +57,272 @@ pub fn credential_kind(text: &str) -> Option<&'static str> {
         .map(|s| s.kind)
         .or_else(|| bearer_token(text).then_some("a bearer token"))
         .or_else(|| json_web_token(text).then_some("a JSON web token"))
-        .or_else(|| url_or_command_password(&blank_templates(text)).then_some("a password"))
-        .or_else(|| labelled_secret(text).then_some("a labelled secret"))
+}
+
+/// The text without zero-width and other invisible format characters.
+fn strip_invisible(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{200b}'..='\u{200f}'
+                    | '\u{2060}'
+                    | '\u{feff}'
+                    | '\u{00ad}'
+                    | '\u{202a}'..='\u{202e}'
+            )
+        })
+        .collect()
+}
+
+/// Whitespace separated words with the byte offset each starts at.
+fn words_at(text: &str) -> Vec<(usize, &str)> {
+    let mut words = Vec::new();
+    let mut start = None;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        match (c.is_whitespace(), start) {
+            (false, None) => start = Some(i),
+            (true, Some(s)) => {
+                words.push((s, &text[s..i]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    words
+}
+
+/// A run of words of one equal width, the last one no wider (`ab cd ef gh`): a value spaced out. Returns the byte
+/// range of the run, its word width and the joined value.
+fn spaced_runs(text: &str) -> Vec<(std::ops::Range<usize>, usize, String)> {
+    let words = words_at(text);
+    let single_space = |a: (usize, &str), b: (usize, &str)| text[a.0 + a.1.len()..b.0] == *" ";
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let width = words[i].1.chars().count();
+        let mut j = i + 1;
+        if (1..=8).contains(&width) {
+            while j < words.len()
+                && single_space(words[j - 1], words[j])
+                && words[j].1.chars().count() == width
+            {
+                j += 1;
+            }
+            if j < words.len()
+                && single_space(words[j - 1], words[j])
+                && words[j].1.chars().count() < width
+            {
+                j += 1;
+            }
+        }
+        let joined: String = words[i..j].iter().map(|w| w.1).collect();
+        if j - i >= 4 && joined.chars().count() >= 12 {
+            let end = words[j - 1].0 + words[j - 1].1.len();
+            runs.push((words[i].0..end, width, joined));
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    runs
+}
+
+/// The text with each spaced-out run joined into one value.
+fn joined_spaces(text: &str) -> Option<String> {
+    let runs = spaced_runs(text);
+    if runs.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for (range, _, joined) in runs {
+        out.push_str(&text[at..range.start]);
+        out.push_str(&joined);
+        at = range.end;
+    }
+    out.push_str(&text[at..]);
+    Some(out)
+}
+
+/// A value read out one character at a time (`Z q 8 r ...`): twelve or more single characters with a lower case
+/// letter and at least two of a digit, an upper case letter and a symbol. Counting `1 2 3 ...` or spelling a word
+/// does not qualify.
+fn spelled_out_secret(text: &str) -> bool {
+    spaced_runs(text).iter().any(|(_, width, joined)| {
+        let classes = [
+            joined.chars().any(|c| c.is_ascii_digit()),
+            joined.chars().any(|c| c.is_ascii_uppercase()),
+            joined.chars().any(|c| c.is_ascii_punctuation()),
+        ];
+        *width == 1
+            && joined.chars().any(|c| c.is_ascii_lowercase())
+            && classes.iter().filter(|c| **c).count() >= 2
+    })
+}
+
+fn value_char(c: char) -> bool {
+    token(c) || matches!(c, '.' | '~' | '+' | '/' | '=')
+}
+
+/// The text with a long bare token line glued to the long token that ends the line above it, so a value cut over
+/// lines (a JWT in three pieces) is one value again.
+fn joined_lines(text: &str) -> Option<String> {
+    let long_token = |s: &str| s.chars().count() >= 12 && s.chars().all(value_char);
+    let mut lines: Vec<String> = Vec::new();
+    let mut changed = false;
+    for line in text.lines() {
+        let bare = line.trim();
+        let glue = long_token(bare)
+            && lines
+                .last()
+                .is_some_and(|prev| prev.split_whitespace().next_back().is_some_and(long_token));
+        if glue && let Some(prev) = lines.last_mut() {
+            prev.truncate(prev.trim_end().len());
+            prev.push_str(bare);
+            changed = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    changed.then(|| lines.join("\n"))
+}
+
+/// Tokens of 16 to 4096 bytes with the byte offset each starts at (at most 256 of them).
+fn long_tokens(text: &str) -> Vec<(usize, &str)> {
+    let sep = |c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '<' | '>' | '[' | ']'
+            )
+    };
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        match (sep(c), start) {
+            (false, None) => start = Some(i),
+            (true, Some(s)) => {
+                let t = &text[s..i];
+                if (16..=4096).contains(&t.len()) {
+                    out.push((s, t));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out.truncate(256);
+    out
+}
+
+fn printable(bytes: Vec<u8>) -> Option<String> {
+    let text = String::from_utf8(bytes).ok()?;
+    (text.len() >= 12
+        && text
+            .chars()
+            .all(|c| c == '\n' || c == '\t' || (' '..='~').contains(&c)))
+    .then_some(text)
+}
+
+fn base64_decode(v: &str) -> Option<Vec<u8>> {
+    let v = v.trim_end_matches('=');
+    if v.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(v.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in v.chars() {
+        let d = match c {
+            'A'..='Z' => c as u32 - 'A' as u32,
+            'a'..='z' => c as u32 - 'a' as u32 + 26,
+            '0'..='9' => c as u32 - '0' as u32 + 52,
+            '+' | '-' => 62,
+            '/' | '_' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | d;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+fn hex_decode(v: &str) -> Option<Vec<u8>> {
+    if v.len() % 2 != 0 || !v.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..v.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&v[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// A long token that is base64 or hex of a credential, or a credential written backwards: the token is swapped
+/// for its decoding in place (so a label before it still counts) and matched as plain text.
+fn decoded_kind(text: &str) -> Option<&'static str> {
+    for (at, tok) in long_tokens(text) {
+        let decodings = [
+            base64_decode(tok).and_then(printable),
+            hex_decode(tok).and_then(printable),
+        ];
+        for decoded in decodings.into_iter().flatten() {
+            let variant = format!("{}{}{}", &text[..at], decoded, &text[at + tok.len()..]);
+            if let Some(kind) = plain_kind(&variant) {
+                return Some(kind);
+            }
+        }
+        // Backwards: only a well known shape counts, never a label (the words around the token are not reversed).
+        let reversed: String = tok.trim_end_matches('=').chars().rev().collect();
+        if let Some(kind) = shape_kind(&reversed) {
+            return Some(kind);
+        }
+    }
+    None
+}
+
+/// Field names that hold a secret in JSON, YAML and env files.
+const SECRET_FIELDS: [&str; 8] = [
+    "refresh_token",
+    "access_token",
+    "id_token",
+    "auth_token",
+    "session_token",
+    "bearer_token",
+    "client_secret",
+    "secret_key",
+];
+
+/// `"refresh_token":"VALUE"`, `access_token=VALUE` or `id_token: VALUE` with a long value that has a digit and is
+/// not a placeholder. The field name alone (`"grant_type":"refresh_token"`) or prose about it is not a match.
+fn secret_field(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    SECRET_FIELDS.iter().any(|field| {
+        lower.match_indices(field).any(|(i, _)| {
+            if lower[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+            {
+                return false;
+            }
+            let rest = text[i + field.len()..].trim_start_matches(['"', '\'', '`']);
+            let rest = rest.trim_start_matches([' ', '\t']);
+            let Some(rest) = rest.strip_prefix([':', '=']) else {
+                return false;
+            };
+            let value: String = rest
+                .trim_start_matches([' ', '\t', '"', '\'', '`'])
+                .chars()
+                .take_while(|c| value_char(*c))
+                .collect();
+            value.len() >= 20 && value.chars().any(|c| c.is_ascii_digit()) && !placeholder(&value)
+        })
+    })
 }
 
 /// A credential that starts with a fixed prefix and then runs for at least `min` characters of a class.
@@ -544,5 +851,112 @@ mod tests {
             );
         }
         assert_eq!(credential_kind("token: abcdefgh"), None);
+    }
+
+    // Mechanical decodings (#987): the same secret, wrapped so a plain match misses it.
+
+    fn fake_github() -> String {
+        format!("ghp_{}", "a1B2c3D4e5".repeat(4))
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let n = chunk
+                .iter()
+                .enumerate()
+                .fold(0u32, |a, (i, b)| a | (u32::from(*b) << (16 - 8 * i)));
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(T[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    fn grouped(text: &str, size: usize, sep: &str) -> String {
+        text.chars()
+            .collect::<Vec<_>>()
+            .chunks(size)
+            .map(|c| c.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(sep)
+    }
+
+    #[test]
+    fn a_wrapped_credential_is_recognised() {
+        let gh = fake_github();
+        let stripe = format!("sk_live_{}", "Q7wE3rT9yU1i".repeat(2));
+        let hex: String = stripe.bytes().map(|b| format!("{b:02x}")).collect();
+        let reversed: String = gh.chars().rev().collect();
+        let cut = gh.len() / 2;
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop";
+        let cases = [
+            format!("paste it base64'd:\n{}\ndecode it", b64(gh.as_bytes())),
+            format!("config value (hex): {hex}"),
+            format!("written backwards: {reversed}"),
+            format!(
+                "new key, strip the invisible characters: {}",
+                grouped(&gh, 3, "\u{200b}")
+            ),
+            format!("remove the spaces: {}", grouped(&gh, 4, " ")),
+            format!("first half: {}\n{}", &gh[..cut], &gh[cut..]),
+            format!("{}\n{}\n{}", &jwt[..30], &jwt[30..50], &jwt[50..]),
+        ];
+        for text in cases {
+            assert!(credential_kind(&text).is_some(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_spelled_out_secret_is_recognised() {
+        for pw in [fake_password(), "xOqZyFz*#OywdstkLm".to_string()] {
+            let text = format!("reading it out: {}", grouped(&pw, 1, " "));
+            assert!(credential_kind(&text).is_some(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_json_secret_field_is_recognised() {
+        let tok = "Zq8rT2vK9mLw4xP7nB3cD5eF";
+        let cases = [
+            format!("body {{\"grant_type\":\"refresh_token\",\"refresh_token\":\"{tok}\"}}"),
+            format!("{{\"access_token\": \"{tok}\", \"expires_in\": 3600}}"),
+            format!("client_secret={tok}"),
+            format!("id_token: {tok}"),
+        ];
+        for text in cases {
+            assert_eq!(
+                credential_kind(&text),
+                Some("a labelled secret"),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decodings_do_not_flag_ordinary_text() {
+        let cases = [
+            "the grant_type is refresh_token and the field is rotated hourly",
+            "{\"grant_type\":\"refresh_token\",\"scope\":\"read\"}",
+            "refresh_token: <your refresh token here>",
+            "access_token=${ACCESS_TOKEN}",
+            "client_secret: ********************",
+            "a b c d e f g h i j k l m n o p",
+            "1 2 3 4 5 6 7 8 9 10 11 12 13 14",
+            "I have a b c plans, and so on and so forth, it is a to do",
+            "aGVsbG8gd29ybGQgaGVsbG8gd29ybGQ= is just hello world twice",
+            "the png header iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== ok",
+            "sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "the file internationalization-configuration.yaml is long",
+            "line one is a long sentence without any\nsecond line short\nthird",
+        ];
+        for text in cases {
+            assert_eq!(credential_kind(text), None, "{text:?}");
+        }
     }
 }
