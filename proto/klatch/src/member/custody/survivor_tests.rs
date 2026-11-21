@@ -5,13 +5,13 @@
 //! so no test reaches the Keychain or the real store, whatever the caller's environment is.
 
 use super::*;
-use klatch::keys::FileKeys;
+use crate::keys::FileKeys;
 use std::process::Command;
 
 const NAME: &str = "store-test";
 
-fn scratch(tag: &str) -> crate::test_dir::TestDir {
-    crate::test_dir::TestDir::new(&format!("survivor-{tag}"))
+fn scratch(tag: &str) -> crate::store::test_dir::TestDir {
+    crate::store::test_dir::TestDir::new(&format!("survivor-{tag}"))
 }
 
 fn file_home(d: &Path) -> KeyHome {
@@ -31,7 +31,7 @@ fn in_child(name: &str, dir: &Path, extra: &[(&str, &str)]) {
     let mut cmd = Command::new(std::env::current_exe().unwrap());
     cmd.args([
         "--exact",
-        &format!("custody::survivor_tests::{name}"),
+        &format!("member::custody::survivor_tests::{name}"),
         "--test-threads=1",
     ])
     .env_clear()

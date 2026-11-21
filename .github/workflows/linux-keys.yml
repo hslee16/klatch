@@ -2,7 +2,7 @@ name: Linux keys
 
 # The Linux Secret Service backend against a real gnome-keyring, and the headless fallbacks, in Docker (epic #387,
 # #385). Run by hand: it builds Rust in a container, which is more than every pull request should pay for (the human's
-# rule, 2026-11-14: CI stays lightweight). Run it after changing proto/klatch/src/keys, custody.rs or proto/linux-keys.
+# rule, 2026-11-14: CI stays lightweight). Run it after changing proto/klatch/src/keys, member/custody.rs or proto/linux-keys.
 # The same command runs on a laptop with Docker: proto/linux-keys/run.sh
 on:
   workflow_dispatch:

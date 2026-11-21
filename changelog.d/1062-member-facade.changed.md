@@ -1,0 +1,1 @@
+- The member setup (store open and key source, caller discovery and credentials, scope, the gateway for a member, the wake pointer) moved from the `klatch` binary into the library as `klatch::member`, so a second binary can do what `klatch mcp --stdio` does; behaviour, output and exit codes are unchanged (#1062).
