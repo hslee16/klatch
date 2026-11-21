@@ -498,13 +498,14 @@ fn classify(line: &[u8]) -> First {
     let Ok(v) = serde_json::from_slice::<Value>(line) else {
         return First::Other;
     };
-    if v["type"] == "request" && v["method"] == "identify" {
-        if let Some(id) = v["id"].as_str() {
-            return First::Identify {
-                id: id.to_string(),
-                params: v["params"].clone(),
-            };
-        }
+    if v["type"] == "request"
+        && v["method"] == "identify"
+        && let Some(id) = v["id"].as_str()
+    {
+        return First::Identify {
+            id: id.to_string(),
+            params: v["params"].clone(),
+        };
     }
     First::Other
 }
