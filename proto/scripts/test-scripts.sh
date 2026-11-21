@@ -126,7 +126,13 @@ if env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="fmt" GIT_CEILING_DIREC
 d="$work/diag"; mkdir -p "$d/proto/scripts" "$d/release"; cp "$gate" "$d/proto/scripts/gate"
 printf '#!/bin/sh\nexit 0\n' > "$d/proto/scripts/shuttle"
 printf '#!/bin/sh\necho TIMEOUTS-OUT\nexit 0\n' > "$d/release/check-timeouts.sh"
-{ printf '#!/bin/sh\n'; printf 'echo EARLY-LINE-GONE\n'; printf 'i=0; while [ $i -lt 60 ]; do echo "versions line $i"; i=$((i+1)); done\n'; printf 'echo STDERR-LINE >&2\nexit 3\n'; } > "$d/release/check-versions.sh"
+cat > "$d/release/check-versions.sh" <<'SH'
+#!/bin/sh
+echo EARLY-LINE-GONE
+i=0; while [ $i -lt 60 ]; do echo "versions line $i"; i=$((i+1)); done
+echo STDERR-LINE >&2
+exit 3
+SH
 printf '#!/bin/sh\necho SHOULD-NOT-RUN >> "%s/ran"\nexit 0\n' "$work" > "$d/release/test-check-versions.sh"
 chmod +x "$d/proto/scripts/shuttle" "$d"/release/*.sh
 rm -f "$work/ran" "$work/gate.log"
