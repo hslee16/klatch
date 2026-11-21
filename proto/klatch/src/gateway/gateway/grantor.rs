@@ -12,7 +12,9 @@
 //! - `agent-cap`: the label is no higher than the agent cap;
 //! - `room-label`: the label is no higher than the room's label;
 //! - `own-clearance`: the label is no higher than the grantor's own global clearance. Room grants are not passed on
-//!   (not transitive): a grantor that is in a room only by a grant holds, as a grantor, its global clearance.
+//!   (not transitive): a grantor that is in a room only by a grant holds, as a grantor, its global clearance;
+//! - `sealed-key` (#896): the room's label is sealed and the grantee's global clearance does not reach it. A room
+//!   grant never carries a label key, so such a grant could not be read through; it is refused with the next step.
 //!
 //! The grantor must also pass the ordinary checks of the room (stops, its own clearance for the room) and its role
 //! (a librarian or reviewer is refused). Every grant writes an audit row naming the grantor, grantee, room and
@@ -167,6 +169,19 @@ impl<S: Store> Gateway<S> {
                 "own-clearance",
                 format!("you hold {own}; you cannot grant {label}"),
             ));
+        }
+        // a room grant never hands out a label key (#896): the keys a process holds follow the global clearance, so a
+        // grantee without it would pass the room check and then fail closed on every read, and is refused here instead
+        if self.sealed_labels()?.contains(&room_label) {
+            let theirs = self.clearance_of(member)?;
+            if !chain.dominates(&theirs, &room_label) {
+                return Err(refuse(
+                    "sealed-key",
+                    format!(
+                        "room {room} is labelled {room_label}, which is sealed, and {member} holds {theirs} globally; a room grant never carries a label key, so {member} could not read it. Raise {member}'s clearance first (klatch admin clear {member} {room_label}), or leave this room ungranted"
+                    ),
+                ));
+            }
         }
         Ok(())
     }
