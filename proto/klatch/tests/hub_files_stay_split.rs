@@ -28,6 +28,7 @@ fn the_split_directories_have_no_file_over_the_line_cap() {
         "commands",
         "args",
         "kani_proofs",
+        "gateway/gateway/tests/zero_trust",
         "domain/board",
         "gateway/gateway/board",
     ] {
