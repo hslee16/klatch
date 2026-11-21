@@ -310,13 +310,13 @@ impl Drop for Bound {
 // ---------------------------------------------------------------------------------------------------------------
 // stopping
 
-static STOP: AtomicBool = AtomicBool::new(false);
+pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
     STOP.store(true, Ordering::SeqCst);
 }
 
-fn install_signal_handlers() {
+pub(crate) fn install_signal_handlers() {
     let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
     act.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as usize;
     // no SA_RESTART: the wait for a connection returns when a signal comes

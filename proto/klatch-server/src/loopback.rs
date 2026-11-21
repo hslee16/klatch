@@ -14,8 +14,10 @@
 //! `Content-Length` body; `Transfer-Encoding` is refused (501), so there is no chunked parser to get wrong.
 
 use anyhow::{Result, bail};
+use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -129,20 +131,24 @@ impl Response {
     fn reason(&self) -> &'static str {
         match self.status {
             200 => "OK",
+            202 => "Accepted",
             400 => "Bad Request",
             401 => "Unauthorized",
+            403 => "Forbidden",
             404 => "Not Found",
             405 => "Method Not Allowed",
             408 => "Request Timeout",
             411 => "Length Required",
             413 => "Content Too Large",
+            429 => "Too Many Requests",
             431 => "Request Header Fields Too Large",
             501 => "Not Implemented",
+            503 => "Service Unavailable",
             _ => "Status",
         }
     }
 
-    fn bytes(&self) -> Vec<u8> {
+    pub fn bytes(&self) -> Vec<u8> {
         let mut head = format!(
             "HTTP/1.1 {} {}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n",
             self.status,
@@ -353,6 +359,72 @@ fn serve_one(stream: &mut TcpStream, limits: &Limits, handler: &mut dyn Handler)
         let _ = stream.flush();
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
+}
+
+/// A connection as [`serve_concurrent`] hands it to its handler. The alias is how the other modules name the socket
+/// without naming its type (the scan test lets only this file do that).
+pub type Stream = TcpStream;
+
+/// Accept connections until `stop` is set and serve each on a thread of its own (phase 3, #1059: a server-sent-events
+/// stream stays open, so the one-at-a-time loop of [`serve`] cannot carry it). At most `max_connections` are open at
+/// once: the excess is given to `excess` (which should answer in a moment and close) and gets no thread. On `stop` every
+/// open connection is shut down, so a handler blocked on its socket returns, and the threads are joined before this
+/// returns. The listener is polled, as in [`serve`]. Nothing here reads a request: the handler owns the connection.
+pub fn serve_concurrent<H, X>(
+    listener: &TcpListener,
+    stop: &AtomicBool,
+    max_connections: usize,
+    handler: &H,
+    excess: &X,
+) where
+    H: Fn(Stream) + Sync,
+    X: Fn(Stream) + Sync,
+{
+    if listener.set_nonblocking(true).is_err() {
+        return;
+    }
+    let open: Mutex<HashMap<u64, TcpStream>> = Mutex::default();
+    std::thread::scope(|scope| {
+        let mut next = 0u64;
+        while !stop.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    // an accepted socket may inherit the listener's non-blocking mode
+                    if stream.set_nonblocking(false).is_err() {
+                        continue;
+                    }
+                    let Ok(handle) = stream.try_clone() else {
+                        continue;
+                    };
+                    let slot = {
+                        let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
+                        if open.len() >= max_connections {
+                            None
+                        } else {
+                            next += 1;
+                            open.insert(next, handle);
+                            Some(next)
+                        }
+                    };
+                    match slot {
+                        None => excess(stream),
+                        Some(id) => {
+                            let open = &open;
+                            scope.spawn(move || {
+                                handler(stream);
+                                open.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                            });
+                        }
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(_) => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        for s in open.lock().unwrap_or_else(|e| e.into_inner()).values() {
+            let _ = s.shutdown(std::net::Shutdown::Both);
+        }
+    });
 }
 
 /// Accept connections one at a time until `stop` is set. The listener is polled (a short pause when nobody is
