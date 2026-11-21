@@ -98,6 +98,8 @@ pub struct McpServer<'a, B: Backend + ?Sized> {
     session: &'a Session<'a, B>,
     instructions: String,
     channel: bool,
+    /// Asked between polls of a `klatch_wait`: true ends the wait early (the server is stopping or the client left).
+    cancel: Option<&'a (dyn Fn() -> bool + Sync)>,
 }
 
 impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
@@ -107,7 +109,15 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             session,
             instructions,
             channel: false,
+            cancel: None,
         }
+    }
+
+    /// Let the caller end a `klatch_wait` early (#1125): `cancel` is asked between polls, and once it says true the wait
+    /// returns as a timeout with no messages (none are taken, so none are lost).
+    pub fn with_cancel(mut self, cancel: &'a (dyn Fn() -> bool + Sync)) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     /// Declare the Claude Code channel capability at `initialize` (`experimental['claude/channel']`, #1057). It only
@@ -271,7 +281,7 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             if !got.is_empty() {
                 return Ok(Ok(with_notice(json!({"messages": got, "timeout": false}))));
             }
-            if Instant::now() >= deadline {
+            if Instant::now() >= deadline || self.cancel.is_some_and(|c| c()) {
                 return Ok(Ok(json!({"messages": [], "timeout": true})));
             }
             std::thread::sleep(WAIT_POLL);
