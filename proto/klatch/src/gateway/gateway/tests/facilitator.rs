@@ -288,16 +288,7 @@ fn it_may_dm_the_asker_once_about_the_ask_in_the_fixed_form() {
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].body, "need-info #1: which-repo");
     assert_eq!(seen[0].sender, "fac");
-    // a short bounded field is allowed
-    let (g, _) = with_facilitator();
-    g.dm(
-        &fac(),
-        "alice",
-        "need-info #1: which-file (login form)",
-        None,
-    )
-    .unwrap();
-    // audited, with the ask and the asker but no text
+    // audited, with the ask, the asker and the code
     let audit = g.admin_audit(&admin(), 40).unwrap();
     let row = audit
         .iter()
@@ -306,7 +297,6 @@ fn it_may_dm_the_asker_once_about_the_ask_in_the_fixed_form() {
     assert!(
         row.detail.contains("fac") && row.detail.contains("alice") && row.detail.contains("#1")
     );
-    assert!(!row.detail.contains("login form"));
     assert!(
         audit
             .iter()
@@ -335,9 +325,6 @@ fn the_dm_room_is_capped_at_the_lower_of_the_two_clearances() {
 #[test]
 fn every_other_dm_is_refused_with_the_facilitator_rule() {
     let (g, _) = with_facilitator();
-    g.join(&carol(), "lobby").unwrap();
-    g.post(&carol(), "lobby", "carol secret plan zeta").unwrap();
-    let long = "x".repeat(41);
     let bad: Vec<(&str, &str, String)> = vec![
         ("free text", "alice", "please check the repo".into()),
         (
@@ -354,30 +341,19 @@ fn every_other_dm_is_refused_with_the_facilitator_rule() {
             "need-info #1: which-repo and more".into(),
         ),
         (
-            "over-long field",
+            "a field after the code",
             "alice",
-            format!("need-info #1: which-repo ({long})"),
+            "need-info #1: which-file (login form)".into(),
         ),
         (
-            "newline in field",
+            "an empty field",
             "alice",
-            "need-info #1: which-repo (a\nb)".into(),
+            "need-info #1: which-repo ()".into(),
         ),
-        (
-            "odd characters",
-            "alice",
-            "need-info #1: which-repo (a;b)".into(),
-        ),
-        ("empty field", "alice", "need-info #1: which-repo ()".into()),
         (
             "leading zero number",
             "alice",
             "need-info #01: which-repo".into(),
-        ),
-        (
-            "another member's words",
-            "alice",
-            "need-info #1: which-repo (carol secret plan zeta)".into(),
         ),
         (
             "a tail after the form",
@@ -420,6 +396,38 @@ fn a_second_dm_for_the_same_ask_is_refused_but_another_ask_is_its_own() {
         "facilitator"
     );
     g.dm(&fac(), "alice", "need-info #2: which-repo", None)
+        .unwrap();
+}
+
+#[test]
+fn a_message_with_the_old_need_info_field_text_is_an_ordinary_message() {
+    // the optional field was dropped (#905, #997): the text is no form and no member is held to it
+    assert!(
+        super::super::facilitator::parse_need_info("need-info #1: which-file (login form)")
+            .is_none()
+    );
+    let (g, _) = with_facilitator();
+    g.join(&carol(), "lobby").unwrap();
+    g.post(&carol(), "lobby", "need-info #1: which-file (login form)")
+        .unwrap();
+    g.post(
+        &alice(),
+        "lobby",
+        "need-info #1: which-repo (carol secret plan zeta)",
+    )
+    .unwrap();
+    // the facilitator may not post it, and the refusal is the bounded role's, not a field check
+    assert_eq!(
+        rule_of_err(g.dm(
+            &fac(),
+            "alice",
+            "need-info #1: which-file (login form)",
+            None
+        )),
+        "facilitator"
+    );
+    // the code alone still works
+    g.dm(&fac(), "alice", "need-info #1: which-file", None)
         .unwrap();
 }
 
