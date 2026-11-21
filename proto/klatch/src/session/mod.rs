@@ -532,7 +532,7 @@ pub(crate) fn spawn_reader<R: BufRead + Send + 'static>(
 /// What arrived within `wait`, and (in `open`) whether the input is still open.
 pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> Vec<Item> {
     let mut items = Vec::new();
-    match rx.recv_timeout(wait) {
+    match crate::sync::recv_within(rx, wait) {
         Ok(item) => items.push(item),
         Err(RecvTimeoutError::Timeout) => {}
         Err(RecvTimeoutError::Disconnected) => *open = false,

@@ -162,7 +162,8 @@ impl<B: Backend + ?Sized> Session<'_, B> {
         drop(rx);
         // A session that ended well waits for its last frames to be written; one that failed does not wait on a
         // consumer that may be the reason.
-        let flushed = result.is_err() || drained.recv_timeout(self.config.stall).is_ok();
+        let flushed =
+            result.is_err() || crate::sync::recv_within(&drained, self.config.stall).is_ok();
         let stop_streams = closer.is_some();
         if let Some(close) = closer {
             close();

@@ -1,0 +1,1 @@
+- Shuttle schedule tests now cover the session loop's poll period and heartbeat over the shared gateway (`sync::recv_within`; two tests, two mutation plants), #666
