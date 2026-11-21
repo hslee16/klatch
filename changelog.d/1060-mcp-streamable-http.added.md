@@ -1,0 +1,1 @@
+- `klatch-server http` also serves MCP over Streamable HTTP at `POST /mcp` on the same loopback listener (#1060): the nine klatch tools, the worker credential and member header of the wire routes checked on every request, an Origin check, and no channel capability (channels stay stdio only).

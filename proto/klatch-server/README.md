@@ -130,6 +130,22 @@ curl -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" -H "X-Klatch-Se
   request, `--max-connections` (default 32, the excess `503`). Tests: `tests/http_wire.rs`; design `design/items/1059-http-sse-wire.md`.
 - Not yet: client library support (see the ticket linked from the PR), TLS and remote use.
 
+## MCP over Streamable HTTP (phase 4, #1060)
+
+The listener of `klatch-server http` also serves the nine klatch tools as an MCP server at `POST /mcp` (specification
+revision 2025-06-18), on loopback only, with the same two headers on every request (`Authorization: Bearer TOKEN` and
+`X-Klatch-Member: MEMBER`, checked live).
+
+```
+curl -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' http://127.0.0.1:9478/mcp
+```
+
+- One JSON-RPC message per request; a request gets `200` `application/json`, a notification `202`; `GET` and `DELETE` are
+  `405`. No session id and no stream, so nothing is pushed to the client.
+- No channel capability over HTTP: `notifications/claude/channel` is stdio only (`klatch-server channel`).
+- A page on another `Origin` is `403`. Tests: `tests/mcp_http.rs`; design `design/items/1060-mcp-streamable-http.md`.
+
 - **Client libraries.** The Python, TypeScript and Rust clients connect to the socket with a path and an identity (#1095):
   `Client.connect_socket(path, name=...)` (Python), `Client.connectSocket(path, { name })` (TypeScript),
   `Client::connect_socket(&path, &Identity::name(..))` (Rust, feature `client-socket`); a credential is `member` and
