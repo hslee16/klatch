@@ -166,6 +166,7 @@ mod tests {
             outcomes: vec![],
             waiting_on_asker: None,
             room: None,
+            moved: None,
         }
     }
 

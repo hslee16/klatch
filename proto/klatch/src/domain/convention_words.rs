@@ -9,8 +9,8 @@
 use crate::domain::{
     ASK_LEASE_DEFAULT_SECS, CloseOutcome, DropReason, HaltReason, Message, OutcomeKind, QueueState,
     answer_target, claim_ttl, close_outcome, closed_target, current_offers, is_ask, merge_halt,
-    merge_queue, open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked,
-    reopen_target, statuses,
+    merge_queue, moved_target, open_prs, open_tasks, parse_clarification, parse_outcome,
+    parse_parked, reopen_target, statuses,
 };
 
 /// One word: how it is written, an example, and the question "does the code read this example as this word".
@@ -136,6 +136,9 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
     }),
     word!("info #N:", "info #3: en-US", |b| {
         parse_clarification(b).is_some_and(|(need, n, _)| !need && n == 3)
+    }),
+    word!("moved #N: dm with NAME", "moved #3: dm with alpha", |b| {
+        moved_target(b) == Some((3, "alpha".to_string()))
     }),
     word!("partial #N:", "partial #3: parser done", |b| {
         outcome(OutcomeKind::Partial)(b)

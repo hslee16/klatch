@@ -374,6 +374,10 @@ fn asks_a_busy_helper_means_someone_capable_exists_so_no_escalation() {
 }
 
 #[test]
+fn asks_a_moved_ask_is_alive_while_its_dm_has_news_and_shows_the_name() {
+    c::asks::a_moved_ask_is_alive_while_its_dm_has_news_and_shows_the_name(store);
+}
+#[test]
 fn asks_a_working_room_is_listed_with_its_members_and_activity_and_attached_to_its_ask() {
     c::asks::a_working_room_is_listed_with_its_members_and_activity_and_attached_to_its_ask(store);
 }

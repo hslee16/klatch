@@ -419,3 +419,59 @@ pub fn an_ask_and_its_answer_are_found_however_deep_they_are_in_the_room<S: Stor
     assert_eq!(open[0].outcomes.len(), 1);
     assert!(open[0].waiting_on_asker.is_some());
 }
+
+pub fn a_moved_ask_is_alive_while_its_dm_has_news_and_shows_the_name<S: Store>(make: fn() -> S) {
+    let s = make();
+    let moved = s
+        .post(Seat::new("lobby", "asker"), "seeking: a", 10)
+        .unwrap()
+        .seq;
+    let plain = s
+        .post(Seat::new("lobby", "asker"), "seeking: b", 10)
+        .unwrap()
+        .seq;
+    let ghost = s
+        .post(Seat::new("lobby", "asker"), "seeking: c", 10)
+        .unwrap()
+        .seq;
+    s.post(
+        Seat::new("lobby", "helper"),
+        &format!("moved #{moved}: dm with asker"),
+        20,
+    )
+    .unwrap();
+    s.post(
+        Seat::new("lobby", "asker"),
+        &format!("moved #{ghost}: dm with nobody"),
+        20,
+    )
+    .unwrap();
+    s.join("dm.asker.helper", "asker", 20).unwrap();
+    s.join("dm.asker.helper", "helper", 20).unwrap();
+    s.post(Seat::new("dm.asker.helper", "helper"), "PRIVATE TEXT", 150)
+        .unwrap();
+    let open = s.open_asks("lobby", 200).unwrap();
+    let find = |n: i64| open.iter().find(|a| a.seq == n).unwrap();
+    let m = find(moved).moved.as_ref().expect("moved");
+    assert_eq!((m.by.as_str(), m.with.as_str()), ("helper", "asker"));
+    assert_eq!(m.room.as_ref().map(|r| r.members), Some(2));
+    assert!(find(moved).summary(200).contains("in a dm with helper"));
+    assert!(!find(moved).summary(200).contains("PRIVATE"));
+    assert!(find(plain).moved.is_none());
+    assert!(find(ghost).moved.is_none(), "no such dm, so ignored");
+    let told: Vec<_> = s
+        .stale_asks(Seat::new("lobby", "asker"), 200, 60)
+        .unwrap()
+        .into_iter()
+        .map(|x| x.seq)
+        .collect();
+    assert_eq!(told, vec![plain, ghost], "the moved ask is not stale");
+    // once the dm goes quiet the ask counts as stale again
+    let later: Vec<_> = s
+        .stale_asks(Seat::new("lobby", "asker"), 400, 60)
+        .unwrap()
+        .into_iter()
+        .map(|x| x.seq)
+        .collect();
+    assert_eq!(later, vec![moved]);
+}
