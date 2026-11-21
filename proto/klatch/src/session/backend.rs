@@ -49,10 +49,11 @@ impl<S: Store> Backend for Gateway<S> {
         handle(self, who, call)
     }
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal> {
-        let token = crate::keys::Token::parse(token).ok_or_else(|| crate::domain::Error::Refused {
-            rule: "credential".into(),
-            reason: "the credential is not valid".into(),
-        })?;
+        let token =
+            crate::keys::Token::parse(token).ok_or_else(|| crate::domain::Error::Refused {
+                rule: "credential".into(),
+                reason: "the credential is not valid".into(),
+            })?;
         Gateway::verify_credential(self, member, &token)
     }
 }

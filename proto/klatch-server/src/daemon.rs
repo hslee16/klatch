@@ -385,8 +385,15 @@ pub fn run(opts: &Options) -> Result<()> {
                     continue;
                 }
                 // who first: another user's connection is closed before a byte moves in either direction
-                let Ok(peer) = peer_cred(&stream) else {
-                    continue;
+                let peer = match peer_cred(&stream) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // never serve a peer the kernel cannot name; say so (no peer data is involved)
+                        eprintln!(
+                            "klatch-server: closed a connection whose peer credentials could not be read: {e}"
+                        );
+                        continue;
+                    }
                 };
                 let Ok(evidence) = local_evidence(peer, uid) else {
                     continue;
@@ -622,11 +629,30 @@ mod tests {
     #[test]
     fn only_the_daemons_own_uid_is_accepted_and_the_pid_is_evidence_not_a_name() {
         let own = 501;
-        let ev = local_evidence(PeerCred { pid: 4242, uid: 501 }, own).unwrap();
-        assert_eq!(ev, PeerEvidence::Process { pid: 4242, uid: 501 });
+        let ev = local_evidence(
+            PeerCred {
+                pid: 4242,
+                uid: 501,
+            },
+            own,
+        )
+        .unwrap();
+        assert_eq!(
+            ev,
+            PeerEvidence::Process {
+                pid: 4242,
+                uid: 501
+            }
+        );
         for other in [0, 1, 500, 502, u32::MAX] {
             assert_eq!(
-                local_evidence(PeerCred { pid: 4242, uid: other }, own),
+                local_evidence(
+                    PeerCred {
+                        pid: 4242,
+                        uid: other
+                    },
+                    own
+                ),
                 Err(WrongUid),
                 "uid {other}"
             );
@@ -653,10 +679,16 @@ mod tests {
         assert!(directory_problem(d, 501, 0o40755, 501).is_none());
         for mode in [0o40777, 0o40770, 0o40707, 0o41777, 0o40722] {
             let p = directory_problem(d, 501, mode, 501).unwrap();
-            assert!(p.contains("not safe") && p.contains("writable"), "{mode:o}: {p}");
+            assert!(
+                p.contains("not safe") && p.contains("writable"),
+                "{mode:o}: {p}"
+            );
         }
         let p = directory_problem(d, 0, 0o40700, 501).unwrap();
-        assert!(p.contains("not safe") && p.contains("owned by uid 0"), "{p}");
+        assert!(
+            p.contains("not safe") && p.contains("owned by uid 0"),
+            "{p}"
+        );
     }
 
     #[test]
@@ -667,7 +699,10 @@ mod tests {
         assert!(path_problem(Path::new(&exact), limit).is_none());
         let long = "a".repeat(limit + 1);
         let p = path_problem(Path::new(&long), limit).unwrap();
-        assert!(p.contains("too long") && p.contains(&format!("{limit} bytes")), "{p}");
+        assert!(
+            p.contains("too long") && p.contains(&format!("{limit} bytes")),
+            "{p}"
+        );
     }
 
     #[test]
@@ -691,7 +726,9 @@ mod tests {
     #[test]
     fn identify_is_recognised_only_as_a_well_formed_request() {
         assert!(matches!(
-            classify(br#"{"v":1,"type":"request","id":"a","method":"identify","params":{"name":"x"}}"#),
+            classify(
+                br#"{"v":1,"type":"request","id":"a","method":"identify","params":{"name":"x"}}"#
+            ),
             First::Identify { .. }
         ));
         for other in [

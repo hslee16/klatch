@@ -206,7 +206,9 @@ impl Conn {
         let id = format!("r{}", self.next);
         self.send(&json!({"v":1,"type":"request","id":id,"method":method,"params":params}));
         loop {
-            let f = self.recv().unwrap_or_else(|| panic!("closed before the response to {method}"));
+            let f = self
+                .recv()
+                .unwrap_or_else(|| panic!("closed before the response to {method}"));
             if f["type"] == "response" && f["id"] == id.as_str() {
                 return f;
             }
@@ -316,11 +318,8 @@ fn issue_credential(dir: &Dir, member: &str) -> String {
     }
     // the human's gateway (not one members act through, which refuses an admin act)
     let store = klatch::member::custody::open_store(&klatch::member::db_path().unwrap()).unwrap();
-    let gateway = klatch::gateway::Gateway::new(
-        store,
-        klatch::member::CliClock,
-        klatch::gateway::AllowAll,
-    );
+    let gateway =
+        klatch::gateway::Gateway::new(store, klatch::member::CliClock, klatch::gateway::AllowAll);
     let spec = klatch::gateway::CredentialSpec {
         member,
         clearance: "public",
@@ -484,7 +483,10 @@ fn a_frame_over_the_cap_is_refused_and_other_connections_are_not_affected() {
         f["type"] == "refusal" || (f["type"] == "response" && f["ok"] == false),
         "{f}"
     );
-    assert!(!f.to_string().contains("xxxxxxxx"), "the refusal never echoes the frame");
+    assert!(
+        !f.to_string().contains("xxxxxxxx"),
+        "the refusal never echoes the frame"
+    );
     assert_eq!(good.request("join", json!({"room": "r"}))["ok"], true);
     assert_eq!(good.post("r", "fine"), 1);
 }
@@ -572,9 +574,7 @@ fn a_store_that_cannot_be_opened_stops_the_daemon_before_it_listens() {
 
 /// The scenario both transports run: two members, one session each, in turn.
 fn scenario(member: &str) -> Vec<Value> {
-    let req = |id: &str, method: &str, params: Value| {
-        json!({"v":1,"type":"request","id":id,"method":method,"params":params})
-    };
+    let req = |id: &str, method: &str, params: Value| json!({"v":1,"type":"request","id":id,"method":method,"params":params});
     let mut s = vec![req("j", "join", json!({"room": "conf"}))];
     for i in 0..3 {
         s.push(req(
@@ -596,7 +596,11 @@ fn scenario(member: &str) -> Vec<Value> {
     ));
     s.push(json!({"v":1,"type":"ack","room":"conf","seq":2}));
     s.push(req("read", "read", json!({"room": "conf"})));
-    s.push(req("who", "claim", json!({"room": "conf", "path": format!("{member}.rs")})));
+    s.push(req(
+        "who",
+        "claim",
+        json!({"room": "conf", "path": format!("{member}.rs")}),
+    ));
     s.push(req("bad", "no_such_method", json!({})));
     s
 }
@@ -644,10 +648,7 @@ fn direct_run(dir: &Dir) -> (Vec<Value>, Vec<Value>) {
         let m = klatch::member::open_member(&who, klatch::member::Call::default())
             .unwrap()
             .unwrap();
-        let input: String = scenario(name)
-            .iter()
-            .map(|f| format!("{f}\n"))
-            .collect();
+        let input: String = scenario(name).iter().map(|f| format!("{f}\n")).collect();
         let config = klatch::session::SessionConfig::default();
         let mut out = Vec::new();
         klatch::session::Session::new(&m.gateway, m.principal(), &config)
@@ -660,7 +661,13 @@ fn direct_run(dir: &Dir) -> (Vec<Value>, Vec<Value>) {
             .collect();
         assert_eq!(frames[0]["type"], "hello");
         assert_eq!(frames[0]["member"], name);
-        runs.push(frames[1..].iter().cloned().map(|f| normal(f, true)).collect());
+        runs.push(
+            frames[1..]
+                .iter()
+                .cloned()
+                .map(|f| normal(f, true))
+                .collect(),
+        );
     }
     (runs.remove(0), runs.remove(0))
 }
@@ -702,7 +709,9 @@ fn the_same_scenario_through_the_daemon_and_through_the_session_loop_gives_the_s
     let seqs = |frames: &Vec<Value>| -> Vec<i64> {
         frames
             .iter()
-            .filter(|f| f["type"] == "response" && f["id"].as_str().is_some_and(|i| i.starts_with('p')))
+            .filter(|f| {
+                f["type"] == "response" && f["id"].as_str().is_some_and(|i| i.starts_with('p'))
+            })
             .map(|f| f["result"]["seq"].as_i64().unwrap())
             .collect()
     };

@@ -78,3 +78,30 @@ Only POST to `/github` is answered (404 and 405 otherwise), bodies over 1 MiB ge
 seconds. Events lost while the forwarder is down are not replayed: reconcile with a read of the open pull requests.
 The tests use documented payload shapes (`tests/fixtures`, not recordings); a real `gh webhook forward` run has not been
 verified by this repository's tests.
+
+## Daemon (step 2 of epic #13, #102)
+
+`klatch-server daemon --socket PATH` owns one gateway (one owner thread, #140) and serves the session protocol of
+`klatch serve --stdio` (PROTOCOL.md) over a local Unix domain socket, one session per connection. It listens on nothing
+else: there is no TCP and no address. The `klatch` binary is unchanged and still network-free.
+
+```
+d=$(mktemp -d /tmp/kd.XXXX)          # a short path: a socket path is limited to about 100 bytes
+klatch-server daemon --socket "$d/k.sock" [--max-connections 32] [--first-frame-secs 10]
+```
+
+The store is opened as `klatch mcp --stdio` opens it (`KLATCH_HOME`, `KLATCH_KEY_DIR`); the daemon never prints the key and
+does not start if it cannot open the store. SIGTERM or SIGINT close the sessions, remove the socket and exit.
+
+- **The socket.** Mode 0600, in a directory your user owns that group and others cannot write to (otherwise it refuses,
+  naming the directory). A path over the socket limit is refused, naming the limit. A socket file nobody listens on is
+  replaced; a running daemon is never stolen from (startup fails); a file that is not a socket is never touched.
+- **Who connects.** Only your own uid: another user's connection is closed before a byte is read. The process on the
+  other end (its pid) is evidence, never a name. A connection is `unmapped-process`, unattributed, until its first request
+  `identify` (PROTOCOL.md section 9): a typed name is unattributed (like `KLATCH_NAME`); a member and a credential token is
+  verified, checked as a key bundle is; a bad one ends the connection.
+- **Limits.** 1 MiB frames, a 10 second first-frame timeout (`--first-frame-secs`), 32 concurrent connections
+  (`--max-connections`; the excess gets a `daemon.connections` refusal frame).
+- **Not yet.** The client libraries cannot connect to the socket (#1095); a connection carries no sealed-label keys and
+  joins as the generic harness floor (#1096). The tests are in `tests/daemon.rs` (the daemon as a child process, a temp
+  store, scripted frames) and the design is `design/items/102-daemon-socket.md`.

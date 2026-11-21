@@ -221,7 +221,8 @@ impl Backend for SharedBackend {
     }
     fn ack(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
         let (who, room) = (who.clone(), room.to_owned());
-        self.gateway.call_backend(move |b| b.ack(&who, &room, seq))?
+        self.gateway
+            .call_backend(move |b| b.ack(&who, &room, seq))?
     }
     /// The subscription lives with the caller and goes to the owner for the length of one poll.
     fn poll(&self, sub: &mut Subscription, who: &Principal, max: usize) -> Result<Batch> {

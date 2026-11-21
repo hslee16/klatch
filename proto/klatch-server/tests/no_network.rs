@@ -213,8 +213,18 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
         .collect();
     let count = |needle: &str| code.iter().filter(|l| l.contains(needle)).count();
     assert_eq!(count("UnixListener::bind("), 1, "one listener");
-    assert_eq!(count("UnixStream::connect("), 1, "one probe, of the daemon's own path");
-    for forbidden in ["TcpListener", "TcpStream", "TcpSocket", "0.0.0.0", "SocketAddr"] {
+    assert_eq!(
+        count("UnixStream::connect("),
+        1,
+        "one probe, of the daemon's own path"
+    );
+    for forbidden in [
+        "TcpListener",
+        "TcpStream",
+        "TcpSocket",
+        "0.0.0.0",
+        "SocketAddr",
+    ] {
         assert_eq!(count(forbidden), 0, "{forbidden}");
     }
     // the order in the accept loop: who the peer is, the uid check, and only then a thread for the connection
@@ -225,7 +235,10 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
         body.find("local_evidence(peer").expect("the uid check"),
         body.find("scope.spawn(").expect("the connection thread"),
     );
-    assert!(cred < uid && uid < spawn, "the uid check comes before anything is served");
+    assert!(
+        cred < uid && uid < spawn,
+        "the uid check comes before anything is served"
+    );
     // the socket is born 0600 (umask) and made 0600, and the directory is checked before the path is cleared
     assert!(text.contains("umask(0o177)") && text.contains("from_mode(0o600)"));
     let dir_check = body.find("checked_directory(").unwrap();

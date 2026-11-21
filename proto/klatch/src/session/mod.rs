@@ -12,14 +12,14 @@ mod role_methods;
 
 use crate::domain::Principal;
 use crate::gateway::{Connection, Gateway, Identity, Subscription};
-pub use backend::Backend;
-#[doc(hidden)]
-pub use methods::Call;
 use crate::protocol::{ClientFrame, DecodeError, FrameReader, PROTOCOL_VERSION, ServerFrame};
 use crate::store::Store;
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use crate::sync::thread;
+pub use backend::Backend;
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
+#[doc(hidden)]
+pub use methods::Call;
 
 /// The frames that answer a request that failed with `e` (a `response` with the error).
 #[doc(hidden)]
