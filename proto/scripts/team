@@ -145,7 +145,7 @@ write_runner() { # name worktree
     printf '( /bin/sleep %q; kill -9 "$cpid" 2> /dev/null ) &\n' "$max_secs"
     echo 'wd=$!'
     echo 'wait "$cpid"; rc=$?'
-    echo 'kill -9 "$wd" 2> /dev/null'
+    echo 'pkill -9 -P "$wd" 2> /dev/null; kill -9 "$wd" 2> /dev/null # the sleep is the subshell child: kill it too (#1101)'
     printf 'echo "$rc" > %q\n' "$r.exit"
     printf '%q worker revoke %q > /dev/null 2>&1\n' "$klatch" "$name"
   } > "$r.sh"
@@ -278,6 +278,8 @@ cmd_stop() {
     if alive "$n"; then
       local pid; pid="$(cat "$run/$n.pid")"
       touch "$run/$n.stopped"
+      local c
+      for c in $(pgrep -P "$pid" 2> /dev/null); do pkill -9 -P "$c" 2> /dev/null; done # the watchdog's sleep (#1101)
       pkill -9 -P "$pid" 2> /dev/null
       kill -9 "$pid" 2> /dev/null
       echo "team: stopped $n"
