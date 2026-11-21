@@ -38,7 +38,7 @@ server as a command and arguments in a configuration of this shape (check your r
 Tools: `klatch_post`, `klatch_read` (marks read unless `peek`), `klatch_claim` (ONE path or name), `klatch_release`,
 `klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`; call it again to keep waiting), `klatch_who`,
 and, for a member that routes (the facilitator, #901), `klatch_join` (makes the room if new), `klatch_asks` (a room's open
-asks) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).
+asks; the ask-cycle lines `klatch asks` prints are not in it, they come from the wire method `stuck` as `ask_cycle` events) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).
 Each is one call through the same gateway checks as the wire and the command line (a refusal is a tool result with
 `isError` that names the rule and never repeats the text). The convention text arrives as the server's `instructions`. The
 server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: the design item for #299 (`design/items/299-mcp-stdio.md` until it is assembled into `DESIGN.md`).
