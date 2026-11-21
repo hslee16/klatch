@@ -27,25 +27,25 @@ const B: &str = "b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0a1";
 // ---- HMAC (RFC 4231) and the GitHub signature ----
 
 #[test]
-fn hmac_sha256_matches_rfc_4231() {
+fn signature_digest_matches_rfc_4231() {
     // test case 1
     assert_eq!(
-        hex(&hmac_sha256(&[0x0b; 20], b"Hi There")),
+        hex(&signature_digest(&[0x0b; 20], b"Hi There")),
         "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
     );
     // test case 2
     assert_eq!(
-        hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+        hex(&signature_digest(b"Jefe", b"what do ya want for nothing?")),
         "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
     );
     // test case 3
     assert_eq!(
-        hex(&hmac_sha256(&[0xaa; 20], &[0xdd; 50])),
+        hex(&signature_digest(&[0xaa; 20], &[0xdd; 50])),
         "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"
     );
     // test case 6: a key longer than the block size is hashed first
     assert_eq!(
-        hex(&hmac_sha256(
+        hex(&signature_digest(
             &[0xaa; 131],
             b"Test Using Larger Than Block-Size Key - Hash Key First"
         )),
@@ -139,7 +139,7 @@ fn the_secret_comes_from_a_private_file_and_a_trailing_newline_is_dropped() {
         b"x",
         Some(&format!(
             "sha256={}",
-            hex(&hmac_sha256(b"s3cret-value", b"x"))
+            hex(&signature_digest(b"s3cret-value", b"x"))
         ))
     ));
     // a file others can read is refused
@@ -164,7 +164,10 @@ fn the_secret_can_come_from_a_named_environment_variable() {
     assert!(verify_signature(
         &s,
         b"x",
-        Some(&format!("sha256={}", hex(&hmac_sha256(b"from-env", b"x"))))
+        Some(&format!(
+            "sha256={}",
+            hex(&signature_digest(b"from-env", b"x"))
+        ))
     ));
     let e = Secret::load(None, Some("UNSET_ONE"), &lookup)
         .unwrap_err()
@@ -559,7 +562,7 @@ fn head(method: &str, path: &str, sig: Option<&str>, event: Option<&str>) -> Hea
 }
 
 fn signed(secret: &[u8], body: &[u8]) -> String {
-    format!("sha256={}", hex(&hmac_sha256(secret, body)))
+    format!("sha256={}", hex(&signature_digest(secret, body)))
 }
 
 fn intake(queue: &Queue) -> Intake<'_> {

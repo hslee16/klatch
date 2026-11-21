@@ -20,8 +20,9 @@
 use crate::channel::SharedOut;
 use crate::loopback::{self, Handler, Head, Request, Response};
 use anyhow::{Result, bail};
+use hmac::{Hmac, Mac};
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Mutex;
@@ -44,24 +45,13 @@ const TRACKED_HEADS: usize = 256;
 
 // ---- HMAC-SHA256 ----
 
-const BLOCK: usize = 64;
-
-/// HMAC-SHA256 (RFC 2104) built on the `sha2` crate the `klatch` library already uses.
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut k = [0u8; BLOCK];
-    if key.len() > BLOCK {
-        k[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        k[..key.len()].copy_from_slice(key);
-    }
-    let mut inner = Sha256::new();
-    inner.update(k.map(|b| b ^ 0x36));
-    inner.update(message);
-    let inner = inner.finalize();
-    let mut outer = Sha256::new();
-    outer.update(k.map(|b| b ^ 0x5c));
-    outer.update(inner);
-    outer.finalize().into()
+/// HMAC-SHA256 from the audited RustCrypto `hmac` crate (the repository does not hand-roll a MAC; RFC 4231 vectors are
+/// unit tests).
+pub fn signature_digest(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut mac =
+        <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes a key of any length");
+    mac.update(message);
+    mac.finalize().into_bytes().into()
 }
 
 /// The shared secret of the webhook. Its debug form shows nothing.
@@ -169,7 +159,7 @@ pub fn verify_signature(secret: &Secret, body: &[u8], header: Option<&str>) -> b
     else {
         return false;
     };
-    let want = hmac_sha256(&secret.0, body);
+    let want = signature_digest(&secret.0, body);
     want.ct_eq(&given).into()
 }
 

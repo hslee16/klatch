@@ -504,6 +504,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 - digest 0.10.7 (https://github.com/RustCrypto/traits)
+- hmac 0.12.1 (https://github.com/RustCrypto/MACs)
 
 Copyright (c) 2017 Artyom Pavlov
 

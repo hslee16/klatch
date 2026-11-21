@@ -11,8 +11,9 @@
 //! path and method and an oversized body are refused. Not verified: that Claude Code shows the events, or a real
 //! `gh webhook forward` run.
 
+use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -45,17 +46,10 @@ impl Drop for Home {
 }
 
 fn hmac(key: &[u8], msg: &[u8]) -> String {
-    let mut k = [0u8; 64];
-    k[..key.len()].copy_from_slice(key);
-    let mut inner = Sha256::new();
-    inner.update(k.map(|b| b ^ 0x36));
-    inner.update(msg);
-    let inner = inner.finalize();
-    let mut outer = Sha256::new();
-    outer.update(k.map(|b| b ^ 0x5c));
-    outer.update(inner);
-    outer
-        .finalize()
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).unwrap();
+    mac.update(msg);
+    mac.finalize()
+        .into_bytes()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
