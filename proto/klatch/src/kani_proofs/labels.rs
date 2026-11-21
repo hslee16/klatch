@@ -74,14 +74,15 @@ fn dominance_is_transitive() {
     }
 }
 
-/// A name for the chain-building harness: three valid names and one invalid (it has a space).
-fn any_chain_name() -> &'static str {
-    match kani::any::<u8>() % 4 {
-        0 => "a",
-        1 => "b",
-        2 => "c",
-        _ => "x y",
-    }
+/// The name for each index of the chain-building harness: three valid names and one invalid (it has a space).
+const CHAIN_NAMES: [&str; 4] = ["a", "b", "c", "x y"];
+const BAD_INDEX: u8 = 3;
+
+/// An index into `CHAIN_NAMES`. The harness oracle compares these small numbers, not strings (#831).
+fn any_chain_index() -> u8 {
+    let i: u8 = kani::any();
+    kani::assume(i < 4);
+    i
 }
 
 /// `check_chain` (what `LabelChain::new` runs) accepts a list exactly when it has at least two names, every name is a
@@ -92,18 +93,24 @@ fn any_chain_name() -> &'static str {
 #[kani::solver(cadical)]
 #[kani::unwind(10)]
 fn a_chain_needs_two_or_more_valid_distinct_names_and_the_first_fault_is_named() {
+    let idx = [
+        any_chain_index(),
+        any_chain_index(),
+        any_chain_index(),
+        any_chain_index(),
+    ];
     let all = [
-        any_chain_name(),
-        any_chain_name(),
-        any_chain_name(),
-        any_chain_name(),
+        CHAIN_NAMES[idx[0] as usize],
+        CHAIN_NAMES[idx[1] as usize],
+        CHAIN_NAMES[idx[2] as usize],
+        CHAIN_NAMES[idx[3] as usize],
     ];
     let len: usize = kani::any();
     kani::assume(len <= 4);
     let names = &all[..len];
-    let bad = |n: &str| n == "x y";
-    let first_bad = (0..len).find(|&i| bad(names[i]));
-    let first_repeat = (0..len).find(|&i| (0..i).any(|j| names[j] == names[i]));
+    // The oracle works on the indices (a name repeats exactly when its index does), so it costs no string compares.
+    let first_bad = (0..len).find(|&i| idx[i] == BAD_INDEX);
+    let first_repeat = (0..len).find(|&i| (0..i).any(|j| idx[j] == idx[i]));
     let got = check_chain(names);
     if len < 2 {
         assert!(got == Err(ChainError::TooFew));
