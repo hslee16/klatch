@@ -147,3 +147,23 @@ fn an_unmapped_label_is_unattributed_and_typed_names_are_never_evidence() {
 fn the_evidence_names_its_kind_and_not_the_label() {
     assert_eq!(forced("secret-looking-label").kind(), "ssh-forced");
 }
+
+#[test]
+fn a_session_level_member_fixed_refusal_is_kept_and_counts_toward_the_breaker() {
+    let g = open();
+    g.note_member_fixed(&alice());
+    let kept = g.my_refusals(&alice(), 10).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        (kept[0].rule.as_str(), kept[0].operation.as_str()),
+        ("member-fixed", "session")
+    );
+    for _ in 0..4 {
+        g.note_member_fixed(&alice());
+    }
+    assert_eq!(
+        rule_of(g.post(&alice(), "town", "x").unwrap_err()),
+        "breaker"
+    );
+    g.post(&bob(), "town", "fine").unwrap();
+}

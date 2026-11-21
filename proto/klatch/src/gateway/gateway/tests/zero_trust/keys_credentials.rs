@@ -25,6 +25,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
 #[rustfmt::skip]
 pub(super) const OWN_RECORD: &[(&str, &str)] = &[
     ("note_session", "the caller's own session id"),
+    ("note_member_fixed", "keeps a refusal for the caller itself, with no text the peer chose; it grants nothing and reads nothing"),
     ("record_hook_run", "the caller's own hook run record"),
     ("sealed_labels", "a policy lookup the CLI uses to find which keys to load; takes no principal"),
     ("sealed_labels_within", "the same, limited to what one member's clearance reaches; takes no principal"),
@@ -48,6 +49,7 @@ pub(super) const NO_PRINCIPAL: &[&str] = &[
 #[rustfmt::skip]
 pub(super) const AFTER_END: &[(&str, OwnCall, Option<&str>)] = &[
     ("note_session", |g, w| g.note_session(w, "sess-1"), None),
+    ("note_member_fixed", |g, w| { g.note_member_fixed(w); Ok(()) }, Some("it only keeps a refusal row about the caller; a session whose credential ended has the same refusal to keep, and the row grants no authority")),
     ("record_hook_run", |g, w| g.record_hook_run(w, "SessionEnd", 0), Some("only the `SessionEnd` event: a session whose credential idled out must still be able to record that it ended; any other event is refused (checked separately)")),
     ("end_credential", |g, w| g.end_credential(w).map(|_| ()), Some("it only revokes the caller's own credential and does nothing when none is live, so a second call adds no authority")),
 ];

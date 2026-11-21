@@ -109,3 +109,46 @@ fn without_the_fixed_member_a_member_field_still_has_no_effect() {
     );
     assert_eq!(refused_rule(&frames, "p"), None);
 }
+
+#[test]
+fn a_member_fixed_refusal_is_kept_in_the_refusals_without_the_claimed_name() {
+    let g = gateway();
+    let _ = run_fixed(
+        &g,
+        &alice(),
+        &[req(
+            "m",
+            "post",
+            json!({"room":"r","body":"x","member":"mallory-the-forger"}),
+        )],
+    );
+    let kept = g.my_refusals(&alice(), 10).unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(
+        (kept[0].member.as_str(), kept[0].rule.as_str()),
+        ("alice", "member-fixed")
+    );
+    let shown = format!("{kept:?}");
+    assert!(!shown.contains("mallory"), "{shown}");
+}
+
+#[test]
+fn five_member_fixed_refusals_trip_the_breaker_for_that_member_only() {
+    let g = gateway();
+    let forged: Vec<Value> = (0..5)
+        .map(|i| {
+            req(
+                &format!("f{i}"),
+                "post",
+                json!({"room":"r","body":"x","sender":"bob"}),
+            )
+        })
+        .collect();
+    let _ = run_fixed(&g, &alice(), &forged);
+    let e = g.post(&alice(), "r", "innocent").unwrap_err();
+    assert!(
+        matches!(&e, crate::domain::Error::Refused { rule, .. } if rule == "breaker"),
+        "{e:?}"
+    );
+    g.post(&bob(), "r", "others are unaffected").unwrap();
+}
