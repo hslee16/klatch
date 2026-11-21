@@ -405,10 +405,10 @@ pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Opt
     let session = found.as_ref().and_then(|r| r.as_ref().ok()).cloned();
     // A subagent that did not name itself is not guessed to be its parent (#503). The walk ran only when no name, key
     // bundle or Codex thread said who is calling, and a hook is the session's own plumbing, never refused.
-    if let (false, Some(s)) = (is_hook, session.as_ref()) {
-        if let Some(child) = discover_child(s) {
-            return Err(refuse_child(s, child));
-        }
+    if let (false, Some(s)) = (is_hook, session.as_ref())
+        && let Some(child) = discover_child(s)
+    {
+        return Err(refuse_child(s, child));
     }
     let session_dir = session_dir_of(session.as_ref(), codex.as_ref());
     let probe = Probe {
