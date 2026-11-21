@@ -733,6 +733,13 @@ fn delivered(i: &mut Intake<'_>, id: Option<&str>, body: Vec<u8>, event: &str) -
     i.handle(Request { head: h, body })
 }
 
+/// The fixture with `n` trailing spaces: still the same JSON, a different signed body.
+fn variant(name: &str, n: usize) -> Vec<u8> {
+    let mut b = fixture(name);
+    b.extend(std::iter::repeat_n(b' ', n));
+    b
+}
+
 #[test]
 fn a_redelivered_delivery_id_is_answered_200_and_queued_once() {
     let q = Queue::new(8);
@@ -760,8 +767,16 @@ fn a_redelivered_delivery_id_is_answered_200_and_queued_once() {
 fn different_delivery_ids_and_missing_ids_are_not_deduplicated() {
     let q = Queue::new(8);
     let mut i = intake(&q);
-    for id in [Some("aaaa-1"), Some("aaaa-2"), None, None] {
-        delivered(&mut i, id, fixture("pull_request_opened"), "pull_request");
+    for (n, id) in [Some("aaaa-1"), Some("aaaa-2"), None, None]
+        .into_iter()
+        .enumerate()
+    {
+        delivered(
+            &mut i,
+            id,
+            variant("pull_request_opened", n),
+            "pull_request",
+        );
     }
     assert_eq!(q.drain().0.len(), 4);
 }
@@ -815,7 +830,7 @@ fn the_delivery_cache_is_bounded_and_forgets_the_oldest() {
         delivered(
             &mut i,
             Some(&format!("id-{n}")),
-            fixture("pull_request_opened"),
+            variant("pull_request_opened", n + 1),
             "pull_request",
         );
     }
@@ -830,7 +845,7 @@ fn the_delivery_cache_is_bounded_and_forgets_the_oldest() {
     let recent = delivered(
         &mut i,
         Some(&format!("id-{}", DELIVERY_IDS - 1)),
-        fixture("pull_request_opened"),
+        variant("pull_request_opened", DELIVERY_IDS),
         "pull_request",
     );
     assert_eq!(recent.body, "duplicate");
@@ -841,19 +856,109 @@ fn an_oversized_or_odd_delivery_id_is_ignored_not_cached() {
     let q = Queue::new(8);
     let mut i = intake(&q);
     let long = "a".repeat(200);
-    for id in [long.as_str(), "has space!"] {
+    for (k, id) in [long.as_str(), "has space!"].into_iter().enumerate() {
+        for m in 0..2 {
+            delivered(
+                &mut i,
+                Some(id),
+                variant("pull_request_opened", k * 2 + m),
+                "pull_request",
+            );
+        }
+    }
+    assert_eq!(q.drain().0.len(), 4);
+}
+
+#[test]
+fn a_replayed_signed_body_with_a_fresh_delivery_id_is_dropped() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let a = delivered(
+        &mut i,
+        Some("id-a"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    let b = delivered(
+        &mut i,
+        Some("id-b"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    let c = delivered(&mut i, None, fixture("pull_request_opened"), "pull_request");
+    assert_eq!((a.body, b.body, c.body), ("ok", "duplicate", "duplicate"));
+    assert_eq!(q.drain().0.len(), 1);
+}
+
+#[test]
+fn the_same_body_under_another_event_name_is_not_a_replay() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    delivered(
+        &mut i,
+        Some("a"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    let other = delivered(&mut i, Some("b"), fixture("pull_request_opened"), "ping");
+    assert_eq!(other.body, "ignored");
+}
+
+#[test]
+fn an_unsigned_body_does_not_poison_the_content_cache_and_a_failed_one_can_retry() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let mut h = head("POST", "/github", Some("sha256=00"), Some("pull_request"));
+    h.headers
+        .push(("x-github-delivery".to_string(), "x".to_string()));
+    let r = i.handle(Request {
+        head: h,
+        body: fixture("pull_request_opened"),
+    });
+    assert_eq!(r.status, 401);
+    let ok = delivered(
+        &mut i,
+        Some("y"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!(ok.body, "ok");
+    let bad = delivered(&mut i, Some("z"), b"{".to_vec(), "pull_request");
+    let bad2 = delivered(&mut i, Some("w"), b"{".to_vec(), "pull_request");
+    assert_eq!((bad.status, bad2.status), (400, 400));
+}
+
+#[test]
+fn the_content_cache_is_bounded_and_forgets_the_oldest() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    delivered(
+        &mut i,
+        None,
+        variant("pull_request_opened", 0),
+        "pull_request",
+    );
+    for n in 1..=DELIVERY_IDS {
         delivered(
             &mut i,
-            Some(id),
-            fixture("pull_request_opened"),
-            "pull_request",
-        );
-        delivered(
-            &mut i,
-            Some(id),
-            fixture("pull_request_opened"),
+            None,
+            variant("pull_request_opened", n),
             "pull_request",
         );
     }
-    assert_eq!(q.drain().0.len(), 4);
+    q.drain();
+    let first = delivered(
+        &mut i,
+        None,
+        variant("pull_request_opened", 0),
+        "pull_request",
+    );
+    assert_eq!(first.body, "ok");
+    let last = delivered(
+        &mut i,
+        None,
+        variant("pull_request_opened", DELIVERY_IDS),
+        "pull_request",
+    );
+    assert_eq!(last.body, "duplicate");
 }
