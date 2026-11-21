@@ -58,3 +58,26 @@ fn it_says_to_use_this_binary_and_not_a_fresh_build() {
     let t = text(&run(&["convention"]));
     assert!(t.contains("not a freshly built"), "{t}");
 }
+
+/// #1184: the commands the text teaches are real: each exists with the shape the text shows (a drift test).
+#[test]
+fn the_commands_the_text_teaches_exist_with_the_shape_it_shows() {
+    let bin = env!("CARGO_BIN_EXE_klatch");
+    let t = text(&run(&["convention"]));
+    for (cmd, shape) in [
+        ("dm", "<MEMBER> [BODY]..."),
+        ("ask", "<ROOM> [TEXT]..."),
+        ("answer", "<ROOM> <NUMBER> [TEXT]..."),
+        ("find", "<ROOM> <TEXT>..."),
+    ] {
+        assert!(
+            t.contains(&format!("{bin} --discover {cmd} ")),
+            "{cmd}: {t}"
+        );
+        let h = text(&run(&[cmd, "--help"]));
+        assert!(
+            h.contains(shape),
+            "`klatch {cmd} --help` has no {shape}: {h}"
+        );
+    }
+}

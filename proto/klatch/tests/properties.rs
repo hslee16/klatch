@@ -189,6 +189,7 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
         outcomes: Vec::new(),
         waiting_on_asker: None,
         room: None,
+        moved: None,
     };
     for seq in 1..=count(8) as i64 {
         d.stale.push(ask(seq, nasty_text(tc)));

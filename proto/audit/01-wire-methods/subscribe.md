@@ -1,1 +1,1 @@
-| `subscribe` | `head`, then `Subscription::poll` per tick (`tail`) | `Subscribe` (every poll) | `zero_trust.rs` GUARDED `head`, `tail`; `session/tests/live.rs` |
+| `subscribe` | `head`, then `Subscription::poll` per tick (`tail`) | `Subscribe` (every poll); `tail_scan` admits like `head`: stops, `dm-members`, clearance, then the guard (#1196) | `zero_trust.rs` GUARDED `head`, `tail`; `tests/dm.rs` `a_third_member_reads_a_dm_through_no_reader`; `session/tests/live.rs` |

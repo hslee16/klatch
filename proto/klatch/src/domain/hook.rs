@@ -33,6 +33,13 @@ pub struct RoomDigest {
     pub crossings: Vec<crate::domain::CrossingStatus>,
     /// Pull requests said to be open that no live `pr:N` claim holds (shown at session start, item 84).
     pub unowned_prs: Vec<crate::domain::OpenPr>,
+    /// The other member of this room when it is a direct message the gateway made (#1192): the digest then says how
+    /// to reply. A validated member name, never text.
+    pub dm_peer: Option<String>,
+    /// A long exchange in this shared room between the member and one peer (#1190): the peer and how many messages
+    /// the two have exchanged. Shown once, when the Nth message of the exchange reaches the member. A name and a
+    /// count, never text.
+    pub move_to_dm: Option<(String, usize)>,
 }
 
 /// The JSON a hook prints so Claude Code hands `text` to the model as additional context for `event`.
@@ -237,6 +244,26 @@ fn render_crossing_notices(d: &RoomDigest, out: &mut String) {
     }
 }
 
+/// The dm help lines (#1190, #1192): fixed templates over validated names, a count and the room, never message text.
+/// A dm room names its peer and the reply command; a shared room whose two members exchanged a long thread suggests
+/// moving it to a dm. A line is printed only when the room has new messages for the member.
+fn render_dm_help(d: &RoomDigest, out: &mut String) {
+    if d.messages.is_empty() {
+        return;
+    }
+    if let Some(peer) = &d.dm_peer {
+        out.push_str(&format!(
+            "  dm from {peer}: reply with klatch dm {peer} \"<text>\"\n"
+        ));
+    }
+    if let Some((peer, n)) = &d.move_to_dm {
+        out.push_str(&format!(
+            "  klatch: you and {peer} exchanged {n} messages in {}; for a longer exchange use: klatch dm {peer} \"<text>\"\n",
+            d.room
+        ));
+    }
+}
+
 /// What a narrowed view held back (#673): a count and the newest seq, the same words the wake pointer uses.
 fn render_outside_view(d: &RoomDigest, out: &mut String) {
     if let Some((n, newest)) = d.outside_view {
@@ -320,6 +347,7 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     render_cycle_notices(d, &mut text);
     render_crossing_notices(d, &mut text);
     render_outside_view(d, &mut text);
+    render_dm_help(d, &mut text);
     render_own_asks(d, now, &mut text);
     for a in &d.backlog {
         render_backlog_ask(a, &mut text);
@@ -1118,6 +1146,8 @@ mod tests {
                 why: evil.into(),
             }],
             unowned_prs: vec![crate::domain::OpenPr::new(5, evil, evil, 0)],
+            dm_peer: Some("bob".into()),
+            move_to_dm: Some(("bob".into(), 4)),
         };
         let out = render_hook(
             &[
@@ -1563,5 +1593,51 @@ mod tests {
         let out = refused_lines_within(&[("a", "why\nnot")], 1000);
         assert_eq!(out, "[klatch] room a not shown: why not\n");
         assert_eq!(refused_lines_within(&[], 1000), "");
+    }
+
+    #[test]
+    fn the_dm_reply_hint_and_the_move_nudge_are_fixed_lines_of_names_and_a_count() {
+        let d = RoomDigest {
+            room: "dm.alice.bob".into(),
+            messages: vec![msg(1, "hi")],
+            dm_peer: Some("bob".into()),
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        shows!(out, "  dm from bob: reply with klatch dm bob \"<text>\"\n");
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: vec![msg(1, "hi")],
+            move_to_dm: Some(("bob".into(), 4)),
+            ..Default::default()
+        };
+        let out = render_hook(&[d], 0);
+        shows!(
+            out,
+            "  klatch: you and bob exchanged 4 messages in lobby; for a longer exchange use: klatch dm bob \"<text>\"\n"
+        );
+    }
+
+    #[test]
+    fn the_dm_lines_collapse_with_their_room_under_a_tight_budget() {
+        let digests: Vec<RoomDigest> = (0..30)
+            .map(|i| RoomDigest {
+                room: format!("dm.a{i}.me"),
+                messages: vec![msg(1, "hi")],
+                dm_peer: Some(format!("a{i}")),
+                move_to_dm: Some((format!("a{i}"), 4)),
+                ..Default::default()
+            })
+            .collect();
+        for budget in [100, 400, 1500, 4000] {
+            let out = render_hook_within(&digests, 0, budget);
+            assert!(
+                printed_len(&out) <= budget,
+                "budget {budget}: {}",
+                out.len()
+            );
+        }
+        let out = render_hook_within(&digests, 0, 1500);
+        shows!(out, "more rooms have news");
     }
 }

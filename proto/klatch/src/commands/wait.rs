@@ -17,8 +17,11 @@ pub(super) fn run_wait(ctx: &Ctx, cmd: WaitCmd) -> Result<()> {
                 only,
                 from: from.into_iter().collect(),
             };
+            let targets = klatch::domain::resolve_dm_targets(&rooms, ctx.me)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            check_dm_rooms(t, &rooms, &targets)?;
             let rooms =
-                klatch::domain::room_filters(&rooms, &global).map_err(|e| anyhow::anyhow!(e))?;
+                klatch::domain::room_filters(&targets, &global).map_err(|e| anyhow::anyhow!(e))?;
             wait(
                 t,
                 &WaitArgs {
@@ -30,6 +33,24 @@ pub(super) fn run_wait(ctx: &Ctx, cmd: WaitCmd) -> Result<()> {
             )?
         }
         WaitCmd::Wake { timeout } => wake(t, (ctx.me, timeout))?,
+    }
+    Ok(())
+}
+
+/// A `dm:NAME` that resolved to a room nobody has made yet is refused with the way to make it, not left to wait out
+/// its timeout (#1186). Only the fixed form and the validated name are printed.
+fn check_dm_rooms(t: &dyn Transport, given: &[String], resolved: &[String]) -> Result<()> {
+    for (arg, room) in given.iter().zip(resolved) {
+        if arg == room {
+            continue;
+        }
+        let room = room.split(':').next().unwrap_or(room);
+        if t.who(room).is_err() {
+            let name = arg.split(':').nth(1).unwrap_or_default();
+            anyhow::bail!(
+                "`{arg}`: no direct messages with {name} yet; start them with `klatch dm {name} TEXT`"
+            );
+        }
     }
     Ok(())
 }
@@ -388,7 +409,7 @@ pub(super) fn wake(t: &dyn Transport, (me, timeout): (&str, u64)) -> Result<()> 
             // What the view holds back is counted first: marking moves the wake cursor past it.
             let outside = t.outside_view(&room).ok().flatten();
             t.wake_mark(&room)?;
-            let mut pointer = klatch::member::wake_pointer(&room, unread, newest);
+            let mut pointer = klatch::member::wake_pointer_for(Some(me), &room, unread, newest);
             if let Some((n, last)) = outside {
                 pointer.push(' ');
                 pointer.push_str(&klatch::domain::outside_view_line(&room, n, last));

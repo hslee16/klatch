@@ -200,13 +200,14 @@ fn declare_kind<S: Store>(
 }
 
 /// The open asks of a room as the wire shows them (#901): number, asker, text (other members' words, so data), age
-/// anchor, whether a live claim exists, whether the ask waits on its asker, and the working room's name if any.
+/// anchor, whether a live claim exists, whether the ask waits on its asker, the working room's name if any, and the member whose dm a moved ask went to (a name only, #1188).
 fn asks_json(asks: &[crate::domain::OpenAsk]) -> Value {
     let one = |a: &crate::domain::OpenAsk| {
         json!({
             "seq": a.seq, "sender": a.sender, "text": a.text, "ts": a.ts, "claimed": a.claimed,
             "waiting_on_asker": a.waiting_on_asker.is_some(),
             "room": a.room.as_ref().map(|r| r.name.clone()),
+            "moved_to": a.moved.as_ref().filter(|m| m.room.is_some()).map(|m| m.counterpart(&a.sender)),
         })
     };
     json!({ "asks": asks.iter().map(one).collect::<Vec<_>>() })

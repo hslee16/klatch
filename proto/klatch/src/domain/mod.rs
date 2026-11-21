@@ -55,9 +55,10 @@ pub use ask_find::{AnsweredAsk, find_answered};
 pub use asker_gone::{Served, exited_asker_notes, gone_asker_notes, served_by};
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, ASK_WORDS, AskRoom, CLAIM_DEFAULT_SECS,
-    CLAIM_MAX_SECS, Clarification, CloseOutcome, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,
-    ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, close_outcome, closed_target,
-    is_ask, latest_close, open_asks, parse_clarification, parse_outcome, reopen_target,
+    CLAIM_MAX_SECS, Clarification, CloseOutcome, MovedDm, NO_CAPABLE_AFTER, OpenAsk, Outcome,
+    OutcomeKind, ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, close_outcome,
+    closed_target, is_ask, latest_close, moved_target, open_asks, parse_clarification,
+    parse_outcome, reopen_target,
 };
 pub use board::{
     BOARD_LIST_LIMIT, BOARD_WORDS, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS,
@@ -83,7 +84,7 @@ pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
-pub use dm::{DM_PREFIX, dm_room};
+pub use dm::{DM_NUDGE_MESSAGES, DM_NUDGE_WINDOW, DM_PREFIX, dm_peer_in_room, dm_room};
 pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, outside_view_line,
@@ -127,6 +128,6 @@ pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,
 };
-pub use wait_filter::{Filter as WaitFilter, room_filters};
+pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{Capped, cap_wake};
 pub use wake_path::{PROMPTING_MODES, WakePath, wake_path};

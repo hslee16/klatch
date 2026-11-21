@@ -128,11 +128,10 @@ fn read_tail_and_history_never_show_it_even_before_the_digest() {
 fn a_member_below_the_label_never_sees_it() {
     let (g, token) = vault();
     g.join(&bob(), "elsewhere").unwrap();
-    assert!(
-        g.tail(&bob(), "vault", (0, 10))
-            .unwrap()
-            .iter()
-            .all(|m| !m.body.contains(&token))
+    // `tail` asks for clearance like `read` (#1196): a member below the label is refused, it no longer gets a page
+    assert_eq!(
+        rule_of(g.tail(&bob(), "vault", (0, 10)).unwrap_err()),
+        "clearance"
     );
     assert!(g.read(&bob(), "vault", false).is_err());
     let d = g.digest(&bob()).unwrap();
