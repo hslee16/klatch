@@ -2,9 +2,9 @@
 // this directory: node --experimental-strip-types --test http.test.ts
 //
 // The success path runs against a small in-process server that speaks the same wire (`GET /v1/stream` as server-sent
-// events with `X-Klatch-Session`, `POST /v1/frames` with that header), because a verified connection needs a worker
-// credential and only the human issues one. The refusal path also runs against the real `klatch-server http` when it
-// is built. Every wait has a deadline, no test reads a stream to its end, and every error is injected, not provoked
+// events with `X-Klatch-Session`, `POST /v1/frames` with that header), because it can drop a stream
+// on demand. The whole conformance scenario over the real `klatch-server http`, with a credential issued per member in
+// a throwaway store, is in conformance.test.ts (#1123). The refusal path also runs against the real server here. Every wait has a deadline, no test reads a stream to its end, and every error is injected, not provoked
 // from the platform (a peer that dies is ECONNRESET on Linux and a clean end on macOS).
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

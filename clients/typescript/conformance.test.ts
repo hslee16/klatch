@@ -2,7 +2,7 @@
 // real gateway. Run from this directory:
 //   KLATCH_BIN=/path/to/klatch node --experimental-strip-types --test conformance.test.ts
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -18,6 +18,7 @@ const FIXTURES = resolve(here, "../../proto/klatch/fixtures/protocol");
 const SERVER_BIN = process.env.KLATCH_SERVER_BIN || resolve(here, "../../proto/target/debug/klatch-server");
 
 class Store {
+  attribution = "unattributed"; // what the gateway says of a member of this store in the hello
   home = mkdtempSync(join(tmpdir(), "klatch-client-ts-"));
   clients: Client[] = [];
   async client(name: string): Promise<Client> {
@@ -68,13 +69,66 @@ class DaemonStore extends Store {
   }
 }
 
+const ISSUE_BIN = process.env.KLATCH_ISSUE_BIN || resolve(here, "../../proto/target/debug/examples/issue_test_credential");
+
+/** The same throwaway store with a real `klatch-server http` on a port the system chooses, and clients that connect to
+ * it over HTTP and server-sent events (#1114). Every connection needs a worker credential, so one is issued per member
+ * with the test-only helper (`cargo build -p klatch-server --example issue_test_credential`), which refuses any store
+ * that is not a throwaway one under a temp directory. The member is `verified`, proven by its credential. */
+class HttpStore extends Store {
+  override attribution = "verified";
+  private server: ChildProcess | null = null;
+  private port = 0;
+  private tokens = new Map<string, string>();
+  private env() {
+    return { PATH: "/usr/bin:/bin", HOME: this.home, KLATCH_HOME: this.home, KLATCH_KEY_DIR: join(this.home, "keys") };
+  }
+  async start() {
+    if (this.server) return;
+    const log = join(this.home, "err.log");
+    this.server = spawn(SERVER_BIN, ["http", "--listen", "127.0.0.1:0"], { env: this.env(), stdio: ["ignore", "ignore", openSync(log, "w")] });
+    for (let i = 0; i < 1500; i++) {
+      const m = /http listening on 127\.0\.0\.1:(\d+)/.exec(readFileSync(log, "utf8"));
+      if (m) {
+        this.port = Number(m[1]);
+        return;
+      }
+      await sleep(20);
+    }
+    throw new Error("the server never listened");
+  }
+  private token(name: string): string {
+    let t = this.tokens.get(name);
+    if (t === undefined) {
+      const out = spawnSync(ISSUE_BIN, [name], { env: this.env(), encoding: "utf8", timeout: 60000 });
+      if (out.status !== 0) throw new Error("the credential helper failed: " + out.stderr.trim());
+      t = out.stdout.trim();
+      this.tokens.set(name, t);
+    }
+    return t;
+  }
+  override async client(name: string): Promise<Client> {
+    await this.start();
+    const c = await Client.connectHttp(`http://127.0.0.1:${this.port}`, { member: name, token: this.token(name), connectTimeoutMs: 10000 });
+    this.clients.push(c);
+    return c;
+  }
+  override async close() {
+    for (const c of this.clients) await c.close();
+    this.server?.kill("SIGKILL");
+    rmSync(this.home, { recursive: true, force: true });
+  }
+}
+
 const daemonBuilt = existsSync(SERVER_BIN);
+const httpBuilt = daemonBuilt && existsSync(ISSUE_BIN);
 
 // The scenario runs over `klatch serve --stdio`, then unchanged over the daemon's socket: the same events and
-// sequence numbers are required of both transports.
+// sequence numbers are required of every transport (and over HTTP each member has a credential issued in the store).
 for (const [title, newStore, skip] of [
   ["klatch client conformance", () => new Store(), false],
   ["klatch client conformance over the daemon socket", () => new DaemonStore(), !daemonBuilt],
+  ["klatch client conformance over HTTP", () => new HttpStore(), !httpBuilt],
 ] as [string, () => Store, boolean][])
 describe(title, { skip }, () => {
   let store = newStore();
@@ -88,7 +142,7 @@ describe(title, { skip }, () => {
 
   it("hello says who the gateway believes you are", async () => {
     const a = await store.client("alice");
-    assert.deepEqual([a.member, a.attribution, a.clearance], ["alice", "unattributed", "public"]);
+    assert.deepEqual([a.member, a.attribution, a.clearance], ["alice", store.attribution, "public"]);
   });
 
   it("understands every server fixture line and ignores unknown things", () => {
@@ -116,7 +170,7 @@ describe(title, { skip }, () => {
     assert.deepEqual(messages.map((m) => m.body), ["just words", "see the order"]);
     assert.ok(!("kind" in messages[0]) && !("payload" in messages[0]));
     assert.deepEqual([messages[1].kind, messages[1].payload], ["work-order", '{"id":7}']);
-    assert.equal(messages[0].attribution, "unattributed");
+    assert.equal(messages[0].attribution, store.attribution);
     assert.equal((await b.read("r")).length, 2);
     assert.deepEqual(await b.read("r"), []);
   });
