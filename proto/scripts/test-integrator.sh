@@ -46,6 +46,7 @@ cat > "$bin/gh" <<'SH'
 echo "gh $*" >> "$FAKE_DIR/calls.log"
 org="$FAKE_ORIGIN"
 f() { cat "$FAKE_DIR/$1" 2> /dev/null || echo "$2"; }
+git() { "$REALGIT" "$@"; }
 if [ "$1 $2" = "webhook forward" ]; then
   echo "start $*" >> "$FAKE_DIR/forward.log"
   starts="$(wc -l < "$FAKE_DIR/forward.log" | tr -d ' ')"
@@ -73,14 +74,35 @@ fi
 if [ "$1 $2" = "pr merge" ]; then
   n="$3"; sha=""; prev=""
   for a in "$@"; do [ "$prev" = "--match-head-commit" ] && sha="$a"; prev="$a"; done
-  tip="$(git --git-dir="$org" rev-parse "refs/heads/feat-$n")"
+  hr="$(f "headref-$n" "feat-$n")"
+  tip="$(git --git-dir="$org" rev-parse "refs/heads/$hr")"
   [ "$sha" = "$tip" ] || { echo "gh: head branch was modified" >&2; exit 1; }
   [ -e "$FAKE_DIR/merge-fails" ] && exit 1
+  echo "merge $n" >> "$FAKE_DIR/merges.log"
   git -C "$FAKE_SEED" fetch -q origin
   git -C "$FAKE_SEED" checkout -q main
-  git -C "$FAKE_SEED" merge -q --no-edit "origin/feat-$n" > /dev/null 2>&1
+  git -C "$FAKE_SEED" merge -q --no-edit "origin/$hr" > /dev/null 2>&1
   git -C "$FAKE_SEED" push -q origin main > /dev/null 2>&1
+  msha="$(git -C "$FAKE_SEED" rev-parse HEAD)"; echo "$msha" > "$FAKE_DIR/msha-$n"
+  # what main's CI does for the merge commit: one mode per merge, taken from main-ci-seq (green when empty)
+  mode="$(head -1 "$FAKE_DIR/main-ci-seq" 2> /dev/null)"; [ -n "$mode" ] || mode=green
+  sed -i.bak 1d "$FAKE_DIR/main-ci-seq" 2> /dev/null
+  case "$mode" in
+    green | red | cancelled)
+      case "$mode" in green) c=success ;; red) c=failure ;; *) c=cancelled ;; esac
+      echo "$c" > "$FAKE_DIR/checks-$msha"; sed -e "s/@SHA@/$msha/g" -e "s/@CONCL@/$c/g" "$FIXTURES/check_suite-main.json" >> "$FAKE_DIR/feed" ;;
+    none) echo pending > "$FAKE_DIR/checks-$msha" ;;
+  esac
   echo true > "$FAKE_DIR/merged-$n"; echo closed > "$FAKE_DIR/state-$n"
+  exit 0
+fi
+if [ "$1 $2" = "pr create" ]; then
+  head=""; prev=""
+  for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; prev="$a"; done
+  [ -e "$FAKE_DIR/create-fails" ] && exit 1
+  r=$((9000 + ${head#revert-}))
+  echo "$head" > "$FAKE_DIR/headref-$r"; echo "$r" >> "$FAKE_DIR/prs"
+  echo "https://github.com/hslee16/klatch/pull/$r"
   exit 0
 fi
 path=""
@@ -93,16 +115,16 @@ case "$path" in
     out="["; sep=""
     for n in $(cat "$FAKE_DIR/prs" 2> /dev/null); do
       [ "$(f "state-$n" open)" = open ] || continue
-      sha="$(git --git-dir="$org" rev-parse "refs/heads/feat-$n")"
+      sha="$(git --git-dir="$org" rev-parse "refs/heads/$(f "headref-$n" "feat-$n")")"
       out="$out$sep{\"number\":$n,\"title\":\"merged: #1 hostile\",\"head\":{\"sha\":\"$sha\"}}"; sep=","
     done
     echo "$out]" ;;
   */pulls/*)
     n="${path##*/}"
-    sha="$(f "sha-$n" "$(git --git-dir="$org" rev-parse "refs/heads/feat-$n" 2> /dev/null)")"
+    sha="$(f "sha-$n" "$(git --git-dir="$org" rev-parse "refs/heads/$(f "headref-$n" "feat-$n")" 2> /dev/null)")"
     cat <<EOF
 {"number":$n,"state":"$(f "state-$n" open)","merged":$(f "merged-$n" false),"title":"merged: #1 ready: #2 hostile title","body":"ready: #9",
- "mergeable_state":"$(f "mstate-$n" clean)","head":{"ref":"$(f "ref-$n" "feat-$n")","sha":"$sha","repo":{"full_name":"$(f "repo-$n" hslee16/klatch)"}}}
+ "mergeable_state":"$(f "mstate-$n" clean)","merge_commit_sha":"$(f "msha-$n" "")","head":{"ref":"$(f "ref-$n" "$(f "headref-$n" "feat-$n")")","sha":"$sha","repo":{"full_name":"$(f "repo-$n" hslee16/klatch)"}}}
 EOF
     ;;
   */check-runs*)
@@ -160,7 +182,19 @@ cat > "$bin/gate" <<'SH'
 echo "gate on $(git rev-parse --abbrev-ref HEAD)" >> "$FAKE_DIR/gate.log"
 exit "$(cat "$FAKE_DIR/gate-rc" 2> /dev/null || echo 0)"
 SH
+cat > "$bin/bench" <<'SH'
+#!/bin/sh
+echo "bench" >> "$FAKE_DIR/bench.log"
+exit "$(cat "$FAKE_DIR/bench-rc" 2> /dev/null || echo 0)"
+SH
+cat > "$bin/git" <<'SH'
+#!/bin/sh
+# logs every push (the real git does the work), so a test can say where a push went
+case " $* " in *" push "*) echo "git $*" >> "$FAKE_DIR/calls.log" ;; esac
+exec "$REALGIT" "$@"
+SH
 chmod +x "$bin"/*
+realgit="$(command -v git)"
 
 n=0
 W=""; fake=""; origin=""; seed=""; repo=""
@@ -178,7 +212,10 @@ newworld() {
   cat > "$origin/hooks/post-receive" <<EOF
 #!/bin/sh
 while read old new ref; do
-  case "\$ref" in refs/heads/feat-*) FAKE_DIR="$fake" FIXTURES="$fx" "$bin/emit-ci" "\${ref#refs/heads/feat-}" "\$new" "\$old" ;; esac
+  case "\$ref" in
+    refs/heads/feat-*) FAKE_DIR="$fake" FIXTURES="$fx" "$bin/emit-ci" "\${ref#refs/heads/feat-}" "\$new" "\$old" ;;
+    refs/heads/revert-*) FAKE_DIR="$fake" FIXTURES="$fx" "$bin/emit-ci" "\$((9000 + \${ref#refs/heads/revert-}))" "\$new" "\$old" ;;
+  esac
 done
 EOF
   chmod +x "$origin/hooks/post-receive"
@@ -209,7 +246,7 @@ advance() { # file content: main moves on (a merge by someone else)
 # cases test the integrator, not the caller (#866).
 _run() {
   # shellcheck disable=SC2016 # the single quotes are on purpose: perl, not the shell, expands $SIG
-  exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" \
+  exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" REALGIT="$realgit" INTEGRATOR_BENCH="$bin/bench" INTEGRATOR_VERIFY_WAIT_SECS="${VW:-}" \
     INTEGRATOR_REPO="$repo" INTEGRATOR_KLATCH="${KB:-$bin/klatch}" INTEGRATOR_GATE="$bin/gate" INTEGRATOR_GH_REPO=hslee16/klatch \
     INTEGRATOR_RECONCILE_SECS="${RS:-2}" INTEGRATOR_POLL_SECS=0.1 INTEGRATOR_GH_RETRY_SLEEP=0 INTEGRATOR_GH_TIMEOUT=20 \
     INTEGRATOR_CHECK_WAIT_SECS="${CW:-25}" INTEGRATOR_FORWARDER_TRIES=3 INTEGRATOR_FORWARDER_MIN_UP=1000 INTEGRATOR_REQUEUE_SECS=0 \
@@ -233,7 +270,7 @@ waitfor() { # file, extended regex, seconds
 posts() { cat "$fake/posts.log" 2> /dev/null | paste -sd '|' -; }
 calls() { grep -c "$1" "$fake/calls.log" 2> /dev/null || true; }
 fixed_posts() { # every word posted is one of the fixed templates
-  ! grep -Evq '^(integrating|checking|merged): #[0-9]+$|^dropped: #[0-9]+ (conflict|checks-failed|closed|timeout|head-changed|error)$|^parked: (running the gate for|waiting for checks on) #[0-9]+, back by [0-9]+m$' "$fake/posts.log" 2> /dev/null
+  ! grep -Evq '^(integrating|checking|merged): #[0-9]+$|^reverted: #[0-9]+$|^halted: main (red|not verified) after #[0-9]+$|^dropped: #[0-9]+ (conflict|checks-failed|closed|timeout|head-changed|error)$|^parked: (running the gate for|waiting for checks on) #[0-9]+, back by [0-9]+m$' "$fake/posts.log" 2> /dev/null
 }
 subst() { sed -e "s/@N@/$2/g" -e "s/@SHA@/$3/g" -e "s/@CONCL@/${4:-success}/g" "$fx/$1.json"; }
 A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -442,6 +479,118 @@ dry; rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'would post: dropped: #8 error' "$fake/out" && ! grep -qiE 'hostile|ignore previous|ready: #|touch|integrator-pwned' "$fake/out" && [ ! -e /tmp/integrator-pwned ]; then ok "a hostile PR title, body and branch name never appear in the dry run output"; else bad "hostile in dry run rc=$rc: $(cat "$fake/out")"; fi
 newworld; dry; rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'queue is empty' "$fake/out" && [ "$(tail -1 "$fake/out")" = 'dry run: nothing was changed.' ]; then ok "an empty queue is said so"; else bad "empty queue rc=$rc: $(cat "$fake/out")"; fi
+
+# ---- --merge-without-update (#867): off by default; merge a PR whose merge-tree against current main is clean ----
+mwu() { runint --once --merge-without-update "$@" > "$fake/out" 2>&1; }
+pushes() { grep -E '^git .*push ' "$fake/calls.log" 2> /dev/null; }
+no_leak() { ! grep -qiE 'hostile|ignore previous|ready: #|touch|integrator-pwned' "$fake/posts.log" "$fake/calls.log" 2> /dev/null; }
+clean_world() { newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance README.md 'moved\n'; }
+
+# the default mode never skips the update, never reads main's verdict and never reverts
+clean_world; old7="$(sha_of feat-7)"; echo red > "$fake/main-ci-seq"
+runint --once > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sha_of feat-7)" != "$old7" ] && [ -s "$fake/gate.log" ] && ! posts | grep -q 'reverted\|halted' && ! pushes | grep -q revert-; then ok "without the flag the up-to-date flow runs as before: main merged into the branch, the gate run, a red main is not acted on"; else bad "default mode rc=$rc posts=$(posts)"; fi
+
+# a clean merge-tree merges without updating the branch
+clean_world; old7="$(sha_of feat-7)"
+mwu; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(posts)" = 'integrating: #7|checking: #7|parked: waiting for checks on #7, back by 25m|merged: #7' ]; then ok "a clean merge-tree merges with no main merge, no gate and no push: integrating, checking, parked, merged, and nothing extra after a green main"; else bad "clean merge rc=$rc posts=$(posts) out=$(tail -3 "$fake/out")"; fi
+if [ "$(sha_of feat-7)" = "$old7" ] && [ ! -e "$fake/gate.log" ] && [ -z "$(pushes)" ]; then ok "the PR branch was not touched (same head), the gate did not run and nothing was pushed"; else bad "branch changed or push: $(pushes)"; fi
+if grep -q "gh pr merge 7 --repo hslee16/klatch --merge --match-head-commit $old7" "$fake/calls.log"; then ok "the merge is pinned to the PR's current head with --match-head-commit"; else bad "merge call: $(grep 'pr merge' "$fake/calls.log")"; fi
+if fixed_posts && [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ]; then ok "every word is a fixed template and the claim is released"; else bad "words or claim"; fi
+
+# a code conflict still drops
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance code.txt 'l1\nl2\nMAIN\nl4\nl5\n'
+mwu; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(posts)" = 'dropped: #7 conflict' ] && [ "$(calls 'pr merge')" -eq 0 ]; then ok "with the flag a code conflict still posts dropped: #7 conflict and merges nothing"; else bad "mwu conflict rc=$rc posts=$(posts)"; fi
+
+# a docs-only conflict is not a clean merge-tree: it takes the update path (both sides kept)
+newworld; mkpr 7 DESIGN.md 'intro\n1. **One**\n2. **Two**\n3. **From the PR**\n'; advance DESIGN.md 'intro\n1. **One**\n2. **Two**\n4. **From main**\n'
+mwu; rc=$?
+if [ "$rc" -eq 0 ] && posts | grep -q 'merged: #7$' && [ -s "$fake/gate.log" ] && git --git-dir="$origin" show main:DESIGN.md | grep -q "From the PR" && git --git-dir="$origin" show main:DESIGN.md | grep -q "From main"; then ok "a docs-only conflict is not clean, so it still takes the update flow and keeps both sides"; else bad "mwu docs rc=$rc posts=$(posts)"; fi
+
+# red checks on the PR head: not merged
+clean_world; mv "$fake/ci-mode" "$fake/ci-mode.x"; echo red > "$fake/ci-mode"; git -C "$seed" checkout -q feat-7; printf 'l1\nl2\nPR2\nl4\nl5\n' > "$seed/code.txt"; git -C "$seed" commit -q -am more; git -C "$seed" push -q origin feat-7 2> /dev/null
+mwu; rc=$?
+if [ "$rc" -eq 0 ] && posts | grep -q 'dropped: #7 checks-failed$' && [ "$(calls 'pr merge')" -eq 0 ]; then ok "with the flag a failed check suite on the current head still drops the PR and merges nothing"; else bad "mwu red pr rc=$rc posts=$(posts)"; fi
+
+# a green main from another sha does not matter; a red main from ANOTHER sha is not reverted by this run
+clean_world
+subst check_suite-main 0 cccccccccccccccccccccccccccccccccccccccc failure >> "$fake/feed"
+mwu; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(posts)" = 'integrating: #7|checking: #7|parked: waiting for checks on #7, back by 25m|merged: #7' ] && ! pushes | grep -q revert- && [ "$(calls 'pr create')" -eq 0 ]; then ok "a red main from ANOTHER sha is not this run's merge: no revert, no word, no branch"; else bad "other sha rc=$rc posts=$(posts)"; fi
+
+# red main attributed to the merge: the revert goes through a branch and a PR, never a push to main
+clean_world; printf 'red\ngreen\n' > "$fake/main-ci-seq"
+mwu; rc=$?
+want='integrating: #7|checking: #7|parked: waiting for checks on #7, back by 25m|merged: #7|parked: waiting for checks on #9007, back by 25m|reverted: #7'
+if [ "$rc" -eq 0 ] && [ "$(posts)" = "$want" ]; then ok "a red main after the merge reverts it and posts reverted: #7 (the revert PR's own checks are waited for)"; else bad "red main rc=$rc posts=$(posts) out=$(tail -4 "$fake/out")"; fi
+l_push="$(grep -n 'push .*revert-7' "$fake/calls.log" | head -1 | cut -d: -f1)"; l_create="$(grep -n '^gh pr create' "$fake/calls.log" | head -1 | cut -d: -f1)"; l_merge="$(grep -n '^gh pr merge 9007 ' "$fake/calls.log" | head -1 | cut -d: -f1)"
+if [ -n "$l_push" ] && [ -n "$l_create" ] && [ -n "$l_merge" ] && [ "$l_push" -lt "$l_create" ] && [ "$l_create" -lt "$l_merge" ]; then ok "the order is: push the branch revert-7, create the PR, then merge the revert PR"; else bad "order push=$l_push create=$l_create merge=$l_merge: $(cat "$fake/calls.log")"; fi
+if pushes | grep -q 'origin revert-7:refs/heads/revert-7' && ! pushes | grep -Eq 'main|--force| -f '; then ok "the only push is to the remote branch revert-7 (never main, never forced)"; else bad "pushes: $(pushes)"; fi
+if grep -q "gh pr create --repo hslee16/klatch --base main --head revert-7 --title Revert PR #7 (main went red)" "$fake/calls.log" && grep -q "gh pr merge 9007 --repo hslee16/klatch --merge --match-head-commit $(sha_of revert-7)" "$fake/calls.log"; then ok "the revert PR has a fixed title and is merged pinned to its current head"; else bad "create/merge calls: $(grep -E 'pr (create|merge)' "$fake/calls.log")"; fi
+if [ "$(git --git-dir="$origin" show main:code.txt)" = "$(printf 'l1\nl2\nl3\nl4\nl5')" ] && git --git-dir="$origin" log -1 --format=%s main | grep -q '^Revert PR #7'; then ok "main ends with the PR's change undone by the merged revert"; else bad "main content: $(git --git-dir="$origin" show main:code.txt)"; fi
+if no_leak && fixed_posts; then ok "no PR title or body text is in a word, a command or the revert"; else bad "leak"; fi
+
+# hostile text in the PR: the revert commit message and PR text come from a fixed template
+git --git-dir="$origin" log -1 --format=%B revert-7 > "$work/revert-msg"
+if ! grep -qiE 'hostile|ignore previous|feat-7|pr 7$' "$work/revert-msg" && grep -q 'Revert PR #7 (main went red)' "$work/revert-msg"; then ok "the revert commit message is the fixed template (no branch name, title or body of the reverted PR)"; else bad "revert message: $(cat "$work/revert-msg")"; fi
+
+# a revert that fails halts: distinct exit code, a fixed word, no further merge
+clean_world; mkpr 8 DESIGN.md 'intro\n1. **One**\n2. **Two**\n4. **Eight**\n'; printf '7 waiting\n8 waiting\n' > "$fake/queue"
+printf 'red\n' > "$fake/main-ci-seq"; touch "$fake/create-fails"
+mwu; rc=$?
+if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main red after #7$' && ! posts | grep -q 'reverted: #7' && [ "$(calls 'pr merge')" -eq 1 ] && [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ]; then ok "a revert that cannot be made halts: exit 5, halted: main red after #7, PR 8 not merged, the claim released"; else bad "halt rc=$rc posts=$(posts) merges=$(calls 'pr merge')"; fi
+if ! posts | grep -q '#8' && fixed_posts && no_leak; then ok "nothing was posted for the next PR after the halt, and every word is fixed"; else bad "after halt: $(posts)"; fi
+
+# a revert whose own checks fail halts too (never a second revert, never a merge of the red revert)
+clean_world; mkpr 8 DESIGN.md 'intro\n1. **One**\n2. **Two**\n4. **Eight**\n'; printf '7 waiting\n8 waiting\n' > "$fake/queue"
+printf 'red\n' > "$fake/main-ci-seq"; echo red > "$fake/ci-mode"
+mwu; rc=$?
+if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main red after #7$' && [ "$(calls 'pr merge 9007')" -eq 0 ] && [ "$(calls 'pr merge')" -eq 1 ] && [ "$(pushes | grep -c revert-)" -eq 1 ]; then ok "a revert PR with red checks is not merged: halted, exit 5, one revert branch only, PR 8 untouched"; else bad "red revert rc=$rc posts=$(posts)"; fi
+
+# a revert that merges but leaves main red halts (no loop)
+clean_world; printf 'red\nred\n' > "$fake/main-ci-seq"
+mwu; rc=$?
+if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main red after #7$' && ! posts | grep -q 'reverted: #7' && [ "$(pushes | grep -c revert-)" -eq 1 ]; then ok "main still red after the revert halts the process and never reverts again"; else bad "still red rc=$rc posts=$(posts)"; fi
+
+# main never reports: the merge is not verified, so the process stops rather than merge on
+clean_world; mkpr 8 DESIGN.md 'intro\n1. **One**\n2. **Two**\n4. **Eight**\n'; printf '7 waiting\n8 waiting\n' > "$fake/queue"; echo none > "$fake/main-ci-seq"
+VW=3 mwu; rc=$?
+if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main not verified after #7$' && [ "$(calls 'pr merge')" -eq 1 ] && ! pushes | grep -q revert-; then ok "a main that is never verified halts (exit 5) without reverting a merge it cannot show was bad"; else bad "unverified rc=$rc posts=$(posts)"; fi
+
+# a cancelled run on main is not a failure to revert on
+clean_world; echo cancelled > "$fake/main-ci-seq"
+VW=3 mwu; rc=$?
+if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main not verified after #7$' && ! pushes | grep -q revert-; then ok "a cancelled check on main is not a failure: no revert, the process halts as unverified"; else bad "cancelled main rc=$rc posts=$(posts)"; fi
+
+# --verify-gate runs the gate on the merge commit of main; --verify-bench runs the bench
+clean_world
+mwu --verify-gate --verify-bench; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'gate on HEAD' "$fake/gate.log" && [ "$(wc -l < "$fake/gate.log" | tr -d ' ')" -eq 1 ] && [ "$(wc -l < "$fake/bench.log" | tr -d ' ')" -eq 1 ] && posts | grep -q 'parked: running the gate for #7' && posts | grep -q 'merged: #7$' && ! posts | grep -q 'reverted\|halted'; then ok "--verify-gate and --verify-bench run the gate (on main's merge commit) and the bench once after the merge, parked first"; else bad "verify flags rc=$rc posts=$(posts) gate=$(cat "$fake/gate.log" 2> /dev/null)"; fi
+clean_world; echo 1 > "$fake/gate-rc"
+mwu --verify-gate; rc=$?
+if [ "$rc" -eq 5 ] && pushes | grep -q 'revert-7' && posts | grep -q 'halted: main red after #7$'; then ok "a red local gate on main triggers the revert path (here the gate stays red, so it halts)"; else bad "red gate rc=$rc posts=$(posts)"; fi
+clean_world
+mwu; rc=$?
+if [ ! -e "$fake/gate.log" ] && [ ! -e "$fake/bench.log" ]; then ok "without the verify flags neither the gate nor the bench runs after a merge"; else bad "gate or bench ran"; fi
+
+# the verify flags need the mode
+newworld
+runint --once --verify-gate > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q 'merge-without-update' "$fake/out"; then ok "--verify-gate and --verify-bench without --merge-without-update are a usage error"; else bad "verify without mode rc=$rc"; fi
+
+# the dry run describes the mode's plan and changes nothing
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance README.md 'moved\n'
+refs0="$(refs_of)"
+runint --dry-run --merge-without-update --verify-gate > "$fake/out" 2>&1; rc=$?
+o="$fake/out"
+if [ "$rc" -eq 0 ] && grep -q 'merge without update' "$o" && grep -q 'would skip merging main into the branch' "$o" && grep -q 'would verify main' "$o" && grep -q 'would run the gate on main' "$o" && grep -q 'would revert' "$o" && grep -q 'branch revert-7' "$o" && grep -q 'never a push to main' "$o" && ! grep -q 'would push the merged branch' "$o"; then ok "the dry run says it would skip the update, verify main, run the gate on main and revert through a branch and a PR"; else bad "dry run mwu rc=$rc: $(cat "$o")"; fi
+want_order="$(grep -F 'would post:' "$o" | sed 's/^.*would post: //; s/  (.*//' | paste -sd '|' -)"
+if [ "$want_order" = 'integrating: #7|checking: #7|parked: waiting for checks on #7, back by 25m|merged: #7|parked: running the gate for #7, back by 25m|reverted: #7' ] && only_reads && [ "$(refs_of)" = "$refs0" ] && [ ! -e "$fake/posts.log" ] && [ -z "$(pushes)" ] && no_leak; then ok "the dry run's words are the real templates, in order, and it is still read only"; else bad "dry mwu words: $want_order"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance code.txt 'l1\nl2\nMAIN\nl4\nl5\n'
+runint --dry-run --merge-without-update > "$fake/out" 2>&1
+if grep -q 'would post: dropped: #7 conflict' "$fake/out"; then ok "the dry run of the mode still reports a conflict as dropped"; else bad "dry mwu conflict: $(cat "$fake/out")"; fi
 
 # ---- a real klatch refuses a plain member (only when a built binary exists; temp home and key dir) ----
 kb="${INTEGRATOR_TEST_KLATCH:-$here/../target/debug/klatch}"
