@@ -535,3 +535,40 @@ fn the_grantor_check_and_the_grant_write_are_one_transaction() {
     assert_eq!(g.room_grantor("vault").unwrap().as_deref(), Some("alice"));
     assert_eq!(grant_rows(&g).len(), 1);
 }
+
+// ---- #896: a room grant never hands out a label key ----
+
+#[test]
+fn a_grant_into_a_sealed_room_is_refused_when_the_grantee_lacks_the_global_clearance() {
+    let g = vault();
+    g.admin_seal_label(&admin(), "private").unwrap();
+    let r = g.grant_room_clearance(&alice(), "vault", "bob", "private");
+    match r {
+        Err(Error::Refused { rule, reason }) => {
+            assert_eq!(rule, "sealed-key");
+            assert!(
+                reason.contains("klatch admin clear bob private"),
+                "{reason}"
+            );
+        }
+        other => panic!("expected refusal sealed-key, got {other:?}"),
+    }
+    assert!(grant_rows(&g).is_empty());
+}
+
+#[test]
+fn a_grant_into_a_sealed_room_is_allowed_when_the_grantee_already_holds_the_clearance() {
+    let g = vault();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.admin_seal_label(&admin(), "private").unwrap();
+    g.grant_room_clearance(&alice(), "vault", "bob", "private")
+        .unwrap();
+}
+
+#[test]
+fn an_unsealed_room_still_takes_a_grant() {
+    let g = vault();
+    g.admin_seal_label(&admin(), "secret").unwrap();
+    g.grant_room_clearance(&alice(), "vault", "bob", "private")
+        .unwrap();
+}
