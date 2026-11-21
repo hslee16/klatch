@@ -1,7 +1,14 @@
 //! Who is calling: the evidence the process has about its caller (a typed name, or the coding-agent session found
 //! above it), the stable member name each session keeps, and the principal the gateway acts for.
 
-use super::*;
+use super::{Call, Who, now};
+use crate::domain::Principal;
+use crate::gateway::{Identity, LocalIdentity, PeerEvidence};
+use crate::harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
+use crate::store::SqliteStore;
+use crate::store::areas::*;
+use anyhow::{Result, bail};
+use std::path::PathBuf;
 
 pub(crate) type Finder<'a> = &'a dyn Fn() -> Result<Found, Miss>;
 
@@ -158,7 +165,7 @@ pub(crate) fn stdin_json() -> Option<serde_json::Value> {
     }
     // Claude Code writes the JSON at once and closes the pipe. Anything else (a script that holds standard input
     // open, a pipe nobody writes to) must not make a hook wait for ever, so the read is time-bounded.
-    let text = klatch::sync::within(std::time::Duration::from_millis(1500), || {
+    let text = crate::sync::within(std::time::Duration::from_millis(1500), || {
         let mut text = String::new();
         let _ = std::io::stdin().take(1 << 20).read_to_string(&mut text);
         text
@@ -191,7 +198,7 @@ fn session_dir_of(session: Option<&Found>, codex: Option<&CodexSession>) -> Opti
 
 /// The Codex session behind this call when `--codex` was given and no name was typed; a typed name always wins.
 fn codex_for(
-    who: &WhoFlags,
+    who: &Who,
     named: bool,
     is_hook: bool,
     stdin: Option<&serde_json::Value>,
@@ -260,7 +267,7 @@ fn codex_session(
 
 /// Look for the session above this process, using the real process table and the harness registry
 /// (`$HOME/.claude/sessions`). Reads nothing but the registry's .json files and never the environment.
-pub(crate) fn discover_session() -> Result<Found, Miss> {
+pub fn discover_session() -> Result<Found, Miss> {
     let Some((registry, domain)) = registry_and_domain() else {
         return Err(Miss::NoSession);
     };
@@ -268,12 +275,12 @@ pub(crate) fn discover_session() -> Result<Found, Miss> {
 }
 
 /// The harness registry under `$HOME` and the pid domain of this machine, if there is a home.
-pub(crate) fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
+pub fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
     let home = std::env::var_os("HOME")?;
     let registry = FsRegistry {
         dir: PathBuf::from(home).join(".claude").join("sessions"),
     };
-    Some((registry, klatch::harness::this_pid_domain()))
+    Some((registry, crate::harness::this_pid_domain()))
 }
 
 /// The session above `session`, with the real process table and registry.
@@ -313,7 +320,7 @@ pub(crate) fn resolve_principal(
 }
 
 /// The caller of this process: who it acts as, where its session started and the session id a hook was given.
-pub(crate) struct Caller {
+pub struct Caller {
     pub principal: Principal,
     /// The coding-agent session found above this process, when there is one.
     pub session: Option<Found>,
@@ -339,7 +346,7 @@ pub(crate) fn runs_claude_code(evidence: &PeerEvidence, codex: bool) -> bool {
 /// Who is calling: the typed name if there is one, else the coding-agent session found above this process, kept to
 /// one stable member name. `None` for a SessionEnd hook that cannot tell which session it ends: that does nothing,
 /// quietly, because it must never fail a session's exit and never act as anyone else.
-pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result<Option<Caller>> {
+pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Option<Caller>> {
     // The only thing the CLI knows about its caller is a typed name, which proves nothing.
     let declared = who
         .as_member
@@ -351,16 +358,13 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
         return identify_by_credential(
             std::path::Path::new(&path),
             declared.as_deref(),
-            cmd,
+            call,
             store,
         );
     }
     // A hook gets the session it was started for on standard input. It acts only as that session: a registry
     // record for another session (the parent that started this one) is never used (ticket #284).
-    let is_hook = matches!(
-        cmd,
-        Cmd::Agents(AgentsCmd::Hook { .. }) | Cmd::Wait(WaitCmd::Wake { .. })
-    );
+    let is_hook = call.hook;
     let stdin = if is_hook { stdin_json() } else { None };
     let stdin_session = stdin.as_ref().and_then(session_id_of);
     // A Codex session has no registry record: the hook's session id (or the thread id of a command) names it (#341).
@@ -380,9 +384,7 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
     let (evidence, notice) = probe.evidence(store);
     let claude_code = runs_claude_code(&evidence, is_codex);
     // A SessionEnd hook that cannot tell which session it ends does nothing, quietly.
-    let session_end =
-        matches!(cmd, Cmd::Agents(AgentsCmd::Hook { event: Some(e), .. }) if e == "SessionEnd");
-    if session_end && matches!(evidence, PeerEvidence::None) {
+    if call.session_end && matches!(evidence, PeerEvidence::None) {
         return Ok(None);
     }
     if let Some(n) = notice {
@@ -404,10 +406,10 @@ pub(crate) fn identify(who: &WhoFlags, cmd: &Cmd, store: &SqliteStore) -> Result
 fn identify_by_credential(
     path: &std::path::Path,
     declared: Option<&str>,
-    cmd: &Cmd,
+    call: Call,
     store: &SqliteStore,
 ) -> Result<Option<Caller>> {
-    let bundle = klatch::keys::Bundle::read(path)?;
+    let bundle = crate::keys::Bundle::read(path)?;
     if let Some(name) = declared.filter(|n| *n != bundle.member) {
         let _ = name;
         bail!(
@@ -416,19 +418,15 @@ fn identify_by_credential(
         );
     }
     let at = now();
-    if let Err(e) = klatch::gateway::check_credential(store, at, &bundle.member, &bundle.token) {
-        let _ = klatch::store::PolicyStore::record_refusal(
+    if let Err(e) = crate::gateway::check_credential(store, at, &bundle.member, &bundle.token) {
+        let _ = crate::store::PolicyStore::record_refusal(
             store,
-            &klatch::store::NewRefusal::new(&bundle.member, "", "credential", "credential"),
+            &crate::store::NewRefusal::new(&bundle.member, "", "credential", "credential"),
             at,
         );
         return Err(e.into());
     }
-    let is_hook = matches!(
-        cmd,
-        Cmd::Agents(AgentsCmd::Hook { .. }) | Cmd::Wait(WaitCmd::Wake { .. })
-    );
-    let stdin = if is_hook { stdin_json() } else { None };
+    let stdin = if call.hook { stdin_json() } else { None };
     let stdin_session = stdin.as_ref().and_then(session_id_of);
     let evidence = PeerEvidence::Credential {
         member: bundle.member,
@@ -488,9 +486,9 @@ mod survivor_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klatch::domain::Attribution;
-    use klatch::gateway::FixedIdentity;
-    use klatch::harness::Liveness;
+    use crate::domain::Attribution;
+    use crate::gateway::FixedIdentity;
+    use crate::harness::Liveness;
 
     fn declared(name: Option<&str>) -> PeerEvidence {
         name.map_or(PeerEvidence::None, |n| PeerEvidence::DeclaredName(n.into()))
@@ -681,9 +679,9 @@ mod hook_identity_tests {
 mod member_name_tests {
     use super::*;
 
-    fn store() -> crate::test_dir::In<SqliteStore> {
-        crate::test_dir::In::new("names", |dir| {
-            SqliteStore::open(&dir.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+    fn store() -> crate::store::test_dir::In<SqliteStore> {
+        crate::store::test_dir::In::new("names", |dir| {
+            SqliteStore::open(&dir.join("t.db"), &crate::store::insecure_test_key()).unwrap()
         })
     }
 

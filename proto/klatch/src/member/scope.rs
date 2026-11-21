@@ -1,7 +1,10 @@
 //! The scope a member works in: derived from the directory it started in (a git repository, or the directory), or
 //! declared, and remembered per member (DESIGN section 27).
 
-use super::*;
+use crate::domain::Principal;
+use crate::gateway::Gateway;
+use crate::store::areas::*;
+use anyhow::{Context, Result, bail};
 
 #[cfg(test)]
 mod attr_tests;
@@ -29,7 +32,7 @@ pub(crate) fn scope_for_dir(dir: &str) -> Option<String> {
     let name = scope_name(&root);
     let id = fnv1a(&common.to_string_lossy()) as u32;
     let scope = format!("{kind}:{name}-{id:08x}");
-    klatch::domain::valid_scope(&scope).then_some(scope)
+    crate::domain::valid_scope(&scope).then_some(scope)
 }
 
 /// The git directory every worktree of the repository containing `base` shares, if `base` is in one. Read from the
@@ -107,7 +110,7 @@ pub(crate) fn ensure_member_attrs(
         .unwrap_or_else(|| member_id_for(member, session_id));
     Ok(store.note_member_attrs(
         member,
-        &klatch::domain::MemberAttrs::new(id, repository, dir),
+        &crate::domain::MemberAttrs::new(id, repository, dir),
         now,
     )?)
 }
@@ -148,7 +151,7 @@ pub(crate) fn ensure_member_scope(
     match (declared, &stored) {
         (Some(d), Some(s)) if d == s => Ok(()),
         (Some(d), _) => {
-            if !klatch::domain::valid_scope(d) {
+            if !crate::domain::valid_scope(d) {
                 bail!("bad scope {d:?}: 1 to 80 characters of letters, digits and . : _ - /");
             }
             Ok(store.set_member_scope(member, d, now)?)
@@ -179,7 +182,7 @@ pub(crate) fn declare_member_kind(
     let kind =
         match word {
             "off" => None,
-            w => Some(klatch::domain::MemberKind::parse(w).with_context(|| {
+            w => Some(crate::domain::MemberKind::parse(w).with_context(|| {
                 format!("bad member kind {w:?}: use bot, service, human, or off")
             })?),
         };
@@ -189,11 +192,12 @@ pub(crate) fn declare_member_kind(
 #[cfg(test)]
 mod scope_dir_tests {
     use super::*;
+    use crate::store::SqliteStore;
 
     /// A scratch directory, with its canonical path (the temp directory may be a symlink) kept apart from the guard.
     struct Tmp {
         path: std::path::PathBuf,
-        _dir: crate::test_dir::TestDir,
+        _dir: crate::store::test_dir::TestDir,
     }
     impl std::ops::Deref for Tmp {
         type Target = std::path::Path;
@@ -207,7 +211,7 @@ mod scope_dir_tests {
         }
     }
     fn tmp(name: &str) -> Tmp {
-        let dir = crate::test_dir::TestDir::new("scope");
+        let dir = crate::store::test_dir::TestDir::new("scope");
         // the scope of a repository is made from the name of its directory, so the directory is named for the test
         std::fs::create_dir_all(dir.join(name)).unwrap();
         let path = std::fs::canonicalize(dir.join(name)).unwrap();
@@ -238,7 +242,7 @@ mod scope_dir_tests {
         assert!(top.starts_with("git:repo-a-"), "{top}");
         assert_eq!(top, sub, "a subdirectory is the same repository");
         assert_ne!(top, other);
-        assert!(klatch::domain::valid_scope(&top) && top.len() <= 80);
+        assert!(crate::domain::valid_scope(&top) && top.len() <= 80);
     }
 
     #[test]
@@ -297,7 +301,7 @@ mod scope_dir_tests {
     #[test]
     fn an_explicit_scope_wins_and_is_kept_and_a_bad_one_is_refused() {
         let dir = tmp("store");
-        let s = SqliteStore::open(&dir.join("t.db"), &klatch::store::insecure_test_key()).unwrap();
+        let s = SqliteStore::open(&dir.join("t.db"), &crate::store::insecure_test_key()).unwrap();
         ensure_member_scope(&s, "alice", (None, Some(&dir.to_string_lossy())), 1).unwrap();
         let derived = s.member_scope("alice").unwrap().unwrap();
         ensure_member_scope(&s, "alice", (None, Some("/other")), 2).unwrap();

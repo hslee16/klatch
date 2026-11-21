@@ -8,15 +8,12 @@ mod args;
 mod codex;
 mod commands;
 mod consent;
-mod custody;
 mod doctor;
-mod identity;
 mod init;
 mod init_codex;
 mod judge;
 mod roles;
 mod run;
-mod scope;
 /// The scratch-directory guard of the library's store tests, compiled into the binary's tests too (#812).
 #[cfg(test)]
 #[allow(dead_code)]
@@ -29,11 +26,11 @@ use klatch::domain::{
     Asker, Claim, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json,
     judge_tool, patch_targets, render_board, render_hook, render_who,
 };
-use klatch::gateway::{
-    AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, Identity, LocalIdentity, PeerEvidence,
-    Transport,
+use klatch::gateway::{AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, Transport};
+use klatch::harness::PsTable;
+use klatch::member::{
+    Call, CliClock, Who, custody, db_path, discover_session, now, registry_and_domain,
 };
-use klatch::harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
 use klatch::store::SqliteStore;
 use klatch::store::areas::*;
 use std::path::PathBuf;
@@ -42,8 +39,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use args::*;
 use commands::*;
-use identity::*;
-use scope::*;
 
 #[derive(Parser)]
 #[command(name = "klatch", about = "Local agent rooms prototype", version = version_text())]
@@ -77,6 +72,29 @@ struct WhoFlags {
     /// session is a session by itself. Shown by `who` and the board, and it changes who may do what for no one.
     #[arg(long = "member-kind", global = true)]
     member_kind: Option<String>,
+}
+
+impl WhoFlags {
+    fn who(&self) -> Who {
+        Who {
+            as_member: self.as_member.clone(),
+            discover: self.discover,
+            codex: self.codex,
+            member_scope: self.member_scope.clone(),
+            member_kind: self.member_kind.clone(),
+        }
+    }
+}
+
+/// What the command says about its caller's standard input (see `klatch::member::Call`).
+fn call_of(cmd: &Cmd) -> Call {
+    Call {
+        hook: matches!(
+            cmd,
+            Cmd::Agents(AgentsCmd::Hook { .. }) | Cmd::Wait(WaitCmd::Wake { .. })
+        ),
+        session_end: matches!(cmd, Cmd::Agents(AgentsCmd::Hook { event: Some(e), .. }) if e == "SessionEnd"),
+    }
 }
 
 #[derive(Subcommand)]
@@ -232,32 +250,6 @@ enum Cmd {
     },
 }
 
-/// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when
-/// that is set, so time-dependent behaviour can be tested end to end; a real build has no such seam and ignores
-/// the variable (DESIGN section 26.5).
-fn now() -> i64 {
-    #[cfg(feature = "test-clock")]
-    if let Some(t) = std::env::var("KLATCH_NOW")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return t;
-    }
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
-}
-
-/// The clock the gateway uses: the same time as `now()`.
-struct CliClock;
-
-impl klatch::gateway::Clock for CliClock {
-    fn now(&self) -> i64 {
-        now()
-    }
-}
-
 /// The version text: the package version, then the wire protocol and the store schema this binary speaks (a store
 /// written by a newer schema is refused, so this says whether the binary can open yours). A test build says so too,
 /// which is how the bench knows it has the right binary.
@@ -276,15 +268,6 @@ pub(crate) fn version_text() -> &'static str {
             klatch::store::SCHEMA_VERSION
         )
     })
-}
-
-fn db_path() -> Result<PathBuf> {
-    let base = match std::env::var("KLATCH_HOME") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => PathBuf::from(std::env::var("HOME").context("HOME not set")?).join(".klatch"),
-    };
-    std::fs::create_dir_all(&base)?;
-    Ok(base.join("rooms.db"))
 }
 
 /// A hook that cannot write the store (it is read-only) must not fail every turn of a session: it says so in one
@@ -505,7 +488,7 @@ fn run_doctor() -> Result<()> {
 /// `klatch sessions`: one tab separated line per live session (pid, name, directory, session id); with `--all` also the
 /// records that are not live and why.
 fn run_sessions(all: bool) -> Result<()> {
-    let Some((registry, domain)) = identity::registry_and_domain() else {
+    let Some((registry, domain)) = registry_and_domain() else {
         bail!("HOME is not set, so the harness registry cannot be found");
     };
     let found = klatch::harness::list(&registry, &PsTable, domain);
@@ -621,56 +604,10 @@ fn run_init(options: &init::Options) -> Result<()> {
 
 /// Every command that acts as a member: find out which, settle its scope, then serve, stream or run the command.
 fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
-    let store = custody::open_store(&db_path()?)?;
-    let Some(caller) = identify(who, &cmd, &store)? else {
+    let Some(member) = klatch::member::open_member(&who.who(), call_of(&cmd))? else {
         return Ok(());
     };
-    // The scope a member works in: the one it declared (flag or KLATCH_SCOPE), else the one it already has, else
-    // for a coding session the repository it started in (DESIGN section 27).
-    let declared_scope = who
-        .member_scope
-        .clone()
-        .or_else(|| std::env::var("KLATCH_SCOPE").ok());
-    ensure_member_scope(
-        &store,
-        &caller.principal.member,
-        (declared_scope.as_deref(), caller.session_dir.as_deref()),
-        now(),
-    )?;
-    // what klatch observes about the member (its directory, the repository derived from it, a stable id); a note that
-    // fails must never stop the command
-    let _ = ensure_member_attrs(
-        &store,
-        &caller.principal.member,
-        caller
-            .session
-            .as_ref()
-            .map(|f| f.session_id.as_str())
-            .or(caller.stdin_session.as_deref()),
-        caller.session_dir.as_deref(),
-        now(),
-    );
-    let parent = pending_parent(&store, &caller);
-    let mut gateway = Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
-    // claims follow their holder's liveness (DESIGN section 29, #304); no home means no registry to probe
-    if let Some(home) = std::env::var_os("HOME") {
-        gateway = gateway.with_leases(klatch::gateway::SysLeaseSource::under_home(
-            std::path::Path::new(&home),
-        ));
-    }
-    let gateway = Rc::new(gateway);
-    if let Some(kind) = declared_kind(who.member_kind.as_deref()) {
-        declare_member_kind(&gateway, &caller.principal, &kind)?;
-    }
-    // the keys of the sealed labels this member's clearance reaches, and no others (#160)
-    let labels = gateway.sealed_labels_within(&caller.principal.member)?;
-    if !labels.is_empty() {
-        gateway.use_label_keys(custody::label_ring(&db_path()?, &labels)?);
-    }
-    if let Some(parent) = parent {
-        // a failure to note it must never stop the command
-        let _ = gateway.note_parent(&caller.principal, parent.as_deref());
-    }
+    let klatch::member::Member { gateway, caller } = member;
     match cmd {
         Cmd::Serve { stdio } => serve_stdio(&gateway, &caller.principal, stdio),
         Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),

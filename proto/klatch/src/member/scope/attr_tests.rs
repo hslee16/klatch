@@ -3,12 +3,13 @@
 //! an observation, not authority.
 
 use super::*;
+use crate::store::SqliteStore;
 use std::path::{Path, PathBuf};
 
 /// A scratch directory and its canonical path (the temp directory may be a symlink); the guard removes it on drop.
 struct Tmp {
     path: PathBuf,
-    _dir: crate::test_dir::TestDir,
+    _dir: crate::store::test_dir::TestDir,
 }
 
 impl std::ops::Deref for Tmp {
@@ -25,13 +26,13 @@ impl AsRef<Path> for Tmp {
 }
 
 fn tmp(tag: &str) -> Tmp {
-    let dir = crate::test_dir::TestDir::new(&format!("attrs-{tag}"));
+    let dir = crate::store::test_dir::TestDir::new(&format!("attrs-{tag}"));
     let path = std::fs::canonicalize(&*dir).unwrap();
     Tmp { path, _dir: dir }
 }
 
 fn store(root: &Path) -> SqliteStore {
-    SqliteStore::open(&root.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+    SqliteStore::open(&root.join("t.db"), &crate::store::insecure_test_key()).unwrap()
 }
 
 /// A repository laid out by hand (no git binary): `<root>/<name>/.git` with a source subdirectory.
@@ -95,7 +96,7 @@ fn a_repository_its_subdirectories_and_its_worktrees_share_one_repository_id() {
     );
     let other = id(&b).unwrap();
     assert_ne!(other, top, "another repository has its own id");
-    assert!(klatch::domain::valid_scope(&top));
+    assert!(crate::domain::valid_scope(&top));
 }
 
 #[test]
@@ -136,8 +137,10 @@ fn two_sessions_in_one_repository_are_two_members_that_share_a_repository_attrib
     let a = fake_repo(&root, "proj");
     let wt = fake_worktree(&root, &a, "wt", true);
     // same name from the harness, as two sessions of one project have
-    let m1 = crate::identity::ensure_session_member(&s, "sid-aaaa1111", Some("proj"), 1).unwrap();
-    let m2 = crate::identity::ensure_session_member(&s, "sid-bbbb2222", Some("proj"), 2).unwrap();
+    let m1 = crate::member::identity::ensure_session_member(&s, "sid-aaaa1111", Some("proj"), 1)
+        .unwrap();
+    let m2 = crate::member::identity::ensure_session_member(&s, "sid-bbbb2222", Some("proj"), 2)
+        .unwrap();
     assert_ne!(m1, m2, "same-named sessions stay distinct");
     ensure_member_attrs(&s, &m1, Some("sid-aaaa1111"), Some(&dir(&a)), 3).unwrap();
     ensure_member_attrs(&s, &m2, Some("sid-bbbb2222"), Some(&dir(&wt)), 4).unwrap();
@@ -165,12 +168,14 @@ fn a_rename_keeps_one_member_and_its_id_and_a_move_updates_only_the_attributes()
     let s = store(&root);
     let a = fake_repo(&root, "proj");
     let b = fake_repo(&root, "elsewhere");
-    let m = crate::identity::ensure_session_member(&s, "sid-aaaa1111", Some("proj"), 1).unwrap();
+    let m = crate::member::identity::ensure_session_member(&s, "sid-aaaa1111", Some("proj"), 1)
+        .unwrap();
     ensure_member_attrs(&s, &m, Some("sid-aaaa1111"), Some(&dir(&a)), 2).unwrap();
     let first = s.member_attrs(&m).unwrap().unwrap();
     // the harness renames the session: still the same member
     let again =
-        crate::identity::ensure_session_member(&s, "sid-aaaa1111", Some("renamed"), 3).unwrap();
+        crate::member::identity::ensure_session_member(&s, "sid-aaaa1111", Some("renamed"), 3)
+            .unwrap();
     assert_eq!(again, m);
     ensure_member_attrs(&s, &again, Some("sid-aaaa1111"), Some(&dir(&a)), 4).unwrap();
     assert_eq!(

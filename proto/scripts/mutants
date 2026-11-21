@@ -43,9 +43,9 @@ module_files() {
   case "$1" in
     gateway-policy) echo "src/gateway/guard.rs src/gateway/gateway/policy.rs src/gateway/gateway/checks.rs src/gateway/gateway/scrub.rs src/gateway/gateway/tripwire.rs src/gateway/gateway/crossing.rs src/session/policy.rs" ;;
     domain-security) echo "src/domain/scope.rs src/domain/text.rs src/domain/labels.rs src/domain/toolguard.rs src/domain/credentials.rs src/domain/claim_age.rs" ;;
-    gateway-claims) echo "src/gateway/gateway/claims.rs src/gateway/gateway/lease.rs src/gateway/gateway/roles.rs src/gateway/sys_lease.rs src/roles.rs src/scope.rs" ;;
+    gateway-claims) echo "src/gateway/gateway/claims.rs src/gateway/gateway/lease.rs src/gateway/gateway/roles.rs src/gateway/sys_lease.rs src/roles.rs src/member/scope.rs" ;;
     keys) echo "src/keys/*.rs" ;;
-    custody) echo "src/custody.rs src/identity.rs" ;;
+    custody) echo "src/member/custody.rs src/member/identity.rs" ;;
     store-crypto) echo "src/store/encrypt.rs src/store/sqlite/seal.rs src/store/sqlite/connect.rs" ;;
     store-claims) echo "src/store/sqlite/claims.rs src/store/sqlite/leases.rs src/store/sqlite/credentials.rs src/store/area/claims.rs src/store/area/credentials.rs src/store/sqlite/api/claims.rs src/store/sqlite/api/credentials.rs" ;;
     archive) echo "src/admin/archive.rs src/admin/keys.rs src/store/sqlite/archive.rs src/store/sqlite/backup.rs src/store/sqlite/integrity.rs" ;;

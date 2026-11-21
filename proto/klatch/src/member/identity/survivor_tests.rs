@@ -3,12 +3,12 @@
 //! registry under `$HOME`, so it runs in a child process of the test binary with a temporary `HOME`.
 
 use super::*;
-use klatch::harness::{ProcessTable, PsTable};
+use crate::harness::{ProcessTable, PsTable};
 use std::process::{Command, Stdio};
 
-fn store(tag: &str) -> crate::test_dir::In<SqliteStore> {
-    crate::test_dir::In::new(&format!("survivor-names-{tag}"), |dir| {
-        SqliteStore::open(&dir.join("klatch.db"), &klatch::store::insecure_test_key()).unwrap()
+fn store(tag: &str) -> crate::store::test_dir::In<SqliteStore> {
+    crate::store::test_dir::In::new(&format!("survivor-names-{tag}"), |dir| {
+        SqliteStore::open(&dir.join("klatch.db"), &crate::store::insecure_test_key()).unwrap()
     })
 }
 
@@ -97,23 +97,23 @@ struct Holders {
 }
 
 /// The required methods of the areas this store does not keep: nothing in the name search may reach them.
-impl klatch::store::areas::MessageStore for Holders {
-    fn join(&self, _: &str, _: &str, _: i64) -> klatch::domain::Result<()> {
+impl crate::store::areas::MessageStore for Holders {
+    fn join(&self, _: &str, _: &str, _: i64) -> crate::domain::Result<()> {
         unimplemented!()
     }
     fn post_as(
         &self,
-        _: &klatch::store::NewMessage,
+        _: &crate::store::NewMessage,
         _: i64,
-    ) -> klatch::domain::Result<klatch::domain::Posted> {
+    ) -> crate::domain::Result<crate::domain::Posted> {
         unimplemented!()
     }
     fn read(
         &self,
-        _: klatch::store::Seat,
+        _: crate::store::Seat,
         _: bool,
         _: i64,
-    ) -> klatch::domain::Result<Vec<klatch::domain::Message>> {
+    ) -> crate::domain::Result<Vec<crate::domain::Message>> {
         unimplemented!()
     }
     fn tail(
@@ -121,63 +121,58 @@ impl klatch::store::areas::MessageStore for Holders {
         _: &str,
         _: i64,
         _: usize,
-    ) -> klatch::domain::Result<Vec<klatch::domain::Message>> {
+    ) -> crate::domain::Result<Vec<crate::domain::Message>> {
         unimplemented!()
     }
-    fn head(&self, _: &str) -> klatch::domain::Result<i64> {
+    fn head(&self, _: &str) -> crate::domain::Result<i64> {
         unimplemented!()
     }
     fn advance_cursor(
         &self,
-        _: klatch::store::Seat,
-        _: klatch::store::Seq,
+        _: crate::store::Seat,
+        _: crate::store::Seq,
         _: i64,
-    ) -> klatch::domain::Result<()> {
+    ) -> crate::domain::Result<()> {
         unimplemented!()
     }
 }
-impl klatch::store::areas::AskStore for Holders {}
-impl klatch::store::areas::ClaimStore for Holders {
-    fn claim(&self, _: &klatch::store::ClaimRequest, _: i64) -> klatch::domain::Result<()> {
+impl crate::store::areas::AskStore for Holders {}
+impl crate::store::areas::ClaimStore for Holders {
+    fn claim(&self, _: &crate::store::ClaimRequest, _: i64) -> crate::domain::Result<()> {
         unimplemented!()
     }
-    fn release(&self, _: &str, _: &str, _: &str) -> klatch::domain::Result<()> {
+    fn release(&self, _: &str, _: &str, _: &str) -> crate::domain::Result<()> {
         unimplemented!()
     }
-    fn claims(&self, _: &str, _: i64) -> klatch::domain::Result<Vec<klatch::domain::Claim>> {
-        unimplemented!()
-    }
-}
-impl klatch::store::areas::ReviewStore for Holders {}
-impl klatch::store::areas::CredentialStore for Holders {}
-impl klatch::store::areas::PolicyStore for Holders {}
-impl klatch::store::areas::RoomStore for Holders {
-    fn features(&self) -> klatch::store::Features {
-        klatch::store::Features::none()
-    }
-    fn set_label_keys(&self, _: klatch::keys::LabelKeys) {
+    fn claims(&self, _: &str, _: i64) -> crate::domain::Result<Vec<crate::domain::Claim>> {
         unimplemented!()
     }
 }
-impl klatch::store::areas::MemberStore for Holders {
-    fn members(&self, _: &str) -> klatch::domain::Result<Vec<klatch::domain::MemberInfo>> {
+impl crate::store::areas::ReviewStore for Holders {}
+impl crate::store::areas::CredentialStore for Holders {}
+impl crate::store::areas::PolicyStore for Holders {}
+impl crate::store::areas::RoomStore for Holders {
+    fn features(&self) -> crate::store::Features {
+        crate::store::Features::none()
+    }
+    fn set_label_keys(&self, _: crate::keys::LabelKeys) {
         unimplemented!()
     }
-    fn rooms_of(&self, _: &str) -> klatch::domain::Result<Vec<String>> {
+}
+impl crate::store::areas::MemberStore for Holders {
+    fn members(&self, _: &str) -> crate::domain::Result<Vec<crate::domain::MemberInfo>> {
+        unimplemented!()
+    }
+    fn rooms_of(&self, _: &str) -> crate::domain::Result<Vec<String>> {
         unimplemented!()
     }
 
-    fn session_of_member(&self, member: &str) -> klatch::domain::Result<Option<String>> {
+    fn session_of_member(&self, member: &str) -> crate::domain::Result<Option<String>> {
         self.lookups.set(self.lookups.get() + 1);
         Ok(self.held.borrow().get(member).cloned())
     }
 
-    fn note_session(
-        &self,
-        session_id: &str,
-        member: &str,
-        _now: i64,
-    ) -> klatch::domain::Result<()> {
+    fn note_session(&self, session_id: &str, member: &str, _now: i64) -> crate::domain::Result<()> {
         self.held
             .borrow_mut()
             .insert(member.into(), session_id.into());
@@ -215,7 +210,7 @@ fn a_session_id_with_too_few_characters_to_lengthen_still_gets_a_name() {
     assert_eq!(a, "x-ab", "an existing name never changes");
     assert_ne!(b, a, "two sessions never share a member name (#767)");
     assert_ne!(b, "x");
-    assert!(klatch::domain::valid_name(&b), "{b}");
+    assert!(crate::domain::valid_name(&b), "{b}");
     assert_eq!(b_again, b, "the name is kept for the session's life");
 }
 
@@ -250,7 +245,7 @@ fn sessions_whose_ids_run_out_of_characters_never_share_a_name_even_when_many_co
     let unique: std::collections::HashSet<_> = names.iter().collect();
     assert_eq!(unique.len(), names.len(), "{names:?}");
     assert!(
-        names.iter().all(|n| klatch::domain::valid_name(n)),
+        names.iter().all(|n| crate::domain::valid_name(n)),
         "{names:?}"
     );
 }
@@ -307,20 +302,20 @@ fn found_at(pid: u32) -> Found {
 #[test]
 fn a_caller_whose_parent_was_already_noted_is_not_looked_up_again() {
     let s = store("noted");
-    klatch::store::MemberStore::note_parent(&*s, "kid", "boss", 1).unwrap();
+    crate::store::MemberStore::note_parent(&*s, "kid", "boss", 1).unwrap();
     let caller = caller_of("kid", Some(found_at(std::process::id())));
     assert_eq!(pending_parent(&s, &caller), None);
 }
 
 #[test]
 fn a_session_with_no_session_above_it_records_that_it_has_no_parent() {
-    let d = crate::test_dir::TestDir::new("survivor-parent-none");
+    let d = crate::store::test_dir::TestDir::new("survivor-parent-none");
     in_child("child_no_parent", &d);
 }
 
 #[test]
 fn a_session_started_from_another_session_names_that_session_as_its_parent() {
-    let d = crate::test_dir::TestDir::new("survivor-parent-boss");
+    let d = crate::store::test_dir::TestDir::new("survivor-parent-boss");
     in_child("child_parent_found", &d);
 }
 
@@ -328,7 +323,7 @@ fn in_child(name: &str, dir: &std::path::Path) {
     let out = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            &format!("identity::survivor_tests::{name}"),
+            &format!("member::identity::survivor_tests::{name}"),
             "--test-threads=1",
         ])
         .env_clear()

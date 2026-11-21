@@ -20,7 +20,7 @@ cargo-deny.
 | timing budgets | `klatch-bench --budgets proto/klatch-bench/baseline.json` |
 | bench history and drift (outside the repo; see the design item for #920) | `klatch-bench --record` after a run, then `klatch-bench --trend` (flags a metric over 1.5x baseline in each of the last 5 runs) |
 | Linux portability (glibc needs, musl static builds) | Actions, Linux portability, Run workflow; switch it on for pull requests at v1.0 |
-| Linux key custody (the Secret Service against a real gnome-keyring, the headless fallbacks, key latency) | `proto/linux-keys/run.sh` (Docker; `--bench` adds latency), or Actions, Linux keys, Run workflow; run it after changing `proto/klatch/src/keys`, `custody.rs` or `proto/linux-keys` |
+| Linux key custody (the Secret Service against a real gnome-keyring, the headless fallbacks, key latency) | `proto/linux-keys/run.sh` (Docker; `--bench` adds latency), or Actions, Linux keys, Run workflow; run it after changing `proto/klatch/src/keys`, `member/custody.rs` or `proto/linux-keys` |
 | release dry run (every build a release does, nothing published) | Actions, Release dry run, Run workflow |
 | fuzzing | `cargo +nightly fuzz run decode` in `proto/klatch` |
 
