@@ -99,7 +99,17 @@ step() {
 
 # #1101: a gate run once left about 50 orphaned /bin/sleep 3600 processes (the team watchdog) and fork failed machine-wide.
 # Count them now and fail at the end if the run added any (sleeps another session left earlier are not blamed on this run).
-sleepers() { pgrep -f '/bin/sleep 3600' 2> /dev/null | wc -l | tr -d ' '; }
+# Only sleeps in THIS run's process group count: an orphan keeps the process group of the script that started it, so a gate in
+# another worktree (a builder still on an older base that has the leak) cannot fail this run. (A sleep's environment is not
+# readable on macOS, so a marker variable cannot be used.)
+my_pgid="$(ps -o pgid= -p $$ | tr -d ' ')"
+sleepers() {
+  local pid n=0
+  for pid in $(pgrep -f '/bin/sleep 3600' 2> /dev/null); do
+    [ "$(ps -o pgid= -p "$pid" 2> /dev/null | tr -d ' ')" = "$my_pgid" ] && n=$((n + 1))
+  done
+  echo "$n"
+}
 sleepers_before="$(sleepers)"
 
 proto="$root/proto"
