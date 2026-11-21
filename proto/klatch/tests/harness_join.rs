@@ -258,6 +258,36 @@ fn serve_stdio_with_a_typed_name_is_the_generic_floor_even_inside_a_real_session
     assert!(text.contains("generic"), "{text}");
 }
 
+/// `klatch mcp --stdio` in a session, fed `initialize` and one `klatch_join` tool call on standard input.
+fn mcp_join(h: &Home, fake: &Path, name: Option<&str>, sid: &str) -> (bool, String) {
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#;
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"klatch_join","arguments":{"room":"gated"}}}"#;
+    let mcp = klatch_in_session(h, fake, name, "--discover mcp --stdio");
+    let cmd = format!("printf '%s\\n%s\\n' '{init}' '{call}' | {mcp}");
+    finish(session(h, fake, &cmd, sid))
+}
+
+#[test]
+fn mcp_stdio_in_a_genuine_claude_code_session_joins_a_room_that_requires_what_it_has() {
+    let h = Home::new();
+    require(&h, "gated", REQUIRE);
+    let fake = fake_home(&h);
+    let (_, text) = mcp_join(&h, &fake, None, "sess-mcp-1");
+    assert!(text.contains(r#""id":2"#), "{text}");
+    assert!(!text.contains(r#""isError":true"#), "{text}");
+    assert!(!text.contains("generic"), "{text}");
+}
+
+#[test]
+fn mcp_stdio_with_a_typed_name_is_the_generic_floor_even_inside_a_real_session() {
+    let h = Home::new();
+    require(&h, "gated", REQUIRE);
+    let fake = fake_home(&h);
+    let (_, text) = mcp_join(&h, &fake, Some("typed"), "sess-mcp-2");
+    assert!(text.contains(r#""isError":true"#), "{text}");
+    assert!(text.contains("generic"), "{text}");
+}
+
 #[test]
 fn serve_stdio_with_no_session_above_it_is_the_generic_floor() {
     let h = Home::new();
