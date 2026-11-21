@@ -213,6 +213,18 @@ role checks and live credential check. No new gateway method and no new `PeerEvi
 | the listener | `127.0.0.1` or `::1` only | `loopback::bind_loopback` refuses every other address, named, before the store is opened; the scan test `tests/no_network.rs` (one `TcpListener::bind`; `wire_http.rs` names no socket type) |
 | the limits | 16 KiB headers, 1 MiB bodies (413 before the body is read), a 5 second request deadline, a connection cap with `503`, a bounded inbox per session (`429`), the session's bounded output queue and stall limit (#147) | `tests/http_wire.rs`; a client that goes away ends its session at once |
 
+## `klatch-server http` MCP route (#1060)
+
+`POST /mcp` on the same listener: the nine MCP tools (the `McpServer` adapter over `Session::call`, so each is a wire method
+of the table above, run as the session's principal with the same guards). No new gateway method and no new evidence.
+
+| Evidence or path | What it gives | Check |
+|---|---|---|
+| `Authorization: Bearer TOKEN` with `X-Klatch-Member` on every `POST /mcp` | Verified, for a live credential | the same `authenticate` as the wire routes (`verify_credential`, then `LocalIdentity` over `PeerEvidence::Credential`), on every request and with no session to outlive it; every failure is the same `401 unauthorized`; the caller is never an argument (`member` and `sender` are ignored); `tests/mcp_http.rs` (matrix, revoked credential, identity of a post) |
+| `Origin` | a page on another origin is `403` | after the credential; only `http` and `https` on `127.0.0.1`, `localhost` or `[::1]` pass; `tests/mcp_http.rs` |
+| `initialize` | tools only; never the channel capability | `with_channel` is not called over HTTP; `tests/mcp_http.rs` |
+| the limits | the listener's: headers, bodies (413 before read), deadline, connection cap, loopback only | `tests/mcp_http.rs` |
+
 ## Gaps found and ticketed
 
 | Gap | Ticket |

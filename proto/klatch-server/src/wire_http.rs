@@ -193,9 +193,9 @@ struct Entry {
 type Sessions = Arc<Mutex<HashMap<String, Entry>>>;
 
 /// What every connection thread shares.
-struct Shared {
-    backend: SharedBackend,
-    config: SessionConfig,
+pub(crate) struct Shared {
+    pub(crate) backend: SharedBackend,
+    pub(crate) config: SessionConfig,
     sessions: Sessions,
 }
 
@@ -224,7 +224,7 @@ fn bearer_token(value: &str) -> Option<&str> {
 }
 
 /// The verified principal a request's credential names, or `None` for every way of not having one.
-fn authenticate(backend: &SharedBackend, head: &Head) -> Option<Principal> {
+pub(crate) fn authenticate(backend: &SharedBackend, head: &Head) -> Option<Principal> {
     let member = head.header(MEMBER_HEADER)?;
     let token = bearer_token(head.header("authorization")?)?;
     backend.verify_credential(member, token).ok()?;
@@ -236,7 +236,7 @@ fn authenticate(backend: &SharedBackend, head: &Head) -> Option<Principal> {
         .ok()
 }
 
-fn unauthorized() -> Response {
+pub(crate) fn unauthorized() -> Response {
     Response::new(401, "unauthorized")
 }
 
@@ -249,7 +249,12 @@ fn reply(stream: &mut Stream, response: &Response) {
     if response.status == 0 {
         return;
     }
-    let _ = stream.write_all(&response.bytes());
+    reply_bytes(stream, &response.bytes());
+}
+
+/// [`reply`] for an answer already built (the MCP route's JSON answers).
+pub(crate) fn reply_bytes(stream: &mut Stream, bytes: &[u8]) {
+    let _ = stream.write_all(bytes);
     let _ = stream.flush();
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let until = Instant::now() + Duration::from_secs(1);
@@ -293,6 +298,11 @@ fn serve_connection(mut stream: Stream, shared: &Shared) {
             let response = post_frames(&mut stream, head, first, &limits, deadline, shared);
             reply(&mut stream, &response);
         }
+        ("POST", crate::mcp_http::PATH) => {
+            let bytes = crate::mcp_http::post(&mut stream, head, first, &limits, deadline, shared);
+            crate::mcp_http::finish(&mut stream, &bytes);
+        }
+        (_, crate::mcp_http::PATH) => reply(&mut stream, &method_not_allowed("POST")),
         (_, STREAM_PATH) => reply(&mut stream, &method_not_allowed("GET")),
         (_, FRAMES_PATH) => reply(&mut stream, &method_not_allowed("POST")),
         _ => reply(&mut stream, &Response::new(404, "not found")),
@@ -451,9 +461,10 @@ pub fn run(opts: &Options) -> Result<()> {
     let listener = loopback::bind_loopback(&opts.listen)?;
     crate::daemon::install_signal_handlers();
     eprintln!(
-        "klatch-server: http listening on {} (loopback only, up to {} connections), GET {STREAM_PATH} and POST {FRAMES_PATH}",
+        "klatch-server: http listening on {} (loopback only, up to {} connections), GET {STREAM_PATH}, POST {FRAMES_PATH} and POST {} (MCP)",
         listener.local_addr()?,
-        opts.max_connections
+        opts.max_connections,
+        crate::mcp_http::PATH
     );
     let shared = Shared {
         backend: gateway.session_backend(),
