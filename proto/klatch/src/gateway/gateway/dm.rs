@@ -15,6 +15,77 @@ impl<S: Store> Gateway<S> {
         }))
     }
 
+    /// The other member of `room` when it is a direct message the gateway made and `who` is one of its two members
+    /// (#1192). The name comes from the policy record `dm` wrote, and is checked again here.
+    pub(super) fn dm_peer(&self, who: &Principal, room: &str) -> Result<Option<String>> {
+        Ok(self.dm_pair(room)?.and_then(|(a, b)| {
+            let peer = if a == who.member {
+                b
+            } else if b == who.member {
+                a
+            } else {
+                return None;
+            };
+            valid_name(&peer).then_some(peer)
+        }))
+    }
+
+    /// Whether the caller's newly shown `shown` messages carry the Nth message of a long exchange with one peer in a
+    /// shared room (#1190), and with whom: the peer and the length of the exchange.
+    ///
+    /// The exchange is the newest run of messages sent by only two members. It needs a room of three or more, both
+    /// members in the run, and no dm between them yet. Nothing is stored: the nudge is for the digest that first shows
+    /// the caller a message of the peer's at or past the threshold. A hook shows each message once, so that happens
+    /// once; a third member's message ends the run, so a later exchange counts afresh. The read is the room's newest
+    /// `DM_NUDGE_WINDOW` messages.
+    pub(super) fn long_exchange(
+        &self,
+        who: &Principal,
+        room: &str,
+        shown: &[Message],
+    ) -> Result<Option<(String, usize)>> {
+        use crate::domain::{DM_NUDGE_MESSAGES as N, DM_NUDGE_WINDOW as WINDOW};
+        if shown.is_empty() || self.store.members(room)?.len() < 3 {
+            return Ok(None);
+        }
+        let head = self.store.head(room)?;
+        let after = (head - WINDOW as i64).max(0);
+        let rows = Self::without_canary(self.store.tail(room, after, WINDOW)?);
+        let Some(last) = rows.last() else {
+            return Ok(None);
+        };
+        let first_other = rows.iter().rev().find(|m| m.sender != last.sender);
+        let Some(other) = first_other.map(|m| m.sender.as_str()) else {
+            return Ok(None);
+        };
+        let pair = [last.sender.as_str(), other];
+        let run: Vec<&Message> = rows
+            .iter()
+            .rev()
+            .take_while(|m| pair.contains(&m.sender.as_str()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if run.len() < N || !pair.contains(&who.member.as_str()) {
+            return Ok(None);
+        }
+        let peer = if pair[0] == who.member {
+            pair[1]
+        } else {
+            pair[0]
+        };
+        if !valid_name(peer) || self.dm_pair(&dm_room(&who.member, peer))?.is_some() {
+            return Ok(None);
+        }
+        // the first message of the peer at or past the Nth place of the run: the one that crosses the threshold for
+        // this member, since its own messages are never shown to it
+        let crossing = run.iter().skip(N - 1).find(|m| m.sender == peer);
+        Ok(crossing
+            .filter(|m| shown.iter().any(|s| s.seq == m.seq))
+            .map(|_| (peer.to_string(), run.len())))
+    }
+
     /// Only the two members use a direct-message room, and a name made like one that `dm` did not make is reserved.
     pub(super) fn check_dm(&self, who: &Principal, room: &str) -> Result<()> {
         match self.dm_pair(room)? {

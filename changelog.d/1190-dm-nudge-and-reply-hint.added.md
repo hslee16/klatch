@@ -1,0 +1,1 @@
+- The hook digest suggests `klatch dm NAME` once an exchange of 4 or more messages between the same two members fills a shared room of three or more with no dm between them yet, from a fixed line of names, a count and the room; a dm room's digest names the peer and the reply command, and the wake pointer says `dm from NAME` for a dm (#1190, #1192).
