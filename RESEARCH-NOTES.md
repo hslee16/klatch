@@ -1995,3 +1995,44 @@ Honest notes. The four harnesses passed on their first run, so the plants are wh
 bytes that mix characters are still only covered by the 12 byte and the one-bad-byte harnesses together, which is not
 the same as all mixed strings of that length. The valid_scope line that refuses `*` explicitly is redundant with the
 alphabet (#664) and is kept with a comment; a plant that removes it still cannot be caught.
+
+## 54. Agent-tool subagents against launched sessions, and what the Agent tool gives a coordinator (desk research, 2026-11-21, tickets #581, #582, #583)
+
+Question: for a team of coding agents, how do Agent-tool subagents differ from separate `claude -p` sessions started by `proto/scripts/team`, and what does the Agent tool offer a coordinator that klatch should or should not duplicate?
+
+Method and limit: this section is read from sections 1 to 9 (documentation, marked DOCUMENTED there), section 50 (a live run of launched sessions) and the dogfooding tickets named below. It adds NO new live run. The questions of #581 that need one (what a subagent inherits, the exact SubagentStart input, whether a hook can inject context at start) stay open, see 54.4.
+
+### 54.1 Subagents against launched sessions (answers the comparison asked in #582)
+
+| Axis | Agent-tool subagent | Launched session (`proto/scripts/team`, section 50) |
+|---|---|---|
+| Identity | shares the parent's session id; under `--discover` it resolved to the parent's member until #503, which now refuses it when it is its own `claude` process and demands `KLATCH_NAME`; an in-process subagent is still not detected (#1152) | its own member through a worker credential (`KLATCH_IDENTITY_FILE`), verified (section 50.8) |
+| Hook delivery | no SessionStart text (#491); hooks fired by its tool calls carry the parent's session id and an agent id and are silent (#493, #505) | every hook runs with the worker's own settings; mail arrives at tool boundaries (50.3) |
+| Waiting for mail | none of its own | `klatch wait` inside the turn; a finished turn cannot be woken (#591), so `team resume` relaunches on unread mail (#1011) |
+| Cost control | the parent's budget, no per-agent cap known | `--max-budget-usd` per worker, `TEAM_MAX_TOTAL_USD` team cap, wall clock watchdog (#593) |
+| Isolation | optional `isolation: worktree` (section 6), restricted shell seen in dogfooding | own worktree and own settings by construction |
+| Result to the coordinator | arrives only when it finishes (#583) | a room post and a log file; the board and claims show live state |
+| Cost per session | not measured | about $0.003 and 9 s for a trivial Haiku task (50.3) |
+
+### 54.2 What the Agent tool gives a coordinator (answers #583)
+
+DOCUMENTED (sections 1, 2, 6, 8): `SendMessage` resumes a finished agent with its transcript and takes `notify_when_idle`; `ListAgents` shows subagents, teammates and sessions with a busy, idle or shell status; agent teams add a shared task list, teammate messaging, idle hooks and a lead; running agents hold a worktree lock. OBSERVED while coordinating about 20 subagents (the ticket): results only at finish, no live view of what an agent is doing except its room posts, repeated shell restrictions, two agents on one design item number, worktrees vanishing mid-task. Not found in the notes: a cancel or budget control per subagent.
+
+### 54.3 Which of those klatch already provides, and which was klatch's to prevent
+
+| Need | In klatch today |
+|---|---|
+| Live status | status words in the room (`working:`, `parked:`, `finished:`) and the board |
+| Work ownership | claims with leases, file and ticket scopes (section 51); append-only sharing (#533); renewal on hooks |
+| Work requests | asks |
+| Delivery proof | receipts (#546) |
+| Duplicate design item numbers | design fragments named by ticket (#502, #807) |
+| Hook echo and empty lobby surprises | #493, #500, fixed |
+| Router and facilitator roles | #189, #190 |
+| Launch, budget, relaunch | `proto/scripts/team` (#593, #1011) |
+
+Ranked remaining features, each already ticketed or noted: (1) a signal that tells an in-process subagent from its parent (#1152, blocked on 54.4); (2) one claim deadlock refusal with no cycle (#543, open); (3) a coordinator that assigns tickets from a backlog: not built, and the human has so far played it; no ticket is filed here because #189 and #190 closed without deciding it and the decision belongs to the human.
+
+### 54.4 Not done, needs a real run
+
+A live run on the installed Claude Code, throwaway settings, isolated KLATCH_HOME, recording: the standard input of SubagentStart and SubagentStop hooks, whether `agent_id` or any agent variable reaches a command run by an in-process subagent (this decides #1152), what a subagent inherits (settings, hooks, environment, permission mode, MCP), and subagent lifetime against the parent turn. A subagent run needs a model session, which the launched builders do not start.

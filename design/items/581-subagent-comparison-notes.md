@@ -1,0 +1,2 @@
+Subagents against launched sessions: a desk comparison in RESEARCH-NOTES 54 (#581, #582, #583; no schema change; 2026-11-21).
+The notes compare Agent-tool subagents with `proto/scripts/team` sessions on identity, hooks, waiting, cost, isolation and observability, and list what klatch already provides a coordinator. It is desk research from sections 1 to 9 and 50; the live subagent run that #581 asks for (hook inputs, inheritance, whether an in-process subagent sees an agent id) is not done and decides #1152.
