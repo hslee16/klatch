@@ -581,24 +581,33 @@ pub struct Intake<'a> {
     secret: Secret,
     queue: &'a Queue,
     tracker: Tracker,
-    deliveries: Deliveries,
+    deliveries: Recent<String>,
+    contents: Recent<[u8; 32]>,
 }
 
-/// Recent delivery ids, oldest first, bounded by [`DELIVERY_IDS`].
-#[derive(Default)]
-struct Deliveries {
-    order: std::collections::VecDeque<String>,
-    seen: std::collections::HashSet<String>,
+/// A bounded set of recent keys, oldest forgotten first, at most [`DELIVERY_IDS`] long.
+struct Recent<K: std::hash::Hash + Eq + Clone> {
+    order: std::collections::VecDeque<K>,
+    seen: std::collections::HashSet<K>,
 }
 
-impl Deliveries {
-    fn contains(&self, id: &str) -> bool {
-        self.seen.contains(id)
+impl<K: std::hash::Hash + Eq + Clone> Default for Recent<K> {
+    fn default() -> Self {
+        Recent {
+            order: Default::default(),
+            seen: Default::default(),
+        }
+    }
+}
+
+impl<K: std::hash::Hash + Eq + Clone> Recent<K> {
+    fn contains(&self, key: &K) -> bool {
+        self.seen.contains(key)
     }
 
-    fn remember(&mut self, id: &str) {
-        if self.seen.insert(id.to_string()) {
-            self.order.push_back(id.to_string());
+    fn remember(&mut self, key: &K) {
+        if self.seen.insert(key.clone()) {
+            self.order.push_back(key.clone());
             while self.order.len() > DELIVERY_IDS {
                 if let Some(old) = self.order.pop_front() {
                     self.seen.remove(&old);
@@ -606,6 +615,17 @@ impl Deliveries {
             }
         }
     }
+}
+
+/// The identity of a signed request apart from its unsigned delivery id: SHA-256 over the event name and the body (the
+/// HMAC covers the body only, so an id header can be swapped by anyone who holds a captured request, #1103).
+fn content_key(event: &str, body: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    let mut h = Sha256::new();
+    h.update(event.as_bytes());
+    h.update([0]);
+    h.update(body);
+    h.finalize().into()
 }
 
 /// A usable delivery id: GitHub sends a GUID; anything long or with odd characters is not cached.
@@ -621,7 +641,8 @@ impl<'a> Intake<'a> {
             secret,
             queue,
             tracker: Tracker::default(),
-            deliveries: Deliveries::default(),
+            deliveries: Recent::default(),
+            contents: Recent::default(),
         }
     }
 }
@@ -651,18 +672,27 @@ impl Handler for Intake<'_> {
         }
         // the id is looked at only after the signature check; a repeat is acknowledged and dropped
         let delivery = delivery_id(request.head.header("x-github-delivery"));
-        if delivery.is_some_and(|id| self.deliveries.contains(id)) {
+        if delivery.is_some_and(|id| self.deliveries.contains(&id.to_string())) {
             return Response::new(200, "duplicate");
         }
         let Some(event) = request.head.header("x-github-event") else {
             return Response::new(400, "missing event header");
         };
+        // the same event and body under a fresh id is a replay of a captured signed request, or GitHub resending: the
+        // notice it would make was already made, so it is acknowledged and dropped
+        let content = content_key(event, &request.body);
+        if self.contents.contains(&content) {
+            return Response::new(200, "duplicate");
+        }
         let Ok(body) = serde_json::from_slice::<Value>(&request.body) else {
             return Response::new(400, "body is not JSON");
         };
         let outcome = translate(event, &body, &mut self.tracker);
-        if let (Ok(_), Some(id)) = (&outcome, delivery) {
-            self.deliveries.remember(id);
+        if outcome.is_ok() {
+            self.contents.remember(&content);
+            if let Some(id) = delivery {
+                self.deliveries.remember(&id.to_string());
+            }
         }
         match outcome {
             Ok(Outcome::Notice(n)) => {
