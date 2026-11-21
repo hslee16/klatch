@@ -101,6 +101,7 @@ mod grant;
 mod guarded;
 mod live;
 mod mute;
+mod recheck;
 mod replay;
 mod stuck;
 mod wire;

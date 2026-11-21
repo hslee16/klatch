@@ -125,6 +125,9 @@ pub struct Session<'a, B: Backend + ?Sized> {
     config: &'a SessionConfig,
     /// The transport fixed the member (an ssh forced command, #107): a request that claims an identity is refused.
     fixed_member: bool,
+    /// A look at what the session is bound to (#1083, an ssh key mapping): taken before each batch of requests and on
+    /// every tick; an error ends the session with that refusal.
+    recheck: Option<&'a dyn Fn() -> crate::domain::Result<()>>,
     /// Whether the session sends `hello` itself (a transport that already told the peer who it is turns this off).
     greet: bool,
 }
@@ -144,6 +147,7 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             who,
             config,
             fixed_member: false,
+            recheck: None,
             greet: true,
         }
     }
@@ -154,6 +158,24 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
     pub fn fixed_member(mut self) -> Self {
         self.fixed_member = true;
         self
+    }
+
+    /// Look at `check` before each batch of requests and on every tick of an idle session (#1083). When it returns an
+    /// error the requests that arrived are answered with that error, a refusal naming no request is sent, and the
+    /// session ends. An ssh session uses it so that unmapping its key ends it; `Busy` is a store that was momentarily
+    /// locked and is looked at again on the next tick.
+    #[must_use]
+    pub fn rechecked(mut self, check: &'a dyn Fn() -> crate::domain::Result<()>) -> Self {
+        self.recheck = Some(check);
+        self
+    }
+
+    /// The reason the session's binding is gone, if it is.
+    fn binding_lost(&self) -> Option<crate::domain::Error> {
+        match self.recheck?() {
+            Err(crate::domain::Error::Busy(_)) | Ok(()) => None,
+            Err(e) => Some(e),
+        }
     }
 
     /// Do not send `hello` when the session starts: the transport already sent one and settled the principal.
@@ -204,6 +226,17 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             let forced = !items.is_empty() || !open;
             // an output that has gone away ends the session even when it has nothing to send (#146)
             out.healthy()?;
+            if let Some(lost) = self.binding_lost() {
+                for item in items {
+                    if let Ok(ClientFrame::Request { id, .. }) = item {
+                        out.send_all(&failure(id, &lost))?;
+                    }
+                }
+                if let Some(frame) = stream_refusal(&lost) {
+                    out.send(&frame)?;
+                }
+                return Ok(());
+            }
             for item in items {
                 self.dispatch(item, &mut subs, out)?;
             }
