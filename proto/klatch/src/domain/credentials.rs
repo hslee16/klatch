@@ -259,7 +259,7 @@ fn base64_decode(v: &str) -> Option<Vec<u8>> {
 }
 
 fn hex_decode(v: &str) -> Option<Vec<u8>> {
-    if v.len() % 2 != 0 || !v.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !v.len().is_multiple_of(2) || !v.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
     (0..v.len())
