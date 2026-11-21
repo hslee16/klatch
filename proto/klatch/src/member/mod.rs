@@ -28,6 +28,15 @@ pub use identity::{Caller, discover_session, peer_runs_claude_code, registry_and
 /// that is set, so time-dependent behaviour can be tested end to end; a real build has no such seam and ignores
 /// the variable (DESIGN section 26.5).
 pub fn now() -> i64 {
+    // `KLATCH_NOW_FILE` names a file holding the time, read at every call, so a test can move the clock of a process
+    // that is already running (#1051); it wins over `KLATCH_NOW`.
+    #[cfg(feature = "test-clock")]
+    if let Some(t) = std::env::var_os("KLATCH_NOW_FILE")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|v| v.trim().parse().ok())
+    {
+        return t;
+    }
     #[cfg(feature = "test-clock")]
     if let Some(t) = std::env::var("KLATCH_NOW")
         .ok()
