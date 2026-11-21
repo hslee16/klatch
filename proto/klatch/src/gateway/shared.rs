@@ -77,7 +77,8 @@ impl SharedGateway {
                     return;
                 }
                 Err(_) => {
-                    let _ = ready_tx.send(Err(Error::Backend("building the gateway panicked".into())));
+                    let _ =
+                        ready_tx.send(Err(Error::Backend("building the gateway panicked".into())));
                     return;
                 }
             };
@@ -104,7 +105,9 @@ impl SharedGateway {
                 let _ = thread.join();
                 Err(e)
             }
-            Err(_) => Err(Error::Backend("the gateway thread ended before it was ready".into())),
+            Err(_) => Err(Error::Backend(
+                "the gateway thread ended before it was ready".into(),
+            )),
         }
     }
 
@@ -430,10 +433,12 @@ impl Transport for SharedTransport {
     /// The subscription lives with the caller and goes to the owner for the length of one poll.
     fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch> {
         let mut moved = std::mem::replace(subscription, Subscription::new("", 0, 0));
-        let r = self.gateway.call((&self.principal, &self.harness), move |t| {
-            let batch = t.poll(&mut moved, max);
-            (batch, moved)
-        });
+        let r = self
+            .gateway
+            .call((&self.principal, &self.harness), move |t| {
+                let batch = t.poll(&mut moved, max);
+                (batch, moved)
+            });
         match r {
             Ok((batch, back)) => {
                 *subscription = back;

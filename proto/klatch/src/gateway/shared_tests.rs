@@ -62,7 +62,10 @@ fn threads_posting_through_one_handle_get_dense_unique_seqs_and_lose_nothing() {
     assert_eq!(bodies.len(), 200, "no message lost or duplicated");
     for m in &all {
         let sender = m.body.split('-').next().unwrap();
-        assert_eq!(m.sender, sender, "each post is attributed to its own handle");
+        assert_eq!(
+            m.sender, sender,
+            "each post is attributed to its own handle"
+        );
     }
 }
 
