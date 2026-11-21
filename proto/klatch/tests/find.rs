@@ -52,6 +52,24 @@ fn find_lists_shared_keywords_and_skips_unanswered_asks() {
 }
 
 #[test]
+fn find_shows_how_the_asker_closed_an_answered_ask() {
+    let h = room_with_an_answer();
+    let plain = h.ok("carol", &["find", "lobby", "gateway listen"]);
+    assert!(!plain.contains("closed"), "{plain}");
+    h.ok("alice", &["post", "lobby", "closed #1 unresolved"]);
+    let shown = h.ok("carol", &["find", "lobby", "gateway listen"]);
+    assert!(shown.contains("closed unresolved"), "{shown}");
+    h.ok("alice", &["post", "lobby", "reopen #1: wrong port"]);
+    h.ok("bob", &["post", "lobby", "answer to #1: 9000"]);
+    h.ok("alice", &["post", "lobby", "closed #1 ok"]);
+    let shown = h.ok("carol", &["find", "lobby", "gateway listen"]);
+    assert!(
+        shown.contains("closed ok") && shown.contains("9000"),
+        "{shown}"
+    );
+}
+
+#[test]
 fn find_moves_no_cursor_and_posts_nothing() {
     let h = room_with_an_answer();
     h.ok("carol", &["join", "lobby"]);
