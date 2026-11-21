@@ -22,7 +22,9 @@
 //! refused), and then the body.
 //!
 //! The limits and the connection cap are the listener's: a `tools/call` of `klatch_wait` holds its connection (one of
-//! `--max-connections`) for up to its bound, 55 seconds at most.
+//! `--max-connections`) for up to its bound, 55 seconds at most, unless the server is stopping or the client hangs up:
+//! the wait checks both between polls (about 100 ms) and then ends, so neither SIGTERM nor a departed client is held
+//! up by it (#1125).
 
 use crate::loopback::{self, Head, Limits, Response, Stream};
 use crate::wire_http::{Shared, authenticate, reply_bytes, unauthorized};
@@ -30,7 +32,8 @@ use klatch::session::Session;
 use klatch::session::mcp::{MCP_VERSION, McpServer};
 use serde_json::{Value, json};
 use std::io::Cursor;
-use std::time::Instant;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 pub const PATH: &str = "/mcp";
 
@@ -94,6 +97,14 @@ fn instructions(member: &str) -> String {
     )
 }
 
+/// Whether the client has closed its end: a peek that reads end-of-file. The peek waits at most a millisecond (the
+/// request has been read, and the reply sets its own timeouts), consumes nothing, and an empty socket or pending bytes
+/// (a pipelined request) both mean the client is still there.
+fn peer_closed(stream: &Stream) -> bool {
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1)));
+    matches!(stream.peek(&mut [0u8; 1]), Ok(0))
+}
+
 /// `POST /mcp`: the whole exchange, the bytes to send back.
 pub fn post(
     stream: &mut Stream,
@@ -142,7 +153,12 @@ pub fn post(
     // the adapter reads one message per line: the compact form of the message is exactly one
     let line = format!("{message}\n");
     let session = Session::over(&shared.backend, &who, &shared.config);
-    let server = McpServer::new(&session, instructions(&who.member));
+    // a wait ends early when the server is stopping or the client has hung up (#1125)
+    let watch = stream.try_clone().ok();
+    let cancel = move || {
+        crate::daemon::STOP.load(Ordering::SeqCst) || watch.as_ref().is_some_and(peer_closed)
+    };
+    let server = McpServer::new(&session, instructions(&who.member)).with_cancel(&cancel);
     let mut answer = Vec::new();
     if server
         .serve(Cursor::new(line.into_bytes()), &mut answer)

@@ -779,3 +779,72 @@ fn a_wait_asked_for_too_long_is_a_json_rpc_error_and_a_short_one_times_out() {
     );
     assert_eq!(r["isError"], false, "{r}");
 }
+
+/// Send a `klatch_wait` of the longest bound and give the server a moment to be inside it. The connection is returned
+/// open: the caller decides how it ends.
+fn start_long_wait(addr: SocketAddr, member: &str, token: &str) -> TcpStream {
+    let b = bearer(token);
+    let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"klatch_wait","arguments":{"rooms":["lobby"],"timeout":55}}})
+    .to_string();
+    let s = send_request(
+        addr,
+        "POST",
+        MCP,
+        &[
+            ("X-Klatch-Member", member),
+            ("Authorization", b.as_str()),
+            ("Content-Type", "application/json"),
+            ("Accept", "application/json"),
+        ],
+        body.as_bytes(),
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    s
+}
+
+#[test]
+fn a_client_that_leaves_mid_wait_frees_its_connection_slot_promptly() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let t = issue_credential(&dir, "w-1");
+    let s = Server::started(&dir, &["--max-connections", "1"]);
+    let wait = start_long_wait(s.addr, "w-1", &t);
+    // the only slot is held by the wait
+    assert_eq!(mcp_post(s.addr, "w-1", &t, &[], PING).status, 503);
+    drop(wait);
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let r = mcp_post(s.addr, "w-1", &t, &[], PING);
+        if r.status == 200 {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "the slot of the departed client was not freed within 5 s (last status {})",
+            r.status
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn sigterm_stops_the_server_promptly_in_the_middle_of_a_wait() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let t = issue_credential(&dir, "w-1");
+    let mut s = Server::started(&dir, &[]);
+    let _wait = start_long_wait(s.addr, "w-1", &t);
+    s.signal(libc::SIGTERM);
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if s.child.try_wait().unwrap().is_some() {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "the server was still running 5 s after SIGTERM, inside a wait"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
