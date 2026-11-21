@@ -20,6 +20,9 @@ use std::time::{Duration, Instant};
 #[path = "../../klatch/tests/client_scenario/mod.rs"]
 mod client_scenario;
 
+/// What the hello says of a member here: a typed name is unattributed.
+pub const ATTRIBUTION: &str = "unattributed";
+
 static N: AtomicU32 = AtomicU32::new(0);
 /// Issuing a credential reads the environment of this process: one test at a time may set it.
 static ENV: Mutex<()> = Mutex::new(());

@@ -343,6 +343,61 @@ pub fn closed_target(body: &str) -> Option<i64> {
     number(body.strip_prefix("closed #")?).map(|(n, _)| n)
 }
 
+/// How the asker closed an ask (#232): a bare `closed #N` says nothing about the result, `closed #N ok` says the
+/// answer served, `closed #N unresolved` says the ask was given up without a usable answer. Every one ends the ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseOutcome {
+    Unspecified,
+    Ok,
+    Unresolved,
+}
+
+impl CloseOutcome {
+    /// The word shown for it, `closed` for a bare close.
+    pub fn word(self) -> &'static str {
+        match self {
+            CloseOutcome::Unspecified => "closed",
+            CloseOutcome::Ok => "closed ok",
+            CloseOutcome::Unresolved => "closed unresolved",
+        }
+    }
+}
+
+/// The outcome in a `closed #<N>` body: the first word after the number, lower-cased, without trailing
+/// punctuation. Any other word, or none, is `Unspecified` and still a close.
+pub fn close_outcome(body: &str) -> Option<CloseOutcome> {
+    let (_, after) = number(body.strip_prefix("closed #")?)?;
+    if !after.starts_with(char::is_whitespace) {
+        return Some(CloseOutcome::Unspecified);
+    }
+    let word = after
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .to_ascii_lowercase();
+    Some(match word.as_str() {
+        "ok" => CloseOutcome::Ok,
+        "unresolved" => CloseOutcome::Unresolved,
+        _ => CloseOutcome::Unspecified,
+    })
+}
+
+/// How the asker last closed `ask` in `messages`, if a close of theirs is newer than their latest reopen.
+pub fn latest_close(messages: &[Message], ask: &Message) -> Option<CloseOutcome> {
+    let latest_reopen = messages
+        .iter()
+        .filter(|m| m.sender == ask.sender && reopen_target(&m.body) == Some(ask.seq))
+        .map(|m| m.seq)
+        .max();
+    messages
+        .iter()
+        .filter(|m| m.sender == ask.sender && closed_target(&m.body) == Some(ask.seq))
+        .filter(|m| latest_reopen.is_none_or(|r| m.seq > r))
+        .max_by_key(|m| m.seq)
+        .and_then(|m| close_outcome(&m.body))
+}
+
 /// The ask number in `reopen #<N>:` at the start of a body.
 pub fn reopen_target(body: &str) -> Option<i64> {
     let (n, after) = number(body.strip_prefix("reopen #")?)?;
@@ -500,6 +555,49 @@ mod tests {
         for (text, expected) in cases {
             assert_eq!(closed_target(text), expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_close_names_its_outcome() {
+        for (text, expected) in [
+            ("closed #3", Some(CloseOutcome::Unspecified)),
+            ("closed #3 thanks", Some(CloseOutcome::Unspecified)),
+            ("closed #3 ok", Some(CloseOutcome::Ok)),
+            ("closed #3 OK.", Some(CloseOutcome::Ok)),
+            ("closed #3 ok thanks", Some(CloseOutcome::Ok)),
+            ("closed #3 unresolved", Some(CloseOutcome::Unresolved)),
+            (
+                "closed #3 unresolved: nobody knew",
+                Some(CloseOutcome::Unresolved),
+            ),
+            ("closed #3 okay", Some(CloseOutcome::Unspecified)),
+            ("closed #3ok", Some(CloseOutcome::Unspecified)),
+            ("closed #x ok", None),
+            ("not closed #3 ok", None),
+        ] {
+            assert_eq!(close_outcome(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn every_close_outcome_still_ends_the_ask() {
+        for body in ["closed #1", "closed #1 ok", "closed #1 unresolved"] {
+            let m = [msg(1, "asker", "seeking: x", 5), msg(2, "asker", body, 6)];
+            assert!(open_asks(&m, &[]).is_empty(), "{body}");
+        }
+    }
+
+    #[test]
+    fn latest_close_is_the_askers_newest_close_after_any_reopen() {
+        let ask = msg(1, "asker", "seeking: x", 5);
+        let mut m = vec![ask.clone(), msg(2, "asker", "closed #1 unresolved", 6)];
+        assert_eq!(latest_close(&m, &ask), Some(CloseOutcome::Unresolved));
+        m.push(msg(3, "other", "closed #1 ok", 7));
+        assert_eq!(latest_close(&m, &ask), Some(CloseOutcome::Unresolved));
+        m.push(msg(4, "asker", "reopen #1: try again", 8));
+        assert_eq!(latest_close(&m, &ask), None);
+        m.push(msg(5, "asker", "closed #1 ok", 9));
+        assert_eq!(latest_close(&m, &ask), Some(CloseOutcome::Ok));
     }
 
     #[test]

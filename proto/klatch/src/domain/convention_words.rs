@@ -7,10 +7,10 @@
 //! never post it, so nothing they do changes; a new word must never change what an existing word means.
 
 use crate::domain::{
-    ASK_LEASE_DEFAULT_SECS, DropReason, HaltReason, Message, OutcomeKind, QueueState,
-    answer_target, claim_ttl, closed_target, current_offers, is_ask, merge_halt, merge_queue,
-    open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked, reopen_target,
-    statuses,
+    ASK_LEASE_DEFAULT_SECS, CloseOutcome, DropReason, HaltReason, Message, OutcomeKind, QueueState,
+    answer_target, claim_ttl, close_outcome, closed_target, current_offers, is_ask, merge_halt,
+    merge_queue, open_prs, open_tasks, parse_clarification, parse_outcome, parse_parked,
+    reopen_target, statuses,
 };
 
 /// One word: how it is written, an example, and the question "does the code read this example as this word".
@@ -122,6 +122,12 @@ pub static CONVENTION_WORDS: &[ConventionWord] = &[
         answer_target(b) == Some(3)
     }),
     word!("closed #N", "closed #3", |b| closed_target(b) == Some(3)),
+    word!("closed #N ok", "closed #3 ok", |b| {
+        close_outcome(b) == Some(CloseOutcome::Ok) && closed_target(b) == Some(3)
+    }),
+    word!("closed #N unresolved", "closed #3 unresolved", |b| {
+        close_outcome(b) == Some(CloseOutcome::Unresolved) && closed_target(b) == Some(3)
+    }),
     word!("reopen #N:", "reopen #3: that is the wrong crate", |b| {
         reopen_target(b) == Some(3)
     }),

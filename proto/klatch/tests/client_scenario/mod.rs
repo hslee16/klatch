@@ -1,14 +1,16 @@
 //! The connect-dependent steps of the client conformance scenario (#119, #1095). They are written against two things the
 //! including test crate provides at its root: `home()` (a throwaway store) and `connect(&home, name)` (a `Client` for a
 //! member of it). `tests/client.rs` provides them over `klatch serve --stdio` (a child process); the daemon test of
-//! `klatch-server` provides them over the daemon's Unix socket. The steps and their assertions are the same in both, so
+//! `klatch-server` provides them over the daemon's Unix socket, and the HTTP test over `klatch-server http` (#1122). A
+//! third thing the including crate provides, `ATTRIBUTION`, is what the hello says of a member: `unattributed` for a
+//! typed name, `verified` over HTTP, where every member has a credential. The steps and their assertions are the same in both, so
 //! the same events and sequence numbers are required of both transports.
 
 use klatch::client::{ClaimRequest, Error, PostRequest, Verdict};
 use klatch::protocol::PROTOCOL_VERSION;
 use std::time::Duration;
 
-use crate::{connect, home};
+use crate::{ATTRIBUTION, connect, home};
 
 fn api(e: Error) -> klatch::client::ApiError {
     match e {
@@ -28,7 +30,7 @@ fn the_protocol_version_is_one_and_hello_says_who_you_are() {
             a.attribution.as_str(),
             a.clearance.as_str()
         ),
-        ("alice", "unattributed", "public")
+        ("alice", ATTRIBUTION, "public")
     );
 }
 
@@ -52,7 +54,7 @@ fn a_post_is_read_by_another_member_and_a_handoff_keeps_its_kind_and_payload() {
         (ms[1].kind.as_deref(), ms[1].payload.as_deref()),
         (Some("work-order"), Some("{\"id\":7}"))
     );
-    assert_eq!(ms[0].attribution, "unattributed");
+    assert_eq!(ms[0].attribution, ATTRIBUTION);
     assert_eq!(b.read("r", false).unwrap().len(), 2);
     assert!(b.read("r", false).unwrap().is_empty());
 }

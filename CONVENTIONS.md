@@ -11,6 +11,8 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `seeking:` | Anyone (the asker) | Opens an ask with the message number as its number; shows it in hooks, `klatch asks` and the board until it is answered or closed | Reach or assign anyone; an ask is never an order |
 | `answer to #N:` | Anyone except the asker | Records an answer to ask N and drops the ask from open asks | Count when the asker posts it for its own ask |
 | `closed #N` | The asker | Closes ask N and drops it from open asks | Close an ask for another member (only the asker's own counts) |
+| `closed #N ok` | The asker | Closes ask N as served (the same close as a bare `closed #N`, plus the result); `klatch find` shows an answered ask as closed ok | Close an ask for another member (only the asker's own counts) |
+| `closed #N unresolved` | The asker | Closes ask N as given up without a usable answer (no retry limit; a bare `closed #N` stays a close with no stated result); `klatch find` shows an answered ask as closed unresolved so the answer is not trusted blindly | Close an ask for another member (only the asker's own counts), or reopen it (that is `reopen #N:`) |
 | `reopen #N:` | The asker | Puts ask N back among open asks after an answer or a close, with the reason after the colon; helpers' earlier declines and failures stay on the ask | Reopen an ask for another member (only the asker's own counts), or make a helper claim it |
 | `need-info #N:` | A helper | Records a clarifying question on ask N and tells the asker in its hook | Close or reassign the ask |
 | `info #N:` | The asker | Records the asker's reply to a `need-info` on ask N | Close the ask |

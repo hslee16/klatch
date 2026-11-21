@@ -30,8 +30,6 @@ pub const NEED_INFO_CODES: [&str; 5] = [
     "which-deadline",
     "more-detail",
 ];
-/// The longest the optional field may be, in characters.
-pub const NEED_INFO_FIELD_MAX: usize = 40;
 /// Asks live in the lobby.
 const ASK_ROOM: &str = "lobby";
 
@@ -74,11 +72,11 @@ impl<S: Store> Gateway<S> {
         self.check_need_info(who, &to, room, body)
     }
 
-    /// The state rules of the one DM: the ask is open, `to` asked it, no earlier need-info for it from this
-    /// facilitator in the room, and a field made of nothing another member wrote.
+    /// The state rules of the one DM: the ask is open, `to` asked it, and no earlier need-info for it from this
+    /// facilitator in the room.
     fn check_need_info(&self, who: &Principal, to: &str, room: &str, body: &str) -> Result<()> {
         let no = |why: String| Err(refused(who, &why));
-        let Some((n, _, field)) = parse_need_info(body) else {
+        let Some((n, _)) = parse_need_info(body) else {
             return no("a message that is not the need-info form".into());
         };
         let asks = self.store.open_asks(ASK_ROOM, self.now())?;
@@ -93,21 +91,11 @@ impl<S: Store> Gateway<S> {
         // the prefix query sees a need-info at any depth of the room, not only in its oldest 5000 messages (#980)
         let sent = self.store.words(room, &["need-info #"])?;
         if sent.iter().any(|m| {
-            m.sender == who.member && parse_need_info(&m.body).is_some_and(|(k, _, _)| k == n)
+            m.sender == who.member && parse_need_info(&m.body).is_some_and(|(k, _)| k == n)
         }) {
             return no(format!(
                 "one need-info message per ask, and #{n} has had its one"
             ));
-        }
-        if let Some(field) = field {
-            let lower = field.to_lowercase();
-            let lobby = self.store.tail(ASK_ROOM, 0, 5000)?;
-            if lobby
-                .iter()
-                .any(|m| m.sender != to && m.body.to_lowercase().contains(&lower))
-            {
-                return no("the field repeats another member's text".into());
-            }
         }
         Ok(())
     }
@@ -139,7 +127,7 @@ impl<S: Store> Gateway<S> {
         Ok(new)
     }
 
-    /// Audit a sent need-info message: who, which ask, which asker and the reason code, never the field's text.
+    /// Audit a sent need-info message: who, which ask, which asker and the reason code, never any other text.
     pub(super) fn audit_facilitator_dm(
         &self,
         who: &Principal,
@@ -148,7 +136,7 @@ impl<S: Store> Gateway<S> {
         body: &str,
         created: bool,
     ) -> Result<()> {
-        let Some((n, code, _)) = parse_need_info(body) else {
+        let Some((n, code)) = parse_need_info(body) else {
             return Ok(());
         };
         if created {
@@ -220,31 +208,16 @@ fn is_pointer(from: &str, body: &str) -> bool {
     valid_name(member) && valid_name(room) && super::rooms::invite_text(from, member, room) == body
 }
 
-/// The ask number, reason code and optional field of a need-info message, or `None` unless the body is exactly
-/// `need-info #N: CODE` or `need-info #N: CODE (FIELD)`: N canonical digits, CODE one of `NEED_INFO_CODES`, FIELD
-/// 1 to `NEED_INFO_FIELD_MAX` characters of ASCII letters, digits, space, `-`, `_`, `.` or `/`, with no leading or
-/// trailing space. Nothing else may follow.
-pub fn parse_need_info(body: &str) -> Option<(i64, &str, Option<&str>)> {
+/// The ask number and reason code of a need-info message, or `None` unless the body is exactly `need-info #N: CODE`:
+/// N canonical digits, CODE one of `NEED_INFO_CODES`. Nothing else may follow; text after the code (the optional
+/// field of #902, dropped in #905) makes the body no form.
+pub fn parse_need_info(body: &str) -> Option<(i64, &str)> {
     let rest = body.strip_prefix("need-info #")?;
-    let (digits, rest) = rest.split_once(": ")?;
+    let (digits, code) = rest.split_once(": ")?;
     let n: i64 = digits.parse().ok()?;
     if n < 1 || n.to_string() != digits {
         return None;
     }
-    let (code, field) = match rest.split_once(" (") {
-        Some((code, f)) => (code, Some(f.strip_suffix(')')?)),
-        None => (rest, None),
-    };
     let code = NEED_INFO_CODES.iter().find(|c| **c == code)?;
-    if let Some(f) = field {
-        let ok = !f.is_empty()
-            && f.chars().count() <= NEED_INFO_FIELD_MAX
-            && f.trim() == f
-            && f.chars()
-                .all(|c| c.is_ascii_alphanumeric() || " -_./".contains(c));
-        if !ok {
-            return None;
-        }
-    }
-    Some((n, code, field))
+    Some((n, code))
 }

@@ -29,13 +29,9 @@ fn the_brief_states_each_bound_of_the_role() {
             "DM the asker once with a reason code, then do nothing",
         ),
         ("the DM form", "need-info #N: CODE"),
-        ("the field cap", "40 characters"),
+        ("no free text", "There is no free text"),
         ("only the asker of an open ask", "only the member who asked"),
         ("one per ask", "at most one per ask"),
-        (
-            "no text from others in the field",
-            "never text another member wrote",
-        ),
         ("refusals are not retried", "Do not retry a refusal"),
         ("the rule is named", "`facilitator`"),
     ] {

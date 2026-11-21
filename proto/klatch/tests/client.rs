@@ -8,6 +8,9 @@ use klatch::protocol::decode_server_line;
 use std::path::PathBuf;
 mod client_scenario;
 
+/// What the hello says of a member here: a typed name is unattributed.
+pub const ATTRIBUTION: &str = "unattributed";
+
 pub fn connect(h: &Home, name: &str) -> Client {
     let env = vec![
         (

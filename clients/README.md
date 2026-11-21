@@ -37,8 +37,10 @@ token=...)` and TypeScript with `Client.connectHttp(url, { member: "w-1", token 
 /v1/stream`, reads `X-Klatch-Session`, reads each event's `data:` as a frame, and sends each request as `POST /v1/frames`
 with that header; the response arrives on the stream. A refused credential is an error with code `identity.refused`. A url
 that is not plain `http` to a loopback address is refused before anything is sent. If the stream drops, the library reopens it
-and resubscribes every subscribed room from the last `seq` seen, so messages resume without a gap or a repeat. The Rust client
-has no HTTP transport yet (#1122).
+and resubscribes every subscribed room from the last `seq` seen, so messages resume without a gap or a repeat. Rust connects
+with `Client::connect_http(url, member, token)` (feature `client-http` of `klatch`, off by default and in no default feature, so
+the `klatch` binary has no network socket type; one file, `proto/klatch/src/client/http.rs`, names `TcpStream`). Its conformance
+run is `cargo test -p klatch-server --test client_http` (#1122).
 
 | Language | Where | Dependencies | Conformance test |
 |---|---|---|---|
