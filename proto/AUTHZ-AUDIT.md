@@ -24,7 +24,9 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
    step renews the credential on use (#161): the expiry moves to now plus the idle timeout, never past the hard cap
    from issue, and each renewal is audited as `renew-credential`; proof in `credential_renewal.rs`. The own-record
    methods make the same check without the renewal (`check_own_record_live`, #835), except `release_all`, `record_hook_run`
-   for `SessionEnd` and `end_credential`, which the end of a session needs (`AFTER_END` in `zero_trust.rs`).
+   for `SessionEnd` and `end_credential`, which the end of a session needs (`AFTER_END` in `zero_trust.rs`). The two hook
+   methods that prove a session is alive, `sign_of_life` and `record_hook_run` for any event but `SessionEnd`, also renew
+   (`check_own_record_live_and_renew`, #1027) with the same cap and audit; no other own-record method renews.
 3. **Roles.** `check_role` in the same function: librarian may only look (`read-only`), reviewer may only review
    (`reviewer`), the facilitator (#190) may only look, create a room, invite, post the invite pointer and send one fixed-form need-info DM to the asker of an open ask (#902; `facilitator`,
    enforced before any guard is asked), only an integrator or the human may take the `merge:main` claim (#865; `integrator`, a plain member, the admin agent and every other role are refused with the next step), admin agent has an allowlist (`admin-scope`, `floors`), members' admin acts need a role on a
