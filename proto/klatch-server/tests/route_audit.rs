@@ -58,11 +58,7 @@ fn routes() -> Vec<(String, String)> {
         }
         for line in non_test(&text).lines() {
             let t = line.trim();
-            if t.starts_with("pub const ") && t.contains("PATH: &str = \"/") {
-                if let Some(p) = path_literal(t) {
-                    found.push((file.clone(), p));
-                }
-            }
+            let is_const = t.starts_with("pub const ") && t.contains("PATH: &str = \"/");
             let is_arm = [
                 "(\"GET\", \"/",
                 "(\"POST\", \"/",
@@ -71,10 +67,10 @@ fn routes() -> Vec<(String, String)> {
             ]
             .iter()
             .any(|a| t.contains(a));
-            if is_arm {
-                if let Some(p) = path_literal(t) {
-                    found.push((file.clone(), p));
-                }
+            if (is_const || is_arm)
+                && let Some(p) = path_literal(t)
+            {
+                found.push((file.clone(), p));
             }
         }
     }
