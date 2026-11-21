@@ -1,0 +1,1 @@
+- Wire methods `my_rooms`, `board` and `receipt` let a wire-only member read its own rooms, a room board and the receipts of its own message, with wrappers in the Rust, Python (`my_rooms`, `board`, `receipt`) and TypeScript (`myRooms`, `board`, `receipt`) clients (#848).

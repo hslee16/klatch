@@ -272,6 +272,17 @@ describe(title, { skip }, () => {
     await assert.rejects(a.request("invite", { member: "bob" }), (e: ApiError) => e.code === "invalid_params");
   });
 
+  it("a member reads its rooms, its board and its receipt", async () => {
+    const a = await store.client("alice");
+    const b = await store.client("bob");
+    const sent = await a.post("r", "offering: review help");
+    await b.post("r", "hi");
+    assert.deepEqual(await a.myRooms(), ["r"]);
+    assert.ok((await a.board("r")).includes("review help"));
+    assert.deepEqual((await a.receipt("r", sent.seq)).recipients.map((r) => r.name), ["bob"]);
+    await assert.rejects(b.receipt("r", sent.seq), (e: ApiError) => e.code === "refused");
+  });
+
   it("a member declares its scope, its kind and its status", async () => {
     const a = await store.client("alice");
     await a.post("r", "here");

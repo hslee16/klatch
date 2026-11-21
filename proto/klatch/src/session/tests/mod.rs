@@ -102,6 +102,7 @@ mod guarded;
 mod live;
 mod mute;
 mod my_role_wire;
+mod own_record_wire;
 mod recheck;
 mod replay;
 mod stuck;
