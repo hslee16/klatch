@@ -60,8 +60,7 @@ pub(super) fn rotate_label_key_in(
         .source
         .get(&kh.name)?
         .ok_or_else(|| anyhow::anyhow!("this store has no key"))?;
-    if crate::store::areas::PolicyStore::policy_get(&store, &format!("sealed:{label}"))?.is_none()
-    {
+    if crate::store::areas::PolicyStore::policy_get(&store, &format!("sealed:{label}"))?.is_none() {
         bail!("label {label} is not sealed, so it has no key to rotate");
     }
     let name = label_key_name(&kh.name, label);

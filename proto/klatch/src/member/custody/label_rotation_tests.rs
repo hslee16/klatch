@@ -163,7 +163,10 @@ fn a_crash_after_any_step_is_finished_by_a_repeated_rotation() {
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("injected crash"), "{crash:?}: {err}");
+        assert!(
+            err.to_string().contains("injected crash"),
+            "{crash:?}: {err}"
+        );
         // whatever the state, what a process reads is whole: the label's key in the keystore opens every message
         assert_eq!(
             live_secrets(&readable(&db, &kh)),
@@ -310,7 +313,10 @@ fn a_sealed_row_that_does_not_open_refuses_the_rotation_and_changes_nothing() {
     let err = rotate_label_key_in(&db, &kh, LABEL, &no_hook)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("neither") && err.contains("not changed"), "{err}");
+    assert!(
+        err.contains("neither") && err.contains("not changed"),
+        "{err}"
+    );
     assert!(main_key(&kh) == old, "the key changed");
     assert!(next_key(&kh).is_none(), "a second key was stored");
     assert_eq!(
@@ -366,7 +372,12 @@ fn rotating_one_label_leaves_another_sealed_label_alone() {
         );
         store
             .post_as(
-                &NewMessage::new(("r", "alice"), Attribution::Unattributed, "other", "other text"),
+                &NewMessage::new(
+                    ("r", "alice"),
+                    Attribution::Unattributed,
+                    "other",
+                    "other text",
+                ),
                 2000,
             )
             .unwrap();

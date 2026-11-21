@@ -48,8 +48,9 @@ fn key_act(ctx: &KeyCtx, act: KeyAct) -> Result<()> {
     match act {
         KeyAct::Recovery => recovery(ctx),
         KeyAct::Recover { code, label } => recover(ctx, &code, label.as_deref()),
-        KeyAct::SealLabel { label } => add_label_seal(ctx, &label),
+        KeyAct::SealLabel { label, keep_plain } => add_label_seal(ctx, &label, keep_plain),
         KeyAct::RotateKey => rotate_key(ctx),
+        KeyAct::RotateLabelKey { label } => rotate_label_key(ctx, &label),
         KeyAct::Backup { file } => backup(ctx, &file),
         KeyAct::Restore { file } => restore(ctx, &file),
         KeyAct::RunArchive { file, run } => run_archive(ctx, &file, &run),
@@ -93,12 +94,28 @@ fn run_archive(ctx: &KeyCtx, file: &Path, run: &str) -> Result<()> {
     Ok(())
 }
 
-fn add_label_seal(ctx: &KeyCtx, label: &str) -> Result<()> {
-    ctx.gateway()?.admin_seal_label(&ctx.who, label)?;
+fn add_label_seal(ctx: &KeyCtx, label: &str, keep_plain: bool) -> Result<()> {
+    let gateway = ctx.gateway()?;
+    // a bad label makes no key
+    gateway.check_sealable(label)?;
+    // the key comes first: the messages already under the label are sealed with it in the same step as the marking
     let made = custody::ensure_label_key(ctx.db, label)?;
+    let converted = if keep_plain {
+        gateway.admin_seal_label_keep_plain(&ctx.who, label)?;
+        None
+    } else {
+        gateway.use_label_keys(custody::label_ring(ctx.db, &[label.to_string()])?);
+        Some(gateway.admin_seal_label(&ctx.who, label)?)
+    };
     println!(
         "label {label} is sealed: new messages under it are stored encrypted under a key of their own"
     );
+    match converted {
+        Some(n) => println!("converted {n} earlier message text(s) of the label to sealed text"),
+        None => println!(
+            "earlier messages were left as plain text (`klatch admin seal-label {label}` without --keep-plain seals them)"
+        ),
+    }
     if made {
         println!(
             "a key was made for it; `klatch admin recovery` shows the code that restores it. Keep that code: a sealed label whose key is lost cannot be read again."
@@ -139,6 +156,27 @@ fn rotate_key(ctx: &KeyCtx) -> Result<()> {
     println!("New recovery code: {}", klatch::keys::recovery_code(&key));
     println!(
         "The archive files were moved to the new key too. Backups made by `klatch admin backup` keep the key they were made under and open only with it."
+    );
+    Ok(())
+}
+
+fn rotate_label_key(ctx: &KeyCtx, label: &str) -> Result<()> {
+    // a label that is unknown or the lowest cannot be sealed, so it has no key to rotate
+    ctx.gateway()?.check_sealable(label)?;
+    let key = custody::rotate_label_key(ctx.db, label)?;
+    ctx.note("rotate-label-key", label)?;
+    println!(
+        "label {label} is now sealed under a new key. The old key and its recovery code open none of its messages."
+    );
+    println!(
+        "New recovery code for label {label}: {}",
+        klatch::keys::recovery_code(&key)
+    );
+    println!(
+        "Every message of the label in the store and in the archive files was moved. Workers launched with the old key hold a dead one: relaunch workers that hold this label."
+    );
+    println!(
+        "Backups and archive copies made earlier keep the old key's text, so a leaked old key still opens those copies; remove them if that matters."
     );
     Ok(())
 }

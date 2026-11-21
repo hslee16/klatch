@@ -148,7 +148,7 @@ fn sealed_shared(tag: &str, keyed: Option<Asked>) -> (SharedGateway, TempDb) {
         let admin = Principal::unattributed("admin");
         g.admin_set_room_label(&admin, "vault", "private")?;
         g.admin_set_clearance(&admin, "alice", "private")?;
-        g.admin_seal_label(&admin, "private")?;
+        g.admin_seal_label_keep_plain(&admin, "private")?;
         Ok(g)
     };
     let gw = match keyed {

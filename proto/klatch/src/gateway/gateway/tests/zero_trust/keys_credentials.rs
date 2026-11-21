@@ -13,6 +13,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("admin_revoke_credential", |g, w| refused(g.admin_revoke_credential(w, "w-1"))),
     ("admin_credentials", |g, w| refused(g.admin_credentials(w))),
     ("admin_seal_label", |g, w| refused(g.admin_seal_label(w, "private"))),
+    ("admin_seal_label_keep_plain", |g, w| refused(g.admin_seal_label_keep_plain(w, "private"))),
     ("admin_set_room_label", |g, w| refused(g.admin_set_room_label(w, "r", "private"))),
     ("admin_set_clearance", |g, w| refused(g.admin_set_clearance(w, "bob", "private"))),
     ("admin_set_cap", |g, w| refused(g.admin_set_cap(w, "private"))),
@@ -31,6 +32,7 @@ pub(super) const OWN_RECORD: &[(&str, &str)] = &[
     ("sealed_labels_within", "the same, limited to what one member's clearance reaches; takes no principal"),
     ("end_credential", "a worker revokes only its own credential, and only as a verified principal"),
     ("verify_credential", "authentication itself: it takes proof of identity instead of a principal, and records a failure"),
+    ("check_sealable", "validates a label name for sealing (known, not the lowest); a policy lookup that changes nothing and takes no principal"),
     ("use_label_keys", "the keys this process holds, in memory only"),
     ("clearance_of", "a policy lookup the gateway uses on every call; takes no principal"),
     ("room_label", "a policy lookup the gateway uses on every call; takes no principal"),
@@ -40,6 +42,7 @@ pub(super) const OWN_RECORD: &[(&str, &str)] = &[
 pub(super) const NO_PRINCIPAL: &[&str] = &[
     "sealed_labels",
     "sealed_labels_within",
+    "check_sealable",
     "verify_credential",
     "use_label_keys",
     "clearance_of",

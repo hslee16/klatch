@@ -145,8 +145,13 @@ fn an_archived_tombstone_is_not_sealed_and_a_repeat_converts_nothing() {
     let s = store();
     post(&s, "r", "secret", "old plain", 1);
     let dir = crate::store::test_dir::TestDir::new("seal-convert-tomb");
-    s.archive_before("r", 500, &dir.join("r-1.db"), &crate::store::insecure_test_key())
-        .unwrap();
+    s.archive_before(
+        "r",
+        500,
+        &dir.join("r-1.db"),
+        &crate::store::insecure_test_key(),
+    )
+    .unwrap();
     s.set_label_keys(ring("secret", 0x33));
     assert_eq!(s.seal_label_converting("secret", 10).unwrap(), 0);
     assert_eq!(
@@ -245,8 +250,13 @@ fn a_row_the_old_key_does_not_open_refuses_the_move_and_changes_nothing() {
         .execute("UPDATE messages SET body=?1 WHERE seq=2", [&foreign])
         .unwrap();
     let before = (raw_bodies(&s, "secret"), raw_payloads(&s, "secret"));
-    assert!(s.check_label_reseal("secret", &key(0x33), &key(0x44)).is_err());
-    let err = s.reseal_label("secret", &key(0x33), &key(0x44)).unwrap_err();
+    assert!(
+        s.check_label_reseal("secret", &key(0x33), &key(0x44))
+            .is_err()
+    );
+    let err = s
+        .reseal_label("secret", &key(0x33), &key(0x44))
+        .unwrap_err();
     assert!(matches!(err, Error::Invalid(_)), "{err}");
     assert_eq!(
         (raw_bodies(&s, "secret"), raw_payloads(&s, "secret")),
@@ -393,8 +403,11 @@ fn an_archive_row_no_key_opens_refuses_the_move_before_any_file_is_changed() {
         let c = rusqlite::Connection::open(&bad).unwrap();
         c.pragma_update(None, "key", store_key.sqlcipher_pragma().as_str())
             .unwrap();
-        c.execute("UPDATE archived SET body='klatch-sealed:1:AAAA' WHERE label='secret'", [])
-            .unwrap();
+        c.execute(
+            "UPDATE archived SET body='klatch-sealed:1:AAAA' WHERE label='secret'",
+            [],
+        )
+        .unwrap();
     }
     let good_before = archived_bodies(&good, &store_key);
     let err = resealable_archives(&dir, &store_key, "secret", &key(0x33), &key(0x44)).unwrap_err();

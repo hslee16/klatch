@@ -1,0 +1,1 @@
+- `klatch admin seal-label` now also seals the messages already under the label (bodies and payloads, in the same step as marking the label sealed); `--keep-plain` leaves them as before. SECURITY.md now says claim reasons, release notes and statuses are not sealed and must not carry secrets (#378).

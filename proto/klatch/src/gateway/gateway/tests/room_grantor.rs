@@ -541,7 +541,7 @@ fn the_grantor_check_and_the_grant_write_are_one_transaction() {
 #[test]
 fn a_grant_into_a_sealed_room_is_refused_when_the_grantee_lacks_the_global_clearance() {
     let g = vault();
-    g.admin_seal_label(&admin(), "private").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "private").unwrap();
     let r = g.grant_room_clearance(&alice(), "vault", "bob", "private");
     match r {
         Err(Error::Refused { rule, reason }) => {
@@ -560,7 +560,7 @@ fn a_grant_into_a_sealed_room_is_refused_when_the_grantee_lacks_the_global_clear
 fn a_grant_into_a_sealed_room_is_allowed_when_the_grantee_already_holds_the_clearance() {
     let g = vault();
     g.admin_set_clearance(&admin(), "bob", "private").unwrap();
-    g.admin_seal_label(&admin(), "private").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "private").unwrap();
     g.grant_room_clearance(&alice(), "vault", "bob", "private")
         .unwrap();
 }
@@ -568,7 +568,7 @@ fn a_grant_into_a_sealed_room_is_allowed_when_the_grantee_already_holds_the_clea
 #[test]
 fn an_unsealed_room_still_takes_a_grant() {
     let g = vault();
-    g.admin_seal_label(&admin(), "secret").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "secret").unwrap();
     g.grant_room_clearance(&alice(), "vault", "bob", "private")
         .unwrap();
 }

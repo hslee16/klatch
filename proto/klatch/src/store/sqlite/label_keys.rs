@@ -192,7 +192,12 @@ impl SqliteStore {
 
     /// How many sealed texts `label` has in all, and how many of them open with `a` and with `b`. A move that died
     /// after its transaction shows as none opening with the main key and all with the second one.
-    pub fn label_open_counts(&self, label: &str, a: &Key, b: &Key) -> Result<(usize, usize, usize)> {
+    pub fn label_open_counts(
+        &self,
+        label: &str,
+        a: &Key,
+        b: &Key,
+    ) -> Result<(usize, usize, usize)> {
         let (mut total, mut with_a, mut with_b) = (0, 0, 0);
         for row in self.label_rows(label, false)? {
             for (field, text) in [("body", &row.body), ("payload", &row.payload)] {

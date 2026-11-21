@@ -143,8 +143,12 @@ pub(super) enum KeyAct {
     },
     SealLabel {
         label: String,
+        keep_plain: bool,
     },
     RotateKey,
+    RotateLabelKey {
+        label: String,
+    },
     Backup {
         file: PathBuf,
     },
@@ -263,8 +267,11 @@ impl From<AdminCmd> for Route {
             C::ReviewQueue { limit } => Route::listing(ListingAct::ReviewQueue { limit }),
             C::Recovery => Route::key(KeyAct::Recovery),
             C::Recover { code, label } => Route::key(KeyAct::Recover { code, label }),
-            C::SealLabel { label } => Route::key(KeyAct::SealLabel { label }),
+            C::SealLabel { label, keep_plain } => {
+                Route::key(KeyAct::SealLabel { label, keep_plain })
+            }
             C::RotateKey => Route::key(KeyAct::RotateKey),
+            C::RotateLabelKey { label } => Route::key(KeyAct::RotateLabelKey { label }),
             C::Backup { file } => Route::key(KeyAct::Backup { file }),
             C::Restore { file } => Route::key(KeyAct::Restore { file }),
             C::RunArchive { file, run } => Route::key(KeyAct::RunArchive { file, run }),

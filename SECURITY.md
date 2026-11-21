@@ -47,6 +47,17 @@ reviewed by an outside person before release (#167).
   everywhere else.
 - **The first release of a store** on a machine with a running older klatch: see #373.
 - **Claims** are advisory to every route into a file other than the claim hook.
+- **Claim text is not sealed.** A sealed label protects message bodies and payloads. A claim's reason, a release note
+  and a member's status are stored as plain text (inside the encrypted store, but readable by every principal that
+  can read the board, `who` and the hook digest, whatever label it holds), so they must not carry secrets. A reason
+  is meant to be a path or a ticket number (#378).
+- **Copies made before a label key rotated.** `klatch admin rotate-label-key` moves the live store and the archive
+  files to the new key. A backup (`klatch admin backup`) or an archive copied elsewhere before the rotation keeps the
+  old key's text, so a leaked old label key still opens those copies; remove them if that matters. Workers launched
+  with the old key hold a dead one and must be relaunched.
+- **Archive files of a label sealed late.** `klatch admin seal-label` seals the messages already in the store, but an
+  archive file made before the label was sealed keeps those messages as plain text (inside the encrypted file), and
+  restoring it puts them back plain (#1153).
 
 ## Reporting a problem
 

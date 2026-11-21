@@ -143,12 +143,15 @@ impl<S: Store> Gateway<S> {
     /// without that key can neither read nor write it (#160). The lowest label cannot be sealed, because everyone
     /// holds it. The messages already under the label are sealed in the same transaction (#378), which needs the
     /// label's key in this process (`use_label_keys`) when there are any; `admin_seal_label_keep_plain` leaves them.
-    pub fn admin_seal_label(&self, who: &Principal, label: &str) -> Result<()> {
+    /// Returns how many earlier texts were converted.
+    pub fn admin_seal_label(&self, who: &Principal, label: &str) -> Result<usize> {
         self.check_sealable(label)?;
+        let mut converted = 0;
         self.administer(who, ("seal-label", label), |now| {
-            let n = self.store.seal_label_converting(label, now)?;
-            Ok(format!("converted {n} earlier text(s)"))
-        })
+            converted = self.store.seal_label_converting(label, now)?;
+            Ok(format!("converted {converted} earlier text(s)"))
+        })?;
+        Ok(converted)
     }
 
     /// Seal a label as `admin_seal_label` does, but leave the messages already under it as plain text (`--keep-plain`).
@@ -161,8 +164,8 @@ impl<S: Store> Gateway<S> {
         )
     }
 
-    /// A label that can be sealed: a known label other than the lowest.
-    fn check_sealable(&self, label: &str) -> Result<()> {
+    /// A label that can be sealed: a known label other than the lowest. A policy lookup; it changes nothing.
+    pub fn check_sealable(&self, label: &str) -> Result<()> {
         let chain = self.chain()?;
         known_label(&chain, label)?;
         if label == chain.lowest() {
