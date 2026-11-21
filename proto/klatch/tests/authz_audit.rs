@@ -156,3 +156,65 @@ fn every_admin_command_is_in_the_audit() {
         "add these admin commands to AUTHZ-AUDIT.md: {gone:?}"
     );
 }
+
+/// The first cell of every table row, per section (a `##` heading starts a new one; a header row and the separator
+/// are skipped), as `(section, cell)`. A union merge (#1065) keeps both sides' lines, so two branches that each
+/// edited the same row leave two copies of it; the rows of a section are unique by this cell.
+fn row_keys(doc: &str) -> Vec<(String, String)> {
+    let mut section = String::new();
+    let mut keys = Vec::new();
+    for line in doc.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            section = h.to_string();
+        } else if line.starts_with('|') {
+            let cell = line
+                .trim_start_matches('|')
+                .split('|')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if cell.starts_with('`') {
+                keys.push((section.clone(), cell.to_string()));
+            }
+        }
+    }
+    keys
+}
+
+/// The keys that occur more than once in one section.
+fn duplicate_rows(doc: &str) -> Vec<(String, String)> {
+    let keys = row_keys(doc);
+    let mut dups: Vec<(String, String)> = keys
+        .iter()
+        .filter(|k| keys.iter().filter(|o| o == k).count() > 1)
+        .cloned()
+        .collect();
+    dups.sort();
+    dups.dedup();
+    dups
+}
+
+#[test]
+fn a_row_seen_twice_is_found() {
+    let doc = "## A\n\n| Op | x |\n|---|---|\n| `one` | a |\n| `two` | b |\n| `one` | c |\n\n## B\n\n| `one` | d |\n";
+    assert_eq!(
+        duplicate_rows(doc),
+        vec![("A".to_string(), "`one`".to_string())],
+        "the same key in another section is not a duplicate"
+    );
+    assert!(duplicate_rows("## A\n| `one` | a |\n| `two` | b |\n").is_empty());
+}
+
+#[test]
+fn audit_rows_are_unique_by_operation() {
+    assert!(
+        row_keys(&audit()).len() > 50,
+        "the row parser found almost no rows"
+    );
+    let dups = duplicate_rows(&audit());
+    assert!(
+        dups.is_empty(),
+        "AUTHZ-AUDIT.md has a row twice (a union merge of two edits of one row keeps both; keep the right one and \
+         delete the other): {dups:?}"
+    );
+}
