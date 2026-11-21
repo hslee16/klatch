@@ -1,0 +1,1 @@
+- The SessionStart convention text now teaches `dm <member>` (from the second need-info round, or for anything private), `ask`, `answer`, `find` before asking again, `reopen #N: <why>` and `closed #N ok|unresolved`, replacing the `ask-<N>` working-room sentence; shorter wording elsewhere keeps it under the same byte bound (#1184, #1146).

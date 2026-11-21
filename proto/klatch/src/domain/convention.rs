@@ -21,16 +21,15 @@ pub fn convention_in(bin: &str, room: &str) -> String {
       {bin} --discover release {room} ask:<N>\n\
       {bin} --discover wait {room} --timeout 60\n\
       {bin} --discover status {room} done\n\
-  - Ask: post \"seeking: <need>\"; \"closed #N\" when done. After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
-  - Answer: claim ask:<N> first; if the claim conflicts, someone else has it. An ask claim lasts 90 seconds: while you work renew it every minute or so; if you stop, release it. Then post \"answer to #N: <answer>\" and release the claim.\n\
-  - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". For a longer or multi-party exchange use the working room ask-<N>: join it and tell {room}.\n\
-  - Stopping part way: post \"partial #N: <what is done>\", then release the claim.\n\
-  - Cannot help: post \"declined #N busy: <why>\" (capable, not now) or \"declined #N cannot: <why>\" (not capable). Never leave a claimed ask unanswered.\n\
-  - Claim: claim what you will change (a file, or `ticket:602`; one word) first. Claims are per scope (other scopes do not conflict); add --shared for something shared across scopes. If a claim conflicts, release the claims you hold before you wait, then try again. If the refusal says deadlock, you yield: release the claims you hold, wait, retry.\n  - Changed it: release with --note \"<what you changed>\"; after waiting on a conflict, re-read before you edit.\n\
+  - Ask: first {bin} --discover find {room} \"<need>\" for an earlier answer; else {bin} --discover ask {room} \"<need>\" (posts \"seeking:\"). Close it with \"closed #N ok\" or \"closed #N unresolved\"; if the answer failed, \"reopen #N: <why>\". After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
+  - Answer: {bin} --discover answer {room} N \"<answer>\" claims, posts and releases. To work longer, claim ask:<N> first, renew it every minute (a claim lasts 90 seconds), release it if you stop, then post \"answer to #N: <answer>\".\n\
+  - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". From the second round, or for anything private: {bin} --discover dm <member> \"<text>\" (a room only you two share), and tell {room} in one line.\n\
+  - Cannot finish: \"partial #N: <what is done>\", \"declined #N busy: <why>\" (not now) or \"declined #N cannot: <why>\"; then release the claim. Never leave a claimed ask unanswered.\n\
+  - Claim what you will change (a file, or `ticket:602`) first; claims are per scope, add --shared to cross scopes. If a claim conflicts, release the claims you hold, wait, retry; if the refusal says deadlock, you yield.\n  - Changed it: release with --note \"<what you changed>\"; after a conflict wait, re-read before you edit.\n\
   - To reach one member, write @its-name (a member who ran `{bin} --discover mute {room}` still sees it).\n\
-  - Offer: post \"offering: <what you can do for others>\" once you know a concrete capability, not at start; post \"withdrawn: <why>\" when it no longer holds.\n\
-  - A long wait (a build, a review, a night): post \"parked: <why>, back by <time>\" (2h, 3d or 2026-11-20 14:30 UTC); your claims hold until then. Any post of yours ends it.\n\
-  - Work that may outlive your session: \"working: <what>\", then \"checkpoint: <state to resume from>\" as you go; \"handoff: <task> to <member>\" or \"finished: <task>\" at the end.\n\
+  - Offer: post \"offering: <capability>\" once it is concrete, not at start; \"withdrawn: <why>\" when it no longer holds.\n\
+  - A long wait: post \"parked: <why>, back by <time>\" (2h or 3d); your claims hold until then. Any post of yours ends it.\n\
+  - Work that may outlive your session: \"working: <what>\", \"checkpoint: <state to resume from>\" as you go; \"handoff: <task> to <member>\" or \"finished: <task>\" at the end.\n\
   - A PR you open: post \"pr: #N <title>\" and {bin} --discover claim {room} pr:<N> --shared; renew while it is open. At merge post \"merged: #N\" and release with --note merged. Unheld open PRs show at session start; take one.\n\
   - When you leave, post \"status: done\" and run the status command. Free for work: status available. Posting or claiming clears done.\n"
     )
@@ -250,7 +249,6 @@ mod tests {
             "need-info #N:",
             "info #N:",
             "partial #N:",
-            "ask-<N>",
             "renew",
             "--note",
             "@its-name",
@@ -267,5 +265,45 @@ mod tests {
                 && crate::domain::parse_outcome("partial #3: x").is_some(),
             "the words it teaches must be the ones the code parses"
         );
+    }
+
+    /// #1184 and #1146: the text names the commands and words a real agent only used when told (#210, #239, #241),
+    /// each with the binary path, and the one move-to-a-dm trigger.
+    #[test]
+    fn the_text_teaches_dm_ask_answer_find_reopen_and_the_closed_words() {
+        let t = convention(BIN);
+        for w in [
+            "/opt/klatch/klatch --discover dm <member> \"<text>\"",
+            "/opt/klatch/klatch --discover ask lobby \"<need>\"",
+            "/opt/klatch/klatch --discover answer lobby N \"<answer>\"",
+            "/opt/klatch/klatch --discover find lobby \"<need>\"",
+            "closed #N ok",
+            "closed #N unresolved",
+            "reopen #N: <why>",
+            "From the second round",
+            "anything private",
+        ] {
+            assert!(t.contains(w), "missing {w}: {t}");
+        }
+        assert!(
+            !t.contains("ask-<N>"),
+            "the old working-room sentence stays out: {t}"
+        );
+        assert!(t.len() < 2800, "{} bytes", t.len());
+    }
+
+    /// Every convention word the text teaches by its form is one klatch reads (CONVENTION_WORDS, CONVENTIONS.md).
+    #[test]
+    fn the_closed_and_reopen_words_it_teaches_are_listed_convention_words() {
+        let t = convention(BIN);
+        for form in ["closed #N ok", "closed #N unresolved", "reopen #N:"] {
+            assert!(t.contains(form), "{form}");
+            assert!(
+                crate::domain::CONVENTION_WORDS
+                    .iter()
+                    .any(|w| w.form == form),
+                "{form} is not a convention word"
+            );
+        }
     }
 }
