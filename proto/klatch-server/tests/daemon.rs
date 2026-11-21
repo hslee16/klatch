@@ -170,7 +170,14 @@ struct Conn {
 impl Conn {
     fn open(sock: &Path) -> Conn {
         let w = UnixStream::connect(sock).expect("connect");
-        w.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        // A daemon that refuses the connection (the cap) closes it at once; on macOS setting an option on a socket
+        // the peer has already closed fails with EINVAL (#1150). The read then returns the refusal frame or end of
+        // file at once, so the timeout is not needed for that connection.
+        match w.set_read_timeout(Some(Duration::from_secs(20))) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {}
+            Err(e) => panic!("set_read_timeout: {e}"),
+        }
         let r = BufReader::new(w.try_clone().unwrap());
         Conn {
             w,
@@ -593,6 +600,18 @@ fn a_first_line_over_the_cap_closes_the_connection_with_a_refusal() {
     assert!(c.rest().is_empty());
     let (mut other, _) = Conn::hello(&d.sock);
     assert_eq!(other.request("join", json!({"room": "r"}))["ok"], true);
+}
+
+#[test]
+fn a_connection_the_peer_closed_at_once_still_opens_and_reads_the_end() {
+    // The shape of a refused connection (#1150): the peer accepts and closes before the client sets any option.
+    let dir = Dir::new();
+    let path = dir.home().join("closed.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let t = std::thread::spawn(move || drop(listener.accept().unwrap()));
+    let mut c = Conn::open(&path);
+    t.join().unwrap();
+    assert!(c.recv().is_none(), "end of file, not a panic");
 }
 
 #[test]
