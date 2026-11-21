@@ -188,8 +188,14 @@ reachable except the roles' own. What is new is who the connection is and what i
 
 No new gateway method: `Gateway::verify_credential` already exists (GUARDED list unchanged, zero-trust lists unchanged), and
 `session::Backend` is a trait over calls the session loop already made. The daemon opens the store through
-`klatch::member::spawn_shared_gateway` (same environment variables, same custody as `klatch mcp --stdio`) and loads no
-per-member label keys (#1096).
+`klatch::member::spawn_shared_gateway` (same environment variables, same custody as `klatch mcp --stdio`). Label keys and
+the harness are per connection (#1096), neither a new method nor a new guard: for each request the owner reads from the
+keystore the keys of the sealed labels that request's principal is cleared to (`sealed_labels_within`, the rule
+`klatch serve --stdio` uses; no other key, none kept after the request, a failure to load is no key), and a connection that
+never sent `identify` whose kernel-reported pid is inside a verified Claude Code session (`peer_runs_claude_code`, the walk a
+command makes) joins as Claude Code, every other connection as the generic floor (typed name, #881; credential, #880).
+Tests: `shared_session_tests` (keys asked only within clearance, none without a source, harness per connection) and
+`tests/daemon.rs` (a sealed label over the socket, with and without a key in the keystore).
 
 ## Gaps found and ticketed
 
@@ -203,7 +209,8 @@ per-member label keys (#1096).
 | The scan of public gateway methods was a hand-kept list of files and missed eight | fixed here (`gateway_sources`) |
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
 | `klatch admin` decides who may administer by a terminal and a process-tree walk, and its keystore family has no principal | #318 |
-| The daemon (#102) carries no sealed-label keys and no harness evidence per connection; a connection reads only labels held in the clear and joins as the generic floor | #1096 |
+| The daemon (#102) carried no sealed-label keys and no harness evidence per connection | fixed in #1096 (per-request keys within clearance; harness from the peer pid for an unidentified connection). A connection that identifies still joins as the generic floor (#880, #881) |
+| A wire `join` (`klatch serve --stdio` and the daemon alike) was always judged as the generic floor; only the CLI commands passed the harness | #1096 for the daemon; `serve --stdio` is #1115 |
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |

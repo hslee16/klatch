@@ -383,6 +383,79 @@ fn a_credential_gives_a_verified_member_and_a_bad_one_is_refused_and_closed() {
     }
 }
 
+/// A store of `dir` where room `vault` is `private`, the label `private` is sealed (its key made unless `key` is false)
+/// and a credential for `member` is cleared to `private`. Returns the token. The caller holds ENV.
+fn sealed_vault(dir: &Dir, member: &str, key: bool) -> String {
+    unsafe {
+        std::env::set_var("KLATCH_HOME", dir.home());
+        std::env::set_var("KLATCH_KEY_DIR", dir.home().join("keys"));
+        std::env::remove_var("KLATCH_NAME");
+        std::env::remove_var("KLATCH_IDENTITY_FILE");
+    }
+    let db = klatch::member::db_path().unwrap();
+    let store = klatch::member::custody::open_store(&db).unwrap();
+    let gateway =
+        klatch::gateway::Gateway::new(store, klatch::member::CliClock, klatch::gateway::AllowAll);
+    let human = klatch::domain::Principal::unattributed("launcher");
+    gateway
+        .admin_set_room_label(&human, "vault", "private")
+        .unwrap();
+    gateway.admin_seal_label(&human, "private").unwrap();
+    if key {
+        klatch::member::custody::ensure_label_key(&db, "private").unwrap();
+    }
+    let spec = klatch::gateway::CredentialSpec {
+        member,
+        clearance: "private",
+        ttl: 3600,
+        max_life: None,
+        parent: None,
+    };
+    gateway
+        .admin_issue_credential(&human, &spec)
+        .unwrap()
+        .to_text()
+        .to_string()
+}
+
+/// #1096: a connection of a member cleared to a sealed label reads and writes it over the socket (the daemon loads that
+/// member's key for the request), and a connection that is not cleared reaches nothing of it.
+#[test]
+fn a_cleared_connection_uses_a_sealed_label_and_an_uncleared_one_cannot() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let token = sealed_vault(&dir, "w-1", true);
+    let d = Daemon::started(&dir, &[]);
+    let (mut c, _) = Conn::hello(&d.sock);
+    let r = c.request("identify", json!({"member": "w-1", "token": token}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(c.request("join", json!({"room": "vault"}))["ok"], true);
+    c.post("vault", "the sealed launch plan");
+    let r = c.request("history", json!({"room": "vault", "last": 5}));
+    assert!(r.to_string().contains("the sealed launch plan"), "{r}");
+    // an unidentified connection is below the label: refused, and it never sees the text
+    let (mut o, _) = Conn::hello(&d.sock);
+    let r = o.request("join", json!({"room": "vault"}));
+    assert_eq!(r["ok"], false, "{r}");
+    let r = o.request("history", json!({"room": "vault", "last": 5}));
+    assert!(!r.to_string().contains("the sealed launch plan"), "{r}");
+}
+
+/// #1096: with no key for the label in the keystore the label stays sealed and a write fails closed.
+#[test]
+fn a_sealed_label_with_no_key_in_the_keystore_stays_sealed_over_the_socket() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let token = sealed_vault(&dir, "w-1", false);
+    let d = Daemon::started(&dir, &[]);
+    let (mut c, _) = Conn::hello(&d.sock);
+    let r = c.request("identify", json!({"member": "w-1", "token": token}));
+    assert_eq!(r["ok"], true, "{r}");
+    c.request("join", json!({"room": "vault"}));
+    let r = c.request("post", json!({"room": "vault", "body": "no key"}));
+    assert_eq!(r["ok"], false, "{r}");
+}
+
 #[test]
 fn identify_after_another_request_is_an_ordinary_unknown_method() {
     let dir = Dir::new();

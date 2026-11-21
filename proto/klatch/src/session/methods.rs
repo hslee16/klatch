@@ -268,7 +268,12 @@ fn prune<S: Store>(g: &Gateway<S>, who: &Principal, id: String) -> Vec<ServerFra
 }
 
 /// Answer a request that is a plain call through the gateway.
-pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame> {
+pub(crate) fn handle<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    call: Call,
+    harness: Option<&dyn crate::harness::Harness>,
+) -> Vec<ServerFrame> {
     let empty = |()| json!({});
     match call.method.clone().as_str() {
         "post" => call.run(
@@ -301,7 +306,13 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
                 json!({ "messages": h.messages.iter().map(message_json).collect::<Vec<_>>(), "more": h.more })
             },
         ),
-        "join" => call.run(|p: RoomParams| g.join(who, &p.room), empty),
+        "join" => call.run(
+            |p: RoomParams| match harness {
+                Some(h) => g.join_with_harness(who, &p.room, h).map(|_| ()),
+                None => g.join(who, &p.room),
+            },
+            empty,
+        ),
         "asks" => call.run(|p: RoomParams| g.open_asks(who, &p.room), |a| asks_json(&a)),
         "my_crossings" => call.run(
             |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
