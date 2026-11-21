@@ -43,6 +43,9 @@ pub const QUEUE_CAP: usize = 64;
 /// How many pull requests' heads are remembered.
 const TRACKED_HEADS: usize = 256;
 
+/// How many recent `X-GitHub-Delivery` ids are remembered to drop redeliveries.
+pub const DELIVERY_IDS: usize = 1024;
+
 // ---- HMAC-SHA256 ----
 
 /// HMAC-SHA256 from the audited RustCrypto `hmac` crate (the repository does not hand-roll a MAC; RFC 4231 vectors are
@@ -578,6 +581,38 @@ pub struct Intake<'a> {
     secret: Secret,
     queue: &'a Queue,
     tracker: Tracker,
+    deliveries: Deliveries,
+}
+
+/// Recent delivery ids, oldest first, bounded by [`DELIVERY_IDS`].
+#[derive(Default)]
+struct Deliveries {
+    order: std::collections::VecDeque<String>,
+    seen: std::collections::HashSet<String>,
+}
+
+impl Deliveries {
+    fn contains(&self, id: &str) -> bool {
+        self.seen.contains(id)
+    }
+
+    fn remember(&mut self, id: &str) {
+        if self.seen.insert(id.to_string()) {
+            self.order.push_back(id.to_string());
+            while self.order.len() > DELIVERY_IDS {
+                if let Some(old) = self.order.pop_front() {
+                    self.seen.remove(&old);
+                }
+            }
+        }
+    }
+}
+
+/// A usable delivery id: GitHub sends a GUID; anything long or with odd characters is not cached.
+fn delivery_id(v: Option<&str>) -> Option<&str> {
+    v.filter(|s| {
+        !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
 }
 
 impl<'a> Intake<'a> {
@@ -586,6 +621,7 @@ impl<'a> Intake<'a> {
             secret,
             queue,
             tracker: Tracker::default(),
+            deliveries: Deliveries::default(),
         }
     }
 }
@@ -613,13 +649,22 @@ impl Handler for Intake<'_> {
         ) {
             return Response::new(401, "unauthorized");
         }
+        // the id is looked at only after the signature check; a repeat is acknowledged and dropped
+        let delivery = delivery_id(request.head.header("x-github-delivery"));
+        if delivery.is_some_and(|id| self.deliveries.contains(id)) {
+            return Response::new(200, "duplicate");
+        }
         let Some(event) = request.head.header("x-github-event") else {
             return Response::new(400, "missing event header");
         };
         let Ok(body) = serde_json::from_slice::<Value>(&request.body) else {
             return Response::new(400, "body is not JSON");
         };
-        match translate(event, &body, &mut self.tracker) {
+        let outcome = translate(event, &body, &mut self.tracker);
+        if let (Ok(_), Some(id)) = (&outcome, delivery) {
+            self.deliveries.remember(id);
+        }
+        match outcome {
             Ok(Outcome::Notice(n)) => {
                 self.queue.push(n);
                 Response::new(200, "ok")
