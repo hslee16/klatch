@@ -302,7 +302,8 @@ cmd_resume() {
   ensure_worktree "$name" || { "$klatch" worker revoke "$name" > /dev/null 2>&1; skip "no worktree"; }
   # bank what the ended run spent so TEAM_MAX_TOTAL_USD keeps counting it, then keep its log aside
   local c; c="$(grep -o '"total_cost_usd": *[0-9.]*' "$r.log" 2> /dev/null | tail -1 | sed 's/.*: *//')"
-  awk -v a="$(cat "$r.spent" 2> /dev/null || echo 0)" -v b="${c:-0}" 'BEGIN { print a + b }' > "$r.spent"
+  local prior; prior="$(cat "$r.spent" 2> /dev/null || echo 0)"
+  awk -v a="$prior" -v b="${c:-0}" 'BEGIN { print a + b }' > "$r.spent"
   [ -f "$r.log" ] && mv "$r.log" "$r.log.prev"
   echo $((done_n + 1)) > "$r.restarts"
   {
