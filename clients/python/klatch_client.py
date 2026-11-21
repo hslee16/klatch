@@ -179,8 +179,12 @@ class Client:
             self._note(frame)
 
     def _send(self, frame):
-        self._writer.write(encode_line(frame))
-        self._writer.flush()
+        try:
+            self._writer.write(encode_line(frame))
+            self._writer.flush()
+        except (OSError, ValueError) as e:
+            # a dead peer or a closed stream: one error type for callers, as the TypeScript client does
+            raise ProtocolError(f"the session is closed: {e}") from e
 
     def post(self, room, body, label=None, kind=None, payload=None):
         params = {"room": room, "body": body}
