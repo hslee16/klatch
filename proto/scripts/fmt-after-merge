@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# fmt-after-merge (#1093): run after `git merge` of main into a branch, from anywhere inside the repo, before the gate.
+# A union merge (#1065) keeps both `mod x;` lines two branches added at the same place, in an order rustfmt rejects, so a
+# textually clean and compiling merge can still fail CI's Format check. This runs `cargo fmt --all` in proto/, commits the
+# result when it changed anything (a normal commit, never an amend, never a push), then `cargo check --workspace
+# --all-targets --locked` so a merge that no longer compiles is found here. A repo with no proto/Cargo.toml is skipped.
+# Exit 0 formatted (or nothing to do) and compiles; 1 the format or the compile check failed (the tree is left as it is).
+set -uo pipefail
+command -v cargo > /dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
+top="$(git rev-parse --show-toplevel 2> /dev/null)" || { echo "fmt-after-merge: not in a git repository" >&2; exit 1; }
+[ -f "$top/proto/Cargo.toml" ] || exit 0
+cd "$top/proto" || exit 1
+cargo fmt --all || { echo "fmt-after-merge: cargo fmt failed" >&2; exit 1; }
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  git add -u
+  git commit -q -m "Format after the merge (cargo fmt)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { echo "fmt-after-merge: commit failed" >&2; exit 1; }
+  echo "fmt-after-merge: formatted and committed"
+fi
+cargo check --workspace --all-targets --locked || { echo "fmt-after-merge: cargo check failed after the merge" >&2; exit 1; }

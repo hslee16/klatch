@@ -607,6 +607,8 @@ process_pr() {
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" > /dev/null 2>&1 || { git merge --abort > /dev/null 2>&1; post_dropped "$n" error; cur=""; return; }
     fi
+    # #1093: a union-merged registry can be unsorted for rustfmt; format, commit, and re-check the compile before the gate
+    if ! bash "$here/fmt-after-merge" > "$run/fmt.log" 2>&1; then say "#$n: fmt-after-merge failed"; tail -5 "$run/fmt.log" >&2; post_dropped "$n" checks-failed; cur=""; return; fi
     post_parked "$n" gate
     if ! run_gate; then say "#$n: the gate failed; not pushed (output kept in the state directory until exit)"; tail -5 "$run/gate.log" >&2; post_dropped "$n" checks-failed; cur=""; return; fi
     newhead="$(git rev-parse HEAD)"
