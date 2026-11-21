@@ -1,0 +1,1 @@
+- The webhook intake of `klatch-server channel --webhook` also drops a replay of an already accepted signed body (same event name and body) under a fresh or missing `X-GitHub-Delivery` id, answering 200 `duplicate` (a bounded in-memory set of the last 1024 digests; a restart forgets it) (#1103).
