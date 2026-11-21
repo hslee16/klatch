@@ -14,6 +14,8 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# a sentinel watchdog length no other process on the machine uses, so the leak check at the end sees only this test's (#1101)
+export TEAM_MAX_SECONDS=3602
 fails=0
 ok() { printf '  ok    %s\n' "$1"; }
 bad() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
@@ -226,6 +228,11 @@ if [ ! -f "$fake/claims.env" ]; then ok "a task with no ticket does not read the
 newenv
 TEAM_KLATCH="$bin/klatch" TEAM_CLAUDE="$bin/claude" TMPDIR="$work" KLATCH_HOME="$work/home" FAKE_DIR="$fake" "$team" smoke > "$work/out" 2>&1; rc=$?
 if [ "$rc" -eq 0 ] && grep -q "^home=$work/klatch-team-smoke" "$fake/claude-smoke/env" && ! grep -q "home=$work/home$" "$fake/claude-smoke/env" && grep -q "^worker issue smoke " "$fake/klatch.log"; then ok "smoke uses a throwaway KLATCH_HOME, not the caller's"; else bad "smoke rc=$rc: $(cat "$work/out")"; fi
+
+# --- every worker run above left its watchdog behind a while: none may outlive the run (#1101)
+/bin/sleep 1
+leaked="$(pgrep -f "/bin/sleep 3602" | wc -l | tr -d ' ')"
+if [ "$leaked" -eq 0 ]; then ok "no watchdog sleep outlives a finished or stopped worker"; else bad "$leaked watchdog sleep(s) left running"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all team script tests passed"; else echo "$fails team script test(s) failed"; exit 1; fi

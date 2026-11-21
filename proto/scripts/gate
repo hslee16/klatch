@@ -97,6 +97,11 @@ step() {
   fi
 }
 
+# #1101: a gate run once left about 50 orphaned /bin/sleep 3600 processes (the team watchdog) and fork failed machine-wide.
+# Count them now and fail at the end if the run added any (sleeps another session left earlier are not blamed on this run).
+sleepers() { pgrep -f '/bin/sleep 3600' 2> /dev/null | wc -l | tr -d ' '; }
+sleepers_before="$(sleepers)"
+
 proto="$root/proto"
 step "fmt"                          no    "$proto" cargo fmt --all --check
 step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -167,6 +172,13 @@ repo_checks() {
     && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh; }
 }
 step "release and shell checks"     no    "$root" repo_checks
+
+sleepers_after="$(sleepers)"
+if [ "$sleepers_after" -gt "$sleepers_before" ]; then
+  echo "gate: FAILED: the run left $((sleepers_after - sleepers_before)) orphaned '/bin/sleep 3600' process(es) behind (#1101)." >&2
+  echo "Find the script or test that starts a background sleep and stops only its parent; clean up with: pkill -9 -f 'sleep 3600'" >&2
+  exit 1
+fi
 
 echo
 echo "GATE PASSED in $((SECONDS - started))s (Hegel seed $HEGEL_SEED, $cases cases each)"
