@@ -125,8 +125,12 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
 
 #[test]
 fn unsafe_code_is_only_where_it_was_reviewed() {
-    // main.rs: lowering the core dump limit. The harness module: the process table. Nothing else.
-    let allowed = ["klatch/src/main.rs", "klatch/src/harness/"];
+    // main.rs of both binaries: lowering the core dump limit. The harness module: the process table. Nothing else.
+    let allowed = [
+        "klatch/src/main.rs",
+        "klatch-server/src/main.rs",
+        "klatch/src/harness/",
+    ];
     let mut found = Vec::new();
     for (path, text) in sources() {
         let rel = path
