@@ -2,7 +2,8 @@
 //! `klatch serve --stdio` using the same frame types the gateway does. Over stdio, who you are is decided by the
 //! environment the process is started with, never by a request parameter. Over the daemon's Unix socket (`klatch-server
 //! daemon`, #102; feature `client-socket`, #1095) the kernel reports the peer and the first request, `identify`, says
-//! more (an [`Identity`]). A frame type or field this version does not know is ignored.
+//! more (an [`Identity`]). Over `klatch-server http` (feature `client-http`, #1122) a bearer credential and the member name
+//! say who you are, and the stream is server-sent events. A frame type or field this version does not know is ignored.
 
 use crate::protocol::{
     Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, decode_server_line, encode_line,
@@ -17,6 +18,11 @@ use std::time::{Duration, Instant};
 
 #[cfg(all(unix, feature = "client-socket"))]
 mod socket;
+
+#[cfg(feature = "client-http")]
+mod http;
+#[cfg(feature = "client-http")]
+pub use http::{HttpFault, HttpOptions};
 
 /// A boxed writer for the session's input, and the action that ends a transport that has no child to wait for.
 type Writer = Box<dyn Write + Send>;

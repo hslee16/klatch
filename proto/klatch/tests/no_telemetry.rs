@@ -146,6 +146,23 @@ fn may_connect_unix_socket(rel: &str) -> bool {
         })
 }
 
+/// The one file that may name `TcpStream` (and no other socket type): the Rust client's connect to `klatch-server http`
+/// (#1122). It connects to a loopback port and listens for nothing (the url is checked before a socket is opened). It
+/// is allowed only while its parent declares it `mod http;` directly under `#[cfg(feature = "client-http")]`, a feature
+/// that is in no default feature (see `the_client_http_is_in_no_default_feature`), so the shipped binary never
+/// contains it. It names no other socket type, and no resolver (`ToSocketAddrs`, `lookup_host`).
+const CLIENT_HTTP_FILE: &str = "src/client/http.rs";
+
+fn may_connect_tcp(rel: &str) -> bool {
+    rel == CLIENT_HTTP_FILE
+        && parent_text(rel).is_some_and(|text| {
+            let lines: Vec<&str> = text.lines().map(str::trim).collect();
+            lines.iter().enumerate().any(|(i, l)| {
+                *l == "mod http;" && i > 0 && lines[i - 1] == "#[cfg(feature = \"client-http\")]"
+            })
+        })
+}
+
 /// The text of the file that declares the module at `rel` (`src/a/b.rs` is declared in `src/a.rs` or `src/a/mod.rs`),
 /// for the first of them that exists.
 fn parent_text(rel: &str) -> Option<String> {
@@ -238,6 +255,7 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
                         code.contains(*s)
                             && !may_open_loopback_socket(&rel)
                             && !(**s == "UnixStream" && may_connect_unix_socket(&rel))
+                            && !(**s == "TcpStream" && may_connect_tcp(&rel))
                     })
                     .map(|s| format!("{at}: uses {s}")),
             );
@@ -270,6 +288,10 @@ fn std_net_is_only_used_to_read_addresses() {
                 "ToSocketAddrs",
                 "lookup_host",
             ] {
+                // the client's HTTP file imports `TcpStream` and nothing else of the kind
+                if item == "TcpStream" && may_connect_tcp(&rel) {
+                    continue;
+                }
                 assert!(!line.contains(item), "{}: {line}", path.display());
             }
         }
@@ -354,6 +376,62 @@ fn the_client_socket_is_in_no_default_feature() {
         "[\"client\"]",
         "client-socket brings in nothing but the client"
     );
+}
+
+/// The Rust client's HTTP connect (#1122) is a feature of its own, like the socket connect: no default feature turns it
+/// on, so the shipped `klatch` binary (and so every wheel, the npm package and the Homebrew build, which build with the
+/// default features) contains no network socket type, and it brings in nothing but the client.
+#[test]
+fn the_client_http_is_in_no_default_feature() {
+    let toml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    let section = toml
+        .split("\n[features]")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .expect("a features section");
+    let mut bodies = std::collections::BTreeMap::<String, String>::new();
+    let mut current = String::new();
+    for line in section.lines() {
+        let t = line.trim();
+        if t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        if let Some((name, rest)) = t.split_once('=') {
+            current = name.trim().to_string();
+            bodies.entry(current.clone()).or_default().push_str(rest);
+        } else {
+            bodies.entry(current.clone()).or_default().push_str(t);
+        }
+    }
+    for (name, body) in &bodies {
+        if name != "client-http" {
+            assert!(
+                !body.contains("client-http"),
+                "{name} turns on the client HTTP transport: {body}"
+            );
+        }
+    }
+    assert_eq!(
+        bodies["client-http"].trim(),
+        "[\"client\"]",
+        "client-http brings in nothing but the client"
+    );
+}
+
+/// The allowance for `TcpStream` is for one file, declared one way; the same file elsewhere or another file is not it.
+#[test]
+fn only_the_client_http_file_may_name_a_tcp_stream() {
+    assert!(may_connect_tcp("src/client/http.rs"));
+    for other in [
+        "src/client/socket.rs",
+        "src/client.rs",
+        "src/jev/http.rs",
+        "src/gateway/http.rs",
+        "src/client/http/tests.rs",
+    ] {
+        assert!(!may_connect_tcp(other), "{other}");
+    }
 }
 
 #[test]
