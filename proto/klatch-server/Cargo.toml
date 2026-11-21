@@ -21,3 +21,6 @@ klatch = { path = "../klatch" }
 anyhow.workspace = true
 serde_json.workspace = true
 libc = "0.2"
+sha2 = "0.10"
+subtle = "2"
+hmac = "0.12"
