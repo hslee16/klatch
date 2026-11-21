@@ -119,12 +119,41 @@ impl<S: Store> Gateway<S> {
         room: &str,
         (after_seq, limit): (i64, usize),
     ) -> Result<(Vec<Message>, usize, i64)> {
+        Self::check_tail_range(after_seq, limit)?;
+        // the same admission as `head`: the stops, the direct-message pair and the clearance, then the guard (#1196)
+        self.admit(who, room, Operation::Subscribe { room: room.into() })?;
+        self.scan_tail(room, (after_seq, limit))
+    }
+
+    /// `tail_scan` for the human's floor acts (`klatch admin export`, #1196): the room's rows whoever the room belongs
+    /// to, a direct message included. It is an admin act (`tail`) that goes through the role check and the guard, so
+    /// on a members' gateway only the admin agent holds it, and it is a named method of its own: nothing a member
+    /// reaches (`tail`, `tail_scan`, the stream, `history`) goes through it, and no principal name unlocks it.
+    pub fn admin_tail_scan(
+        &self,
+        who: &Principal,
+        room: &str,
+        (after_seq, limit): (i64, usize),
+    ) -> Result<(Vec<Message>, usize, i64)> {
         check_member(who)?;
         check_room(room)?;
+        Self::check_tail_range(after_seq, limit)?;
+        self.check_guard(who, &Operation::admin("tail", room))?;
+        self.scan_tail(room, (after_seq, limit))
+    }
+
+    fn check_tail_range(after_seq: i64, limit: usize) -> Result<()> {
         if after_seq < 0 || limit == 0 {
             return Err(Error::Invalid("bad tail range".into()));
         }
-        self.check_guard(who, &Operation::Subscribe { room: room.into() })?;
+        Ok(())
+    }
+
+    fn scan_tail(
+        &self,
+        room: &str,
+        (after_seq, limit): (i64, usize),
+    ) -> Result<(Vec<Message>, usize, i64)> {
         let rows = self.store.tail(room, after_seq, limit)?;
         let (scanned, last) = (rows.len(), rows.last().map_or(after_seq, |m| m.seq));
         let shown = self.mark_advisory(room, Self::without_canary(rows))?;

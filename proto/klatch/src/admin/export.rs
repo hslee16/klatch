@@ -40,7 +40,8 @@ pub(super) fn export(ctx: &KeyCtx, room: &str, json: bool) -> Result<()> {
     gateway.use_label_keys(custody::label_ring(ctx.db, &gateway.sealed_labels()?)?);
     // audited before anything is printed: the act is recorded even if the output is cut short
     gateway.admin_note(&ctx.who, ("export", room), "readable transcript printed")?;
-    for m in gateway.tail(&ctx.who, room, (0, 1_000_000))? {
+    // the human's own named path (#1196): a direct message is exportable here and through no member-reachable reader
+    for m in gateway.admin_tail_scan(&ctx.who, room, (0, 1_000_000))?.0 {
         if json {
             println!("{}", export_json_line(room, &m));
         } else {

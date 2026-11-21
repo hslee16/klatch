@@ -13,6 +13,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
     ("read", |g, w| refused(g.read(w, "r", true))),
     ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),
+    ("admin_tail_scan", |g, w| refused(g.admin_tail_scan(w, "r", (0, 10)))),
     ("history", |g, w| refused(g.history(w, "r", crate::gateway::HistoryRange::default()))),
     ("head", |g, w| refused(g.head(w, "r"))),
     ("ack", |g, w| refused(g.ack(w, "r", 1))),
