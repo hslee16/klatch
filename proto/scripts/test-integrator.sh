@@ -196,6 +196,7 @@ advance() { # file content: main moves on (a merge by someone else)
 # SIGINT, and a shell script cannot trap a signal that was ignored on entry: reset the dispositions so the signal
 # cases test the integrator, not the caller (#866).
 _run() {
+  # shellcheck disable=SC2016 # the single quotes are on purpose: perl, not the shell, expands $SIG
   exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" \
     INTEGRATOR_REPO="$repo" INTEGRATOR_KLATCH="${KB:-$bin/klatch}" INTEGRATOR_GATE="$bin/gate" INTEGRATOR_GH_REPO=hslee16/klatch \
     INTEGRATOR_RECONCILE_SECS="${RS:-2}" INTEGRATOR_POLL_SECS=0.1 INTEGRATOR_GH_RETRY_SLEEP=0 INTEGRATOR_GH_TIMEOUT=20 \
