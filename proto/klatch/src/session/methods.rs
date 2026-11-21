@@ -283,6 +283,15 @@ fn stuck_json(events: &[crate::domain::StuckEvent]) -> Value {
             StuckEvent::ClaimDeadlock { members } => {
                 v["members"] = json!(members);
             }
+            StuckEvent::LongExchange {
+                room,
+                members,
+                messages,
+            } => {
+                v["room"] = json!(room);
+                v["members"] = json!(members);
+                v["messages"] = json!(messages);
+            }
         }
         v
     };

@@ -12,6 +12,20 @@ pub const DM_NUDGE_MESSAGES: usize = 4;
 /// How many of a room's newest messages the nudge looks at: a bounded read, never the room's whole history.
 pub const DM_NUDGE_WINDOW: usize = 64;
 
+/// The newest run of messages sent by only two members, from the senders of a room's newest messages in order: the
+/// two names (the last sender first) and the length of the run. `None` when one member sent them all or there are none.
+/// Pure, so the digest nudge (#1190) and the mediator proposal (#1191) count an exchange the same way.
+pub fn exchange_run<'a>(senders: &[&'a str]) -> Option<(&'a str, &'a str, usize)> {
+    let last = *senders.last()?;
+    let other = *senders.iter().rev().find(|s| **s != last)?;
+    let len = senders
+        .iter()
+        .rev()
+        .take_while(|s| **s == last || **s == other)
+        .count();
+    Some((last, other, len))
+}
+
 /// The room two members share: `dm.<a>.<b>` with the names sorted, or `dm.` and 16 hex digits of a hash of the
 /// pair when that would not fit in a room name.
 pub fn dm_room(a: &str, b: &str) -> String {
@@ -51,6 +65,20 @@ pub fn dm_peer_in_room(me: &str, room: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_is_the_newest_stretch_sent_by_only_two_members() {
+        assert_eq!(
+            exchange_run(&["cy", "ann", "bo", "ann", "bo"]),
+            Some(("bo", "ann", 4))
+        );
+        assert_eq!(
+            exchange_run(&["ann", "bo", "cy", "bo"]),
+            Some(("bo", "cy", 3))
+        );
+        assert_eq!(exchange_run(&["ann", "ann", "ann"]), None);
+        assert_eq!(exchange_run(&[]), None);
+    }
 
     #[test]
     fn the_peer_is_read_from_the_room_name_for_either_side() {

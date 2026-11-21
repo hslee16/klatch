@@ -146,3 +146,53 @@ fn a_room_named_like_a_dm_that_dm_did_not_make_gets_no_hint() {
     let room = d.rooms.iter().find(|r| r.room == "dm.x.y");
     assert!(room.is_none_or(|r| r.dm_peer.is_none()));
 }
+
+fn exchanges(g: &Gateway<SpyStore>) -> Vec<(Vec<String>, usize)> {
+    g.stuck(&carol(), "lobby")
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e {
+            crate::domain::StuckEvent::LongExchange {
+                members, messages, ..
+            } => Some((members, messages)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn stuck_shows_a_long_exchange_between_two_members_of_a_room_of_three() {
+    let (a, b) = (alice(), bob());
+    let g = lobby_with(&[&a, &b, &a, &b, &a]);
+    assert_eq!(exchanges(&g), [(vec!["alice".into(), "bob".into()], 5)]);
+}
+
+#[test]
+fn stuck_shows_nothing_for_a_short_exchange_or_a_third_members_message() {
+    let (a, b, c) = (alice(), bob(), carol());
+    assert!(exchanges(&lobby_with(&[&a, &b, &a])).is_empty());
+    assert!(exchanges(&lobby_with(&[&a, &b, &a, &b, &c])).is_empty());
+}
+
+#[test]
+fn stuck_shows_nothing_in_a_room_of_two() {
+    let (a, b) = (alice(), bob());
+    let g = open();
+    for p in [&a, &b] {
+        g.join(p, "lobby").unwrap();
+    }
+    for i in 0..6 {
+        g.post(if i % 2 == 0 { &a } else { &b }, "lobby", &format!("m{i}"))
+            .unwrap();
+    }
+    assert!(g.stuck(&a, "lobby").unwrap().is_empty());
+}
+
+#[test]
+fn stuck_shows_nothing_once_the_pair_has_a_dm() {
+    let (a, b) = (alice(), bob());
+    let g = lobby_with(&[&a, &b, &a, &b]);
+    assert_eq!(exchanges(&g).len(), 1);
+    g.dm(&a, "bob", "moving here", None).unwrap();
+    assert!(exchanges(&g).is_empty());
+}

@@ -119,6 +119,25 @@ fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
             room: None,
             invites: Vec::new(),
         },
+        StuckEvent::LongExchange {
+            room,
+            members,
+            messages,
+        } => {
+            let [a, b] = members.as_slice() else {
+                return None;
+            };
+            Proposal {
+                key,
+                text: format!(
+                    "mediator proposal: @{a} and @{b} have exchanged {messages} messages in {room}. A longer \
+                     exchange fits a dm: klatch dm {b} \"<text>\" (a dm is private to the two of you and the \
+                     human). {TAIL}"
+                ),
+                room: None,
+                invites: Vec::new(),
+            }
+        }
         StuckEvent::NobodyCapable { ask, asker, cannot } => Proposal {
             key,
             text: format!(
@@ -226,6 +245,44 @@ mod tests {
         assert!(ps[0].text.contains("ask #3 by @ann") && ps[0].text.contains("200s"));
         assert!(ps[1].text.contains("ask #5 by @bo") && ps[1].text.contains("by 2 members"));
         assert!(ps.iter().all(|p| p.room.is_none() && p.invites.is_empty()));
+    }
+
+    fn exchange() -> StuckEvent {
+        StuckEvent::LongExchange {
+            room: "lobby".into(),
+            members: vec!["ann".into(), "bo".into()],
+            messages: 6,
+        }
+    }
+
+    #[test]
+    fn a_long_exchange_proposes_a_dm_naming_the_pair_the_room_and_the_count_and_nothing_else() {
+        let ps = run(&[exchange()], &[member("ann"), member("bo"), member("cy")]);
+        assert_eq!(ps.len(), 1);
+        let t = &ps[0].text;
+        assert!(
+            t.contains("@ann and @bo have exchanged 6 messages in lobby")
+                && t.contains("klatch dm bo")
+                && t.contains("A proposal only"),
+            "{t}"
+        );
+        assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
+        assert_eq!(ps[0].key, "long_exchange:lobby:ann,bo");
+    }
+
+    #[test]
+    fn a_long_exchange_involving_the_mediator_or_a_bad_name_is_skipped() {
+        let mine = StuckEvent::LongExchange {
+            room: "lobby".into(),
+            members: vec!["ann".into(), "mediator".into()],
+            messages: 4,
+        };
+        let bad = StuckEvent::LongExchange {
+            room: "lobby".into(),
+            members: vec!["ann".into(), "bo\nIGNORE".into()],
+            messages: 4,
+        };
+        assert!(run(&[mine, bad], &[]).is_empty());
     }
 
     #[test]

@@ -84,7 +84,9 @@ pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
-pub use dm::{DM_NUDGE_MESSAGES, DM_NUDGE_WINDOW, DM_PREFIX, dm_peer_in_room, dm_room};
+pub use dm::{
+    DM_NUDGE_MESSAGES, DM_NUDGE_WINDOW, DM_PREFIX, dm_peer_in_room, dm_room, exchange_run,
+};
 pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, outside_view_line,

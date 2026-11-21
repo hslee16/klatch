@@ -238,6 +238,72 @@ mod tests {
         assert!(seen[0].contains("@ann yields"), "{}", seen[0]);
     }
 
+    /// Alternating lobby posts by ann and bo, one per number in `range` (distinct texts, so no repeat guard).
+    fn chat(g: &Gw, range: std::ops::Range<usize>) {
+        for i in range {
+            let who = if i % 2 == 0 { "ann" } else { "bo" };
+            me(g, who).post("lobby", &format!("secret-{i}")).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_long_two_member_exchange_gets_one_dm_proposal_without_message_text() {
+        let (g, _) = lobby(&["mediator", "ann", "bo", "cy"]);
+        chat(&g, 0..4);
+        let mut m = mediator();
+        let ev = m.pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
+        let seen = proposals_seen(&g, "cy");
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(
+            seen[0].contains("@ann and @bo have exchanged 4 messages in lobby")
+                && seen[0].contains("klatch dm bo")
+                && !seen[0].contains("secret"),
+            "{}",
+            seen[0]
+        );
+        // no repeat while the exchange stands, even as it grows
+        chat(&g, 4..6);
+        assert!(m.pass(&me(&g, "mediator"), 100).unwrap().is_empty());
+        assert_eq!(proposals_seen(&g, "cy").len(), 1);
+    }
+
+    #[test]
+    fn a_short_exchange_a_pair_with_a_dm_and_a_room_of_two_get_no_dm_proposal() {
+        let (g, _) = lobby(&["mediator", "ann", "bo", "cy"]);
+        chat(&g, 0..3);
+        assert!(
+            mediator()
+                .pass(&me(&g, "mediator"), 100)
+                .unwrap()
+                .is_empty()
+        );
+        chat(&g, 3..4);
+        me(&g, "ann").dm("bo", "over here", None).unwrap();
+        assert!(
+            mediator()
+                .pass(&me(&g, "mediator"), 100)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(proposals_seen(&g, "cy").is_empty());
+    }
+
+    #[test]
+    fn a_new_exchange_after_a_third_members_message_is_proposed_on_again() {
+        let (g, t) = lobby(&["mediator", "ann", "bo", "cy"]);
+        chat(&g, 0..4);
+        let mut m = mediator();
+        m.pass(&me(&g, "mediator"), 100).unwrap();
+        me(&g, "cy").post("lobby", "interjection").unwrap();
+        assert!(m.pass(&me(&g, "mediator"), 100).unwrap().is_empty());
+        t.set(t.get() + 61);
+        chat(&g, 6..11);
+        let ev = m.pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
+        assert_eq!(proposals_seen(&g, "cy").len(), 2);
+    }
+
     #[test]
     fn a_second_pass_proposes_nothing_again() {
         let (g, _) = lobby(&["mediator", "ann", "bo"]);

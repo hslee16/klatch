@@ -9,8 +9,8 @@ impl<S: Store> Gateway<S> {
         self.store.open_asks(room, self.now())
     }
 
-    /// The stuck cases of a room as structured events (#271): stale asks, asks nobody capable took, cycles through asks
-    /// and cycles of claim waits. A read like `open_asks`, guarded the same way (so a room above the caller's clearance
+    /// The stuck cases of a room as structured events (#271): stale asks, asks nobody capable took, cycles through asks,
+    /// cycles of claim waits and a long two-member exchange with no dm (#1191). A read like `open_asks`, guarded the same way (so a room above the caller's clearance
     /// refuses it), and it carries ids, member names and numbers, never message text.
     pub fn stuck(&self, who: &Principal, room: &str) -> Result<Vec<crate::domain::StuckEvent>> {
         self.admit(who, room, Operation::read(room, false))?;
@@ -19,12 +19,8 @@ impl<S: Store> Gateway<S> {
         let claims = self.store.claims(room, now)?;
         let cycles = self.store.wait_cycles(room, now)?;
         let stale_after = self.settings_of(room)?.stale_secs;
-        Ok(crate::domain::stuck_events(
-            &asks,
-            &claims,
-            &cycles,
-            now,
-            stale_after,
-        ))
+        let mut events = crate::domain::stuck_events(&asks, &claims, &cycles, now, stale_after);
+        events.extend(self.exchange_event(room)?);
+        Ok(events)
     }
 }
