@@ -27,7 +27,7 @@ impl<S: Store> Gateway<S> {
         ))
     }
 
-    /// The `seq`s of `messages` that are addressed to the caller: it is mentioned, or the room is a direct message with
+    /// The `seq`s of `messages` that are addressed to the caller: it is mentioned, the message is an `@all` broadcast, or the room is a direct message with
     /// the caller in it. A busy hook digest keeps these before newer messages (#185).
     pub(super) fn addressed_seqs(
         &self,
@@ -38,7 +38,10 @@ impl<S: Store> Gateway<S> {
         let dm = self.dm_pair(room)?.is_some();
         Ok(messages
             .iter()
-            .filter(|m| dm || crate::domain::mentions(&m.body, &who.member))
+            .filter(|m| {
+                dm || crate::domain::mentions(&m.body, &who.member)
+                    || crate::domain::mentions(&m.body, super::super::delivery::BROADCAST)
+            })
             .map(|m| m.seq)
             .collect())
     }

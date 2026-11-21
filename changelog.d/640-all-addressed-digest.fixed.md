@@ -1,0 +1,1 @@
+- A busy hook digest keeps `@all` messages with the ones addressed to the member, as the delivery view already treated them (#640).

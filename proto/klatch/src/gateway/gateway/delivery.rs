@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 const KEY: &str = "view:";
 /// The word that addresses every member (`@all`).
-const BROADCAST: &str = "all";
+pub(super) const BROADCAST: &str = "all";
 
 /// What a member is shown without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
