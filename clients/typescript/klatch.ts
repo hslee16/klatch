@@ -1,13 +1,15 @@
 // A thin klatch client over the wire protocol (PROTOCOL.md, version 1): newline-delimited JSON to
-// `klatch serve --stdio`, or over the Unix socket of the klatch-server daemon (`Client.connectSocket`), using only
-// Node's standard library. Over stdio, who you are is decided by the environment of the process, never by a request
+// `klatch serve --stdio`, over the Unix socket of the klatch-server daemon (`Client.connectSocket`), or over HTTP and
+// server-sent events to `klatch-server http` (`Client.connectHttp`), using only Node's standard library. Over stdio, who you are is decided by the environment of the process, never by a request
 // parameter; over the daemon's socket the operating system reports the peer and the first request, `identify`, says
 // more (#102). A frame type or field this version does not know is ignored.
 
 import { spawn } from "node:child_process";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { createConnection, type Socket } from "node:net";
 import { createInterface } from "node:readline";
-import type { Readable, Writable } from "node:stream";
+import { PassThrough, Writable, type Readable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -72,6 +74,254 @@ type Waiter = (frame: Frame | null) => void;
  * (`unmapped-process`). */
 export type Identity = { name?: string; member?: string; token?: string };
 
+/** What `Client.connectHttp` takes: the credential (a member and its token) and how patient to be. */
+export type HttpOptions = {
+  member?: string;
+  token?: string;
+  /** Milliseconds to wait for the server to answer a connect or a post (default 10000). */
+  connectTimeoutMs?: number;
+  /** Times to try to reopen a stream that ended without `close()` (default 5). */
+  reconnectAttempts?: number;
+  /** Base delay between those tries, multiplied by the try number (default 200). */
+  reconnectDelayMs?: number;
+};
+
+/** `klatch-server http` as a readable of frame lines and a writable of frame lines (#1114). The stream is
+ * `GET /v1/stream` with the credential; its `X-Klatch-Session` header names the session; the `data:` of each event is one
+ * frame line exactly. Each written line is a `POST /v1/frames` with that header, in order; the answer comes on the
+ * stream, as on the daemon's connection. A stream that ends without `shut()` (the server went away, a reset) is reopened,
+ * the `hello` of the new session is dropped, and every subscribed room is resubscribed from the last `seq` seen in it,
+ * so the caller sees no gap and no repeat. */
+class HttpTransport {
+  readonly input = new PassThrough({ encoding: "utf8" });
+  readonly output: Writable;
+  stream: IncomingMessage | null = null;
+  closed = false;
+  private session = "";
+  private ready: Promise<void> = Promise.resolve();
+  private subs = new Map<string, number>(); // room -> the from_seq to resume from
+  private rid = 0;
+  private done!: (code: number) => void;
+  readonly exited = new Promise<number>((resolve) => (this.done = resolve));
+
+  private host: string;
+  private port: number;
+  private member: string;
+  private token: string;
+  private connectTimeoutMs: number;
+  private reconnectAttempts: number;
+  private reconnectDelayMs: number;
+  private onSendError: (e: Error) => void;
+
+  // plain fields, not parameter properties: the tests run with Node's type stripping, which does not support them
+  constructor(
+    host: string,
+    port: number,
+    member: string,
+    token: string,
+    connectTimeoutMs: number,
+    reconnectAttempts: number,
+    reconnectDelayMs: number,
+    onSendError: (e: Error) => void,
+  ) {
+    this.host = host;
+    this.port = port;
+    this.member = member;
+    this.token = token;
+    this.connectTimeoutMs = connectTimeoutMs;
+    this.reconnectAttempts = reconnectAttempts;
+    this.reconnectDelayMs = reconnectDelayMs;
+    this.onSendError = onSendError;
+    let chain: Promise<void> = Promise.resolve();
+    this.output = new Writable({
+      write: (chunk, _enc, cb) => {
+        const text = String(chunk);
+        this.noteSent(text);
+        // posts go out in order; a failed one is reported as a send error, answered by the next request
+        chain = chain.then(() => this.post(text)).catch((e) => this.onSendError(e as Error));
+        cb();
+      },
+    });
+    this.output.on("error", () => {});
+  }
+
+  private headers(): Record<string, string> {
+    return { Authorization: `Bearer ${this.token}`, "X-Klatch-Member": this.member };
+  }
+
+  /** Open a session. Rejects with an ApiError (`identity.refused`) for a 401 and with the socket's error when nothing listens. */
+  open(skipHello: boolean): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(
+        { host: this.host, port: this.port, path: "/v1/stream", method: "GET", headers: { ...this.headers(), Accept: "text/event-stream" } },
+        (res) => {
+          req.setTimeout(0);
+          if (res.statusCode === 401) {
+            res.resume();
+            return reject(new ApiError("identity.refused", "the server refused the credential"));
+          }
+          const session = res.headers["x-klatch-session"];
+          if (res.statusCode !== 200 || typeof session !== "string" || session === "") {
+            res.resume();
+            return reject(new Error(`the server answered ${res.statusCode} to the stream`));
+          }
+          this.session = session;
+          this.stream = res;
+          this.read(res, skipHello);
+          resolve();
+        },
+      );
+      req.setTimeout(this.connectTimeoutMs, () => req.destroy(new Error("the server did not answer the connect in time")));
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  private read(res: IncomingMessage, skipHello: boolean) {
+    res.setEncoding("utf8");
+    let buf = "";
+    let data: string[] = [];
+    let first = true;
+    const end = () => {
+      if (this.stream !== res) return;
+      this.stream = null;
+      void this.reconnect();
+    };
+    res.on("data", (chunk: string) => {
+      if (this.stream !== res) return;
+      buf += chunk;
+      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+        const line = buf.slice(0, i).replace(/\r$/, "");
+        buf = buf.slice(i + 1);
+        if (line === "") {
+          if (data.length === 0) continue;
+          const frame = data.join("\n");
+          data = [];
+          const hello = first && /"type"\s*:\s*"hello"/.test(frame);
+          first = false;
+          if (hello && skipHello) continue;
+          this.noteSeen(frame);
+          this.input.write(frame + "\n");
+        } else if (line.startsWith("data:")) {
+          data.push(line.slice(line[5] === " " ? 6 : 5));
+        }
+      }
+    });
+    res.on("end", end);
+    res.on("close", end);
+    res.on("error", end); // a reset (ECONNRESET on Linux) is a stream that ended, as a clean end is
+  }
+
+  private async reconnect() {
+    if (this.closed) return;
+    let release!: () => void;
+    let fail!: (e: Error) => void;
+    this.ready = new Promise<void>((res, rej) => ((release = res), (fail = rej)));
+    this.ready.catch(() => {});
+    for (let attempt = 1; attempt <= this.reconnectAttempts; attempt++) {
+      if (this.closed) return;
+      try {
+        await this.open(true);
+        release();
+        await this.resubscribe();
+        return;
+      } catch {
+        await sleep(this.reconnectDelayMs * attempt);
+      }
+    }
+    fail(new Error("the stream could not be reopened"));
+    this.finish();
+  }
+
+  private async resubscribe() {
+    for (const [room, from_seq] of [...this.subs]) {
+      const line = JSON.stringify({ v: PROTOCOL_VERSION, type: "request", id: `r${++this.rid}`, method: "subscribe", params: { room, from_seq } }) + "\n";
+      try {
+        await this.post(line);
+      } catch {
+        return;
+      }
+    }
+  }
+
+  private noteSent(text: string) {
+    for (const line of text.split("\n")) {
+      if (line.trim() === "") continue;
+      let f: any;
+      try {
+        f = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (f?.type !== "request") continue;
+      if (f.method === "subscribe" && typeof f.params?.room === "string") this.subs.set(f.params.room, f.params.from_seq ?? 0);
+      else if (f.method === "unsubscribe") this.subs.delete(f.params?.room);
+    }
+  }
+
+  private noteSeen(frameLine: string) {
+    try {
+      const f = JSON.parse(frameLine);
+      if (f?.type === "message" && this.subs.has(f.room) && Number.isInteger(f.seq)) this.subs.set(f.room, f.seq);
+    } catch {
+      // not JSON: the client reports it as an _error frame
+    }
+  }
+
+  /** One POST, retried while the session's inbox is full (429); any other answer than 202 is an error. */
+  private async post(text: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.ready;
+      } catch {
+        throw new Error("the session is closed");
+      }
+      if (this.closed) throw new Error("the session is closed");
+      const status = await new Promise<number>((resolve, reject) => {
+        const body = Buffer.from(text, "utf8");
+        const req = httpRequest(
+          {
+            host: this.host,
+            port: this.port,
+            path: "/v1/frames",
+            method: "POST",
+            headers: { ...this.headers(), "X-Klatch-Session": this.session, "Content-Type": "application/x-ndjson", "Content-Length": body.length },
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+            res.on("error", reject);
+          },
+        );
+        req.setTimeout(this.connectTimeoutMs, () => req.destroy(new Error("the server did not answer the post in time")));
+        req.on("error", reject);
+        req.end(body);
+      });
+      if (status === 202) return;
+      if (status === 429 && attempt < 39 && !this.closed) {
+        await sleep(50);
+        continue;
+      }
+      throw new Error(`the server answered ${status} to a post`);
+    }
+  }
+
+  private finish() {
+    this.input.destroy();
+    this.done(0);
+  }
+
+  /** End the session: dropping the stream ends it on the server. */
+  shut() {
+    if (this.closed) return;
+    this.closed = true;
+    const stream = this.stream;
+    this.stream = null;
+    stream?.destroy();
+    this.finish();
+  }
+}
+
 /** One session with the gateway. */
 export class Client {
   member = "";
@@ -86,6 +336,8 @@ export class Client {
   private pendingMessages: Message[] = [];
   private caughtUp = new Map<string, Frame>();
   private exited: Promise<number>;
+
+  private http: HttpTransport | null = null;
 
   private constructor(input: Readable, output: Writable, exited: Promise<number>, socket: Socket | null) {
     this.writable = output;
@@ -151,6 +403,55 @@ export class Client {
     return c;
   }
 
+  /** Connect to a `klatch-server http --listen ADDR` at `url` (`http://127.0.0.1:PORT`, loopback only) as `member` with
+   * its credential `token`, the only way to be known over HTTP (a worker credential the human issued). The stream is
+   * `GET /v1/stream` and each request is a `POST /v1/frames` carrying `X-Klatch-Session`. A refused credential rejects
+   * with an `ApiError` of code `identity.refused` (its message never repeats the token); a server nobody listens on
+   * rejects with the socket's error; a url that is not plain `http` to a loopback address, or a member without a token
+   * (or the reverse), rejects with a `TypeError` before anything is sent. If the stream ends without `close()` it is
+   * reopened (up to `reconnectAttempts` times) and every subscribed room is resubscribed from the last `seq` seen, so
+   * messages resume without a gap or a repeat. `close()` ends the session and answers 0. */
+  static async connectHttp(url: string, options: HttpOptions = {}): Promise<Client> {
+    const { member, token } = options;
+    if (member === undefined || token === undefined) throw new TypeError("a credential is a member and a token");
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new TypeError("the url is http://127.0.0.1:PORT (plain http, loopback only)");
+    }
+    const host = parsed.hostname.replace(/^\[|\]$/g, "");
+    if (parsed.protocol !== "http:" || !["127.0.0.1", "::1", "localhost"].includes(host) || parsed.port === "") {
+      throw new TypeError("the url is http://127.0.0.1:PORT (plain http, loopback only)");
+    }
+    let client: Client | null = null;
+    const transport = new HttpTransport(
+      host,
+      Number(parsed.port),
+      member,
+      token,
+      options.connectTimeoutMs ?? 10_000,
+      options.reconnectAttempts ?? 5,
+      options.reconnectDelayMs ?? 200,
+      (e) => client?.push({ type: "_send_error", error: e.message }),
+    );
+    await transport.open(false);
+    client = new Client(transport.input, transport.output, transport.exited, null);
+    client.http = transport;
+    try {
+      await client.hello();
+    } catch (e) {
+      transport.shut();
+      throw e;
+    }
+    return client;
+  }
+
+  /** The open event stream, for a test to inject an error into. */
+  private get httpStream(): IncomingMessage | null {
+    return this.http?.stream ?? null;
+  }
+
   private async hello() {
     const hello = await this.frame(10_000);
     if (hello === null || hello.type !== "hello") throw new ProtocolError("the first frame is hello");
@@ -198,6 +499,7 @@ export class Client {
     for (;;) {
       const frame = await this.frame(30_000);
       if (frame === null) throw new ProtocolError("the gateway closed the session or did not answer");
+      if (frame.type === "_send_error") throw new ProtocolError(`the session is closed: ${frame.error}`);
       if (frame.type === "response" && frame.id === id) {
         if (frame.ok) return (frame.result as Record<string, any>) ?? {};
         const err = (frame.error as Record<string, string>) ?? {};
@@ -380,6 +682,10 @@ export class Client {
    * socket is shut and the daemon's end of the session is awaited (up to 10 seconds), and the answer is 0. */
   async close(): Promise<number> {
     this.writable.end();
+    if (this.http !== null) {
+      this.http.shut();
+      return await this.exited;
+    }
     if (this.socket === null) return await this.exited;
     const socket = this.socket;
     const timer = setTimeout(() => socket.destroy(), 10_000);
