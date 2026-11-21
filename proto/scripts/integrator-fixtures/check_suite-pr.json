@@ -1,0 +1,1 @@
+{"action":"completed","check_suite":{"id":9,"head_branch":"feat-@N@","head_sha":"@SHA@","status":"completed","conclusion":"@CONCL@","pull_requests":[{"number":@N@,"head":{"ref":"feat-@N@","sha":"@SHA@"},"base":{"ref":"main"}}],"app":{"slug":"github-actions"}},"repository":{"full_name":"hslee16/klatch"}}
