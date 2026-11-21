@@ -648,6 +648,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" > /dev/null 2>&1 || {
     say "#$n: merged"
     [ "$clean" -eq 1 ] && verify_after_merge "$n"
     after_merge "$n"
+    progress_at=$(date +%s) # #1081: the work that finishes a merge is not hold time
   else
     post_dropped "$n" error
   fi
