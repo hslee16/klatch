@@ -67,7 +67,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=11
+total=14
 n=0
 started=$SECONDS
 replay_hint() {
@@ -178,10 +178,33 @@ repo_checks() {
     && check experiments/variance/test-repeat.sh \
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh \
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh \
+    && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/launcher-demo.sh \
     && { ! command -v actionlint > /dev/null 2>&1 || check actionlint; } \
     && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh; }
 }
 step "release and shell checks"     no    "$root" repo_checks
+
+# CI steps the gate did not run (#1034). Each runs here too; the two that need a tool the machine may lack skip with a message,
+# as cargo deny does. The gate refuses a dirty tree, so the dry run packages the commit; --allow-dirty is passed on only
+# when the gate itself was told to check the working tree.
+publish_args=(--dry-run --locked -p klatch)
+[ "$allow_dirty" -eq 1 ] && publish_args+=(--allow-dirty)
+step "crates.io dry run"            no    "$proto" cargo publish "${publish_args[@]}"
+if command -v node > /dev/null 2>&1 && command -v npm > /dev/null 2>&1; then
+  # the same commands as the CI step; npm ci needs the network
+  ts_tests() {
+    (cd "$root/clients/typescript" && KLATCH_BIN="$proto/target/debug/klatch" node --experimental-strip-types --test conformance.test.ts http.test.ts) \
+      && (cd "$root/clients/typescript" && npm ci --ignore-scripts && node --experimental-strip-types --test package.test.ts)
+  }
+  step "TypeScript client tests"    no    "$root" ts_tests
+else
+  n=$((n + 1)); printf '[%d/%d] %-34s skipped (node is not installed; CI runs it)\n' "$n" "$total" "TypeScript client tests"
+fi
+if command -v cargo-about > /dev/null 2>&1; then
+  step "licence notices"            no    "$proto" ./check-notices.sh
+else
+  n=$((n + 1)); printf '[%d/%d] %-34s skipped (cargo-about is not installed; CI runs it)\n' "$n" "$total" "licence notices"
+fi
 
 sleepers_after="$(sleepers)"
 if [ "$sleepers_after" -gt "$sleepers_before" ]; then
