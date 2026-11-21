@@ -6,7 +6,10 @@ the workspace. Each test starts its own throwaway store.
 import json
 import os
 import shutil
+import signal
+import subprocess
 import tempfile
+import time
 import unittest
 
 import klatch_client as kc
@@ -14,6 +17,7 @@ import klatch_client as kc
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.environ.get("KLATCH_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "klatch")
 FIXTURES = os.path.join(HERE, "..", "..", "proto", "klatch", "fixtures", "protocol")
+SERVER_BIN = os.environ.get("KLATCH_SERVER_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "klatch-server")
 
 
 class Store:
@@ -37,9 +41,47 @@ class Store:
         shutil.rmtree(self.home, ignore_errors=True)
 
 
+class DaemonStore(Store):
+    """The same throwaway store, with a `klatch-server daemon` over a short socket path, and clients that connect to
+    it over the socket (#1095) by a typed name."""
+
+    def __init__(self):
+        super().__init__()
+        self.sockdir = tempfile.mkdtemp(prefix="kc-", dir="/tmp")  # a socket path is limited to about 100 bytes
+        self.sock = os.path.join(self.sockdir, "d.sock")
+        self.log = open(os.path.join(self.sockdir, "err.log"), "w+")
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.home, "KLATCH_HOME": self.home, "KLATCH_KEY_DIR": os.path.join(self.home, "keys")}
+        self.daemon = subprocess.Popen(
+            [SERVER_BIN, "daemon", "--socket", self.sock], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log
+        )
+        until = time.monotonic() + 30
+        while time.monotonic() < until:
+            self.log.seek(0)
+            if "daemon listening on" in self.log.read():
+                return
+            time.sleep(0.02)
+        raise RuntimeError("the daemon never listened")
+
+    def client(self, name):
+        c = kc.Client.connect_socket(self.sock, name=name)
+        self.clients.append(c)
+        return c
+
+    def close(self):
+        for c in self.clients:
+            c.close()
+        self.daemon.send_signal(signal.SIGKILL)
+        self.daemon.wait()
+        self.log.close()
+        shutil.rmtree(self.sockdir, ignore_errors=True)
+        super().close()
+
+
 class Conformance(unittest.TestCase):
+    make_store = Store
+
     def setUp(self):
-        self.store = Store()
+        self.store = self.make_store()
         self.addCleanup(self.store.close)
 
     def test_the_protocol_version_is_one(self):
@@ -270,6 +312,108 @@ class Conformance(unittest.TestCase):
         a = self.store.client("alice")
         a.post("r", "x")
         self.assertEqual(a.close(), 0)
+
+
+@unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
+class ConformanceOverTheDaemon(Conformance):
+    """Every step of the scenario above, unchanged, over the klatch-server daemon's Unix socket (#1095): the same
+    events and sequence numbers are required of both transports."""
+
+    make_store = DaemonStore
+
+
+@unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
+class SocketConnect(unittest.TestCase):
+    def setUp(self):
+        self.store = DaemonStore()
+        self.addCleanup(self.store.close)
+
+    def test_a_typed_name_is_the_member_and_unattributed_after_the_handshake(self):
+        a = self.store.client("alice")
+        self.assertEqual((a.member, a.attribution, a.clearance), ("alice", "unattributed", "public"))
+        a.post("r", "hi")
+        self.assertEqual(a.history("r")["messages"][0]["sender"], "alice")
+
+    def test_no_identity_is_the_unmapped_process_the_daemon_gives_every_local_process(self):
+        c = kc.Client.connect_socket(self.store.sock)
+        self.addCleanup(c.close)
+        self.assertEqual((c.member, c.attribution), ("unmapped-process", "unattributed"))
+
+    def test_a_refused_identity_raises_without_echoing_the_name(self):
+        for bad in ("admin", "a b", "x/y"):
+            with self.assertRaises(kc.ApiError, msg=bad) as ctx:
+                kc.Client.connect_socket(self.store.sock, name=bad)
+            self.assertEqual(ctx.exception.code, "identity.refused")
+            self.assertNotIn(bad, ctx.exception.message)
+
+    def test_a_name_together_with_a_credential_is_refused_before_anything_is_sent(self):
+        with self.assertRaises(ValueError):
+            kc.Client.connect_socket(self.store.sock, name="alice", member="w-1", token="t")
+        with self.assertRaises(ValueError):
+            kc.Client.connect_socket(self.store.sock, member="w-1")
+
+    def test_a_credential_that_is_not_live_is_refused_and_the_token_is_never_echoed(self):
+        token = "0" * 64
+        with self.assertRaises(kc.ApiError) as ctx:
+            kc.Client.connect_socket(self.store.sock, member="w-1", token=token)
+        self.assertEqual(ctx.exception.code, "identity.refused")
+        self.assertNotIn(token, str(ctx.exception))
+
+    def test_a_socket_nobody_listens_on_is_an_error_and_close_answers_zero_once_the_daemon_ends_the_session(self):
+        with self.assertRaises(OSError):
+            kc.Client.connect_socket(os.path.join(self.store.sockdir, "nobody.sock"), name="alice")
+        a = self.store.client("alice")
+        self.assertEqual(a.close(), 0)
+        self.assertEqual(a.close(), 0)  # closing again is harmless
+        b = self.store.client("bob")
+        self.assertEqual(b.post("r", "after")["seq"], 1)
+
+    def test_the_daemon_ending_the_session_is_a_protocol_error_not_a_hang(self):
+        a = self.store.client("alice")
+        a.post("r", "x")
+        self.store.daemon.send_signal(signal.SIGKILL)
+        self.store.daemon.wait()
+        with self.assertRaises((kc.ProtocolError, OSError)):
+            a.post("r", "y")
+
+
+class ResetReader:
+    """A transport that says hello and then fails as Linux reports a dead peer: ConnectionResetError on the read."""
+
+    def __iter__(self):
+        yield '{"v":1,"type":"hello","member":"u","attribution":"unattributed","clearance":"public"}\n'
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+    def close(self):
+        pass
+
+
+class Sink:
+    def write(self, text):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class SocketReset(unittest.TestCase):
+    def test_a_reset_ends_the_session_and_never_raises_in_the_reader_thread(self):
+        import threading
+
+        raised = []
+        old = threading.excepthook
+        threading.excepthook = lambda args: raised.append(args)
+        self.addCleanup(setattr, threading, "excepthook", old)
+        c = kc.Client.__new__(kc.Client)
+        c._sock = None
+        c._start(ResetReader(), Sink(), proc=None)
+        with self.assertRaises((kc.ProtocolError, OSError)):
+            c.request("post", room="r", body="x")
+        time.sleep(0.2)
+        self.assertEqual(raised, [])
 
 
 if __name__ == "__main__":

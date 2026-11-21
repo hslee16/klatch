@@ -1,15 +1,19 @@
 """A thin klatch client over the wire protocol (PROTOCOL.md, version 1): it speaks newline-delimited JSON to
-`klatch serve --stdio`, standard library only.
+`klatch serve --stdio`, or over the Unix socket of the klatch-server daemon, standard library only.
 
     c = Client("/path/to/klatch", env={"KLATCH_NAME": "alice", ...})
+    c = Client.connect_socket("/path/to/daemon.sock", name="alice")   # or member="w-1", token="..."
     c.post("lobby", "hello")
     c.subscribe("lobby", from_seq=0); c.collect(until_caught_up=True)
 
-Who you are is decided by the transport (the environment of the process), never by a request parameter. A frame this
-version does not know, and a field it does not know, are ignored, as the protocol requires.
+Over stdio, who you are is decided by the transport (the environment of the process), never by a request parameter.
+Over the daemon's socket the operating system reports the peer, and the first request, `identify`, says more (#102):
+a typed name (unattributed), or a member and its credential token (verified), or nothing (`unmapped-process`). A
+frame this version does not know, and a field it does not know, are ignored, as the protocol requires.
 """
 import json
 import queue
+import socket
 import subprocess
 import threading
 
@@ -55,7 +59,7 @@ class Client:
     """One session with the gateway. Not thread safe: use one client per thread."""
 
     def __init__(self, binary, env=None, args=("serve", "--stdio")):
-        self._proc = subprocess.Popen(
+        proc = subprocess.Popen(
             [binary, *args],
             env=env,
             stdin=subprocess.PIPE,
@@ -64,12 +68,56 @@ class Client:
             text=True,
             bufsize=1,
         )
+        self._start(proc.stdout, proc.stdin, proc=proc)
+
+    @classmethod
+    def connect_socket(cls, path, name=None, member=None, token=None):
+        """Connect to a `klatch-server daemon --socket PATH` and say who you are, as the daemon's `identify` first
+        request: a typed `name` (unattributed), or a `member` and its credential `token` (verified; the token only,
+        never the key bundle file), or neither (`unmapped-process`). A refused identity raises `ApiError` with code
+        `identity.refused` (its message never repeats the name or the token); a path nobody listens on raises
+        `OSError`. `close()` shuts the socket and waits for the daemon to end the session; it returns 0."""
+        if name is not None and (member is not None or token is not None):
+            raise ValueError("give a name, or a member and a token, not both")
+        if (member is None) != (token is None):
+            raise ValueError("a credential is a member and a token")
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.connect(path)
+        except OSError:
+            sock.close()
+            raise
+        self = cls.__new__(cls)
+        self._sock = sock
+        reader = sock.makefile("r", encoding="utf-8", newline="\n")
+        writer = sock.makefile("w", encoding="utf-8", newline="\n")
+        self._start(reader, writer, proc=None)
+        try:
+            params = {}
+            if name is not None:
+                params["name"] = name
+            elif member is not None:
+                params.update(member=member, token=token)
+            if params:
+                answer = self.request("identify", **params)
+                self.member = answer.get("member", self.member)
+                self.attribution = answer.get("attribution", self.attribution)
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def _start(self, reader, writer, proc):
+        self._proc = proc
+        self._sock = getattr(self, "_sock", None)
+        self._reader, self._writer = reader, writer
         self._frames = queue.Queue()
         self._next_id = 0
         self.refusals = []
         self._pending_messages = []
         self._caught_up = {}
-        threading.Thread(target=self._pump, daemon=True).start()
+        self._pumper = threading.Thread(target=self._pump, daemon=True)
+        self._pumper.start()
         hello = self._frame(timeout=10)
         if hello is None or hello.get("type") != "hello":
             raise ProtocolError("the first frame is hello")
@@ -80,14 +128,20 @@ class Client:
     # ---- reading ----
 
     def _pump(self):
-        for line in self._proc.stdout:
+        try:
+            self._pump_lines()
+        except (OSError, ValueError):
+            pass  # the transport was closed under the reader
+        self._frames.put(None)
+
+    def _pump_lines(self):
+        for line in self._reader:
             try:
                 frame = decode_server_frame(line)
             except ProtocolError as e:
                 frame = {"type": "_error", "error": str(e)}
             if frame is not None:
                 self._frames.put(frame)
-        self._frames.put(None)
 
     def _frame(self, timeout):
         try:
@@ -125,8 +179,8 @@ class Client:
             self._note(frame)
 
     def _send(self, frame):
-        self._proc.stdin.write(encode_line(frame))
-        self._proc.stdin.flush()
+        self._writer.write(encode_line(frame))
+        self._writer.flush()
 
     def post(self, room, body, label=None, kind=None, payload=None):
         params = {"room": room, "body": body}
@@ -292,7 +346,10 @@ class Client:
             self._note(frame)
 
     def close(self):
-        """End the session: close the input, which ends the gateway's side. Returns its exit code."""
+        """End the session: close the input, which ends the gateway's side. Returns its exit code (over a socket, 0
+        once the daemon has ended the session)."""
+        if self._proc is None:
+            return self._close_socket()
         if self._proc.poll() is None:
             try:
                 self._proc.stdin.close()
@@ -309,3 +366,23 @@ class Client:
             except OSError:
                 pass
         return self._proc.returncode
+
+    def _close_socket(self):
+        """Shut the socket's write side, wait (up to 10 seconds) for the daemon to end its side, then release it."""
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                self._writer.close()
+            except OSError:
+                pass
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            self._pumper.join(timeout=10)
+            for stream in (self._reader, sock):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        return 0
