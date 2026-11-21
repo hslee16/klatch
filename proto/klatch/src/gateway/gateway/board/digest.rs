@@ -72,6 +72,12 @@ impl<S: Store> Gateway<S> {
             }
             let (messages, outside_view) = self.digest_messages(who, &room, now)?;
             let addressed = self.addressed_seqs(who, &room, &messages)?;
+            let dm_peer = self.dm_peer(who, &room)?;
+            let move_to_dm = if dm_peer.is_none() {
+                self.long_exchange(who, &room, &messages)?
+            } else {
+                None
+            };
             let changes = self.store.claim_changes(&room, &who.member, now)?;
             let stale_after = self.settings_of(&room)?.stale_secs;
             let stale = self
@@ -113,6 +119,8 @@ impl<S: Store> Gateway<S> {
                 cycles,
                 crossings,
                 unowned_prs,
+                dm_peer,
+                move_to_dm,
             });
         }
         Ok(Digest {

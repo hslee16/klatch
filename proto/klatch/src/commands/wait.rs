@@ -409,7 +409,7 @@ pub(super) fn wake(t: &dyn Transport, (me, timeout): (&str, u64)) -> Result<()> 
             // What the view holds back is counted first: marking moves the wake cursor past it.
             let outside = t.outside_view(&room).ok().flatten();
             t.wake_mark(&room)?;
-            let mut pointer = klatch::member::wake_pointer(&room, unread, newest);
+            let mut pointer = klatch::member::wake_pointer_for(Some(me), &room, unread, newest);
             if let Some((n, last)) = outside {
                 pointer.push(' ');
                 pointer.push_str(&klatch::domain::outside_view_line(&room, n, last));

@@ -24,6 +24,7 @@ mod crossing;
 mod delivery_view;
 mod digest;
 mod dm;
+mod dm_nudge;
 mod facilitator;
 mod floors;
 mod guarding;
