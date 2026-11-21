@@ -296,4 +296,6 @@ started. Nothing checks yet that a scope covers what the ask names; see the desi
   and pipe it to `klatch anchor github`.
 - [clients/recipes/ssh-transport.md](clients/recipes/ssh-transport.md): reach `klatch serve --stdio` over ssh with the
   member fixed by a forced command in `authorized_keys` (host key verification, multiplexing, threat notes).
+- [clients/recipes/behind-a-tunnel.md](clients/recipes/behind-a-tunnel.md): reach a loopback-only `klatch-server http` from another
+  machine through an ssh forward or a same-host TLS terminator; identity stays the worker credential, forwarded headers are ignored.
 - [SECURITY.md](SECURITY.md): what identity, labels and the store do and do not protect.
