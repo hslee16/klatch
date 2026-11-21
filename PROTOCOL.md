@@ -196,3 +196,30 @@ standard error and nothing on standard output. Any tool can spawn it and read th
 `proto/klatch/fixtures/protocol/server_basic.ndjson`, `client_basic.ndjson` and `forward_compat.ndjson` hold
 valid frames for every type, including an unattributed sender, a refusal, both response shapes, and a frame of
 an unknown type that consumers must ignore.
+
+## 9. Transports
+
+The frames and the session are the same over every transport; only how the bytes travel and who the peer is differ.
+
+- **`klatch serve --stdio`**: standard input and output of a child process. Who you are comes from the environment the
+  process was started with (`KLATCH_NAME`, or `KLATCH_IDENTITY_FILE` for a credential bundle), never from a request.
+- **`klatch-server daemon --socket PATH`** (#102): a local Unix domain socket, one session per connection, all over one
+  gateway. Local only: the socket is mode 0600 in a directory only its owner can write to, and a connection from
+  another uid is closed before any frame. There is no environment to read, so a connection says who it is with one
+  extra request, valid only as the very first request:
+
+  ```json
+  {"v":1,"type":"request","id":"i1","method":"identify","params":{"name":"alice"}}
+  {"v":1,"type":"request","id":"i1","method":"identify","params":{"member":"w-1","token":"..."}}
+  ```
+
+  The server sends `hello` first, at once, for the principal the operating system's evidence gives an unidentified
+  connection (`unmapped-process`, `attribution` `unattributed`). `identify` with a `name` is a typed name:
+  `unattributed`, as with `KLATCH_NAME`. `identify` with `member` and `token` is a credential token, checked as a key
+  bundle is: only a live credential is `verified`. The response carries `member` and `attribution` (no second `hello`),
+  and the session goes on as that member. A refused `identify` (`ok` false, error code `identity.refused`; the name and
+  the token are never echoed) closes the connection: nothing falls back to a weaker identity. Any other first request
+  starts the session as the unidentified member, and `identify` after it is an ordinary unknown method. A connection
+  that sends no frame within the first-frame timeout (default 10 seconds) is closed; one over the connection cap gets one
+  `refusal` with rule `daemon.connections` and is closed; a first line over `MAX_LINE_BYTES` gets a `refusal` with rule
+  `frame.too_large` and is closed.

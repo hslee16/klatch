@@ -17,6 +17,8 @@ mod listener_tests;
 mod notifier;
 mod shared;
 #[cfg(test)]
+mod shared_session_tests;
+#[cfg(test)]
 mod shared_tests;
 mod subscription;
 mod sys_lease;
@@ -40,7 +42,7 @@ pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvi
 pub use judge::{DRAIN_LIMIT, Drained, drain, rules_judge};
 pub use listener::{Connection, Connector, EvidenceTable, Listener};
 pub use notifier::{NoNotifier, Notifier};
-pub use shared::{SharedGateway, SharedTransport};
+pub use shared::{SharedBackend, SharedGateway, SharedTransport};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use sys_lease::SysLeaseSource;
 pub use transport::{Direct, Transport};

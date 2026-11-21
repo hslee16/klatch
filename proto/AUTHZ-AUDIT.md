@@ -170,6 +170,27 @@ directly and meets only the terminal heuristic.
 | Listing | `refusals`, `audit`, `review-queue` | guard (`Admin`, a query) |
 | Keystore | `recovery`, `recover`, `seal-label`, `rotate-key`, `backup`, `restore`, `run-archive`, `retention`, `archive`, `restore-archive`, `archives`, `export` | the key or the store file directly, no principal and no guard: only the terminal heuristic and the typed confirmation; `export` and the archive acts write an audit row. Part of #318 |
 
+## `klatch-server daemon` (#102)
+
+One gateway (`SharedGateway`, #140) over a local Unix socket; `SharedGateway::session_backend()` is the `session::Backend`
+the session loop runs over. Every request a connection makes is a wire method of the table above, dispatched by the same
+`handle` on the owner thread as the connection's principal, so it meets exactly the guards, the role check and the live
+credential check of that method. The gateway is built with `for_members()`, as `serve` builds it, so no admin act is
+reachable except the roles' own. What is new is who the connection is and what it may do before a frame is read.
+
+| Evidence or path | What it gives | Check |
+|---|---|---|
+| `PeerEvidence::Process { pid, uid }` from the kernel (`SO_PEERCRED`, `getpeereid` and `LOCAL_PEERPID`) | `unmapped-process`, Unattributed (the empty `EvidenceTable`), the pid never a name | the peer's uid must equal the daemon's, checked in `local_evidence` before a byte is read or written and before the connection's thread exists; unit test with a fake credential (a real second uid is not testable here); `no_network.rs` asserts the order |
+| `identify` with `name` (first request only) | the typed name, Unattributed | `LocalIdentity` over `DeclaredName`: the `KLATCH_NAME` rules, reserved and malformed names refused without echo; `tests/daemon.rs` |
+| `identify` with `member` and `token` (first request only) | Verified, for a live credential | `Gateway::verify_credential` (token, expiry, revocation, a refusal row without the token), the check `klatch serve --stdio` makes for a bundle; a bad token, another member's name, a name together with a token, or a token without a member ends the connection and never falls back; GUARDED `verify_credential` is unchanged, `Backend::verify_credential` only parses the token text first; `tests/daemon.rs` |
+| the socket file and its directory | mode 0600, in a directory owned by the daemon's uid and not group or world writable | `directory_problem`, `path_problem` (the `sun_path` limit), `clear_path` (a live daemon is never stolen from, a non-socket is never removed), `Bound::drop` (removed only if still the daemon's own inode); `tests/daemon.rs` |
+| the connection and frame limits | 1 MiB frames, a first-frame timeout, a connection cap with a refusal frame | `tests/daemon.rs`; bounded memory: a line over the cap is never stored, one thread and one bounded output queue per connection, at most the cap |
+
+No new gateway method: `Gateway::verify_credential` already exists (GUARDED list unchanged, zero-trust lists unchanged), and
+`session::Backend` is a trait over calls the session loop already made. The daemon opens the store through
+`klatch::member::spawn_shared_gateway` (same environment variables, same custody as `klatch mcp --stdio`) and loads no
+per-member label keys (#1096).
+
 ## Gaps found and ticketed
 
 | Gap | Ticket |
@@ -181,6 +202,7 @@ directly and meets only the terminal heuristic.
 | The scan of public gateway methods was a hand-kept list of files and missed eight | fixed here (`gateway_sources`) |
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
 | `klatch admin` decides who may administer by a terminal and a process-tree walk, and its keystore family has no principal | #318 |
+| The daemon (#102) carries no sealed-label keys and no harness evidence per connection; a connection reads only labels held in the clear and joins as the generic floor | #1096 |
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |

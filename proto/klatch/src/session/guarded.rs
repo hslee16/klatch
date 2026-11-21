@@ -5,9 +5,8 @@
 //! writer so neither outlives the session.
 
 use super::frames::Out;
-use super::{Session, spawn_reader};
+use super::{Backend, Session, spawn_reader};
 use crate::protocol::{PROTOCOL_VERSION, ServerFrame, encode_line};
-use crate::store::Store;
 use crate::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::sync::mpsc::{Receiver, SyncSender, TrySendError, channel, sync_channel};
 use crate::sync::thread;
@@ -134,7 +133,7 @@ fn spawn_writer<W: Write + Send + 'static>(
     )
 }
 
-impl<S: Store> Session<'_, S> {
+impl<B: Backend + ?Sized> Session<'_, B> {
     /// `serve` with the output behind a bounded queue and the transport's way to stop the streams (#147, #146).
     ///
     /// A consumer that stops reading ends the session with a `TimedOut` error once the queue has been full for
@@ -153,7 +152,12 @@ impl<S: Store> Session<'_, S> {
             spawn_writer(output, self.config.outgoing, self.config.stall);
         let (rx, reader) = spawn_reader(input);
         let mut out = Out::probing(queue);
-        let result = self.hello(&mut out).and_then(|()| self.run(&rx, &mut out));
+        let result = (if self.greet {
+            self.hello(&mut out)
+        } else {
+            Ok(())
+        })
+        .and_then(|()| self.run(&rx, &mut out));
         drop(out);
         drop(rx);
         // A session that ended well waits for its last frames to be written; one that failed does not wait on a

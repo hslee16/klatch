@@ -157,6 +157,26 @@ pub fn open_member(who: &Who, call: Call) -> Result<Option<Member>> {
     Ok(Some(Member { gateway, caller }))
 }
 
+/// The gateway of a daemon (#102): the store opened as every member command opens it (`$KLATCH_HOME`, the keystore or
+/// `$KLATCH_KEY_DIR`, the same guards), held by one owner thread that connections share (`SharedGateway`). There is no
+/// caller here: each connection brings its own principal. The store is opened on the owner thread, so a store that
+/// cannot be opened is this function's error, with nothing listening yet. The key is never printed. The keys of sealed
+/// labels are per member and are not loaded: a daemon reads and writes the labels the store holds in the clear to its
+/// peers and nothing sealed.
+pub fn spawn_shared_gateway() -> Result<crate::gateway::SharedGateway> {
+    let db = db_path()?;
+    crate::gateway::SharedGateway::spawn(move || {
+        let store = custody::open_store(&db)
+            .map_err(|e| crate::domain::Error::Backend(format!("{e:#}")))?;
+        let mut gateway = Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
+        if let Some(home) = std::env::var_os("HOME") {
+            gateway = gateway.with_leases(SysLeaseSource::under_home(std::path::Path::new(&home)));
+        }
+        Ok(gateway)
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 impl Member {
     /// The principal of this member's caller.
     pub fn principal(&self) -> &Principal {
