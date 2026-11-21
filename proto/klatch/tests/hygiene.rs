@@ -125,10 +125,12 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
 
 #[test]
 fn unsafe_code_is_only_where_it_was_reviewed() {
-    // main.rs of both binaries: lowering the core dump limit. The harness module: the process table. Nothing else.
+    // main.rs of both binaries: lowering the core dump limit. The harness module: the process table. The daemon (#102):
+    // the peer-credential calls, umask, signal handlers and poll, all libc. Nothing else.
     let allowed = [
         "klatch/src/main.rs",
         "klatch-server/src/main.rs",
+        "klatch-server/src/daemon.rs",
         "klatch/src/harness/",
     ];
     let mut found = Vec::new();
