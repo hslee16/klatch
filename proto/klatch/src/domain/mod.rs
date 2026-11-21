@@ -38,6 +38,7 @@ mod receipt;
 mod router;
 mod scope;
 mod stuck;
+mod subagent_name;
 mod tasks;
 mod text;
 mod toolguard;
@@ -111,6 +112,7 @@ pub use scope::{
     valid_scope, work_item_name,
 };
 pub use stuck::{StuckEvent, stuck_events};
+pub use subagent_name::invokes_klatch_unnamed;
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
 pub use text::{

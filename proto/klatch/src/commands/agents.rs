@@ -414,6 +414,19 @@ pub(super) fn pre_tool_use(ctx: &Ctx) -> Result<()> {
     let Some(call) = ctx.stdin.and_then(tool_input) else {
         return Ok(());
     };
+    // A subagent has no process of its own and no agent id in its environment, so a klatch command it runs would
+    // resolve to the parent's member. This hook sees `agent_id`: refuse the command unless it names the subagent (#1152).
+    if call.tool == "Bash"
+        && ctx.stdin.is_some_and(inside_subagent)
+        && klatch::domain::invokes_klatch_unnamed(&call.command)
+    {
+        eprintln!(
+            "klatch: this command runs inside a subagent and does not name itself, so it would act as the session's \
+             member and share its name and cursor. Set KLATCH_NAME to a name for this subagent (for example \
+             KLATCH_NAME=<task>-1) in front of the klatch command and run it again."
+        );
+        std::process::exit(2);
+    }
     let t = ctx.t;
     let mut held = Vec::new();
     for room in t.rooms()? {
