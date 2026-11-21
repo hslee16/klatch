@@ -1,0 +1,1 @@
+- The local gate now also runs the launcher demo, the crates.io publish dry run, the TypeScript client tests (skipped without node) and the licence notices check (skipped without cargo-about), so it covers every CI step except the Linux-only tools it cannot install (#1034).
