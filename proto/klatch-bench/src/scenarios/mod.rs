@@ -13,6 +13,7 @@ mod ask_cycle;
 mod ask_gone;
 mod asks;
 mod bigstore;
+mod channel;
 mod claims;
 mod credentials;
 mod crossing_view;
@@ -99,6 +100,7 @@ pub fn all() -> Vec<Scenario> {
         ask_gone::all(),
         ask_bounds::all(),
         bigstore::all(),
+        channel::all(),
         claims::all(),
         sessions::all(),
         faults::all(),

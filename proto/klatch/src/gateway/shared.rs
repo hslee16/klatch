@@ -248,6 +248,13 @@ impl Backend for SharedBackend {
         self.gateway
             .call_backend(move |b| b.verify_credential(&member, &token))?
     }
+    fn note_member_fixed(&self, who: &Principal) {
+        let who = who.clone();
+        // the refusal stands whether or not the owner could keep the row
+        let _ = self
+            .gateway
+            .call_backend(move |b| b.note_member_fixed(&who));
+    }
 }
 
 fn gone() -> Error {
@@ -380,6 +387,7 @@ impl Transport for SharedTransport {
         receipt(room: &str, seq: i64) -> Result<crate::domain::Receipts>;
         set_scope(scope: &str) -> Result<()>;
         scope() -> Result<Option<String>>;
+        my_role() -> Result<Option<String>>;
         release(room: &str, path: &str) -> Result<()>;
         release_with_note(room: &str, path: &str, note: &str) -> Result<()>;
         last_release(room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>>;

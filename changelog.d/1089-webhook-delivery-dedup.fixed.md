@@ -1,0 +1,1 @@
+- The webhook intake of `klatch-server channel --webhook` drops a redelivered event with the same `X-GitHub-Delivery` id (answers 200 `duplicate`, remembers the last 1024 ids) instead of emitting a second channel event (#1089).

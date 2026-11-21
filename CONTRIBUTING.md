@@ -232,7 +232,9 @@ Settings are environment variables listed at the top of the script (budget `TEAM
   two edits of the SAME line, so after such a merge read the file: `authz_audit.rs` fails on an AUTHZ-AUDIT row that
   appears twice (delete the stale copy), and a duplicate `mod` or `pub use` does not compile. Add a file to
   `.gitattributes` only if its conflicts are always both-sides-added lines and a check catches a duplicate; never a
-  file with code bodies. `proto/scripts/test-merge-union.sh` proves it.
+  file with code bodies. `proto/scripts/test-merge-union.sh` proves it. A union-merged `mod` registry can also be
+  in an order rustfmt rejects: after merging main run `proto/scripts/fmt-after-merge` (cargo fmt, commit if changed,
+  cargo check; the integrator and pr-sweep run it for you, #1093).
 - Never claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md and the like) in a room (#533). A claim is
   exclusive per path and an advisory claim held while its owner waits stalls everyone who needs one line. Put the change
   in a fragment file instead; the claim code has no append-only or section kind, by decision.

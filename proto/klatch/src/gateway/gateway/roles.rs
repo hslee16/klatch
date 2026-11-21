@@ -108,6 +108,14 @@ impl<S: Store> Gateway<S> {
             .and_then(Role::parse))
     }
 
+    /// The caller's own role as its word (`integrator`, `reviewer`, ...), or `None` (#1090). A read of the caller's own
+    /// policy entry only: no parameter names another member, and the answer is one fixed word, never text.
+    pub fn my_role(&self, who: &Principal) -> Result<Option<String>> {
+        check_member(who)?;
+        self.check_own_record_live(who)?;
+        Ok(self.role_of(&who.member)?.map(|r| r.word().to_string()))
+    }
+
     /// Give a member the admin agent role, or take it away.
     pub fn admin_set_admin_agent(&self, who: &Principal, member: &str, on: bool) -> Result<()> {
         self.set_role(

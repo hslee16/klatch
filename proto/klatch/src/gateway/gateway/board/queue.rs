@@ -10,7 +10,11 @@ impl<S: Store> Gateway<S> {
         &self,
         room: &str,
         now: i64,
-    ) -> Result<(Vec<crate::domain::QueueEntry>, Option<String>)> {
+    ) -> Result<(
+        Vec<crate::domain::QueueEntry>,
+        Option<String>,
+        Option<crate::domain::Halt>,
+    )> {
         let words = self.store.words(room, &crate::domain::QUEUE_WORDS)?;
         let claims = self.store.claims(room, now)?;
         let merge_holder = claims
@@ -18,7 +22,7 @@ impl<S: Store> Gateway<S> {
             .find(|c| crate::domain::is_merge_claim(&c.path))
             .map(|c| c.owner.clone());
         if words.is_empty() {
-            return Ok((Vec::new(), merge_holder));
+            return Ok((Vec::new(), merge_holder, None));
         }
         let mut vouched: Vec<String> = Vec::new();
         let mut asked: Vec<&str> = Vec::new();
@@ -35,7 +39,9 @@ impl<S: Store> Gateway<S> {
                 vouched.push(who.to_string());
             }
         }
-        let mut queue = crate::domain::merge_queue(&words, &|who| vouched.iter().any(|v| v == who));
+        let trusted = |who: &str| vouched.iter().any(|v| v == who);
+        let halt = crate::domain::merge_halt(&words, &trusted);
+        let mut queue = crate::domain::merge_queue(&words, &trusted);
         for e in &mut queue {
             let path = e.path();
             e.owner = claims
@@ -43,6 +49,6 @@ impl<S: Store> Gateway<S> {
                 .find(|c| c.path == path)
                 .map(|c| c.owner.clone());
         }
-        Ok((queue, merge_holder))
+        Ok((queue, merge_holder, halt))
     }
 }

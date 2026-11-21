@@ -129,3 +129,12 @@ curl -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" -H "X-Klatch-Se
 - Credentials only: no typed names. Every refusal is `401 unauthorized`. Limits: 16 KiB headers, 1 MiB bodies, 5 s per
   request, `--max-connections` (default 32, the excess `503`). Tests: `tests/http_wire.rs`; design `design/items/1059-http-sse-wire.md`.
 - Not yet: client library support (see the ticket linked from the PR), TLS and remote use.
+
+- **Client libraries.** The Python, TypeScript and Rust clients connect to the socket with a path and an identity (#1095):
+  `Client.connect_socket(path, name=...)` (Python), `Client.connectSocket(path, { name })` (TypeScript),
+  `Client::connect_socket(&path, &Identity::name(..))` (Rust, feature `client-socket`); a credential is `member` and
+  `token`. See `clients/README.md`.
+- **Not yet.** A connection carries no sealed-label keys and joins as the generic harness floor (#1096). The tests are in
+  `tests/daemon.rs` (the daemon as a child process, a temp store, scripted frames) and `tests/client_socket.rs` (the Rust
+  client and its conformance scenario over the socket); the design is `design/items/102-daemon-socket.md` and
+  `design/items/1095-client-socket-connect.md`.

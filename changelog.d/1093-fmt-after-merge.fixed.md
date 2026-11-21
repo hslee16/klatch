@@ -1,0 +1,1 @@
+- The integrator and pr-sweep run `proto/scripts/fmt-after-merge` (cargo fmt, commit if changed, cargo check) after merging main, so a union-merged `mod` registry no longer fails the Format check (#1093).

@@ -27,6 +27,8 @@ pub trait Backend {
     /// Prove a member from the text of its credential token: `Verified` when it is live, else the refusal. Nothing
     /// weaker is ever returned for a bad token.
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal>;
+    /// Keep a `member-fixed` refusal the session made for the principal (#1084): a refusal row and a look at the breaker.
+    fn note_member_fixed(&self, who: &Principal);
 }
 
 impl<S: Store> Backend for Gateway<S> {
@@ -55,5 +57,8 @@ impl<S: Store> Backend for Gateway<S> {
                 reason: "the credential is not valid".into(),
             })?;
         Gateway::verify_credential(self, member, &token)
+    }
+    fn note_member_fixed(&self, who: &Principal) {
+        Gateway::note_member_fixed(self, who);
     }
 }

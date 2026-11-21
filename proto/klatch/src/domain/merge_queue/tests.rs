@@ -262,3 +262,97 @@ fn text_with_control_characters_in_a_name_cannot_break_a_line() {
     let q = queue(&[("al\nice", "ready: #7")]);
     assert!(!q[0].line(200).contains('\n'));
 }
+
+fn halt(entries: &[(&str, &str)]) -> Option<Halt> {
+    merge_halt(&log(entries), &trusted)
+}
+
+#[test]
+fn the_integrators_reverted_word_shows_a_merged_pr_as_reverted() {
+    let q = queue(&[
+        ("alice", "ready: #7"),
+        ("ivy", "merged: #7"),
+        ("ivy", "reverted: #7"),
+    ]);
+    assert_eq!(states(&q), [(7, Reverted, None)]);
+    assert_eq!(q[0].changed, 120);
+    assert_eq!(q[0].line(120 + 600), "#7 reverted, main went red (10m ago)");
+}
+
+#[test]
+fn reverted_from_a_plain_member_or_for_an_unqueued_pr_changes_nothing() {
+    let q = queue(&[
+        ("alice", "ready: #7"),
+        ("ivy", "merged: #7"),
+        ("bob", "reverted: #7"),
+        ("ivy", "reverted: #9"),
+    ]);
+    assert_eq!(states(&q), [(7, Merged, None)]);
+}
+
+#[test]
+fn a_reverted_pr_is_not_enqueued_again_by_ready_and_a_later_merged_does_not_undo_it() {
+    let q = queue(&[
+        ("alice", "ready: #7"),
+        ("ivy", "merged: #7"),
+        ("ivy", "reverted: #7"),
+        ("alice", "ready: #7"),
+        ("ivy", "merged: #7"),
+    ]);
+    assert_eq!(states(&q), [(7, Reverted, None)]);
+}
+
+#[test]
+fn the_integrators_halted_word_is_read_with_its_reason_and_pr() {
+    let red = halt(&[("ivy", "halted: main red after #7")]).unwrap();
+    assert_eq!((red.number, red.reason), (7, HaltReason::MainRed));
+    let unverified = halt(&[("ivy", "halted: main not verified after #12")]).unwrap();
+    assert_eq!(
+        (unverified.number, unverified.reason),
+        (12, HaltReason::MainNotVerified)
+    );
+    assert_eq!(unverified.ts, 100);
+    assert!(red.line(160).contains("main red after #7"));
+    assert!(unverified.line(160).contains("main not verified after #12"));
+}
+
+#[test]
+fn halted_from_a_plain_member_or_in_another_form_is_ignored() {
+    for (who, body) in [
+        ("bob", "halted: main red after #7"),
+        ("ivy", "halted: main red"),
+        ("ivy", "halted: something else after #7"),
+        ("ivy", "halted: main red after soon"),
+        ("ivy", "Halted: main red after #7"),
+    ] {
+        assert!(halt(&[(who, body)]).is_none(), "{who}: {body}");
+    }
+}
+
+#[test]
+fn the_newest_halt_counts_and_the_integrator_running_again_ends_it() {
+    let both = halt(&[
+        ("ivy", "halted: main red after #7"),
+        ("ivy", "halted: main not verified after #8"),
+    ])
+    .unwrap();
+    assert_eq!(both.number, 8);
+    let plain = [
+        ("ivy", "halted: main red after #7"),
+        ("alice", "ready: #9"),
+        ("bob", "integrating: #9"),
+    ];
+    assert!(
+        halt(&plain).is_some(),
+        "a plain member's word does not end it"
+    );
+    for word in [
+        "integrating: #9",
+        "checking: #9",
+        "merged: #9",
+        "dropped: #9 closed",
+    ] {
+        let q = [("ivy", "halted: main red after #7"), ("ivy", word)];
+        assert!(halt(&q).is_none(), "{word}");
+    }
+}

@@ -1,6 +1,8 @@
 //! A thin klatch client over the wire protocol (PROTOCOL.md, version 1): it speaks newline-delimited JSON to
-//! `klatch serve --stdio` using the same frame types the gateway does. Who you are is decided by the environment the
-//! process is started with, never by a request parameter. A frame type or field this version does not know is ignored.
+//! `klatch serve --stdio` using the same frame types the gateway does. Over stdio, who you are is decided by the
+//! environment the process is started with, never by a request parameter. Over the daemon's Unix socket (`klatch-server
+//! daemon`, #102; feature `client-socket`, #1095) the kernel reports the peer and the first request, `identify`, says
+//! more (an [`Identity`]). A frame type or field this version does not know is ignored.
 
 use crate::protocol::{
     Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, decode_server_line, encode_line,
@@ -10,8 +12,50 @@ use crate::sync::thread;
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+#[cfg(all(unix, feature = "client-socket"))]
+mod socket;
+
+/// A boxed writer for the session's input, and the action that ends a transport that has no child to wait for.
+type Writer = Box<dyn Write + Send>;
+type Shutdown = Box<dyn FnOnce() + Send>;
+
+/// Who a connection over a daemon's socket says it is: the `identify` first request of the daemon (#102). Build it
+/// with [`Identity::name`], [`Identity::credential`] or [`Identity::none`]. Nothing here is ever printed: a refusal
+/// names a code, never the name or the token.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Identity(Option<Value>);
+
+impl Identity {
+    /// A typed name, validated by the daemon as `KLATCH_NAME` is. The member is **unattributed**, as the CLI's is.
+    pub fn name(name: &str) -> Self {
+        Self(Some(json!({"name": name})))
+    }
+
+    /// A member and its credential token (the token only, never the key bundle file). A live credential gives a
+    /// **verified** member; a bad one ends the connection with an error, and nothing falls back to a weaker name.
+    pub fn credential(member: &str, token: &str) -> Self {
+        Self(Some(json!({"member": member, "token": token})))
+    }
+
+    /// No `identify`: the member is what the daemon gives a local process nobody registered, `unmapped-process`,
+    /// unattributed.
+    pub fn none() -> Self {
+        Self(None)
+    }
+}
+
+impl std::fmt::Debug for Identity {
+    /// Never the name or the token.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match &self.0 {
+            None => "Identity(none)",
+            Some(_) => "Identity(..)",
+        })
+    }
+}
 
 /// A failed response. `refusals` are the refusal frames that came with it: a policy refused the call.
 #[derive(Debug)]
@@ -212,8 +256,11 @@ pub struct Client {
     pub member: String,
     pub attribution: String,
     pub clearance: String,
-    child: Child,
-    stdin: Option<ChildStdin>,
+    /// The `klatch serve --stdio` child, when the session is one.
+    child: Option<Child>,
+    writer: Option<Writer>,
+    /// Ends a transport with no child (a socket), once.
+    shutdown: Option<Shutdown>,
     frames: Receiver<Option<std::result::Result<ServerFrame, String>>>,
     next_id: u64,
     refusals: Vec<(String, String)>,
@@ -264,21 +311,65 @@ impl Client {
             .stdout
             .take()
             .ok_or_else(|| Error::Session("no output".into()))?;
-        let stdin = child.stdin.take();
+        let stdin = child.stdin.take().map(|s| Box::new(s) as Writer);
+        Self::start(stdout, stdin, Some(child), None, &Identity::none())
+    }
+
+    /// A session over a transport the caller opened: `reader` carries the gateway's frames, `writer` the requests,
+    /// and `shutdown` ends the transport when the session is closed or dropped (a socket has no child to wait
+    /// for). The hello is read, then `identity` is sent as the `identify` first request unless it is
+    /// [`Identity::none`]. The socket connect of feature `client-socket` is this with a Unix socket.
+    pub fn over<R, W>(reader: R, writer: W, shutdown: Shutdown, identity: &Identity) -> Result<Self>
+    where
+        R: Read + Send + 'static,
+        W: Write + Send + 'static,
+    {
+        Self::start(
+            reader,
+            Some(Box::new(writer)),
+            None,
+            Some(shutdown),
+            identity,
+        )
+    }
+
+    fn start<R: Read + Send + 'static>(
+        reader: R,
+        writer: Option<Writer>,
+        child: Option<Child>,
+        shutdown: Option<Shutdown>,
+        identity: &Identity,
+    ) -> Result<Self> {
         let (tx, frames) = channel();
-        thread::spawn(move || pump_frames(stdout, tx));
+        thread::spawn(move || pump_frames(reader, tx));
         let mut c = Self {
             member: String::new(),
             attribution: String::new(),
             clearance: String::new(),
             child,
-            stdin,
+            writer,
+            shutdown,
             frames,
             next_id: 0,
             refusals: Vec::new(),
             pending: Vec::new(),
             caught_up: None,
         };
+        c.hello()?;
+        if let Some(params) = &identity.0 {
+            let r = c.request("identify", params.clone())?;
+            if let Some(m) = r["member"].as_str() {
+                c.member = m.to_string();
+            }
+            if let Some(a) = r["attribution"].as_str() {
+                c.attribution = a.to_string();
+            }
+        }
+        Ok(c)
+    }
+
+    fn hello(&mut self) -> Result<()> {
+        let c = self;
         match c.frame(Duration::from_secs(10))? {
             Some(ServerFrame::Hello {
                 v,
@@ -289,7 +380,7 @@ impl Client {
                 c.member = member;
                 c.attribution = attribution_text(&attribution);
                 c.clearance = clearance;
-                Ok(c)
+                Ok(())
             }
             _ => Err(Error::Protocol("the first frame is hello".into())),
         }
@@ -339,13 +430,13 @@ impl Client {
     }
 
     fn send(&mut self, frame: &ClientFrame) -> Result<()> {
-        let stdin = self
-            .stdin
+        let writer = self
+            .writer
             .as_mut()
             .ok_or_else(|| Error::Session("the session is closed".into()))?;
-        stdin
+        writer
             .write_all(encode_line(frame).as_bytes())
-            .and_then(|()| stdin.flush())
+            .and_then(|()| writer.flush())
             .map_err(|e| Error::Session(e.to_string()))
     }
 
@@ -716,20 +807,46 @@ impl Client {
         }
     }
 
-    /// End the session by closing the input; returns the gateway's exit code.
+    /// End the session by closing the input; returns the gateway's exit code. Over a socket there is no child:
+    /// the socket is shut and the daemon's end of the session is awaited (up to 10 seconds), and the answer is 0.
     pub fn close(mut self) -> Result<i32> {
-        drop(self.stdin.take());
-        self.child
-            .wait()
-            .map(|s| s.code().unwrap_or(-1))
-            .map_err(|e| Error::Session(e.to_string()))
+        self.end_input();
+        if let Some(child) = self.child.as_mut() {
+            return child
+                .wait()
+                .map(|s| s.code().unwrap_or(-1))
+                .map_err(|e| Error::Session(e.to_string()));
+        }
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            match self
+                .frames
+                .recv_timeout(end.saturating_duration_since(Instant::now()))
+            {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(RecvTimeoutError::Disconnected) => return Ok(0),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(Error::Session("the daemon did not end the session".into()));
+                }
+            }
+        }
+    }
+
+    /// Close the input: drop the writer, and end a transport that has no child.
+    fn end_input(&mut self) {
+        drop(self.writer.take());
+        if let Some(shutdown) = self.shutdown.take() {
+            shutdown();
+        }
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        drop(self.stdin.take());
-        let _ = self.child.wait();
+        self.end_input();
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.wait();
+        }
     }
 }
 

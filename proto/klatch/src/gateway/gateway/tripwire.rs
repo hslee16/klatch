@@ -16,9 +16,16 @@ pub const BREAKER_WINDOW_SECS: i64 = 300;
 
 /// The rules that mean a member ran into a safety rule, as opposed to a limit or an admin stop.
 fn is_safety_rule(rule: &str) -> bool {
-    ["clearance", "label", "credentials", "canary", "dm-"]
-        .iter()
-        .any(|r| rule == *r || (r.ends_with('-') && rule.starts_with(r)))
+    [
+        "clearance",
+        "label",
+        "credentials",
+        "canary",
+        "member-fixed",
+        "dm-",
+    ]
+    .iter()
+    .any(|r| rule == *r || (r.ends_with('-') && rule.starts_with(r)))
         || rule.starts_with("scrub:")
 }
 

@@ -23,13 +23,20 @@ pub const CHECKING_PREFIX: &str = "checking:";
 /// The integrator says the PR left the queue without merging; the first word after the number is the reason.
 pub const DROPPED_PREFIX: &str = "dropped:";
 
-/// The prefixes of every word that `merge_queue` folds, for a store query that reads only those messages.
-pub const QUEUE_WORDS: [&str; 5] = [
+/// The integrator says it merged the PR and then reverted it because main went red (#1094).
+pub const REVERTED_PREFIX: &str = "reverted:";
+/// The integrator says it stopped: `halted: main red after #N` or `halted: main not verified after #N` (#1094).
+pub const HALTED_PREFIX: &str = "halted:";
+
+/// The prefixes of every word that `merge_queue` and `merge_halt` fold, for a store query that reads only those messages.
+pub const QUEUE_WORDS: [&str; 7] = [
     READY_PREFIX,
     INTEGRATING_PREFIX,
     CHECKING_PREFIX,
     DROPPED_PREFIX,
     MERGED_PREFIX,
+    REVERTED_PREFIX,
+    HALTED_PREFIX,
 ];
 
 /// How many ended entries (merged or dropped) the board keeps showing, newest first.
@@ -96,6 +103,8 @@ pub enum QueueState {
     Integrating,
     Checking,
     Merged,
+    /// Merged and then reverted by the integrator because main went red (#1094).
+    Reverted,
     Dropped(DropReason),
 }
 
@@ -153,6 +162,10 @@ impl QueueEntry {
                 span(now - self.changed)
             ),
             QueueState::Merged => format!("#{n} merged ({} ago)", span(now - self.changed)),
+            QueueState::Reverted => format!(
+                "#{n} reverted, main went red ({} ago)",
+                span(now - self.changed)
+            ),
         }
     }
 }
@@ -202,7 +215,12 @@ pub fn merge_queue(messages: &[Message], trusted: &dyn Fn(&str) -> bool) -> Vec<
             DROPPED_PREFIX if vouched && e.state.is_active() => {
                 Some(QueueState::Dropped(DropReason::parse(rest)))
             }
-            MERGED_PREFIX if e.state != QueueState::Merged => Some(QueueState::Merged),
+            MERGED_PREFIX if !matches!(e.state, QueueState::Merged | QueueState::Reverted) => {
+                Some(QueueState::Merged)
+            }
+            REVERTED_PREFIX if vouched && e.state == QueueState::Merged => {
+                Some(QueueState::Reverted)
+            }
             _ => None,
         };
         if let Some(s) = next.filter(|s| *s != e.state) {
@@ -220,6 +238,76 @@ pub fn merge_queue(messages: &[Message], trusted: &dyn Fn(&str) -> bool) -> Vec<
     ended.truncate(QUEUE_ENDED_SHOWN);
     active.extend(ended);
     active
+}
+
+/// Why the integrator stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaltReason {
+    /// Main was red after the merge and could not be put right.
+    MainRed,
+    /// Main could not be verified after the merge.
+    MainNotVerified,
+}
+
+/// The integrator's halt (#1094): it stopped after PR `number` and merges nothing more until a human starts it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Halt {
+    pub number: u64,
+    pub reason: HaltReason,
+    /// When the halt word was posted.
+    pub ts: i64,
+}
+
+impl Halt {
+    /// One line for the board; fixed text, nothing of the message is echoed except the number.
+    pub fn line(&self, now: i64) -> String {
+        let why = match self.reason {
+            HaltReason::MainRed => "main red",
+            HaltReason::MainNotVerified => "main not verified",
+        };
+        format!(
+            "integrator halted: {why} after #{} ({} ago; it merges nothing more until a human looks at main and starts it again)",
+            self.number,
+            span(now - self.ts)
+        )
+    }
+}
+
+fn halted(body: &str) -> Option<(HaltReason, u64)> {
+    let rest = body.strip_prefix(HALTED_PREFIX)?.trim_start();
+    let (reason, tail) = if let Some(t) = rest.strip_prefix("main red after ") {
+        (HaltReason::MainRed, t)
+    } else {
+        (
+            HaltReason::MainNotVerified,
+            rest.strip_prefix("main not verified after ")?,
+        )
+    };
+    Some((reason, number_of(tail)?.0))
+}
+
+/// The integrator's current halt in `messages`, if any: the newest `halted:` word from a trusted sender that no later
+/// trusted state word (`integrating:`, `checking:`, `merged:`, `dropped:`, `reverted:`) has followed, since those
+/// words mean the integrator is running again.
+pub fn merge_halt(messages: &[Message], trusted: &dyn Fn(&str) -> bool) -> Option<Halt> {
+    let mut ordered: Vec<&Message> = messages.iter().collect();
+    ordered.sort_by_key(|m| m.seq);
+    let mut halt = None;
+    for m in ordered {
+        if !trusted(&m.sender) {
+            continue;
+        }
+        if let Some((reason, number)) = halted(&m.body) {
+            halt = Some(Halt {
+                number,
+                reason,
+                ts: m.ts,
+            });
+        } else if parsed(&m.body).is_some_and(|(w, _, _)| w != READY_PREFIX) {
+            halt = None;
+        }
+    }
+    halt
 }
 
 fn enqueued(number: u64, m: &Message) -> QueueEntry {

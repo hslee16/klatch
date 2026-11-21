@@ -716,3 +716,144 @@ fn a_response_is_a_response_type() {
     });
     assert_eq!(r.body, "unauthorized");
 }
+
+// ---- delivery id de-duplication (#1089) ----
+
+fn delivered(i: &mut Intake<'_>, id: Option<&str>, body: Vec<u8>, event: &str) -> Response {
+    let mut h = head(
+        "POST",
+        "/github",
+        Some(&signed(b"topsecret", &body)),
+        Some(event),
+    );
+    if let Some(id) = id {
+        h.headers
+            .push(("x-github-delivery".to_string(), id.to_string()));
+    }
+    i.handle(Request { head: h, body })
+}
+
+#[test]
+fn a_redelivered_delivery_id_is_answered_200_and_queued_once() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let id = "72d3162e-cc78-11e3-81ab-4c9367dc0958";
+    let a = delivered(
+        &mut i,
+        Some(id),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    let b = delivered(
+        &mut i,
+        Some(id),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!((a.status, b.status), (200, 200));
+    assert_eq!(b.body, "duplicate");
+    let (got, _) = q.drain();
+    assert_eq!(got.len(), 1);
+}
+
+#[test]
+fn different_delivery_ids_and_missing_ids_are_not_deduplicated() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    for id in [Some("aaaa-1"), Some("aaaa-2"), None, None] {
+        delivered(&mut i, id, fixture("pull_request_opened"), "pull_request");
+    }
+    assert_eq!(q.drain().0.len(), 4);
+}
+
+#[test]
+fn an_unsigned_repeat_does_not_poison_the_delivery_cache() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let body = fixture("pull_request_opened");
+    let mut h = head("POST", "/github", Some("sha256=00"), Some("pull_request"));
+    h.headers
+        .push(("x-github-delivery".to_string(), "id-1".to_string()));
+    let r = i.handle(Request { head: h, body });
+    assert_eq!(r.status, 401);
+    let ok = delivered(
+        &mut i,
+        Some("id-1"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!(ok.body, "ok");
+    assert_eq!(q.drain().0.len(), 1);
+}
+
+#[test]
+fn a_failed_delivery_can_be_redelivered() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let bad = delivered(&mut i, Some("id-9"), b"not json".to_vec(), "pull_request");
+    assert_eq!(bad.status, 400);
+    let ok = delivered(
+        &mut i,
+        Some("id-9"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!(ok.body, "ok");
+}
+
+#[test]
+fn the_delivery_cache_is_bounded_and_forgets_the_oldest() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    delivered(
+        &mut i,
+        Some("first"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    for n in 0..DELIVERY_IDS {
+        delivered(
+            &mut i,
+            Some(&format!("id-{n}")),
+            fixture("pull_request_opened"),
+            "pull_request",
+        );
+    }
+    q.drain();
+    let again = delivered(
+        &mut i,
+        Some("first"),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!(again.body, "ok");
+    let recent = delivered(
+        &mut i,
+        Some(&format!("id-{}", DELIVERY_IDS - 1)),
+        fixture("pull_request_opened"),
+        "pull_request",
+    );
+    assert_eq!(recent.body, "duplicate");
+}
+
+#[test]
+fn an_oversized_or_odd_delivery_id_is_ignored_not_cached() {
+    let q = Queue::new(8);
+    let mut i = intake(&q);
+    let long = "a".repeat(200);
+    for id in [long.as_str(), "has space!"] {
+        delivered(
+            &mut i,
+            Some(id),
+            fixture("pull_request_opened"),
+            "pull_request",
+        );
+        delivered(
+            &mut i,
+            Some(id),
+            fixture("pull_request_opened"),
+            "pull_request",
+        );
+    }
+    assert_eq!(q.drain().0.len(), 4);
+}

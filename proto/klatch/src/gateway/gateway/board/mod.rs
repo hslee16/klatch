@@ -29,13 +29,14 @@ impl<S: Store> Gateway<S> {
         let messages = self.store.words(room, &crate::domain::BOARD_WORDS)?;
         let roster = self.board_roster(room, now, &messages)?;
         let tasks = self.board_tasks(room, now, &roster.members)?;
-        let (queue, merge_holder) = self.merge_queue_of(room, now)?;
+        let (queue, merge_holder, halt) = self.merge_queue_of(room, now)?;
         Ok(crate::domain::Board {
             room: room.into(),
             tasks,
             prs: self.open_prs_of(room, now)?,
             queue,
             merge_holder,
+            halt,
             asks: self.store.open_asks(room, now)?,
             offers: self.board_offers(&messages, now, &roster),
             members: roster.members,
