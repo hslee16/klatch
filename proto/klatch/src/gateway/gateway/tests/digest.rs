@@ -149,3 +149,15 @@ fn the_digest_marks_the_messages_addressed_to_the_member_and_a_dm_room_is_all_ad
     let dm_room = d.rooms.iter().find(|r| r.room != "r").unwrap();
     assert_eq!(dm_room.addressed, vec![1]);
 }
+
+#[test]
+fn the_digest_counts_an_at_all_message_as_addressed_to_the_member() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.post(&bob(), "r", "chatter").unwrap();
+    g.post(&bob(), "r", "@all the build is red").unwrap();
+    g.post(&bob(), "r", "@allison not a broadcast").unwrap();
+    let d = g.digest(&alice()).unwrap();
+    let r = d.rooms.iter().find(|r| r.room == "r").unwrap();
+    assert_eq!(r.addressed, vec![2]);
+}
