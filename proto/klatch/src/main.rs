@@ -694,7 +694,21 @@ fn serve_stdio(
     // stdin cannot be stopped from outside; the process exits when the session does
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
-    let still_mapped = || ssh_key_still_mapped(gateway, key.unwrap_or_default(), &principal.member);
+    // The mapping is read through a second connection of its own, opened here, so the look never goes through the
+    // gateway's operations (it is a policy read for the session itself, #1083).
+    let mapping = match key {
+        Some(_) => Some(klatch::member::custody::open_store(
+            &klatch::member::db_path()?,
+        )?),
+        None => None,
+    };
+    let still_mapped = || {
+        ssh_key_still_mapped(
+            mapping.as_ref().expect("an ssh session has a store"),
+            key.unwrap_or_default(),
+            &principal.member,
+        )
+    };
     let session = if key.is_some() {
         session.fixed_member().rechecked(&still_mapped)
     } else {
@@ -710,11 +724,11 @@ fn serve_stdio(
 /// Whether the ssh key `label` is still mapped to `member`: the refusal an open session ends with when the human took
 /// the mapping away (`ssh-key-unmapped`) or pointed the label at another member (`ssh-key-remapped`).
 fn ssh_key_still_mapped(
-    gateway: &Gateway<SqliteStore>,
+    store: &SqliteStore,
     label: &str,
     member: &str,
 ) -> klatch::domain::Result<()> {
-    let (rule, what) = match gateway.ssh_key_member(label)? {
+    let (rule, what) = match klatch::gateway::ssh_key_member(store, label)? {
         Some(m) if m == member => return Ok(()),
         Some(_) => ("ssh-key-remapped", "is now mapped to another member"),
         None => ("ssh-key-unmapped", "is no longer mapped to a member"),
