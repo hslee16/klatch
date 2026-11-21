@@ -10,6 +10,11 @@
 
 use std::path::Path;
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+use test_dir::TestDir;
+
 fn read(rel: &str) -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
         .unwrap_or_else(|e| panic!("{rel}: {e}"))
@@ -87,8 +92,7 @@ fn slug(cell: &str) -> String {
 #[test]
 fn the_script_assembles_the_same_document_as_the_test_byte_for_byte() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/authz-audit");
-    let dir = std::env::temp_dir().join(format!("klatch-authz-audit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let dir = TestDir::new("authz-audit-script");
     let mut outputs = Vec::new();
     for n in 0..2 {
         let target = dir.join(format!("out{n}.md"));
@@ -107,7 +111,6 @@ fn the_script_assembles_the_same_document_as_the_test_byte_for_byte() {
             .expect("run authz-audit --check");
         assert!(check.success(), "--check fails on a fresh document");
     }
-    let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(outputs[0], outputs[1], "the assembly is not byte-stable");
     assert_eq!(
         outputs[0],
