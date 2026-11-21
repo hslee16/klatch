@@ -110,6 +110,21 @@ pub fn open_member(who: &Who, call: Call) -> Result<Option<Member>> {
     let Some(caller) = identity::identify(who, call, &store)? else {
         return Ok(None);
     };
+    settle_member(store, caller, who).map(Some)
+}
+
+/// The member of an ssh forced command (#107): `klatch serve --stdio --ssh-key LABEL`. The caller is the member the
+/// human mapped LABEL to (`klatch admin ssh-key`); an unmapped label, or a typed name beside it, is an error. Nothing
+/// the remote controls is read: not `KLATCH_NAME`, not `KLATCH_IDENTITY_FILE`, not `SSH_ORIGINAL_COMMAND`.
+pub fn open_ssh_member(who: &Who, label: &str) -> Result<Member> {
+    let store = custody::open_store(&db_path()?)?;
+    let caller = identity::identify_by_ssh_key(who, label, &store)?;
+    settle_member(store, caller, who)
+}
+
+/// What every caller gets once it is known: its scope, its attributes, the gateway for it and the label keys its
+/// clearance reaches.
+fn settle_member(store: SqliteStore, caller: Caller, who: &Who) -> Result<Member> {
     // The scope a member works in: the one it declared (flag or KLATCH_SCOPE), else the one it already has, else
     // for a coding session the repository it started in (DESIGN section 27).
     let declared_scope = who
@@ -154,7 +169,7 @@ pub fn open_member(who: &Who, call: Call) -> Result<Option<Member>> {
         // a failure to note it must never stop the command
         let _ = gateway.note_parent(&caller.principal, parent.as_deref());
     }
-    Ok(Some(Member { gateway, caller }))
+    Ok(Member { gateway, caller })
 }
 
 impl Member {

@@ -66,6 +66,11 @@ pub(super) enum MemberAct {
         member: String,
         label: Option<String>,
     },
+    SshKey {
+        label: String,
+        member: String,
+        off: bool,
+    },
 }
 
 pub(super) enum RoleAct {
@@ -215,6 +220,9 @@ impl From<AdminCmd> for Route {
                 member,
                 label,
             }),
+            C::SshKey { label, member, off } => {
+                Route::member(MemberAct::SshKey { label, member, off })
+            }
             C::Librarian { member, off } => Route::role(RoleAct::Librarian { member, off }),
             C::Reviewer { member, off } => Route::role(RoleAct::Reviewer { member, off }),
             C::Facilitator { member, off } => Route::role(RoleAct::Facilitator { member, off }),

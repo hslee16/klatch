@@ -96,6 +96,7 @@ mod attributes;
 mod crossings_wire;
 mod dm;
 mod facilitator_wire;
+mod fixed_member;
 mod grant;
 mod guarded;
 mod live;

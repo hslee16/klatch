@@ -339,6 +339,37 @@ impl World {
             .collect())
     }
 
+    /// Run `klatch serve --stdio --ssh-key <label>` the way an `authorized_keys` forced command does (#107), with a
+    /// hostile environment: `KLATCH_NAME` names `hostile`. One process handles all the request lines; the response
+    /// lines come back, or the error text when the process did not start or failed.
+    pub fn serve_ssh(
+        &self,
+        label: &str,
+        hostile: &str,
+        requests: &[String],
+    ) -> Result<Vec<String>, String> {
+        use std::io::Write;
+        let mut c = self.command(hostile, &["serve", "--stdio", "--ssh-key", label]);
+        c.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = c.spawn().map_err(|e| format!("start serve: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let body: String = requests.iter().map(|r| format!("{r}\n")).collect();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(body.as_bytes());
+        });
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(String::from)
+            .collect())
+    }
+
     /// A `post` request line for the wire protocol.
     pub fn post_request(id: usize, room: &str, body: &str) -> String {
         serde_json::json!({"v": 1, "type": "request", "id": id.to_string(), "method": "post",

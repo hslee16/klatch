@@ -441,6 +441,50 @@ fn identify_by_credential(
     }))
 }
 
+/// The caller of `klatch serve --stdio --ssh-key <label>` (#107): the member the human mapped the label to, and nobody
+/// else. The label comes from the command line sshd runs, which the administrator wrote in `authorized_keys`; nothing
+/// the remote sends is looked at (no typed name, no environment variable, no `SSH_ORIGINAL_COMMAND`), so `who` must
+/// carry no name of its own. An unmapped label is refused with the rule and the next step, and the refusal is kept.
+pub(crate) fn identify_by_ssh_key(who: &Who, label: &str, store: &SqliteStore) -> Result<Caller> {
+    if who.as_member.is_some() || who.discover || who.codex {
+        bail!(
+            "the member of this session is fixed by the ssh key {label}; --as-member, --discover and --codex are refused with --ssh-key"
+        );
+    }
+    if !crate::gateway::valid_ssh_key_label(label) {
+        bail!(
+            "the ssh key label {label:?} is not a bare word of 1 to 40 letters, digits, '.', '_' or '-'; use the label the human gave `klatch admin ssh-key`"
+        );
+    }
+    let evidence = PeerEvidence::SshForcedKey {
+        label: label.to_string(),
+    };
+    let principal = crate::gateway::SshKeyIdentity::new(store).resolve(&evidence)?;
+    if principal.attribution != crate::domain::Attribution::Verified {
+        let _ = crate::store::PolicyStore::record_refusal(
+            store,
+            &crate::store::NewRefusal::new(
+                &format!("ssh-key:{label}"),
+                "",
+                "serve",
+                "ssh-key-unmapped",
+            ),
+            now(),
+        );
+        bail!(
+            "refused (rule ssh-key-unmapped): the ssh key {label} is not mapped to a member; the human maps it at a terminal with `klatch admin ssh-key {label} <member>`"
+        );
+    }
+    Ok(Caller {
+        principal,
+        session: None,
+        session_dir: None,
+        stdin_session: None,
+        stdin: None,
+        claude_code: false,
+    })
+}
+
 /// What `identify` found out about the caller before deciding.
 struct Probe<'a> {
     declared: Option<String>,

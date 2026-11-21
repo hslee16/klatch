@@ -59,7 +59,11 @@ A `response` with `"ok":true` carries `result` and no `error`; with `"ok":false`
 ## 5. Methods
 
 Methods are named in `request.method`; `params` is an object. Unknown params are ignored. Who is calling is
-decided by the transport and never by `params`: a `member` or `sender` field in a request has no effect.
+decided by the transport and never by `params`: a `member` or `sender` field in a request has no effect. One exception
+makes the attempt visible: on a session whose member an ssh forced command fixed (`klatch serve --stdio --ssh-key LABEL`,
+#107), a request with a `sender`, `from`, `as`, `as_member`, `caller`, `identity`, `principal` or `attribution` param, or a
+`member` param on a method that does not take a member as its target (`invite`, `grant_room_clearance` and `role_act`
+do), is not run: it gets a `refusal` with rule `member-fixed` and a failed `response` (`refused`). Nothing else changes.
 
 | Method | Params | Result |
 |---|---|---|

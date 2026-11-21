@@ -76,6 +76,15 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Map an ssh forced-command key label to one member: `klatch serve --stdio --ssh-key LABEL`, the command in an
+    /// `authorized_keys` line, then acts as that member and no other (a floor act: never an agent's); with --off take
+    /// the mapping from that member
+    SshKey {
+        label: String,
+        member: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Set a member's clearance in one room only, at most the agent cap; with --off revoke it
     RoomClear {
         room: String,

@@ -24,6 +24,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("admin_set_reviewer", |g, w| refused(g.admin_set_reviewer(w, "bob", true))),
     ("admin_set_facilitator", |g, w| refused(g.admin_set_facilitator(w, "bob", true))),
     ("admin_set_integrator", |g, w| refused(g.admin_set_integrator(w, "bob", true))),
+    ("admin_set_ssh_key", |g, w| refused(g.admin_set_ssh_key(w, "laptop", "bob", true))),
     ("admin_set_admin_agent", |g, w| refused(g.admin_set_admin_agent(w, "bob", true))),
     ("admin_set_room_creation_granted", |g, w| refused(g.admin_set_room_creation_granted(w, true))),
     ("admin_grant_room_capability", |g, w| refused(g.admin_grant_room_capability(w, "bob", true))),

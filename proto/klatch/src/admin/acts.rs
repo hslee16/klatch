@@ -107,6 +107,16 @@ fn members(t: &dyn Transport, act: MemberAct) -> Result<()> {
                 None => println!("{member}'s clearance in {room} is revoked"),
             }
         }
+        MemberAct::SshKey { label, member, off } => {
+            t.admin_set_ssh_key(&label, &member, !off)?;
+            if off {
+                println!(
+                    "ssh key {label} is no longer {member}; end any session already open on it (the gateway checks the mapping when a session starts) and remove its line from authorized_keys"
+                );
+            } else {
+                println!("ssh key {label} is now {member}");
+            }
+        }
         MemberAct::GrantRooms { member, off } => {
             t.admin_grant_room_capability(&member, !off)?;
             println!(

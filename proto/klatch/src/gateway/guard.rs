@@ -199,10 +199,10 @@ impl Guard for AllowAll {
 
 /// The admin acts that edit a floor (R29, D4): the agent cap, the label order, the scrub and deny list, and who may
 /// grant room-scoped clearance (the room grantor and the grants themselves, #893), and a member's own post limit,
-/// which an agent could otherwise lift for itself (#972).
+/// which an agent could otherwise lift for itself (#972), and which member an ssh key label is (#107).
 /// Keep this list in step with the `administer` calls that write those policies; the floors tests fail when a
 /// listed act stops being refused.
-const FLOOR_ACTIONS: [&str; 7] = [
+const FLOOR_ACTIONS: [&str; 8] = [
     "cap",
     "chain",
     "scrub-add",
@@ -210,6 +210,7 @@ const FLOOR_ACTIONS: [&str; 7] = [
     "grantor",
     "room-clear",
     "member-rate-limit",
+    "ssh-key",
 ];
 
 /// Whether the admin act edits a floor.
