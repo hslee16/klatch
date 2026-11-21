@@ -2,6 +2,8 @@
 # integrator: the merge queue's integrator PROCESS (#866, step 3 of epic #863). See INTEGRATOR.md.
 #
 #   integrator [--once]        run until a signal (INT, TERM, HUP); --once drains the queue and exits (for a hand run)
+#   integrator --dry-run       (#1075) check the setup, read the queue and the open PRs, run the conflict pre-check, and PRINT
+#                              what a real run would post and merge; it posts, claims, pushes, merges and starts nothing
 #   integrator --normalize     (internal) turn a stream of webhook payloads on standard input into tab separated lines
 #   integrator --pr | --pulls | --checks    (internal) validate one gh api answer on standard input
 #
@@ -142,6 +144,9 @@ elif mode == 'pulls':
             n, h = num(get(p, 'number')), sha(get(p, 'head', 'sha'))
             if n is not None and h is not None:
                 print('%d\t%s' % (n, h))
+elif mode == 'perm':
+    p = get(data, 'permissions')
+    print('admin' if get(p, 'admin') is True else 'push' if get(p, 'push') is True else 'none')
 elif mode == 'checks':
     runs = get(data, 'check_runs')
     if not isinstance(runs, list) or not runs:
@@ -166,13 +171,15 @@ case "${1:-}" in
   --pr) py_filter pr; exit $? ;;
   --pulls) py_filter pulls; exit $? ;;
   --checks) py_filter checks; exit $? ;;
-  -h | --help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h | --help) sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 once=0
+dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --once) once=1 ;;
+    --dry-run) dry=1 ;;
     *) echo "integrator: unknown argument $1" >&2; exit 1 ;;
   esac
   shift
@@ -552,8 +559,114 @@ after_merge() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
+# --dry-run (#1075): what the first real run would do. Reads only: klatch board and refusals, gh api GET, gh auth status
+# and extension list, git fetch and merge-tree. It never posts, claims, pushes, makes a branch, merges, runs the gate or
+# starts the forwarder. Everything printed is a fixed template, an integer, a word from a fixed list or a fixed message:
+# never a title, a body, a branch name or a login. The would-post words repeat the templates of post_* above (the tests
+# hold them equal).
+# ---------------------------------------------------------------------------------------------------------------------
+problems=0
+out() { printf '%s\n' "$*"; }
+chk_ok() { out "setup: $1: ok${2:+ ($2)}"; }
+chk_bad() { out "setup: $1: PROBLEM $2: $3"; problems=$((problems + 1)); }
+
+dry_setup() {
+  local b refused perm g first holder
+  # the role: klatch shows no role, so the one read-only sign is a recorded refusal of a merge:main claim by the rule `integrator`
+  if ! b="$("$klatch" board "$room" 2> /dev/null)"; then
+    chk_bad "klatch board" no-board "the board of room $room could not be read; check the member's identity and that it joined the room (klatch join $room)"
+    b=""
+  fi
+  refused="$("$klatch" refusals --limit 50 2> /dev/null | awk -F'\t' '$4 == "claim" && $5 == "integrator" { n++ } END { print n + 0 }')"
+  if [ "$refused" -gt 0 ] 2> /dev/null; then
+    chk_bad role no-integrator-role "this member was refused the merge:main claim; the human runs: klatch admin integrator <this member>"
+  else
+    chk_ok role "no refusal on record; klatch shows no role, so the first real run proves it by taking the claim"
+  fi
+  if gh auth status > /dev/null 2>&1; then chk_ok "gh login"
+  else chk_bad "gh login" no-gh-login "gh has no working login on this machine; run: gh auth login"; fi
+  perm="$(ghx api "repos/$slug" | py_filter perm)" || perm=unreadable
+  case "$perm" in
+    admin) chk_ok "gh permission" "admin on $slug, which gh webhook forward needs" ;;
+    push | none) chk_bad "gh permission" no-admin "the gh login has no admin on $slug (gh webhook forward creates a temporary webhook); log in as an account with repo admin" ;;
+    *) chk_bad "gh permission" unreadable "the repository permission of $slug could not be read; check gh auth status and the repository name (INTEGRATOR_GH_REPO)" ;;
+  esac
+  if gh extension list 2> /dev/null | grep -q 'cli/gh-webhook'; then chk_ok "webhook extension"
+  else chk_bad "webhook extension" no-webhook-extension "run: gh extension install cli/gh-webhook"; fi
+  g=0
+  if [ -n "$(git status --porcelain 2> /dev/null)" ]; then chk_bad clone dirty-clone "the clone has uncommitted or untracked files; use a dedicated clean clone"; g=1; fi
+  if [ "$(git rev-parse --abbrev-ref HEAD 2> /dev/null)" != main ]; then chk_bad clone wrong-branch "the clone is not on main; check main out in it"; g=1; fi
+  [ "$g" -eq 0 ] && chk_ok clone "clean, on main"
+  if [ -n "${INTEGRATOR_GATE:-}" ]; then
+    # shellcheck disable=SC2086
+    set -- $INTEGRATOR_GATE; first="$1"
+    if command -v "$first" > /dev/null 2>&1; then chk_ok gate "the INTEGRATOR_GATE command is present"
+    else chk_bad gate no-gate "the INTEGRATOR_GATE command was not found; fix the setting or unset it"; fi
+  elif [ -x proto/scripts/gate ]; then chk_ok gate "proto/scripts/gate is present"
+  else chk_bad gate no-gate "proto/scripts/gate is missing or not executable in the clone; update it to a current main"; fi
+  holder="$(printf '%s\n' "$b" | sed -nE 's/^queue \(merge:main held by ([A-Za-z0-9._-]{1,40})\):.*/\1/p' | head -1)"
+  if [ -n "$holder" ]; then chk_ok "merge:main" "held by $holder right now; a real run waits until it is free"
+  else chk_ok "merge:main" "free, or no queue on the board"; fi
+}
+
+dry_pr() { # one queued PR: the words a real run would post, in order
+  local n=$1 tip rc
+  out "queue #$n:"
+  if ! pr_read "$n"; then out "  would post: $(printf 'dropped: #%d error' "$n")  (the PR could not be read)"; return; fi
+  if [ "$pr_state" != open ]; then out "  would post: $(printf 'dropped: #%d closed' "$n")"; return; fi
+  if [ "$pr_sha" = - ] || [ "$pr_ref" = - ] || [ "$pr_repo" = - ]; then out "  would post: $(printf 'dropped: #%d error' "$n")  (the branch is not a plain name)"; return; fi
+  case "$(printf '%s' "$pr_repo" | tr '[:upper:]' '[:lower:]')" in "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')") ;;
+    *) out "  would post: $(printf 'dropped: #%d error' "$n")  (a branch of another repository is not integrated)"; return ;; esac
+  if ! { git fetch -q --no-prune origin main && git fetch -q --no-prune origin "pull/$n/head"; } > /dev/null 2>&1; then
+    out "  would post: $(printf 'dropped: #%d error' "$n")  (fetch failed)"; return
+  fi
+  tip="$(git rev-parse FETCH_HEAD 2> /dev/null)"
+  case "$tip" in *[!0-9a-f]* | '') out "  would post: $(printf 'dropped: #%d error' "$n")"; return ;; esac
+  code_conflicts origin/main "$tip"; rc=$?
+  if [ "$rc" -eq 1 ]; then out "  would post: $(printf 'dropped: #%d conflict' "$n")  (a code conflict with main, found before anything is touched)"; return; fi
+  if [ "$rc" -eq 2 ]; then out "  would post: $(printf 'dropped: #%d error' "$n")  (git merge-tree could not tell; git 2.38 or newer is needed)"; return; fi
+  out "  would post: $(printf 'integrating: #%d' "$n")"
+  if ! git merge-base --is-ancestor origin/main "$tip" 2> /dev/null; then
+    out "  would merge origin/main into a local branch integrator/$n (docs conflicts keep both sides)"
+    out "  would post: $(printf 'parked: running the gate for #%d, back by %dm' "$n" "$park_min")"
+    out "  would run the gate"
+    out "  would push the merged branch to the PR's own branch (a plain push, never forced)"
+  else
+    out "  main is already in the branch: no merge, no gate, no push"
+  fi
+  out "  would post: $(printf 'checking: #%d' "$n")"
+  out "  would post: $(printf 'parked: waiting for checks on #%d, back by %dm' "$n" "$park_min")"
+  out "  would wait for the checks of the current head to be green"
+  out "  would run gh pr merge $n --merge --match-head-commit <the head the checks were green on>"
+  out "  would post: $(printf 'merged: #%d' "$n")"
+}
+
+dry_run() {
+  local list q n count
+  out "dry run: $slug, room $room"
+  dry_setup
+  list="$(ghx api "repos/$slug/pulls?state=open&per_page=100" | py_filter pulls)" || list=""
+  count="$(printf '%s\n' "$list" | sed '/^$/d' | wc -l | tr -d ' ')"
+  out "open PRs read from GitHub: $count"
+  q="$(queue | tr '\n' ' ')"
+  if [ -z "${q// /}" ]; then
+    out "the queue is empty: nothing would be posted or merged"
+  else
+    out "the queue on the board: $(printf '%s' "$q" | sed -E 's/([0-9]+)/#\1/g; s/ +$//')"
+    out "would take the merge:main claim (lease ${lease}s), then release it when the queue is empty"
+    out "would start gh webhook forward --repo $slug --events pull_request,check_suite,workflow_run"
+    for n in $q; do dry_pr "$n"; done
+    out "(each PR is checked against main as it is now; a real run checks again after the PR before it merged)"
+  fi
+  if [ "$problems" -gt 0 ]; then out "dry run: $problems setup problem(s) above; fix them before the first real run"; fi
+  out "dry run: nothing was changed."
+  [ "$problems" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------------------------------------------------
+if [ "$dry" -eq 1 ]; then dry_run; exit $?; fi
 take_claim; rc=$?
 case "$rc" in
   0) drop_claim ;; # the probe: this member may take merge:main; it is taken again when there is work

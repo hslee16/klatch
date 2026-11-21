@@ -62,6 +62,14 @@ if [ "$1 $2" = "webhook forward" ]; then
   wait $tp
   exit 0
 fi
+if [ "$1 $2" = "auth status" ]; then
+  [ -e "$FAKE_DIR/no-login" ] && { echo "You are not logged into any GitHub hosts" >&2; exit 1; }
+  echo "Logged in to github.com account fake"; exit 0
+fi
+if [ "$1 $2" = "extension list" ]; then
+  [ -e "$FAKE_DIR/no-ext" ] || printf 'gh webhook\tcli/gh-webhook\tv1\n'
+  exit 0
+fi
 if [ "$1 $2" = "pr merge" ]; then
   n="$3"; sha=""; prev=""
   for a in "$@"; do [ "$prev" = "--match-head-commit" ] && sha="$a"; prev="$a"; done
@@ -78,6 +86,9 @@ fi
 path=""
 for a in "$@"; do case "$a" in repos/*) path="$a" ;; esac; done
 case "$path" in
+  repos/hslee16/klatch)
+    if [ -e "$FAKE_DIR/no-admin" ]; then echo '{"full_name":"hslee16/klatch","permissions":{"admin":false,"push":true,"pull":true}}'
+    else echo '{"full_name":"hslee16/klatch","permissions":{"admin":true,"push":true,"pull":true}}'; fi ;;
   */pulls\?*)
     out="["; sep=""
     for n in $(cat "$FAKE_DIR/prs" 2> /dev/null); do
@@ -133,6 +144,7 @@ case "$cmd" in
       echo "  #98 merged (10m ago)"
     fi
     echo "members:"; echo "  bob last seen 0s ago" ;;
+  refusals) cat "$FAKE_DIR/refusals" 2> /dev/null ;;
   wait)
     t=10; while [ $# -gt 0 ]; do [ "$1" = "--timeout" ] && t="$2"; shift; done
     i=0
@@ -370,6 +382,66 @@ if [ ! -e /tmp/integrator-pwned ] && ! grep -q 'integrator-pwned' "$fake/calls.l
 newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; echo "someone/fork" > "$fake/repo-7"
 runint --once > "$fake/out" 2>&1
 if [ "$(posts)" = 'dropped: #7 error' ] && [ "$(calls 'pr merge')" -eq 0 ] && [ ! -e "$fake/gate.log" ]; then ok "a PR whose branch is in another repository is dropped with error and nothing is run"; else bad "fork: $(posts)"; fi
+
+# ---- --dry-run (#1075): says what it would do, reads only, changes nothing ----
+# every call the fake gh and the fake klatch saw must be a read
+only_reads() {
+  ! grep -E '^gh ' "$fake/calls.log" | grep -Ev '^gh (api repos/[^ ]+|auth status|extension list|pr list|pr view)( |$)' | grep -q . \
+    && ! grep -E '^gh api' "$fake/calls.log" | grep -Eq ' (-X|--method|-f|-F|--field|--raw-field|--input)( |$)' \
+    && ! grep -E '^klatch ' "$fake/calls.log" | grep -Ev '^klatch (board|refusals|who)( |$)' | grep -q .
+}
+refs_of() { git --git-dir="$origin" for-each-ref | sort; }
+dry() { runint --dry-run > "$fake/out" 2>&1; }
+newworld; advance README.md 'moved\n'; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
+advance code.txt 'l1\nl2\nMAIN\nl4\nl5\n'
+mkpr 9 DESIGN.md 'intro\n1. **One**\n2. **Two**\n3. **Nine**\n'
+advance README.md 'moved again\n'
+printf '9 waiting\n7 waiting\n' > "$fake/queue"
+refs0="$(refs_of)"; head0="$(git -C "$repo" rev-parse HEAD)"
+dry; rc=$?
+o="$fake/out"
+lineof() { grep -n -m1 -F -- "$1" "$o" | cut -d: -f1; }
+l9="$(lineof 'would post: integrating: #9')"; lm9="$(lineof 'would post: merged: #9')"; l7="$(lineof 'would post: dropped: #7 conflict')"
+if [ "$rc" -eq 0 ] && [ -n "$l9" ] && [ -n "$lm9" ] && [ -n "$l7" ] && [ "$l9" -lt "$lm9" ] && [ "$lm9" -lt "$l7" ]; then ok "a dry run with two queued PRs prints the would-do lines for each, in queue order"; else bad "dry run rc=$rc: $(cat "$o")"; fi
+want_order="$(grep -F 'would post:' "$o" | sed 's/^.*would post: //; s/  (.*//' | paste -sd '|' -)"
+if [ "$want_order" = 'integrating: #9|parked: running the gate for #9, back by 25m|checking: #9|parked: waiting for checks on #9, back by 25m|merged: #9|dropped: #7 conflict' ]; then ok "the would-post words are the fixed templates, in the order a real run posts them"; else bad "would-post words: $want_order"; fi
+if grep -q 'would take the merge:main claim' "$o" && grep -q 'would start gh webhook forward --repo hslee16/klatch --events pull_request,check_suite,workflow_run' "$o" && grep -q 'would run gh pr merge 9 --merge --match-head-commit' "$o" && grep -q 'would run the gate' "$o" && grep -q 'would push' "$o"; then ok "it says it would take the claim, start the forwarder, run the gate, push and merge"; else bad "would lines: $(cat "$o")"; fi
+if only_reads; then ok "the fake gh and the fake klatch saw only read calls"; else bad "a write call: $(cat "$fake/calls.log")"; fi
+if [ "$(calls 'klatch post')" -eq 0 ] && [ "$(calls 'klatch claim')" -eq 0 ] && [ "$(calls 'klatch release')" -eq 0 ] && [ ! -e "$fake/posts.log" ] && [ ! -e "$fake/claims.log" ] \
+  && [ "$(calls 'git push')" -eq 0 ] && [ "$(calls 'pr merge')" -eq 0 ] && [ "$(calls 'webhook')" -eq 0 ] && [ ! -e "$fake/gate.log" ] && [ ! -e "$fake/forward.log" ]; then ok "no post, claim, release, push, merge, gate or webhook happened"; else bad "something changed: $(cat "$fake/calls.log")"; fi
+if [ "$(refs_of)" = "$refs0" ]; then ok "the fake git remote is unchanged"; else bad "remote changed"; fi
+if [ "$(git -C "$repo" rev-parse HEAD)" = "$head0" ] && [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = main ] && [ -z "$(git -C "$repo" status --porcelain)" ] && ! git -C "$repo" for-each-ref refs/heads | grep -q -v 'refs/heads/main$'; then ok "the clone is untouched: same head, on main, clean, no new branch"; else bad "clone changed"; fi
+if [ "$(tail -1 "$o")" = 'dry run: nothing was changed.' ]; then ok "the last line says nothing was changed"; else bad "last line: $(tail -1 "$o")"; fi
+for k in role 'gh login' 'gh permission' 'webhook extension' clone gate 'merge:main'; do
+  grep -Eq "^setup: $k: ok" "$o" || bad "setup line for $k is not ok: $(grep "^setup: $k" "$o")"
+done
+if ! grep -q 'PROBLEM' "$o"; then ok "a healthy setup reports every check as ok"; else bad "unexpected problem: $(grep PROBLEM "$o")"; fi
+
+# a missing role (a recorded refusal by the integrator rule), a missing login and a missing permission are named problems
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; printf '30s ago\tbob\tlobby\tclaim\tintegrator\n' > "$fake/refusals"
+dry; rc=$?
+if [ "$rc" -eq 1 ] && grep -q '^setup: role: PROBLEM no-integrator-role: .*klatch admin integrator' "$fake/out" && [ "$(tail -1 "$fake/out")" = 'dry run: nothing was changed.' ] && only_reads; then ok "a member that was refused the claim is reported as a named role problem with the next step; still read only"; else bad "role problem rc=$rc: $(cat "$fake/out")"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; touch "$fake/no-login"
+dry; rc=$?
+if [ "$rc" -eq 1 ] && grep -q '^setup: gh login: PROBLEM no-gh-login: .*gh auth login' "$fake/out" && only_reads; then ok "no gh login is a named problem with the next step"; else bad "login problem rc=$rc: $(cat "$fake/out")"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; touch "$fake/no-admin" "$fake/no-ext"
+dry; rc=$?
+if [ "$rc" -eq 1 ] && grep -q '^setup: gh permission: PROBLEM no-admin: ' "$fake/out" && grep -q '^setup: webhook extension: PROBLEM no-webhook-extension: .*gh extension install cli/gh-webhook' "$fake/out"; then ok "a login without admin, and a missing webhook extension, are named problems"; else bad "permission problem rc=$rc: $(cat "$fake/out")"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; echo dirt > "$repo/untracked.txt"; git -C "$repo" checkout -q -b other
+dry; rc=$?
+if [ "$rc" -eq 1 ] && grep -q '^setup: clone: PROBLEM dirty-clone: ' "$fake/out" && grep -q '^setup: clone: PROBLEM wrong-branch: ' "$fake/out"; then ok "a dirty clone and a clone on the wrong branch are named problems"; else bad "clone problems rc=$rc: $(cat "$fake/out")"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
+mv "$bin/gate" "$bin/gate.off"; dry; rc=$?; mv "$bin/gate.off" "$bin/gate"
+if [ "$rc" -eq 1 ] && grep -q '^setup: gate: PROBLEM no-gate: ' "$fake/out"; then ok "a missing gate script is a named problem"; else bad "gate problem rc=$rc: $(cat "$fake/out")"; fi
+
+# hostile text never appears in the output
+rm -f /tmp/integrator-pwned
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; mkpr 8 DESIGN.md 'intro\n1. **One**\n2. **Two**\n4. **Eight**\n'; echo 'x; touch /tmp/integrator-pwned' > "$fake/ref-8"
+printf '7 waiting\n8 waiting\n' > "$fake/queue"
+dry; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'would post: dropped: #8 error' "$fake/out" && ! grep -qiE 'hostile|ignore previous|ready: #|touch|integrator-pwned' "$fake/out" && [ ! -e /tmp/integrator-pwned ]; then ok "a hostile PR title, body and branch name never appear in the dry run output"; else bad "hostile in dry run rc=$rc: $(cat "$fake/out")"; fi
+newworld; dry; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'queue is empty' "$fake/out" && [ "$(tail -1 "$fake/out")" = 'dry run: nothing was changed.' ]; then ok "an empty queue is said so"; else bad "empty queue rc=$rc: $(cat "$fake/out")"; fi
 
 # ---- a real klatch refuses a plain member (only when a built binary exists; temp home and key dir) ----
 kb="${INTEGRATOR_TEST_KLATCH:-$here/../target/debug/klatch}"
