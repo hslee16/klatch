@@ -500,6 +500,12 @@ if [ "$(calls 'record-bench')" -eq 0 ] && grep -q "^ledger --post --only 11,13,1
 batchenv 11 13 14
 runsweep --batch --max 2
 if grep -q '^gh pr create .*--title Batch: #11 #13 --body-file' "$log" && [ "$(calls '^git merge .*refs/pr-sweep/14')" -eq 0 ]; then ok "--max 2 batches the two lowest PR numbers"; else bad "max: $(cat "$log")"; fi
+# --- #854: PRs dropped for a code conflict do not use up --max slots; the cap fills from the survivors
+batchenv 11 13 14 15 16
+echo "proto/klatch/src/lib.rs" > "$fake/mt-main-11"
+echo "proto/klatch/src/store.rs" > "$fake/mt-main-13"
+runsweep --batch --max 2
+if grep -q '^gh pr create .*--title Batch: #14 #15 --body-file' "$log" && [ "$(calls '^git merge .*refs/pr-sweep/16')" -eq 0 ] && [ "$(calls '^git merge .*refs/pr-sweep/11')" -eq 0 ]; then ok "two dropped PRs do not use the --max 2 slots: the batch fills from the survivors (#14 #15)"; else bad "fill cap: $(cat "$log") $(cat "$fake/out")"; fi
 newenv
 runsweep --batch --max 1
 r1=$rc

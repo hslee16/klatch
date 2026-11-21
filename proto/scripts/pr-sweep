@@ -503,7 +503,7 @@ verify_included() { # batch PR, PR: is the included PR merged (its head is in ma
 # shellcheck disable=SC2086
 do_batch_inner() {
   local row n stage ticket closer sha g ncand=0 cands="" sig="" refspecs="" got surv="" mt r s bad_pair cur title merged_ok
-  local bn url prev ms rc tries_left=3 landed="" nsurv
+  local bn url prev ms rc tries_left=3 landed="" nsurv examined="" scan_max=$((batch_max * 3))
   # an open batch PR from an earlier pass (its branch is alee/batch-*) blocks a new batch; the PRs in it are left to it
   local openb p inc
   openb="$(printf '%s\n' "$rows" | awk '$3 ~ /^alee\/batch-/ && $2 !~ /^(merged|done|abandoned)/ { sub(/^#/, "", $1); print $1 }')"
@@ -514,7 +514,9 @@ do_batch_inner() {
     done
     return
   fi
-  # the candidates: ready or conflicted, with a linked ticket, green on their own head, in PR-number order, at most --max
+  # the candidates: ready or conflicted, with a linked ticket, green on their own head, in PR-number order. Up to 3 times
+  # --max are looked at, because PRs dropped by the pre-check must not use up slots (#854); the batch itself is capped
+  # at --max SURVIVORS below.
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     # shellcheck disable=SC2086
@@ -533,7 +535,7 @@ do_batch_inner() {
     if [ "$g" -ne 0 ]; then say "#$n: not green on its own head (or unreadable); left out of the batch"; continue; fi
     echo "$sha" > "$run/head.$n"; echo "$ticket" > "$run/ticket.$n"; echo "$closer" > "$run/closer.$n"
     cands="$cands $n"; ncand=$((ncand + 1))
-    [ "$ncand" -ge "$batch_max" ] && break
+    [ "$ncand" -ge "$scan_max" ] && break
   done <<< "$(printf '%s\n' "$rows" | sort -t'#' -k2,2n)"
   cands="${cands# }"
   if [ "$ncand" -lt 2 ]; then say "batch: fewer than 2 candidates (${cands:-none}); one at a time"; return; fi
@@ -552,7 +554,10 @@ do_batch_inner() {
     if [ "$cur" != "$bb" ]; then say "batch: on $cur, not $bb; refusing to merge"; return; fi
   fi
   # PRE-CHECK: a PR that would conflict in any non-docs file is dropped BEFORE it touches the branch
+  nsurv=0
   for n in $cands; do
+    [ "$nsurv" -ge "$batch_max" ] && break # the batch is full; the rest are left for the next pass
+    examined="$examined $n"
     got="$(git rev-parse "refs/pr-sweep/$n" 2> /dev/null)"
     if [ "$got" != "$(cat "$run/head.$n")" ]; then batch_drop "$n" "its head moved since it was seen green"; continue; fi
     mt="$(mt_code_conflicts origin/main "refs/pr-sweep/$n")"; r=$?
@@ -575,9 +580,9 @@ do_batch_inner() {
       merge_in "refs/pr-sweep/$n" "$n" "into the batch" "Merge #$n into the batch (docs conflict)" || { batch_drop "$n" "its merge into the batch conflicted (aborted)"; continue; }
     fi
     surv="$surv $n"
+    nsurv=$((nsurv + 1))
   done
   surv="${surv# }"
-  nsurv="$(echo "$surv" | wc -w | tr -d ' ')"
   if [ "$nsurv" -lt 2 ]; then
     say "batch: fewer than 2 PRs survive (${surv:-none}); one at a time"
     return
@@ -589,7 +594,7 @@ do_batch_inner() {
     say "would batch$(printf ' #%s' $surv) into one pull request (one gate, one merge, one bench) titled \"$title\""
     return
   fi
-  for n in $cands; do skip_pr "$n"; done # whatever happens below, this pass does not also take them one at a time
+  for n in $examined; do skip_pr "$n"; done # whatever happens below, this pass does not also take them one at a time
   # ONE gate on the combined branch (the merges are committed; the gate refuses a dirty tree)
   if ! run_gate; then
     say "batch gate failed on the combined branch of$(printf ' #%s' $surv); nothing pushed; the next pass takes this set one at a time"
