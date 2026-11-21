@@ -165,3 +165,27 @@ outlier can pass 50 ms. The keyring cost is two `secret-tool` runs per command, 
 (added for #560, so a dead bus falls back to the file) and the lookup; the probe is about 8 ms of the 19 and #562 is
 to remove it. No miss, so no budget ticket. Not measured: a keyring that is slow to answer (a locked collection fails
 in about 25 ms), x86_64, and a desktop session under load.
+
+## Many threads in one process: the shared gateway (ticket #140, 2026-11-20)
+
+Everything above is processes (the CLI and the hooks) meeting one SQLite file. A daemon (#102) serves many connections
+from one process, and the `Gateway` cannot be shared by threads (`Rc`, one non-`Sync` connection, boxed clock, guard
+and notifier with no `Send`). `SharedGateway` (`gateway/shared.rs`, analysis in `design/items/140-gateway-threads.md`)
+gives it one owner thread: connection threads hold a `SharedTransport` (`Clone`, `Send`, `Sync`, implements
+`Transport`) and each call is one request over a channel, served in order, so there is one connection and one writer
+and no lock around the gateway. A wait is a loop of short requests that sleeps on the caller's thread, so it holds
+nothing. Processes still coordinate through SQLite's lock exactly as before.
+
+| Test (`gateway/shared_tests.rs`) | Checks |
+|---|---|
+| `threads_posting_through_one_handle_get_dense_unique_seqs_and_lose_nothing` | 8 threads, 200 posts: seq 1 to 200, each message once, attributed to its handle |
+| `readers_running_beside_writers_see_every_message_once_in_order` | 4 writers, 1 reader: 100 messages once, in order |
+| `eight_threads_claiming_one_path_give_exactly_one_holder` | one winner, seven `Conflict` |
+| `a_bounded_wait_returns_when_another_thread_posts_and_blocks_nobody` | the wait wakes on the post; another call is served during the wait |
+| `the_owner_stops_when_the_last_handle_is_dropped` | the connection closes with the last handle |
+| `a_request_that_panics_fails_that_call_and_leaves_the_owner_serving` | one bad request does not stop the owner |
+
+**Limits.** One owner serves one request at a time, so a slow request delays the others (as it would under a lock);
+each call costs a channel round trip and a copy of its arguments. Not measured here (no listener yet); a pool of
+reader connections would be a later change if a daemon needs it. No Shuttle test: it cannot see SQLite, so it would
+test only the channel.
