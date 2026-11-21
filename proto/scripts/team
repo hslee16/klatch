@@ -22,8 +22,8 @@
 # default 2), TEAM_MAX_SECONDS (wall clock cap; default 3600; claude has no turn cap flag), TEAM_MODEL (optional),
 # TEAM_PERMISSION_MODE (default dontAsk: nobody is there to answer a prompt, so anything not on the allowlist is
 # denied; bypassPermissions only when asked, #594), TEAM_ALLOWED_TOOLS (comma separated tool rules replacing the default
-# allowlist: the klatch commands a worker needs by absolute path, git, gh api and pr create, the build and test tools,
-# file edits; no klatch admin or worker, no bare git push, no shell, curl or rm), TEAM_WAKE=1 (also install the
+# allowlist: the klatch commands a worker needs by absolute path, git, `gh pr create/view/checks`, a plain GET of the worker's own ticket, the build and test tools,
+# file edits; no klatch admin or worker, git push only of its own alee/NAME, no gh api with a method or body, no shell, curl or rm), TEAM_WAKE=1 (also install the
 # asyncRewake wake watcher). RELAUNCH (#1011, #591): a worker that ends (budget, watchdog, crash or a finished turn)
 # while `klatch read ROOM --count` reports unread mail for it is relaunched with a fresh credential and the unread
 # digest as its prompt: at most TEAM_MAX_RESTARTS times (default 3; 0 turns it off), never past TEAM_MAX_TOTAL_USD,
@@ -51,18 +51,23 @@ restart_pause="${TEAM_RESTART_PAUSE_SECS:-30}"
 mode="${TEAM_PERMISSION_MODE:-dontAsk}"
 # What a worker may run when no one can answer a prompt (#594). A worker that room mail talks into something else
 # finds it denied. The klatch rules name the binary by its absolute path, as the brief does.
-default_allowed() {
-  local k="$klatch" out="Read,Write,Edit,Glob,Grep" c
+# Rules match the command text with * standing for any text, and the rule cannot see flag order, so a wildcard on push
+# or gh api would also cover `git push origin alee/x:main`, `gh api -X DELETE` or a -f body (#1156). So the two risky
+# commands are exact strings built per worker (no *): `git push -u origin alee/NAME` and a plain (GET) `gh api` of the
+# worker's own ticket and its comments. `gh pr create/view/checks` cannot merge or edit, so those take arguments.
+default_allowed() { # name ticket
+  local k="$klatch" out="Read,Write,Edit,Glob,Grep" c n="$1" t="$2"
   for c in join post claim release read wait who board claims history; do out="$out,Bash($k $c:*)"; done
   for c in "git add" "git commit" "git status" "git diff" "git log" "git show" "git fetch" "git merge" "git checkout" "git branch" \
-    "git worktree" "git rev-parse" "git push -u origin" "gh api" "gh pr create" "gh pr view" "cargo" "rustc" "rustfmt" \
+    "git worktree" "git rev-parse" "gh pr create" "gh pr view" "gh pr checks" "cargo" "rustc" "rustfmt" \
     "python3 -I proto/scripts" "bash proto/scripts" "proto/scripts" "release/changelog-fragments.sh" "release/design-fragments.sh" \
     "ls" "cat" "grep" "mkdir" "export PATH" "kill -9" "echo"; do
     out="$out,Bash($c:*)"
   done
+  out="$out,Bash(git push -u origin alee/$n)"
+  case "$t" in '' | -) ;; *) out="$out,Bash(gh api repos/hslee16/klatch/issues/$t),Bash(gh api repos/hslee16/klatch/issues/$t/comments)" ;; esac
   printf '%s' "$out"
 }
-allowed="${TEAM_ALLOWED_TOOLS:-$(default_allowed)}"
 case "$mode" in acceptEdits|auto|bypassPermissions|manual|dontAsk|plan) ;; *) die "TEAM_PERMISSION_MODE must be one of acceptEdits, auto, bypassPermissions, manual, dontAsk, plan; got '$mode'" 2 ;; esac
 run="$dir/run"
 bundles="$dir/bundles"
@@ -111,7 +116,7 @@ Join the room first, read it, and post one short line saying what you took ($t).
 ## Rules from the human (follow exactly)
 - You work in your own git worktree (your current directory) on branch alee/$name. Never push to main, never force-push, never a bare \`git push\`; use \`git push -u origin alee/$name\`. Open a PR with \`gh pr create\`, post its number in the room, then follow "After you open the PR" below. Never merge.
 - Add files by name (never \`git add -A\` or \`git add .\`). Tests first: write the failing test, watch it fail, then implement; say honestly in the PR if a test was not red first.
-- GitHub: \`gh api\` REST only (never \`gh issue view\`, \`gh pr edit\`, or GraphQL). File a ticket for every bug, gap or limitation you find.
+- GitHub: you may read your own ticket with a plain \`gh api repos/hslee16/klatch/issues/N\` (GET only; other \`gh api\` calls are denied; never GraphQL, \`gh issue view\` or \`gh pr edit\`). You cannot file tickets: post a \`friction:\` line in the room for every bug, gap or limitation you find and the human files it.
 - Never use em dashes in anything you write. No time or effort estimates. CI stays lightweight.
 - Rust: \`export PATH=\$HOME/.cargo/bin:\$PATH\`. Commit, then run \`proto/scripts/gate\` before the PR; it must pass (it refuses a tree with uncommitted changes to tracked files: it checks the commit).
 - A new DESIGN item goes in its own file \`design/items/<ticket>-<slug>.md\` (line 1 is the item title, the rest is the text; see design/items/README.md); never append to DESIGN.md and never pick an item number (#807). Refer to an item that is not yet assembled as "the design item for #NNN".
@@ -154,8 +159,8 @@ PY
 
 # --- the runner script one worker executes in the background: claude, a wall-clock watchdog, then the cleanup
 # shellcheck disable=SC2016  # the runner text is written out literally, its variables expand when it runs
-write_runner() { # name worktree
-  local name="$1" wt="$2" r="$run/$1"
+write_runner() { # name worktree ticket
+  local name="$1" wt="$2" ticket="$3" r="$run/$1"
   {
     echo '#!/usr/bin/env bash'
     printf 'cd %q || exit 1\n' "$wt"
@@ -163,7 +168,7 @@ write_runner() { # name worktree
     echo 'unset KLATCH_NAME KLATCH_DISCOVER'
     printf 'args=(-p "$(cat %q)" --output-format stream-json --verbose --settings %q --setting-sources project\n' "$r.task" "$r.settings.json"
     printf '  --append-system-prompt "$(cat %q)" --max-budget-usd %q --permission-mode %q\n' "$r.brief" "$budget" "$mode"
-    printf '  --allowedTools %q)\n' "$allowed"
+    printf '  --allowedTools %q)\n' "${TEAM_ALLOWED_TOOLS:-$(default_allowed "$name" "$ticket")}"
     [ -n "${TEAM_MODEL:-}" ] && printf 'args+=(--model %q)\n' "$TEAM_MODEL"
     printf '%q "${args[@]}" > %q 2>&1 < /dev/null &\n' "$claude" "$r.log"
     echo 'cpid=$!'
@@ -239,7 +244,7 @@ launch() { # name ticket: the task file is already written; brief, hooks, runner
   local name="$1" r="$run/$1"
   brief "$name" "$2" > "$r.brief"
   settings_json > "$r.settings.json"
-  write_runner "$name" "$dir/worktrees/$name"
+  write_runner "$name" "$dir/worktrees/$name" "$2"
   nohup "$r.sh" > "$r.runner.log" 2>&1 < /dev/null &
   echo "$!" > "$r.pid"
 }
