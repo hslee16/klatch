@@ -1,0 +1,1 @@
+{"action":"synchronize","number":12,"pull_request":{"number":12,"state":"open","merged":false,"head":{"ref":"feature-x","sha":"b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0a1"},"base":{"ref":"main"},"title":"Add a thing"},"repository":{"full_name":"example/repo","default_branch":"main"}}

@@ -549,6 +549,8 @@ dependencies = [
  "klatch",
  "libc",
  "serde_json",
+ "sha2",
+ "subtle",
 ]
 
 [[package]]
