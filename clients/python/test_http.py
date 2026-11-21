@@ -1,8 +1,9 @@
 """The HTTP and server-sent-events transport of the Python client (#1114) for `klatch-server http` (#1059).
 
 The success path runs against a small in-process server that speaks the same wire (`GET /v1/stream` as server-sent
-events with `X-Klatch-Session`, `POST /v1/frames` with that header), because a verified connection needs a worker
-credential and only the human issues one. The refusal path runs against the real `klatch-server http` when it is built.
+events with `X-Klatch-Session`, `POST /v1/frames` with that header), because it can drop a stream
+on demand. The whole conformance scenario over the real `klatch-server http`, with a credential issued per member in a
+throwaway store, is `ConformanceOverHttp` in test_conformance.py (#1123). The refusal path runs against the real server here.
 Every wait has a deadline, no test reads a stream to its end, and every error is injected, not provoked from the
 platform (a peer that dies is ECONNRESET on Linux and a clean end on macOS).
 """
