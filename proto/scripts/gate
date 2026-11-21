@@ -157,13 +157,14 @@ repo_checks() {
     && check proto/scripts/test-sweep.sh \
     && check proto/scripts/test-integrator.sh \
     && check proto/scripts/test-merge-union.sh \
+    && check proto/scripts/test-fmt-after-merge.sh \
     && check sh install/test-install.sh \
     && check experiments/gates/test-check-binary.sh \
     && check experiments/variance/test-repeat.sh \
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh \
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh \
     && { ! command -v actionlint > /dev/null 2>&1 || check actionlint; } \
-    && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh; }
+    && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 
