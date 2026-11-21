@@ -321,7 +321,7 @@ impl Shared {
 
 /// The status and the headers (names lower-cased) of a reply.
 fn read_head<R: BufRead>(r: &mut R) -> io::Result<(u16, HashMap<String, String>)> {
-    let line = read_line(r)?.ok_or_else(|| io::ErrorKind::UnexpectedEof)?;
+    let line = read_line(r)?.ok_or(io::ErrorKind::UnexpectedEof)?;
     let status = line
         .split(' ')
         .nth(1)
@@ -329,7 +329,7 @@ fn read_head<R: BufRead>(r: &mut R) -> io::Result<(u16, HashMap<String, String>)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not an http reply"))?;
     let mut headers = HashMap::new();
     loop {
-        let h = read_line(r)?.ok_or_else(|| io::ErrorKind::UnexpectedEof)?;
+        let h = read_line(r)?.ok_or(io::ErrorKind::UnexpectedEof)?;
         if h.is_empty() {
             return Ok((status, headers));
         }
