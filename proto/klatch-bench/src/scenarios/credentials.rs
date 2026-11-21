@@ -12,6 +12,18 @@ pub(super) fn all() -> Vec<Scenario> {
             run: own_record_after_end,
         },
         Scenario {
+            name: "a_live_wire_is_refused_once_its_credential_expires_under_it",
+            origin: "#835, #1051",
+            layer: "functional",
+            run: live_wire_expiry,
+        },
+        Scenario {
+            name: "the_release_audit_names_the_judge_when_the_hosted_judge_allows",
+            origin: "#836, #960, #1051",
+            layer: "functional",
+            run: judge_names_itself,
+        },
+        Scenario {
             name: "the_release_audit_names_who_released_a_crossing",
             origin: "#836, #679",
             layer: "functional",
@@ -179,7 +191,7 @@ fn release_names_releaser(w: &World) -> Res {
         format!("the reviewer is not named as the releaser:\n{audit}"),
     )?;
     // the judge's own deny is audited as the judge's and releases nothing; naming the judge as a releaser needs an
-    // allow, which only the opt-in hosted judge (a `claude` binary of the operator's) gives, so the bench leaves it
+    // allow, which only the opt-in hosted judge gives; that is covered by the fake-claude scenario below (#1051)
     check(
         audit
             .lines()
@@ -349,4 +361,90 @@ fn marked(text: &str, what: &str) -> Result<(), String> {
         .find(|l| l.contains("before the requirement"))
         .ok_or_else(|| format!("{what}: the early member's message is missing:\n{text}"))?;
     lacks(plain, "advisory", &format!("{what} marks a clean sender"))
+}
+
+/// An allow from the opt-in hosted judge releases a crossing and the audit names the judge as the releaser. The
+/// `claude` binary is a local script (`World::judge_with_fake_claude`): no model is called and no text leaves the
+/// machine (#1051).
+fn judge_names_itself(w: &World) -> Res {
+    w.set_clock(T0);
+    check(
+        w.admin(&["label", "vault", "private"], "").ok,
+        "label failed",
+    )?;
+    check(
+        w.admin(&["clear", "alice", "private"], "").ok,
+        "clear failed",
+    )?;
+    w.ok("alice", &["join", "vault"])?;
+    w.ok("alice", &["join", "open"])?;
+    w.ok("bob", &["join", "open"])?;
+    // seq 1 of a private room is its canary (#347)
+    w.ok("alice", &["post", "vault", "the plan is blue"])?;
+    w.ok("alice", &["cross", "vault", "2", "--to", "open"])?;
+    let reply = r#"{"is_error":false,"structured_output":{"verdict":"allow","confidence":0.99}}"#;
+    // a ceiling at or below the source label sends nothing: the item stays queued and nothing is released
+    let held = w.judge_with_fake_claude("private", reply);
+    check(held.ok, format!("judge run failed: {}", held.stderr))?;
+    lacks(
+        &w.admin(&["audit"], "").stdout,
+        "applied by judge",
+        "an item above the ceiling was released",
+    )?;
+    let pass = w.judge_with_fake_claude("secret", reply);
+    check(pass.ok, format!("judge run failed: {}", pass.stderr))?;
+    let audit = w.admin(&["audit"], "").stdout;
+    check(
+        audit.lines().any(|l| {
+            l.contains("crossing") && l.contains("vault#2") && l.contains("applied by judge")
+        }),
+        format!("the judge is not named as the releaser:\n{audit}"),
+    )?;
+    has(
+        &w.ok("bob", &["read", "open"])?,
+        "the plan is blue",
+        "the released text did not arrive",
+    )?;
+    Ok(vec![])
+}
+
+/// A worker's `serve --stdio` keeps running while the world's clock moves past its idle timeout: the call before is
+/// served, the call after is refused as expired (#1051). The running process reads the world's clock file.
+fn live_wire_expiry(w: &World) -> Res {
+    use std::io::{BufRead, BufReader, Write};
+    w.set_clock(T0);
+    let bundle = w.issue_worker("w-exp", "internal", (60, None))?;
+    let mut child = w
+        .spawn_worker_piped(&bundle, &["serve", "--stdio"])
+        .map_err(|e| format!("start serve: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    let mut out = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+    let mut hello = String::new();
+    out.read_line(&mut hello).map_err(|e| e.to_string())?;
+    let mut call = |id: &str| -> Result<String, String> {
+        let req = serde_json::json!({"v": 1, "type": "request", "id": id, "method": "my_crossings", "params": {}});
+        writeln!(stdin, "{req}").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        out.read_line(&mut line).map_err(|e| e.to_string())?;
+        Ok(line)
+    };
+    let live = call("1");
+    w.advance(120);
+    let after = call("2");
+    let _ = child.kill();
+    let _ = child.wait();
+    has(&live?, "\"ok\":true", "a live credential was refused")?;
+    let after = after?;
+    lacks(
+        &after,
+        "\"ok\":true",
+        "an expired credential was served on the live wire",
+    )?;
+    has(
+        &after,
+        "expired",
+        "the refusal does not say the credential expired",
+    )?;
+    Ok(vec![])
 }

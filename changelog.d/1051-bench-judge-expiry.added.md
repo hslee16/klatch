@@ -1,0 +1,1 @@
+- The bench covers a hosted-judge allow (with a local fake `claude`) and credential expiry on a running wire; a test build reads `KLATCH_NOW_FILE` so a running process sees the clock move (#1051).
