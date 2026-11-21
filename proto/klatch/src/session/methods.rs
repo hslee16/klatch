@@ -22,6 +22,11 @@ pub(crate) struct RoomParams {
     pub room: String,
 }
 #[derive(Deserialize)]
+struct ReceiptParams {
+    room: String,
+    seq: i64,
+}
+#[derive(Deserialize)]
 struct CrossingsParams {
     #[serde(default)]
     limit: Option<usize>,
@@ -212,6 +217,25 @@ fn crossings_json(list: &[crate::domain::CrossingStatus]) -> Value {
     json!({ "crossings": list.iter().map(one).collect::<Vec<_>>() })
 }
 
+/// The receipts of the caller's own message (#848): one row per recipient with a liveness state word, the seconds
+/// that state names, and the shown and read flags. Never the message text.
+fn receipts_json(r: &crate::domain::Receipts, now: i64) -> Value {
+    use crate::domain::Receipt;
+    let one = |(name, state): &(String, Receipt)| {
+        let (word, secs) = match state {
+            Receipt::Parked { back_by } => ("parked", (back_by - now).max(0)),
+            Receipt::SeenAfter { secs } => ("seen_after", *secs),
+            Receipt::NotSeen { secs_before } => ("not_seen", *secs_before),
+        };
+        let taken = r.taken.iter().find(|(n, _)| n == name).map(|(_, t)| *t);
+        json!({
+            "name": name, "state": word, "secs": secs,
+            "shown": taken.is_some_and(|t| t.shown), "read": taken.is_some_and(|t| t.read),
+        })
+    };
+    json!({ "seq": r.seq, "posted": r.posted, "recipients": r.rows.iter().map(one).collect::<Vec<_>>() })
+}
+
 fn claims_json(cs: &[Claim]) -> Value {
     let one = |c: &Claim| {
         let mut v = json!({
@@ -317,6 +341,17 @@ pub(crate) fn handle<S: Store>(
         "my_crossings" => call.run(
             |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
             |l| crossings_json(&l),
+        ),
+        "my_rooms" => call.run(|_: NoParams| g.rooms(who), |r| json!({ "rooms": r })),
+        "board" => call.run(
+            |p: RoomParams| g.board(who, &p.room),
+            |b: crate::domain::Board| {
+                json!({ "room": b.room, "board": crate::domain::render_board(&b, g.now()) })
+            },
+        ),
+        "receipt" => call.run(
+            |p: ReceiptParams| g.receipt(who, &p.room, p.seq),
+            |r| receipts_json(&r, g.now()),
         ),
         "my_role" => call.run(|_: NoParams| g.my_role(who), |r| json!({ "role": r })),
         "invite" => call.run(

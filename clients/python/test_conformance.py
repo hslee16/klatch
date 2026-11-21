@@ -314,6 +314,19 @@ class Conformance(unittest.TestCase):
         a.post("r", "here")
         self.assertIsNone(a.my_role())
 
+    def test_a_member_reads_its_rooms_its_board_and_its_receipt(self):
+        a = self.store.client("alice")
+        b = self.store.client("bob")
+        sent = a.post("r", "offering: review help")
+        b.post("r", "hi")
+        self.assertEqual(a.my_rooms(), ["r"])
+        self.assertIn("review help", a.board("r"))
+        rows = a.receipt("r", sent["seq"])["recipients"]
+        self.assertEqual([r["name"] for r in rows], ["bob"])
+        with self.assertRaises(kc.ApiError) as ctx:
+            b.receipt("r", sent["seq"])
+        self.assertEqual(ctx.exception.code, "refused")
+
     def test_a_member_declares_its_scope_its_kind_and_its_status(self):
         a = self.store.client("alice")
         a.post("r", "here")
