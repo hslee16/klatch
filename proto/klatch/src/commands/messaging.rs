@@ -29,8 +29,15 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
                 handoff: kind.as_deref().map(|k| (k, payload.as_deref())),
             },
         )?,
-        MessagingCmd::Ask { room, text } => ask(ctx, &room, &text)?,
-        MessagingCmd::Answer { room, number, text } => answer(ctx, &room, number, &text)?,
+        MessagingCmd::Ask { args, to: Some(to) } => ask_to(ctx, &to, &args)?,
+        MessagingCmd::Ask { args, to: None } => match args.split_first() {
+            Some((room, text)) => ask(ctx, room, text)?,
+            None => bail!("klatch ask needs a room and text, or --to MEMBER and text"),
+        },
+        MessagingCmd::Answer { room, number, text } => {
+            let room = resolve_answer_room(ctx.me, &room)?;
+            answer(ctx, &room, number, &text)?
+        }
         MessagingCmd::Read { room, peek, count } => {
             if count {
                 unread_count(t, &room)?
@@ -190,6 +197,57 @@ pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String]) -> Result<()> {
         eprintln!("{note}");
     }
     Ok(())
+}
+
+/// `klatch ask --to MEMBER TEXT` (#1189): the `seeking:` ask as a dm, through the same `dm` as the command of that
+/// name (no new privilege; the ceiling, labels and content checks are the dm's). Only a member the caller shares a
+/// room with is asked, so a mistyped name makes no room and says nothing about the text. Nothing is posted in a
+/// shared room: the ask lives in the dm and is seen by the two members (and the human who runs klatch).
+pub(super) fn ask_to(ctx: &Ctx, to: &str, text: &[String]) -> Result<()> {
+    if !klatch::domain::valid_name(to) {
+        bail!("`{to}` is not a member name: klatch ask --to MEMBER <what you need>");
+    }
+    if to == ctx.me {
+        bail!("you cannot ask yourself: klatch ask --to MEMBER <what you need>");
+    }
+    let text = text.join(" ");
+    let text = text.trim();
+    let text = text
+        .strip_prefix(klatch::domain::ASK_PREFIX)
+        .unwrap_or(text)
+        .trim();
+    if text.is_empty() {
+        bail!("an ask needs text: klatch ask --to {to} <what you need>");
+    }
+    if !shares_a_room_with(ctx.t, to) {
+        bail!(
+            "{to} is not a member you share a room with; nothing was sent (join a room they are in, or check the name with `klatch who`)"
+        );
+    }
+    let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
+    let (room, posted) = ctx.t.dm(to, &body, None)?;
+    println!(
+        "asked #{} of {to} in room {room} (private, queued; `klatch wait {room}` for the answer)",
+        posted.seq
+    );
+    Ok(())
+}
+
+/// Whether `member` is in any room the caller has joined (a dm room counts, so a standing dm is enough).
+fn shares_a_room_with(t: &dyn Transport, member: &str) -> bool {
+    t.rooms().is_ok_and(|rooms| {
+        rooms.iter().any(|room| {
+            t.who(room)
+                .is_ok_and(|members| members.iter().any(|m| m.name == member))
+        })
+    })
+}
+
+/// The room `answer` works in: `dm:NAME` is the caller's dm with NAME; any other name is as given.
+fn resolve_answer_room(me: &str, room: &str) -> Result<String> {
+    let mut rooms = klatch::domain::resolve_dm_targets(&[room.to_string()], me)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(rooms.remove(0))
 }
 
 /// `klatch answer ROOM N TEXT`: claim `ask:N`, post `answer to #N:` and release, in one call (#241). Each step is the
