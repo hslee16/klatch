@@ -154,6 +154,29 @@ fn the_chain_of_migrations_has_one_step_per_older_version() {
     assert_eq!(MIGRATIONS.len() as i64, SCHEMA_VERSION);
 }
 
+/// SCHEMA_VERSION is the length of the list, so a merge of two PRs that each added a step with the same number (a
+/// union merge keeps both lines) must fail here, not pass quietly (#1070): the list must read migrate_v0, migrate_v1,
+/// and so on, each once and in order.
+#[test]
+fn the_list_names_each_step_once_in_order() {
+    let source = include_str!("../schema.rs");
+    let start = source.find("const MIGRATIONS").expect("the list");
+    let listed: Vec<&str> = source[start..]
+        .lines()
+        .skip(1)
+        .take_while(|l| l.trim() != "];")
+        .map(str::trim)
+        .collect();
+    let want: Vec<String> = (0..listed.len())
+        .map(|n| format!("migrate_v{n},"))
+        .collect();
+    assert_eq!(
+        listed, want,
+        "MIGRATIONS must list migrate_v0.. once each, in order"
+    );
+    assert_eq!(listed.len() as i64, SCHEMA_VERSION);
+}
+
 #[test]
 fn every_older_version_migrates_to_the_current_one_with_its_data_intact() {
     for version in 0..MIGRATIONS.len() {

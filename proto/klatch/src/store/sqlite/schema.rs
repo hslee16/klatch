@@ -6,7 +6,8 @@ use crate::domain::Result;
 use crate::store::ids::new_id;
 use rusqlite::{Connection, params};
 
-pub const SCHEMA_VERSION: i64 = 35;
+/// The store schema version: the number of migrations, so adding a step is the only edit that moves it (#1070).
+pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// A member's post times since a moment: the per-member rate limit (#187) runs it on every post, so it must be an
 /// index search (`messages_sender_ts`, #637), not a scan of the table.
@@ -431,7 +432,7 @@ pub(super) type Step = fn(&Connection) -> Result<()>;
 
 /// Every migration, indexed by the version it upgrades from: `MIGRATIONS[n]` takes a database at version `n` (or
 /// older) to version `n + 1`.
-pub(super) const MIGRATIONS: [Step; 35] = [
+pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v0,
     migrate_v1,
     migrate_v2,
@@ -478,5 +479,3 @@ pub(super) fn migrate(conn: &Connection, version: i64) -> Result<()> {
     }
     Ok(())
 }
-
-const _: () = assert!(MIGRATIONS.len() as i64 == SCHEMA_VERSION);

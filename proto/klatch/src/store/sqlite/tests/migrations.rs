@@ -66,7 +66,7 @@ fn a_version_25_database_gains_the_claim_ttl_and_its_old_claims_are_not_renewed(
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     assert_eq!(s.claims("r", 1).unwrap()[0].path, "old.rs");
     // Its original ttl is unknown (0), so activity leaves it to lapse at its own lease.
     s.touch("r", "bob", 500).unwrap();
@@ -85,7 +85,7 @@ fn a_version_26_database_gains_the_member_mode_table_and_keeps_its_data() {
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     assert_eq!(s.members("r").unwrap()[0].name, "alice");
     assert!(s.member_modes().unwrap().is_empty());
     s.note_member_mode("alice", "default", 5).unwrap();
@@ -95,7 +95,7 @@ fn a_version_26_database_gains_the_member_mode_table_and_keeps_its_data() {
 
 #[test]
 fn a_fresh_database_is_at_schema_version_35() {
-    assert_eq!(version(&store()), 35);
+    assert_eq!(version(&store()), SCHEMA_VERSION);
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn a_version_1_database_is_migrated_to_35_and_keeps_its_messages() {
         .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let old = s.tail("r", 0, 10).unwrap();
     assert_eq!(old.len(), 2);
     assert!(
@@ -139,7 +139,7 @@ fn a_version_1_database_is_migrated_to_35_and_keeps_its_messages() {
     let again = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(
         version(&again),
-        35,
+        SCHEMA_VERSION,
         "reopening a migrated database is a no-op"
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -159,7 +159,7 @@ fn a_version_0_database_now_migrates_all_the_way_to_23() {
         .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let m = &s.tail("r", 0, 10).unwrap()[0];
     assert_eq!(
         (m.attribution, m.label.as_str()),
@@ -174,7 +174,7 @@ fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
     std::fs::write(&path, RELEASE_V2).unwrap();
     crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(core.len(), 1);
     assert_eq!(core[0].body, "hello from v2");
@@ -193,7 +193,7 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
     std::fs::write(&path, PROTOTYPE_V0).unwrap();
     crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(
@@ -281,7 +281,7 @@ fn a_version_27_database_gains_the_claim_age_and_its_old_claims_are_never_report
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     assert!(s.claim_ages("r", "bob", 100_000).unwrap().is_empty());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -302,7 +302,7 @@ fn a_version_28_database_gains_the_wait_mark_and_its_old_waits_tell_nobody() {
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     assert!(s.deadlock_notices("r", "alice", 12).unwrap().is_empty());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -359,7 +359,7 @@ fn a_version_29_database_gains_the_member_attributes_table_and_keeps_its_data() 
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     assert_eq!(s.members("r").unwrap()[0].name, "alice");
     assert_eq!(s.member_scope("alice").unwrap().as_deref(), Some("git:a"));
     assert_eq!(s.member_attrs("alice").unwrap(), None);
@@ -394,7 +394,7 @@ fn a_version_30_database_gains_the_credential_renewal_columns_and_its_credential
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let c = s.credential("w-1").unwrap().unwrap();
     assert_eq!((c.expires, c.idle, c.cap), (1_600, 0, 0));
     // an old credential lapses at its own expiry: use does not renew it
@@ -413,7 +413,7 @@ fn a_database_from_before_status_ages_gains_the_column_and_keeps_its_statuses() 
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let m = &s.members("r").unwrap()[0];
     assert_eq!((m.status.as_deref(), m.status_ts), (Some("done"), 0));
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -430,7 +430,7 @@ fn a_database_from_before_the_sender_index_gains_it_and_keeps_its_messages() {
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let n: i64 = s
         .conn
         .query_row(
@@ -463,7 +463,7 @@ fn a_version_34_database_gains_the_audit_lookup_index_and_keeps_its_rows() {
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), 35);
+    assert_eq!(version(&s), SCHEMA_VERSION);
     let n: i64 = s
         .conn
         .query_row(

@@ -316,5 +316,19 @@ case "$seen" in
 esac
 rm -rf "$short"
 
+# next-schema (#1070): the next free store schema number is one past the highest on main and in open PR patches
+# (the migration list ends at migrate_v34 for schema 35, so the next free number is 36)
+ns="$here/next-schema"
+mkdir -p "$work/ns"
+printf '    migrate_v33,\n    migrate_v34,\n];\n' > "$work/ns/main.rs"
+printf '+    migrate_v35,\n' > "$work/ns/pr1.patch"
+printf ' context\n+    migrate_v36,\n-    migrate_v99,\n' > "$work/ns/pr2.patch"
+got="$(python3 -I "$ns" --main "$work/ns/main.rs" 2>&1)"
+if [ "$got" = "36" ]; then ok "next-schema: one past the highest migration on main"; else bad "next-schema: main only gave '$got'"; fi
+got="$(python3 -I "$ns" --main "$work/ns/main.rs" --patch "$work/ns/pr1.patch" 2>&1)"
+if [ "$got" = "37" ]; then ok "next-schema: skips a number an open PR already added"; else bad "next-schema: with one PR gave '$got'"; fi
+got="$(python3 -I "$ns" --main "$work/ns/main.rs" --patch "$work/ns/pr1.patch" --patch "$work/ns/pr2.patch" 2>&1)"
+if [ "$got" = "38" ]; then ok "next-schema: counts only added lines, not removed ones"; else bad "next-schema: with two PRs gave '$got'"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all gate script tests passed"; else echo "$fails gate script test(s) failed"; exit 1; fi
