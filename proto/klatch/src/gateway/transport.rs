@@ -51,6 +51,8 @@ pub trait Transport {
     fn set_scope(&self, scope: &str) -> Result<()>;
     /// The scope the caller declared or was given.
     fn scope(&self) -> Result<Option<String>>;
+    /// The role the caller holds, as its word, or `None` (#1090).
+    fn my_role(&self) -> Result<Option<String>>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
     /// `release` with a note on what the caller changed.
     fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()>;
@@ -273,6 +275,9 @@ impl<S: Store> Transport for Direct<S> {
     }
     fn scope(&self) -> Result<Option<String>> {
         self.gateway.scope_of(&self.principal)
+    }
+    fn my_role(&self) -> Result<Option<String>> {
+        self.gateway.my_role(&self.principal)
     }
     fn release(&self, room: &str, path: &str) -> Result<()> {
         self.gateway.release(&self.principal, room, path)

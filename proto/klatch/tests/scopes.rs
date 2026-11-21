@@ -71,6 +71,12 @@ fn the_scope_command_shows_and_sets_the_scope_and_refuses_a_bad_one() {
 }
 
 #[test]
+fn the_role_command_says_none_for_a_member_without_a_role() {
+    let h = Home::new();
+    assert_eq!(h.ok("a", &["role"]).trim(), "none");
+}
+
+#[test]
 fn a_hook_does_not_wait_forever_on_a_standard_input_that_never_closes() {
     let h = Home::new();
     let mut child = Command::new(env!("CARGO_BIN_EXE_klatch"))
