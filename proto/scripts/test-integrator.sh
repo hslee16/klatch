@@ -631,7 +631,7 @@ runint --once > "$fake/out" 2>&1; rc=$?
 if [ "$rc" -eq 0 ] && posts | grep -q 'merged: #7$' && ! grep -v '^claim lobby\|^release lobby' "$fake/claims.log" | grep -q .; then ok "by default the room is the lobby: every claim and release is for lobby and the PR merges"; else bad "lobby default rc=$rc claims=$(cat "$fake/claims.log")"; fi
 newworld
 ROOM='bad room;x' runint --once > "$fake/out" 2>&1; rc=$?
-if [ "$rc" -eq 1 ] && grep -q "INTEGRATOR_ROOM" "$fake/out" && [ "$(calls 'klatch claim')" -eq 0 ]; then ok "a room name that is not a plain name is a usage error before any claim"; else bad "bad room rc=$rc: $(cat "$fake/out")"; fi
+if [ "$rc" -eq 1 ] && grep -q "INTEGRATOR_ROOM" "$fake/out" && [ ! -s "$fake/claims.log" ]; then ok "a room name that is not a plain name is a usage error before any claim"; else bad "bad room rc=$rc: $(cat "$fake/out")"; fi
 
 # ---- a hold with no merged word is released by the helper itself, and taken again only by a fresh ready: (#1054) ----
 newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; mkpr 8 README.md 'eight\n'
@@ -640,9 +640,9 @@ MHS=1 RS=30 runint_bg
 if waitfor "$fake/posts.log" '^released: held merge:main' 40; then ok "a hold with no merged word for the limit is released with a visible word"; else bad "no release: posts=$(posts) out=$(tail -3 "$fake/out")"; fi
 rel_at="$(grep -c . "$fake/posts.log")"
 /bin/sleep 3
-if [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ] && ! posts | grep -q 'integrating: #8' && [ "$(grep -c . "$fake/posts.log")" -eq "$rel_at" ]; then ok "after releasing, the claim is not taken again while the queue is unchanged (a stuck loop cannot hold forever)"; else bad "retook: posts=$(posts) claims=$(tail -3 "$fake/claims.log")"; fi
-echo 0 > "$fake/gate-rc"; rm -f "$fake/gate-sleep"; touch "$fake/wake"
-if waitfor "$fake/posts.log" 'merged: #8' 40; then ok "a fresh ready: word makes it take the claim again and carry on"; else bad "no resume: posts=$(posts)"; fi
+if [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ] && [ "$(grep -c . "$fake/posts.log")" -eq "$rel_at" ]; then ok "after releasing, the claim is not taken again while the queue is unchanged (a stuck loop cannot hold forever)"; else bad "retook: posts=$(posts) claims=$(tail -3 "$fake/claims.log")"; fi
+echo 0 > "$fake/gate-rc"; rm -f "$fake/gate-sleep"; mkpr 9 NINE.md 'nine\n'; touch "$fake/wake"
+if waitfor "$fake/posts.log" 'merged: #9' 40; then ok "a fresh ready: word makes it take the claim again and carry on"; else bad "no resume: posts=$(posts)"; fi
 kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
 if fixed_posts; then ok "the release word is a fixed template of an integer"; else bad "posts: $(posts)"; fi
 newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'

@@ -272,6 +272,7 @@ sup_alive() { [ -z "${INTEGRATOR_SUPERVISOR:-}" ] || kill -0 "$INTEGRATOR_SUPERV
 
 export PATH="$HOME/.cargo/bin:$PATH"
 slug="${INTEGRATOR_GH_REPO:-hslee16/klatch}"
+say() { printf 'integrator: %s\n' "$*" >&2; }
 room="${INTEGRATOR_ROOM:-lobby}"
 klatch="${INTEGRATOR_KLATCH:-klatch}"
 lease="${INTEGRATOR_LEASE_SECS:-600}"
@@ -293,7 +294,6 @@ max_hold_secs="${INTEGRATOR_MAX_HOLD_SECS:-$((max_hold_min * 60))}" # seconds: a
 # #1055: merge:main is held in one room, the lobby; a room is a plain name
 case "$room" in '' | *[!A-Za-z0-9._-]*) say "INTEGRATOR_ROOM must be a plain room name (letters, digits, dot, dash, underscore); the team's one room for merge:main is the lobby"; exit 1 ;; esac
 
-say() { printf 'integrator: %s\n' "$*" >&2; }
 nap() { /bin/sleep "$1"; }
 
 case "$lease$reconcile_secs$park_min$check_wait$verify_wait" in *[!0-9]*) say "the lease, reconcile, park and check-wait settings must be whole numbers"; exit 1 ;; esac
