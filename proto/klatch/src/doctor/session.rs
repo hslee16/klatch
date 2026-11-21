@@ -48,7 +48,7 @@ pub(super) fn check_harness(r: &mut Report) {
 }
 
 pub(super) fn check_session(r: &mut Report) {
-    match crate::identity::discover_session() {
+    match klatch::member::discover_session() {
         Ok(found) => r.add(
             Status::Ok,
             format!(
@@ -66,7 +66,7 @@ pub(super) fn check_session(r: &mut Report) {
 }
 
 pub(super) fn check_registry(r: &mut Report) {
-    let Some((registry, domain)) = crate::identity::registry_and_domain() else {
+    let Some((registry, domain)) = klatch::member::registry_and_domain() else {
         return;
     };
     if !registry.dir.exists() {
