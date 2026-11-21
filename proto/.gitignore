@@ -1,3 +1,6 @@
 /target
 *.db-shm
 *.db-wal
+
+# generated from audit/ by scripts/authz-audit (#1068); never committed, so two PRs never both change it
+/AUTHZ-AUDIT.md

@@ -1,0 +1,1 @@
+| `read` | `read` | as wire `read`; `--count` (#1011) prints only the number of messages a peek would show, through the same `read` peek (never advances, the caller's own record, no new method), proved by `tests/cli.rs` `count_reports_the_unread_total_and_marks_nothing_read` |

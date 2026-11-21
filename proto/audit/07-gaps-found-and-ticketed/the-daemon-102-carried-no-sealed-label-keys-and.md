@@ -1,0 +1,1 @@
+| The daemon (#102) carried no sealed-label keys and no harness evidence per connection | fixed in #1096 (per-request keys within clearance; harness from the peer pid for an unidentified connection). A connection that identifies still joins as the generic floor (#880, #881) |

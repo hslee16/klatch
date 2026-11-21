@@ -1,0 +1,1 @@
+| `my_rooms` | `rooms` | none (OWN_RECORD, no guard, like `my_role`) | OWN_RECORD `rooms` (#848): no param is read, the answer is the names of the rooms the transport's principal joined, no room is read and no cursor moves; refused after the credential ends; `session/tests/own_record_wire.rs` |

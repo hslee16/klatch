@@ -1,0 +1,1 @@
+| `claim` | `claim_ttl_for`, `claim` | `Claim`; the path `merge:main` (any spelling) also needs the integrator role or the human's own name (#865, rule `integrator`, refused before the guard, in `claim_ttl_for` too) | GUARDED `claim`, `claim_ttl_for`; `claims.rs`; `gateway/tests/merge_claim.rs` |

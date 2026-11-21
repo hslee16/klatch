@@ -1,0 +1,1 @@
+| `review_verdict` | `review_verdict` | `ReviewVerdict`, reviewer role only | GUARDED `review_verdict`; `reviewer.rs`. Releases what it recorded under the reviewer's own name (audit `applied by <reviewer>`) |

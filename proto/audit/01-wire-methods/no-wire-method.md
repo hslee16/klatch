@@ -1,0 +1,1 @@
+| (no wire method) | `release_crossings` | `Admin(release-crossings)`, the human's gateway only | GUARDED `release_crossings`; a reviewer is refused `reviewer`, an admin agent and a plain member on a members' gateway `admin-scope`. Proof: `tests/crossing.rs` (`a_principal_without_the_role_cannot_release`, `a_release_names_who_released_it_in_the_audit`) |

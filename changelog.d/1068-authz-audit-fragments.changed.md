@@ -1,0 +1,1 @@
+- The authorization audit is one file per row under `proto/audit/`, assembled into `proto/AUTHZ-AUDIT.md` by `proto/scripts/authz-audit` (not committed), so two pull requests that add or change rows never conflict or leave a duplicate row (#1068).

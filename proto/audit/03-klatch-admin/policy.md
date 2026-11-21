@@ -1,0 +1,1 @@
+| Policy | `room-creation`, `rate-limit`, `rate-limit --member` (act `member-rate-limit`, #972), `lease-cap`, `lease-grace`, `room-stale`, `room-ask-lease`, `room-require`, `cap`, `chain` | `administer`; `cap`, `chain` and `member-rate-limit` are floors, refused to every agent by `ForbidFloors` (a member limit overrides the global one, so an agent must not lift its own) |

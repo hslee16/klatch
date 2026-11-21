@@ -1,0 +1,1 @@
+| `release_crossings` took no principal; `klatch judge` ran it with `AllowAll` | fixed here (#836): it takes a principal, is the admin act `release-crossings`, and each crossing audit row says who applied it; the launcher heuristic that gates the `judge` command remains #834 |

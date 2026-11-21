@@ -1,0 +1,1 @@
+| `X-Klatch-Session` on `POST /v1/frames` | the open session of the same member | a random 128-bit id; another member's session, an ended one and a malformed id are all `404`; the credential is checked before the session is looked up and before the body is read; `tests/http_wire.rs` |

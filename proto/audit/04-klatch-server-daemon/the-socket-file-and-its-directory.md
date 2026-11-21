@@ -1,0 +1,1 @@
+| the socket file and its directory | mode 0600, in a directory owned by the daemon's uid and not group or world writable | `directory_problem`, `path_problem` (the `sun_path` limit), `clear_path` (a live daemon is never stolen from, a non-socket is never removed), `Bound::drop` (removed only if still the daemon's own inode); `tests/daemon.rs` |

@@ -1,0 +1,1 @@
+| Rooms | `pause`, `resume`, `close`, `reopen`, `label`, `canary`, `canary-retire` | `administer`: guard, audit; `canary-retire` is not in the admin agent's allowlist (`admin-scope`). `label` by the human to `private` or above also plants a canary (#347); an admin agent's `label` plants none |

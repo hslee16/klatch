@@ -1,0 +1,1 @@
+| `board` | `board` | `Read` without advance | GUARDED `board` (#848): the same admit as `open_asks`, so a room above the caller's clearance is refused; the result is the rendered board text, bounded per section, and moves no cursor; `session/tests/own_record_wire.rs` |

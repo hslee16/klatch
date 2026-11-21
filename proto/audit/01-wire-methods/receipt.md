@@ -1,0 +1,1 @@
+| `receipt` | `receipt` | `Who`, then the sender-only check | GUARDED `receipt` (#848): refuses anyone but the sender of the message (`receipt-sender-only`), returns liveness words, seconds and the shown and read flags of the recipients and never the text; `session/tests/own_record_wire.rs` |
