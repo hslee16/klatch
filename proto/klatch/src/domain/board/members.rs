@@ -1,48 +1,16 @@
-//! Offers and member status, derived from the message log like asks (DESIGN section 25.5). An offer is a
-//! message starting `offering:`; it stays current until its sender withdraws it (`withdrawn:`), says
-//! `status: done`, or it is older than the backstop lifetime. The gateway also drops an offer whose sender has
-//! not been seen for a while (DESIGN section 25.8).
+//! Members on the board and in `who`: status, place, liveness, and the notes an asker or poster is shown about who
+//! can be reached.
 
+use super::{BOARD_LIST_LIMIT, Board, Now, more, section};
 use crate::domain::hook::clip;
-use crate::domain::{MemberInfo, MemberKind, MemberPlace, Message, OpenAsk, Parked, flat};
+use crate::domain::{MemberInfo, MemberKind, MemberPlace, Message, Parked, flat};
 
-/// A message whose body starts with this text is an offer.
-pub const OFFER_PREFIX: &str = "offering:";
-/// A message starting with this text withdraws its sender's current offer.
-pub const WITHDRAW_PREFIX: &str = "withdrawn:";
-/// A message starting with this text sets its sender's status.
-pub const STATUS_PREFIX: &str = "status:";
 /// A member not seen for this long is counted on the board, not listed.
 pub const MEMBER_ACTIVE_SECS: i64 = 600;
 /// Members not seen for this long are removed when a session starts (their messages stay).
 pub const MEMBER_RETENTION_SECS: i64 = 86_400;
-/// The most entries the board lists per section; the rest are counted.
-pub const BOARD_LIST_LIMIT: usize = 20;
-/// The longest an offer stays on the board whatever its sender does: a backstop. An offer normally follows its
-/// sender's presence (section 25.8), so a member that stays present need not renew it.
-pub const OFFER_TTL_SECS: i64 = 86_400;
-
-/// The reader's clock: seconds since the epoch. A type of its own so the age helpers cannot be handed some other
-/// number, and so an age is never negative when the reader's clock is behind the writer's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Now(i64);
-
-impl Now {
-    /// Whole seconds since `then`, never negative.
-    fn since(self, then: i64) -> i64 {
-        crate::domain::secs_between(self.0, then)
-    }
-}
-
-/// What a member currently offers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Offer {
-    pub sender: String,
-    pub seq: i64,
-    pub text: String,
-    pub ts: i64,
-}
-
+/// A message starting with this text sets its sender's status.
+pub const STATUS_PREFIX: &str = "status:";
 /// The latest status a member announced (`status: <text>`), with the text after the prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberStatus {
@@ -79,7 +47,7 @@ pub fn short_dir_name(dir: &str) -> Option<String> {
 }
 
 /// ` repo: ..., dir: ...` pieces of a member's place, tab separated, empty when it has none.
-fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
+pub(super) fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
     let Some(p) = place else { return Vec::new() };
     let mut parts = Vec::new();
     if let Some(r) = &p.repository {
@@ -89,25 +57,6 @@ fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
         parts.push(format!("dir: {}", flat(d)));
     }
     parts
-}
-
-/// The current state of a room derived from its log: open asks, current offers and members.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Board {
-    pub room: String,
-    pub asks: Vec<OpenAsk>,
-    pub offers: Vec<Offer>,
-    pub members: Vec<BoardMember>,
-    /// Members not seen for over `MEMBER_ACTIVE_SECS`, counted instead of listed.
-    pub stale_members: usize,
-    /// Open durable tasks (working, checkpoint, handoff), with owners that are gone marked orphaned.
-    pub tasks: Vec<crate::domain::Task>,
-    /// Pull requests said to be open (item 84), with who holds each one's `pr:N` claim, if anyone.
-    pub prs: Vec<crate::domain::OpenPr>,
-    /// The merge queue (#864): PRs said to be ready and how the integrator says each one is going.
-    pub queue: Vec<crate::domain::QueueEntry>,
-    /// The member holding the `merge:main` claim now, if any.
-    pub merge_holder: Option<String>,
 }
 
 /// `klatch who` as text: each member with last seen and status. Unless `all`, members not seen for
@@ -200,60 +149,8 @@ fn holds_park(parked: Option<&Parked>, now: Now) -> bool {
     parked.is_some_and(|p| p.holds(now.0))
 }
 
-/// A section heading, with a line naming the section when it is empty so a reader can see there is nothing.
-fn section(out: &mut String, heading: &str, empty: Option<&str>) {
-    out.push_str(heading);
-    out.push('\n');
-    if let Some(none) = empty {
-        out.push_str(&format!("  {none}\n"));
-    }
-}
-
-fn render_asks(board: &Board, now: Now, out: &mut String) {
-    let none = board.asks.is_empty().then_some("no open asks");
-    section(out, "asks:", none);
-    for a in board.asks.iter().take(BOARD_LIST_LIMIT) {
-        let summary = a.summary(now.0);
-        let gap = if summary.is_empty() { "" } else { " " };
-        let state = if a.claimed { "claimed" } else { "unclaimed" };
-        out.push_str(&format!(
-            "  #{} {} {state} {}s{gap}{summary}: {}\n",
-            a.seq,
-            flat(&a.sender),
-            now.since(a.ts),
-            clip(&a.text)
-        ));
-    }
-    more(out, board.asks.len(), "asks");
-}
-
-fn render_offers(board: &Board, now: Now, out: &mut String) {
-    let none = board.offers.is_empty().then_some("no current offers");
-    section(out, "offers:", none);
-    for o in board.offers.iter().take(BOARD_LIST_LIMIT) {
-        out.push_str(&format!(
-            "  {} offers ({}s ago): {}\n",
-            flat(&o.sender),
-            now.since(o.ts),
-            clip(&o.text)
-        ));
-    }
-    more(out, board.offers.len(), "offers");
-}
-
-/// A section that exists only when it has lines, bounded like the others.
-fn render_list(out: &mut String, heading: &str, lines: &[String], what: &str) {
-    if lines.is_empty() {
-        return;
-    }
-    section(out, heading, None);
-    for line in lines.iter().take(BOARD_LIST_LIMIT) {
-        out.push_str(&format!("  {line}\n"));
-    }
-    more(out, lines.len(), what);
-}
-
-fn render_members(board: &Board, now: Now, out: &mut String) {
+/// The `members:` section.
+pub(super) fn render(board: &Board, now: Now, out: &mut String) {
     section(out, "members:", None);
     for m in board.members.iter().take(BOARD_LIST_LIMIT) {
         let status = m
@@ -304,80 +201,9 @@ fn render_members(board: &Board, now: Now, out: &mut String) {
     }
 }
 
-/// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
-/// as data. Empty sections are named so a reader can see there is nothing.
-pub fn render_board(board: &Board, now: i64) -> String {
-    let now = Now(now);
-    let mut out = format!("[board {}]\n", flat(&board.room));
-    render_asks(board, now, &mut out);
-    render_offers(board, now, &mut out);
-    let tasks: Vec<String> = board.tasks.iter().map(|t| t.line(now.0, false)).collect();
-    render_list(&mut out, "tasks:", &tasks, "tasks");
-    let prs: Vec<String> = board.prs.iter().map(|p| p.line(now.0)).collect();
-    render_list(&mut out, "prs:", &prs, "prs");
-    let queue: Vec<String> = board.queue.iter().map(|e| e.line(now.0)).collect();
-    let heading = match &board.merge_holder {
-        Some(h) => format!("queue (merge:main held by {}):", flat(h)),
-        None => "queue (merge:main free):".to_string(),
-    };
-    render_list(&mut out, &heading, &queue, "queue entries");
-    render_members(board, now, &mut out);
-    out
-}
-
-/// A line saying how many entries of a section were not listed.
-fn more(out: &mut String, total: usize, what: &str) {
-    if total > BOARD_LIST_LIMIT {
-        out.push_str(&format!("  and {} more {what}\n", total - BOARD_LIST_LIMIT));
-    }
-}
-
-/// The prefixes of every word that `statuses` and `current_offers` fold, for a store query that reads only those
-/// messages at any depth (#731).
-pub const BOARD_WORDS: [&str; 3] = [OFFER_PREFIX, WITHDRAW_PREFIX, STATUS_PREFIX];
-
-pub fn is_offer(body: &str) -> bool {
-    body.starts_with(OFFER_PREFIX)
-}
-
 /// The text after `status:` in a status message, trimmed.
-fn status_text(body: &str) -> Option<&str> {
+pub(super) fn status_text(body: &str) -> Option<&str> {
     body.strip_prefix(STATUS_PREFIX).map(str::trim)
-}
-
-/// The current offers in `messages` at time `now`, one per sender at most, oldest first.
-pub fn current_offers(messages: &[Message], now: i64, ttl: i64) -> Vec<Offer> {
-    let mut ordered: Vec<&Message> = messages.iter().collect();
-    ordered.sort_by_key(|m| m.seq);
-    let mut by_sender: Vec<(String, Option<Offer>)> = Vec::new();
-    for m in ordered {
-        let next = if is_offer(&m.body) {
-            Some(Some(Offer {
-                sender: m.sender.clone(),
-                seq: m.seq,
-                text: m.body.clone(),
-                ts: m.ts,
-            }))
-        } else if m.body.starts_with(WITHDRAW_PREFIX)
-            || status_text(&m.body).is_some_and(|t| t.starts_with("done"))
-        {
-            Some(None)
-        } else {
-            None
-        };
-        let Some(next) = next else { continue };
-        match by_sender.iter_mut().find(|(s, _)| *s == m.sender) {
-            Some(slot) => slot.1 = next,
-            None => by_sender.push((m.sender.clone(), next)),
-        }
-    }
-    let mut offers: Vec<Offer> = by_sender
-        .into_iter()
-        .filter_map(|(_, o)| o)
-        .filter(|o| now - o.ts <= ttl)
-        .collect();
-    offers.sort_by_key(|o| o.seq);
-    offers
 }
 
 /// Each member's latest announced status, in order of the member's first status message.
@@ -438,6 +264,3 @@ pub fn nudge_skipped_note(members: &[MemberInfo], me: &str, now: i64) -> Option<
         )
     })
 }
-
-#[cfg(test)]
-mod tests;

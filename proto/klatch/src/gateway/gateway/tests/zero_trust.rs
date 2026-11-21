@@ -350,17 +350,26 @@ const OWN_RECORD: &[(&str, &str)] = &[
     ),
 ];
 
+/// The `.rs` files in `dir` and in its subdirectories other than the tests (the board is split by section, #1066).
+fn collect_sources(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("the gateway directory") {
+        let path = entry.expect("a directory entry").path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "tests") {
+                collect_sources(&path, files);
+            }
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+}
+
 /// The source files of the gateway, found by reading the directory so that a new file cannot be left out of the
 /// scan (#161): `gateway.rs` and every file beside it, tests excluded.
 fn gateway_sources() -> Vec<(String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gateway");
     let mut files = vec![root.join("gateway.rs")];
-    for entry in std::fs::read_dir(root.join("gateway")).expect("the gateway directory") {
-        let path = entry.expect("a directory entry").path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            files.push(path);
-        }
-    }
+    collect_sources(&root.join("gateway"), &mut files);
     files.sort();
     files
         .into_iter()
@@ -376,6 +385,7 @@ fn the_scan_reads_every_source_file_of_the_gateway() {
     let seen = gateway_sources();
     for name in [
         "crossing.rs",
+        "digest.rs",
         "lease.rs",
         "librarian.rs",
         "rate.rs",
