@@ -567,7 +567,7 @@ if [ "$rc" -eq 5 ] && posts | grep -q 'halted: main not verified after #7$' && !
 # --verify-gate runs the gate on the merge commit of main; --verify-bench runs the bench
 clean_world
 mwu --verify-gate --verify-bench; rc=$?
-if [ "$rc" -eq 0 ] && grep -q 'gate on HEAD' "$fake/gate.log" && [ "$(wc -l < "$fake/gate.log" | tr -d ' ')" -eq 1 ] && [ "$(wc -l < "$fake/bench.log" | tr -d ' ')" -eq 1 ] && posts | grep -q 'parked: running the gate for #7' && posts | grep -q 'merged: #7$' && ! posts | grep -q 'reverted\|halted'; then ok "--verify-gate and --verify-bench run the gate (on main's merge commit) and the bench once after the merge, parked first"; else bad "verify flags rc=$rc posts=$(posts) gate=$(cat "$fake/gate.log" 2> /dev/null)"; fi
+if [ "$rc" -eq 0 ] && grep -q 'gate on HEAD' "$fake/gate.log" && [ "$(wc -l < "$fake/gate.log" | tr -d ' ')" -eq 1 ] && [ "$(wc -l < "$fake/bench.log" | tr -d ' ')" -eq 1 ] && posts | grep -q 'parked: running the gate for #7' && posts | grep -q 'merged: #7|' && ! posts | grep -q 'reverted\|halted'; then ok "--verify-gate and --verify-bench run the gate (on main's merge commit) and the bench once after the merge, parked first"; else bad "verify flags rc=$rc posts=$(posts) gate=$(cat "$fake/gate.log" 2> /dev/null) bench=$(cat "$fake/bench.log" 2>&1) out=$(tail -4 "$fake/out")"; fi
 clean_world; echo 1 > "$fake/gate-rc"
 mwu --verify-gate; rc=$?
 if [ "$rc" -eq 5 ] && pushes | grep -q 'revert-7' && posts | grep -q 'halted: main red after #7$'; then ok "a red local gate on main triggers the revert path (here the gate stays red, so it halts)"; else bad "red gate rc=$rc posts=$(posts)"; fi

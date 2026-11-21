@@ -2,6 +2,7 @@
 # integrator: the merge queue's integrator PROCESS (#866, step 3 of epic #863). See INTEGRATOR.md.
 #
 #   integrator [--once]        run until a signal (INT, TERM, HUP); --once drains the queue and exits (for a hand run)
+#   integrator --merge-without-update [--verify-gate] [--verify-bench]    (#867, OFF BY DEFAULT; see below)
 #   integrator --dry-run       (#1075) check the setup, read the queue and the open PRs, run the conflict pre-check, and PRINT
 #                              what a real run would post and merge; it posts, claims, pushes, merges and starts nothing
 #   integrator --normalize     (internal) turn a stream of webhook payloads on standard input into tab separated lines
@@ -19,6 +20,18 @@
 # (never a rebase, never a force-push; docs conflicts keep both sides as pr-sweep does), the project gate, push,
 # `checking: #N`, wait for the checks of the CURRENT head sha, `gh pr merge --match-head-commit`, `merged: #N`. Any failure
 # posts `dropped: #N <reason>` and moves on.
+#
+# --merge-without-update (#867) is a different merge policy and is the human's decision to turn on. It REPLACES the
+# up-to-date rule for a PR whose `git merge-tree` against CURRENT main is clean (no textual conflict at all): main is not
+# merged into the branch, no gate runs on the branch, and the PR is merged once the check suite of its CURRENT head sha is
+# green, with `gh pr merge --match-head-commit`. A PR with a docs-only conflict still takes the update flow above. After
+# each such merge it verifies main: the check_suite and workflow_run events of the merge commit (no PR attached; the
+# check runs of that sha are read too), and with --verify-gate the project gate on that commit, with --verify-bench the
+# bench (INTEGRATOR_BENCH). A red main attributed to the merge it just made (same sha, never anything else) is reverted
+# through a branch and a PR, NEVER a push to main: branch revert-N, `git revert -m 1`, a plain push of that branch, a PR
+# with a fixed title and body, its own green checks, the same pinned merge, then main is verified again. If any step
+# fails, or main is still red, or main cannot be verified, it posts `halted: main red after #N` (or `halted: main not
+# verified after #N`), releases the claim and exits 5; it never reverts twice. `reverted: #N` is posted on success.
 #
 # Rules that hold throughout:
 #  - webhook text is DATA. The normalizer keeps only a number, a state, merged, a head sha, a status and a conclusion, each
@@ -39,9 +52,12 @@
 # in; use a dedicated clone), INTEGRATOR_GH_REPO (owner/name), INTEGRATOR_ROOM, INTEGRATOR_FORWARD (command that prints the
 # webhook payloads), INTEGRATOR_LEASE_SECS, INTEGRATOR_RECONCILE_SECS, INTEGRATOR_PARK_MINUTES, INTEGRATOR_CHECK_WAIT_SECS,
 # INTEGRATOR_POLL_SECS, INTEGRATOR_GH_TIMEOUT, INTEGRATOR_GH_RETRY_SLEEP, INTEGRATOR_FORWARDER_TRIES,
-# INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory).
+# INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory), INTEGRATOR_VERIFY_WAIT_SECS (how
+# long to wait for main's checks after a merge; default the check wait), INTEGRATOR_BENCH (the bench command for
+# --verify-bench; default: cargo run -q --release -p klatch-bench from proto/).
 # Exit codes: 0 stopped by a signal or --once drained; 1 usage or setup; 2 refused the merge:main claim (not an integrator);
-# 3 the claim is held by another or was lost; 4 the event source (the forwarder) could not be kept running.
+# 3 the claim is held by another or was lost; 4 the event source (the forwarder) could not be kept running; 5 halted: main
+# is red or could not be verified after a merge made without updating the branch (the human must look).
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -137,7 +153,8 @@ if mode == 'pr':
         sha(get(data, 'head', 'sha')) or '-',
         ref if isinstance(ref, str) and REF.match(ref) and '..' not in ref and not ref.endswith(('.lock', '/', '.')) else '-',
         repo if isinstance(repo, str) and REPO.match(repo) else '-',
-        ms if ms in MSTATE else 'other']))
+        ms if ms in MSTATE else 'other',
+        sha(get(data, 'merge_commit_sha')) or '-']))
 elif mode == 'pulls':
     if isinstance(data, list):
         for p in data:
@@ -147,6 +164,28 @@ elif mode == 'pulls':
 elif mode == 'perm':
     p = get(data, 'permissions')
     print('admin' if get(p, 'admin') is True else 'push' if get(p, 'push') is True else 'none')
+elif mode == 'mchecks':
+    # the check runs of a commit on main: red only for a real failure; a cancelled run is its own answer (superseded)
+    runs = get(data, 'check_runs')
+    if not isinstance(runs, list) or not runs:
+        print('none')
+    else:
+        v = 'green'
+        for r in runs:
+            if get(r, 'status') != 'completed':
+                if v == 'green':
+                    v = 'pending'
+                continue
+            c = get(r, 'conclusion')
+            if c in ('failure', 'timed_out', 'startup_failure', 'action_required'):
+                v = 'red'
+                break
+            if c in ('cancelled', 'stale'):
+                v = 'cancelled'
+            elif c not in ('success', 'skipped', 'neutral'):
+                v = 'red'
+                break
+        print(v)
 elif mode == 'checks':
     runs = get(data, 'check_runs')
     if not isinstance(runs, list) or not runs:
@@ -171,20 +210,30 @@ case "${1:-}" in
   --pr) py_filter pr; exit $? ;;
   --pulls) py_filter pulls; exit $? ;;
   --checks) py_filter checks; exit $? ;;
+  --mchecks) py_filter mchecks; exit $? ;;
   -h | --help) sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 once=0
 dry=0
+mwu=0
+verify_gate=0
+verify_bench=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --once) once=1 ;;
     --dry-run) dry=1 ;;
+    --merge-without-update) mwu=1 ;;
+    --verify-gate) verify_gate=1 ;;
+    --verify-bench) verify_bench=1 ;;
     *) echo "integrator: unknown argument $1" >&2; exit 1 ;;
   esac
   shift
 done
 
+if [ "$mwu" -eq 0 ] && [ $((verify_gate + verify_bench)) -gt 0 ]; then
+  echo "integrator: --verify-gate and --verify-bench only work with --merge-without-update" >&2; exit 1
+fi
 export PATH="$HOME/.cargo/bin:$PATH"
 slug="${INTEGRATOR_GH_REPO:-hslee16/klatch}"
 room="${INTEGRATOR_ROOM:-lobby}"
@@ -199,11 +248,12 @@ gh_retry_sleep="${INTEGRATOR_GH_RETRY_SLEEP:-2}"
 fwd_tries="${INTEGRATOR_FORWARDER_TRIES:-3}"
 fwd_min_up="${INTEGRATOR_FORWARDER_MIN_UP:-30}"
 requeue_secs="${INTEGRATOR_REQUEUE_SECS:-30}"
+verify_wait="${INTEGRATOR_VERIFY_WAIT_SECS:-$check_wait}"
 
 say() { printf 'integrator: %s\n' "$*" >&2; }
 nap() { /bin/sleep "$1"; }
 
-case "$lease$reconcile_secs$park_min$check_wait" in *[!0-9]*) say "the lease, reconcile, park and check-wait settings must be whole numbers"; exit 1 ;; esac
+case "$lease$reconcile_secs$park_min$check_wait$verify_wait" in *[!0-9]*) say "the lease, reconcile, park and check-wait settings must be whole numbers"; exit 1 ;; esac
 [ "$reconcile_secs" -ge 1 ] && [ "$reconcile_secs" -le 300 ] || { say "INTEGRATOR_RECONCILE_SECS must be 1 to 300"; exit 1; }
 
 repo="${INTEGRATOR_REPO:-}"
@@ -268,6 +318,11 @@ post_dropped() { # PR, reason from the fixed list: conflict checks-failed closed
   case "$2" in conflict | checks-failed | closed | timeout | head-changed | error) ;; *) set -- "$1" error ;; esac
   say "#$1 dropped: $2"
   post "$(printf 'dropped: #%d %s' "$1" "$2")"
+}
+post_reverted() { post "$(printf 'reverted: #%d' "$1")"; }
+post_halted() { # PR, red | unverified
+  case "$2" in unverified) post "$(printf 'halted: main not verified after #%d' "$1")" ;;
+    *) post "$(printf 'halted: main red after #%d' "$1")" ;; esac
 }
 post_parked() { # what is awaited: gate | checks
   case "$2" in gate) post "$(printf 'parked: running the gate for #%d, back by %dm' "$1" "$park_min")" ;;
@@ -371,11 +426,11 @@ wait_events() { # up to $1 seconds for the event file to grow (a local file; Git
   return 1
 }
 
-pr_read() { # PR: sets pr_state pr_merged pr_sha pr_ref pr_repo pr_ms (validated); 1 when it could not be read
+pr_read() { # PR: sets pr_state pr_merged pr_sha pr_ref pr_repo pr_ms pr_msha (validated); 1 when it could not be read
   local out
   out="$(ghx api "repos/$slug/pulls/$1" | py_filter pr)" || return 1
   [ -n "$out" ] || return 1
-  IFS=$'\t' read -r pr_state pr_merged pr_sha pr_ref pr_repo pr_ms <<< "$out"
+  IFS=$'\t' read -r pr_state pr_merged pr_sha pr_ref pr_repo pr_ms pr_msha <<< "$out"
   return 0
 }
 mstate_of() { # PR: the mergeable_state, asked again while GitHub says unknown
@@ -419,6 +474,9 @@ code_conflicts() { # base ref, PR ref: 0 none or docs only, 1 a code conflict, 2
   [ -n "$bad" ] && return 1
   [ -z "$files" ] && return 1
   return 0
+}
+tree_clean() { # base ref, PR ref: 0 only when git merge-tree reports no conflict at all
+  git merge-tree --write-tree --name-only "$1" "$2" > /dev/null 2>&1
 }
 fetch_pr() { # PR
   git fetch -q --no-prune origin main "+pull/$1/head:refs/pr-integrator/$1" > /dev/null 2>&1
@@ -489,9 +547,12 @@ process_pr() {
   code_conflicts origin/main "refs/pr-integrator/$n"; rc=$?
   if [ "$rc" -eq 1 ]; then post_dropped "$n" conflict; cur=""; return; fi
   if [ "$rc" -eq 2 ]; then say "#$n: git merge-tree could not tell (git 2.38 or newer is needed)"; post_dropped "$n" error; cur=""; return; fi
+  # --merge-without-update (#867): a merge-tree with no conflict at all against current main skips the update
+  clean=0
+  if [ "$mwu" -eq 1 ] && tree_clean origin/main "refs/pr-integrator/$n"; then clean=1; fi
   post_integrating "$n"
   [ "$claim_lost" -eq 1 ] && { cur=""; return; }
-  if ! git merge-base --is-ancestor origin/main "refs/pr-integrator/$n" 2> /dev/null; then
+  if [ "$clean" -eq 0 ] && ! git merge-base --is-ancestor origin/main "refs/pr-integrator/$n" 2> /dev/null; then
     git checkout -q -B "integrator/$n" "refs/pr-integrator/$n" > /dev/null 2>&1 || { post_dropped "$n" error; cur=""; return; }
     if ! git merge -q --no-edit origin/main > /dev/null 2>&1; then
       if [ -z "$(git diff --name-only --diff-filter=U)" ]; then git merge --abort > /dev/null 2>&1; post_dropped "$n" error; cur=""; return; fi
@@ -523,12 +584,17 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" > /dev/null 2>&1 || {
   # merge pinned to the head the checks were green on
   pr_read "$n" || { post_dropped "$n" error; cur=""; return; }
   if [ "$pr_sha" != "$head" ]; then post_dropped "$n" head-changed; cur=""; return; fi
+  if [ "$clean" -eq 1 ]; then
+    # main may have moved while the checks ran: the tree must still merge with no conflict at all
+    if ! { fetch_pr "$n" && tree_clean origin/main "refs/pr-integrator/$n"; }; then post_dropped "$n" conflict; cur=""; return; fi
+  fi
   ghx pr merge "$n" --repo "$slug" --merge --match-head-commit "$head" > /dev/null || true
   pr_read "$n" || { post_dropped "$n" error; cur=""; return; }
   if [ "$pr_merged" = true ]; then
     post_merged "$n"
     rm -f "$run/open-$n"
     say "#$n: merged"
+    [ "$clean" -eq 1 ] && verify_after_merge "$n"
     after_merge "$n"
   else
     post_dropped "$n" error
@@ -556,6 +622,108 @@ after_merge() {
     code_conflicts origin/main "refs/pr-integrator/$n"; q=$?
     if [ "$q" -eq 1 ]; then post_dropped "$n" conflict; fi
   done
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# --merge-without-update (#867): verify main after a merge and revert it through a branch and a PR when main is red. Only
+# the merge commit this run just made is ever judged or reverted. Every word is a fixed template of an integer.
+# ---------------------------------------------------------------------------------------------------------------------
+halt() { # PR, red | unverified: say so, release the claim, stop merging (exit 5)
+  say "#$1: halting (main $2); the human must look before the integrator is started again"
+  post_halted "$1" "$2"
+  cur=""
+  drop_claim
+  exit 5
+}
+main_event_red() { # sha: a completed failed check suite or workflow run of that commit on main
+  grep -Eq "^$1 completed (failure|timed_out|startup_failure|action_required)$" "$run/main-checks.log" 2> /dev/null
+}
+main_event_done() { grep -Eq "^$1 completed " "$run/main-checks.log" 2> /dev/null; }
+main_state() { # sha: green pending red cancelled none (the check runs of that commit); 1 when unreadable
+  ghx api "repos/$slug/commits/$1/check-runs?per_page=100" | py_filter mchecks
+}
+run_bench() {
+  if [ -n "${INTEGRATOR_BENCH:-}" ]; then bg "$run/bench.log" "$INTEGRATOR_BENCH"
+  else bg "$run/bench.log" bash -c 'cd proto && cargo run -q --release -p klatch-bench'; fi
+}
+# verify_main SHA PR: 0 green, 1 red, 2 not verified (timeout, cancelled, unreadable, no event source, stopped)
+verify_main() {
+  local sha=$1 n=$2 end first=1 tick=0 v left
+  git fetch -q --no-prune origin main > /dev/null 2>&1
+  if [ "$verify_gate" -eq 1 ]; then
+    git checkout -q --detach "$sha" > /dev/null 2>&1 || return 2
+    post_parked "$n" gate
+    run_gate || { say "main at the merge of #$n: the gate failed"; return 1; }
+  fi
+  if [ "$verify_bench" -eq 1 ]; then
+    git checkout -q --detach "$sha" > /dev/null 2>&1 || return 2
+    run_bench || { say "main at the merge of #$n: the bench failed"; return 1; }
+  fi
+  end=$(($(date +%s) + verify_wait))
+  while true; do
+    [ "$stopping" -eq 1 ] && return 2
+    drain_events
+    main_event_red "$sha" && return 1
+    if [ "$first" -eq 1 ] || [ "$tick" -eq 1 ] || main_event_done "$sha"; then
+      tick=0
+      v="$(main_state "$sha")" || v=unreadable
+      case "$v" in green) return 0 ;; red) return 1 ;; esac
+    fi
+    first=0
+    [ "$(date +%s)" -ge "$end" ] && return 2
+    ensure_forwarder || return 2
+    left=$((next_reconcile - $(date +%s))); [ "$left" -lt 1 ] && left=1
+    wait_events "$left"
+    if [ "$(date +%s)" -ge "$next_reconcile" ]; then
+      reconcile
+      tick=1
+      renew_claim
+      [ "$claim_lost" -eq 1 ] && return 2
+    fi
+  done
+}
+# revert_merge N SHA: the revert of the merge commit SHA of PR N, as a branch and a PR (never a push to main); 0 only when
+# the revert PR was merged and main is green again
+revert_merge() {
+  local n=$1 s=$2 b="revert-$1" out r rsha np
+  git fetch -q --no-prune origin main > /dev/null 2>&1 || return 1
+  git merge-base --is-ancestor "$s" origin/main 2> /dev/null || return 1
+  git checkout -q -B "$b" origin/main > /dev/null 2>&1 || return 1
+  np="$(git rev-list --parents -n 1 "$s" 2> /dev/null | wc -w | tr -d ' ')"
+  if [ "$np" -ge 3 ]; then git revert -m 1 --no-commit "$s" > /dev/null 2>&1; else git revert --no-commit "$s" > /dev/null 2>&1; fi || { git revert --abort > /dev/null 2>&1; git reset -q --hard > /dev/null 2>&1; return 1; }
+  git commit -q -m "$(printf 'Revert PR #%d (main went red)\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>' "$n")" > /dev/null 2>&1 || { git reset -q --hard > /dev/null 2>&1; return 1; }
+  rsha="$(git rev-parse HEAD)"
+  git push -q origin "$b:refs/heads/$b" > /dev/null 2>&1 || return 1
+  # one try only: a second pr create must not make a second PR
+  out="$(perl -e 'alarm shift; exec @ARGV' "$gh_timeout" gh pr create --repo "$slug" --base main --head "$b" \
+    --title "$(printf 'Revert PR #%d (main went red)' "$n")" \
+    --body "$(printf 'The integrator merged PR #%d without updating its branch and main went red afterwards, so this reverts that merge. Its own checks decide whether it merges. A human should look at why main went red.' "$n")" 2> /dev/null)" || return 1
+  r="$(printf '%s\n' "$out" | sed -nE 's#.*/pull/([0-9]{1,9})$#\1#p' | tail -1)"
+  [ -n "$r" ] || return 1
+  : > "$run/open-$r"; note_head "$r" "$rsha"
+  why=""
+  wait_checks "$r" "$rsha" || return 1
+  pr_read "$r" || return 1
+  [ "$pr_sha" = "$rsha" ] || return 1
+  ghx pr merge "$r" --repo "$slug" --merge --match-head-commit "$rsha" > /dev/null || true
+  pr_read "$r" || return 1
+  [ "$pr_merged" = true ] || return 1
+  rm -f "$run/open-$r"
+  [ "$pr_msha" != - ] || return 1
+  verify_main "$pr_msha" "$n"
+}
+verify_after_merge() { # PR just merged by this run
+  local n=$1 ms=$pr_msha i=0 v
+  while [ "$ms" = - ] && [ "$i" -lt 5 ]; do nap "$poll"; pr_read "$n" && ms=$pr_msha; i=$((i + 1)); done
+  [ "$ms" != - ] || halt "$n" unverified
+  verify_main "$ms" "$n"; v=$?
+  case "$v" in
+    0) return 0 ;;
+    1) say "#$n: main is red after its merge; reverting through a branch and a PR"
+       if revert_merge "$n" "$ms"; then post_reverted "$n"; return 0; fi
+       halt "$n" red ;;
+    *) halt "$n" unverified ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -626,6 +794,23 @@ dry_pr() { # one queued PR: the words a real run would post, in order
   if [ "$rc" -eq 1 ]; then out "  would post: $(printf 'dropped: #%d conflict' "$n")  (a code conflict with main, found before anything is touched)"; return; fi
   if [ "$rc" -eq 2 ]; then out "  would post: $(printf 'dropped: #%d error' "$n")  (git merge-tree could not tell; git 2.38 or newer is needed)"; return; fi
   out "  would post: $(printf 'integrating: #%d' "$n")"
+  if [ "$mwu" -eq 1 ] && tree_clean origin/main "$tip"; then
+    out "  would skip merging main into the branch: git merge-tree is clean against current main (--merge-without-update)"
+    out "  would post: $(printf 'checking: #%d' "$n")"
+    out "  would post: $(printf 'parked: waiting for checks on #%d, back by %dm' "$n" "$park_min")"
+    out "  would wait for the checks of the PR's current head to be green"
+    out "  would run gh pr merge $n --merge --match-head-commit <the head the checks were green on>"
+    out "  would post: $(printf 'merged: #%d' "$n")"
+    out "  would verify main: wait for the check suite and workflow run events of the merge commit, and read its check runs"
+    if [ "$verify_gate" -eq 1 ]; then
+      out "  would post: $(printf 'parked: running the gate for #%d, back by %dm' "$n" "$park_min")"
+      out "  would run the gate on main at the merge commit"
+    fi
+    [ "$verify_bench" -eq 1 ] && out "  would run the bench on main at the merge commit"
+    out "  would revert, only if main is red at that merge commit: branch revert-$n, git revert -m 1, a plain push of that branch (never a push to main), a PR with a fixed title and body, its own green checks, then the same pinned merge"
+    out "  would post: $(printf 'reverted: #%d' "$n")  (or halted: main red after #$n, or halted: main not verified after #$n, and exit 5)"
+    return
+  fi
   if ! git merge-base --is-ancestor origin/main "$tip" 2> /dev/null; then
     out "  would merge origin/main into a local branch integrator/$n (docs conflicts keep both sides)"
     out "  would post: $(printf 'parked: running the gate for #%d, back by %dm' "$n" "$park_min")"
@@ -644,6 +829,7 @@ dry_pr() { # one queued PR: the words a real run would post, in order
 dry_run() {
   local list q n count
   out "dry run: $slug, room $room"
+  [ "$mwu" -eq 1 ] && out "mode: merge without update (--merge-without-update): a PR whose merge-tree against main is clean is merged with no update of its branch, then main is verified and a red merge is reverted; this replaces the up-to-date rule for it"
   dry_setup
   list="$(ghx api "repos/$slug/pulls?state=open&per_page=100" | py_filter pulls)" || list=""
   count="$(printf '%s\n' "$list" | sed '/^$/d' | wc -l | tr -d ' ')"
