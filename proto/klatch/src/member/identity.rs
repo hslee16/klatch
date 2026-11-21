@@ -4,7 +4,9 @@
 use super::{Call, Who, now};
 use crate::domain::Principal;
 use crate::gateway::{Identity, LocalIdentity, PeerEvidence};
-use crate::harness::{Found, FsRegistry, Miss, PsTable, find_parent, find_session};
+use crate::harness::{
+    Found, FsRegistry, Miss, PsTable, find_parent, find_session, unregistered_agent_below,
+};
 use crate::store::SqliteStore;
 use crate::store::areas::*;
 use anyhow::{Result, bail};
@@ -298,6 +300,26 @@ fn discover_parent(session: &Found) -> Option<Found> {
     find_parent(session, &PsTable, &registry, domain)
 }
 
+/// The pid of the subagent this process runs in: a coding-agent process below the session found with no record of its
+/// own (#503), with the real process table. `None` for the session itself and for a nested session that has a record
+/// of its own (it is its own member).
+fn discover_child(session: &Found) -> Option<u32> {
+    unregistered_agent_below(std::process::id(), session, &PsTable)
+}
+
+/// Why a subagent may not take the session's member name. Under --discover it would be the session's member: one
+/// name, one cursor and one author for every sibling, so siblings hide each other's posts and a reader that is not
+/// the parent eats the parent's unread mail (#495, #500, #503). Even a read is refused for that reason.
+fn refuse_child(session: &Found, child: u32) -> anyhow::Error {
+    let who = session.name.as_deref().unwrap_or(&session.session_id);
+    anyhow::anyhow!(
+        "this process runs inside a subagent (a coding-agent process, pid {child}, below the session {who:?}), and \
+         --discover would make it that session's member, sharing one name and one cursor with the session and every \
+         other subagent. Set KLATCH_NAME to a name for this subagent (for example KLATCH_NAME=<task>-1) and run the \
+         command again"
+    )
+}
+
 /// The member of a session, named and remembered if it had none (it may never have run klatch itself).
 fn member_of(store: &SqliteStore, session: &Found) -> Option<String> {
     ensure_session_member(store, &session.session_id, session.name.as_deref(), now()).ok()
@@ -381,6 +403,13 @@ pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Opt
     // What the walk up the process tree found, once: it gives the identity and, for a coding session, its directory.
     let found = walk_wanted(&declared, discover, &codex).then(discover_session);
     let session = found.as_ref().and_then(|r| r.as_ref().ok()).cloned();
+    // A subagent that did not name itself is not guessed to be its parent (#503). The walk ran only when no name, key
+    // bundle or Codex thread said who is calling, and a hook is the session's own plumbing, never refused.
+    if let (false, Some(s)) = (is_hook, session.as_ref())
+        && let Some(child) = discover_child(s)
+    {
+        return Err(refuse_child(s, child));
+    }
     let session_dir = session_dir_of(session.as_ref(), codex.as_ref());
     let probe = Probe {
         declared,

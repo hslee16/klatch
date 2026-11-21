@@ -15,7 +15,11 @@ Property tests, model checks and bounded proofs are separate (DESIGN item 66).
 1. **Identity.** The transport makes a `Principal` (`gateway/identity.rs`, `gateway/listener.rs`, `identity.rs`). A
    process holding a key bundle is `Verified` (its credential was live when the process started); a typed or
    discovered name is `Unattributed`. Nothing is trusted for its address or its process: the `Process` evidence is
-   only ever mapped to `Unattributed`, proved by `gateway/listener.rs` tests and `tests/hook_identity.rs`.
+   only ever mapped to `Unattributed`, proved by `gateway/listener.rs` tests and `tests/hook_identity.rs`. A command
+   under `--discover` that runs in a subagent (a coding-agent process below the session found, with no registry record
+   of its own) is refused with a message to set `KLATCH_NAME`, never resolved to the parent's member (#503;
+   `member/identity.rs` `refuse_child`, `harness/ancestry.rs` `unregistered_agent_below`; proved by
+   `tests/subagent_identity.rs`). This only removes an identity the process could have taken; no operation changes.
 2. **Credential liveness, on every request.** `Gateway::check_credential_live` (in `gateway/gateway/roles.rs`) runs
    first in `check_guard`: a `Verified` principal whose member holds an issued credential is refused (rule
    `credential`) once the credential is expired or revoked, with the clock read at each request. Proof:
