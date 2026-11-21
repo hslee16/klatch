@@ -441,7 +441,7 @@ pub fn moved_target(body: &str) -> Option<(i64, String)> {
     let name = after.strip_prefix(": dm with ")?;
     let token = name.split_whitespace().next()?;
     // punctuation that ends the sentence is not part of the name
-    let token = token.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'));
+    let token = token.trim_end_matches(['.', ',', ';', ':', '!', '?']);
     valid_name(token).then(|| (n, token.to_string()))
 }
 
