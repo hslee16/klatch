@@ -1,0 +1,1 @@
+| `could-answer` (command) | `could_answer`, the same read as wire `could_answer`, printing `yes` or `no` and one `rule: reason` line for each blocker | as wire `could_answer`; the member defaults to the caller. Proof: `tests/could_answer.rs` |

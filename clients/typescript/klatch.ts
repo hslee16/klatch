@@ -552,6 +552,11 @@ export class Client {
     return (await this.request("claims", { room })).claims;
   }
 
+  /** Whether `member` could answer open ask `ask` in `room` now (#671): `{ member, ask, could, blockers: [{ rule, reason }] }`. A read only; asking about a member other than yourself is an admin act. Rule words and names only, never the ask's text. */
+  async couldAnswer(room: string, member: string, ask: number): Promise<Record<string, any>> {
+    return await this.request("could_answer", { room, member, ask });
+  }
+
   /** The stuck cases of a room as events (stale_ask, nobody_capable, ask_cycle, claim_deadlock): a kind, a stable key, and ids, member names and numbers, never message text. */
   async stuck(room: string): Promise<Record<string, any>[]> {
     return (await this.request("stuck", { room })).events;

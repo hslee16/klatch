@@ -94,6 +94,17 @@ pub(crate) enum WorkCmd {
         /// The room; without one, every room you have joined
         room: Option<String>,
     },
+    /// Whether a member could answer an ask: `yes`, or `no` with every reason, one line each (#671). A read only that
+    /// changes nothing. Checking yourself is any member's; checking another member is the human's (an admin act)
+    #[command(name = "could-answer", display_order = 44)]
+    CouldAnswer {
+        /// The room the ask is in
+        room: String,
+        /// The ask's number (the `#N` that `klatch asks` shows)
+        ask: i64,
+        /// The member to check; omit for yourself
+        member: Option<String>,
+    },
     /// List the open durable tasks in a room with their full latest checkpoint (working, checkpoint, handoff)
     #[command(display_order = 43)]
     Tasks { room: String },

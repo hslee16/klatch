@@ -10,6 +10,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("process_exited", |g, w| refused(g.process_exited(w, "r", "bob"))),
     ("claim_ttl_for", |g, w| refused(g.claim_ttl_for(w, ("r", "ask:1"), None))),
     ("claims", |g, w| refused(g.claims(w, "r"))),
+    ("could_answer", |g, w| refused(g.could_answer(w, "r", "bob", 1))),
     ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),
     ("release", |g, w| refused(g.release(w, "r", "p"))),
     ("release_with_note", |g, w| refused(g.release_with_note(w, ("r", "p"), "n"))),

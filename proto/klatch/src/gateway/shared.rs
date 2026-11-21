@@ -541,6 +541,7 @@ impl Transport for SharedTransport {
         member_card(room: &str, member: &str) -> Result<Option<crate::domain::Card>>;
         open_asks(room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
         stuck(room: &str) -> Result<Vec<crate::domain::StuckEvent>>;
+        could_answer(room: &str, member: &str, ask: i64) -> Result<crate::domain::CouldAnswer>;
         process_exited(room: &str, member: &str) -> Result<bool>;
         ack(room: &str, seq: i64) -> Result<()>;
     }

@@ -636,6 +636,15 @@ impl Client {
         Ok(r["events"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Whether `member` could answer open ask `ask` in `room` now: `{member, ask, could, blockers: [{rule, reason}]}`
+    /// (#671). A read only; asking about a member other than yourself is an admin act.
+    pub fn could_answer(&mut self, room: &str, member: &str, ask: i64) -> Result<Value> {
+        self.request(
+            "could_answer",
+            json!({"room": room, "member": member, "ask": ask}),
+        )
+    }
+
     /// Set your own status in a room (one line, 1 to 80 characters), for example `done`.
     pub fn set_status(&mut self, room: &str, status: &str) -> Result<()> {
         self.request("status", json!({"room": room, "status": status}))

@@ -22,6 +22,12 @@ pub(crate) struct RoomParams {
     pub room: String,
 }
 #[derive(Deserialize)]
+struct CouldAnswerParams {
+    room: String,
+    member: String,
+    ask: i64,
+}
+#[derive(Deserialize)]
 struct ReceiptParams {
     room: String,
     seq: i64,
@@ -383,6 +389,17 @@ pub(crate) fn handle<S: Store>(
         ),
         "claims" => call.run(|p: RoomParams| g.claims(who, &p.room), |cs| claims_json(&cs)),
         "stuck" => call.run(|p: RoomParams| g.stuck(who, &p.room), |ev| stuck_json(&ev)),
+        "could_answer" => call.run(
+            |p: CouldAnswerParams| g.could_answer(who, &p.room, &p.member, p.ask),
+            |c: crate::domain::CouldAnswer| {
+                json!({
+                    "member": c.member,
+                    "ask": c.ask,
+                    "could": c.could(),
+                    "blockers": c.blockers.iter().map(|b| json!({ "rule": b.rule, "reason": b.reason })).collect::<Vec<_>>(),
+                })
+            },
+        ),
         "label_order" => call.run(
             |_: NoParams| g.label_order(who),
             |(chain, cap): (Vec<String>, String)| json!({ "chain": chain, "cap": cap }),

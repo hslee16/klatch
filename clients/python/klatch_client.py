@@ -480,6 +480,12 @@ class Client:
         key, and ids, member names and numbers, never message text."""
         return self.request("stuck", room=room)["events"]
 
+    def could_answer(self, room, member, ask):
+        """Whether `member` could answer open ask `ask` in `room` now (#671): {"member", "ask", "could", "blockers":
+        [{"rule", "reason"}]}. A read only; asking about a member other than yourself is an admin act. Rule words and
+        names only, never the ask's text."""
+        return self.request("could_answer", room=room, member=member, ask=ask)
+
     def who(self, room):
         return self.request("who", room=room)["members"]
 
