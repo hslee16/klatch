@@ -219,7 +219,7 @@ impl<S: Store> Gateway<S> {
         Ok(())
     }
 
-    fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
+    pub(super) fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
         // #523: on a members' gateway the system's own names are nobody's, so a typed one gets no standing
         if self.for_members && crate::domain::is_reserved_name(&who.member) {
             return Err(Error::Refused {

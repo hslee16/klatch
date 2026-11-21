@@ -17,6 +17,7 @@ mod canary_surfaces;
 mod claim_age;
 mod claim_edges;
 mod claims;
+mod could_answer;
 mod credential_renewal;
 mod credentials;
 mod crossing;

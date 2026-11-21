@@ -61,6 +61,17 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
             }
             Ok(())
         })?,
+        WorkCmd::CouldAnswer { room, ask, member } => {
+            let c = t.could_answer(&room, member.as_deref().unwrap_or(ctx.me), ask)?;
+            if c.could() {
+                println!("yes");
+            } else {
+                println!("no");
+                for b in &c.blockers {
+                    println!("{}: {}", b.rule, flat(&b.reason));
+                }
+            }
+        }
         WorkCmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
                 println!("{}", task.line(ctx.now, true));

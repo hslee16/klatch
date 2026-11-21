@@ -9,6 +9,7 @@
 use super::*;
 
 mod asks;
+mod could_answer;
 mod digest;
 mod members;
 mod offers;

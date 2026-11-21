@@ -12,6 +12,7 @@ mod cascade_judge;
 mod claim_age;
 mod convention;
 mod convention_words;
+mod could_answer;
 mod credentials;
 mod cycle_notice;
 mod dm;
@@ -79,6 +80,7 @@ pub use cascade_judge::{
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
 pub use convention::{CONVENTION_MARKER, convention, convention_in, subagent_brief};
 pub use convention_words::{CONVENTION_WORDS, ConventionWord};
+pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
 pub use dm::{DM_PREFIX, dm_room};
