@@ -1,0 +1,1 @@
+- `klatch mcp --stdio` in a verified Claude Code session now joins a room that has a `room-require` harness requirement (`klatch acp --stdio` carries the same evidence); every other caller is still the generic floor (#1130).

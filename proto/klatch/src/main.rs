@@ -634,8 +634,8 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
             (stdio, None),
             caller.claude_code,
         ),
-        Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
-        Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio),
+        Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio, caller.claude_code),
+        Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio, caller.claude_code),
         Cmd::Stream {
             room,
             from_seq,
@@ -686,6 +686,12 @@ fn stream_room(
         .map_err(Into::into)
 }
 
+/// The harness a process the walk up the tree verified as Claude Code is judged as (#877, #1115, #1130); it is passed
+/// only when the caller's process tree vouched for it, never because a request says so.
+fn verified_harness() -> klatch::harness::ClaudeCode {
+    klatch::harness::ClaudeCode::probing(klatch::harness::wake_support_here)
+}
+
 /// `klatch serve --stdio`; `(stdio, key)` where `key` is the label of the ssh key that fixed the member: a request that
 /// claims an identity is refused (#107), and the session ends when the key stops being mapped to this member (#1083).
 fn serve_stdio(
@@ -702,7 +708,7 @@ fn serve_stdio(
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
     // A `join` is judged by the harness the process tree verified, the same evidence a CLI command passes (#877, #1115)
-    let harness = klatch::harness::ClaudeCode::probing(klatch::harness::wake_support_here);
+    let harness = verified_harness();
     let session = if claude_code {
         session.with_harness(&harness)
     } else {
@@ -756,12 +762,24 @@ fn ssh_key_still_mapped(
 }
 
 /// `klatch mcp --stdio`: the MCP front end over the same session `serve` uses; standard output carries MCP messages only.
-fn mcp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
+fn mcp_stdio(
+    gateway: &Gateway<SqliteStore>,
+    principal: &Principal,
+    stdio: bool,
+    claude_code: bool,
+) -> Result<()> {
     if !stdio {
         bail!("mcp needs --stdio, the only transport so far");
     }
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
+    // A `klatch_join` is judged by the harness the process tree verified, as for `serve` (#1130)
+    let harness = verified_harness();
+    let session = if claude_code {
+        session.with_harness(&harness)
+    } else {
+        session
+    };
     let bin = std::env::current_exe()?;
     let instructions = klatch::domain::subagent_brief(
         &bin.to_string_lossy(),
@@ -774,12 +792,24 @@ fn mcp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool)
 }
 
 /// `klatch acp --stdio`: the librarian as an ACP agent over the same session `serve` uses (#115).
-fn acp_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
+fn acp_stdio(
+    gateway: &Gateway<SqliteStore>,
+    principal: &Principal,
+    stdio: bool,
+    claude_code: bool,
+) -> Result<()> {
     if !stdio {
         bail!("acp needs --stdio, the only transport so far");
     }
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
+    // The same evidence as for `serve` (#1130); the ACP agent only looks today, so no join reaches it
+    let harness = verified_harness();
+    let session = if claude_code {
+        session.with_harness(&harness)
+    } else {
+        session
+    };
     klatch::session::acp::AcpServer::new(&session)
         .serve(std::io::stdin().lock(), std::io::stdout())?;
     Ok(())
