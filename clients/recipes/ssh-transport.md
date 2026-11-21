@@ -105,8 +105,9 @@ hook timeout around it. All channels of one master connection belong to the same
   the store too: this is not isolation from a hostile process of the same account.
 - **Key rotation.** Add the new key with a new label and map it to the same member (a member may have more than one
   label): `klatch admin ssh-key laptop-a2 build-bot-a`. Move the client to the new key, then remove the old line from
-  `authorized_keys`, run `klatch admin ssh-key laptop-a build-bot-a --off`, and end any session still open on the old key
-  (`kill -9` its `klatch serve --stdio --ssh-key laptop-a` process). **Known limit:** the mapping is checked when a session
-  starts, not on every request, so an open session on a removed key keeps running until it ends (ticketed).
+  `authorized_keys`, run `klatch admin ssh-key laptop-a build-bot-a --off`, and the session still open on the old key
+  ends by itself: klatch reads the mapping before each batch of requests and on every idle tick, refuses the next request
+  with rule `ssh-key-unmapped` (or `ssh-key-remapped` if the label now names another member) and exits. Removing only the
+  `authorized_keys` line stops new connections but not one already open; run the `--off` step to end it.
 - **Not covered here.** klatch does not enforce that the client verified the host key, rate limits by ssh source address, or
   see the client's address. Anything between ssh and klatch (a proxy, a jump host) is outside what klatch checks.

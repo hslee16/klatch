@@ -616,14 +616,18 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     } = &cmd
     {
         let member = klatch::member::open_ssh_member(&who.who(), label)?;
-        return serve_stdio(&member.gateway, &member.caller.principal, (*stdio, true));
+        return serve_stdio(
+            &member.gateway,
+            &member.caller.principal,
+            (*stdio, Some(label.as_str())),
+        );
     }
     let Some(member) = klatch::member::open_member(&who.who(), call_of(&cmd))? else {
         return Ok(());
     };
     let klatch::member::Member { gateway, caller } = member;
     match cmd {
-        Cmd::Serve { stdio, .. } => serve_stdio(&gateway, &caller.principal, (stdio, false)),
+        Cmd::Serve { stdio, .. } => serve_stdio(&gateway, &caller.principal, (stdio, None)),
         Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
@@ -676,12 +680,12 @@ fn stream_room(
         .map_err(Into::into)
 }
 
-/// `klatch serve --stdio`; `(stdio, fixed)` where `fixed` says an ssh key fixed the member, so a request that claims
-/// an identity is refused (#107).
+/// `klatch serve --stdio`; `(stdio, key)` where `key` is the label of the ssh key that fixed the member: a request that
+/// claims an identity is refused (#107), and the session ends when the key stops being mapped to this member (#1083).
 fn serve_stdio(
     gateway: &Gateway<SqliteStore>,
     principal: &Principal,
-    (stdio, fixed): (bool, bool),
+    (stdio, key): (bool, Option<&str>),
 ) -> Result<()> {
     if !stdio {
         bail!("serve needs --stdio, the only transport so far");
@@ -690,8 +694,23 @@ fn serve_stdio(
     // stdin cannot be stopped from outside; the process exits when the session does
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
-    let session = if fixed {
-        session.fixed_member()
+    // The mapping is read through a second connection of its own, opened here, so the look never goes through the
+    // gateway's operations (it is a policy read for the session itself, #1083).
+    let mapping = match key {
+        Some(_) => Some(klatch::member::custody::open_store(
+            &klatch::member::db_path()?,
+        )?),
+        None => None,
+    };
+    let still_mapped = || {
+        ssh_key_still_mapped(
+            mapping.as_ref().expect("an ssh session has a store"),
+            key.unwrap_or_default(),
+            &principal.member,
+        )
+    };
+    let session = if key.is_some() {
+        session.fixed_member().rechecked(&still_mapped)
     } else {
         session
     };
@@ -700,6 +719,26 @@ fn serve_stdio(
         std::io::stdout(),
         None,
     )?)
+}
+
+/// Whether the ssh key `label` is still mapped to `member`: the refusal an open session ends with when the human took
+/// the mapping away (`ssh-key-unmapped`) or pointed the label at another member (`ssh-key-remapped`).
+fn ssh_key_still_mapped(
+    store: &SqliteStore,
+    label: &str,
+    member: &str,
+) -> klatch::domain::Result<()> {
+    let (rule, what) = match klatch::gateway::ssh_key_member(store, label)? {
+        Some(m) if m == member => return Ok(()),
+        Some(_) => ("ssh-key-remapped", "is now mapped to another member"),
+        None => ("ssh-key-unmapped", "is no longer mapped to a member"),
+    };
+    Err(klatch::domain::Error::Refused {
+        rule: rule.into(),
+        reason: format!(
+            "the ssh key {label} {what}; this session ends, and a new one starts as whoever the key is mapped to"
+        ),
+    })
 }
 
 /// `klatch mcp --stdio`: the MCP front end over the same session `serve` uses; standard output carries MCP messages only.
