@@ -7,6 +7,7 @@ import { existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
+import { createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApiError, Client, type Message, decodeServerFrame, PROTOCOL_VERSION, ProtocolError } from "./klatch.ts";
@@ -335,5 +336,32 @@ describe("klatch client socket connect", { skip: !daemonBuilt }, () => {
     await a.post("r", "x");
     store.stopDaemon();
     await assert.rejects(a.post("r", "y"));
+  });
+});
+
+// On Linux a peer that dies surfaces as ECONNRESET on the socket, not a clean end. That must end the session (pending
+// and later requests reject with a ProtocolError), never become an uncaught exception.
+describe("klatch client socket reset", () => {
+  it("a connection reset by the peer ends the session without an uncaught error", async () => {
+    const dir = mkdtempSync(join("/tmp", "kr-"));
+    const path = join(dir, "r.sock");
+    const server = createServer((c) => {
+      c.on("error", () => {});
+      c.write('{"v":1,"type":"hello","member":"unmapped-process","attribution":"unattributed","clearance":"public"}\n');
+    });
+    await new Promise<void>((r) => server.listen(path, r));
+    try {
+      const c = await Client.connectSocket(path);
+      // what Linux reports for a peer that died: an error event on the socket (Node cannot reset a Unix socket from
+      // the other end, so the event is raised here, on every platform)
+      const socket = (c as unknown as { socket: { destroy(e: Error): void } }).socket;
+      socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+      await assert.rejects(c.post("r", "x"), ProtocolError);
+      await sleep(100); // an error event with no listener would be thrown here
+      await assert.rejects(c.post("r", "y"), ProtocolError);
+    } finally {
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

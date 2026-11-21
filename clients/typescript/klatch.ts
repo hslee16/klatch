@@ -93,7 +93,11 @@ export class Client {
     this.exited = exited;
     // a write to a transport that has gone is answered by the closed session, not by an unhandled event
     output.on("error", () => {});
-    createInterface({ input }).on("line", (line) => {
+    // readline re-emits an error of its input (a reset socket: ECONNRESET on Linux) on itself; with no listener it
+    // would be thrown. A reset ends the session like a clean close does: the input's `close` pushes the end.
+    const lines = createInterface({ input });
+    lines.on("error", () => {});
+    lines.on("line", (line) => {
       let frame: Frame | null;
       try {
         frame = decodeServerFrame(line);

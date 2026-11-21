@@ -377,5 +377,44 @@ class SocketConnect(unittest.TestCase):
             a.post("r", "y")
 
 
+class ResetReader:
+    """A transport that says hello and then fails as Linux reports a dead peer: ConnectionResetError on the read."""
+
+    def __iter__(self):
+        yield '{"v":1,"type":"hello","member":"u","attribution":"unattributed","clearance":"public"}\n'
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+    def close(self):
+        pass
+
+
+class Sink:
+    def write(self, text):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class SocketReset(unittest.TestCase):
+    def test_a_reset_ends_the_session_and_never_raises_in_the_reader_thread(self):
+        import threading
+
+        raised = []
+        old = threading.excepthook
+        threading.excepthook = lambda args: raised.append(args)
+        self.addCleanup(setattr, threading, "excepthook", old)
+        c = kc.Client.__new__(kc.Client)
+        c._sock = None
+        c._start(ResetReader(), Sink(), proc=None)
+        with self.assertRaises((kc.ProtocolError, OSError)):
+            c.request("post", room="r", body="x")
+        time.sleep(0.2)
+        self.assertEqual(raised, [])
+
+
 if __name__ == "__main__":
     unittest.main()
