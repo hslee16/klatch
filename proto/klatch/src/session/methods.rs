@@ -307,6 +307,7 @@ pub(crate) fn handle<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> V
             |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
             |l| crossings_json(&l),
         ),
+        "my_role" => call.run(|_: NoParams| g.my_role(who), |r| json!({ "role": r })),
         "invite" => call.run(
             |p: InviteParams| g.invite(who, &p.member, &p.room, &p.via),
             empty,

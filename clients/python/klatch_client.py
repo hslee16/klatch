@@ -265,6 +265,11 @@ class Client:
         words."""
         return self.request("my_crossings", limit=limit)["crossings"]
 
+    def my_role(self):
+        """Your own role as one fixed word (`librarian`, `admin`, `reviewer`, `facilitator` or `integrator`), or
+        `None` when you hold none. Only your own; there is no way to ask for another member's."""
+        return self.request("my_role")["role"]
+
     def set_scope(self, scope):
         """Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims
         conflict only with claims in the same scope, and a shared claim conflicts with every scope."""

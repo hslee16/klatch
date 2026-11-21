@@ -294,6 +294,12 @@ export class Client {
     return (await this.request("my_crossings", { limit })).crossings;
   }
 
+  /** Your own role as one fixed word (`librarian`, `admin`, `reviewer`, `facilitator` or `integrator`), or null when
+   * you hold none. Only your own; there is no way to ask for another member's. */
+  async myRole(): Promise<string | null> {
+    return (await this.request("my_role", {})).role;
+  }
+
   /** Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict only
    * with claims in the same scope, and a shared claim conflicts with every scope. */
   async setScope(scope: string) {
