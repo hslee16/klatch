@@ -29,6 +29,17 @@ The conformance scenario of each library runs twice, over stdio and, unchanged, 
 `klatch-server` is built, `KLATCH_SERVER_BIN` or `proto/target/debug/klatch-server`; Rust in
 `proto/klatch-server/tests/client_socket.rs`, which includes `proto/klatch/tests/client_scenario`).
 
+## Over HTTP and server-sent events
+
+`klatch-server http --listen 127.0.0.1:PORT` (#1059) serves the protocol over HTTP, loopback only, and every caller needs a
+worker credential the human issued. Python connects with `Client.connect_http("http://127.0.0.1:PORT", member="w-1",
+token=...)` and TypeScript with `Client.connectHttp(url, { member: "w-1", token })` (#1114). The library opens `GET
+/v1/stream`, reads `X-Klatch-Session`, reads each event's `data:` as a frame, and sends each request as `POST /v1/frames`
+with that header; the response arrives on the stream. A refused credential is an error with code `identity.refused`. A url
+that is not plain `http` to a loopback address is refused before anything is sent. If the stream drops, the library reopens it
+and resubscribes every subscribed room from the last `seq` seen, so messages resume without a gap or a repeat. The Rust client
+has no HTTP transport yet (#1122).
+
 | Language | Where | Dependencies | Conformance test |
 |---|---|---|---|
 | Python 3 | `clients/python/klatch_client.py` | standard library | `cd clients/python && KLATCH_BIN=... python3 -m unittest -v` |

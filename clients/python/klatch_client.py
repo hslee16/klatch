@@ -1,8 +1,10 @@
 """A thin klatch client over the wire protocol (PROTOCOL.md, version 1): it speaks newline-delimited JSON to
-`klatch serve --stdio`, or over the Unix socket of the klatch-server daemon, standard library only.
+`klatch serve --stdio`, over the Unix socket of the klatch-server daemon, or over HTTP and server-sent events to
+`klatch-server http`, standard library only.
 
     c = Client("/path/to/klatch", env={"KLATCH_NAME": "alice", ...})
     c = Client.connect_socket("/path/to/daemon.sock", name="alice")   # or member="w-1", token="..."
+    c = Client.connect_http("http://127.0.0.1:7777", member="w-1", token="...")   # loopback only
     c.post("lobby", "hello")
     c.subscribe("lobby", from_seq=0); c.collect(until_caught_up=True)
 
@@ -11,11 +13,14 @@ Over the daemon's socket the operating system reports the peer, and the first re
 a typed name (unattributed), or a member and its credential token (verified), or nothing (`unmapped-process`). A
 frame this version does not know, and a field it does not know, are ignored, as the protocol requires.
 """
+import http.client
 import json
 import queue
 import socket
 import subprocess
 import threading
+import time
+import urllib.parse
 
 PROTOCOL_VERSION = 1
 
@@ -53,6 +58,216 @@ def decode_server_frame(line):
 
 def encode_line(frame):
     return json.dumps({"v": PROTOCOL_VERSION, **frame}, separators=(",", ":")) + "\n"
+
+
+class _HttpTransport:
+    """`klatch-server http` as a reader and a writer for `Client._start` (#1114). The reader opens `GET /v1/stream`
+    with the credential, reads the `X-Klatch-Session` header, and yields the `data:` of each server-sent event, which is
+    one frame line exactly. The writer POSTs each line to `/v1/frames` with that header; the answer comes on the
+    stream, as it does on the daemon's connection. When the stream ends without a `close()` (the server went away, a
+    reset), the reader opens a new one, drops the `hello` of the new session and resubscribes every room that was
+    subscribed from the last `seq` seen in it, so the caller sees no gap and no repeat."""
+
+    def __init__(self, host, port, member, token, connect_timeout, reconnect_attempts, reconnect_delay):
+        self.host, self.port, self.member, self.token = host, port, member, token
+        self.connect_timeout = connect_timeout
+        self.reconnect_attempts, self.reconnect_delay = reconnect_attempts, reconnect_delay
+        self.closed = False
+        self.session = None
+        self._conn = None
+        self._stream = None
+        self._lock = threading.Lock()
+        self.hello_wanted = True
+        self._fail = None  # an error to raise on the next read (a test hook: the platform's reset is not portable)
+        self._subs = {}  # room -> the from_seq to resume from
+        self._rid = 0
+        self.reader = _HttpReader(self)
+        self.writer = _HttpWriter(self)
+
+    def _headers(self):
+        return {"Authorization": f"Bearer {self.token}", "X-Klatch-Member": self.member}
+
+    def open_stream(self):
+        """Open a session. Raises ApiError (`identity.refused`) for a 401, OSError when nothing listens."""
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
+        try:
+            conn.request("GET", "/v1/stream", headers={**self._headers(), "Accept": "text/event-stream"})
+            sock = conn.sock  # the response closes the connection's reference to it; close() needs the socket itself
+            resp = conn.getresponse()
+            if resp.status == 401:
+                raise ApiError("identity.refused", "the server refused the credential")
+            if resp.status != 200:
+                raise OSError(f"the server answered {resp.status} to the stream")
+            session = resp.getheader("X-Klatch-Session")
+            if not session:
+                raise ProtocolError("the stream has no X-Klatch-Session header")
+            sock.settimeout(None)  # heartbeats keep a healthy stream busy; close() unblocks the read
+        except BaseException:
+            conn.close()
+            raise
+        with self._lock:
+            self._conn, self._stream, self.session = (conn, sock), resp, session
+
+    def fail_next_read(self, error):
+        self._fail = error
+
+    def readline(self):
+        error, self._fail = self._fail, None
+        if error is not None:
+            raise error
+        stream = self._stream
+        return stream.readline() if stream is not None else b""
+
+    def post(self, text):
+        body = text.encode("utf-8")
+        for attempt in range(40):
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
+            try:
+                conn.request(
+                    "POST",
+                    "/v1/frames",
+                    body=body,
+                    headers={**self._headers(), "X-Klatch-Session": self.session or "", "Content-Type": "application/x-ndjson"},
+                )
+                resp = conn.getresponse()
+                resp.read()
+                status = resp.status
+            finally:
+                conn.close()
+            if status == 202:
+                return
+            if status == 429 and attempt < 39 and not self.closed:
+                time.sleep(0.05)  # the session's inbox is full: it drains, so try again
+                continue
+            raise OSError(f"the server answered {status} to a post")
+
+    def note_sent(self, line):
+        """Remember what the session subscribes to, to resubscribe after a reconnect."""
+        try:
+            frame = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(frame, dict) or frame.get("type") != "request":
+            return
+        params = frame.get("params") or {}
+        room = params.get("room")
+        if frame.get("method") == "subscribe" and isinstance(room, str):
+            self._subs[room] = params.get("from_seq", 0)
+        elif frame.get("method") == "unsubscribe":
+            self._subs.pop(room, None)
+
+    def note_seen(self, frame):
+        if frame.get("type") == "message" and frame.get("room") in self._subs and isinstance(frame.get("seq"), int):
+            self._subs[frame["room"]] = frame["seq"]
+
+    def reconnect(self):
+        """A new session in place of one that ended; True when it is open and its rooms are resubscribed."""
+        self._release()
+        for attempt in range(self.reconnect_attempts):
+            if self.closed:
+                return False
+            try:
+                self.open_stream()
+                break
+            except (OSError, ProtocolError, ApiError):
+                time.sleep(self.reconnect_delay * (attempt + 1))
+        else:
+            return False
+        return True
+
+    def resubscribe(self):
+        for room, seq in list(self._subs.items()):
+            self._rid += 1
+            line = encode_line({"type": "request", "id": f"r{self._rid}", "method": "subscribe", "params": {"room": room, "from_seq": seq}})
+            try:
+                self.post(line)
+            except OSError:
+                return
+
+    def _release(self):
+        with self._lock:
+            conn, self._conn, self._stream = self._conn, None, None
+        if conn is not None:
+            conn, sock = conn
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            conn.close()
+
+    def shut(self):
+        self.closed = True
+        self._release()
+
+
+class _HttpWriter:
+    def __init__(self, transport):
+        self._t = transport
+
+    def write(self, text):
+        self._t.note_sent(text)
+        self._t.post(text)  # an OSError here is the caller's ProtocolError (`Client._send`)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _HttpReader:
+    """Iterates the frame lines of the stream across reconnects."""
+
+    def __init__(self, transport):
+        self._t = transport
+
+    def __iter__(self):
+        t = self._t
+        data = []
+        first = True  # the first frame of a session is its hello; only the first session's is wanted
+        while not t.closed:
+            try:
+                raw = t.readline()
+            except (OSError, ValueError, http.client.HTTPException):
+                raw = b""
+            if raw:
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if line == "":
+                    if data:
+                        frame_line, data = "\n".join(data), []
+                        hello = first and self._is_hello(frame_line)
+                        first = False
+                        if hello and not t.hello_wanted:
+                            continue  # a reconnect: the caller has its hello
+                        self._note(frame_line)
+                        yield frame_line
+                elif line.startswith("data:"):
+                    data.append(line[6:] if line[5:6] == " " else line[5:])
+                continue
+            # the stream ended
+            if t.closed or not t.reconnect():
+                return
+            data, first = [], True
+            t.hello_wanted = False
+            t.resubscribe()
+
+    @staticmethod
+    def _is_hello(line):
+        try:
+            return json.loads(line).get("type") == "hello"
+        except (ValueError, AttributeError):
+            return False
+
+    def _note(self, frame_line):
+        try:
+            frame = json.loads(frame_line)
+        except ValueError:
+            return
+        if isinstance(frame, dict):
+            self._t.note_seen(frame)
+
+    def close(self):
+        pass
 
 
 class Client:
@@ -107,9 +322,37 @@ class Client:
             raise
         return self
 
+    @classmethod
+    def connect_http(cls, url, member=None, token=None, connect_timeout=10, reconnect_attempts=5, reconnect_delay=0.2):
+        """Connect to a `klatch-server http --listen ADDR` at `url` (`http://127.0.0.1:PORT`, loopback only) as `member`
+        with its credential `token`, the only way to be known over HTTP (a worker credential the human issued). The
+        stream is `GET /v1/stream` and each request is a `POST /v1/frames` carrying `X-Klatch-Session`. A refused
+        credential raises `ApiError` with code `identity.refused` (its message never repeats the token); a server
+        nobody listens on raises `OSError`; a url that is not plain `http` to a loopback address raises `ValueError`.
+        If the stream ends without a `close()`, it is reopened up to `reconnect_attempts` times and every subscribed
+        room is resubscribed from the last `seq` seen, so messages resume without a gap or a repeat. `close()` ends
+        the session and returns 0."""
+        if member is None or token is None:
+            raise ValueError("a credential is a member and a token")
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme != "http" or parts.hostname not in ("127.0.0.1", "::1", "localhost") or parts.port is None:
+            raise ValueError("the url is http://127.0.0.1:PORT (plain http, loopback only)")
+        transport = _HttpTransport(parts.hostname, parts.port, member, token, connect_timeout, reconnect_attempts, reconnect_delay)
+        transport.open_stream()
+        self = cls.__new__(cls)
+        self._sock = None
+        self._http = transport
+        try:
+            self._start(transport.reader, transport.writer, proc=None)
+        except BaseException:
+            self.close()
+            raise
+        return self
+
     def _start(self, reader, writer, proc):
         self._proc = proc
         self._sock = getattr(self, "_sock", None)
+        self._http = getattr(self, "_http", None)
         self._reader, self._writer = reader, writer
         self._frames = queue.Queue()
         self._next_id = 0
@@ -350,8 +593,9 @@ class Client:
             self._note(frame)
 
     def close(self):
-        """End the session: close the input, which ends the gateway's side. Returns its exit code (over a socket, 0
-        once the daemon has ended the session)."""
+        """End the session: close the input, which ends the gateway's side. Returns its exit code (over a socket or HTTP, 0)."""
+        if self._http is not None:
+            return self._close_http()
         if self._proc is None:
             return self._close_socket()
         if self._proc.poll() is None:
@@ -370,6 +614,12 @@ class Client:
             except OSError:
                 pass
         return self._proc.returncode
+
+    def _close_http(self):
+        """End the stream, which ends the session on the server, and let the reader thread see it."""
+        self._http.shut()
+        self._pumper.join(timeout=10)
+        return 0
 
     def _close_socket(self):
         """Shut the socket's write side, wait (up to 10 seconds) for the daemon to end its side, then release it."""
