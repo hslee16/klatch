@@ -53,6 +53,7 @@
 # webhook payloads), INTEGRATOR_LEASE_SECS, INTEGRATOR_RECONCILE_SECS, INTEGRATOR_PARK_MINUTES, INTEGRATOR_CHECK_WAIT_SECS,
 # INTEGRATOR_POLL_SECS, INTEGRATOR_GH_TIMEOUT, INTEGRATOR_GH_RETRY_SLEEP, INTEGRATOR_FORWARDER_TRIES,
 # INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory), INTEGRATOR_TEST_DROP_TERMS,
+# INTEGRATOR_MAX_HOLD_MINUTES (default 60: release merge:main after this long with no merged word; see INTEGRATOR.md),
 # INTEGRATOR_VERIFY_WAIT_SECS (how long to wait for main's checks after a merge; default the check wait), INTEGRATOR_BENCH
 # (the bench command for --verify-bench; default: cargo run -q --release -p klatch-bench from proto/).
 # Exit codes: 0 stopped by a signal or --once drained; 1 usage or setup; 2 refused the merge:main claim (not an integrator);
@@ -271,6 +272,7 @@ sup_alive() { [ -z "${INTEGRATOR_SUPERVISOR:-}" ] || kill -0 "$INTEGRATOR_SUPERV
 
 export PATH="$HOME/.cargo/bin:$PATH"
 slug="${INTEGRATOR_GH_REPO:-hslee16/klatch}"
+say() { printf 'integrator: %s\n' "$*" >&2; }
 room="${INTEGRATOR_ROOM:-lobby}"
 klatch="${INTEGRATOR_KLATCH:-klatch}"
 lease="${INTEGRATOR_LEASE_SECS:-600}"
@@ -284,8 +286,14 @@ fwd_tries="${INTEGRATOR_FORWARDER_TRIES:-3}"
 fwd_min_up="${INTEGRATOR_FORWARDER_MIN_UP:-30}"
 requeue_secs="${INTEGRATOR_REQUEUE_SECS:-30}"
 verify_wait="${INTEGRATOR_VERIFY_WAIT_SECS:-$check_wait}"
+# #1054: the longest the helper holds merge:main without posting a merged word; then it releases the claim itself
+max_hold_min="${INTEGRATOR_MAX_HOLD_MINUTES:-60}"
+case "$max_hold_min" in '' | *[!0-9]*) say "INTEGRATOR_MAX_HOLD_MINUTES must be a whole number of minutes, 1 or more"; exit 1 ;; esac
+[ "$max_hold_min" -ge 1 ] || { say "INTEGRATOR_MAX_HOLD_MINUTES must be a whole number of minutes, 1 or more"; exit 1; }
+max_hold_secs="${INTEGRATOR_MAX_HOLD_SECS:-$((max_hold_min * 60))}" # seconds: a test knob
+# #1055: merge:main is held in one room, the lobby; a room is a plain name
+case "$room" in '' | *[!A-Za-z0-9._-]*) say "INTEGRATOR_ROOM must be a plain room name (letters, digits, dot, dash, underscore); the team's one room for merge:main is the lobby"; exit 1 ;; esac
 
-say() { printf 'integrator: %s\n' "$*" >&2; }
 nap() { /bin/sleep "$1"; }
 
 case "$lease$reconcile_secs$park_min$check_wait$verify_wait" in *[!0-9]*) say "the lease, reconcile, park and check-wait settings must be whole numbers"; exit 1 ;; esac
@@ -303,7 +311,7 @@ docs_re='^(DESIGN.md|CHANGELOG.md|VERSIONING.md|RESEARCH-NOTES.md|proto/klatch-b
 # ---------------------------------------------------------------------------------------------------------------------
 # process control: every long command runs in the background and is waited for, so a signal is handled at once
 # ---------------------------------------------------------------------------------------------------------------------
-fpid=""; npid=""; cpid=""; held=0; cur=""; stopping=0
+fpid=""; npid=""; cpid=""; held=0; cur=""; stopping=0; progress_at=0; blocked=0
 cleanup() {
   [ "$stopping" -eq 1 ] && return
   stopping=1
@@ -354,7 +362,7 @@ post() { # the whole word (built only by the helpers below)
 }
 post_integrating() { post "$(printf 'integrating: #%d' "$1")"; }
 post_checking() { post "$(printf 'checking: #%d' "$1")"; }
-post_merged() { post "$(printf 'merged: #%d' "$1")"; }
+post_merged() { progress_at=$(date +%s); post "$(printf 'merged: #%d' "$1")"; }
 post_dropped() { # PR, reason from the fixed list: conflict checks-failed closed timeout head-changed error
   case "$2" in conflict | checks-failed | closed | timeout | head-changed | error) ;; *) set -- "$1" error ;; esac
   say "#$1 dropped: $2"
@@ -901,7 +909,7 @@ take_claim; rc=$?
 case "$rc" in
   0) drop_claim ;; # the probe: this member may take merge:main; it is taken again when there is work
   1) say "this member may not take merge:main (the integrator role is the human's to grant: klatch admin integrator <member>)"; exit 2 ;;
-  *) say "merge:main is held by another member (or could not be claimed); not starting"; exit 3 ;;
+  *) say "merge:main could not be held in room $room (held by another member, or this member is not in that room); the team's one room for merge:main is the lobby; not starting"; exit 3 ;;
 esac
 
 start_forwarder || { say "cannot start the webhook forwarder"; exit 4; }
@@ -914,8 +922,21 @@ while true; do
   ensure_forwarder || { say "the event source cannot be kept running; releasing merge:main and stopping"; drop_claim; exit 4; }
   drain_events
   [ "$(date +%s)" -ge "$next_reconcile" ] && reconcile
-  q=""
   now=$(date +%s)
+  if [ "$held" -eq 1 ] && [ $((now - progress_at)) -ge "$max_hold_secs" ]; then
+    # #1054: a hold with no merged word for the limit is released here, by the holder, and taken again only for new work
+    drop_claim
+    post "$(printf 'released: held merge:main %dm with no merged word, waiting for a new ready:' $((max_hold_secs / 60)))"
+    say "held merge:main for the limit with no merged word; released it"
+    blocked=1
+  fi
+  if [ "$blocked" -eq 1 ]; then
+    [ "$once" -eq 1 ] && exit 0
+    bg "$run/wait.out" "$klatch" wait "$room" --only "ready:" --timeout "$reconcile_secs"
+    grep -q 'ready:' "$run/wait.out" 2> /dev/null && blocked=0
+    continue
+  fi
+  q=""
   for n in $(queue); do
     d="$(cat "$run/done-$n" 2> /dev/null || echo 0)"
     [ $((now - d)) -lt "$requeue_secs" ] && continue
@@ -932,7 +953,7 @@ while true; do
   if [ "$held" -eq 0 ]; then
     take_claim; rc=$?
     case "$rc" in
-      0) ;;
+      0) progress_at=$(date +%s) ;;
       1) say "the integrator role was removed; stopping"; exit 2 ;;
       *) say "merge:main is held by another member; waiting"; bg "$run/wait.out" "$klatch" wait "$room" --timeout 5; continue ;;
     esac
