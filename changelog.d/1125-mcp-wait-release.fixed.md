@@ -1,0 +1,1 @@
+- A `klatch_wait` over `POST /mcp` now ends within about 100 ms when the server is stopped (SIGTERM) or the client disconnects, instead of holding shutdown and its connection slot for up to 55 seconds (#1125).
