@@ -295,6 +295,21 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     args
 }
 
+/// The cargo arguments that build `klatch-server` as shipped (no test clock: the channel never reads it) in the same
+/// profile as the running bench, into its own target directory so it never meets the klatch copies (#1078).
+fn server_build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = ["build", "-q", "-p", "klatch-server"]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    if profile == "release" {
+        args.push("--release".into());
+    }
+    args.push("--target-dir".into());
+    args.push(dir.display().to_string());
+    args
+}
+
 /// Runs `build` under an exclusive file lock (so no two threads or processes build at once) and returns a private copy
 /// of the binary it produced, named by its content and renamed into place atomically. Cargo removes and re-links the
 /// built binary on every build, even a fresh one, so a test that had been handed the built path could find it gone
@@ -394,6 +409,55 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
         std::sync::OnceLock::new();
     BINARY.get_or_init(build_binary).clone()
+}
+
+/// The `klatch-server` binary the workspace builds, as a private copy (see `find_binary`). Built on first use, so a
+/// bench run that selects no channel scenario never builds it (#1078).
+pub fn find_server_binary() -> Result<std::path::PathBuf, String> {
+    static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
+        std::sync::OnceLock::new();
+    BINARY.get_or_init(build_server_binary).clone()
+}
+
+fn build_server_binary() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let profile = exe
+        .ancestors()
+        .find(|d| {
+            matches!(
+                d.file_name().and_then(|n| n.to_str()),
+                Some("debug" | "release")
+            )
+        })
+        .ok_or("could not find the cargo profile directory above the running executable")?
+        .to_path_buf();
+    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+    let dir = target.join("bench-bin-server");
+    let name = profile
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("debug");
+    let built = dir.join(name).join(if cfg!(windows) {
+        "klatch-server.exe"
+    } else {
+        "klatch-server"
+    });
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let args = server_build_args(name, &dir);
+    obtain_binary(&dir, &built, || {
+        let status = std::process::Command::new(cargo)
+            .args(args)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "could not build {} (cargo {status}; its own error is printed above)",
+                built.display()
+            ))
+        }
+    })
 }
 
 fn build_binary() -> Result<std::path::PathBuf, String> {
@@ -981,8 +1045,22 @@ mod tests {
 
 #[cfg(test)]
 mod build_args_tests {
-    use super::build_args;
+    use super::{build_args, server_build_args};
     use std::path::Path;
+
+    #[test]
+    fn the_server_build_is_klatch_server_in_the_same_profile_and_its_own_target_dir() {
+        let rel = server_build_args("release", Path::new("/t/bench-bin-server"));
+        assert!(rel.contains(&"klatch-server".to_string()), "{rel:?}");
+        assert!(rel.contains(&"--release".to_string()), "{rel:?}");
+        assert!(
+            !rel.contains(&"test-clock".to_string()),
+            "the server is built as shipped: {rel:?}"
+        );
+        let dbg = server_build_args("debug", Path::new("/t/bench-bin-server"));
+        assert!(!dbg.contains(&"--release".to_string()), "{dbg:?}");
+        assert_eq!(dbg.last().map(String::as_str), Some("/t/bench-bin-server"));
+    }
 
     #[test]
     fn a_release_bench_builds_the_release_binary() {
