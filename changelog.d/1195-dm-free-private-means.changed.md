@@ -1,0 +1,1 @@
+- A dm needs no room-creation grant and is covered by tests under the `granted` policy; the room-capability refusal now points a two-member need at `klatch dm`, and SECURITY.md, INTEGRATION.md and the `dm` help say a dm is private from other members but readable by the human (#1195).
