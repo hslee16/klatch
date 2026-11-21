@@ -70,7 +70,10 @@ fn the_commands_the_text_teaches_exist_with_the_shape_it_shows() {
         ("answer", "<ROOM> <NUMBER> <TEXT>"),
         ("find", "<ROOM> <TEXT>"),
     ] {
-        assert!(t.contains(&format!("{bin} --discover {cmd} ")), "{cmd}: {t}");
+        assert!(
+            t.contains(&format!("{bin} --discover {cmd} ")),
+            "{cmd}: {t}"
+        );
         let h = text(&run(&[cmd, "--help"]));
         assert!(
             h.contains(shape),
