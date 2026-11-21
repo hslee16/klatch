@@ -143,6 +143,7 @@ echo "klatch $*" >> "$FAKE_DIR/calls.log"
 cmd="$1"; shift
 case "$cmd" in
   claim)
+    if [ -e "$FAKE_DIR/claim-only-room" ] && [ "$1" != "$(cat "$FAKE_DIR/claim-only-room")" ]; then echo "Error: not a member of room $1" >&2; exit 1; fi
     if [ -e "$FAKE_DIR/claim-refuse" ]; then echo "Error: refused (integrator): bob may not take merge:main, which only an integrator or the human may; ask the human to run \`klatch admin integrator bob\`" >&2; exit 1; fi
     if [ -e "$FAKE_DIR/claim-other" ]; then echo "Error: merge:main is claimed by ivy" >&2; exit 1; fi
     echo "claim $*" >> "$FAKE_DIR/claims.log" ;;
@@ -180,6 +181,7 @@ SH
 cat > "$bin/gate" <<'SH'
 #!/bin/sh
 echo "gate on $(git rev-parse --abbrev-ref HEAD)" >> "$FAKE_DIR/gate.log"
+[ -e "$FAKE_DIR/gate-sleep" ] && /bin/sleep "$(cat "$FAKE_DIR/gate-sleep")"
 exit "$(cat "$FAKE_DIR/gate-rc" 2> /dev/null || echo 0)"
 SH
 cat > "$bin/bench" <<'SH'
@@ -246,7 +248,7 @@ advance() { # file content: main moves on (a merge by someone else)
 # cases test the integrator, not the caller (#866).
 _run() {
   # shellcheck disable=SC2016 # the single quotes are on purpose: perl, not the shell, expands $SIG
-  exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" REALGIT="$realgit" INTEGRATOR_BENCH="$bin/bench" INTEGRATOR_VERIFY_WAIT_SECS="${VW:-}" \
+  exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" REALGIT="$realgit" INTEGRATOR_BENCH="$bin/bench" INTEGRATOR_VERIFY_WAIT_SECS="${VW:-}" INTEGRATOR_ROOM="${ROOM:-}" INTEGRATOR_MAX_HOLD_SECS="${MHS:-}" INTEGRATOR_MAX_HOLD_MINUTES="${MHM:-}" \
     INTEGRATOR_REPO="$repo" INTEGRATOR_KLATCH="${KB:-$bin/klatch}" INTEGRATOR_GATE="$bin/gate" INTEGRATOR_GH_REPO=hslee16/klatch \
     INTEGRATOR_RECONCILE_SECS="${RS:-2}" INTEGRATOR_POLL_SECS=0.1 INTEGRATOR_GH_RETRY_SLEEP=0 INTEGRATOR_GH_TIMEOUT=20 \
     INTEGRATOR_CHECK_WAIT_SECS="${CW:-25}" INTEGRATOR_FORWARDER_TRIES=3 INTEGRATOR_FORWARDER_MIN_UP=1000 INTEGRATOR_REQUEUE_SECS=0 \
@@ -270,7 +272,7 @@ waitfor() { # file, extended regex, seconds
 posts() { cat "$fake/posts.log" 2> /dev/null | paste -sd '|' -; }
 calls() { grep -c "$1" "$fake/calls.log" 2> /dev/null || true; }
 fixed_posts() { # every word posted is one of the fixed templates
-  ! grep -Evq '^(integrating|checking|merged): #[0-9]+$|^reverted: #[0-9]+$|^halted: main (red|not verified) after #[0-9]+$|^dropped: #[0-9]+ (conflict|checks-failed|closed|timeout|head-changed|error)$|^parked: (running the gate for|waiting for checks on) #[0-9]+, back by [0-9]+m$' "$fake/posts.log" 2> /dev/null
+  ! grep -Evq '^(integrating|checking|merged): #[0-9]+$|^reverted: #[0-9]+$|^released: held merge:main [0-9]+m with no merged word, waiting for a new ready:$|^halted: main (red|not verified) after #[0-9]+$|^dropped: #[0-9]+ (conflict|checks-failed|closed|timeout|head-changed|error)$|^parked: (running the gate for|waiting for checks on) #[0-9]+, back by [0-9]+m$' "$fake/posts.log" 2> /dev/null
 }
 subst() { sed -e "s/@N@/$2/g" -e "s/@SHA@/$3/g" -e "s/@CONCL@/${4:-success}/g" "$fx/$1.json"; }
 A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -617,6 +619,38 @@ if [ "$want_order" = 'integrating: #7|checking: #7|parked: waiting for checks on
 newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance code.txt 'l1\nl2\nMAIN\nl4\nl5\n'
 runint --dry-run --merge-without-update > "$fake/out" 2>&1
 if grep -q 'would post: dropped: #7 conflict' "$fake/out"; then ok "the dry run of the mode still reports a conflict as dropped"; else bad "dry mwu conflict: $(cat "$fake/out")"; fi
+
+# ---- merge:main is one room, the lobby; the helper holds it in its configured room or does not run (#1055) ----
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; echo lobby > "$fake/claim-only-room"
+ROOM=ops runint --once > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 3 ] && grep -q "room ops" "$fake/out" && grep -q "the lobby" "$fake/out" && [ "$(calls 'webhook forward')" -eq 0 ] && [ ! -s "$fake/posts.log" ] && [ "$(calls 'pr merge')" -eq 0 ]; then ok "a helper that cannot hold merge:main in its configured room (not the lobby) refuses to run: exit 3, the room and the lobby named, no forwarder, no post"; else bad "wrong room rc=$rc: $(cat "$fake/out")"; fi
+ROOM=ops runint --once > "$fake/out" 2>&1
+if grep -q "claim ops merge:main" "$fake/claims.log" 2> /dev/null || grep -q "klatch claim ops merge:main" "$fake/calls.log"; then ok "the claim is asked for in INTEGRATOR_ROOM"; else bad "claim room: $(cat "$fake/calls.log")"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; echo lobby > "$fake/claim-only-room"
+runint --once > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && posts | grep -q 'merged: #7$' && ! grep -v '^claim lobby\|^release lobby' "$fake/claims.log" | grep -q .; then ok "by default the room is the lobby: every claim and release is for lobby and the PR merges"; else bad "lobby default rc=$rc claims=$(cat "$fake/claims.log")"; fi
+newworld
+ROOM='bad room;x' runint --once > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "INTEGRATOR_ROOM" "$fake/out" && [ "$(calls 'klatch claim')" -eq 0 ]; then ok "a room name that is not a plain name is a usage error before any claim"; else bad "bad room rc=$rc: $(cat "$fake/out")"; fi
+
+# ---- a hold with no merged word is released by the helper itself, and taken again only by a fresh ready: (#1054) ----
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; mkpr 8 README.md 'eight\n'
+echo 1 > "$fake/gate-rc"; echo 2 > "$fake/gate-sleep"
+MHS=1 RS=30 runint_bg
+if waitfor "$fake/posts.log" '^released: held merge:main' 40; then ok "a hold with no merged word for the limit is released with a visible word"; else bad "no release: posts=$(posts) out=$(tail -3 "$fake/out")"; fi
+rel_at="$(grep -c . "$fake/posts.log")"
+/bin/sleep 3
+if [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ] && ! posts | grep -q 'integrating: #8' && [ "$(grep -c . "$fake/posts.log")" -eq "$rel_at" ]; then ok "after releasing, the claim is not taken again while the queue is unchanged (a stuck loop cannot hold forever)"; else bad "retook: posts=$(posts) claims=$(tail -3 "$fake/claims.log")"; fi
+echo 0 > "$fake/gate-rc"; rm -f "$fake/gate-sleep"; touch "$fake/wake"
+if waitfor "$fake/posts.log" 'merged: #8' 40; then ok "a fresh ready: word makes it take the claim again and carry on"; else bad "no resume: posts=$(posts)"; fi
+kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
+if fixed_posts; then ok "the release word is a fixed template of an integer"; else bad "posts: $(posts)"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
+MHS=1 runint --once > "$fake/out" 2>&1
+if posts | grep -q 'merged: #7$' && ! posts | grep -q '^released'; then ok "a merged word resets the hold clock: a working integrator is not released"; else bad "released while merging: $(posts)"; fi
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
+MHM=abc runint --once > "$fake/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "INTEGRATOR_MAX_HOLD_MINUTES" "$fake/out"; then ok "INTEGRATOR_MAX_HOLD_MINUTES must be a whole number"; else bad "bad hold knob rc=$rc: $(cat "$fake/out")"; fi
 
 # ---- a real klatch refuses a plain member (only when a built binary exists; temp home and key dir) ----
 kb="${INTEGRATOR_TEST_KLATCH:-$here/../target/debug/klatch}"
