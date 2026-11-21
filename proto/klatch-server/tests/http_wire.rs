@@ -457,6 +457,64 @@ fn every_route_needs_a_live_credential_for_the_member_named() {
     assert!(!log.contains(&token), "{log}");
 }
 
+/// Behind a reverse proxy or stunnel the proxy's word about the caller is only a header (#110, #161): the address, a
+/// forwarded user, a client-certificate header and a loopback source (the proxy is on this host) give no identity and
+/// change none. The credential alone decides.
+#[test]
+fn forwarded_identity_headers_give_no_identity_and_change_none() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let token = issue_credential(&dir, "w-1");
+    let _other = issue_credential(&dir, "w-2");
+    let s = Server::started(&dir, &[]);
+    let forged: &[(&str, &str)] = &[
+        ("X-Forwarded-For", "10.0.0.7"),
+        ("X-Real-IP", "10.0.0.7"),
+        ("Forwarded", "for=10.0.0.7;proto=https"),
+        ("X-Forwarded-User", "w-1"),
+        ("X-Remote-User", "w-1"),
+        ("X-Klatch-Forwarded-Member", "w-1"),
+        ("X-SSL-Client-S-DN", "CN=w-1"),
+        ("X-Client-Cert", "CN=w-1"),
+        ("X-Client-Verify", "SUCCESS"),
+    ];
+    // no credential: every forged header together is still a 401, on every route, from a loopback source
+    for (method, path) in [("GET", "/v1/stream"), ("POST", "/v1/frames")] {
+        let mut h = forged.to_vec();
+        h.push(("X-Klatch-Session", "0123456789abcdef0123456789abcdef"));
+        let r = exchange(s.addr, method, path, &h, b"{}\n");
+        assert_eq!(r.status, 401, "{method} {path}");
+        let mut h = forged.to_vec();
+        h.push(("X-Klatch-Member", "w-1"));
+        let r = exchange(s.addr, method, path, &h, b"{}\n");
+        assert_eq!(r.status, 401, "{method} {path} with a member name only");
+    }
+    let r = exchange(s.addr, "POST", "/mcp", forged, b"{}");
+    assert_eq!(r.status, 401, "/mcp");
+    // a credential for w-1 with headers that claim w-2: the session is w-1's, whatever the proxy says
+    let bearer = format!("Bearer {token}");
+    let mut h: Vec<(&str, &str)> = forged
+        .iter()
+        .map(|(n, v)| (*n, if v == &"w-1" { "w-2" } else { *v }))
+        .collect();
+    h.push(("X-Klatch-Member", "w-1"));
+    h.push(("Authorization", bearer.as_str()));
+    let st = send_request(s.addr, "GET", "/v1/stream", &h, b"");
+    let mut r = BufReader::new(st);
+    let (status, _) = read_head(&mut r);
+    assert_eq!(status, 200);
+    let mut line = String::new();
+    let mut hello = String::new();
+    while !hello.contains("\"type\":\"hello\"") {
+        line.clear();
+        r.read_line(&mut line).unwrap();
+        hello.push_str(&line);
+        assert!(!line.is_empty(), "no hello: {hello}");
+    }
+    assert!(hello.contains("\"member\":\"w-1\""), "{hello}");
+    assert!(!hello.contains("w-2"), "{hello}");
+}
+
 #[test]
 fn the_stream_begins_with_a_verified_hello_and_carries_frames_as_the_session_protocol_writes_them()
 {
