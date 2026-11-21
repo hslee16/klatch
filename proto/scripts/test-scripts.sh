@@ -122,6 +122,31 @@ t0="$work/not-a-repo"; mkdir -p "$t0/proto/scripts"; cp "$gate" "$t0/proto/scrip
 FAKE_LOG="$work/log"; : > "$FAKE_LOG"
 if env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="fmt" GIT_CEILING_DIRECTORIES="$work" "$t0/proto/scripts/gate" > "$work/out" 2>&1; [ -s "$work/log" ] && ! grep -q "uncommitted" "$work/out"; then ok "outside a git checkout (an export) the gate has no commit to compare and runs"; else bad "not a repo: $(cat "$work/out")"; fi
 
+# ---- step 11 says which check failed (#1081): in an export with stub checks, the first fails with long output
+d="$work/diag"; mkdir -p "$d/proto/scripts" "$d/release"; cp "$gate" "$d/proto/scripts/gate"
+printf '#!/bin/sh\nexit 0\n' > "$d/proto/scripts/shuttle"
+printf '#!/bin/sh\necho TIMEOUTS-OUT\nexit 0\n' > "$d/release/check-timeouts.sh"
+cat > "$d/release/check-versions.sh" <<'SH'
+#!/bin/sh
+echo EARLY-LINE-GONE
+i=0; while [ $i -lt 60 ]; do echo "versions line $i"; i=$((i+1)); done
+echo STDERR-LINE >&2
+exit 3
+SH
+printf '#!/bin/sh\necho SHOULD-NOT-RUN >> "%s/ran"\nexit 0\n' "$work" > "$d/release/test-check-versions.sh"
+chmod +x "$d/proto/scripts/shuttle" "$d"/release/*.sh
+rm -f "$work/ran" "$work/gate.log"
+FAKE_LOG="$work/log"; : > "$FAKE_LOG"
+env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="" GIT_CEILING_DIRECTORIES="$work" GATE_LOG="$work/gate.log" "$d/proto/scripts/gate" > "$work/out" 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && grep -q "FAILED at step 11: release and shell checks" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing check in step 11 still fails the gate at step 11 (#1081)"; else bad "step 11 rc=$rc: $(tail -n 20 "$work/out")"; fi
+if grep -q "release/check-versions.sh" "$work/out" && grep -q "STDERR-LINE" "$work/out" && grep -q "versions line 59" "$work/out" && ! grep -q "versions line 19" "$work/out"; then ok "the failing check's command line and its last 40 lines (stdout and stderr) are printed (#1081)"; else bad "diagnostics: $(tail -n 60 "$work/out")"; fi
+if ! grep -q "TIMEOUTS-OUT" "$work/out" && [ ! -e "$work/ran" ]; then ok "a passing check stays quiet and the first failure stops the chain (#1081)"; else bad "quiet/order: $(cat "$work/out")"; fi
+if grep -q "^### release/check-timeouts.sh" "$work/gate.log" && grep -q "TIMEOUTS-OUT" "$work/gate.log" && grep -q "versions line 0\$" "$work/gate.log" && grep -q "STDERR-LINE" "$work/gate.log"; then ok "GATE_LOG gets every check's command line and full output (#1081)"; else bad "GATE_LOG: $(cat "$work/gate.log" 2>&1)"; fi
+rm -f "$work/gate.log"
+env -u GATE_LOG PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="" GIT_CEILING_DIRECTORIES="$work" "$d/proto/scripts/gate" > "$work/out" 2>&1
+if [ ! -e "$work/gate.log" ] && ! grep -q "TIMEOUTS-OUT" "$work/out"; then ok "without GATE_LOG nothing extra is written (#1081)"; else bad "no GATE_LOG: $(cat "$work/out")"; fi
+
 # ---- the pre-push hook installer, in a throwaway repository -------------------------------------------------------
 t="$work/repo"; mkdir -p "$t/proto/scripts"; git -C "$t" init -q
 cp "$here/gate" "$here/install-git-hook" "$t/proto/scripts/"
