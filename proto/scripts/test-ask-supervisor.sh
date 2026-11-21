@@ -37,6 +37,9 @@ cat > "$bin/launch" <<'SH'
 #!/bin/sh
 # one line per start: ask member active, plus anything that must never reach a helper
 echo "$ASKSUP_ASK $ASKSUP_MEMBER active=$ASKSUP_ACTIVE room=$ASKSUP_ROOM text=${ASKSUP_TEXT:-none}" >> "$FAKE_DIR/launches.log"
+# #1177: a launcher reports what the helper really cost by writing ASKSUP_COST_FILE (the test picks the bytes)
+[ -n "${ASKSUP_COST_FILE:-}" ] && echo "cost-file-set" >> "$FAKE_DIR/costenv.log"
+[ -n "${ASKSUP_COST_FILE:-}" ] && [ -e "$FAKE_DIR/cost-value" ] && cp "$FAKE_DIR/cost-value" "$ASKSUP_COST_FILE"
 [ -e "$FAKE_DIR/launch-fails" ] && exit 3
 [ -e "$FAKE_DIR/launch-quick" ] && exit 0
 while [ ! -e "$FAKE_DIR/stop-$ASKSUP_MEMBER" ]; do /bin/sleep 0.2; done
@@ -142,6 +145,44 @@ run_once
 if [ "$(launches)" -eq 0 ] && grep -qi 'off' "$fake/out"; then ok "the off switch (ASKSUP_OFF_FILE exists): nothing is started"; else bad "off switch: $(launches)"; fi
 rm -f "$work/off"; run_once
 if [ "$(launches)" -eq 1 ]; then ok "removing the off file lets the next pass start the helper"; else bad "off removed: $(launches)"; fi
+
+# ---- the measured cost (#1177): the launcher reports it in ASKSUP_COST_FILE, the fixed charge is the fallback ----
+spent_of() { cat "$work/state/spent" 2> /dev/null || echo none; }
+same_num() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a == b) }'; } # 0.5 equals 0.50
+newworld; ask 5 alice; yes_for 5 helper1; printf '0.5\n' > "$fake/cost-value"
+ASKSUP_START_USD=2 run_once
+if grep -q cost-file-set "$fake/costenv.log" 2> /dev/null && same_num "$(spent_of)" 0.5; then ok "the helper gets ASKSUP_COST_FILE; the cost it wrote (0.5) replaces the fixed charge (2) in the total"; else bad "measured cost: spent=$(spent_of) env=$(cat "$fake/costenv.log" 2> /dev/null)"; fi
+newworld; ask 5 alice; yes_for 5 helper1; printf '7.25' > "$fake/cost-value"
+ASKSUP_START_USD=2 ASKSUP_MAX_TOTAL_USD=100 run_once
+if same_num "$(spent_of)" 7.25; then ok "a measured cost above the fixed charge is charged too (no trailing newline needed)"; else bad "higher cost: spent=$(spent_of)"; fi
+newworld; ask 5 alice; yes_for 5 helper1
+ASKSUP_START_USD=2 run_once
+if same_num "$(spent_of)" 2; then ok "no cost file written: the fixed per-start charge stays"; else bad "absent cost: spent=$(spent_of)"; fi
+# shellcheck disable=SC2016 # the dollar sign is literal junk
+for junk in 'lots' '-3' '1e9' '5 USD; touch pwned' '0.5.5' '' '$(touch pwned)' '1000000000000000000000000'; do
+  newworld; ask 5 alice; yes_for 5 helper1; printf '%s\n' "$junk" > "$fake/cost-value"
+  ASKSUP_START_USD=2 run_once
+  if same_num "$(spent_of)" 2 && [ ! -e pwned ] && [ ! -e "$work/pwned" ]; then ok "an unparsable cost ('$junk') is ignored: the fixed charge stays"; else bad "junk cost '$junk': spent=$(spent_of)"; fi
+done
+newworld; ask 5 alice; yes_for 5 helper1; printf '0.5\nignored text after the number\n' > "$fake/cost-value"
+ASKSUP_START_USD=2 run_once
+if same_num "$(spent_of)" 2; then ok "a cost file with text after the number is not trusted: the fixed charge stays"; else bad "multi-line cost: spent=$(spent_of)"; fi
+newworld; ask 5 alice; yes_for 5 helper1; printf '99999\n' > "$fake/cost-value"
+ASKSUP_START_USD=2 ASKSUP_MAX_TOTAL_USD=10 run_once
+if same_num "$(spent_of)" 10; then ok "a reported cost is capped at ASKSUP_MAX_TOTAL_USD (99999 counts as 10)"; else bad "capped cost: spent=$(spent_of)"; fi
+# the cap reflects reality: with a fixed charge of 2 and a cap of 3 only one start fits; measured at 0.5 a second does
+newworld; ask 5 alice; ask 6 alice; yes_for 5 helper1; yes_for 6 helper2; printf '0.5\n' > "$fake/cost-value"
+export ASKSUP_MAX_HELPERS=5 ASKSUP_START_USD=2 ASKSUP_MAX_TOTAL_USD=3
+run_once; run_once
+n1="$(launches)"
+printf '3\n' > "$fake/cost-value"; ask 7 alice; yes_for 7 helper1; yes_for 7 helper2
+run_once; run_once
+n2="$(launches)"
+if [ "$n1" -eq 2 ] && [ "$n2" -eq 3 ]; then ok "measured costs free budget the fixed charge would hold (a second start fits at 0.5, not at 2)"; else bad "cap with measured: n1=$n1 n2=$n2 spent=$(spent_of)"; fi
+ask 8 alice; yes_for 8 helper1
+run_once
+if [ "$(launches)" -eq 3 ] && grep -qi 'spend cap' "$fake/out"; then ok "once the measured total reaches the cap no more helpers are started, and it says so"; else bad "after cap: $(launches) spent=$(spent_of) $(cat "$fake/out")"; fi
+base_env
 
 # ---- dry run ----
 newworld; ask 5 alice; yes_for 5 helper1

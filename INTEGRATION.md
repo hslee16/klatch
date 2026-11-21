@@ -280,7 +280,10 @@ visible as before.
 The helper identities are created once by you (`klatch worker issue`, or `proto/scripts/team`); the supervisor issues,
 renews and revokes nothing, and posts nothing. Bounds, all with a refusal that says which: `ASKSUP_MAX_HELPERS` at once,
 one helper per ask (`ASKSUP_MAX_PER_ASK`, a second only after the first ended), `ASKSUP_MAX_TOTAL_USD` in total with
-`ASKSUP_START_USD` charged per start (keep the state in `ASKSUP_STATE` so the cap survives a restart),
+`ASKSUP_START_USD` charged per start (keep the state in `ASKSUP_STATE` so the cap survives a restart; a launcher can
+report the real cost by writing one decimal USD number, such as `0.37`, to the file named by `ASKSUP_COST_FILE` in the
+helper's environment, and when the helper ends that number replaces the fixed charge, capped at `ASKSUP_MAX_TOTAL_USD`;
+a missing file, any other text or a negative number leaves the fixed charge),
 `ASKSUP_HELPER_SECS` per helper (then `kill -9`), `ASKSUP_PAUSE_SECS` between starts, and an off switch: while the file
 `ASKSUP_OFF_FILE` exists nothing new is started. A helper never starts a helper: an ask posted by a candidate is skipped,
 and a process with `ASKSUP_ACTIVE=1` refuses to run the supervisor. A signal stops the supervisor and the helpers it
