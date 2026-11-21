@@ -238,7 +238,7 @@ of the table above, run as the session's principal with the same guards). No new
 | A credential was checked once when a process started, so a long-lived `serve` or `stream` kept working after its credential expired or was revoked | fixed here (`check_credential_live`) |
 | `klatch admin` decides who may administer by a terminal and a process-tree walk, and its keystore family has no principal | #318 |
 | The daemon (#102) carried no sealed-label keys and no harness evidence per connection | fixed in #1096 (per-request keys within clearance; harness from the peer pid for an unidentified connection). A connection that identifies still joins as the generic floor (#880, #881) |
-| A wire `join` (`klatch serve --stdio` and the daemon alike) was always judged as the generic floor; only the CLI commands passed the harness | #1115 |
+| A wire `join` over `klatch serve --stdio` was judged as the generic floor; only the CLI commands passed the harness | fixed in #1115 (the process-tree evidence is passed to the session; ssh sessions and mcp stay the floor) |
 | A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |
 | A key bundle proves a member and not its harness, so a worker joins as the generic floor and a capability-requiring room refuses it | #880 |
 | A typed `KLATCH_NAME` inside a real Claude Code session is the generic floor for `room-require` (fails closed, by design) | #881 |

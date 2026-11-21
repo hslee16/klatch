@@ -226,3 +226,44 @@ fn a_wake_requirement_is_met_by_a_claude_new_enough_to_have_it() {
     let (ok, text) = finish(session(&h, &fake, &cmd, "sess-wake-2"));
     assert!(ok, "{text}");
 }
+
+/// `klatch serve --stdio` in a session, fed one `join gated` request on standard input.
+fn serve_join(h: &Home, fake: &Path, name: Option<&str>, sid: &str) -> (bool, String) {
+    let frame = request("j", "join", r#"{"room":"gated"}"#);
+    let serve = klatch_in_session(h, fake, name, "--discover serve --stdio");
+    let cmd = format!("printf '%s\\n' '{frame}' | {serve}");
+    finish(session(h, fake, &cmd, sid))
+}
+
+#[test]
+fn serve_stdio_in_a_genuine_claude_code_session_joins_a_room_that_requires_what_it_has() {
+    let h = Home::new();
+    require(&h, "gated", REQUIRE);
+    let fake = fake_home(&h);
+    let (_, text) = serve_join(&h, &fake, None, "sess-serve-1");
+    assert!(text.contains(r#""ok":true"#), "{text}");
+    assert!(!text.contains("generic"), "{text}");
+}
+
+#[test]
+fn serve_stdio_with_a_typed_name_is_the_generic_floor_even_inside_a_real_session() {
+    let h = Home::new();
+    require(&h, "gated", REQUIRE);
+    let fake = fake_home(&h);
+    let (_, text) = serve_join(&h, &fake, Some("typed"), "sess-serve-2");
+    assert!(
+        !text.contains(r#""ok":true"#),
+        "a typed name was admitted: {text}"
+    );
+    assert!(text.contains("generic"), "{text}");
+}
+
+#[test]
+fn serve_stdio_with_no_session_above_it_is_the_generic_floor() {
+    let h = Home::new();
+    require(&h, "gated", REQUIRE);
+    let frame = request("j", "join", r#"{"room":"gated"}"#);
+    let frames = h.serve("alice", &[&frame]);
+    let text = format!("{frames:?}");
+    assert!(text.contains("generic"), "{text}");
+}
