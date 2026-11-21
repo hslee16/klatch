@@ -221,6 +221,16 @@ Settings are environment variables listed at the top of the script (budget `TEAM
   its README; line 1 is the section title, `###` headings are the subsections) and do not append a section to
   RESEARCH-NOTES.md (`release/research-fragments.sh`, #859). Refer to an unassembled note as "the research note for #NNN".
   Never renumber a section already in RESEARCH-NOTES.md.
+- Union merge (#1065): the root `.gitattributes` marks a few append-only files `merge=union` (`proto/AUTHZ-AUDIT.md`, the `mod x;`
+  registries `domain/mod.rs`, `gateway/mod.rs`, `gateway/gateway/tests/mod.rs` and the bench `scenarios/mod.rs`), so two branches that each
+  add a line at the same place merge with both lines kept and no conflict. The union driver is built in to git: there is
+  nothing to configure or register. It applies to merges git runs itself (your `git merge`, `proto/scripts/pr-sweep`, the
+  integrator) and NOT on GitHub, which ignores `.gitattributes` merge strategies: GitHub's `mergeable_state` can say
+  `dirty` while the local merge is clean, so the integrator merges locally and pushes. A union merge keeps both sides of
+  two edits of the SAME line, so after such a merge read the file: `authz_audit.rs` fails on an AUTHZ-AUDIT row that
+  appears twice (delete the stale copy), and a duplicate `mod` or `pub use` does not compile. Add a file to
+  `.gitattributes` only if its conflicts are always both-sides-added lines and a check catches a duplicate; never a
+  file with code bodies. `proto/scripts/test-merge-union.sh` proves it.
 - Never claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md and the like) in a room (#533). A claim is
   exclusive per path and an advisory claim held while its owner waits stalls everyone who needs one line. Put the change
   in a fragment file instead; the claim code has no append-only or section kind, by decision.
