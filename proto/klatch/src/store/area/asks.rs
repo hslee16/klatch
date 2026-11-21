@@ -23,8 +23,27 @@ pub trait AskStore: MessageStore + ClaimStore {
                 .iter()
                 .find(|r| r.name == format!("ask-{}", a.seq))
                 .cloned();
+            self.attach_dm(a)?;
         }
         Ok(asks)
+    }
+
+    /// Finds the dm a moved ask points at (#1188). The pointer stands only when that room exists with both members
+    /// in it; otherwise it is dropped. Only the room's name, member count and latest timestamp are read, never a
+    /// message.
+    fn attach_dm(&self, ask: &mut OpenAsk) -> Result<()> {
+        let Some(m) = ask.moved.as_mut() else {
+            return Ok(());
+        };
+        let name = crate::domain::dm_room(&m.by, &m.with);
+        m.room = self
+            .rooms_with_prefix(&name)?
+            .into_iter()
+            .find(|r| r.name == name && r.members >= 2);
+        if m.room.is_none() {
+            ask.moved = None;
+        }
+        Ok(())
     }
 
     /// `member`'s own open asks whose claim lapsed without an answer (a helper that failed or vanished), not

@@ -55,9 +55,10 @@ pub use ask_find::{AnsweredAsk, find_answered};
 pub use asker_gone::{Served, exited_asker_notes, gone_asker_notes, served_by};
 pub use asks::{
     ASK_LEASE_DEFAULT_SECS, ASK_LEASE_MAX_SECS, ASK_PREFIX, ASK_WORDS, AskRoom, CLAIM_DEFAULT_SECS,
-    CLAIM_MAX_SECS, Clarification, CloseOutcome, NO_CAPABLE_AFTER, OpenAsk, Outcome, OutcomeKind,
-    ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, close_outcome, closed_target,
-    is_ask, latest_close, open_asks, parse_clarification, parse_outcome, reopen_target,
+    CLAIM_MAX_SECS, Clarification, CloseOutcome, MovedDm, NO_CAPABLE_AFTER, OpenAsk, Outcome,
+    OutcomeKind, ROOM_ACTIVE_SECS, STALE_AFTER_SECS, answer_target, claim_ttl, close_outcome,
+    closed_target, is_ask, latest_close, moved_target, open_asks, parse_clarification,
+    parse_outcome, reopen_target,
 };
 pub use board::{
     BOARD_LIST_LIMIT, BOARD_WORDS, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS,

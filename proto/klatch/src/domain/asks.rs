@@ -2,7 +2,7 @@
 //! claims (DESIGN section 25.4). An ask is open until someone answers it or its asker closes it. Releasing an
 //! `ask:<seq>` claim does not end it: a helper that gives up releases too.
 
-use crate::domain::{Claim, Message};
+use crate::domain::{Claim, Message, valid_name};
 
 /// A message whose body starts with this text is an ask.
 pub const ASK_PREFIX: &str = "seeking:";
@@ -109,6 +109,27 @@ pub struct OpenAsk {
     pub waiting_on_asker: Option<Clarification>,
     /// The ask's working room, if anyone has joined `ask-<N>`.
     pub room: Option<AskRoom>,
+    /// The dm the exchange moved to (`moved #N: dm with NAME`, #1188), with the dm room once the store has found it.
+    pub moved: Option<MovedDm>,
+}
+
+impl MovedDm {
+    /// The member of the pair that is not the asker: who the asker's exchange is with.
+    pub fn counterpart(&self, asker: &str) -> &str {
+        if self.by == asker {
+            &self.with
+        } else {
+            &self.by
+        }
+    }
+}
+
+/// Where a moved ask's exchange went: the member who posted the pointer, the member named, and their dm room.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MovedDm {
+    pub by: String,
+    pub with: String,
+    pub room: Option<AskRoom>,
 }
 
 impl OpenAsk {
@@ -158,14 +179,22 @@ impl OpenAsk {
         if let Some(r) = &self.room {
             parts.push(format!("room {} {} members", r.name, r.members));
         }
+        if let Some(m) = self.moved.as_ref().filter(|m| m.room.is_some()) {
+            // the name only: nothing of what is said in the dm
+            parts.push(format!("in a dm with {}", m.counterpart(&self.sender)));
+        }
         bracket(parts)
     }
 
     /// The ask's working room has had news recently, so the ask is being worked on.
     pub fn room_active(&self, now: i64) -> bool {
-        self.room
-            .as_ref()
-            .is_some_and(|r| now - r.last_activity <= ROOM_ACTIVE_SECS)
+        let recent = |r: &AskRoom| now - r.last_activity <= ROOM_ACTIVE_SECS;
+        self.room.as_ref().is_some_and(recent)
+            || self
+                .moved
+                .as_ref()
+                .and_then(|m| m.room.as_ref())
+                .is_some_and(recent)
     }
 
     /// When the asker needs this by, if the text says `(by YYYY-MM-DD)` or `(by YYYY-MM-DD HH:MM)` (UTC).
@@ -304,8 +333,8 @@ pub fn parse_outcome(body: &str) -> Option<(OutcomeKind, i64, String)> {
 }
 
 /// The prefixes of every word that `open_asks` folds (the ask, its answer, close, reopen, decline, failure, partial
-/// and the clarification pair), for a store query that reads only those messages at any depth (#731).
-pub const ASK_WORDS: [&str; 9] = [
+/// the clarification pair and the pointer to a dm), for a store query that reads only those messages at any depth (#731).
+pub const ASK_WORDS: [&str; 10] = [
     ASK_PREFIX,
     "answer to #",
     "closed #",
@@ -315,6 +344,7 @@ pub const ASK_WORDS: [&str; 9] = [
     "failed #",
     "need-info #",
     "info #",
+    "moved #",
 ];
 
 pub fn is_ask(body: &str) -> bool {
@@ -404,6 +434,36 @@ pub fn reopen_target(body: &str) -> Option<i64> {
     after.starts_with(':').then_some(n)
 }
 
+/// The member name in `moved #<N>: dm with <NAME>` at the start of a body, with the ask number (#1188).
+/// Only the number and the name are read; any text after the name is data and is never kept.
+pub fn moved_target(body: &str) -> Option<(i64, String)> {
+    let (n, after) = number(body.strip_prefix("moved #")?)?;
+    let name = after.strip_prefix(": dm with ")?;
+    let token = name.split_whitespace().next()?;
+    // punctuation that ends the sentence is not part of the name
+    let token = token.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'));
+    valid_name(token).then(|| (n, token.to_string()))
+}
+
+/// The latest `moved #<seq>:` that points at a dm the asker is in: posted after the ask by the asker, or by anyone
+/// naming the asker, so a third pair cannot keep someone else's ask alive (#1188).
+fn moved_to(messages: &[Message], ask: &Message) -> Option<MovedDm> {
+    messages
+        .iter()
+        .filter(|m| m.seq > ask.seq)
+        .filter_map(|m| {
+            let (n, with) = moved_target(&m.body)?;
+            let involves = m.sender == ask.sender || with == ask.sender;
+            (n == ask.seq && m.sender != with && involves).then(|| (m.seq, m.sender.clone(), with))
+        })
+        .max_by_key(|(seq, _, _)| *seq)
+        .map(|(_, by, with)| MovedDm {
+            by,
+            with,
+            room: None,
+        })
+}
+
 /// The asks in `messages` that are still open. `live_claims` are unexpired claims.
 pub fn open_asks(messages: &[Message], live_claims: &[Claim]) -> Vec<OpenAsk> {
     let mut asks: Vec<&Message> = messages.iter().filter(|m| is_ask(&m.body)).collect();
@@ -454,6 +514,7 @@ pub fn open_asks(messages: &[Message], live_claims: &[Claim]) -> Vec<OpenAsk> {
                 .collect(),
             waiting_on_asker: waiting_on(messages, a),
             room: None,
+            moved: moved_to(messages, a),
         })
         .collect()
 }
@@ -634,6 +695,129 @@ mod tests {
             msg(3, "asker", "reopen #1: closed too soon", 7),
         ];
         assert_eq!(open_asks(&m, &[]).len(), 1);
+    }
+
+    #[test]
+    fn a_moved_word_names_its_ask_and_a_valid_member() {
+        for (text, expected) in [
+            ("moved #3: dm with alpha", Some((3, "alpha"))),
+            ("moved #12: dm with a.b-c_d", Some((12, "a.b-c_d"))),
+            ("moved #3: dm with alpha.", Some((3, "alpha"))),
+            ("moved #3: dm with alpha and more words", Some((3, "alpha"))),
+            ("moved #3: dm with", None),
+            ("moved #3: dm with ", None),
+            ("moved #3: dm with a/b", None),
+            ("moved #3: dm with @alpha", None),
+            ("moved #3 dm with alpha", None),
+            ("moved #: dm with alpha", None),
+            ("moved #x: dm with alpha", None),
+            ("moved #3: room with alpha", None),
+            ("please moved #3: dm with alpha", None),
+            ("Moved #3: dm with alpha", None),
+        ] {
+            let want = expected.map(|(n, w)| (n, w.to_string()));
+            assert_eq!(moved_target(text), want, "{text:?}");
+        }
+    }
+
+    fn moved_asks(posts: &[(&str, &str)]) -> Vec<OpenAsk> {
+        let mut m = vec![msg(1, "asker", "seeking: x", 5)];
+        for (i, (who, body)) in posts.iter().enumerate() {
+            m.push(msg(i as i64 + 2, who, body, 6));
+        }
+        open_asks(&m, &[])
+    }
+
+    fn moved_of(posts: &[(&str, &str)]) -> Option<(String, String)> {
+        moved_asks(posts)[0]
+            .moved
+            .as_ref()
+            .map(|m| (m.by.clone(), m.with.clone()))
+    }
+
+    #[test]
+    fn the_asker_or_a_helper_pointing_at_the_asker_moves_an_ask() {
+        let want = Some(("asker".to_string(), "helper".to_string()));
+        assert_eq!(moved_of(&[("asker", "moved #1: dm with helper")]), want);
+        let want = Some(("helper".to_string(), "asker".to_string()));
+        assert_eq!(moved_of(&[("helper", "moved #1: dm with asker")]), want);
+    }
+
+    #[test]
+    fn a_moved_word_that_does_not_involve_the_asker_is_ignored() {
+        assert_eq!(moved_of(&[("other", "moved #1: dm with helper")]), None);
+        assert_eq!(moved_of(&[("helper", "moved #1: dm with helper")]), None);
+        assert_eq!(moved_of(&[("asker", "moved #1: dm with asker")]), None);
+        assert_eq!(moved_of(&[("helper", "moved #2: dm with asker")]), None);
+        assert_eq!(moved_of(&[("asker", "moved #1: dm with a/b")]), None);
+    }
+
+    #[test]
+    fn a_moved_word_posted_before_the_ask_is_ignored() {
+        let m = [
+            msg(1, "asker", "moved #2: dm with helper", 5),
+            msg(2, "asker", "seeking: x", 6),
+        ];
+        assert!(open_asks(&m, &[])[0].moved.is_none());
+    }
+
+    #[test]
+    fn the_latest_moved_word_wins_and_a_close_still_ends_the_ask() {
+        let got = moved_of(&[
+            ("asker", "moved #1: dm with one"),
+            ("asker", "moved #1: dm with two"),
+        ]);
+        assert_eq!(got, Some(("asker".to_string(), "two".to_string())));
+        let m = [
+            msg(1, "asker", "seeking: x", 5),
+            msg(2, "asker", "moved #1: dm with helper", 6),
+            msg(3, "asker", "closed #1 ok", 7),
+        ];
+        assert!(open_asks(&m, &[]).is_empty());
+    }
+
+    fn with_dm(last_activity: i64) -> OpenAsk {
+        OpenAsk {
+            seq: 1,
+            sender: "asker".into(),
+            moved: Some(MovedDm {
+                by: "asker".into(),
+                with: "helper".into(),
+                room: Some(AskRoom {
+                    name: "dm.asker.helper".into(),
+                    members: 2,
+                    last_activity,
+                }),
+            }),
+            ..OpenAsk::default()
+        }
+    }
+
+    #[test]
+    fn a_dm_with_news_keeps_a_moved_ask_alive_and_a_quiet_one_does_not() {
+        assert!(with_dm(100).room_active(150));
+        assert!(!with_dm(100).room_active(100 + ROOM_ACTIVE_SECS + 1));
+        let mut no_room = with_dm(100);
+        no_room.moved.as_mut().unwrap().room = None;
+        assert!(!no_room.room_active(100));
+        assert!(!OpenAsk::default().room_active(100));
+    }
+
+    #[test]
+    fn a_moved_ask_is_shown_as_in_a_dm_with_the_name_only() {
+        let a = with_dm(100);
+        assert_eq!(a.summary(150), "[in a dm with helper]");
+        assert!(!a.summary(150).contains("dm.asker"));
+        let mut b = a.clone();
+        b.waiting_on_asker = Some(Clarification {
+            by: "helper".into(),
+            question: "SECRET TEXT".into(),
+        });
+        assert!(b.summary(150).contains("in a dm with helper"));
+        assert!(!b.summary(150).contains("SECRET"));
+        let mut unseen = a;
+        unseen.moved.as_mut().unwrap().room = None;
+        assert_eq!(unseen.summary(150), "");
     }
 
     #[test]
