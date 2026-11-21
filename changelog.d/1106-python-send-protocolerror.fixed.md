@@ -1,0 +1,1 @@
+- The Python client raises ProtocolError, not a raw OSError, when a request cannot be sent because the session is gone (#1106).
