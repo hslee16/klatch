@@ -2,6 +2,7 @@
 //! Identity comes from the `Principal` the transport supplies, never from a request.
 
 pub mod acp;
+mod backend;
 mod frames;
 mod guarded;
 pub mod mcp;
@@ -11,13 +12,22 @@ mod role_methods;
 
 use crate::domain::Principal;
 use crate::gateway::{Connection, Gateway, Identity, Subscription};
+pub use backend::Backend;
+#[doc(hidden)]
+pub use methods::Call;
 use crate::protocol::{ClientFrame, DecodeError, FrameReader, PROTOCOL_VERSION, ServerFrame};
 use crate::store::Store;
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use crate::sync::thread;
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
+
+/// The frames that answer a request that failed with `e` (a `response` with the error).
+#[doc(hidden)]
+pub fn failure_frames(id: String, e: &crate::domain::Error) -> Vec<ServerFrame> {
+    failure(id, e)
+}
 pub use guarded::Closer;
-use methods::{Call, RoomParams, handle, params};
+use methods::{RoomParams, params};
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{self, BufRead, Write};
@@ -25,6 +35,18 @@ use std::time::Duration;
 
 /// Until the label model exists every caller has the lowest clearance; this is the safe direction.
 const DEFAULT_CLEARANCE: &str = "public";
+
+/// The `hello` a session sends for a principal. A transport that settles who the peer is after the session has begun
+/// (the daemon's `identify`, #102) sends it itself and starts the session `without_hello`.
+#[doc(hidden)]
+pub fn hello_frame(who: &Principal) -> ServerFrame {
+    ServerFrame::Hello {
+        v: PROTOCOL_VERSION,
+        member: who.member.clone(),
+        attribution: attribution(who.attribution),
+        clearance: DEFAULT_CLEARANCE.into(),
+    }
+}
 
 /// Timing and flow-control settings of a session.
 #[derive(Debug, Clone)]
@@ -96,28 +118,41 @@ pub struct StreamRequest<'a> {
 type Item = Result<ClientFrame, DecodeError>;
 
 /// One session: a gateway, the principal it acts for and its settings.
-pub struct Session<'a, S: Store> {
-    gateway: &'a Gateway<S>,
+pub struct Session<'a, B: Backend + ?Sized> {
+    gateway: &'a B,
     who: &'a Principal,
     config: &'a SessionConfig,
+    /// Whether the session sends `hello` itself (a transport that already told the peer who it is turns this off).
+    greet: bool,
 }
 
-impl<'a, S: Store> Session<'a, S> {
+impl<'a, S: Store> Session<'a, Gateway<S>> {
+    /// A session over a gateway in this thread.
     pub fn new(gateway: &'a Gateway<S>, who: &'a Principal, config: &'a SessionConfig) -> Self {
+        Self::over(gateway, who, config)
+    }
+}
+
+impl<'a, B: Backend + ?Sized> Session<'a, B> {
+    /// A session over any backend: a gateway in this thread, or a handle to one that another thread owns (#102).
+    pub fn over(gateway: &'a B, who: &'a Principal, config: &'a SessionConfig) -> Self {
         Self {
             gateway,
             who,
             config,
+            greet: true,
         }
     }
 
+    /// Do not send `hello` when the session starts: the transport already sent one and settled the principal.
+    #[must_use]
+    pub fn without_hello(mut self) -> Self {
+        self.greet = false;
+        self
+    }
+
     fn hello<W: Write>(&self, out: &mut Out<W>) -> io::Result<()> {
-        out.send(&ServerFrame::Hello {
-            v: PROTOCOL_VERSION,
-            member: self.who.member.clone(),
-            attribution: attribution(self.who.attribution),
-            clearance: DEFAULT_CLEARANCE.into(),
-        })
+        out.send(&hello_frame(self.who))
     }
 
     fn heartbeat<W: Write>(&self, out: &mut Out<W>) -> io::Result<()> {
@@ -139,7 +174,9 @@ impl<'a, S: Store> Session<'a, S> {
         output: W,
     ) -> io::Result<()> {
         let mut out = Out::new(output);
-        self.hello(&mut out)?;
+        if self.greet {
+            self.hello(&mut out)?;
+        }
         self.run(&read_in_background(input), &mut out)
     }
 
@@ -218,7 +255,9 @@ impl<'a, S: Store> Session<'a, S> {
             .head(self.who, request.room)
             .map_err(io::Error::other)?;
         let mut out = Out::new(output);
-        self.hello(&mut out)?;
+        if self.greet {
+            self.hello(&mut out)?;
+        }
         let from = i64::try_from(request.from_seq).unwrap_or(i64::MAX);
         let mut subs = vec![Subscription::new(request.room, from, usize::MAX / 2)];
         loop {
@@ -279,7 +318,7 @@ impl<'a, S: Store> Session<'a, S> {
     ) -> io::Result<(usize, bool)> {
         let mut sent = 0;
         loop {
-            let batch = match sub.poll(self.gateway, self.who, self.config.batch) {
+            let batch = match self.gateway.poll(sub, self.who, self.config.batch) {
                 Ok(batch) => batch,
                 Err(e) => {
                     let Some(frame) = stream_refusal(&e) else {
@@ -331,7 +370,7 @@ impl<'a, S: Store> Session<'a, S> {
                 }
                 Err(frames) => frames,
             },
-            _ => handle(self.gateway, self.who, call),
+            _ => self.gateway.handle(self.who, call),
         }
     }
 

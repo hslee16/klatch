@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 /// One request being answered: its id, method and parameters.
-pub(crate) struct Call {
+pub struct Call {
     pub id: String,
     pub method: String,
     pub value: Value,

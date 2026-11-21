@@ -15,9 +15,8 @@
 //! `session/update` notifications of kind `agent_message_chunk` and ending with a `stopReason`, and `session/cancel`
 //! as a notification (nothing is ever running when it arrives, because a query is answered before the next line is read).
 
-use super::Session;
+use super::{Backend, Session};
 use crate::protocol::ServerFrame;
-use crate::store::Store;
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::io::{self, BufRead, Write};
@@ -104,13 +103,13 @@ fn parse_query(text: &str) -> Result<Query, String> {
 }
 
 /// One ACP agent for one session.
-pub struct AcpServer<'a, S: Store> {
-    session: &'a Session<'a, S>,
+pub struct AcpServer<'a, B: Backend + ?Sized> {
+    session: &'a Session<'a, B>,
     sessions: Cell<u64>,
 }
 
-impl<'a, S: Store> AcpServer<'a, S> {
-    pub fn new(session: &'a Session<'a, S>) -> Self {
+impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
+    pub fn new(session: &'a Session<'a, B>) -> Self {
         Self {
             session,
             sessions: Cell::new(0),

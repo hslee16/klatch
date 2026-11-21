@@ -18,6 +18,8 @@ use crate::domain::{Error, Principal, Result};
 use crate::gateway::{
     Batch, ClaimSpec, Direct, Gateway, Handoff, HistoryRange, Subscription, Transport,
 };
+use crate::protocol::ServerFrame;
+use crate::session::{Backend, Call};
 use crate::store::Store;
 use crate::sync::{mpsc, thread};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -32,10 +34,20 @@ type HarnessMaker = Arc<dyn Fn() -> Box<dyn crate::harness::Harness> + Send + Sy
 /// the answer back.
 type Run = Box<dyn FnOnce(&dyn Transport) + Send>;
 
+/// What the owner runs for one session-backend request: the gateway itself, as the session loop sees it.
+type BackendRun = Box<dyn FnOnce(&dyn Backend) + Send>;
+
+enum Work {
+    /// A `Transport` call as one principal.
+    Transport(Run),
+    /// A call of the session loop (`session::Backend`).
+    Backend(BackendRun),
+}
+
 struct Job {
     principal: Principal,
     harness: Option<HarnessMaker>,
-    run: Run,
+    run: Work,
 }
 
 /// The owner thread's join handle; joined when the last handle goes away.
@@ -84,13 +96,20 @@ impl SharedGateway {
             };
             let _ = ready_tx.send(Ok(()));
             while let Ok(job) = rx.recv() {
-                let mut direct = Direct::new(gateway.clone(), job.principal);
-                if let Some(make) = &job.harness {
-                    direct = direct.with_harness(make());
-                }
                 // A panic in one request fails that request (its reply channel closes) and nothing else: SQLite
                 // rolls back what was open, and the next request starts clean.
-                let _ = catch_unwind(AssertUnwindSafe(|| (job.run)(&direct)));
+                match job.run {
+                    Work::Transport(run) => {
+                        let mut direct = Direct::new(gateway.clone(), job.principal);
+                        if let Some(make) = &job.harness {
+                            direct = direct.with_harness(make());
+                        }
+                        let _ = catch_unwind(AssertUnwindSafe(|| run(&direct)));
+                    }
+                    Work::Backend(run) => {
+                        let _ = catch_unwind(AssertUnwindSafe(|| run(&*gateway)));
+                    }
+                }
             }
         });
         match ready_rx.recv() {
@@ -120,6 +139,31 @@ impl SharedGateway {
         }
     }
 
+    /// What the session loop calls (`session::Backend`), served by the owner thread: with it `session::Session::over`
+    /// runs the protocol of `klatch serve --stdio` for any number of connections over this one gateway (#102).
+    pub fn session_backend(&self) -> SharedBackend {
+        SharedBackend {
+            gateway: self.clone(),
+        }
+    }
+
+    /// Run `f` on the owner thread against the gateway itself.
+    fn call_backend<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&dyn Backend) -> R + Send + 'static,
+    ) -> Result<R> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let job = Job {
+            principal: Principal::unattributed("session"),
+            harness: None,
+            run: Work::Backend(Box::new(move |b| {
+                let _ = reply_tx.send(f(b));
+            })),
+        };
+        self.tx.send(job).map_err(|_| gone())?;
+        reply_rx.recv().map_err(|_| gone())
+    }
+
     /// Run `f` on the owner thread and wait for its answer. `Backend` when the owner is gone or `f` panicked.
     fn call<R: Send + 'static>(
         &self,
@@ -130,9 +174,9 @@ impl SharedGateway {
         let job = Job {
             principal: principal.clone(),
             harness: harness.clone(),
-            run: Box::new(move |t| {
+            run: Work::Transport(Box::new(move |t| {
                 let _ = reply_tx.send(f(t));
-            }),
+            })),
         };
         self.tx.send(job).map_err(|_| gone())?;
         reply_rx.recv().map_err(|_| gone())
@@ -144,6 +188,64 @@ impl SharedGateway {
         f: impl FnOnce(&dyn Transport) -> R + Send + 'static,
     ) -> Result<R> {
         self.call((&Principal::verified("test"), &None), f)
+    }
+}
+
+/// The session loop's view of a shared gateway (`SharedGateway::session_backend`). `Clone`, `Send` and `Sync`.
+#[derive(Clone)]
+pub struct SharedBackend {
+    gateway: SharedGateway,
+}
+
+impl SharedBackend {
+    /// A request of the session loop: the frames that answer it, or the one failure frame when the owner is gone.
+    fn failed(id: String, e: &Error) -> Vec<ServerFrame> {
+        crate::session::failure_frames(id, e)
+    }
+}
+
+impl Backend for SharedBackend {
+    fn now(&self) -> i64 {
+        self.gateway.call_backend(|b| b.now()).unwrap_or(0)
+    }
+    /// The store's token joined with the count of requests that may have committed here (the store's own does not move
+    /// for the owner's commits), the way `SharedTransport::change_token` does.
+    fn change_token(&self) -> Option<u64> {
+        let store = self.gateway.call_backend(|b| b.change_token()).ok()??;
+        let posts = self.gateway.posts.load(Ordering::SeqCst);
+        Some(store.wrapping_add(posts.rotate_left(32)))
+    }
+    fn head(&self, who: &Principal, room: &str) -> Result<i64> {
+        let (who, room) = (who.clone(), room.to_owned());
+        self.gateway.call_backend(move |b| b.head(&who, &room))?
+    }
+    fn ack(&self, who: &Principal, room: &str, seq: i64) -> Result<()> {
+        let (who, room) = (who.clone(), room.to_owned());
+        self.gateway.call_backend(move |b| b.ack(&who, &room, seq))?
+    }
+    /// The subscription lives with the caller and goes to the owner for the length of one poll.
+    fn poll(&self, sub: &mut Subscription, who: &Principal, max: usize) -> Result<Batch> {
+        let mut moved = std::mem::replace(sub, Subscription::new("", 0, 0));
+        let who = who.clone();
+        let (batch, back) = self.gateway.call_backend(move |b| {
+            let batch = b.poll(&mut moved, &who, max);
+            (batch, moved)
+        })?;
+        *sub = back;
+        batch
+    }
+    fn handle(&self, who: &Principal, call: Call) -> Vec<ServerFrame> {
+        let id = call.id.clone();
+        let who = who.clone();
+        let frames = self.gateway.call_backend(move |b| b.handle(&who, call));
+        // any request may have stored something: a waiting session's change token moves after it
+        self.gateway.posts.fetch_add(1, Ordering::SeqCst);
+        frames.unwrap_or_else(|e| Self::failed(id, &e))
+    }
+    fn verify_credential(&self, member: &str, token: &str) -> Result<Principal> {
+        let (member, token) = (member.to_owned(), token.to_owned());
+        self.gateway
+            .call_backend(move |b| b.verify_credential(&member, &token))?
     }
 }
 
