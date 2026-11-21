@@ -80,11 +80,13 @@ impl World {
     /// Fix klatch's clock for every later command of this world (unix seconds); needs the test-clock binary.
     pub fn set_clock(&self, t: i64) {
         self.clock.set(Some(t));
+        // a running process reads this file at every call, so it sees the clock move (#1051)
+        let _ = std::fs::write(self.home.join("klatch-now"), t.to_string());
     }
 
     /// Move klatch's clock forward (or back, with a negative number) from where it is.
     pub fn advance(&self, secs: i64) {
-        self.clock.set(Some(self.clock.get().unwrap_or(0) + secs));
+        self.set_clock(self.clock.get().unwrap_or(0) + secs);
     }
 
     /// How many klatch processes this world has started.
@@ -102,7 +104,8 @@ impl World {
             .args(args)
             .stdin(Stdio::null());
         if let Some(t) = self.clock.get() {
-            c.env("KLATCH_NOW", t.to_string());
+            c.env("KLATCH_NOW", t.to_string())
+                .env("KLATCH_NOW_FILE", self.home.join("klatch-now"));
         }
         c
     }
@@ -431,6 +434,55 @@ impl World {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("start klatch-server: {e}"))
+    }
+
+    /// Run `klatch judge run --once` as the launcher with the opt-in hosted judge on (`--hosted-judge sonnet
+    /// --hosted-ceiling <ceiling>`), where the `claude` binary is a local script that prints `reply` (the JSON of
+    /// `claude -p --output-format json`) and never reaches a model or the network (#1051). `PATH` holds only the
+    /// script's directory and the system's, so no real `claude` is ever found.
+    pub fn judge_with_fake_claude(&self, ceiling: &str, reply: &str) -> Run {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = self.home.join("fakebin");
+        let script = dir.join("claude");
+        let body = format!("#!/bin/sh\ncat >/dev/null\ncat <<'REPLY'\n{reply}\nREPLY\n");
+        let made = std::fs::create_dir_all(&dir)
+            .and_then(|_| std::fs::write(&script, body))
+            .and_then(|_| {
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            });
+        if let Err(e) = made {
+            return Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("could not make the fake claude: {e}"),
+            };
+        }
+        let mut c = self.command(
+            "launcher",
+            &[
+                "judge",
+                "run",
+                "--once",
+                "--hosted-judge",
+                "sonnet",
+                "--hosted-ceiling",
+                ceiling,
+            ],
+        );
+        c.env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
+            .env("HOME", &self.home);
+        match c.output() {
+            Ok(o) => Run {
+                ok: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => Run {
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("could not start {}: {e}", self.bin.display()),
+            },
+        }
     }
 
     /// Start a klatch process and return it, for concurrent scenarios.
