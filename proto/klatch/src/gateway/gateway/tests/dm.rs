@@ -121,3 +121,31 @@ fn a_blocked_recipient_is_not_pulled_into_the_room() {
         "admin-block"
     );
 }
+
+// #1195: what private means. Other members cannot read a dm; the human who runs klatch can read every room.
+
+#[test]
+fn a_third_member_cannot_read_a_dm_by_any_reading_path_and_the_human_can() {
+    let g = open();
+    let (room, _) = g.dm(&alice(), "bob", "for bob only", None).unwrap();
+    let carol = Principal::unattributed("carol");
+    for (name, err) in [
+        ("read", g.read(&carol, &room, false).err()),
+        (
+            "subscribe",
+            crate::gateway::Subscription::new(&room, 0, 10)
+                .poll(&g, &carol, 10)
+                .err(),
+        ),
+        ("head", g.head(&carol, &room).err()),
+    ] {
+        assert_eq!(
+            rule_of(err.unwrap_or_else(|| panic!("{name} allowed"))),
+            "dm-members",
+            "{name}"
+        );
+    }
+    // the human reads it as `klatch admin export` does: the admin principal, `tail`
+    let seen = g.tail(&admin(), &room, (0, 5)).unwrap();
+    assert_eq!(seen[0].body, "for bob only");
+}

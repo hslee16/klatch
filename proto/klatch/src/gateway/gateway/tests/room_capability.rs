@@ -170,3 +170,47 @@ fn the_guard_decides_a_creation_and_an_invite_too() {
         room: "shared".into()
     }));
 }
+
+// #1195: the grant policy closes room creation, never the two-member room `dm` makes (decisions #631, #672).
+
+#[test]
+fn under_granted_a_member_without_the_grant_still_opens_a_dm_and_is_joined_with_its_peer() {
+    let g = granted();
+    // bob has no grant and the policy is `granted`: a new room is refused, a dm is not
+    assert_eq!(
+        rule_of(g.join(&bob(), "fresh").unwrap_err()),
+        "room-capability"
+    );
+    let (room, _) = g.dm(&bob(), "carol", "hello", None).unwrap();
+    assert_eq!(room, "dm.bob.carol");
+    let who: Vec<String> = g
+        .who(&bob(), &room)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert!(
+        who.contains(&"bob".to_string()) && who.contains(&"carol".to_string()),
+        "{who:?}"
+    );
+    // the peer answers with no grant either
+    g.dm(&Principal::unattributed("carol"), "bob", "hi", None)
+        .unwrap();
+    // and a dm is not audited as a room creation, so the capability never saw it
+    assert!(
+        !g.admin_audit(&admin(), 50)
+            .unwrap()
+            .iter()
+            .any(|a| a.action == "create-room" && a.target == room)
+    );
+}
+
+#[test]
+fn the_room_refusal_points_a_two_member_need_at_dm() {
+    let g = granted();
+    let text = match g.join(&bob(), "fresh").unwrap_err() {
+        Error::Refused { reason, .. } => reason,
+        other => panic!("{other}"),
+    };
+    assert!(text.contains("klatch dm"), "{text}");
+}

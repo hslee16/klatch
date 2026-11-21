@@ -64,7 +64,8 @@ impl<S: Store> Gateway<S> {
         Err(Error::Refused {
             rule: "room-capability".into(),
             reason: format!(
-                "{} may not {what}; the person at the terminal grants that (klatch admin grant-rooms)",
+                "{} may not {what}; the person at the terminal grants that (klatch admin grant-rooms). \
+                 For a need of two members, `klatch dm NAME TEXT` is free",
                 who.member
             ),
         })

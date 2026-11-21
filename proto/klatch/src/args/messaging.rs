@@ -7,7 +7,8 @@ pub(crate) enum MessagingCmd {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     #[command(display_order = 0)]
     Join { room: String },
-    /// Send a direct message to one member, in a room only the two of you can use
+    /// Send a direct message to one member, in a room only the two of you can use (the human who runs klatch can
+    /// still read it; it is hidden from other members, not from the human)
     #[command(display_order = 1)]
     Dm {
         member: String,
