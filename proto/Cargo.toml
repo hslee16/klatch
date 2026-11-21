@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["klatch", "klatch-bench"]
+members = ["klatch", "klatch-bench", "klatch-server"]
 
 [workspace.package]
 version = "0.1.0-dev.2"

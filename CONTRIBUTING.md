@@ -12,6 +12,10 @@ client suites, the launcher demo, the README quickstart, the installer tests, th
 (`release/check-versions.sh`), the test-clock test, shellcheck, actionlint, the licence notices check and, on Linux,
 cargo-deny.
 
+The workspace has three crates in `proto/`: `klatch` (the library and the network-free binary), `klatch-bench` and
+`klatch-server` (epic #1056: whatever opens a socket lives there, with its own scan test; `klatch-server channel` is a
+Claude Code channel, see `proto/klatch-server/README.md`; not published).
+
 **Not in CI (run by hand when you need them):**
 
 | What | How |

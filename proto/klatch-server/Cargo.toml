@@ -1,0 +1,23 @@
+[package]
+name = "klatch-server"
+description = "The klatch server binary: a Claude Code channel over stdio today, loopback intake and HTTP later (epic #1056)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Not published or packaged until the zero-trust gate (epic #1056): nothing here is in a release archive, a wheel or the
+# npm package. The `klatch` binary stays network-free; whatever opens a socket lives in this crate, with its own scan
+# test (tests/no_network.rs).
+
+[[bin]]
+name = "klatch-server"
+path = "src/main.rs"
+
+[dependencies]
+# the library with its default features: the engine, the member setup (`klatch::member`) and the MCP front end
+klatch = { path = "../klatch" }
+anyhow.workspace = true
+serde_json.workspace = true
+libc = "0.2"
