@@ -1,0 +1,1 @@
+- A test (shared_forward) names any Transport method that SharedTransport does not forward, including methods with a default body.
