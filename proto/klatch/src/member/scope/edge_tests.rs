@@ -1,6 +1,7 @@
 //! The scope id hash, the repository root of a git directory, and the same-scope no-op (#725).
 
 use super::*;
+use crate::store::SqliteStore;
 use std::path::Path;
 
 #[test]
@@ -36,9 +37,9 @@ fn the_root_of_a_dot_git_directory_is_its_parent_and_of_a_bare_one_itself() {
     assert_eq!(repository_root(Path::new("/")), Path::new("/"));
 }
 
-fn store(tag: &str) -> crate::test_dir::In<SqliteStore> {
-    crate::test_dir::In::new(&format!("scope-edge-{tag}"), |d| {
-        SqliteStore::open(&d.join("t.db"), &klatch::store::insecure_test_key()).unwrap()
+fn store(tag: &str) -> crate::store::test_dir::In<SqliteStore> {
+    crate::store::test_dir::In::new(&format!("scope-edge-{tag}"), |d| {
+        SqliteStore::open(&d.join("t.db"), &crate::store::insecure_test_key()).unwrap()
     })
 }
 

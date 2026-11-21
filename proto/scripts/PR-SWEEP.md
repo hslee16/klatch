@@ -82,4 +82,6 @@ To batch, the coordinator changes the loop line to `/loop 10m proto/scripts/pr-s
 
 ## Tests
 
+Files marked `merge=union` in `.gitattributes` (#1065: `proto/AUTHZ-AUDIT.md`, the `mod x;` registries) are merged by git itself, in the sweep's real `git merge` and in the `git merge-tree` pre-check, so they never reach the docs resolver; the resolver and its docs list stay as the fallback for the files git cannot union (DESIGN.md, CHANGELOG.md, and two edits of one line of the others). GitHub ignores the attribute, so a PR can show `dirty` there and merge cleanly here.
+
 `proto/scripts/test-sweep.sh` (run by the gate) drives the sweep with a fake `gh`, `git`, ledger, gate and bench on PATH; nothing touches the network or a real repo.
