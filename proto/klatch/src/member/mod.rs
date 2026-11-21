@@ -22,7 +22,7 @@ pub mod custody;
 mod identity;
 mod scope;
 
-pub use identity::{Caller, discover_session, registry_and_domain};
+pub use identity::{Caller, discover_session, peer_runs_claude_code, registry_and_domain};
 
 /// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when
 /// that is set, so time-dependent behaviour can be tested end to end; a real build has no such seam and ignores
@@ -176,19 +176,29 @@ fn settle_member(store: SqliteStore, caller: Caller, who: &Who) -> Result<Member
 /// `$KLATCH_KEY_DIR`, the same guards), held by one owner thread that connections share (`SharedGateway`). There is no
 /// caller here: each connection brings its own principal. The store is opened on the owner thread, so a store that
 /// cannot be opened is this function's error, with nothing listening yet. The key is never printed. The keys of sealed
-/// labels are per member and are not loaded: a daemon reads and writes the labels the store holds in the clear to its
-/// peers and nothing sealed.
+/// labels are per member (#1096): for each request the owner reads, from the same keystore, the keys of the sealed
+/// labels that request's principal is cleared to (`sealed_labels_within`, the rule `klatch serve --stdio` uses) and
+/// no others, uses them for that request and drops them after it. A label with no key in the keystore stays sealed.
 pub fn spawn_shared_gateway() -> Result<crate::gateway::SharedGateway> {
     let db = db_path()?;
-    crate::gateway::SharedGateway::spawn(move || {
-        let store = custody::open_store(&db)
-            .map_err(|e| crate::domain::Error::Backend(format!("{e:#}")))?;
-        let mut gateway = Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
-        if let Some(home) = std::env::var_os("HOME") {
-            gateway = gateway.with_leases(SysLeaseSource::under_home(std::path::Path::new(&home)));
-        }
-        Ok(gateway)
-    })
+    let keys_db = db.clone();
+    crate::gateway::SharedGateway::spawn_keyed(
+        move || {
+            let store = custody::open_store(&db)
+                .map_err(|e| crate::domain::Error::Backend(format!("{e:#}")))?;
+            let mut gateway =
+                Gateway::new(store, CliClock, ForbidFloors::new(AllowAll)).for_members();
+            if let Some(home) = std::env::var_os("HOME") {
+                gateway =
+                    gateway.with_leases(SysLeaseSource::under_home(std::path::Path::new(&home)));
+            }
+            Ok(gateway)
+        },
+        move |labels| {
+            custody::label_ring(&keys_db, labels)
+                .map_err(|e| crate::domain::Error::Backend(format!("{e:#}")))
+        },
+    )
     .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
