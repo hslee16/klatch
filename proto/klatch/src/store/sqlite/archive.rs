@@ -7,6 +7,7 @@
 use super::{SqliteStore, be};
 use crate::domain::{Error, Result};
 use crate::keys::Key;
+use crate::store::PolicyStore;
 use rusqlite::params;
 use std::path::{Path, PathBuf};
 
@@ -356,18 +357,71 @@ impl SqliteStore {
                 params![file.to_string_lossy(), key.sqlcipher_pragma().as_str()],
             )
             .map_err(be)?;
-        let result = self.immediate(|| {
-            self.exec(
-                "UPDATE main.messages SET
-                   body=(SELECT a.body FROM ar.archived a WHERE a.room=messages.room AND a.seq=messages.seq),
-                   payload=(SELECT a.payload FROM ar.archived a WHERE a.room=messages.room AND a.seq=messages.seq),
-                   kind=(SELECT a.kind FROM ar.archived a WHERE a.room=messages.room AND a.seq=messages.seq)
-                 WHERE kind=?1 AND body=?2 AND EXISTS
-                   (SELECT 1 FROM ar.archived a WHERE a.room=messages.room AND a.seq=messages.seq AND a.mid=messages.mid)",
-                params![KIND, TOMBSTONE],
-            )
-        });
+        let result = self.immediate(|| self.restore_rows());
         let _ = self.conn.execute_batch("DETACH DATABASE ar");
         result
+    }
+
+    /// The restore itself, with the archive attached as `ar`. Plain archived text of a label that is sealed now is
+    /// sealed under the label key on the way back, and refused (with nothing changed) when the key is not held, so
+    /// a restore never puts plain text under a sealed label (#1153).
+    fn restore_rows(&self) -> Result<usize> {
+        type Back = (i64, String, String, [Option<String>; 2], Option<String>);
+        let rows: Vec<Back> = self.rows(
+            "SELECT m.id, m.mid, m.label, a.body, a.payload, a.kind FROM main.messages m
+               JOIN ar.archived a ON a.room=m.room AND a.seq=m.seq AND a.mid=m.mid
+              WHERE m.kind=?1 AND m.body=?2",
+            params![KIND, TOMBSTONE],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    [r.get(3)?, r.get(4)?],
+                    r.get(5)?,
+                ))
+            },
+        )?;
+        let mut sealed_labels = std::collections::HashMap::new();
+        let mut done = Vec::new();
+        for (id, mid, label, texts, kind) in rows {
+            if !sealed_labels.contains_key(&label) {
+                let is_sealed = self.policy_get(&format!("sealed:{label}"))?.is_some();
+                sealed_labels.insert(label.clone(), is_sealed);
+            }
+            let mut out = texts.clone();
+            if sealed_labels[&label] {
+                let ring = self.labels.borrow();
+                for (text, field) in out.iter_mut().zip(["body", "payload"]) {
+                    let Some(plain) = text.as_deref().filter(|t| !crate::keys::is_sealed_text(t))
+                    else {
+                        continue;
+                    };
+                    let Some(key) = ring.get(&label) else {
+                        return Err(Error::Refused {
+                            rule: "label-key".into(),
+                            reason: format!(
+                                "the archive holds plain {label} text and label {label} is sealed, and you hold no key for it, so nothing was restored"
+                            ),
+                        });
+                    };
+                    let ctx = Self::sealed_context(&mid, &label, field);
+                    *text = Some(
+                        crate::keys::protect_text(key, ctx.as_bytes(), plain)
+                            .map_err(|e| Error::Backend(format!("no random source: {e}")))?,
+                    );
+                }
+            }
+            let [body, payload] = out;
+            done.push((id, body, payload, kind));
+        }
+        let count = done.len();
+        for (id, body, payload, kind) in done {
+            self.exec(
+                "UPDATE main.messages SET body=?2, payload=?3, kind=?4 WHERE id=?1",
+                params![id, body, payload, kind],
+            )?;
+        }
+        Ok(count)
     }
 }

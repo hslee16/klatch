@@ -34,18 +34,8 @@ fn open_archive(file: &Path, store_key: &Key, write: bool) -> Result<rusqlite::C
     Ok(conn)
 }
 
-/// What moving `label` from `old` to `new` rewrites in one archive file; an error when a sealed text opens with
-/// neither key or the file cannot be read with the store key.
-fn plan_archive(
-    file: &Path,
-    store_key: &Key,
-    label: &str,
-    keys: (&Key, &Key),
-) -> Result<Vec<Update>> {
-    let named = |e: &dyn std::fmt::Display| Error::Invalid(format!("{}: {e}", file.display()));
-    let conn = open_archive(file, store_key, false).map_err(|e| named(&e))?;
-    let rows: Vec<ArchivedRow> = conn
-        .prepare("SELECT room, seq, mid, body, payload FROM archived WHERE label=?1")
+fn archived_rows(conn: &rusqlite::Connection, label: &str) -> rusqlite::Result<Vec<ArchivedRow>> {
+    conn.prepare("SELECT room, seq, mid, body, payload FROM archived WHERE label=?1")
         .and_then(|mut st| {
             st.query_map([label], |r| {
                 Ok(ArchivedRow {
@@ -58,7 +48,19 @@ fn plan_archive(
             })?
             .collect()
         })
-        .map_err(|e| named(&e))?;
+}
+
+/// What moving `label` from `old` to `new` rewrites in one archive file; an error when a sealed text opens with
+/// neither key or the file cannot be read with the store key.
+fn plan_archive(
+    file: &Path,
+    store_key: &Key,
+    label: &str,
+    keys: (&Key, &Key),
+) -> Result<Vec<Update>> {
+    let named = |e: &dyn std::fmt::Display| Error::Invalid(format!("{}: {e}", file.display()));
+    let conn = open_archive(file, store_key, false).map_err(|e| named(&e))?;
+    let rows = archived_rows(&conn, label).map_err(|e| named(&e))?;
     let mut plan = Vec::new();
     let mut stuck = 0;
     for row in rows {
@@ -143,6 +145,11 @@ pub(crate) fn reseal_archives_hooked(
 
 fn reseal_archive_in(file: &Path, store_key: &Key, label: &str, keys: (&Key, &Key)) -> Result<()> {
     let plan = plan_archive(file, store_key, label, keys)?;
+    write_archive(file, store_key, &plan)
+}
+
+/// Apply `plan` to `file` through a temp copy that is opened and checked before it replaces the file.
+fn write_archive(file: &Path, store_key: &Key, plan: &[Update]) -> Result<()> {
     let mut partial = file.as_os_str().to_owned();
     partial.push(format!(".{}.partial", std::process::id()));
     let partial = PathBuf::from(partial);
@@ -152,7 +159,7 @@ fn reseal_archive_in(file: &Path, store_key: &Key, label: &str, keys: (&Key, &Ke
             .map_err(|e| Error::Backend(format!("copying {}: {e}", file.display())))?;
         let mut conn = open_archive(&partial, store_key, true)?;
         let tx = conn.transaction().map_err(be)?;
-        for (room, seq, body, payload) in &plan {
+        for (room, seq, body, payload) in plan {
             tx.execute(
                 "UPDATE archived SET body=COALESCE(?3, body), payload=COALESCE(?4, payload) WHERE room=?1 AND seq=?2",
                 params![room, seq, body, payload],
@@ -169,4 +176,50 @@ fn reseal_archive_in(file: &Path, store_key: &Key, label: &str, keys: (&Key, &Ke
         let _ = std::fs::remove_file(&partial);
     }
     made
+}
+
+/// What sealing `label` under `key` rewrites in one archive file: every plain body and payload of the label.
+fn plan_seal(file: &Path, store_key: &Key, label: &str, key: &Key) -> Result<Vec<Update>> {
+    let named = |e: &dyn std::fmt::Display| Error::Invalid(format!("{}: {e}", file.display()));
+    let conn = open_archive(file, store_key, false).map_err(|e| named(&e))?;
+    let rows = archived_rows(&conn, label).map_err(|e| named(&e))?;
+    let mut plan = Vec::new();
+    for row in rows {
+        let mut next = [None, None];
+        for (i, (field, text)) in [("body", &row.body), ("payload", &row.payload)]
+            .into_iter()
+            .enumerate()
+        {
+            let Some(text) = text.as_deref().filter(|t| !crate::keys::is_sealed_text(t)) else {
+                continue;
+            };
+            let ctx = super::SqliteStore::sealed_context(&row.mid, label, field);
+            next[i] = Some(
+                crate::keys::protect_text(key, ctx.as_bytes(), text)
+                    .map_err(|e| Error::Backend(format!("no random source: {e}")))?,
+            );
+        }
+        let [body, payload] = next;
+        if body.is_some() || payload.is_some() {
+            plan.push((row.room, row.seq, body, payload));
+        }
+    }
+    Ok(plan)
+}
+
+/// Seal every plain body and payload of `label` in the archive files of `dir` under the label's `key` (#1153), each
+/// file through a temp copy as `reseal_archives` does, so a file is whole at every moment and a text already sealed
+/// is left alone, which makes a repeat finish a crash. Returns how many files were rewritten.
+pub fn wrap_archives(dir: &Path, store_key: &Key, label: &str, key: &Key) -> Result<usize> {
+    let mut todo = Vec::new();
+    for path in archive_files(dir)? {
+        let plan = plan_seal(&path, store_key, label, key)?;
+        if !plan.is_empty() {
+            todo.push((path, plan));
+        }
+    }
+    for (path, plan) in &todo {
+        write_archive(path, store_key, plan)?;
+    }
+    Ok(todo.len())
 }
