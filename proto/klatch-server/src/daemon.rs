@@ -16,6 +16,11 @@
 //!   checks a credential bundle (`Gateway::verify_credential`: token, expiry, revocation, a refusal recorded without the
 //!   token); only a live credential is verified. A bad token ends the connection: nothing falls back to a weaker name.
 //!
+//! **Keys and harness (#1096).** For each request the owner loads the keys of the sealed labels the connection's
+//! principal is cleared to, and no others, and drops them after it. A connection that never sent `identify` and whose
+//! kernel-reported pid is inside a verified Claude Code session joins as Claude Code (a room's `room-require` admits it);
+//! every other connection joins as the generic floor.
+//!
 //! **Limits.** A frame is at most `MAX_LINE_BYTES`; a connection that sends no first frame within `--first-frame-secs`
 //! is closed (a connection that has spoken is never closed for silence: a subscriber waits for pushes); at most
 //! `--max-connections` connections at once, and the excess gets one refusal frame and is closed; output goes through the
@@ -341,6 +346,9 @@ fn wait_readable(fd: i32, ms: i32) {
 /// What every connection thread shares.
 struct Shared {
     backend: SharedBackend,
+    /// Whether a process runs inside a verified Claude Code session (`klatch::member::peer_runs_claude_code`); a field
+    /// so a test can stand in for the process table.
+    claude_code_at: fn(u32) -> bool,
     first_frame: Duration,
     config: SessionConfig,
 }
@@ -364,6 +372,7 @@ pub fn run(opts: &Options) -> Result<()> {
     );
     let shared = Shared {
         backend: gateway.session_backend(),
+        claude_code_at: klatch::member::peer_runs_claude_code,
         first_frame: opts.first_frame,
         config: SessionConfig::default(),
     };
@@ -540,6 +549,25 @@ fn unidentified(evidence: &PeerEvidence) -> Principal {
         .unwrap_or_else(|_| Principal::unattributed("unmapped-process"))
 }
 
+/// The backend of a connection that never identified itself (#1096): when the kernel's pid for the peer runs inside a
+/// verified Claude Code session the walk up the process tree finds (the test `klatch` makes for a command), its `join`
+/// is judged as Claude Code, so a room with a harness requirement admits it. Everything else is the generic floor: a
+/// connection that identified with a typed name or a credential (a name proves nothing, #881; a credential proves a
+/// member and not a harness, #880), a peer with no verified session above it, and any doubt. The harness is learned
+/// from the pid alone, never from anything the peer sent.
+fn unidentified_backend(shared: &Shared, evidence: &PeerEvidence) -> SharedBackend {
+    match evidence {
+        PeerEvidence::Process { pid, .. } if (shared.claude_code_at)(*pid) => {
+            shared.backend.clone().with_harness(|| {
+                Box::new(klatch::harness::ClaudeCode::probing(
+                    klatch::harness::wake_support_here,
+                ))
+            })
+        }
+        _ => shared.backend.clone(),
+    }
+}
+
 fn serve_one(stream: UnixStream, evidence: PeerEvidence, shared: &Shared) {
     let _ = serve_inner(stream, &evidence, shared);
 }
@@ -579,7 +607,8 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
     match classify(&first) {
         First::Other => {
             let input = Cursor::new(first).chain(reader);
-            let session = Session::over(&shared.backend, &started, &shared.config).without_hello();
+            let backend = unidentified_backend(shared, evidence);
+            let session = Session::over(&backend, &started, &shared.config).without_hello();
             session.serve_guarded(input, out, Some(closer))
         }
         First::Identify { id, params } => match identify(&params, &shared.backend) {
@@ -624,6 +653,65 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether `join gated` is admitted on the backend `unidentified_backend` gives a peer, with `probe` standing in for
+    /// the process-tree walk. The room requires a capability only a verified harness has.
+    fn joins_gated(probe: fn(u32) -> bool, evidence: &PeerEvidence) -> bool {
+        use klatch::gateway::{AllowAll, Gateway, SystemClock};
+        let dir = PathBuf::from(format!(
+            "/tmp/kh{}-{:?}",
+            std::process::id(),
+            probe as usize
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("rooms.db");
+        let gw = SharedGateway::spawn(move || {
+            let store =
+                klatch::store::SqliteStore::open(&path, &klatch::store::insecure_test_key())?;
+            let g = Gateway::new(store, SystemClock, AllowAll);
+            g.admin_set_room_require(
+                &Principal::unattributed("admin"),
+                "gated",
+                Some("refuse:session-identity"),
+            )?;
+            Ok(g)
+        })
+        .unwrap();
+        let shared = Shared {
+            backend: gw.session_backend(),
+            claude_code_at: probe,
+            first_frame: Duration::from_secs(1),
+            config: SessionConfig::default(),
+        };
+        let backend = unidentified_backend(&shared, evidence);
+        let who = Principal::unattributed("unmapped-process");
+        let script = "{\"v\":1,\"type\":\"request\",\"id\":\"j\",\"method\":\"join\",\"params\":{\"room\":\"gated\"}}\n";
+        let mut out = Vec::new();
+        Session::over(&backend, &who, &shared.config)
+            .without_hello()
+            .serve(Cursor::new(script.as_bytes().to_vec()), &mut out)
+            .unwrap();
+        drop((backend, shared, gw));
+        let _ = std::fs::remove_dir_all(&dir);
+        String::from_utf8(out).unwrap().contains("\"ok\":true")
+    }
+
+    /// #1096: only a peer whose pid the walk verifies as Claude Code gets the harness; every other peer is the floor.
+    #[test]
+    fn a_peer_in_a_verified_claude_code_session_joins_as_claude_code_and_any_other_as_the_floor() {
+        let peer = PeerEvidence::Process { pid: 77, uid: 501 };
+        assert!(joins_gated(|pid| pid == 77, &peer));
+        assert!(!joins_gated(|_| false, &peer));
+        // the probe is asked about the kernel's pid and about nothing else
+        assert!(!joins_gated(
+            |pid| pid == 77,
+            &PeerEvidence::Process { pid: 78, uid: 501 }
+        ));
+        assert!(!joins_gated(
+            |_| true,
+            &PeerEvidence::DeclaredName("claude".into())
+        ));
+    }
 
     /// A fake credential, as the kernel would report it: this is the whole of the uid check, and a connection from
     /// another uid cannot be made in a test.

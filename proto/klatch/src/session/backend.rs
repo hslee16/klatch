@@ -24,6 +24,16 @@ pub trait Backend {
     fn poll(&self, sub: &mut Subscription, who: &Principal, max: usize) -> Result<Batch>;
     /// Answer one plain request: the frames that answer it.
     fn handle(&self, who: &Principal, call: Call) -> Vec<ServerFrame>;
+    /// `handle` for a connection whose edge verified a harness (#1096): a `join` is judged by it. `None` is the
+    /// generic floor, which is what `handle` is.
+    fn handle_as(
+        &self,
+        who: &Principal,
+        call: Call,
+        _harness: Option<&dyn crate::harness::Harness>,
+    ) -> Vec<ServerFrame> {
+        self.handle(who, call)
+    }
     /// Prove a member from the text of its credential token: `Verified` when it is live, else the refusal. Nothing
     /// weaker is ever returned for a bad token.
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal>;
@@ -48,7 +58,15 @@ impl<S: Store> Backend for Gateway<S> {
         sub.poll(self, who, max)
     }
     fn handle(&self, who: &Principal, call: Call) -> Vec<ServerFrame> {
-        handle(self, who, call)
+        handle(self, who, call, None)
+    }
+    fn handle_as(
+        &self,
+        who: &Principal,
+        call: Call,
+        harness: Option<&dyn crate::harness::Harness>,
+    ) -> Vec<ServerFrame> {
+        handle(self, who, call, harness)
     }
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal> {
         let token =

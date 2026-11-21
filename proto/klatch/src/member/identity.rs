@@ -274,6 +274,15 @@ pub fn discover_session() -> Result<Found, Miss> {
     find_session(std::process::id(), &PsTable, &registry, domain)
 }
 
+/// Whether process `pid` runs inside a Claude Code session the walk up the process tree verifies (#877): the same test
+/// `runs_claude_code` makes for a command, applied to a daemon peer's pid (#1096). The pid is the kernel's word for who
+/// is on the socket, not anything the peer sent. Any doubt (no home, an unreadable table, a stale record, no session)
+/// is `false`, the generic floor.
+pub fn peer_runs_claude_code(pid: u32) -> bool {
+    registry_and_domain()
+        .is_some_and(|(registry, domain)| find_session(pid, &PsTable, &registry, domain).is_ok())
+}
+
 /// The harness registry under `$HOME` and the pid domain of this machine, if there is a home.
 pub fn registry_and_domain() -> Option<(FsRegistry, &'static str)> {
     let home = std::env::var_os("HOME")?;
