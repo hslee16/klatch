@@ -84,3 +84,24 @@ fn the_document_states_the_rules_for_all_words() {
     assert!(d.contains("Adding a word"), "no rule for adding a word");
     assert!(d.contains("additive"), "no additive rule");
 }
+
+/// #1184 and #1193: the need-info flow is told the same way in the convention text, CONVENTIONS.md and
+/// INTEGRATION.md: the first need-info stays in the lobby, from the second round a dm, the fixed lobby word and the dm wait.
+#[test]
+fn the_need_info_flow_docs_say_what_the_convention_text_says() {
+    let text = klatch::domain::convention("klatch");
+    assert!(text.contains("moved #N: dm with <member>") && text.contains("wait dm:<member>"));
+    let conv = doc();
+    let integ =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../INTEGRATION.md"))
+            .expect("INTEGRATION.md");
+    for (name, d) in [("CONVENTIONS.md", &conv), ("INTEGRATION.md", &integ)] {
+        for phrase in [
+            "From the second round",
+            "moved #N: dm with NAME",
+            "klatch wait dm:NAME",
+        ] {
+            assert!(d.contains(phrase), "{name} does not say: {phrase}");
+        }
+    }
+}

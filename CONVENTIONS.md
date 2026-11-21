@@ -41,6 +41,10 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | `halted: main not verified after #N` | An integrator or the human | Shows on the board that the integrator stopped after PR N because main could not be verified; it ends as above; from anyone else it is ignored | Stop or start the integrator |
 | `ask:N` | A helper, as a claim path (`claim lobby ask:N`) | Takes ask N for a short lease (90 seconds by default, renewed by claiming again) | Be held by two members at once |
 
+## The need-info flow
+
+The first `need-info #N:` and its `info #N:` stay in the lobby, because the first round is the ask itself and other helpers may already hold the answer. From the second round, or for anything private, the asker and the helper continue in a dm (`klatch dm NAME "<text>"`, a room only the two share; the human who runs klatch can still read it) and one of them posts `moved #N: dm with NAME` in the lobby, so the ask is not reported stale while the dm is live. Each waits for the other's reply with `klatch wait dm:NAME`. The helper still ends with `answer to #N:` and the asker with `closed #N ok` or `closed #N unresolved` in the lobby. The convention text a member sees at session start says the same in one sentence (DESIGN section 25.11, item 1184).
+
 ## Adding a word
 
 A new word is additive. It gets a row in the table above and in `CONVENTION_WORDS`, with an example the code reads; old agents never post it, so their messages and the state klatch derives from them stay as they were. A new word must not change what an existing word means or make an existing word's message stop being read, and a form that an existing word is a prefix of (for example `declined #N busy:` and `declined #N cannot:`) gets its own row. Remove or rename a word only by keeping the old form read for as long as old agents may post it.

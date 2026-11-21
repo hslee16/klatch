@@ -23,14 +23,14 @@ pub fn convention_in(bin: &str, room: &str) -> String {
       {bin} --discover status {room} done\n\
   - Ask: first {bin} --discover find {room} \"<need>\" for an earlier answer; else {bin} --discover ask {room} \"<need>\" (posts \"seeking:\"). Close it with \"closed #N ok\" or \"closed #N unresolved\"; if the answer failed, \"reopen #N: <why>\". After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
   - Answer: {bin} --discover answer {room} N \"<answer>\" claims, posts and releases. To work longer, claim ask:<N> first, renew it every minute (a claim lasts 90 seconds), release it if you stop, then post \"answer to #N: <answer>\".\n\
-  - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". From the second round, or for anything private: {bin} --discover dm <member> \"<text>\" (a room only you two share), and tell {room} in one line.\n\
+  - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". From the second round, or for anything private: {bin} --discover dm <member> \"<text>\" (private), post \"moved #N: dm with <member>\" in {room}, and wait with {bin} --discover wait dm:<member> --timeout 60.\n\
   - Cannot finish: \"partial #N: <what is done>\", \"declined #N busy: <why>\" (not now) or \"declined #N cannot: <why>\"; then release the claim. Never leave a claimed ask unanswered.\n\
   - Claim what you will change (a file, or `ticket:602`) first; claims are per scope, add --shared to cross scopes. If a claim conflicts, release the claims you hold, wait, retry; if the refusal says deadlock, you yield.\n  - Changed it: release with --note \"<what you changed>\"; after a conflict wait, re-read before you edit.\n\
   - To reach one member, write @its-name (a member who ran `{bin} --discover mute {room}` still sees it).\n\
   - Offer: post \"offering: <capability>\" once it is concrete, not at start; \"withdrawn: <why>\" when it no longer holds.\n\
-  - A long wait: post \"parked: <why>, back by <time>\" (2h or 3d); your claims hold until then. Any post of yours ends it.\n\
+  - A long wait: post \"parked: <why>, back by <time>\"; your claims hold until then.\n\
   - Work that may outlive your session: \"working: <what>\", \"checkpoint: <state to resume from>\" as you go; \"handoff: <task> to <member>\" or \"finished: <task>\" at the end.\n\
-  - A PR you open: post \"pr: #N <title>\" and {bin} --discover claim {room} pr:<N> --shared; renew while it is open. At merge post \"merged: #N\" and release with --note merged. Unheld open PRs show at session start; take one.\n\
+  - A PR you open: post \"pr: #N <title>\" and {bin} --discover claim {room} pr:<N> --shared; renew while it is open. At merge post \"merged: #N\" and release with --note merged.\n\
   - When you leave, post \"status: done\" and run the status command. Free for work: status available. Posting or claiming clears done.\n"
     )
 }
@@ -288,6 +288,36 @@ mod tests {
         assert!(
             !t.contains("ask-<N>"),
             "the old working-room sentence stays out: {t}"
+        );
+        assert!(t.len() < 2800, "{} bytes", t.len());
+    }
+
+    /// #1184 and #1193: the text names the fixed lobby word for a moved ask and the dm wait command, and says the
+    /// default (the first need-info stays in the lobby, from the second round a dm), within the unchanged bound.
+    #[test]
+    fn the_text_names_the_moved_word_the_dm_wait_and_the_second_round_default() {
+        let t = convention(BIN);
+        for w in [
+            "moved #N: dm with <member>",
+            "/opt/klatch/klatch --discover wait dm:<member> --timeout 60",
+            "From the second round",
+        ] {
+            assert!(t.contains(w), "missing {w}: {t}");
+        }
+        assert!(
+            !t.contains("in one line"),
+            "the vague pointer sentence is replaced by the fixed word: {t}"
+        );
+        assert!(
+            crate::domain::CONVENTION_WORDS
+                .iter()
+                .any(|w| w.form == "moved #N: dm with NAME"),
+            "the moved word is a listed convention word"
+        );
+        assert_eq!(
+            crate::domain::moved_target("moved #3: dm with alpha"),
+            Some((3, "alpha".to_string())),
+            "the text teaches the form the code reads"
         );
         assert!(t.len() < 2800, "{} bytes", t.len());
     }

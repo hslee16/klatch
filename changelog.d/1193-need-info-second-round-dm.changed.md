@@ -1,0 +1,1 @@
+- The SessionStart convention text now names the lobby word `moved #N: dm with <member>` and the dm wait (`wait dm:<member> --timeout 60`), and says need-info rounds from the second move to a dm by default; CONVENTIONS.md, INTEGRATION.md and the facilitator brief say the same, and the byte bound is unchanged (#1184, #1193, #1146).
