@@ -17,6 +17,8 @@ mod listener_tests;
 mod notifier;
 mod shared;
 #[cfg(test)]
+mod shared_fairness_tests;
+#[cfg(test)]
 mod shared_session_tests;
 #[cfg(test)]
 mod shared_tests;
