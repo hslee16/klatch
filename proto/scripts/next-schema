@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""next-schema: print the next free store schema number (#1070).
+
+Two PRs that each start a migration claim the same number unless they look first. The next free number is one past
+the highest schema version on origin/main and in every open PR: a migration `migrate_vN` upgrades to version N + 1,
+and each is one line `    migrate_vN,` in the MIGRATIONS list of proto/klatch/src/store/sqlite/schema.rs.
+
+Usage:
+  next-schema                          read origin/main (git) and the open PRs (gh api, REST only)
+  next-schema --main FILE --patch F..  offline: FILE is schema.rs, each F a PR patch (used by test-scripts.sh)
+
+Run it when you start a migration, then name your step migrate_v<N-1> and put N in VERSIONING.md. The store schema
+tests read SCHEMA_VERSION, which is the length of MIGRATIONS, so no other number needs editing.
+"""
+import argparse
+import json
+import re
+import subprocess
+import sys
+
+PATH = "proto/klatch/src/store/sqlite/schema.rs"
+ADDED = re.compile(r"^\+\s+migrate_v(\d+),\s*$")
+ENTRY = re.compile(r"^\s+migrate_v(\d+),\s*$")
+
+
+def highest_entry(lines, pattern):
+    nums = [int(m.group(1)) for m in (pattern.match(x) for x in lines) if m]
+    return max(nums) if nums else -1
+
+
+def run(*cmd):
+    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--main")
+    ap.add_argument("--patch", action="append", default=[])
+    ap.add_argument("--repo", default="hslee16/klatch")
+    a = ap.parse_args()
+    if a.main:
+        top = highest_entry(open(a.main).read().splitlines(), ENTRY)
+        patches = [open(f).read().splitlines() for f in a.patch]
+    else:
+        top = highest_entry(run("git", "show", f"origin/main:{PATH}").splitlines(), ENTRY)
+        patches = []
+        prs = json.loads(run("gh", "api", f"repos/{a.repo}/pulls?state=open&per_page=100"))
+        for pr in prs:
+            files = json.loads(run("gh", "api", f"repos/{a.repo}/pulls/{pr['number']}/files?per_page=100"))
+            for f in files:
+                if f["filename"] == PATH:
+                    patches.append(f.get("patch", "").splitlines())
+    for p in patches:
+        top = max(top, highest_entry(p, ADDED))
+    print(top + 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -38,6 +38,10 @@ there is no downgrade. To keep the option, take a backup before upgrading (`klat
 terminal) and restore it with `klatch admin restore` if you must go back. The key that encrypts the store does not
 change with the schema.
 
+To start a migration, run `proto/scripts/next-schema` first: it prints the next free number from origin/main and the
+open pull requests, so two PRs do not claim the same one (#1070). `SCHEMA_VERSION` is the length of the migration list,
+so the step, its list line and the line above are the only places the number appears.
+
 ## What this does not cover
 
 Support windows (how long a release is backported), yanking and the rollback plan are tracked in the distribution epic
