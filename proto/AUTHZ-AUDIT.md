@@ -111,7 +111,7 @@ wraps.
 | `join` | `join`, or `join_with_harness` when the walk verified a Claude Code session (#877) | GUARDED `join`; plus the room's harness requirement, with the harness taken only from the verified session (never from the caller), and every other caller the generic floor (Codex too: no registry record to match, #884) |
 | `dm` | `dm` | as wire `dm` |
 | `post` | `post_labeled` | as wire `post` |
-| `read` | `read` | as wire `read` |
+| `read` | `read` | as wire `read`; `--count` (#1011) prints only the number of messages a peek would show, through the same `read` peek (never advances, the caller's own record, no new method), proved by `tests/cli.rs` `count_reports_the_unread_total_and_marks_nothing_read` |
 | `history` | `history` | as wire `history` |
 | `wait` | `wait_poll`, `wait_seen` | GUARDED `wait_poll`, `wait_seen` |
 | `invite` | `invite` | as wire `invite` |

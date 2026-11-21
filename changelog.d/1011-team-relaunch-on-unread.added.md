@@ -1,0 +1,1 @@
+- `klatch read ROOM --count` prints how many messages are unread and marks nothing read; `team resume NAME` and the team runners relaunch a worker that ended with unread mail (digest as the prompt) at most TEAM_MAX_RESTARTS times (default 3), under TEAM_MAX_TOTAL_USD and with TEAM_RESTART_PAUSE_SECS between relaunches (#1011, #591).

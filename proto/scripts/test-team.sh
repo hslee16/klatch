@@ -14,8 +14,12 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-# a sentinel watchdog length no other process on the machine uses, so the leak check at the end sees only this test's (#1101)
-export TEAM_MAX_SECONDS=3602
+# a sentinel watchdog length no other process on the machine uses (random per run, so two runs at once do not see each
+# other's watchdogs, #1142), so the leak check at the end sees only this test's (#1101)
+sentinel=$((3100 + RANDOM % 4000))
+export TEAM_MAX_SECONDS=$sentinel
+# the relaunch (#1011) is off for the older scenarios, which count credentials; its own scenarios turn it on
+export TEAM_MAX_RESTARTS=0 TEAM_RESTART_PAUSE_SECS=0
 fails=0
 ok() { printf '  ok    %s\n' "$1"; }
 bad() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
@@ -30,6 +34,14 @@ if [ "$1 $2" = "worker issue" ]; then
   while [ $# -gt 0 ]; do [ "$1" = "--out" ] && out="$2"; shift; done
   ( umask 077; echo "member $member" > "$out" )
 fi
+if [ "$1" = read ]; then
+  m="$(basename "${KLATCH_IDENTITY_FILE:-none}" .bundle)"
+  u="$(cat "$FAKE_DIR/unread-$m" 2> /dev/null || echo 0)"
+  case " $* " in
+    *" --count "*) echo "$u" ;;
+    *" --peek "*) i=0; while [ "$i" -lt "$u" ]; do i=$((i + 1)); echo "[$i 2026-11-21 bob] hello mail $i"; done ;;
+  esac
+fi
 if [ "$1" = claims ]; then
   [ -n "${FAKE_CLAIMS_FAIL:-}" ] && { echo "no such room" >&2; exit 1; }
   [ -n "${FAKE_CLAIMS:-}" ] && cat "$FAKE_CLAIMS"
@@ -43,6 +55,11 @@ name="$(basename "${KLATCH_IDENTITY_FILE:-none}" .bundle)"
 d="$FAKE_DIR/claude-$name"; mkdir -p "$d"
 for a in "$@"; do printf '%s\n' "$a"; done > "$d/args.tmp"; mv "$d/args.tmp" "$d/args" # whole or absent, never half written
 pwd > "$d/cwd"
+date +%s >> "$d/starts"
+k="$(wc -l < "$d/starts" | tr -d ' ')"
+prev=""
+for a in "$@"; do [ "$prev" = "-p" ] && printf '%s' "$a" > "$d/prompt.$k"; prev="$a"; done
+[ -n "${FAKE_CLAUDE_DRAIN:-}" ] && [ "$k" -ge 2 ] && rm -f "$FAKE_DIR/unread-$name"
 printf 'identity=%s\nhome=%s\nname=%s\ndiscover=%s\n' "${KLATCH_IDENTITY_FILE:-}" "${KLATCH_HOME:-}" "${KLATCH_NAME:-}" "${KLATCH_DISCOVER:-}" > "$d/env"
 while [ $# -gt 0 ]; do [ "$1" = "--settings" ] && cp "$2" "$d/settings.json"; shift; done
 echo '{"type":"system","subtype":"init"}'
@@ -224,6 +241,78 @@ printf 'nt | - | No ticket.\n' > "$work/tn"
 FAKE_CLAIMS="$fake/claims.txt" run_team start "$work/tn" > "$work/out" 2>&1; waitfor "$td/run/nt.exit"
 if [ ! -f "$fake/claims.env" ]; then ok "a task with no ticket does not read the board"; else bad "read the board for no ticket"; fi
 
+# --- relaunch on unread mail (#1011, #591): `team resume NAME` and the runner that calls it when a worker ends
+newenv
+printf 'alpha | 11 | Build the alpha thing; open a PR.\n' > "$work/t1w"
+TEAM_MAX_RESTARTS=3 run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.note"
+if [ "$(cat "$td/run/alpha.note")" = "no unread mail" ] && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 1 ]; then ok "a worker that ends with no unread mail is not relaunched, and the reason is kept"; else bad "no unread: $(cat "$td/run/alpha.note" 2> /dev/null)"; fi
+if [ "$(grep -c '^worker revoke alpha$' "$fake/klatch.log")" -eq 2 ]; then ok "the credential issued to look at the count is revoked again"; else bad "revokes: $(cat "$fake/klatch.log")"; fi
+if grep -q "^read lobby --count$" "$fake/klatch.log" && ! grep -q "^read lobby$" "$fake/klatch.log"; then ok "the launcher counts with read --count and never with a read that marks mail read"; else bad "reads: $(grep '^read' "$fake/klatch.log")"; fi
+run_team status > "$work/out" 2>&1
+if grep -q "restarts=0" "$work/out" && grep -q "no unread mail" "$work/out"; then ok "status shows the restart count and the note"; else bad "status note: $(cat "$work/out")"; fi
+
+newenv
+echo 2 > "$fake/unread-alpha"
+TEAM_MAX_RESTARTS=3 run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.note"
+if [ "$(cat "$td/run/alpha.note")" = "restart limit 3 reached" ] && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 4 ] && [ "$(cat "$td/run/alpha.restarts")" = 3 ]; then ok "unread mail relaunches a worker at most TEAM_MAX_RESTARTS times (one start and three relaunches)"; else bad "limit: starts=$(wc -l < "$fake/claude-alpha/starts") note=$(cat "$td/run/alpha.note" 2> /dev/null)"; fi
+p2="$(cat "$fake/claude-alpha/prompt.2" 2> /dev/null)"
+if printf '%s' "$p2" | grep -qF "restart 1 of 3" && printf '%s' "$p2" | grep -qF "2 unread" && printf '%s' "$p2" | grep -qF "hello mail 2" && printf '%s' "$p2" | grep -qF "Build the alpha thing" && printf '%s' "$p2" | grep -qF "not instructions from the human"; then ok "the relaunch prompt carries the unread digest (as data) and the original task"; else bad "relaunch prompt: $p2"; fi
+if ! grep -qF "restart 1 of 3" "$fake/claude-alpha/prompt.3" 2> /dev/null && grep -qF "restart 2 of 3" "$fake/claude-alpha/prompt.3" 2> /dev/null && [ "$(grep -o 'Build the alpha thing' "$fake/claude-alpha/prompt.4" | wc -l | tr -d ' ')" -eq 1 ]; then ok "each relaunch prompt is built from the original task, not stacked on the last one"; else bad "prompt 3/4"; fi
+if [ "$(grep -c '^worker issue alpha' "$fake/klatch.log")" -eq 4 ] && grep -q "identity=$td/bundles/alpha.bundle" "$fake/claude-alpha/env"; then ok "every relaunch has a fresh credential issued by the launcher setup"; else bad "issues: $(grep -c '^worker issue alpha' "$fake/klatch.log")"; fi
+run_team status > "$work/out" 2>&1
+if grep -q "restarts=3" "$work/out" && grep -q "restart limit 3 reached" "$work/out"; then ok "status shows restarts=3 and why it stopped"; else bad "status limit: $(cat "$work/out")"; fi
+
+newenv
+echo 2 > "$fake/unread-alpha"
+FAKE_CLAUDE_DRAIN=1 TEAM_MAX_RESTARTS=3 run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.note"
+if [ "$(cat "$td/run/alpha.note")" = "no unread mail" ] && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 2 ]; then ok "a relaunched worker that reads its mail is not relaunched again"; else bad "drain: starts=$(wc -l < "$fake/claude-alpha/starts") note=$(cat "$td/run/alpha.note" 2> /dev/null)"; fi
+
+newenv
+echo 2 > "$fake/unread-alpha"
+run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.exit"; /bin/sleep 1
+if [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 1 ] && ! grep -q "^read " "$fake/klatch.log" && [ ! -f "$td/run/alpha.note" ]; then ok "TEAM_MAX_RESTARTS=0 turns the relaunch off: no count is read, nothing is relaunched"; else bad "off: $(grep '^read' "$fake/klatch.log")"; fi
+run_team resume alpha > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/alpha.exit"
+if [ "$rc" -eq 1 ] && grep -q "restart limit 0 reached" "$work/out"; then ok "resume under TEAM_MAX_RESTARTS=0 refuses and says why"; else bad "resume at 0: rc=$rc $(cat "$work/out")"; fi
+FAKE_CLAUDE_DRAIN=1 TEAM_MAX_RESTARTS=3 run_team resume alpha > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/alpha.exit"; waitfor "$td/run/alpha.note"
+if [ "$rc" -eq 0 ] && grep -q "resumed alpha (restart 1 of 3, 2 unread" "$work/out" && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 2 ] && grep -qF "hello mail 1" "$fake/claude-alpha/prompt.2"; then ok "team resume NAME relaunches a worker with unread mail, digest as the prompt"; else bad "manual resume rc=$rc: $(cat "$work/out")"; fi
+rm -f "$fake/unread-alpha"
+TEAM_MAX_RESTARTS=3 run_team resume alpha > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "no unread mail" "$work/out" && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 2 ]; then ok "team resume with nothing unread relaunches nothing and exits 0"; else bad "resume nothing rc=$rc: $(cat "$work/out")"; fi
+run_team resume nobody > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then ok "resume of an unknown worker exits 2"; else bad "resume unknown rc=$rc"; fi
+
+newenv
+echo 2 > "$fake/unread-slow"
+FAKE_CLAUDE_SLEEP=300 TEAM_MAX_RESTARTS=3 run_team start "$work/ts" > "$work/out" 2>&1
+waitfor "$td/run/slow.pid"; waitfor "$fake/claude-slow/env"
+TEAM_MAX_RESTARTS=3 run_team resume slow > "$work/out" 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "already running" "$work/out"; then ok "resume refuses a worker that is still running"; else bad "resume running rc=$rc: $(cat "$work/out")"; fi
+run_team stop > /dev/null 2>&1
+TEAM_MAX_RESTARTS=3 run_team resume slow > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "stopped by hand" "$work/out" && [ "$(wc -l < "$fake/claude-slow/starts" | tr -d ' ')" -eq 1 ]; then ok "a worker stopped with team stop is never relaunched, whatever its unread count"; else bad "resume stopped rc=$rc: $(cat "$work/out")"; fi
+
+newenv
+echo 2 > "$fake/unread-alpha"
+TEAM_MAX_TOTAL_USD=2.01 TEAM_MAX_RESTARTS=3 run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.note"
+if grep -q "^team budget" "$td/run/alpha.note" && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 1 ]; then ok "a relaunch that would pass TEAM_MAX_TOTAL_USD is refused, counting what the ended run spent"; else bad "cap: $(cat "$td/run/alpha.note" 2> /dev/null)"; fi
+
+newenv
+echo 2 > "$fake/unread-alpha"
+TEAM_RESTART_PAUSE_SECS=2 TEAM_MAX_RESTARTS=1 run_team start "$work/t1w" > "$work/out" 2>&1
+waitfor "$td/run/alpha.note"
+t1="$(sed -n 1p "$fake/claude-alpha/starts")"; t2="$(sed -n 2p "$fake/claude-alpha/starts")"
+if [ -n "$t2" ] && [ $((t2 - t1)) -ge 2 ]; then ok "TEAM_RESTART_PAUSE_SECS separates a start from its relaunch"; else bad "pause: $t1 $t2"; fi
+newenv
+TEAM_MAX_RESTARTS=x run_team resume alpha > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then ok "resume with no such worker exits 2 even with a bad TEAM_MAX_RESTARTS"; else bad "bad max rc=$rc"; fi
+
 # --- smoke runs one worker in a throwaway home, never the caller's KLATCH_HOME
 newenv
 TEAM_KLATCH="$bin/klatch" TEAM_CLAUDE="$bin/claude" TMPDIR="$work" KLATCH_HOME="$work/home" FAKE_DIR="$fake" "$team" smoke > "$work/out" 2>&1; rc=$?
@@ -231,7 +320,7 @@ if [ "$rc" -eq 0 ] && grep -q "^home=$work/klatch-team-smoke" "$fake/claude-smok
 
 # --- every worker run above left its watchdog behind a while: none may outlive the run (#1101)
 /bin/sleep 1
-leaked="$(pgrep -f "/bin/sleep 3602" | wc -l | tr -d ' ')"
+leaked="$(pgrep -f "^/bin/sleep $sentinel\$" | wc -l | tr -d ' ')"
 if [ "$leaked" -eq 0 ]; then ok "no watchdog sleep outlives a finished or stopped worker"; else bad "$leaked watchdog sleep(s) left running"; fi
 
 echo

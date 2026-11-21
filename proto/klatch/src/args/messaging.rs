@@ -50,6 +50,9 @@ pub(crate) enum MessagingCmd {
         /// Do not advance the cursor
         #[arg(long)]
         peek: bool,
+        /// Print only how many messages are unread and leave them unread (read only, implies --peek; #1011)
+        #[arg(long)]
+        count: bool,
     },
     /// Look back in a room: the newest 20 messages, or `--last N`, or the next 20 after `--since SEQ`. Prints
     /// everyone's messages as `read` does and moves no read cursor.

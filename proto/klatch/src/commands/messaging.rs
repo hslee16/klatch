@@ -31,7 +31,13 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
         )?,
         MessagingCmd::Ask { room, text } => ask(ctx, &room, &text)?,
         MessagingCmd::Answer { room, number, text } => answer(ctx, &room, number, &text)?,
-        MessagingCmd::Read { room, peek } => read(t, &room, peek)?,
+        MessagingCmd::Read { room, peek, count } => {
+            if count {
+                unread_count(t, &room)?
+            } else {
+                read(t, &room, peek)?
+            }
+        }
         MessagingCmd::History { room, last, since } => history_of(t, room, since, last)?,
         MessagingCmd::Find { room, text } => find(t, &room, &text.join(" "))?,
         MessagingCmd::Invite { member, room, via } => invite(ctx, (&member, &room), &via)?,
@@ -255,6 +261,13 @@ pub(super) fn join_hint(me: &str, discovered: bool) -> Option<String> {
 pub(super) const EMPTY_READ_NOTE: &str = "klatch: no unread messages here. Messages a hook or an earlier read already showed \
      are not shown again, and processes using the same member name share one cursor and do not see each other's \
      posts; use another name for a separate reader, or `who` to see who is in the room";
+
+/// `read --count` (#1011): how many messages `read` would show, as a bare number, with nothing marked read. It is the
+/// caller's own unread mail through the same guarded `read` peek, so a member sees only its own count.
+pub(super) fn unread_count(t: &dyn Transport, room: &str) -> Result<()> {
+    println!("{}", t.read(room, false)?.len());
+    Ok(())
+}
 
 pub(super) fn read(t: &dyn Transport, room: &str, peek: bool) -> Result<()> {
     let messages = t.read(room, !peek)?;
