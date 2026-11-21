@@ -282,3 +282,68 @@ fn a_reply_reports_usage_and_a_failed_run_says_why_without_quoting_the_reply() {
     assert!(e.starts_with("claude exited with status 2"), "{e}");
     assert!(!e.contains("SECRET-ECHO"));
 }
+
+fn deny_at(confidence: f64) -> String {
+    result_json(
+        serde_json::json!({"verdict": "deny", "confidence": confidence, "reason": "looks private"}),
+    )
+}
+
+#[test]
+fn a_verdict_below_the_confidence_band_is_deferred_with_a_note() {
+    let r = FakeRunner::ok(&deny_at(0.5));
+    let j = judge(&r, "private");
+    let (verdict, note) = j.judge_noted(&review("public", "x"));
+    assert_eq!(verdict, Verdict::Defer);
+    let note = note.expect("the deferral is explained");
+    assert!(
+        note.contains("deny") && note.contains("0.50") && note.contains("0.70"),
+        "{note}"
+    );
+    assert!(
+        !note.contains("looks private"),
+        "the note carries no model text: {note}"
+    );
+    assert_eq!(j.judge(&review("public", "x")), Verdict::Defer);
+}
+
+#[test]
+fn a_verdict_at_or_above_the_band_stands_and_the_band_is_configurable() {
+    let at = FakeRunner::ok(&deny_at(0.7));
+    assert!(matches!(
+        judge(&at, "private").judge_noted(&review("public", "x")),
+        (Verdict::Deny(_), None)
+    ));
+    let mid = FakeRunner::ok(&deny_at(0.9));
+    let strict = judge(&mid, "private").with_band(0.95).unwrap();
+    assert_eq!(strict.judge(&review("public", "x")), Verdict::Defer);
+    let loose = judge(&mid, "private").with_band(0.0).unwrap();
+    assert!(matches!(
+        loose.judge(&review("public", "x")),
+        Verdict::Deny(_)
+    ));
+    for bad in [-0.1, 1.5, f64::NAN] {
+        assert!(judge(&mid, "private").with_band(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_failure_is_a_defer_with_no_note() {
+    let r = FakeRunner::failing(Err("down".into()));
+    assert_eq!(
+        judge(&r, "private").judge_noted(&review("public", "x")),
+        (Verdict::Defer, None)
+    );
+}
+
+#[test]
+fn a_low_confidence_deferral_is_not_a_failure_for_the_breaker() {
+    let r = FakeRunner::ok(&deny_at(0.2));
+    let gated = Breaker::new(judge(&r, "private"), 2);
+    for _ in 0..5 {
+        let (v, note) = gated.judge_noted(&review("public", "x"));
+        assert_eq!(v, Verdict::Defer);
+        assert!(note.is_some());
+    }
+    assert_eq!(r.calls(), 5, "the breaker never opened");
+}

@@ -104,6 +104,31 @@ fn a_decision_resets_the_breaker() {
 }
 
 #[test]
+fn a_noted_deferral_is_not_a_failure_and_passes_through_the_stack() {
+    struct Unsure;
+    impl Judge for Unsure {
+        fn judge(&self, _: &ReviewItem) -> Verdict {
+            Verdict::Defer
+        }
+        fn judge_noted(&self, _: &ReviewItem) -> (Verdict, Option<String>) {
+            (Verdict::Defer, Some("low".into()))
+        }
+    }
+    let low = (Verdict::Defer, Some("low".to_string()));
+    let b = Breaker::new(Unsure, 2);
+    for _ in 0..6 {
+        assert_eq!(b.judge_noted(&item("x", "public")), low);
+    }
+    assert!(!b.is_open());
+    let n = Narrowed::new(rules(), Unsure);
+    assert_eq!(n.judge_noted(&item("hello", "public")), low);
+    assert!(matches!(
+        n.judge_noted(&item("AKIAIOSFODNN7EXAMPLE", "public")),
+        (Verdict::Deny(_), None)
+    ));
+}
+
+#[test]
 fn a_panicking_judge_defers_and_never_allows() {
     struct Boom;
     impl Judge for Boom {

@@ -227,17 +227,16 @@ pub fn parse_reply(stdout: &str) -> Result<Parsed, String> {
     })
 }
 
-/// Read `claude -p --output-format json` output into a verdict.
-pub fn parse_output(stdout: &str) -> Result<Verdict, String> {
-    let p = parse_reply(stdout)?;
-    Ok(match p.pick {
+/// A checked reply as the verdict it names.
+fn parsed_verdict(p: Parsed) -> Verdict {
+    match p.pick {
         Pick::Allow => Verdict::Allow,
         Pick::Redact => Verdict::Redact(p.redacted_text.unwrap_or_default()),
         Pick::Deny => Verdict::Deny(p.reason.map_or_else(
             || "the hosted judge denied it".into(),
             |r| r.chars().take(200).collect(),
         )),
-    })
+    }
 }
 
 /// One validated, isolated session shape: the throwaway settings file, the allow-listed environment, the system
@@ -360,7 +359,12 @@ impl Session {
 pub struct ClaudeJudge<R: ProcessRunner> {
     session: Session,
     runner: R,
+    /// A verdict with less confidence than this is deferred to the reviewer (#1013).
+    band: f64,
 }
+
+/// The default confidence band: below it a hosted verdict goes to the reviewer as a defer.
+pub const DEFAULT_CONFIDENCE_BAND: f64 = 0.7;
 
 impl<R: ProcessRunner> ClaudeJudge<R> {
     /// Check the settings and write the throwaway settings file into `workdir` (which must exist and should be a
@@ -375,7 +379,19 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
         Ok(ClaudeJudge {
             session: Session::new(config, None, workdir, env)?,
             runner,
+            band: DEFAULT_CONFIDENCE_BAND,
         })
+    }
+
+    /// Set the confidence band (0 to 1; 0 never defers on confidence, 1 defers all but certain verdicts).
+    pub fn with_band(mut self, band: f64) -> Result<Self, String> {
+        if !(0.0..=1.0).contains(&band) {
+            return Err(format!(
+                "the confidence band must be between 0 and 1, not {band}"
+            ));
+        }
+        self.band = band;
+        Ok(self)
     }
 
     pub fn invocation(&self, item: &ReviewItem) -> Invocation {
@@ -385,16 +401,37 @@ impl<R: ProcessRunner> ClaudeJudge<R> {
 
 impl<R: ProcessRunner> Judge for ClaudeJudge<R> {
     fn judge(&self, item: &ReviewItem) -> Verdict {
+        self.judge_noted(item).0
+    }
+
+    /// A verdict whose confidence is below the band is deferred to the reviewer with a note naming the verdict and
+    /// the two numbers (never the reply text). Any failure is a plain defer with no note.
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
         if !self.session.admits(item) {
-            return Verdict::Defer;
+            return (Verdict::Defer, None);
         }
         let Ok(out) = self.runner.run(&self.session.invocation(item)) else {
-            return Verdict::Defer;
+            return (Verdict::Defer, None);
         };
         if out.code != Some(0) {
-            return Verdict::Defer;
+            return (Verdict::Defer, None);
         }
-        parse_output(&out.stdout).unwrap_or(Verdict::Defer)
+        let Ok(parsed) = parse_reply(&out.stdout) else {
+            return (Verdict::Defer, None);
+        };
+        if parsed.confidence < self.band {
+            let pick = match parsed.pick {
+                Pick::Allow => "allow",
+                Pick::Redact => "redact",
+                Pick::Deny => "deny",
+            };
+            let note = format!(
+                "hosted {pick} at confidence {:.2}, below the band {:.2}; left for the reviewer",
+                parsed.confidence, self.band
+            );
+            return (Verdict::Defer, Some(note));
+        }
+        (parsed_verdict(parsed), None)
     }
 }
 
@@ -422,6 +459,14 @@ impl<J: Judge> Judge for BelowCeiling<J> {
             self.inner.judge(item)
         } else {
             Verdict::Defer
+        }
+    }
+
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
+        if label_below_ceiling(&self.chain, Some(&self.ceiling), &item.from_label) {
+            self.inner.judge_noted(item)
+        } else {
+            (Verdict::Defer, None)
         }
     }
 }

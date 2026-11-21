@@ -45,6 +45,13 @@ impl Verdict {
 /// One function: take a queued item, return a verdict. Channel safety only.
 pub trait Judge {
     fn judge(&self, item: &ReviewItem) -> Verdict;
+
+    /// The verdict and, when the judge deferred on purpose rather than failing (the hosted judge below its
+    /// confidence band, #1013), a note saying why. The note carries no message text and no model text. The queue
+    /// drain audits it; the breaker does not count such a deferral as a failure.
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
+        (self.judge(item), None)
+    }
 }
 
 /// The default judge: decides nothing.

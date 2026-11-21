@@ -29,8 +29,9 @@ mod transport;
 mod wake;
 
 pub use claude_judge::{
-    BelowCeiling, ClaudeConfig, ClaudeJudge, Invocation, Parsed, Pick, ProcessOutput,
-    ProcessRunner, RealRunner, Session, fence_for, parse_reply, run_command, user_prompt,
+    BelowCeiling, ClaudeConfig, ClaudeJudge, DEFAULT_CONFIDENCE_BAND, Invocation, Parsed, Pick,
+    ProcessOutput, ProcessRunner, RealRunner, Session, fence_for, parse_reply, run_command,
+    user_prompt,
 };
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use gateway::{

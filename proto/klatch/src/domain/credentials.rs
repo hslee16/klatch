@@ -79,7 +79,10 @@ fn strip_invisible(text: &str) -> String {
 fn words_at(text: &str) -> Vec<(usize, &str)> {
     let mut words = Vec::new();
     let mut start = None;
-    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+    for (i, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
         match (c.is_whitespace(), start) {
             (false, None) => start = Some(i),
             (true, Some(s)) => {
@@ -199,7 +202,10 @@ fn long_tokens(text: &str) -> Vec<(usize, &str)> {
     };
     let mut out = Vec::new();
     let mut start = None;
-    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+    for (i, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
         match (sep(c), start) {
             (false, None) => start = Some(i),
             (true, Some(s)) => {

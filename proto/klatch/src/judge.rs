@@ -10,7 +10,8 @@ use super::*;
 use clap::Subcommand;
 use klatch::domain::{Breaker, Judge, LabelChain, Narrowed};
 use klatch::gateway::{
-    BelowCeiling, ClaudeConfig, ClaudeJudge, ProcessRunner, RealRunner, drain, rules_judge,
+    BelowCeiling, ClaudeConfig, ClaudeJudge, DEFAULT_CONFIDENCE_BAND, ProcessRunner, RealRunner,
+    drain, rules_judge,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -44,7 +45,18 @@ pub enum JudgeCmd {
         /// with an unknown label, stays queued). There is no default.
         #[arg(long, value_name = "LABEL", requires = "hosted_judge")]
         hosted_ceiling: Option<String>,
+        /// With --hosted-judge: a hosted verdict with less confidence than this (0 to 1) is not applied; it goes to the
+        /// reviewer as a defer and the audit records it. Default 0.7.
+        #[arg(long, value_name = "0..1", requires = "hosted_judge", value_parser = parse_band)]
+        hosted_confidence_band: Option<f64>,
     },
+}
+
+fn parse_band(s: &str) -> Result<f64, String> {
+    s.parse::<f64>()
+        .ok()
+        .filter(|b| (0.0..=1.0).contains(b))
+        .ok_or_else(|| "the confidence band must be a number from 0 to 1".to_string())
 }
 
 fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
@@ -88,11 +100,13 @@ fn pass(hosted: Option<&dyn Judge>) -> Result<()> {
 /// breaker keeps its count across passes.
 fn hosted_stack<R: ProcessRunner>(
     config: ClaudeConfig,
+    band: f64,
     runner: R,
     workdir: &Path,
 ) -> Result<BelowCeiling<Breaker<ClaudeJudge<R>>>, String> {
     let ceiling = config.ceiling.clone();
-    let judge = ClaudeJudge::new(config, runner, workdir, &|k| std::env::var(k).ok())?;
+    let judge =
+        ClaudeJudge::new(config, runner, workdir, &|k| std::env::var(k).ok())?.with_band(band)?;
     Ok(BelowCeiling::new(
         Breaker::new(judge, BREAKER_LIMIT),
         LabelChain::default(),
@@ -131,6 +145,7 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
         max_passes,
         hosted_judge,
         hosted_ceiling,
+        hosted_confidence_band,
     } = cmd;
     if let Some(why) = refusal(
         std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
@@ -152,7 +167,9 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
             let runner = RealRunner {
                 timeout: Duration::from_secs(HOSTED_TIMEOUT_SECS),
             };
-            let stack = hosted_stack(config, runner, &scratch.0).map_err(anyhow::Error::msg)?;
+            let band = hosted_confidence_band.unwrap_or(DEFAULT_CONFIDENCE_BAND);
+            let stack =
+                hosted_stack(config, band, runner, &scratch.0).map_err(anyhow::Error::msg)?;
             eprintln!(
                 "hosted judge ON: room text posted strictly below the label {ceiling:?} is sent to an outside service \
                  through your claude binary; the scrub list and anything at or above that label never is"
@@ -215,6 +232,18 @@ mod tests {
         assert!(!parses(&["--hosted-ceiling", "private"]));
     }
 
+    #[test]
+    fn the_confidence_band_needs_the_hosted_judge_and_stays_between_zero_and_one() {
+        let hosted = ["--hosted-judge", "sonnet", "--hosted-ceiling", "private"];
+        let with = |band: &'static str| [&hosted[..], &["--hosted-confidence-band", band]].concat();
+        assert!(parses(&with("0.8")));
+        assert!(parses(&with("0")));
+        assert!(!parses(&with("1.5")));
+        assert!(!parses(&with("-0.1")));
+        assert!(!parses(&with("high")));
+        assert!(!parses(&["--hosted-confidence-band", "0.8"]));
+    }
+
     struct Down;
     impl ProcessRunner for Down {
         fn run(
@@ -235,8 +264,8 @@ mod tests {
             budget_usd: 0.25,
             ceiling: ceiling.into(),
         };
-        assert!(hosted_stack(cfg("nope"), Down, &dir).is_err());
-        let stack = hosted_stack(cfg("private"), Down, &dir).unwrap();
+        assert!(hosted_stack(cfg("nope"), 0.7, Down, &dir).is_err());
+        let stack = hosted_stack(cfg("private"), 0.7, Down, &dir).unwrap();
         let item = klatch::domain::ReviewItem {
             id: 1,
             room: "r".into(),
