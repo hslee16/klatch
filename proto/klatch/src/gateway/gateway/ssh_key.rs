@@ -6,6 +6,12 @@ use crate::domain::is_reserved_name;
 use crate::gateway::ssh_key::{POLICY_PREFIX, valid_label};
 
 impl<S: Store> Gateway<S> {
+    /// The member a key label is mapped to now, if any: one policy read, no principal (an open ssh session looks at it
+    /// again on every request and tick, #1083).
+    pub fn ssh_key_member(&self, label: &str) -> Result<Option<String>> {
+        crate::gateway::ssh_key_member(&self.store, label)
+    }
+
     /// Only the human: map the key label `label` to `member`, or with `on` false take the mapping away (the label must
     /// be mapped to that member). A label has one member: mapping it to another is refused until it is unmapped, so a
     /// key never moves between members by accident. A floor act: no agent, the admin agent included.
