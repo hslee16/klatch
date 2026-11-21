@@ -90,6 +90,48 @@ fn the_board_text_has_a_queue_section_with_the_merge_claim_holder_and_the_pr_own
 }
 
 #[test]
+fn the_board_shows_a_reverted_pr_and_the_integrators_halt_only_from_the_integrator() {
+    let (g, _t) = world();
+    g.post(&alice(), "r", "ready: #7").unwrap();
+    g.post(&ivy(), "r", "merged: #7").unwrap();
+    g.post(&bob(), "r", "reverted: #7").unwrap();
+    g.post(&bob(), "r", "halted: main red after #7").unwrap();
+    let board = g.board(&alice(), "r").unwrap();
+    assert_eq!(board.queue[0].state, QueueState::Merged);
+    assert!(board.halt.is_none());
+    g.post(&ivy(), "r", "reverted: #7").unwrap();
+    g.post(&ivy(), "r", "halted: main red after #7").unwrap();
+    let board = g.board(&alice(), "r").unwrap();
+    assert_eq!(board.queue[0].state, QueueState::Reverted);
+    let text = crate::domain::render_board(&board, 1_000);
+    assert!(text.contains("#7 reverted, main went red"), "{text}");
+    assert!(
+        text.contains("integrator halted: main red after #7"),
+        "{text}"
+    );
+    // a later integrator state word means it runs again; the role is read when the board is built
+    g.post(&ivy(), "r", "checking: #9").unwrap();
+    assert!(g.board(&alice(), "r").unwrap().halt.is_none());
+    g.post(&ivy(), "r", "halted: main not verified after #9")
+        .unwrap();
+    assert!(g.board(&alice(), "r").unwrap().halt.is_some());
+    g.admin_set_integrator(&admin(), "ivy", false).unwrap();
+    assert!(g.board(&alice(), "r").unwrap().halt.is_none());
+}
+
+#[test]
+fn a_halt_alone_makes_the_queue_section_even_with_no_entries() {
+    let (g, _t) = world();
+    g.post(&ivy(), "r", "halted: main not verified after #4")
+        .unwrap();
+    let text = crate::domain::render_board(&g.board(&bob(), "r").unwrap(), 1_000);
+    assert!(
+        text.contains("queue (merge:main free):\n  integrator halted: main not verified after #4"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_board_with_no_queue_words_has_no_queue_section() {
     let (g, _t) = world();
     let text = crate::domain::render_board(&g.board(&bob(), "r").unwrap(), 1_000);

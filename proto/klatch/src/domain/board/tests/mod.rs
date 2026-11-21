@@ -102,6 +102,7 @@ fn sample() -> Board {
         prs: vec![],
         queue: vec![],
         merge_holder: None,
+        halt: None,
     }
 }
 
