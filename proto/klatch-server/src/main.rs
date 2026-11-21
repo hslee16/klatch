@@ -1,9 +1,16 @@
 //! `klatch-server` (epic #1056). Phase 1 (#1057) is one subcommand: `klatch-server channel`, a stdio MCP server that is
 //! `klatch mcp --stdio` (same member setup, same nine tools) and also a Claude Code channel: it declares
 //! `experimental['claude/channel']` and pushes `notifications/claude/channel` for messages addressed to its member.
-//! It opens no network socket and starts no program.
+//! Phase 2 (#1058) adds `--webhook ADDR`, a loopback-only listener for `gh webhook forward` (modules `loopback` and
+//! `webhook`). Without that option it opens no network socket; it never starts a program.
 
 mod channel;
+mod loopback;
+#[cfg(test)]
+mod loopback_tests;
+mod webhook;
+#[cfg(test)]
+mod webhook_tests;
 
 use anyhow::{Result, bail};
 use channel::{Live, Selector, SharedOut, Tap, watch};
@@ -11,7 +18,7 @@ use klatch::member::{Call, Who, open_member};
 use klatch::session::{Session, SessionConfig, mcp::McpServer};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const USAGE: &str = "usage: klatch-server channel\n\nchannel: a stdio MCP server for Claude Code: the klatch tools, and a channel that pushes\nroom events for this member. The member comes from the environment as for `klatch mcp --stdio`\n(KLATCH_NAME, KLATCH_SCOPE, KLATCH_HOME, KLATCH_KEY_DIR, KLATCH_IDENTITY_FILE).";
+const USAGE: &str = "usage: klatch-server channel [--webhook 127.0.0.1:PORT (--webhook-secret-file PATH | --webhook-secret-env NAME)]\n\nchannel: a stdio MCP server for Claude Code: the klatch tools, and a channel that pushes\nroom events for this member. The member comes from the environment as for `klatch mcp --stdio`\n(KLATCH_NAME, KLATCH_SCOPE, KLATCH_HOME, KLATCH_KEY_DIR, KLATCH_IDENTITY_FILE).\n\n--webhook ADDR: also listen on loopback (127.0.0.1 or ::1 only; anything else is refused) for\n`gh webhook forward --url http://ADDR/github` and push pull_request, check_suite and workflow_run\nevents as channel events. The X-Hub-Signature-256 HMAC is verified with a secret read from a file\nor from the environment variable NAME (never a command-line value); there is no unauthenticated mode.";
 
 /// A panic prints where it happened and nothing it carried, and a crash leaves no core file (it would hold keys and
 /// messages in memory): the same hardening the `klatch` binary does.
@@ -44,7 +51,7 @@ fn main() {
         .collect::<Vec<_>>()
         .as_slice()
     {
-        ["channel"] => run_channel(),
+        ["channel", rest @ ..] => run_channel(rest),
         ["--help"] | ["-h"] => {
             println!("{USAGE}");
             return;
@@ -82,7 +89,16 @@ fn instructions(member: &str) -> String {
     )
 }
 
-fn run_channel() -> Result<()> {
+fn run_channel(args: &[&str]) -> Result<()> {
+    // the webhook options are checked and the listener bound (or refused) before anything else starts
+    let hook = webhook::setup(args)?;
+    if let Some(h) = &hook {
+        eprintln!(
+            "klatch-server: webhook intake on {} (loopback only), POST {}",
+            h.listener.local_addr()?,
+            webhook::PATH
+        );
+    }
     let Some(member) = open_member(&Who::default(), Call::default())? else {
         bail!("no member to act as");
     };
@@ -92,6 +108,7 @@ fn run_channel() -> Result<()> {
     let out = SharedOut::new(Box::new(std::io::stdout()));
     let ready = AtomicBool::new(false);
     let stop = AtomicBool::new(false);
+    let queue = webhook::Queue::new(webhook::QUEUE_CAP);
 
     std::thread::scope(|scope| -> Result<()> {
         // The watcher has its own gateway on the same store (a gateway is not shared between threads): the same member,
@@ -124,6 +141,15 @@ fn run_channel() -> Result<()> {
                 );
             }
         });
+        if let Some(h) = hook {
+            let queue = &queue;
+            let pump_out = out.clone();
+            scope.spawn(move || webhook::pump(queue, &pump_out, (ready, stop)));
+            scope.spawn(move || {
+                let mut intake = webhook::Intake::new(h.secret, queue);
+                loopback::serve(&h.listener, &loopback::Limits::default(), stop, &mut intake);
+            });
+        }
         let input = Tap::new(std::io::stdin().lock(), ready);
         let served = McpServer::new(&session, instructions(&name))
             .with_channel()
