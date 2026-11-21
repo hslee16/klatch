@@ -130,6 +130,9 @@ pub struct Session<'a, B: Backend + ?Sized> {
     recheck: Option<&'a dyn Fn() -> crate::domain::Result<()>>,
     /// Whether the session sends `hello` itself (a transport that already told the peer who it is turns this off).
     greet: bool,
+    /// The harness the transport edge verified for this process (#1115), which a `join` is judged by; `None` is the
+    /// generic floor. Never read from a request.
+    harness: Option<&'a dyn crate::harness::Harness>,
 }
 
 impl<'a, S: Store> Session<'a, Gateway<S>> {
@@ -149,7 +152,16 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             fixed_member: false,
             recheck: None,
             greet: true,
+            harness: None,
         }
+    }
+
+    /// Judge a `join` by `harness`, which the caller's edge verified from evidence of its own (the process tree, as
+    /// for a CLI command, #877), never from anything a request says (#1115). Without it a `join` is the generic floor.
+    #[must_use]
+    pub fn with_harness(mut self, harness: &'a dyn crate::harness::Harness) -> Self {
+        self.harness = Some(harness);
+        self
     }
 
     /// Mark the member as fixed by the transport: a request with a parameter that claims who is calling (`sender`,
@@ -421,7 +433,7 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
                 }
                 Err(frames) => frames,
             },
-            _ => self.gateway.handle(self.who, call),
+            _ => self.gateway.handle_as(self.who, call, self.harness),
         }
     }
 

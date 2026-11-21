@@ -620,6 +620,7 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
             &member.gateway,
             &member.caller.principal,
             (*stdio, Some(label.as_str())),
+            false, // a remote ssh peer: nothing about this machine's process tree speaks for it
         );
     }
     let Some(member) = klatch::member::open_member(&who.who(), call_of(&cmd))? else {
@@ -627,7 +628,12 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
     };
     let klatch::member::Member { gateway, caller } = member;
     match cmd {
-        Cmd::Serve { stdio, .. } => serve_stdio(&gateway, &caller.principal, (stdio, None)),
+        Cmd::Serve { stdio, .. } => serve_stdio(
+            &gateway,
+            &caller.principal,
+            (stdio, None),
+            caller.claude_code,
+        ),
         Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
@@ -686,6 +692,7 @@ fn serve_stdio(
     gateway: &Gateway<SqliteStore>,
     principal: &Principal,
     (stdio, key): (bool, Option<&str>),
+    claude_code: bool,
 ) -> Result<()> {
     if !stdio {
         bail!("serve needs --stdio, the only transport so far");
@@ -694,6 +701,13 @@ fn serve_stdio(
     // stdin cannot be stopped from outside; the process exits when the session does
     let config = klatch::session::SessionConfig::default();
     let session = klatch::session::Session::new(gateway, principal, &config);
+    // A `join` is judged by the harness the process tree verified, the same evidence a CLI command passes (#877, #1115)
+    let harness = klatch::harness::ClaudeCode::probing(klatch::harness::wake_support_here);
+    let session = if claude_code {
+        session.with_harness(&harness)
+    } else {
+        session
+    };
     // The mapping is read through a second connection of its own, opened here, so the look never goes through the
     // gateway's operations (it is a policy read for the session itself, #1083).
     let mapping = match key {
