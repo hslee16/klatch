@@ -22,6 +22,8 @@ cat > "$shim/cargo" <<'SH'
 #!/bin/sh
 echo "$* | seed=${HEGEL_SEED:-} cases=${HEGEL_TEST_CASES:-}" >> "$FAKE_LOG"
 case "$*" in "build -p klatch --locked --manifest-path "*) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" > /dev/null 2>&1 ;; esac
+# the licence notices check (#1034) reads the real dependency tree, so metadata and about go to the real cargo
+case "$1" in metadata | about) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" ;; esac
 case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"; exit 1; } ;; esac
 exit 0
 SH
@@ -69,6 +71,26 @@ for pat in "--features client" "--no-default-features --locked"; do
 done
 run_gate ""
 if grep -q -- "build -p klatch --no-default-features --features client --locked" "$work/log" && grep -q -- "build -p klatch --no-default-features --locked" "$work/log"; then ok "the gate runs the client-feature build and the bare build, as CI does (#910)"; else bad "builds missing: $(cat "$work/log")"; fi
+
+# the CI steps the gate used to skip (#1034): the crates.io dry run is in the gate (and, with --allow-dirty as the tests
+# pass it, packages the dirty tree), and a failure there fails the gate at its own step
+run_gate ""
+if grep -q -- "publish --dry-run --locked -p klatch --allow-dirty" "$work/log"; then ok "the gate runs the crates.io dry run, as CI does (#1034)"; else bad "publish dry run missing: $(cat "$work/log")"; fi
+if run_gate "publish --dry-run"; then bad "the gate passed although the publish dry run failed (#1034)"; else
+  if grep -q "FAILED at step" "$work/out" && grep -q "crates.io dry run" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing publish dry run fails the gate at its own step (#1034)"; else bad "publish step: $(cat "$work/out")"; fi
+fi
+# the other CI-only steps run when their tool is installed and say they were skipped when it is not
+run_gate ""
+if command -v node > /dev/null 2>&1; then
+  if grep -q "TypeScript client tests *ok" "$work/out"; then ok "with node installed the gate runs the TypeScript tests, as CI does (#1034)"; else bad "typescript step: $(cat "$work/out")"; fi
+else
+  if grep -q "TypeScript client tests .*skipped (node is not installed; CI runs it)" "$work/out"; then ok "without node the TypeScript step is skipped and says so (#1034)"; else bad "typescript skip: $(cat "$work/out")"; fi
+fi
+if command -v cargo-about > /dev/null 2>&1; then
+  if grep -q "licence notices *ok" "$work/out"; then ok "with cargo-about installed the gate checks the licence notices, as CI does (#1034)"; else bad "notices step: $(cat "$work/out")"; fi
+else
+  if grep -q "licence notices .*skipped (cargo-about is not installed; CI runs it)" "$work/out"; then ok "without cargo-about the notices step is skipped and says so (#1034)"; else bad "notices skip: $(cat "$work/out")"; fi
+fi
 
 run_gate "" --long
 if grep -q "cases=5000" "$work/log"; then ok "--long raises the case budget"; else bad "--long: $(cat "$work/log")"; fi
