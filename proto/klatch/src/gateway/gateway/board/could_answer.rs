@@ -128,12 +128,13 @@ impl<S: Store> Gateway<S> {
             room: room.into(),
             body: format!("answer to #{ask}: ."),
         };
-        let mut refusals = Vec::new();
-        refusals.push(self.check_stops(&target, room, &post));
-        refusals.push(self.check_run(room));
-        refusals.push(self.check_dm(&target, room));
-        refusals.push(self.check_clearance(&target, room));
-        refusals.push(self.check_role(&target, &post));
+        let refusals = [
+            self.check_stops(&target, room, &post),
+            self.check_run(room),
+            self.check_dm(&target, room),
+            self.check_clearance(&target, room),
+            self.check_role(&target, &post),
+        ];
         for e in refusals {
             match e {
                 Ok(()) => {}
