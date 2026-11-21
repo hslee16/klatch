@@ -59,6 +59,7 @@ mod room_require;
 mod room_settings;
 mod runs;
 mod scrub;
+mod ssh_key;
 mod stream;
 mod stuck;
 mod tasks;

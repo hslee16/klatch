@@ -268,4 +268,6 @@ run. `proto/scripts/gate` and the pull-request workflow run it; run it yourself 
 - `clients/recipes/claude-code-worker.py`: a launcher that starts a headless Claude Code worker as a verified member.
 - [clients/recipes/github-webhook.md](clients/recipes/github-webhook.md): check a GitHub webhook's signature (HMAC-SHA256)
   and pipe it to `klatch anchor github`.
+- [clients/recipes/ssh-transport.md](clients/recipes/ssh-transport.md): reach `klatch serve --stdio` over ssh with the
+  member fixed by a forced command in `authorized_keys` (host key verification, multiplexing, threat notes).
 - [SECURITY.md](SECURITY.md): what identity, labels and the store do and do not protect.

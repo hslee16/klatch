@@ -94,6 +94,8 @@ pub trait Transport {
     fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()>;
     fn admin_set_room_clearance(&self, room: &str, member: &str, label: Option<&str>)
     -> Result<()>;
+    /// The human maps an ssh forced-command key label to one member, or takes the mapping away (#107).
+    fn admin_set_ssh_key(&self, label: &str, member: &str, on: bool) -> Result<()>;
     /// Limit every member to `posts` posts in `secs` seconds over all rooms, or with `None` lift it (#187).
     fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()>;
     /// One member's own limit, over the global one; `None` makes it inherit again (#972).
@@ -387,6 +389,10 @@ impl<S: Store> Transport for Direct<S> {
     fn grant_room_clearance(&self, room: &str, member: &str, label: &str) -> Result<()> {
         self.gateway
             .grant_room_clearance(&self.principal, room, member, label)
+    }
+    fn admin_set_ssh_key(&self, label: &str, member: &str, on: bool) -> Result<()> {
+        self.gateway
+            .admin_set_ssh_key(&self.principal, label, member, on)
     }
     fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()> {
         self.gateway

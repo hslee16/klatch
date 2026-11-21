@@ -40,6 +40,7 @@ mod roles_path;
 mod room_capability;
 mod scale;
 mod sessions;
+mod ssh_key;
 
 /// The time every clock scenario starts at (unix seconds).
 pub(super) const T0: i64 = 1_800_000_000;
@@ -126,6 +127,7 @@ pub fn all() -> Vec<Scenario> {
         credentials::all(),
         merge_claim::all(),
         merge_queue::all(),
+        ssh_key::all(),
     ]
     .into_iter()
     .flatten()

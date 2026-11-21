@@ -3,6 +3,7 @@
 
 pub mod acp;
 mod backend;
+mod fixed;
 mod frames;
 mod guarded;
 pub mod mcp;
@@ -122,6 +123,8 @@ pub struct Session<'a, B: Backend + ?Sized> {
     gateway: &'a B,
     who: &'a Principal,
     config: &'a SessionConfig,
+    /// The transport fixed the member (an ssh forced command, #107): a request that claims an identity is refused.
+    fixed_member: bool,
     /// Whether the session sends `hello` itself (a transport that already told the peer who it is turns this off).
     greet: bool,
 }
@@ -140,8 +143,17 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             gateway,
             who,
             config,
+            fixed_member: false,
             greet: true,
         }
+    }
+
+    /// Mark the member as fixed by the transport: a request with a parameter that claims who is calling (`sender`,
+    /// `from`, `as`, `identity`, `attribution`, or a `member` where the method has no member target) is refused with the
+    /// rule `member-fixed` and is not run. The member was never taken from a request; this makes an attempt visible.
+    pub fn fixed_member(mut self) -> Self {
+        self.fixed_member = true;
+        self
     }
 
     /// Do not send `hello` when the session starts: the transport already sent one and settled the principal.
@@ -228,6 +240,11 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             Ok(ClientFrame::Request {
                 id, method, params, ..
             }) => {
+                if self.fixed_member
+                    && let Some(field) = fixed::identity_claim(&method, &params)
+                {
+                    return out.send_all(&frames::failure(id, &member_fixed_refusal(&field)));
+                }
                 let call = Call {
                     id,
                     method,
@@ -394,6 +411,18 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             }
             Err(e) => failure(id, &e),
         }
+    }
+}
+
+/// The refusal of a request that claims an identity on a session whose member is fixed. It names the field and never
+/// repeats the name that was claimed.
+fn member_fixed_refusal(field: &str) -> crate::domain::Error {
+    crate::domain::Error::Refused {
+        rule: "member-fixed".into(),
+        reason: format!(
+            "this session's member is fixed by its ssh key; the request field `{field}` claims an identity and is refused; \
+             drop it, the member is whoever the key is mapped to"
+        ),
     }
 }
 

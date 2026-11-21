@@ -400,6 +400,7 @@ impl Transport for SharedTransport {
         admin_set_reviewer(member: &str, on: bool) -> Result<()>;
         admin_set_facilitator(member: &str, on: bool) -> Result<()>;
         admin_set_integrator(member: &str, on: bool) -> Result<()>;
+        admin_set_ssh_key(label: &str, member: &str, on: bool) -> Result<()>;
         admin_set_admin_agent(member: &str, on: bool) -> Result<()>;
         admin_set_room_creation_granted(on: bool) -> Result<()>;
         admin_grant_room_capability(member: &str, on: bool) -> Result<()>;

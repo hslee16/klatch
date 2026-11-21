@@ -28,6 +28,12 @@ pub enum PeerEvidence {
         fingerprint: String,
         forced_member: Option<String>,
     },
+    /// An ssh login whose `authorized_keys` line forces `klatch serve --stdio --ssh-key <label>`: the label the
+    /// administrator wrote there. sshd runs that command line itself, so the remote cannot change it; the remote can
+    /// only send bytes on standard input. Evidence only once the human mapped the label to a member
+    /// (`klatch admin ssh-key`), which `SshKeyIdentity` reads. The label never comes from an environment variable the
+    /// remote controls or from `SSH_ORIGINAL_COMMAND`.
+    SshForcedKey { label: String },
     /// The process on the other end of a local socket, as the kernel reports it. Same-host evidence, not proof.
     Process { pid: u32, uid: u32 },
     /// The subject of a client certificate the transport already validated against its trust roots.
@@ -52,6 +58,7 @@ impl PeerEvidence {
             Self::Session { .. } => "session",
             Self::Credential { .. } => "credential",
             Self::SshKey { .. } => "ssh",
+            Self::SshForcedKey { .. } => "ssh-forced",
             Self::Process { .. } => "process",
             Self::Certificate { .. } => "certificate",
             Self::Bearer { .. } => "bearer",

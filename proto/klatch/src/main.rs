@@ -231,6 +231,11 @@ enum Cmd {
         /// Use standard input and output (the only transport so far)
         #[arg(long)]
         stdio: bool,
+        /// For an ssh forced command (`command="klatch serve --stdio --ssh-key LABEL",restrict ssh-ed25519 ...` in
+        /// authorized_keys): the member is the one the human mapped LABEL to with `klatch admin ssh-key`, and no
+        /// other. An unmapped label does not start; a typed name (--as-member, --discover, KLATCH_NAME) is never read
+        #[arg(long, value_name = "LABEL")]
+        ssh_key: Option<String>,
     },
     /// Run an MCP (Model Context Protocol) server on standard input and output as the member from the environment, so
     /// an agent runtime that can attach a tool server can post, read, wait, claim and release without a harness
@@ -604,12 +609,21 @@ fn run_init(options: &init::Options) -> Result<()> {
 
 /// Every command that acts as a member: find out which, settle its scope, then serve, stream or run the command.
 fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
+    // an ssh forced command (#107): the member is the one the key label is mapped to, found before anything else
+    if let Cmd::Serve {
+        stdio,
+        ssh_key: Some(label),
+    } = &cmd
+    {
+        let member = klatch::member::open_ssh_member(&who.who(), label)?;
+        return serve_stdio(&member.gateway, &member.caller.principal, (*stdio, true));
+    }
     let Some(member) = klatch::member::open_member(&who.who(), call_of(&cmd))? else {
         return Ok(());
     };
     let klatch::member::Member { gateway, caller } = member;
     match cmd {
-        Cmd::Serve { stdio } => serve_stdio(&gateway, &caller.principal, stdio),
+        Cmd::Serve { stdio, .. } => serve_stdio(&gateway, &caller.principal, (stdio, false)),
         Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio),
         Cmd::Stream {
@@ -662,20 +676,30 @@ fn stream_room(
         .map_err(Into::into)
 }
 
-fn serve_stdio(gateway: &Gateway<SqliteStore>, principal: &Principal, stdio: bool) -> Result<()> {
+/// `klatch serve --stdio`; `(stdio, fixed)` where `fixed` says an ssh key fixed the member, so a request that claims
+/// an identity is refused (#107).
+fn serve_stdio(
+    gateway: &Gateway<SqliteStore>,
+    principal: &Principal,
+    (stdio, fixed): (bool, bool),
+) -> Result<()> {
     if !stdio {
         bail!("serve needs --stdio, the only transport so far");
     }
     // stdout carries protocol frames only; nothing else may print there
     // stdin cannot be stopped from outside; the process exits when the session does
     let config = klatch::session::SessionConfig::default();
-    Ok(
-        klatch::session::Session::new(gateway, principal, &config).serve_guarded(
-            std::io::BufReader::new(std::io::stdin()),
-            std::io::stdout(),
-            None,
-        )?,
-    )
+    let session = klatch::session::Session::new(gateway, principal, &config);
+    let session = if fixed {
+        session.fixed_member()
+    } else {
+        session
+    };
+    Ok(session.serve_guarded(
+        std::io::BufReader::new(std::io::stdin()),
+        std::io::stdout(),
+        None,
+    )?)
 }
 
 /// `klatch mcp --stdio`: the MCP front end over the same session `serve` uses; standard output carries MCP messages only.
