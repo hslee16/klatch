@@ -1,0 +1,1 @@
+- The gate no longer fails on leaked sleeps from another worktree running at the same time (#1127).
