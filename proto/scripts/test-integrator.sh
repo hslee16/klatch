@@ -346,6 +346,32 @@ kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
 if [ "$rc" -eq 0 ] && [ "$(tail -1 "$fake/claims.log" | cut -d' ' -f1)" = release ] && [ "$claims_before" -ge 3 ]; then ok "a TERM ends the process with exit 0 and releases merge:main"; else bad "term rc=$rc claims=$(cat "$fake/claims.log")"; fi
 if grep -q stopped-by-term "$fake/forward.log"; then ok "the forwarder is stopped with TERM (so gh removes its temporary webhook), not killed"; else bad "forwarder not stopped by TERM: $(cat "$fake/forward.log")"; fi
 
+# ---- a signal that bash loses is sent again; a signal during a long wait is acted on at once (#1099) ----
+# bash 3.2 loses a trapped signal that lands while it expands a command substitution; the integrator runs its loop in a
+# child and a small parent sends TERM again every second. INTEGRATOR_TEST_DROP_TERMS=2 makes the worker ignore two signals.
+newworld; advance README.md 'moved\n'
+RS=40 INTEGRATOR_TEST_DROP_TERMS=2 runint_bg
+waitfor "$fake/calls.log" 'klatch wait lobby --only ready: --timeout 40' 15 && started=1 || started=0
+t0=$SECONDS
+kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
+took=$((SECONDS - t0))
+if [ "$started" -eq 1 ] && [ "$rc" -eq 0 ] && [ "$took" -le 10 ] && grep -q stopped-by-term "$fake/forward.log"; then ok "a TERM that the process lost twice is sent again by the supervisor and still stops it (exit 0, in $took s, forwarder stopped)"; else bad "lost term started=$started rc=$rc took=$took s out=$(tail -3 "$fake/out")"; fi
+newworld; advance README.md 'moved\n'
+RS=40 runint_bg
+waitfor "$fake/calls.log" 'klatch wait lobby --only ready: --timeout 40' 15 && started=1 || started=0
+t0=$SECONDS
+kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
+took=$((SECONDS - t0))
+if [ "$started" -eq 1 ] && [ "$rc" -eq 0 ] && [ "$took" -le 3 ]; then ok "a TERM during a 40 s klatch wait stops the integrator in under 3 s (it did in $took s)"; else bad "term in a long wait started=$started rc=$rc took=$took s"; fi
+newworld; advance README.md 'moved\n'
+RS=2 runint_bg
+waitfor "$fake/calls.log" 'klatch wait lobby --only ready: --timeout 2' 15 && started=1 || started=0
+wpid="$(pgrep -P "$ipid" | head -1)"
+kill -9 "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
+gone=0; for _ in $(seq 1 100); do if [ -n "$wpid" ] && ! kill -0 "$wpid" 2> /dev/null; then gone=1; break; fi; /bin/sleep 0.2; done
+[ "$gone" -eq 0 ] && [ -n "$wpid" ] && kill -9 "$wpid" 2> /dev/null
+if [ "$started" -eq 1 ] && [ "$gone" -eq 1 ]; then ok "when the supervisor is killed (kill -9) the worker notices and stops by itself"; else bad "orphan worker started=$started wpid=$wpid gone=$gone"; fi
+
 # ---- a signal in the middle of a PR (waiting for checks) ----
 newworld; advance README.md 'moved\n'; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; advance README.md 'moved again\n'; echo none > "$fake/ci-mode"
 runint_bg
