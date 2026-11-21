@@ -412,6 +412,27 @@ impl World {
             .spawn()
     }
 
+    /// Start `klatch-server channel` as `who` (scope `bot:channel`) with piped standard input and output, on this
+    /// world's store (#1078). The environment is cleared, `HOME` is the world's directory.
+    pub fn spawn_channel(&self, who: &str) -> Result<std::process::Child, String> {
+        let bin = crate::find_server_binary()?;
+        self.calls.set(self.calls.get() + 1);
+        Command::new(bin)
+            .arg("channel")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &self.home)
+            .env("KLATCH_HOME", &self.home)
+            .env("KLATCH_KEY_DIR", self.home.join("keys"))
+            .env("KLATCH_NAME", who)
+            .env("KLATCH_SCOPE", "bot:channel")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("start klatch-server: {e}"))
+    }
+
     /// Start a klatch process and return it, for concurrent scenarios.
     pub fn spawn(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
         self.command(who, args)
