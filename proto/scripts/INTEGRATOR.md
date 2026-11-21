@@ -10,7 +10,14 @@
    - `gh auth login` as an account that can push to the PR branches and that has **admin** on the repository: `gh webhook forward` creates a temporary repository webhook through the REST API and removes it on exit, and that needs repo admin. Install the extension once: `gh extension install cli/gh-webhook`.
    - A DEDICATED clone of the repository, with a git identity (`git config user.name`, `user.email`) and push access to the PR branches (an SSH key or the `gh` credential helper). The integrator switches branches in it (`integrator/N`), so do not use a checkout you work in. It must be clean.
    - `git` 2.38 or newer (`git merge-tree --write-tree`), `python3`, `perl`, and whatever the project gate needs (the Rust toolchain, `cargo`).
-4. **Start it**, in its own terminal or a service of that machine:
+4. **Check the setup with a dry run** (the first live check, before the first real merge):
+
+   ```
+   INTEGRATOR_REPO=/path/to/dedicated/clone proto/scripts/integrator --dry-run
+   ```
+
+   Run it as the integrator member (the same environment as the real run). It reads and prints; it posts nothing to klatch, does not take `merge:main` (it only reads who holds it), pushes nothing, makes no branch, merges nothing, runs no gate, does not start the forwarder and makes no write call to `gh`. Read the `setup:` lines first: each is `ok` or `PROBLEM <name>: <next step>` (`no-integrator-role`, `no-gh-login`, `no-admin`, `unreadable`, `no-webhook-extension`, `dirty-clone`, `wrong-branch`, `no-gate`, `no-board`). Fix every problem and run it again until none is left (the exit code is 1 while one is). Then read the per PR lines: they are the words a real run would post, in queue order, and a `dropped:` line says why a PR would be dropped. The last line is always `dry run: nothing was changed.` Limits: klatch shows no role, so the role line only says no refusal is on record (the first real run proves it, #1090); each PR is checked against main as it is now. Then start it for real.
+5. **Start it**, in its own terminal or a service of that machine:
 
    ```
    INTEGRATOR_REPO=/path/to/dedicated/clone proto/scripts/integrator

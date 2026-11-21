@@ -11,9 +11,8 @@
 //! 2025-06-18, read on 2026-11-18). Requests are answered one at a time, so a `klatch_wait` holds the connection until it
 //! returns, which it does within its bound.
 
-use super::Session;
+use super::{Backend, Session};
 use crate::protocol::ServerFrame;
-use crate::store::Store;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
@@ -95,15 +94,15 @@ struct WaitArgs {
 }
 
 /// One MCP server for one session.
-pub struct McpServer<'a, S: Store> {
-    session: &'a Session<'a, S>,
+pub struct McpServer<'a, B: Backend + ?Sized> {
+    session: &'a Session<'a, B>,
     instructions: String,
     channel: bool,
 }
 
-impl<'a, S: Store> McpServer<'a, S> {
+impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
     /// `instructions` is the room convention text, sent at `initialize` so a runtime with no session hooks is taught it.
-    pub fn new(session: &'a Session<'a, S>, instructions: String) -> Self {
+    pub fn new(session: &'a Session<'a, B>, instructions: String) -> Self {
         Self {
             session,
             instructions,
