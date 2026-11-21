@@ -163,6 +163,17 @@ impl<S: Store> Gateway<S> {
         }
     }
 
+    /// The own-record check for a hook that proves the session is alive (#1027): a live credential is renewed, with
+    /// the same bounds as a renewal on use (never past the cap, audited, throttled). Only the hook methods call it;
+    /// a request from outside the hooks keeps nothing alive through it, and `SessionEnd` never does.
+    pub(super) fn check_own_record_live_and_renew(&self, who: &Principal) -> Result<()> {
+        self.check_own_record_live(who)?;
+        if self.has_credential(who)? {
+            self.renew_credential_on_use(&who.member)?;
+        }
+        Ok(())
+    }
+
     /// Why the principal's credential no longer works, or `None` when it works or there is nothing to check (an
     /// unattributed principal, or a verified one with no credential record). A store failure is an error: it refuses.
     fn credential_ended(&self, who: &Principal) -> Result<Option<&'static str>> {

@@ -1,0 +1,1 @@
+- A worker credential now renews on the hooks that prove its session is alive (never past its cap, audited as `renew-credential`), so it idles out less often and session end can still mark the member done (#1027).

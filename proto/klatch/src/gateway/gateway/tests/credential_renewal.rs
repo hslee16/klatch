@@ -206,3 +206,73 @@ fn a_renewal_older_than_ten_thousand_audit_entries_is_still_reported() {
     let listed = g.admin_credentials(&admin()).unwrap();
     assert_eq!(listed[0].last_renewed, Some(1_500));
 }
+
+// #1027: the hooks that prove a session is alive renew its credential, so idle expiry is rarer and the end of the
+// session can still mark the member done. Nothing from outside the hooks does it, and the cap still holds.
+
+#[test]
+fn a_worker_whose_hooks_keep_firing_does_not_idle_out() {
+    let (g, t, who) = worker(None);
+    let mut now = 1_000;
+    // far more than one idle timeout (600) passes with nothing but hooks
+    while now < 1_000 + 5_000 {
+        now += 400;
+        t.set(now);
+        g.sign_of_life(&who).unwrap();
+        g.record_hook_run(&who, "PostToolUse", 0).unwrap();
+    }
+    assert!(expires(&g) > now);
+    g.set_status(&who, "r", "working").unwrap();
+}
+
+#[test]
+fn the_stop_hook_alone_renews_too() {
+    let (g, t, who) = worker(None);
+    t.set(1_500);
+    g.record_hook_run(&who, "Stop", 0).unwrap();
+    assert_eq!(expires(&g), 2_100);
+}
+
+#[test]
+fn hook_renewal_never_passes_the_cap_and_is_audited_without_the_token() {
+    let (g, t, who) = worker(Some(1_000));
+    t.set(1_500);
+    g.sign_of_life(&who).unwrap();
+    assert_eq!(expires(&g), 2_000);
+    assert_eq!(renewals(&g), 1);
+    let row = g
+        .admin_audit(&admin(), 50)
+        .unwrap()
+        .into_iter()
+        .find(|a| a.action == "renew-credential")
+        .unwrap();
+    assert!(row.detail.contains("expires=2000"), "{row:?}");
+    t.set(2_000);
+    assert_eq!(rule_of(g.sign_of_life(&who).unwrap_err()), "credential");
+    assert_eq!(expires(&g), 2_000);
+}
+
+#[test]
+fn a_session_end_hook_renews_nothing_and_an_idle_gap_past_the_limit_still_ends_as_before() {
+    let (g, t, who) = worker(None);
+    t.set(1_500);
+    g.record_hook_run(&who, "SessionEnd", 0).unwrap();
+    assert_eq!(expires(&g), 1_600);
+    assert_eq!(renewals(&g), 0);
+    // after an idle gap longer than the limit the hooks are refused and the end sequence behaves as before
+    t.set(2_200);
+    assert_eq!(rule_of(g.sign_of_life(&who).unwrap_err()), "credential");
+    assert!(is_refused(g.record_hook_run(&who, "Stop", 0)));
+    assert!(is_refused(g.set_status(&who, "r", "done session ended")));
+    g.record_hook_run(&who, "SessionEnd", 0).unwrap();
+    g.end_credential(&who).unwrap();
+}
+
+#[test]
+fn a_request_that_is_not_a_hook_run_on_the_own_record_does_not_renew() {
+    let (g, t, who) = worker(None);
+    t.set(1_500);
+    g.note_session(&who, "sess-1").unwrap();
+    g.note_member_mode(&who, "default").unwrap();
+    assert_eq!(expires(&g), 1_600);
+}

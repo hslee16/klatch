@@ -46,7 +46,7 @@ impl<S: Store> Gateway<S> {
     /// Any hook that runs is a sign of life: it ends a park.
     pub fn sign_of_life(&self, who: &Principal) -> Result<()> {
         check_member(who)?;
-        self.check_own_record_live(who)?;
+        self.check_own_record_live_and_renew(who)?;
         self.store.unpark(&who.member, self.now())
     }
 
@@ -93,7 +93,8 @@ impl<S: Store> Gateway<S> {
         check_event_name(event)?;
         // the end of a session may record itself after its credential idled out; no other event may (#835)
         if event != "SessionEnd" {
-            self.check_own_record_live(who)?;
+            // every other hook event proves the session is alive, so it renews the credential (#1027)
+            self.check_own_record_live_and_renew(who)?;
         }
         self.store.record_hook_run(
             &HookEvent::new(&who.member, event, bytes as i64),
