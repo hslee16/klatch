@@ -59,6 +59,11 @@ jev-http = ["client", "dep:ureq"]
 # `src/client/socket.rs`, naming `UnixStream` and nothing else. OFF by default and not in `cli` or `client`, so the
 # shipped `klatch` binary contains no socket code; a Rust integrator asks for it with `features = ["client-socket"]`.
 client-socket = ["client"]
+# The Rust client's connect to `klatch-server http` over TCP and server-sent events (`Client::connect_http`, #1122): one
+# file, `src/client/http.rs`, naming `TcpStream` and nothing else, loopback http urls only. OFF by default and not in `cli`
+# or `client`, so the shipped `klatch` binary, the wheels, the npm package and the Homebrew build contain no network
+# socket type; a Rust integrator asks for it with `features = ["client-http"]`.
+client-http = ["client"]
 
 [lints.rust]
 # cfg(kani) is set by `cargo kani` only (proto/scripts/kani); cfg(shuttle) by RUSTFLAGS in proto/scripts/shuttle only
