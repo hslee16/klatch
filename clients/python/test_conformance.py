@@ -373,7 +373,7 @@ class SocketConnect(unittest.TestCase):
         a.post("r", "x")
         self.store.daemon.send_signal(signal.SIGKILL)
         self.store.daemon.wait()
-        with self.assertRaises((kc.ProtocolError, OSError)):
+        with self.assertRaises(kc.ProtocolError):
             a.post("r", "y")
 
 
@@ -410,10 +410,19 @@ class SocketReset(unittest.TestCase):
         c = kc.Client.__new__(kc.Client)
         c._sock = None
         c._start(ResetReader(), Sink(), proc=None)
-        with self.assertRaises((kc.ProtocolError, OSError)):
+        with self.assertRaises(kc.ProtocolError):
             c.request("post", room="r", body="x")
         time.sleep(0.2)
         self.assertEqual(raised, [])
+
+    def test_a_send_failure_is_a_protocol_error_that_keeps_its_cause(self):
+        c = kc.Client.__new__(kc.Client)
+        c._sock = None
+        c._next_id = 0
+        c._writer = Sink()
+        with self.assertRaises(kc.ProtocolError) as ctx:
+            c.request("post", room="r", body="x")
+        self.assertIsInstance(ctx.exception.__cause__, BrokenPipeError)
 
 
 if __name__ == "__main__":
