@@ -338,7 +338,7 @@ pub fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()> {
 }
 
 mod label_rotation;
-pub use label_rotation::rotate_label_key;
+pub use label_rotation::{rotate_label_key, wrap_label_archives};
 
 #[cfg(test)]
 mod label_rotation_tests;

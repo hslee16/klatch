@@ -416,3 +416,118 @@ fn an_archive_row_no_key_opens_refuses_the_move_before_any_file_is_changed() {
     assert!(err.to_string().contains("r-2.db"), "{err}");
     assert_eq!(archived_bodies(&good, &store_key), good_before);
 }
+
+// ---- #1153: archive files made before the label was sealed ----
+
+/// An archive of three messages made while `secret` is plain, one with a payload.
+fn plain_archive(dir: &std::path::Path, name: &str) -> (SqliteStore, std::path::PathBuf) {
+    let s = store();
+    s.join("r", "alice", 1).unwrap();
+    post(&s, "r", "secret", "early secret", 10);
+    post_handoff(&s, "secret", "early handoff", "early payload", 11);
+    post(&s, "r", "public", "early public", 12);
+    let file = dir.join(name);
+    s.archive_before("r", 500, &file, &crate::store::insecure_test_key())
+        .unwrap();
+    (s, file)
+}
+
+#[test]
+fn sealing_a_label_seals_its_plain_texts_in_the_archive_files_and_repeats_to_nothing() {
+    use crate::store::sqlite::wrap_archives;
+    let dir = crate::store::test_dir::TestDir::new("seal-archive");
+    let (_s, file) = plain_archive(&dir, "r-1.db");
+    let store_key = crate::store::insecure_test_key();
+    let before = archived_bodies(&file, &store_key);
+    assert_eq!(
+        wrap_archives(&dir, &store_key, "secret", &key(0x33)).unwrap(),
+        1
+    );
+    let after = archived_bodies(&file, &store_key);
+    assert!(
+        is_sealed(&after[0].1) && is_sealed(&after[1].1),
+        "{after:?}"
+    );
+    assert_eq!(after[2], before[2], "a public row changed");
+    let c = rusqlite::Connection::open(&file).unwrap();
+    c.pragma_update(None, "key", store_key.sqlcipher_pragma().as_str())
+        .unwrap();
+    let (mid, payload): (String, String) = c
+        .query_row(
+            "SELECT mid, payload FROM archived WHERE payload IS NOT NULL",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(is_sealed(&payload), "payload stayed plain");
+    let ctx = SqliteStore::sealed_context(&mid, "secret", "payload");
+    assert_eq!(
+        crate::keys::reveal_text(&key(0x33), ctx.as_bytes(), &payload).unwrap(),
+        "early payload"
+    );
+    drop(c);
+    assert_eq!(
+        wrap_archives(&dir, &store_key, "secret", &key(0x33)).unwrap(),
+        0
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        1,
+        "temp file left"
+    );
+}
+
+#[test]
+fn restoring_plain_archived_text_of_a_label_sealed_since_seals_it_on_the_way_back() {
+    let dir = crate::store::test_dir::TestDir::new("restore-seals");
+    let (s, file) = plain_archive(&dir, "r-1.db");
+    s.policy_set("sealed:secret", Some("1"), 20).unwrap();
+    s.set_label_keys(ring("secret", 0x33));
+    let store_key = crate::store::insecure_test_key();
+    assert_eq!(s.restore_archive(&file, &store_key).unwrap(), 3);
+    for body in raw_bodies(&s, "secret") {
+        assert!(is_sealed(&body), "plain text under a sealed label: {body}");
+    }
+    assert!(
+        raw_payloads(&s, "secret")
+            .iter()
+            .flatten()
+            .all(|p| is_sealed(p))
+    );
+    assert!(raw_bodies(&s, "public").iter().all(|b| !is_sealed(b)));
+    let read = read_all(&s);
+    assert!(read.contains(&"early secret".to_string()), "{read:?}");
+}
+
+#[test]
+fn restoring_plain_text_of_a_sealed_label_without_its_key_refuses_and_changes_nothing() {
+    let dir = crate::store::test_dir::TestDir::new("restore-nokey");
+    let (s, file) = plain_archive(&dir, "r-1.db");
+    s.policy_set("sealed:secret", Some("1"), 20).unwrap();
+    let store_key = crate::store::insecure_test_key();
+    let before = s.tail("r", 0, 100).unwrap();
+    let err = s.restore_archive(&file, &store_key).unwrap_err();
+    assert!(matches!(err, Error::Refused { .. }), "{err}");
+    assert_eq!(
+        s.tail("r", 0, 100).unwrap(),
+        before,
+        "a refused restore changed rows"
+    );
+}
+
+#[test]
+fn restoring_already_sealed_archived_text_puts_it_back_as_it_was() {
+    let dir = crate::store::test_dir::TestDir::new("restore-sealed");
+    let s = store();
+    s.policy_set("sealed:secret", Some("1"), 1).unwrap();
+    s.set_label_keys(ring("secret", 0x33));
+    s.join("r", "alice", 1).unwrap();
+    post(&s, "r", "secret", "archived secret", 10);
+    post(&s, "r", "public", "archived public", 11);
+    let ours = dir.join("ours.db");
+    let store_key = crate::store::insecure_test_key();
+    s.archive_before("r", 500, &ours, &store_key).unwrap();
+    assert_eq!(s.restore_archive(&ours, &store_key).unwrap(), 2);
+    assert!(raw_bodies(&s, "secret").iter().all(|b| is_sealed(b)));
+    assert!(read_all(&s).contains(&"archived secret".to_string()));
+}

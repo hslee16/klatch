@@ -28,7 +28,7 @@ mod tasks;
 pub use archive::{
     ArchiveInfo, ArchiveState, archives_to_rekey, list_archives, rekey_archives, rekey_archives_in,
 };
-pub use archive_keys::{reseal_archives, resealable_archives};
+pub use archive_keys::{reseal_archives, resealable_archives, wrap_archives};
 use connect::be;
 pub use integrity::check_store;
 use rows::{MESSAGE_COLUMNS, attribution_text};

@@ -105,7 +105,13 @@ fn add_label_seal(ctx: &KeyCtx, label: &str, keep_plain: bool) -> Result<()> {
         None
     } else {
         gateway.use_label_keys(custody::label_ring(ctx.db, &[label.to_string()])?);
-        Some(gateway.admin_seal_label(&ctx.who, label)?)
+        let n = gateway.admin_seal_label(&ctx.who, label)?;
+        // archive files made before the label was sealed hold the same plain text (#1153); a repeat finishes a crash
+        let files = custody::wrap_label_archives(ctx.db, label)?;
+        if files > 0 {
+            println!("sealed the earlier text of the label in {files} archive file(s)");
+        }
+        Some(n)
     };
     println!(
         "label {label} is sealed: new messages under it are stored encrypted under a key of their own"

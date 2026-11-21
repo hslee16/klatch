@@ -30,6 +30,7 @@ pub mod areas {
 pub use sqlite::{
     ArchiveInfo, ArchiveState, SCHEMA_VERSION, SqliteStore, archives_to_rekey, check_store,
     list_archives, rekey_archives, rekey_archives_in, reseal_archives, resealable_archives,
+    wrap_archives,
 };
 
 use crate::domain::Attribution;

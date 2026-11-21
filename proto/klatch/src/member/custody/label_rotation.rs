@@ -97,6 +97,30 @@ pub(super) fn rotate_label_key_in(
     Ok(new)
 }
 
+/// Seal the plain texts of `label` in the archive files under the label's key (#1153), after `seal-label` sealed the
+/// live store. Under the store directory lock, each file through a temp copy, so a crash leaves every file whole and a
+/// repeat finishes the rest. Returns how many files were rewritten.
+pub fn wrap_label_archives(db: &Path, label: &str) -> Result<usize> {
+    let kh = key_home(db);
+    let _lock = lock_store_dir(db)?;
+    let store_key = kh
+        .source
+        .get(&kh.name)?
+        .ok_or_else(|| anyhow::anyhow!("this store has no key"))?;
+    let key = kh
+        .source
+        .get(&label_key_name(&kh.name, label))?
+        .ok_or_else(|| {
+            anyhow::anyhow!("label {label} has no key in the {}", kh.source.describe())
+        })?;
+    Ok(crate::store::wrap_archives(
+        &db.with_file_name("archive"),
+        &store_key,
+        label,
+        &key,
+    )?)
+}
+
 /// The label twin of `open_keyed`'s repair: a rotation that died after its transaction but before the new key got the
 /// main name leaves the store under the second key while the main key opens none of it. If the main key opens no
 /// sealed text of `label` and the second key opens all of them, the second key becomes the main one. A second key

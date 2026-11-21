@@ -55,9 +55,6 @@ reviewed by an outside person before release (#167).
   files to the new key. A backup (`klatch admin backup`) or an archive copied elsewhere before the rotation keeps the
   old key's text, so a leaked old label key still opens those copies; remove them if that matters. Workers launched
   with the old key hold a dead one and must be relaunched.
-- **Archive files of a label sealed late.** `klatch admin seal-label` seals the messages already in the store, but an
-  archive file made before the label was sealed keeps those messages as plain text (inside the encrypted file), and
-  restoring it puts them back plain (#1153).
 
 ## Reporting a problem
 

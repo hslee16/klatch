@@ -579,6 +579,38 @@ fn sealing_a_label_converts_the_messages_already_in_it_by_default() {
 }
 
 #[test]
+fn sealing_a_label_also_seals_its_plain_text_in_earlier_archive_files() {
+    // #1153: an archive made before the label was sealed must not keep, or bring back, plain text
+    let Some(e) = Env::begin(this_test!(), "seal-archives") else {
+        return;
+    };
+    e.post_under("private", "archived earlier", 10);
+    e.retention("r", "1").unwrap();
+    e.archive("r").unwrap();
+    let file = e.archive_dir().join(&e.archive_files()[0]);
+    let raw = |file: &std::path::Path| -> String {
+        let c = rusqlite::Connection::open(file).unwrap();
+        c.pragma_update(None, "key", e.key().sqlcipher_pragma().as_str())
+            .unwrap();
+        c.query_row("SELECT body FROM archived", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(raw(&file), "archived earlier");
+    e.key_cmd(KeyAct::SealLabel {
+        label: "private".into(),
+        keep_plain: false,
+    })
+    .unwrap();
+    assert!(
+        klatch::keys::is_sealed_text(&raw(&file)),
+        "the archive kept plain text"
+    );
+    e.archive_cmd(ArchiveAct::RestoreArchive { file }).unwrap();
+    assert_eq!(e.read_with_keys(), ["archived earlier"]);
+    assert!(e.read_without_keys()[0].contains("sealed"));
+}
+
+#[test]
 fn sealing_a_label_with_keep_plain_leaves_the_earlier_messages_as_they_were() {
     let Some(e) = Env::begin_saying(
         this_test!(),
