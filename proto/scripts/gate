@@ -15,7 +15,7 @@
 #
 # The Hegel seed is taken from the commit you are on, so a failure repeats exactly and each commit tries different
 # cases. Set HEGEL_SEED yourself to use another. `proto/scripts/install-git-hook` makes a pre-push hook that runs this
-# (opt in; never installed by default).
+# (opt in; never installed by default). Set GATE_LOG=<file> to append the full output of each release and shell check (#1081).
 set -uo pipefail
 
 usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; echo; echo "Usage: proto/scripts/gate [--long] [--allow-dirty]"; }
@@ -90,7 +90,7 @@ step() {
     echo
     echo "FAILED at step $n: $name"
     echo "----- last lines of its output -----"
-    tail -n 40 "$log"
+    tail -n 50 "$log"
     echo "-------------------------------------"
     [ "$hegel" = "hegel" ] && replay_hint
     exit 1
@@ -121,29 +121,48 @@ step "property tests and models"    hegel "$proto" env HEGEL_TEST_CASES="$cases"
 # for about 40 s, then it is seconds). The long run and the mutation check are by hand: proto/scripts/shuttle
 step "shuttle smoke (200 schedules)" no   "$root" proto/scripts/shuttle smoke
 # the repository's own scripts: the release number agrees everywhere, the installer, the README quickstart, shellcheck
+# check <command...>: one check of the step below (#1081). Its output is kept, not discarded: nothing is printed when it
+# passes (the step stays as quiet as before), and when it fails the command line and the last 40 lines of its stdout and
+# stderr are printed, so a failure that does not repeat still says which command it was. With GATE_LOG set to a file path,
+# every check's command line, full output and exit status are appended to that file (off by default).
+check() {
+  local out rc=0
+  out="$(mktemp "${TMPDIR:-/tmp}/klatch-gate-check.XXXXXX")"
+  "$@" > "$out" 2>&1 || rc=$?
+  if [ -n "${GATE_LOG:-}" ]; then
+    { printf '### %s\n' "$*"; cat "$out"; printf '### exit status %d\n' "$rc"; } >> "$GATE_LOG" 2> /dev/null || true
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf 'check failed (exit status %d): %s\n' "$rc" "$*"
+    echo "----- last 40 lines of its stdout and stderr -----"
+    tail -n 40 "$out"
+  fi
+  rm -f "$out"
+  return "$rc"
+}
 repo_checks() {
   cargo build -p klatch --locked --manifest-path "$proto/Cargo.toml" > /dev/null 2>&1 || true
-  release/check-timeouts.sh > /dev/null \
-    && release/check-versions.sh \
-    && release/test-check-versions.sh > /dev/null \
-    && (cd clients/python && python3 -m unittest discover > /dev/null 2>&1) \
-    && python3 -m unittest discover -s clients/recipes -p 'test_*.py' > /dev/null 2>&1 \
-    && release/changelog-fragments.sh check \
-    && release/test-changelog-fragments.sh > /dev/null \
-    && release/design-fragments.sh check \
-    && release/test-design-fragments.sh > /dev/null \
-    && release/research-fragments.sh check \
-    && release/test-research-fragments.sh > /dev/null \
-    && proto/scripts/test-team.sh > /dev/null \
-    && proto/scripts/test-sweep.sh > /dev/null \
-    && proto/scripts/test-merge-union.sh > /dev/null \
-    && sh install/test-install.sh > /dev/null \
-    && experiments/gates/test-check-binary.sh > /dev/null \
-    && experiments/variance/test-repeat.sh > /dev/null \
-    && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh > /dev/null \
-    && KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh > /dev/null \
-    && { ! command -v actionlint > /dev/null 2>&1 || actionlint; } \
-    && { ! command -v shellcheck > /dev/null 2>&1 || shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/quint-check proto/scripts/shuttle; }
+  check release/check-timeouts.sh \
+    && check release/check-versions.sh \
+    && check release/test-check-versions.sh \
+    && check bash -c 'cd clients/python && python3 -m unittest discover' \
+    && check python3 -m unittest discover -s clients/recipes -p 'test_*.py' \
+    && check release/changelog-fragments.sh check \
+    && check release/test-changelog-fragments.sh \
+    && check release/design-fragments.sh check \
+    && check release/test-design-fragments.sh \
+    && check release/research-fragments.sh check \
+    && check release/test-research-fragments.sh \
+    && check proto/scripts/test-team.sh \
+    && check proto/scripts/test-sweep.sh \
+    && check proto/scripts/test-merge-union.sh \
+    && check sh install/test-install.sh \
+    && check experiments/gates/test-check-binary.sh \
+    && check experiments/variance/test-repeat.sh \
+    && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/readme-quickstart.sh \
+    && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh \
+    && { ! command -v actionlint > /dev/null 2>&1 || check actionlint; } \
+    && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/quint-check proto/scripts/shuttle; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 
