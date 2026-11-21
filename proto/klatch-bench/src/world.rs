@@ -447,7 +447,9 @@ impl World {
         let body = format!("#!/bin/sh\ncat >/dev/null\ncat <<'REPLY'\n{reply}\nREPLY\n");
         let made = std::fs::create_dir_all(&dir)
             .and_then(|_| std::fs::write(&script, body))
-            .and_then(|_| std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)));
+            .and_then(|_| {
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            });
         if let Err(e) = made {
             return Run {
                 ok: false,

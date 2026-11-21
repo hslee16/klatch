@@ -395,9 +395,9 @@ fn judge_names_itself(w: &World) -> Res {
     check(pass.ok, format!("judge run failed: {}", pass.stderr))?;
     let audit = w.admin(&["audit"], "").stdout;
     check(
-        audit
-            .lines()
-            .any(|l| l.contains("crossing") && l.contains("vault#2") && l.contains("applied by judge")),
+        audit.lines().any(|l| {
+            l.contains("crossing") && l.contains("vault#2") && l.contains("applied by judge")
+        }),
         format!("the judge is not named as the releaser:\n{audit}"),
     )?;
     has(
