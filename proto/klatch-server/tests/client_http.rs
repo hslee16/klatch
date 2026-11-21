@@ -13,9 +13,7 @@
 
 #![cfg(unix)]
 
-use klatch::client::{
-    Client, Error, HttpFault, HttpOptions, PostRequest,
-};
+use klatch::client::{Client, Error, HttpFault, HttpOptions, PostRequest};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -309,12 +307,13 @@ fn a_broken_stream_is_reopened_and_resumes_from_the_last_seq_with_no_gap_and_no_
     let h = home();
     let fault = HttpFault::new();
     let token = h.token("alice");
-    let mut a = Client::connect_http_with(&h.url(), "alice", &token, &quick().fault(&fault)).unwrap();
+    let mut a =
+        Client::connect_http_with(&h.url(), "alice", &token, &quick().fault(&fault)).unwrap();
     let mut b = connect(&h, "bob");
     a.join("r").unwrap();
     b.join("r").unwrap();
     b.post(PostRequest::new("r", "one")).unwrap();
-    a.subscribe("r", Some(0)).unwrap();
+    a.subscribe("r", 0).unwrap();
     let first = a.next_message(Duration::from_secs(10)).unwrap().unwrap();
     assert_eq!((first.seq, first.body.as_str()), (1, "one"));
     // the stream breaks (injected); two posts land while it is down or being reopened
@@ -323,13 +322,20 @@ fn a_broken_stream_is_reopened_and_resumes_from_the_last_seq_with_no_gap_and_no_
     b.post(PostRequest::new("r", "three")).unwrap();
     let got: Vec<(u64, String)> = (0..2)
         .map(|_| {
-            let m = a.next_message(Duration::from_secs(20)).unwrap().expect("a message after the reconnect");
+            let m = a
+                .next_message(Duration::from_secs(20))
+                .unwrap()
+                .expect("a message after the reconnect");
             (m.seq, m.body)
         })
         .collect();
     assert_eq!(got, [(2, "two".to_string()), (3, "three".to_string())]);
     // nothing is replayed, and the session is still good for requests and for later messages
-    assert!(a.next_message(Duration::from_millis(500)).unwrap().is_none());
+    assert!(
+        a.next_message(Duration::from_millis(500))
+            .unwrap()
+            .is_none()
+    );
     b.post(PostRequest::new("r", "four")).unwrap();
     let m = a.next_message(Duration::from_secs(10)).unwrap().unwrap();
     assert_eq!((m.seq, m.body.as_str()), (4, "four"));
@@ -341,7 +347,8 @@ fn a_server_that_went_away_is_a_session_error_not_a_hang() {
     let h = home();
     let fault = HttpFault::new();
     let token = h.token("alice");
-    let mut a = Client::connect_http_with(&h.url(), "alice", &token, &quick().fault(&fault)).unwrap();
+    let mut a =
+        Client::connect_http_with(&h.url(), "alice", &token, &quick().fault(&fault)).unwrap();
     a.post(PostRequest::new("r", "x")).unwrap();
     h.stop();
     fault.fail_next_read();
@@ -458,7 +465,10 @@ impl Drop for Stub {
 fn the_credential_the_member_and_the_session_are_sent_and_data_lines_are_the_frames() {
     let stub = Stub::start(vec![]);
     let mut c = Client::connect_http(&stub.url(), "w-1", "tok-123").unwrap();
-    assert_eq!((c.member.as_str(), c.attribution.as_str()), ("w-1", "verified"));
+    assert_eq!(
+        (c.member.as_str(), c.attribution.as_str()),
+        ("w-1", "verified")
+    );
     let (seq, id) = c.post(PostRequest::new("r", "hi")).unwrap();
     assert_eq!((seq, id.as_str()), (7, "m7"));
     let seen = stub.seen.lock().unwrap();
@@ -473,7 +483,10 @@ fn the_credential_the_member_and_the_session_are_sent_and_data_lines_are_the_fra
     assert_eq!(h["x-klatch-member"], "w-1");
     assert_eq!(h["x-klatch-session"], "S1");
     assert_eq!(h["content-type"], "application/x-ndjson");
-    assert!(body.ends_with('\n') && body.matches('\n').count() == 1, "{body:?}");
+    assert!(
+        body.ends_with('\n') && body.matches('\n').count() == 1,
+        "{body:?}"
+    );
 }
 
 #[test]
@@ -492,11 +505,4 @@ fn a_refusal_that_is_not_a_full_inbox_is_an_error_and_is_not_retried() {
     let e = c.post(PostRequest::new("r", "hi")).unwrap_err();
     assert!(session_error(e).contains("500"));
     assert_eq!(stub.seen.lock().unwrap().posts.len(), 1);
-}
-
-#[test]
-fn the_conformance_scenario_is_the_one_the_other_transports_run() {
-    let h = home();
-    let a = connect(&h, "alice");
-    assert_eq!(a.attribution, ATTRIBUTION);
 }

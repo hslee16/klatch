@@ -26,5 +26,6 @@ subtle = "2"
 hmac = "0.12"
 
 [dev-dependencies]
-# the Rust client's socket connect (#1095) is a feature the daemon's own binary never links: only these tests ask for it
-klatch = { path = "../klatch", features = ["client-socket"] }
+# the Rust client's socket connect (#1095) and HTTP connect (#1122) are features the server's own binary never links: only
+# these tests ask for them
+klatch = { path = "../klatch", features = ["client-socket", "client-http"] }

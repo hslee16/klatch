@@ -154,3 +154,6 @@ curl -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" -H "Accept: app
   `tests/daemon.rs` (the daemon as a child process, a temp store, scripted frames) and `tests/client_socket.rs` (the Rust
   client and its conformance scenario over the socket); the design is `design/items/102-daemon-socket.md` and
   `design/items/1095-client-socket-connect.md`.
+- **Rust over HTTP.** `Client::connect_http(url, member, token)` (feature `client-http` of `klatch`, off by default) speaks
+  to `klatch-server http` with a bearer credential, reconnects and resumes from the last seq; loopback urls only. The
+  conformance scenario runs over it in `tests/client_http.rs`; design `design/items/1122-rust-http-transport.md` (#1122).

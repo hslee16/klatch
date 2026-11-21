@@ -100,7 +100,9 @@ impl HttpFault {
 /// A loopback server address from a url, or why it is not one. Pure: nothing is resolved and nothing connects.
 fn parse_url(url: &str) -> std::result::Result<SocketAddr, String> {
     let refuse = || {
-        format!("the url is http://127.0.0.1:PORT (plain http, loopback address only, no path or credentials), not {url:?}")
+        format!(
+            "the url is http://127.0.0.1:PORT (plain http, loopback address only, no path or credentials), not {url:?}"
+        )
     };
     let rest = url.strip_prefix("http://").ok_or_else(refuse)?;
     let rest = rest.strip_suffix('/').unwrap_or(rest);
@@ -237,7 +239,10 @@ impl Shared {
     fn post_line(&self, line: &str) -> io::Result<()> {
         for attempt in 0..POST_ATTEMPTS {
             if self.is_closed() {
-                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the session is closed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "the session is closed",
+                ));
             }
             let session = self.lock().session.clone();
             let status = self.post_once(&session, line)?;
@@ -343,7 +348,10 @@ fn read_line<R: BufRead>(r: &mut R) -> io::Result<Option<String>> {
     }
     if buf.last() != Some(&b'\n') {
         return if n as u64 > MAX_LINE {
-            Err(io::Error::new(io::ErrorKind::InvalidData, "a line is too long"))
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a line is too long",
+            ))
         } else {
             Ok(None) // the stream ended inside a line: that line was never finished
         };
