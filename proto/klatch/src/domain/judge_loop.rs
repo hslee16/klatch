@@ -19,6 +19,9 @@ impl<J: Judge + ?Sized> Judge for &J {
     fn judge(&self, item: &ReviewItem) -> Verdict {
         (**self).judge(item)
     }
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
+        (**self).judge_noted(item)
+    }
 }
 
 /// The credential scanner and the scrub list as a judge. A match is a deny that names the rule, never the text.
@@ -78,6 +81,12 @@ impl<R: Judge, J: Judge> Judge for Narrowed<R, J> {
             _ => self.inner.judge(item),
         }
     }
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
+        match self.rules.judge(item) {
+            denied @ Verdict::Deny(_) => (denied, None),
+            _ => self.inner.judge_noted(item),
+        }
+    }
 }
 
 /// Stops calling a failing judge. A `Defer` or a panic counts as a failure, any decision resets the count, and
@@ -105,17 +114,23 @@ impl<J: Judge> Breaker<J> {
 
 impl<J: Judge> Judge for Breaker<J> {
     fn judge(&self, item: &ReviewItem) -> Verdict {
+        self.judge_noted(item).0
+    }
+
+    /// A deferral that carries a note was a deliberate answer (the judge was reached and unsure), so it resets the
+    /// count like a decision does.
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
         if self.is_open() {
-            return Verdict::Defer;
+            return (Verdict::Defer, None);
         }
-        let verdict =
-            catch_unwind(AssertUnwindSafe(|| self.inner.judge(item))).unwrap_or(Verdict::Defer);
-        if verdict == Verdict::Defer {
+        let (verdict, note) = catch_unwind(AssertUnwindSafe(|| self.inner.judge_noted(item)))
+            .unwrap_or((Verdict::Defer, None));
+        if verdict == Verdict::Defer && note.is_none() {
             self.failures.set(self.failures.get() + 1);
         } else {
             self.failures.set(0);
         }
-        verdict
+        (verdict, note)
     }
 }
 

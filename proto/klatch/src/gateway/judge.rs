@@ -47,13 +47,20 @@ pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<
 pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained> {
     let mut out = Drained::default();
     for q in store.pending_reviews(DRAIN_LIMIT)? {
-        let (verdict, detail) = match load_item(store, &q)? {
-            Some(item) => (judge.judge(&item), String::new()),
+        let (verdict, detail, note) = match load_item(store, &q)? {
+            Some(item) => {
+                let (verdict, note) = judge.judge_noted(&item);
+                (verdict, String::new(), note)
+            }
             None => (
                 Verdict::Deny("message missing".into()),
                 "message missing".to_string(),
+                None,
             ),
         };
+        if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
+            audit_deferral(store, &q, note, now)?;
+        }
         match &verdict {
             Verdict::Defer => out.deferred += 1,
             Verdict::Allow => out.allowed += 1,
@@ -65,6 +72,18 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
         }
     }
     Ok(out)
+}
+
+/// Audit a deliberate deferral (a hosted verdict below its confidence band, #1013) once per queued item: the item
+/// stays queued for the reviewer and a resident loop sees it again every pass, so a row already written for it
+/// since it was queued is not repeated. The note holds no message text.
+fn audit_deferral<S: Store>(store: &S, q: &QueuedReview, note: &str, now: i64) -> Result<()> {
+    let target = format!("{}#{}", q.room, q.seq);
+    if store.last_audit_ts("judge-defer", &target, q.ts)?.is_some() {
+        return Ok(());
+    }
+    let detail = format!("defer to {}: {note}", q.to_label);
+    store.record_audit(&NewAudit::new("judge-defer", &target, &detail), now)
 }
 
 /// The local rules judge as the store configures it: the label chain and the scrub list, read once for a pass.
@@ -153,6 +172,51 @@ mod tests {
         assert!(
             !log[0].detail.contains("hello"),
             "the audit holds message text"
+        );
+    }
+
+    /// Defers on purpose with a note, as the hosted judge does below its confidence band (#1013).
+    struct Unsure;
+    impl Judge for Unsure {
+        fn judge(&self, _: &ReviewItem) -> Verdict {
+            Verdict::Defer
+        }
+        fn judge_noted(&self, _: &ReviewItem) -> (Verdict, Option<String>) {
+            (
+                Verdict::Defer,
+                Some("hosted deny at confidence 0.40, below 0.70".into()),
+            )
+        }
+    }
+
+    #[test]
+    fn a_deliberate_deferral_stays_queued_and_is_audited_once() {
+        let s = queued();
+        for now in [10, 20] {
+            let out = drain(&s, &Unsure, now).unwrap();
+            assert_eq!((out.decided(), out.deferred), (0, 1));
+        }
+        assert_eq!(s.pending_reviews(10).unwrap().len(), 1);
+        let log = s.audit_log(10).unwrap();
+        let notes: Vec<_> = log.iter().filter(|l| l.action == "judge-defer").collect();
+        assert_eq!(notes.len(), 1, "{log:?}");
+        assert_eq!(notes[0].target, "r#1");
+        assert!(notes[0].detail.contains("defer") && notes[0].detail.contains("0.40"));
+        assert!(
+            !notes[0].detail.contains("hello"),
+            "the audit holds message text"
+        );
+    }
+
+    #[test]
+    fn a_plain_deferral_writes_no_audit_row() {
+        let s = queued();
+        drain(&s, &NullJudge, 10).unwrap();
+        assert!(
+            s.audit_log(10)
+                .unwrap()
+                .iter()
+                .all(|l| l.action != "judge-defer")
         );
     }
 

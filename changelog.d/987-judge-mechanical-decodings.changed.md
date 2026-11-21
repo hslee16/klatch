@@ -1,0 +1,1 @@
+- The default rules judge and the storage credential check now see through mechanical wrapping: zero-width characters, spaced or line-split values, base64, hex and reversed credentials, secret JSON field names such as `refresh_token`, and values spelled out one character at a time. Plain-word passphrases and context-only secrets are still left to the opt-in hosted judge (#987).

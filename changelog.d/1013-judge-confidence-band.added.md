@@ -1,0 +1,1 @@
+- `klatch judge run --hosted-judge` defers a hosted verdict whose confidence is below a band (default 0.7, `--hosted-confidence-band`) to the reviewer, and the audit records it as `judge-defer` (#1013).
