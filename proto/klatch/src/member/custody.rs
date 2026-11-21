@@ -282,9 +282,16 @@ pub fn settle_archive_keys(db: &Path, kh: &KeyHome, used: &Key, files: &[PathBuf
     Ok(())
 }
 
-/// The keys of `labels` this store has in its key source; a label with no key there is not held.
+/// The keys of `labels` this store has in its key source; a label with no key there is not held. A label whose
+/// rotation died after moving the store is repaired first (`repair_label_key`).
 pub fn label_ring(db: &Path, labels: &[String]) -> Result<crate::keys::LabelKeys> {
-    let kh = key_home(db);
+    label_ring_in(db, &key_home(db), labels)
+}
+
+fn label_ring_in(db: &Path, kh: &KeyHome, labels: &[String]) -> Result<crate::keys::LabelKeys> {
+    for label in labels {
+        label_rotation::repair_label_key(db, kh, label);
+    }
     let names: Vec<&str> = labels.iter().map(String::as_str).collect();
     Ok(crate::keys::LabelKeys::load(
         kh.source.as_ref(),
@@ -330,6 +337,11 @@ pub fn restore_label_key(db: &Path, label: &str, key: &Key) -> Result<()> {
     Ok(())
 }
 
+mod label_rotation;
+pub use label_rotation::rotate_label_key;
+
+#[cfg(test)]
+mod label_rotation_tests;
 #[cfg(test)]
 mod survivor_tests;
 

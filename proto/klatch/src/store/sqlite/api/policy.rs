@@ -20,6 +20,10 @@ impl PolicyStore for SqliteStore {
         .map(|_| ())
     }
 
+    fn seal_label_converting(&self, label: &str, now: i64) -> Result<usize> {
+        self.seal_converting(label, now)
+    }
+
     fn audit_log(&self, limit: usize) -> Result<Vec<AuditRecord>> {
         self.rows(
             "SELECT ts,action,target,detail FROM admin_audit ORDER BY id DESC LIMIT ?1",

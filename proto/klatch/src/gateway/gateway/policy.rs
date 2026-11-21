@@ -141,8 +141,28 @@ impl<S: Store> Gateway<S> {
 
     /// Seal a label: from now on a message under it is stored encrypted under the label's own key, and a principal
     /// without that key can neither read nor write it (#160). The lowest label cannot be sealed, because everyone
-    /// holds it. Existing messages under the label stay as they were.
+    /// holds it. The messages already under the label are sealed in the same transaction (#378), which needs the
+    /// label's key in this process (`use_label_keys`) when there are any; `admin_seal_label_keep_plain` leaves them.
     pub fn admin_seal_label(&self, who: &Principal, label: &str) -> Result<()> {
+        self.check_sealable(label)?;
+        self.administer(who, ("seal-label", label), |now| {
+            let n = self.store.seal_label_converting(label, now)?;
+            Ok(format!("converted {n} earlier text(s)"))
+        })
+    }
+
+    /// Seal a label as `admin_seal_label` does, but leave the messages already under it as plain text (`--keep-plain`).
+    pub fn admin_seal_label_keep_plain(&self, who: &Principal, label: &str) -> Result<()> {
+        self.check_sealable(label)?;
+        self.administer_policy(
+            who,
+            ("seal-label", label),
+            (&format!("sealed:{label}"), Some("1")),
+        )
+    }
+
+    /// A label that can be sealed: a known label other than the lowest.
+    fn check_sealable(&self, label: &str) -> Result<()> {
         let chain = self.chain()?;
         known_label(&chain, label)?;
         if label == chain.lowest() {
@@ -150,11 +170,7 @@ impl<S: Store> Gateway<S> {
                 "{label} is the lowest label and everyone holds it, so it cannot be sealed"
             )));
         }
-        self.administer_policy(
-            who,
-            ("seal-label", label),
-            (&format!("sealed:{label}"), Some("1")),
-        )
+        Ok(())
     }
 
     /// Every sealed label, lowest first.

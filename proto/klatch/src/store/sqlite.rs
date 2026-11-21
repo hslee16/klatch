@@ -6,6 +6,7 @@ use rusqlite::{Connection, params};
 
 mod api;
 mod archive;
+mod archive_keys;
 mod asks;
 mod backup;
 mod claims;
@@ -14,6 +15,7 @@ mod credentials;
 mod exec;
 mod housekeeping;
 mod integrity;
+mod label_keys;
 mod leases;
 mod messaging;
 mod parking;
@@ -23,6 +25,7 @@ mod rows;
 mod schema;
 mod seal;
 mod tasks;
+pub use archive_keys::{reseal_archives, resealable_archives};
 pub use archive::{
     ArchiveInfo, ArchiveState, archives_to_rekey, list_archives, rekey_archives, rekey_archives_in,
 };
