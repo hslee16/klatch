@@ -192,12 +192,15 @@ advance() { # file content: main moves on (a merge by someone else)
   g add -A; g commit -q -m "main moves"; g push -q origin main 2> /dev/null
 }
 # the integrator, with a fake world: tiny waits, never the real gh, git remote or klatch
+# A process started in the background by a non-interactive shell (a CI job, a gate run as a background task) ignores
+# SIGINT, and a shell script cannot trap a signal that was ignored on entry: reset the dispositions so the signal
+# cases test the integrator, not the caller (#866).
 _run() {
   exec env FAKE_DIR="$fake" FAKE_ORIGIN="$origin" FAKE_SEED="$seed" FIXTURES="$fx" PATH="$bin:$PATH" \
     INTEGRATOR_REPO="$repo" INTEGRATOR_KLATCH="${KB:-$bin/klatch}" INTEGRATOR_GATE="$bin/gate" INTEGRATOR_GH_REPO=hslee16/klatch \
     INTEGRATOR_RECONCILE_SECS="${RS:-2}" INTEGRATOR_POLL_SECS=0.1 INTEGRATOR_GH_RETRY_SLEEP=0 INTEGRATOR_GH_TIMEOUT=20 \
     INTEGRATOR_CHECK_WAIT_SECS="${CW:-25}" INTEGRATOR_FORWARDER_TRIES=3 INTEGRATOR_FORWARDER_MIN_UP=1000 INTEGRATOR_REQUEUE_SECS=0 \
-    perl -e 'alarm shift; exec @ARGV' "${LIMIT:-90}" bash "$integrator" "$@"
+    perl -e '$SIG{INT} = "DEFAULT"; $SIG{QUIT} = "DEFAULT"; $SIG{TERM} = "DEFAULT"; alarm shift; exec @ARGV' "${LIMIT:-90}" bash "$integrator" "$@"
 }
 runint() { ( _run "$@" ); }
 ipid=""
