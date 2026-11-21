@@ -1,0 +1,1 @@
+- The docs for the wire method `asks` and the `klatch_asks` tool say the ask-cycle lines `klatch asks` prints come from the wire method `stuck` as `ask_cycle` events; `asks` itself is unchanged (#1004).
