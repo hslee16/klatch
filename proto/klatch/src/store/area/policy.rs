@@ -34,6 +34,13 @@ pub trait PolicyStore {
         unsupported("policy")
     }
 
+    /// Mark `label` sealed and protect every earlier plain message text of the label under the label's key, as one
+    /// step (#378). Returns how many texts were converted. Refused, changing nothing, when there is something to
+    /// convert and the label's key is not held.
+    fn mark_label_sealed_converting(&self, _label: &str, _now: i64) -> Result<usize> {
+        unsupported("policy")
+    }
+
     /// Run `act` as one write transaction (#897): every read and write it makes through this store is one atomic step,
     /// taken under the write lock, so a check made inside it still holds when its write lands. An error from `act`
     /// rolls everything back. The store's own single-statement writes made inside `act` join the transaction.

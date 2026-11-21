@@ -18,6 +18,7 @@ mod conformance;
 mod credentials;
 mod cycle_notice;
 mod encryption;
+mod label_keys;
 mod long_tasks;
 mod members;
 mod messages;

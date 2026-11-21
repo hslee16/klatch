@@ -139,7 +139,7 @@ fn a_sealed_label_seals_the_payload_and_a_reader_without_the_key_sees_only_a_not
     g.admin_set_room_label(&admin(), "vault", "private")
         .unwrap();
     g.admin_set_clearance(&admin(), "alice", "private").unwrap();
-    g.admin_seal_label(&admin(), "private").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "private").unwrap();
     g.use_label_keys(
         crate::keys::LabelKeys::new().with("private", crate::keys::Key::from_bytes([9; 32])),
     );

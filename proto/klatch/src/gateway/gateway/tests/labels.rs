@@ -290,13 +290,51 @@ fn sealing_a_label_is_an_audited_admin_act_that_needs_a_known_label() {
 #[test]
 fn a_member_may_hold_the_keys_of_the_sealed_labels_its_clearance_reaches_and_no_others() {
     let g = vault();
-    g.admin_seal_label(&admin(), "private").unwrap();
-    g.admin_seal_label(&admin(), "secret").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "private").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "secret").unwrap();
     assert_eq!(
         g.sealed_labels_within("alice").unwrap(),
         vec!["private".to_string()]
     );
     assert!(g.sealed_labels_within("bob").unwrap().is_empty());
+}
+
+#[test]
+fn sealing_a_label_seals_the_messages_already_in_it_and_the_audit_says_how_many() {
+    let g = vault();
+    g.join(&alice(), "vault").unwrap();
+    g.post(&alice(), "vault", "the plan").unwrap();
+    // without the label's key nothing is sealed and nothing is converted
+    let err = g.admin_seal_label(&admin(), "private").unwrap_err();
+    assert_eq!(rule_of(err), "label-key");
+    assert!(g.sealed_labels().unwrap().is_empty());
+    let key = crate::keys::Key::from_bytes([3; 32]);
+    g.use_label_keys(crate::keys::LabelKeys::new().with("private", key));
+    let n = g.admin_seal_label(&admin(), "private").unwrap();
+    assert!(n >= 1, "nothing was converted");
+    let audit = g.admin_audit(&admin(), 5).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "seal-label" && a.detail.contains(&format!("converted {n}"))),
+        "{audit:?}"
+    );
+    let shown = g.tail(&alice(), "vault", (0, 10)).unwrap();
+    assert!(shown.iter().any(|m| m.body == "the plan"));
+    g.use_label_keys(crate::keys::LabelKeys::new());
+    let blind = g.tail(&alice(), "vault", (0, 10)).unwrap();
+    assert!(blind.iter().all(|m| m.body != "the plan"), "{blind:?}");
+}
+
+#[test]
+fn keeping_plain_seals_the_label_and_leaves_the_earlier_messages_readable_without_the_key() {
+    let g = vault();
+    g.join(&alice(), "vault").unwrap();
+    g.post(&alice(), "vault", "the plan").unwrap();
+    g.admin_seal_label_keep_plain(&admin(), "private").unwrap();
+    assert_eq!(g.sealed_labels().unwrap(), vec!["private".to_string()]);
+    let shown = g.tail(&alice(), "vault", (0, 10)).unwrap();
+    assert!(shown.iter().any(|m| m.body == "the plan"));
 }
 
 #[test]

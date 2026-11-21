@@ -218,10 +218,20 @@ pub enum AdminCmd {
         label: Option<String>,
     },
     /// Seal a label: its messages are stored encrypted under a key of their own, so only a principal holding that key
-    /// (its clearance reaches the label and the key was handed to it) can read or write them
-    SealLabel { label: String },
+    /// (its clearance reaches the label and the key was handed to it) can read or write them. The messages already
+    /// under the label are sealed too, in the same step, unless `--keep-plain`
+    SealLabel {
+        label: String,
+        /// Leave the messages already under the label as plain text
+        #[arg(long)]
+        keep_plain: bool,
+    },
     /// Re-encrypt the store under a new key; the old key (and the old recovery code) stop working
     RotateKey,
+    /// Move a sealed label to a new key: every message of the label, in the store and in the archive files, is sealed
+    /// again under it, and the old key (and its recovery code) open none of them. Workers that hold the label must be
+    /// relaunched to get the new key; backups and archive copies made earlier keep the old key's text
+    RotateLabelKey { label: String },
     /// Write an encrypted copy of the whole store to a file (never overwrites one); keep it with its recovery code
     Backup { file: std::path::PathBuf },
     /// Replace the store with a backup made under the same key; the store it replaces is kept beside it
@@ -300,6 +310,7 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
         AdminCmd::Close { room } => Some(room.clone()),
         AdminCmd::Recover { .. } => Some("recover".into()),
         AdminCmd::RotateKey => Some("rotate".into()),
+        AdminCmd::RotateLabelKey { label } => Some(label.clone()),
         AdminCmd::Restore { .. } => Some("restore".into()),
         AdminCmd::Export { room, .. } => Some(room.clone()),
         AdminCmd::RunArchive { run, .. } => Some(run.clone()),

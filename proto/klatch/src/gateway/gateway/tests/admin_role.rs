@@ -90,7 +90,7 @@ fn an_admin_agent_cannot_exceed_the_cap_or_grant_roles_or_stop_everything() {
             g.admin_set_admin_agent(&ada(), "ada", false),
         ),
         ("pause", g.admin_pause(&ada(), true)),
-        ("seal", g.admin_seal_label(&ada(), "private")),
+        ("seal", g.admin_seal_label(&ada(), "private").map(|_| ())),
         ("canary", g.admin_plant_canary(&ada(), "r")),
     ];
     for (name, r) in attempts {

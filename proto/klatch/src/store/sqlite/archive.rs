@@ -154,7 +154,7 @@ pub fn archives_to_rekey(dir: &Path, old: &Key, new: &Key) -> Result<Vec<PathBuf
 }
 
 /// The `*.db` files directly in `dir`, in name order. A missing directory has none.
-fn archive_files(dir: &Path) -> Result<Vec<PathBuf>> {
+pub(super) fn archive_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

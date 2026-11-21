@@ -498,6 +498,7 @@ fn sealing_a_label_makes_its_key_and_audits_it() {
     };
     e.key_cmd(KeyAct::SealLabel {
         label: "private".into(),
+        keep_plain: false,
     })
     .unwrap();
     let gateway = Gateway::new(e.store(), CliClock, AllowAll);
@@ -507,6 +508,188 @@ fn sealing_a_label_makes_its_key_and_audits_it() {
     );
     assert!(custody::label_key(&e.db(), "private").unwrap().is_some());
     assert!(e.audited().iter().any(|a| a.contains("seal")));
+}
+
+impl Env {
+    /// Post `body` to room `r` under `label` as plain text, before the label is sealed.
+    fn post_under(&self, label: &str, body: &str, ts: i64) {
+        use klatch::domain::Attribution;
+        self.store()
+            .post_as(
+                &klatch::store::NewMessage::new(
+                    ("r", "alice"),
+                    Attribution::Unattributed,
+                    label,
+                    body,
+                ),
+                ts,
+            )
+            .unwrap();
+    }
+
+    /// The messages of room `r` as a holder of every label key reads them.
+    fn read_with_keys(&self) -> Vec<String> {
+        let store = self.store();
+        store.set_label_keys(custody::label_ring(&self.db(), &["private".to_string()]).unwrap());
+        store
+            .tail("r", 0, 50)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.body)
+            .collect()
+    }
+
+    /// The messages of room `r` as a holder of no label key reads them.
+    fn read_without_keys(&self) -> Vec<String> {
+        self.store()
+            .tail("r", 0, 50)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.body)
+            .collect()
+    }
+}
+
+#[test]
+fn sealing_a_label_converts_the_messages_already_in_it_by_default() {
+    let Some(e) = Env::begin_saying(
+        this_test!(),
+        "seal-convert",
+        &["converted 2 earlier message text(s)"],
+        &[],
+    ) else {
+        return;
+    };
+    e.post_under("private", "earlier one", 1);
+    e.post_under("private", "earlier two", 2);
+    e.post_under("public", "left plain", 3);
+    e.key_cmd(KeyAct::SealLabel {
+        label: "private".into(),
+        keep_plain: false,
+    })
+    .unwrap();
+    let blind = e.read_without_keys();
+    assert!(
+        blind[0].contains("sealed") && blind[1].contains("sealed"),
+        "{blind:?}"
+    );
+    assert_eq!(blind[2], "left plain");
+    assert_eq!(e.read_with_keys()[..2], ["earlier one", "earlier two"]);
+    assert!(e.audited().contains(&"seal-label".to_string()));
+}
+
+#[test]
+fn sealing_a_label_with_keep_plain_leaves_the_earlier_messages_as_they_were() {
+    let Some(e) = Env::begin_saying(
+        this_test!(),
+        "seal-keep-plain",
+        &["earlier messages were left as plain text"],
+        &[],
+    ) else {
+        return;
+    };
+    e.post_under("private", "earlier one", 1);
+    e.key_cmd(KeyAct::SealLabel {
+        label: "private".into(),
+        keep_plain: true,
+    })
+    .unwrap();
+    assert_eq!(e.read_without_keys(), ["earlier one"]);
+}
+
+#[test]
+fn sealing_a_label_again_converts_what_a_keep_plain_run_left() {
+    let Some(e) = Env::begin(this_test!(), "seal-again") else {
+        return;
+    };
+    e.post_under("private", "earlier one", 1);
+    let seal = |keep_plain| {
+        e.key_cmd(KeyAct::SealLabel {
+            label: "private".into(),
+            keep_plain,
+        })
+    };
+    seal(true).unwrap();
+    seal(false).unwrap();
+    assert!(e.read_without_keys()[0].contains("sealed"));
+    assert_eq!(e.read_with_keys(), ["earlier one"]);
+}
+
+#[test]
+fn sealing_the_lowest_or_an_unknown_label_makes_no_key() {
+    let Some(e) = Env::begin(this_test!(), "seal-refused") else {
+        return;
+    };
+    for label in ["public", "no-such-label"] {
+        let err = e
+            .key_cmd(KeyAct::SealLabel {
+                label: label.into(),
+                keep_plain: false,
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(!err.is_empty());
+        assert!(
+            custody::label_key(&e.db(), label).unwrap().is_none(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn rotate_label_key_moves_the_messages_audits_it_and_says_what_to_do_next() {
+    let Some(e) = Env::begin_saying(
+        this_test!(),
+        "rotate-label",
+        &[
+            "relaunch workers that hold this label",
+            "New recovery code for label private:",
+            "Backups and archive copies made earlier",
+        ],
+        &[],
+    ) else {
+        return;
+    };
+    e.post_under("private", "earlier one", 1);
+    e.key_cmd(KeyAct::SealLabel {
+        label: "private".into(),
+        keep_plain: false,
+    })
+    .unwrap();
+    let old = custody::label_key(&e.db(), "private").unwrap().unwrap();
+    e.key_cmd(KeyAct::RotateLabelKey {
+        label: "private".into(),
+    })
+    .unwrap();
+    let new = custody::label_key(&e.db(), "private").unwrap().unwrap();
+    assert!(old != new, "the label key did not change");
+    assert_eq!(e.read_with_keys(), ["earlier one"]);
+    assert_eq!(
+        e.store().label_open_counts("private", &old, &new).unwrap(),
+        (1, 0, 1)
+    );
+    assert_eq!(e.details_of("rotate-label-key"), ["private"]);
+}
+
+#[test]
+fn rotate_label_key_refuses_the_lowest_label_an_unsealed_one_and_an_unknown_one() {
+    let Some(e) = Env::begin(this_test!(), "rotate-label-refused") else {
+        return;
+    };
+    for label in ["public", "private", "no-such-label"] {
+        let err = e
+            .key_cmd(KeyAct::RotateLabelKey {
+                label: label.into(),
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(!err.is_empty(), "{label}");
+        assert!(
+            custody::label_key(&e.db(), label).unwrap().is_none(),
+            "{label}"
+        );
+    }
+    assert!(!e.audited().contains(&"rotate-label-key".to_string()));
 }
 
 #[test]
