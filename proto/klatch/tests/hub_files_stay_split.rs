@@ -1,6 +1,6 @@
 //! The files every pull request edits were split by family so parallel pull requests stop colliding (#860, #533).
 //! This keeps them split: no file under those directories grows past the cap, so a new command goes in the file of
-//! its family or a new file, not into one hub again.
+//! its family or a new file, not into one hub again. The board is split by section the same way (#1066).
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,14 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn the_split_directories_have_no_file_over_the_line_cap() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    for dir in ["commands", "args", "kani_proofs"] {
+    for dir in [
+        "commands",
+        "args",
+        "kani_proofs",
+        "gateway/gateway/tests/zero_trust",
+        "domain/board",
+        "gateway/gateway/board",
+    ] {
         rust_files(&src.join(dir), &mut files);
     }
     assert!(

@@ -1,9 +1,33 @@
 //! Zero trust in code (#161, R35): no operation reaches the store without the guard. Every public method of the
-//! gateway is listed below, as guarded or as acting only on the caller's own record, and a test fails when a new
-//! method is not listed, so a new operation cannot skip the decision.
+//! gateway is listed in one of the area files under `zero_trust/`, as guarded or as acting only on the caller's own
+//! record, and a test fails when a new method is not listed, so a new operation cannot skip the decision.
+//!
+//! How to classify a new public method of the gateway (#1067):
+//!
+//! 1. Pick the area file of what the method is about: `messages`, `claims`, `crossings_review`, `delivery_view`,
+//!    `keys_credentials` or `roles_admin`. Add the entry there, on one line with a trailing comma, so two pull
+//!    requests that add methods to the same file merge by keeping both lines.
+//! 2. A method that takes a room or acts on anyone but the caller goes in that file's `GUARDED` list with a call that
+//!    must be refused under a guard that refuses everything (the closure returns `refused(...)`).
+//! 3. A method that touches only the caller's own record, builds the gateway, or looks up policy goes in
+//!    `OWN_RECORD` with a reason. Then list it in exactly one of `NO_PRINCIPAL` (it takes no principal) or
+//!    `AFTER_END` (it takes the caller's principal: `None` if an ended credential is refused, `Some(reason)` if the
+//!    end of a worker's session needs it).
+//! 4. Keep every list of a file to its own area: a name in two lists of the sort (GUARDED and OWN_RECORD) or in two
+//!    area files fails the test, and so does an entry that names no method.
+//!
+//! The area files must stay under 600 lines (`tests/hub_files_stay_split.rs`); a seventh area is a new file and a new
+//! `mod` line and a new line in each `*_lists` function below.
 
 use super::*;
 use crate::gateway::ClaimSpec;
+
+mod claims;
+mod crossings_review;
+mod delivery_view;
+mod keys_credentials;
+mod messages;
+mod roles_admin;
 
 /// Every public method that takes a room or acts on anyone but the caller: it asks the guard first, and under a
 /// guard that refuses everything it is refused with nothing read or written.
@@ -20,347 +44,108 @@ impl crate::gateway::AnchorAdapter for NoFactory {
 fn refused<T>(r: Result<T>) -> bool {
     matches!(r, Err(Error::Refused { .. }))
 }
-
-const GUARDED: &[(&str, Call)] = &[
-    ("join", |g, w| refused(g.join(w, "r"))),
-    ("join_with_harness", |g, w| {
-        refused(g.join_with_harness(w, "r", &crate::harness::Generic))
-    }),
-    ("post", |g, w| refused(g.post(w, "r", "x"))),
-    ("post_labeled", |g, w| {
-        refused(g.post_labeled(w, ("r", "x", None)))
-    }),
-    ("post_handoff", |g, w| {
-        refused(g.post_handoff(
-            w,
-            ("r", "x", None),
-            &crate::gateway::Handoff {
-                kind: "k",
-                payload: None,
-            },
-        ))
-    }),
-    ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
-    ("read", |g, w| refused(g.read(w, "r", true))),
-    ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),
-    ("history", |g, w| {
-        refused(g.history(w, "r", crate::gateway::HistoryRange::default()))
-    }),
-    ("head", |g, w| refused(g.head(w, "r"))),
-    ("ack", |g, w| refused(g.ack(w, "r", 1))),
-    ("who", |g, w| refused(g.who(w, "r"))),
-    ("receipt", |g, w| refused(g.receipt(w, "r", 1))),
-    ("board", |g, w| refused(g.board(w, "r"))),
-    ("open_asks", |g, w| refused(g.open_asks(w, "r"))),
-    ("stuck", |g, w| refused(g.stuck(w, "r"))),
-    ("claim", |g, w| {
-        refused(g.claim(w, "r", &ClaimSpec::new("p", 10, "")))
-    }),
-    ("invite", |g, w| refused(g.invite(w, "bob", "r", "r"))),
-    ("grant_room_clearance", |g, w| {
-        refused(g.grant_room_clearance(w, "r", "bob", "public"))
-    }),
-    ("admin_set_room_grantor", |g, w| {
-        refused(g.admin_set_room_grantor(w, "r", "bob", true))
-    }),
-    ("admin_set_room_clearance", |g, w| {
-        refused(g.admin_set_room_clearance(w, "r", "bob", Some("public")))
-    }),
-    ("process_exited", |g, w| {
-        refused(g.process_exited(w, "r", "bob"))
-    }),
-    ("request_crossing", |g, w| {
-        refused(g.request_crossing(w, "r", 1, "r"))
-    }),
-    // before admin_close_room below: a closed room refuses before the guard is asked
-    ("member_card", |g, w| refused(g.member_card(w, "r", "bob"))),
-    ("claim_ttl_for", |g, w| {
-        refused(g.claim_ttl_for(w, ("r", "ask:1"), None))
-    }),
-    ("claims", |g, w| refused(g.claims(w, "r"))),
-    ("cycle_notices", |g, w| refused(g.cycle_notices(w, "r"))),
-    ("release", |g, w| refused(g.release(w, "r", "p"))),
-    ("release_with_note", |g, w| {
-        refused(g.release_with_note(w, ("r", "p"), "n"))
-    }),
-    ("last_release", |g, w| refused(g.last_release(w, "r", "p"))),
-    ("set_status", |g, w| refused(g.set_status(w, "r", "done"))),
-    ("set_muted", |g, w| refused(g.set_muted(w, "r", true))),
-    ("wait_poll", |g, w| refused(g.wait_poll(w, "r"))),
-    ("wait_seen", |g, w| refused(g.wait_seen(w, "r", 1))),
-    ("wake_mark", |g, w| refused(g.wake_mark(w, "r"))),
-    ("wakeable", |g, w| refused(g.wakeable(w, "r"))),
-    ("wake_summary", |g, w| refused(g.wake_summary(w, "r"))),
-    ("outside_view", |g, w| refused(g.outside_view(w, "r"))),
-    // another member's data, and housekeeping that deletes other members
-    ("hook_runs", |g, w| refused(g.hook_runs(w, "bob"))),
-    ("label_order", |g, w| refused(g.label_order(w))),
-    ("scrub_check", |g, w| refused(g.scrub_check(w, "x"))),
-    ("prune_members", |g, w| refused(g.prune_members(w, 0))),
-    // the administrative acts
-    ("admin_close_room", |g, w| {
-        refused(g.admin_close_room(w, "r", true))
-    }),
-    ("admin_pause", |g, w| refused(g.admin_pause(w, true))),
-    ("admin_remove_member", |g, w| {
-        refused(g.admin_remove_member(w, "r", "bob"))
-    }),
-    ("admin_allow_member", |g, w| {
-        refused(g.admin_allow_member(w, "r", "bob"))
-    }),
-    ("admin_audit", |g, w| refused(g.admin_audit(w, 5))),
-    ("admin_issue_credential", |g, w| {
-        refused(g.admin_issue_credential(
-            w,
-            &CredentialSpec {
-                member: "w-1",
-                clearance: "internal",
-                ttl: 60,
-                max_life: None,
-                parent: None,
-            },
-        ))
-    }),
-    ("admin_revoke_credential", |g, w| {
-        refused(g.admin_revoke_credential(w, "w-1"))
-    }),
-    ("admin_credentials", |g, w| refused(g.admin_credentials(w))),
-    ("admin_run_create", |g, w| {
-        refused(g.admin_run_create(w, "a"))
-    }),
-    ("admin_run_end", |g, w| {
-        refused(g.admin_run_end(w, "a", None))
-    }),
-    ("admin_runs", |g, w| refused(g.admin_runs(w))),
-    ("anchor_done", |g, w| refused(g.anchor_done(w, "wo:1"))),
-    ("github_events", |g, w| {
-        refused(g.github_events(
-            w,
-            r#"{"number":1,"state":"closed","repository":{"full_name":"a/b"}}"#,
-        ))
-    }),
-    ("reap_anchors", |g, w| {
-        refused(g.reap_anchors(w, &NoFactory))
-    }),
-    ("admin_seal_label", |g, w| {
-        refused(g.admin_seal_label(w, "private"))
-    }),
-    ("admin_note", |g, w| {
-        refused(g.admin_note(w, ("key-test", "x"), "y"))
-    }),
-    ("admin_set_room_label", |g, w| {
-        refused(g.admin_set_room_label(w, "r", "private"))
-    }),
-    ("admin_set_clearance", |g, w| {
-        refused(g.admin_set_clearance(w, "bob", "private"))
-    }),
-    ("admin_set_cap", |g, w| {
-        refused(g.admin_set_cap(w, "private"))
-    }),
-    ("admin_set_label_chain", |g, w| {
-        refused(g.admin_set_label_chain(w, &["a", "b"]))
-    }),
-    ("admin_set_room_stale", |g, w| {
-        refused(g.admin_set_room_stale(w, "r", Some(120)))
-    }),
-    ("admin_set_room_ask_lease", |g, w| {
-        refused(g.admin_set_room_ask_lease(w, "r", Some(120)))
-    }),
-    ("admin_set_room_require", |g, w| {
-        refused(g.admin_set_room_require(w, "r", Some("flag:wake")))
-    }),
-    ("admin_plant_canary", |g, w| {
-        refused(g.admin_plant_canary(w, "r"))
-    }),
-    ("admin_retire_canary", |g, w| {
-        refused(g.admin_retire_canary(w, "r"))
-    }),
-    ("admin_refusals", |g, w| refused(g.admin_refusals(w, 5))),
-    ("admin_add_scrub_term", |g, w| {
-        refused(g.admin_add_scrub_term(w, "n", "t"))
-    }),
-    ("admin_remove_scrub_term", |g, w| {
-        refused(g.admin_remove_scrub_term(w, "n"))
-    }),
-    ("admin_scrub_terms", |g, w| refused(g.admin_scrub_terms(w))),
-    // found by the directory scan (#161): these files were not in the hand-kept list before
-    ("admin_set_librarian", |g, w| {
-        refused(g.admin_set_librarian(w, "bob", true))
-    }),
-    ("admin_set_reviewer", |g, w| {
-        refused(g.admin_set_reviewer(w, "bob", true))
-    }),
-    ("admin_set_facilitator", |g, w| {
-        refused(g.admin_set_facilitator(w, "bob", true))
-    }),
-    ("admin_set_integrator", |g, w| {
-        refused(g.admin_set_integrator(w, "bob", true))
-    }),
-    ("admin_set_admin_agent", |g, w| {
-        refused(g.admin_set_admin_agent(w, "bob", true))
-    }),
-    ("admin_set_room_creation_granted", |g, w| {
-        refused(g.admin_set_room_creation_granted(w, true))
-    }),
-    ("admin_grant_room_capability", |g, w| {
-        refused(g.admin_grant_room_capability(w, "bob", true))
-    }),
-    ("admin_set_rate_limit", |g, w| {
-        refused(g.admin_set_rate_limit(w, Some((5, 60))))
-    }),
-    ("admin_rate_limits", |g, w| refused(g.admin_rate_limits(w))),
-    ("admin_set_member_rate_limit", |g, w| {
-        refused(g.admin_set_member_rate_limit(w, "bob", Some((5, 60))))
-    }),
-    ("admin_set_lease_cap", |g, w| {
-        refused(g.admin_set_lease_cap(w, Some(60)))
-    }),
-    ("admin_set_lease_grace", |g, w| {
-        refused(g.admin_set_lease_grace(w, Some(60)))
-    }),
-    ("review_queue", |g, w| refused(g.review_queue(w, 5))),
-    ("review_next", |g, w| refused(g.review_next(w))),
-    ("review_verdict", |g, w| {
-        refused(g.review_verdict(w, 1, &crate::domain::Verdict::Allow))
-    }),
+/// The areas, in the order the lists run: the guarded calls of one area run before those of the next.
+const AREAS: [&str; 6] = [
+    "messages",
+    "claims",
+    "crossings_review",
+    "delivery_view",
+    "keys_credentials",
+    "roles_admin",
 ];
 
-/// Methods that are not an operation on shared state: building the gateway, the clock, or reading or writing only
-/// the caller's own record (its scope, parent, session id, hook run record, rooms it joined, claims it holds), or a
-/// lookup of policy that the gateway itself uses. Each has a reason; a new one needs one.
-const OWN_RECORD: &[(&str, &str)] = &[
-    ("new", "builds the gateway"),
-    (
-        "with_notifier",
-        "builds the gateway: who is told of a stored post",
-    ),
-    (
-        "for_members",
-        "builds the gateway: members' admin acts need the admin agent role",
-    ),
-    ("now", "the clock"),
-    (
-        "room_grantor",
-        "a policy lookup that takes no principal and returns one member name for a room (#893); the decision to grant reads it inside `grant_room_clearance`, which is GUARDED",
-    ),
-    (
-        "change_token",
-        "when to look, never what: a number that moves when any connection commits, with no room, member or text in it. It takes no principal and returns nothing a peer sees; a session or wait uses it only to decide when to run the checked poll (#616)",
-    ),
-    (
-        "my_refusals",
-        "the caller's own refusal record: it reads only rows of the caller's principal name, so it is the same as reading its own hook record, and a member stopped by the breaker must still read why (#678)",
-    ),
-    (
-        "my_crossings",
-        "the caller's own crossing requests: it reads only queue rows whose requester is the caller and returns a state and a fixed sentence, never the text, a redaction, a reviewer's reason or a scrub rule's name (#516)",
-    ),
-    (
-        "digest",
-        "asks the guard once per room and reports the rooms it refused",
-    ),
-    ("digest_with", "the same, with the backlog"),
-    ("note_parent", "the caller's own parent link"),
-    ("note_session", "the caller's own session id"),
-    (
-        "note_member_mode",
-        "the caller's own permission mode, a short word with no content",
-    ),
-    (
-        "record_stop",
-        "the caller's own park, from the end of its own turn",
-    ),
-    (
-        "sign_of_life",
-        "the caller's own park, ended by its own hook",
-    ),
-    ("scope_of", "the caller's own scope"),
-    ("set_scope", "the caller's own scope"),
-    ("set_kind", "the caller's own kind, display only"),
-    ("kind_of", "the caller's own kind"),
-    ("record_hook_run", "the caller's own hook run record"),
-    ("release_all", "releases only the claims the caller holds"),
-    ("rooms", "the rooms the caller joined"),
-    (
-        "sealed_labels",
-        "a policy lookup the CLI uses to find which keys to load; takes no principal",
-    ),
-    (
-        "sealed_labels_within",
-        "the same, limited to what one member's clearance reaches; takes no principal",
-    ),
-    (
-        "end_credential",
-        "a worker revokes only its own credential, and only as a verified principal",
-    ),
-    (
-        "verify_credential",
-        "authentication itself: it takes proof of identity instead of a principal, and records a failure",
-    ),
-    (
-        "use_label_keys",
-        "the keys this process holds, in memory only",
-    ),
-    (
-        "clearance_of",
-        "a policy lookup the gateway uses on every call; takes no principal",
-    ),
-    (
-        "room_label",
-        "a policy lookup the gateway uses on every call; takes no principal",
-    ),
-    (
-        "role_of",
-        "a policy lookup the gateway uses on every call; takes no principal",
-    ),
-    ("is_admin_agent", "a role lookup; takes no principal"),
-    ("is_librarian", "a role lookup; takes no principal"),
-    ("is_facilitator", "a role lookup; takes no principal"),
-    (
-        "can_create_rooms",
-        "a policy lookup `check_room_capability` uses on every call; takes no principal",
-    ),
-    (
-        "lease_policy",
-        "a policy lookup the lease rules use; takes no principal",
-    ),
-    (
-        "rate_limit",
-        "a policy lookup the budget check uses on every post; takes no principal",
-    ),
-    (
-        "rate_limit_for",
-        "the same lookup for one member's own limit (#972); takes no principal and changes nothing",
-    ),
-    (
-        "with_leases",
-        "builds the gateway: where liveness comes from",
-    ),
-    (
-        "delivery_view",
-        "the caller's own delivery view, a key built from the caller's own name",
-    ),
-    (
-        "set_delivery_view",
-        "the caller's own delivery view, a key built from the caller's own name",
-    ),
-    (
-        "release_crossings",
-        "applies only verdicts a reviewer or judge already recorded, with the floors checked again; it takes no principal and adds no authority. `klatch judge run --once` reaches it behind the launcher heuristic only, a gap kept in proto/AUTHZ-AUDIT.md",
-    ),
-];
+/// Every guarded method of every area, with the name of its area.
+fn guarded_by_area() -> Vec<(&'static str, &'static str, Call)> {
+    let lists: [&[(&str, Call)]; 6] = [
+        messages::GUARDED,
+        claims::GUARDED,
+        crossings_review::GUARDED,
+        delivery_view::GUARDED,
+        keys_credentials::GUARDED,
+        roles_admin::GUARDED,
+    ];
+    let mut out = Vec::new();
+    for (area, list) in AREAS.iter().zip(lists) {
+        out.extend(list.iter().map(|(n, c)| (*area, *n, *c)));
+    }
+    out
+}
+
+fn guarded() -> Vec<(&'static str, Call)> {
+    guarded_by_area()
+        .into_iter()
+        .map(|(_, n, c)| (n, c))
+        .collect()
+}
+
+/// Every own-record method of every area, with the name of its area.
+fn own_record_by_area() -> Vec<(&'static str, &'static str, &'static str)> {
+    let lists: [&[(&str, &str)]; 6] = [
+        messages::OWN_RECORD,
+        claims::OWN_RECORD,
+        crossings_review::OWN_RECORD,
+        delivery_view::OWN_RECORD,
+        keys_credentials::OWN_RECORD,
+        roles_admin::OWN_RECORD,
+    ];
+    let mut out = Vec::new();
+    for (area, list) in AREAS.iter().zip(lists) {
+        out.extend(list.iter().map(|(n, r)| (*area, *n, *r)));
+    }
+    out
+}
+
+fn own_record() -> Vec<(&'static str, &'static str)> {
+    own_record_by_area()
+        .into_iter()
+        .map(|(_, n, r)| (n, r))
+        .collect()
+}
+
+fn no_principal() -> Vec<&'static str> {
+    [
+        messages::NO_PRINCIPAL,
+        claims::NO_PRINCIPAL,
+        crossings_review::NO_PRINCIPAL,
+        delivery_view::NO_PRINCIPAL,
+        keys_credentials::NO_PRINCIPAL,
+        roles_admin::NO_PRINCIPAL,
+    ]
+    .concat()
+}
+
+fn after_end() -> Vec<(&'static str, OwnCall, Option<&'static str>)> {
+    [
+        messages::AFTER_END,
+        claims::AFTER_END,
+        crossings_review::AFTER_END,
+        delivery_view::AFTER_END,
+        keys_credentials::AFTER_END,
+        roles_admin::AFTER_END,
+    ]
+    .concat()
+}
+
+/// The `.rs` files in `dir` and in its subdirectories other than the tests (the board is split by section, #1066).
+fn collect_sources(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("the gateway directory") {
+        let path = entry.expect("a directory entry").path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "tests") {
+                collect_sources(&path, files);
+            }
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+}
 
 /// The source files of the gateway, found by reading the directory so that a new file cannot be left out of the
 /// scan (#161): `gateway.rs` and every file beside it, tests excluded.
 fn gateway_sources() -> Vec<(String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gateway");
     let mut files = vec![root.join("gateway.rs")];
-    for entry in std::fs::read_dir(root.join("gateway")).expect("the gateway directory") {
-        let path = entry.expect("a directory entry").path();
-        if path.extension().is_some_and(|e| e == "rs") {
-            files.push(path);
-        }
-    }
+    collect_sources(&root.join("gateway"), &mut files);
     files.sort();
     files
         .into_iter()
@@ -376,6 +161,7 @@ fn the_scan_reads_every_source_file_of_the_gateway() {
     let seen = gateway_sources();
     for name in [
         "crossing.rs",
+        "digest.rs",
         "lease.rs",
         "librarian.rs",
         "rate.rs",
@@ -409,8 +195,8 @@ fn public_methods() -> Vec<String> {
 
 #[test]
 fn every_public_method_of_the_gateway_is_classified() {
-    let mut known: Vec<&str> = GUARDED.iter().map(|(n, _)| *n).collect();
-    known.extend(OWN_RECORD.iter().map(|(n, _)| *n));
+    let mut known: Vec<&str> = guarded().iter().map(|(n, _)| *n).collect();
+    known.extend(own_record().iter().map(|(n, _)| *n));
     // `shared` and `anchored` belong to ClaimSpec, a builder, not to operations
     known.extend(["shared", "anchored"]);
     let unclassified: Vec<String> = public_methods()
@@ -426,6 +212,24 @@ fn every_public_method_of_the_gateway_is_classified() {
         .filter(|k| !public_methods().iter().any(|m| m == **k))
         .collect();
     assert!(gone.is_empty(), "listed but not in the source: {gone:?}");
+    // a method is listed once: not in GUARDED and OWN_RECORD, and not in two areas (#1067)
+    let mut seen: Vec<&str> = Vec::new();
+    let mut twice: Vec<String> = Vec::new();
+    let all = guarded_by_area()
+        .into_iter()
+        .map(|(area, name, _)| (area, name, "GUARDED"))
+        .chain(
+            own_record_by_area()
+                .into_iter()
+                .map(|(area, name, _)| (area, name, "OWN_RECORD")),
+        );
+    for (area, name, list) in all {
+        if seen.contains(&name) {
+            twice.push(format!("{name} (again in {area}, {list})"));
+        }
+        seen.push(name);
+    }
+    assert!(twice.is_empty(), "listed more than once: {twice:?}");
 }
 
 #[test]
@@ -433,7 +237,7 @@ fn under_a_guard_that_refuses_everything_no_guarded_method_succeeds_or_touches_t
     let guard = Rc::new(SpyGuard::denying(&["r", "", "dm.alice.bob"]));
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard);
     let me = alice();
-    let leaks: Vec<&str> = GUARDED
+    let leaks: Vec<&str> = guarded()
         .iter()
         .filter(|(_, call)| !call(&g, &me))
         .map(|(name, _)| *name)
@@ -468,7 +272,7 @@ fn the_guard_sees_every_guarded_method_exactly_once_per_call() {
     let guard = Rc::new(SpyGuard::allowing());
     let g = Gateway::new(SpyStore::new(), FixedClock(1), guard.clone());
     let me = alice();
-    for (name, call) in GUARDED {
+    for (name, call) in &guarded() {
         // The two review operations are refused by the role (rule `reviewer`) before the guard is asked unless the
         // caller is a reviewer; tests/reviewer.rs proves both the role and the guard for them.
         if matches!(*name, "review_next" | "review_verdict") {
@@ -483,109 +287,26 @@ fn the_guard_sees_every_guarded_method_exactly_once_per_call() {
     }
 }
 
-/// Own-record methods that take no principal: building, the clock, policy lookups the gateway itself uses. Nothing
-/// of a caller's own record can be read or written through them, so there is no credential to look at (#835).
-const NO_PRINCIPAL: &[&str] = &[
-    "new",
-    "with_notifier",
-    "for_members",
-    "now",
-    "room_grantor",
-    "change_token",
-    "sealed_labels",
-    "sealed_labels_within",
-    "verify_credential",
-    "use_label_keys",
-    "clearance_of",
-    "room_label",
-    "role_of",
-    "is_admin_agent",
-    "is_librarian",
-    "is_facilitator",
-    "can_create_rooms",
-    "lease_policy",
-    "rate_limit",
-    "rate_limit_for",
-    "with_leases",
-    "release_crossings",
-    // asks the guard once per room, so a principal whose credential ended is refused for every room (#161)
-    "digest",
-    "digest_with",
-];
-
 /// Every own-record method that takes the caller's principal (#835): a verified principal whose credential ended
 /// (revoked, expired) is refused (`None`), unless the end of a worker's session needs the method (`Some(reason)`).
 /// A new own-record method that takes a principal must be added here, and the tests below prove each row.
 type OwnCall = fn(&Gateway<SpyStore>, &Principal) -> Result<()>;
-const AFTER_END: &[(&str, OwnCall, Option<&str>)] = &[
-    ("note_session", |g, w| g.note_session(w, "sess-1"), None),
-    ("note_parent", |g, w| g.note_parent(w, Some("lead")), None),
-    (
-        "note_member_mode",
-        |g, w| g.note_member_mode(w, "default"),
-        None,
-    ),
-    ("record_stop", |g, w| g.record_stop(w, 1, 0), None),
-    ("sign_of_life", |g, w| g.sign_of_life(w), None),
-    ("set_scope", |g, w| g.set_scope(w, "repo"), None),
-    ("scope_of", |g, w| g.scope_of(w).map(|_| ()), None),
-    (
-        "set_kind",
-        |g, w| g.set_kind(w, Some(crate::domain::MemberKind::Bot)),
-        None,
-    ),
-    ("kind_of", |g, w| g.kind_of(w).map(|_| ()), None),
-    ("my_refusals", |g, w| g.my_refusals(w, 5).map(|_| ()), None),
-    (
-        "my_crossings",
-        |g, w| g.my_crossings(w, 5).map(|_| ()),
-        None,
-    ),
-    ("delivery_view", |g, w| g.delivery_view(w).map(|_| ()), None),
-    (
-        "set_delivery_view",
-        |g, w| g.set_delivery_view(w, crate::gateway::DeliveryView::Scope),
-        None,
-    ),
-    ("rooms", |g, w| g.rooms(w).map(|_| ()), None),
-    (
-        "record_hook_run",
-        |g, w| g.record_hook_run(w, "SessionEnd", 0),
-        Some(
-            "only the `SessionEnd` event: a session whose credential idled out must still be able to record that it ended; any other event is refused (checked separately)",
-        ),
-    ),
-    (
-        "release_all",
-        |g, w| g.release_all(w).map(|_| ()),
-        Some(
-            "frees only the caller's own claims, and the end of a session must free what it held even when the credential idled out first (#277); refusing would leave the claims held until their leases run out",
-        ),
-    ),
-    (
-        "end_credential",
-        |g, w| g.end_credential(w).map(|_| ()),
-        Some(
-            "it only revokes the caller's own credential and does nothing when none is live, so a second call adds no authority",
-        ),
-    ),
-];
 
 #[test]
 fn every_own_record_method_is_classified_for_a_principal_whose_credential_ended() {
-    let in_table: Vec<&str> = AFTER_END.iter().map(|(n, _, _)| *n).collect();
-    for (name, _) in OWN_RECORD {
-        let no_principal = NO_PRINCIPAL.contains(name);
+    let in_table: Vec<&str> = after_end().iter().map(|(n, _, _)| *n).collect();
+    for (name, _) in &own_record() {
+        let no_principal = no_principal().contains(name);
         let with_principal = in_table.contains(name);
         assert!(
             no_principal != with_principal,
             "own-record method {name}: list it in exactly one of NO_PRINCIPAL or AFTER_END (#835)"
         );
     }
-    let strays: Vec<&&str> = NO_PRINCIPAL
-        .iter()
-        .chain(in_table.iter())
-        .filter(|n| !OWN_RECORD.iter().any(|(o, _)| *o == **n))
+    let strays: Vec<&str> = no_principal()
+        .into_iter()
+        .chain(in_table.iter().copied())
+        .filter(|n| !own_record().iter().any(|(o, _)| o == n))
         .collect();
     assert!(
         strays.is_empty(),
@@ -627,7 +348,7 @@ fn ended_worker(how: Ending) -> (Gateway<SpyStore>, Principal) {
 
 #[test]
 fn a_live_credential_may_call_every_own_record_method() {
-    for (name, call, _) in AFTER_END {
+    for (name, call, _) in &after_end() {
         let (g, t) = timed();
         let token = g
             .admin_issue_credential(&admin(), &worker_spec(None))
@@ -645,7 +366,7 @@ fn a_live_credential_may_call_every_own_record_method() {
 #[test]
 fn every_own_record_method_refuses_an_ended_credential_unless_it_is_listed_with_a_reason() {
     for how in [Ending::SessionEnd, Ending::AdminRevoke, Ending::Expiry] {
-        for (name, call, allowed) in AFTER_END {
+        for (name, call, allowed) in &after_end() {
             let (g, who) = ended_worker(how);
             let r = call(&g, &who);
             match allowed {
@@ -700,7 +421,7 @@ fn a_verified_principal_proven_some_other_way_and_a_typed_name_are_not_touched_b
     t.set(t.get() + 700);
     let peer = Principal::verified("peer-1");
     let typed = Principal::unattributed("w-1");
-    for (name, call, _) in AFTER_END {
+    for (name, call, _) in &after_end() {
         if *name == "end_credential" {
             continue;
         }
