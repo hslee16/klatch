@@ -400,7 +400,9 @@ fn sealed_vault(dir: &Dir, member: &str, key: bool) -> String {
     gateway
         .admin_set_room_label(&human, "vault", "private")
         .unwrap();
-    gateway.admin_seal_label_keep_plain(&human, "private").unwrap();
+    gateway
+        .admin_seal_label_keep_plain(&human, "private")
+        .unwrap();
     if key {
         klatch::member::custody::ensure_label_key(&db, "private").unwrap();
     }
