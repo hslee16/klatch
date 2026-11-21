@@ -2,16 +2,19 @@
 // real gateway. Run from this directory:
 //   KLATCH_BIN=/path/to/klatch node --experimental-strip-types --test conformance.test.ts
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, afterEach, describe, it } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApiError, Client, type Message, decodeServerFrame, PROTOCOL_VERSION, ProtocolError } from "./klatch.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = process.env.KLATCH_BIN || resolve(here, "../../proto/target/debug/klatch");
 const FIXTURES = resolve(here, "../../proto/klatch/fixtures/protocol");
+const SERVER_BIN = process.env.KLATCH_SERVER_BIN || resolve(here, "../../proto/target/debug/klatch-server");
 
 class Store {
   home = mkdtempSync(join(tmpdir(), "klatch-client-ts-"));
@@ -30,11 +33,53 @@ class Store {
   }
 }
 
-describe("klatch client conformance", () => {
-  let store = new Store();
+/** The same throwaway store with a `klatch-server daemon` over a short socket path, and clients that connect to it over
+ * the socket (#1095) by a typed name. */
+class DaemonStore extends Store {
+  sockdir = mkdtempSync(join("/tmp", "kc-")); // a socket path is limited to about 100 bytes
+  sock = join(this.sockdir, "d.sock");
+  private daemon: ChildProcess | null = null;
+  async start() {
+    if (this.daemon) return;
+    const log = join(this.sockdir, "err.log");
+    const env = { PATH: "/usr/bin:/bin", HOME: this.home, KLATCH_HOME: this.home, KLATCH_KEY_DIR: join(this.home, "keys") };
+    this.daemon = spawn(SERVER_BIN, ["daemon", "--socket", this.sock], { env, stdio: ["ignore", "ignore", openSync(log, "w")] });
+    for (let i = 0; i < 1500; i++) {
+      if (readFileSync(log, "utf8").includes("daemon listening on")) return;
+      await sleep(20);
+    }
+    throw new Error("the daemon never listened");
+  }
+  override async client(name: string): Promise<Client> {
+    await this.start();
+    const c = await Client.connectSocket(this.sock, { name });
+    this.clients.push(c);
+    return c;
+  }
+  stopDaemon() {
+    this.daemon?.kill("SIGKILL");
+  }
+  override async close() {
+    for (const c of this.clients) await c.close();
+    this.stopDaemon();
+    rmSync(this.sockdir, { recursive: true, force: true });
+    rmSync(this.home, { recursive: true, force: true });
+  }
+}
+
+const daemonBuilt = existsSync(SERVER_BIN);
+
+// The scenario runs over `klatch serve --stdio`, then unchanged over the daemon's socket: the same events and
+// sequence numbers are required of both transports.
+for (const [title, newStore, skip] of [
+  ["klatch client conformance", () => new Store(), false],
+  ["klatch client conformance over the daemon socket", () => new DaemonStore(), !daemonBuilt],
+] as [string, () => Store, boolean][])
+describe(title, { skip }, () => {
+  let store = newStore();
   afterEach(async () => {
     await store.close();
-    store = new Store();
+    store = newStore();
   });
   after(async () => store.close());
 
@@ -225,5 +270,70 @@ describe("klatch client conformance", () => {
     const a = await store.client("alice");
     await a.post("r", "x");
     assert.equal(await a.close(), 0);
+  });
+});
+
+describe("klatch client socket connect", { skip: !daemonBuilt }, () => {
+  let store = new DaemonStore();
+  afterEach(async () => {
+    await store.close();
+    store = new DaemonStore();
+  });
+  after(async () => store.close());
+
+  it("a typed name is the member and unattributed after the handshake", async () => {
+    const a = await store.client("alice");
+    assert.deepEqual([a.member, a.attribution, a.clearance], ["alice", "unattributed", "public"]);
+    await a.post("r", "hi");
+    assert.equal((await a.history("r")).messages[0].sender, "alice");
+  });
+
+  it("no identity is the unmapped-process the daemon gives every local process", async () => {
+    await store.start();
+    const c = await Client.connectSocket(store.sock);
+    store.clients.push(c);
+    assert.deepEqual([c.member, c.attribution], ["unmapped-process", "unattributed"]);
+  });
+
+  it("a refused identity rejects without echoing the name", async () => {
+    await store.start();
+    for (const bad of ["admin", "a b", "x/y"]) {
+      await assert.rejects(Client.connectSocket(store.sock, { name: bad }), (e: ApiError) => {
+        assert.equal(e.code, "identity.refused");
+        assert.ok(!e.detail.includes(bad), e.detail);
+        return true;
+      });
+    }
+  });
+
+  it("a name with a credential, or a member without a token, is refused before anything is sent", async () => {
+    await assert.rejects(Client.connectSocket(store.sock, { name: "alice", member: "w-1", token: "t" }), TypeError);
+    await assert.rejects(Client.connectSocket(store.sock, { member: "w-1" }), TypeError);
+  });
+
+  it("a credential that is not live is refused and the token is never echoed", async () => {
+    await store.start();
+    const token = "0".repeat(64);
+    await assert.rejects(Client.connectSocket(store.sock, { member: "w-1", token }), (e: ApiError) => {
+      assert.equal(e.code, "identity.refused");
+      assert.ok(!e.message.includes(token));
+      return true;
+    });
+  });
+
+  it("a socket nobody listens on rejects, and close answers zero once the daemon ends the session", async () => {
+    await assert.rejects(Client.connectSocket(join(store.sockdir, "nobody.sock"), { name: "alice" }));
+    const a = await store.client("alice");
+    assert.equal(await a.close(), 0);
+    assert.equal(await a.close(), 0); // closing again is harmless
+    const b = await store.client("bob");
+    assert.equal((await b.post("r", "after")).seq, 1);
+  });
+
+  it("the daemon ending the session is a protocol error, not a hang", async () => {
+    const a = await store.client("alice");
+    await a.post("r", "x");
+    store.stopDaemon();
+    await assert.rejects(a.post("r", "y"));
   });
 });

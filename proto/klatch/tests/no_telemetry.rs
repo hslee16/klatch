@@ -127,6 +127,25 @@ fn may_open_loopback_socket(rel: &str) -> bool {
         && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
 }
 
+/// The one file that may name `UnixStream` (and no other socket type): the Rust client's connect to the klatch-server
+/// daemon over a local Unix socket (#1095). It connects to a path on this machine and listens for nothing. It is
+/// allowed only while its parent declares it `mod socket;` directly under `#[cfg(all(unix, feature = "client-socket"))]`,
+/// a feature that is in no default feature (see `the_client_socket_is_in_no_default_feature`), so the shipped binary
+/// never contains it.
+const CLIENT_SOCKET_FILE: &str = "src/client/socket.rs";
+
+fn may_connect_unix_socket(rel: &str) -> bool {
+    rel == CLIENT_SOCKET_FILE
+        && parent_text(rel).is_some_and(|text| {
+            let lines: Vec<&str> = text.lines().map(str::trim).collect();
+            lines.iter().enumerate().any(|(i, l)| {
+                *l == "mod socket;"
+                    && i > 0
+                    && lines[i - 1] == "#[cfg(all(unix, feature = \"client-socket\"))]"
+            })
+        })
+}
+
 /// The text of the file that declares the module at `rel` (`src/a/b.rs` is declared in `src/a.rs` or `src/a/mod.rs`),
 /// for the first of them that exists.
 fn parent_text(rel: &str) -> Option<String> {
@@ -215,7 +234,11 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
             problems.extend(
                 SOCKETS
                     .iter()
-                    .filter(|s| code.contains(*s) && !may_open_loopback_socket(&rel))
+                    .filter(|s| {
+                        code.contains(*s)
+                            && !may_open_loopback_socket(&rel)
+                            && !(**s == "UnixStream" && may_connect_unix_socket(&rel))
+                    })
                     .map(|s| format!("{at}: uses {s}")),
             );
             problems.extend(command_problem(&rel, code, PROGRAMS).map(|p| format!("{at}: {p}")));
@@ -291,6 +314,45 @@ fn the_optional_jev_http_transport_is_in_no_default_feature() {
     assert!(
         shipped["jev-http"].contains("dep:ureq"),
         "jev-http is where the HTTP client comes in"
+    );
+}
+
+/// The Rust client's socket connect (#1095) is a feature of its own: no default feature turns it on, so the shipped
+/// `klatch` binary contains no socket code, and it brings in nothing but the client.
+#[test]
+fn the_client_socket_is_in_no_default_feature() {
+    let toml =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    let section = toml
+        .split("\n[features]")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .expect("a features section");
+    let mut bodies = std::collections::BTreeMap::<String, String>::new();
+    let mut current = String::new();
+    for line in section.lines() {
+        let t = line.trim();
+        if t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        if let Some((name, rest)) = t.split_once('=') {
+            current = name.trim().to_string();
+            bodies.entry(current.clone()).or_default().push_str(rest);
+        } else {
+            bodies.entry(current.clone()).or_default().push_str(t);
+        }
+    }
+    for name in ["default", "client", "cli"] {
+        assert!(
+            !bodies[name].contains("client-socket"),
+            "{name} turns on the client socket: {}",
+            bodies[name]
+        );
+    }
+    assert_eq!(
+        bodies["client-socket"].trim(),
+        "[\"client\"]",
+        "client-socket brings in nothing but the client"
     );
 }
 

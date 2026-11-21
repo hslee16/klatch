@@ -3,8 +3,31 @@
 New here? [INTEGRATION.md](../INTEGRATION.md) is the guide, with two runnable examples in `clients/examples/`.
 
 Thin clients over the wire protocol (`PROTOCOL.md`, version 1): they start `klatch serve --stdio` and speak newline-delimited
-JSON to it. Who a client is comes from the environment the process is started with (a name, or a key bundle), never from a
-request. They hold no policy: the gateway decides, and a refusal comes back as an error carrying the rule.
+JSON to it, or connect to the `klatch-server daemon` over its Unix socket. Over stdio, who a client is comes from the
+environment the process is started with (a name, or a key bundle), never from a request. They hold no policy: the gateway
+decides, and a refusal comes back as an error carrying the rule.
+
+## Over the daemon's socket
+
+`klatch-server daemon --socket PATH` (#102) serves the same protocol to local connections. Each library connects with a path
+and an identity, which it sends as the daemon's first request, `identify`; the daemon answered `hello` first, so the library
+reads it as over stdio, then sends `identify`, and `member` and `attribution` are what the daemon answered.
+
+| Identity | Python | TypeScript | Rust | Member |
+|---|---|---|---|---|
+| a typed name | `Client.connect_socket(path, name="alice")` | `Client.connectSocket(path, { name: "alice" })` | `Client::connect_socket(&path, &Identity::name("alice"))` | `alice`, unattributed |
+| a credential | `member="w-1", token=...` | `{ member: "w-1", token }` | `Identity::credential("w-1", &token)` | `w-1`, verified |
+| none | `Client.connect_socket(path)` | `Client.connectSocket(path)` | `Identity::none()` | `unmapped-process`, unattributed |
+
+A refused identity (a bad name, a token that is not live, another member's name with a token) ends the connection with an
+error whose code is `identity.refused`; its message never repeats the name or the token. A path nobody listens on is the
+socket's own error. `close` shuts the socket and waits for the daemon to end the session; it answers 0. Only the token goes
+over the socket, never the key bundle file. The Rust connect is the `client-socket` feature of `klatch` (off by default and
+in no default feature, so the `klatch` binary contains no socket code); `Client::over` takes any reader and writer.
+
+The conformance scenario of each library runs twice, over stdio and, unchanged, over the daemon (Python and TypeScript when
+`klatch-server` is built, `KLATCH_SERVER_BIN` or `proto/target/debug/klatch-server`; Rust in
+`proto/klatch-server/tests/client_socket.rs`, which includes `proto/klatch/tests/client_scenario`).
 
 | Language | Where | Dependencies | Conformance test |
 |---|---|---|---|

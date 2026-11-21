@@ -1,8 +1,11 @@
 // A thin klatch client over the wire protocol (PROTOCOL.md, version 1): newline-delimited JSON to
-// `klatch serve --stdio`, using only Node's standard library. Who you are is decided by the environment of the
-// process, never by a request parameter. A frame type or field this version does not know is ignored.
+// `klatch serve --stdio`, or over the Unix socket of the klatch-server daemon (`Client.connectSocket`), using only
+// Node's standard library. Over stdio, who you are is decided by the environment of the process, never by a request
+// parameter; over the daemon's socket the operating system reports the peer and the first request, `identify`, says
+// more (#102). A frame type or field this version does not know is ignored.
 
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createConnection, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 
@@ -64,13 +67,19 @@ export function encodeLine(frame: Record<string, unknown>): string {
 
 type Waiter = (frame: Frame | null) => void;
 
+/** Who a connection over the daemon's socket says it is (the `identify` first request): a typed `name` (unattributed),
+ * or a `member` and its credential `token` (verified; the token only, never the key bundle file), or neither
+ * (`unmapped-process`). */
+export type Identity = { name?: string; member?: string; token?: string };
+
 /** One session with the gateway. */
 export class Client {
   member = "";
   attribution = "";
   clearance = "";
   refusals: Frame[] = [];
-  private proc: ChildProcessByStdio<Writable, Readable, null>;
+  private writable: Writable;
+  private socket: Socket | null;
   private frames: (Frame | null)[] = [];
   private waiters: Waiter[] = [];
   private nextId = 0;
@@ -78,9 +87,13 @@ export class Client {
   private caughtUp = new Map<string, Frame>();
   private exited: Promise<number>;
 
-  private constructor(binary: string, env: NodeJS.ProcessEnv, args: string[]) {
-    this.proc = spawn(binary, args, { env, stdio: ["pipe", "pipe", "ignore"] });
-    createInterface({ input: this.proc.stdout }).on("line", (line) => {
+  private constructor(input: Readable, output: Writable, exited: Promise<number>, socket: Socket | null) {
+    this.writable = output;
+    this.socket = socket;
+    this.exited = exited;
+    // a write to a transport that has gone is answered by the closed session, not by an unhandled event
+    output.on("error", () => {});
+    createInterface({ input }).on("line", (line) => {
       let frame: Frame | null;
       try {
         frame = decodeServerFrame(line);
@@ -89,18 +102,57 @@ export class Client {
       }
       if (frame !== null) this.push(frame);
     });
-    this.proc.stdout.on("close", () => this.push(null));
-    this.exited = new Promise((resolve) => this.proc.on("close", (code) => resolve(code ?? -1)));
+    input.on("close", () => this.push(null));
   }
 
   static async connect(binary: string, env: NodeJS.ProcessEnv, args: string[] = ["serve", "--stdio"]): Promise<Client> {
-    const c = new Client(binary, env, args);
-    const hello = await c.frame(10_000);
-    if (hello === null || hello.type !== "hello") throw new ProtocolError("the first frame is hello");
-    c.member = String(hello.member);
-    c.attribution = String(hello.attribution);
-    c.clearance = String(hello.clearance);
+    const proc = spawn(binary, args, { env, stdio: ["pipe", "pipe", "ignore"] });
+    const exited = new Promise<number>((resolve) => proc.on("close", (code) => resolve(code ?? -1)));
+    const c = new Client(proc.stdout, proc.stdin, exited, null);
+    await c.hello();
     return c;
+  }
+
+  /** Connect to a `klatch-server daemon --socket PATH` and say who you are (`identity`, the daemon's `identify` first
+   * request). The hello is read first, as over stdio; `member` and `attribution` are then what the daemon answered. A
+   * refused identity rejects with an `ApiError` of code `identity.refused` (its message never repeats the name or the
+   * token); a path nobody listens on rejects with the socket's error; a name together with a credential, or a member
+   * without a token, rejects with a `TypeError` before anything is sent. `close()` shuts the socket and waits for the
+   * daemon to end the session; it answers 0. */
+  static async connectSocket(path: string, identity: Identity = {}): Promise<Client> {
+    const { name, member, token } = identity;
+    if (name !== undefined && (member !== undefined || token !== undefined)) {
+      throw new TypeError("give a name, or a member and a token, not both");
+    }
+    if ((member === undefined) !== (token === undefined)) throw new TypeError("a credential is a member and a token");
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      const s = createConnection(path);
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    const exited = new Promise<number>((resolve) => socket.on("close", () => resolve(0)));
+    const c = new Client(socket, socket, exited, socket);
+    try {
+      await c.hello();
+      const params = name !== undefined ? { name } : member !== undefined ? { member, token } : null;
+      if (params !== null) {
+        const answer = await c.request("identify", params);
+        c.member = String(answer.member ?? c.member);
+        c.attribution = String(answer.attribution ?? c.attribution);
+      }
+    } catch (e) {
+      socket.destroy();
+      throw e;
+    }
+    return c;
+  }
+
+  private async hello() {
+    const hello = await this.frame(10_000);
+    if (hello === null || hello.type !== "hello") throw new ProtocolError("the first frame is hello");
+    this.member = String(hello.member);
+    this.attribution = String(hello.attribution);
+    this.clearance = String(hello.clearance);
   }
 
   private push(frame: Frame | null) {
@@ -131,7 +183,7 @@ export class Client {
   }
 
   private send(frame: Record<string, unknown>) {
-    this.proc.stdin.write(encodeLine(frame));
+    this.writable.write(encodeLine(frame));
   }
 
   /** Send a request and return its result, or throw ApiError. Frames that arrive meanwhile are kept. */
@@ -320,9 +372,17 @@ export class Client {
     }
   }
 
-  /** End the session by closing the input; returns the gateway's exit code. */
+  /** End the session by closing the input; returns the gateway's exit code. Over a socket there is no process: the
+   * socket is shut and the daemon's end of the session is awaited (up to 10 seconds), and the answer is 0. */
   async close(): Promise<number> {
-    this.proc.stdin.end();
-    return await this.exited;
+    this.writable.end();
+    if (this.socket === null) return await this.exited;
+    const socket = this.socket;
+    const timer = setTimeout(() => socket.destroy(), 10_000);
+    try {
+      return await this.exited;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
