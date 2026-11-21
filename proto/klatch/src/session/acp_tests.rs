@@ -277,3 +277,69 @@ fn a_cancel_notification_gets_no_reply_and_the_session_survives() {
     assert_eq!(out.len(), 3, "{out:?}");
     assert_eq!(out[2]["result"]["stopReason"], "end_turn");
 }
+
+/// A prompt made of the given content blocks; the answer text and stop reason.
+fn ask_blocks(g: &Gateway<SqliteStore>, blocks: Value) -> (String, Value) {
+    let msg = json!({"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
+        "sessionId":"klatch-librarian-1","prompt":blocks}});
+    let out = drive(g, "lib", &[init(), new_session(), msg]);
+    let update = out
+        .iter()
+        .find(|m| m["method"] == "session/update")
+        .expect("an update");
+    let reply = out.iter().find(|m| m["id"] == 3).expect("the response");
+    (
+        update["params"]["update"]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        reply["result"]["stopReason"].clone(),
+    )
+}
+
+#[test]
+fn a_resource_link_is_read_as_its_name_and_uri_text() {
+    // The link text is "read r": the same look as the typed words (#1042).
+    let link = json!([{"type":"resource_link","name":"read","uri":"r"}]);
+    let (text, stop) = ask_blocks(&gateway(), link);
+    assert!(text.contains("hello from alice"), "{text}");
+    assert_eq!(stop, "end_turn");
+}
+
+#[test]
+fn a_resource_link_after_text_is_joined_in_order() {
+    let blocks = json!([
+        {"type":"text","text":"read"},
+        {"type":"resource_link","name":"r","uri":"ignored"}
+    ]);
+    let (text, _) = ask_blocks(&gateway(), blocks);
+    // "read" then "r ignored" on the next line: only the first line is the query.
+    assert!(text.contains("needs a room name"), "{text}");
+}
+
+#[test]
+fn link_text_is_data_control_characters_are_stripped_and_length_is_bounded() {
+    let link = json!([{"type":"resource_link","name":"re\u{0}ad\u{7}","uri":"r\u{1b}"}]);
+    let (text, _) = ask_blocks(&gateway(), link);
+    assert!(text.contains("hello from alice"), "{text}");
+    let long = "a".repeat(100_000);
+    let link = json!([{"type":"resource_link","name":long,"uri":"b".repeat(100_000)}]);
+    let (text, stop) = ask_blocks(&gateway(), link);
+    assert_eq!(stop, "end_turn");
+    assert!(
+        text.len() < 4_000,
+        "answer echoed unbounded link text: {}",
+        text.len()
+    );
+    // A newline in a name cannot start a second query line.
+    let link = json!([{"type":"resource_link","name":"help\nread","uri":"r"}]);
+    let (text, _) = ask_blocks(&gateway(), link);
+    assert!(!text.contains("hello from alice"), "{text}");
+}
+
+#[test]
+fn a_link_without_a_name_or_uri_is_skipped_and_the_prompt_still_answers() {
+    let (text, stop) = ask_blocks(&gateway(), json!([{"type":"resource_link"}]));
+    assert!(text.contains("librarian"), "{text}");
+    assert_eq!(stop, "end_turn");
+}
