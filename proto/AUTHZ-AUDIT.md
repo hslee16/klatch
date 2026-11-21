@@ -191,6 +191,21 @@ No new gateway method: `Gateway::verify_credential` already exists (GUARDED list
 `klatch::member::spawn_shared_gateway` (same environment variables, same custody as `klatch mcp --stdio`) and loads no
 per-member label keys (#1096).
 
+## `klatch-server http` (#1059)
+
+The klatch wire over HTTP and server-sent events, on loopback only. A stream (`GET /v1/stream`) runs the session loop of
+`klatch serve --stdio` over the same `SharedGateway` as the daemon; `POST /v1/frames` writes frames into a session. Every
+frame is a wire method of the table above, run as the session's principal on the owner thread, so it meets the same guards,
+role checks and live credential check. No new gateway method and no new `PeerEvidence` variant: the evidence is the existing
+`PeerEvidence::Credential` (`Bearer` and the evidence table of item 53 stay for a later transport).
+
+| Evidence or path | What it gives | Check |
+|---|---|---|
+| `Authorization: Bearer TOKEN` with `X-Klatch-Member` on `GET /v1/stream` and on `POST /v1/frames` | Verified, for a live credential | `Backend::verify_credential` (token, expiry, revocation, a refusal row without the token), the check the daemon's `identify` makes, then `LocalIdentity` over `PeerEvidence::Credential`; every other case (missing header, wrong or other member's token, wrong scheme, a typed name) is the same `401 unauthorized` and nothing falls back to a weaker name; there is no unattributed tier over HTTP; the token is never logged or echoed; `tests/http_wire.rs` |
+| `X-Klatch-Session` on `POST /v1/frames` | the open session of the same member | a random 128-bit id; another member's session, an ended one and a malformed id are all `404`; the credential is checked before the session is looked up and before the body is read; `tests/http_wire.rs` |
+| the listener | `127.0.0.1` or `::1` only | `loopback::bind_loopback` refuses every other address, named, before the store is opened; the scan test `tests/no_network.rs` (one `TcpListener::bind`; `wire_http.rs` names no socket type) |
+| the limits | 16 KiB headers, 1 MiB bodies (413 before the body is read), a 5 second request deadline, a connection cap with `503`, a bounded inbox per session (`429`), the session's bounded output queue and stall limit (#147) | `tests/http_wire.rs`; a client that goes away ends its session at once |
+
 ## Gaps found and ticketed
 
 | Gap | Ticket |

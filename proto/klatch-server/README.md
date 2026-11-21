@@ -105,3 +105,27 @@ does not start if it cannot open the store. SIGTERM or SIGINT close the sessions
 - **Not yet.** The client libraries cannot connect to the socket (#1095); a connection carries no sealed-label keys and
   joins as the generic harness floor (#1096). The tests are in `tests/daemon.rs` (the daemon as a child process, a temp
   store, scripted frames) and the design is `design/items/102-daemon-socket.md`.
+
+## HTTP and server-sent events (phase 3, #1059)
+
+`klatch-server http --listen 127.0.0.1:PORT [--max-connections N]` serves the wire protocol (PROTOCOL.md) over HTTP, on
+loopback only: any other address is refused at startup (#157 and #161 come first). It is the daemon's session loop over
+the same shared gateway, so a frame means what it means on stdio.
+
+```
+klatch-server http --listen 127.0.0.1:9478
+# a worker credential the human issued; both headers on every request
+curl -N -D - -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9478/v1/stream
+# the response head has X-Klatch-Session: <id>; then, from another shell:
+curl -H "X-Klatch-Member: w-1" -H "Authorization: Bearer $TOKEN" -H "X-Klatch-Session: <id>" \
+  --data '{"v":1,"type":"request","id":"1","method":"join","params":{"room":"lobby"}}' http://127.0.0.1:9478/v1/frames
+```
+
+- `GET /v1/stream`: one session as `text/event-stream`. Each frame is an event (`event: <type>`, `data: <the frame line>`; a
+  message also has `id: <room>:<seq>`). The first is `hello`. Closing the connection ends the session.
+- `POST /v1/frames` (`X-Klatch-Session`): the JSON lines of the body go into the session; `202` and no body, the `response`
+  arrives on the stream. `404` for a session that ended or is not yours.
+- Resume: open a new stream and `subscribe` with `from_seq` = the last `seq` seen; the numbers are the store's.
+- Credentials only: no typed names. Every refusal is `401 unauthorized`. Limits: 16 KiB headers, 1 MiB bodies, 5 s per
+  request, `--max-connections` (default 32, the excess `503`). Tests: `tests/http_wire.rs`; design `design/items/1059-http-sse-wire.md`.
+- Not yet: client library support (see the ticket linked from the PR), TLS and remote use.
