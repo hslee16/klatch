@@ -39,7 +39,7 @@
 # in; use a dedicated clone), INTEGRATOR_GH_REPO (owner/name), INTEGRATOR_ROOM, INTEGRATOR_FORWARD (command that prints the
 # webhook payloads), INTEGRATOR_LEASE_SECS, INTEGRATOR_RECONCILE_SECS, INTEGRATOR_PARK_MINUTES, INTEGRATOR_CHECK_WAIT_SECS,
 # INTEGRATOR_POLL_SECS, INTEGRATOR_GH_TIMEOUT, INTEGRATOR_GH_RETRY_SLEEP, INTEGRATOR_FORWARDER_TRIES,
-# INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory).
+# INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory), INTEGRATOR_TEST_DROP_TERMS.
 # Exit codes: 0 stopped by a signal or --once drained; 1 usage or setup; 2 refused the merge:main claim (not an integrator);
 # 3 the claim is held by another or was lost; 4 the event source (the forwarder) could not be kept running.
 set -uo pipefail
@@ -185,6 +185,40 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# ---------------------------------------------------------------------------------------------------------------------
+# the supervisor (#1099). bash 3.2 (the macOS /bin/bash) LOSES a trapped signal that lands while the shell is expanding a
+# command substitution: the trap string cannot be parsed ("unexpected EOF while looking for matching `)'") and the TERM is
+# gone, so a plain `kill -TERM` sometimes never stopped the integrator. The loop below cannot avoid command substitutions,
+# so the real work runs in a child (INTEGRATOR_WORKER=1) and this small parent, which runs no command substitution, only
+# waits. A signal sets a flag; the parent then sends TERM to the worker once a second until it is gone, so a TERM the worker
+# lost is sent again. The worker's stop is idempotent, and it stops by itself when this parent is gone (kill -9).
+# ---------------------------------------------------------------------------------------------------------------------
+sup_sig=0
+supervise() { # the flags of this run: starts the worker, returns its exit code
+  local wpid rc sp tries=0
+  INTEGRATOR_WORKER=1 INTEGRATOR_SUPERVISOR=$$ bash "$0" "$@" &
+  wpid=$!
+  trap 'sup_sig=1' INT TERM HUP
+  while kill -0 "$wpid" 2> /dev/null; do
+    if [ "$sup_sig" -eq 1 ]; then
+      tries=$((tries + 1))
+      if [ "$tries" -gt 60 ]; then kill -9 "$wpid" 2> /dev/null; else kill -TERM "$wpid" 2> /dev/null; fi
+      /bin/sleep 1 &
+      sp=$!
+      wait "$sp"
+    else
+      wait "$wpid"
+    fi
+  done
+  wait "$wpid"; rc=$?
+  return "$rc"
+}
+if [ "$dry" -eq 0 ] && [ "${INTEGRATOR_WORKER:-}" != 1 ]; then
+  if [ "$once" -eq 1 ]; then supervise --once; else supervise; fi
+  exit $?
+fi
+sup_alive() { [ -z "${INTEGRATOR_SUPERVISOR:-}" ] || kill -0 "$INTEGRATOR_SUPERVISOR" 2> /dev/null; }
+
 export PATH="$HOME/.cargo/bin:$PATH"
 slug="${INTEGRATOR_GH_REPO:-hslee16/klatch}"
 room="${INTEGRATOR_ROOM:-lobby}"
@@ -229,7 +263,13 @@ cleanup() {
   if [ "$held" -eq 1 ]; then "$klatch" release "$room" merge:main > /dev/null 2>&1; held=0; fi
   rm -rf "$run"
 }
-on_signal() { say "signal received; stopping"; cleanup; exit 0; }
+dropped_terms=0
+on_signal() {
+  [ "$stopping" -eq 1 ] && return # a repeated signal (the supervisor sends one a second) never cuts the cleanup short
+  # test knob: pretend the first N signals were lost, as bash 3.2 does; the supervisor must send them again
+  if [ "$dropped_terms" -lt "${INTEGRATOR_TEST_DROP_TERMS:-0}" ]; then dropped_terms=$((dropped_terms + 1)); return; fi
+  say "signal received; stopping"; cleanup; exit 0
+}
 trap on_signal INT TERM HUP
 trap cleanup EXIT
 
@@ -447,6 +487,7 @@ wait_checks() { # PR, sha
   post_parked "$n" checks
   while true; do
     [ "$stopping" -eq 1 ] && return 1
+    sup_alive || { say "the supervisor is gone; stopping"; exit 0; }
     drain_events
     if [ ! -e "$run/open-$n" ] && [ "$first" -eq 0 ]; then why=closed; return 1; fi
     hd=""; [ -s "$run/head-$n" ] && read -r hd < "$run/head-$n"
@@ -680,6 +721,7 @@ reconcile
 say "running as an integrator for $slug in room $room"
 while true; do
   [ "$stopping" -eq 1 ] && exit 0
+  sup_alive || { say "the supervisor is gone; stopping"; exit 0; }
   ensure_forwarder || { say "the event source cannot be kept running; releasing merge:main and stopping"; drop_claim; exit 4; }
   drain_events
   [ "$(date +%s)" -ge "$next_reconcile" ] && reconcile
