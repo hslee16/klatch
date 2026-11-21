@@ -241,6 +241,7 @@ merge_in() {
   local ref=$1 n=$2 what=$3 subject=$4 bad
   if git merge -q --no-edit "$ref" > /dev/null 2>&1; then
     say "#$n: merged $what cleanly"
+    fmt_after_merge "$n" || return 1
     return 0
   fi
   bad="$(git diff --name-only --diff-filter=U | grep -vE "$docs_re")"
@@ -265,6 +266,13 @@ merge_in() {
   git commit -q -m "$subject
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" || { say "#$n: commit of the docs merge failed"; git merge --abort 2> /dev/null; return 1; }
+  fmt_after_merge "$n" || return 1
+  return 0
+}
+
+# #1093: after a merge, format (a union-merged registry can be unsorted), commit, and re-check the compile. 0 ok, 1 failed
+fmt_after_merge() {
+  if ! bash "$here/fmt-after-merge" > /dev/null 2>&1; then say "#$1: fmt-after-merge failed after the merge"; return 1; fi
   return 0
 }
 
