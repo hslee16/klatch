@@ -39,7 +39,7 @@ cat > "$bin/claude" <<'SH'
 #!/bin/sh
 name="$(basename "${KLATCH_IDENTITY_FILE:-none}" .bundle)"
 d="$FAKE_DIR/claude-$name"; mkdir -p "$d"
-for a in "$@"; do printf '%s\n' "$a"; done > "$d/args"
+for a in "$@"; do printf '%s\n' "$a"; done > "$d/args.tmp"; mv "$d/args.tmp" "$d/args" # whole or absent, never half written
 pwd > "$d/cwd"
 printf 'identity=%s\nhome=%s\nname=%s\ndiscover=%s\n' "${KLATCH_IDENTITY_FILE:-}" "${KLATCH_HOME:-}" "${KLATCH_NAME:-}" "${KLATCH_DISCOVER:-}" > "$d/env"
 while [ $# -gt 0 ]; do [ "$1" = "--settings" ] && cp "$2" "$d/settings.json"; shift; done
@@ -61,9 +61,9 @@ run_team() {
   env TEAM_KLATCH="$bin/klatch" TEAM_CLAUDE="$bin/claude" TEAM_REPO="$repo" TEAM_DIR="$td" TEAM_BASE=main \
     KLATCH_HOME="$work/home" FAKE_DIR="$fake" "$team" "$@"
 }
-waitfor() { # a file, for up to about 20 seconds
+waitfor() { # a file, for up to about 2 minutes (a loaded machine starts the background worker late: 20 s was too tight, #1099)
   local i=0
-  while [ ! -e "$1" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.2; i=$((i + 1)); done
+  while [ ! -e "$1" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.2; i=$((i + 1)); done
   [ -e "$1" ]
 }
 perm() { stat -f '%Lp' "$1" 2> /dev/null || stat -c '%a' "$1"; }

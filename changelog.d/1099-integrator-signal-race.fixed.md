@@ -1,0 +1,1 @@
+- `proto/scripts/integrator` stops on TERM, INT and HUP every time: its loop runs in a worker and a small parent sends TERM again until the worker is gone, because bash 3.2 sometimes drops a trapped signal that lands in a command substitution; `test-team.sh` waits 2 minutes, not 20 s, for its background worker (#1099).
