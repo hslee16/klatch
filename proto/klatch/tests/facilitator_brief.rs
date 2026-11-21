@@ -34,6 +34,12 @@ fn the_brief_states_each_bound_of_the_role() {
         ("one per ask", "at most one per ask"),
         ("refusals are not retried", "Do not retry a refusal"),
         ("the rule is named", "`facilitator`"),
+        // #1184, #1193: other members move need-info rounds past the first to a dm; the facilitator does not
+        (
+            "never posts the moved word",
+            "never post `moved #N: dm with NAME`",
+        ),
+        ("waits for the reply in the dm", "K wait dm:<asker>"),
     ] {
         assert!(
             b.contains(phrase),
