@@ -5,6 +5,7 @@ the workspace. Each test starts its own throwaway store.
 """
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -22,6 +23,8 @@ SERVER_BIN = os.environ.get("KLATCH_SERVER_BIN") or os.path.join(HERE, "..", "..
 
 class Store:
     """A throwaway KLATCH_HOME with its own key directory, and clients as members of it."""
+
+    attribution = "unattributed"  # what the gateway says of a member of this store in the hello
 
     def __init__(self):
         self.home = tempfile.mkdtemp(prefix="klatch-client-")
@@ -77,6 +80,63 @@ class DaemonStore(Store):
         super().close()
 
 
+ISSUE_BIN = os.environ.get("KLATCH_ISSUE_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "examples", "issue_test_credential")
+
+
+class HttpStore(Store):
+    """The same throwaway store, with a real `klatch-server http` on a port the system chooses, and clients that connect
+    to it over HTTP and server-sent events (#1114). Every connection needs a worker credential, so one is issued per
+    member with the test-only helper (`cargo build -p klatch-server --example issue_test_credential`), which refuses
+    any store that is not a throwaway one under a temp directory. The member is `verified`, proven by its credential."""
+
+    attribution = "verified"
+
+    def __init__(self):
+        super().__init__()
+        self.keys = os.path.join(self.home, "keys")
+        self.tokens = {}
+        self.log = tempfile.TemporaryFile("w+")
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.home, "KLATCH_HOME": self.home, "KLATCH_KEY_DIR": self.keys}
+        self.server = subprocess.Popen(
+            [SERVER_BIN, "http", "--listen", "127.0.0.1:0"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log
+        )
+        self.port = None
+        until = time.monotonic() + 30
+        while self.port is None and time.monotonic() < until:
+            self.log.seek(0)
+            m = re.search(r"http listening on 127\.0\.0\.1:(\d+)", self.log.read())
+            if m:
+                self.port = int(m.group(1))
+            else:
+                time.sleep(0.02)
+        if self.port is None:
+            self.close()
+            raise RuntimeError("the server never listened")
+
+    def token(self, name):
+        if name not in self.tokens:
+            env = {"PATH": "/usr/bin:/bin", "HOME": self.home, "KLATCH_HOME": self.home, "KLATCH_KEY_DIR": self.keys}
+            out = subprocess.run([ISSUE_BIN, name], env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+            if out.returncode != 0:
+                raise RuntimeError("the credential helper failed: " + out.stderr.strip())
+            self.tokens[name] = out.stdout.strip()
+        return self.tokens[name]
+
+    def client(self, name):
+        c = kc.Client.connect_http(f"http://127.0.0.1:{self.port}", member=name, token=self.token(name), connect_timeout=10)
+        self.clients.append(c)
+        return c
+
+    def close(self):
+        for c in self.clients:
+            c.close()
+        self.clients = []
+        self.server.send_signal(signal.SIGKILL)
+        self.server.wait()
+        self.log.close()
+        super().close()
+
+
 class Conformance(unittest.TestCase):
     make_store = Store
 
@@ -89,7 +149,7 @@ class Conformance(unittest.TestCase):
 
     def test_hello_says_who_the_gateway_believes_you_are(self):
         a = self.store.client("alice")
-        self.assertEqual((a.member, a.attribution, a.clearance), ("alice", "unattributed", "public"))
+        self.assertEqual((a.member, a.attribution, a.clearance), ("alice", self.store.attribution, "public"))
 
     def test_every_server_fixture_line_is_understood_and_unknown_things_are_ignored(self):
         with open(os.path.join(FIXTURES, "server_basic.ndjson")) as f:
@@ -117,7 +177,7 @@ class Conformance(unittest.TestCase):
         self.assertNotIn("kind", messages[0])
         self.assertNotIn("payload", messages[0])
         self.assertEqual((messages[1]["kind"], messages[1]["payload"]), ("work-order", '{"id":7}'))
-        self.assertEqual(messages[0]["attribution"], "unattributed")
+        self.assertEqual(messages[0]["attribution"], self.store.attribution)
         self.assertEqual(len(b.read("r")), 2)
         self.assertEqual(b.read("r"), [])
 
@@ -325,6 +385,17 @@ class ConformanceOverTheDaemon(Conformance):
     events and sequence numbers are required of both transports."""
 
     make_store = DaemonStore
+
+
+@unittest.skipUnless(
+    os.path.exists(SERVER_BIN) and os.path.exists(ISSUE_BIN),
+    "klatch-server or its test helper is not built (cargo build -p klatch-server --example issue_test_credential)",
+)
+class ConformanceOverHttp(Conformance):
+    """Every step of the scenario above, unchanged, over `klatch-server http` (#1123): each member has a credential
+    issued in the throwaway store, and the same events and sequence numbers are required of this transport too."""
+
+    make_store = HttpStore
 
 
 @unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
