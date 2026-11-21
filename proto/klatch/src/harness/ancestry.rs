@@ -84,6 +84,28 @@ fn session_at(
     })
 }
 
+/// A coding-agent process that stands between `start` and the session `found` and has no live record of its own: a
+/// child (a subagent) of that session. The walk would give it the session's member, so two children of one session
+/// would share one name, one cursor and one author (#503). Returns the child's pid. A nested session that has a
+/// record of its own is found first by `find_session` and is never reported here: it already is a member of its own.
+pub fn unregistered_agent_below(
+    start: u32,
+    found: &Found,
+    procs: &dyn ProcessTable,
+) -> Option<u32> {
+    let mut seen = Vec::new();
+    let mut pid = start;
+    while pid != found.pid && worth_visiting(pid, &seen) {
+        seen.push(pid);
+        let info = procs.info(pid)?;
+        if crate::harness::liveness::is_claude_code(&info.command) {
+            return Some(pid);
+        }
+        pid = info.ppid;
+    }
+    None
+}
+
 /// The session above `session`: the nearest live harness record above the process that session was found at. A
 /// headless worker started from an interactive session has its own record and, above it, the session that started it.
 pub fn find_parent(
@@ -138,6 +160,37 @@ mod tests {
             .with((10, 5), T, "claude")
             .with((5, 1), "Fri Nov 6 01:00:00 2026", "Terminal")
             .with((1, 0), "Thu Nov 5 00:00:00 2026", "launchd")
+    }
+
+    #[test]
+    fn a_claude_process_with_no_record_between_the_caller_and_the_session_is_a_child() {
+        // tool (30) -> shell (20) -> claude (15, no record) -> shell (12) -> claude (10, the session)
+        let t = tree()
+            .with((20, 15), "Sat Nov 7 09:59:59 2026", "zsh")
+            .with((15, 12), "Sat Nov 7 09:59:58 2026", "claude")
+            .with((12, 10), "Sat Nov 7 09:59:57 2026", "zsh");
+        let reg = FakeRegistry::default().with((10, "sess-A"), Some("klatch-1b"), T);
+        let f = find_session(30, &t, &reg, "darwin").unwrap();
+        assert_eq!(unregistered_agent_below(30, &f, &t), Some(15));
+    }
+
+    #[test]
+    fn a_top_level_session_has_no_child_below_it() {
+        let reg = FakeRegistry::default().with((10, "sess-A"), None, T);
+        let f = find_session(30, &tree(), &reg, "darwin").unwrap();
+        assert_eq!(unregistered_agent_below(30, &f, &tree()), None);
+    }
+
+    #[test]
+    fn a_nested_session_with_a_record_of_its_own_is_not_a_child() {
+        // the nearer claude (20) has its own live record, so the walk stops there and it is its own member
+        let t = tree().with((20, 10), T, "claude");
+        let reg = FakeRegistry::default()
+            .with((20, "inner"), None, T)
+            .with((10, "outer"), None, T);
+        let f = find_session(30, &t, &reg, "darwin").unwrap();
+        assert_eq!(f.session_id, "inner");
+        assert_eq!(unregistered_agent_below(30, &f, &t), None);
     }
 
     #[test]

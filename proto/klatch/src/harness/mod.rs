@@ -20,7 +20,7 @@ mod record;
 mod selftest;
 mod sessions;
 
-pub use ancestry::{Found, Miss, find_parent, find_session};
+pub use ancestry::{Found, Miss, find_parent, find_session, unregistered_agent_below};
 pub use capability::{
     ASYNC_REWAKE_FLOOR, Support, Version, parse_version, probe_claude_version, wake_support,
     wake_support_here,
