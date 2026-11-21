@@ -1,0 +1,1 @@
+- The team launcher no longer leaves a `/bin/sleep 3600` watchdog process behind when a worker finishes or is stopped, and the gate fails if a run leaks one (#1101).
