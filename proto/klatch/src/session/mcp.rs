@@ -98,6 +98,7 @@ struct WaitArgs {
 pub struct McpServer<'a, S: Store> {
     session: &'a Session<'a, S>,
     instructions: String,
+    channel: bool,
 }
 
 impl<'a, S: Store> McpServer<'a, S> {
@@ -106,7 +107,16 @@ impl<'a, S: Store> McpServer<'a, S> {
         Self {
             session,
             instructions,
+            channel: false,
         }
+    }
+
+    /// Declare the Claude Code channel capability at `initialize` (`experimental['claude/channel']`, #1057). It only
+    /// says the server may push `notifications/claude/channel`; this adapter pushes nothing itself, the caller that
+    /// owns the output (`klatch-server channel`) writes those notifications.
+    pub fn with_channel(mut self) -> Self {
+        self.channel = true;
+        self
     }
 
     /// Answer every request on `input` until it ends. Notifications and responses from the client get no answer.
@@ -153,12 +163,7 @@ impl<'a, S: Store> McpServer<'a, S> {
     /// The server answers with the one revision it knows: the client's own when it asked for it, else the newest it
     /// supports, which for a single supported revision is the same thing (the specification's negotiation rule).
     fn initialize(&self) -> Value {
-        json!({
-            "protocolVersion": MCP_VERSION,
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "klatch", "title": "klatch rooms and claims", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": self.instructions,
-        })
+        initialize_result(&self.instructions, self.channel)
     }
 
     fn tools_call(&self, params: &Value) -> Result<Value, RpcError> {
@@ -316,6 +321,20 @@ fn failure_reply(id: Value, e: &RpcError) -> Value {
 }
 
 /// A tool's result: the data as structured content and as text, or the failure with `isError`.
+/// The `initialize` result: the tools capability, and the channel capability only when `channel` is set (#1057).
+fn initialize_result(instructions: &str, channel: bool) -> Value {
+    let mut capabilities = json!({"tools": {}});
+    if channel {
+        capabilities["experimental"] = json!({"claude/channel": {}});
+    }
+    json!({
+        "protocolVersion": MCP_VERSION,
+        "capabilities": capabilities,
+        "serverInfo": {"name": "klatch", "title": "klatch rooms and claims", "version": env!("CARGO_PKG_VERSION")},
+        "instructions": instructions,
+    })
+}
+
 fn tool_result(outcome: Result<Value, ToolFailure>) -> Value {
     match outcome {
         Ok(v) => json!({
@@ -407,4 +426,22 @@ fn tool_list() -> Vec<Value> {
             &["member", "room", "via"],
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_channel_capability_is_declared_only_when_asked_for() {
+        let plain = initialize_result("i", false);
+        assert!(plain["capabilities"]["experimental"].is_null());
+        assert!(plain["capabilities"]["tools"].is_object());
+        let channel = initialize_result("i", true);
+        assert_eq!(
+            channel["capabilities"]["experimental"],
+            json!({"claude/channel": {}})
+        );
+        assert!(channel["capabilities"]["tools"].is_object());
+    }
 }
