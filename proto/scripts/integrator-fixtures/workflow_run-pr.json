@@ -1,0 +1,1 @@
+{"action":"completed","workflow_run":{"id":11,"name":"ci","head_branch":"feat-@N@","head_sha":"@SHA@","status":"completed","conclusion":"@CONCL@","pull_requests":[{"number":@N@}]},"repository":{"full_name":"hslee16/klatch"}}

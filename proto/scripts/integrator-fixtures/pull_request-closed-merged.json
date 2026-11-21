@@ -1,0 +1,1 @@
+{"action":"closed","number":@N@,"pull_request":{"number":@N@,"state":"closed","title":"Add a thing","merged":true,"merged_by":{"login":"alee"},"head":{"ref":"feat-@N@","sha":"@SHA@"},"base":{"ref":"main"}}}
