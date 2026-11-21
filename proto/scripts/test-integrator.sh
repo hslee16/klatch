@@ -159,6 +159,7 @@ case "$cmd" in
       merged:* | dropped:*) sed -i.bak "/^$num /d" "$FAKE_DIR/queue" ;;
     esac ;;
   board)
+    [ -e "$FAKE_DIR/board-sleep" ] && /bin/sleep "$(cat "$FAKE_DIR/board-sleep")"
     echo "[board lobby]"; echo "asks:"; echo "  no open asks"
     if [ -s "$FAKE_DIR/queue" ]; then
       echo "queue (merge:main free):"; i=1
@@ -645,8 +646,10 @@ echo 0 > "$fake/gate-rc"; rm -f "$fake/gate-sleep"; mkpr 9 NINE.md 'nine\n'; tou
 if waitfor "$fake/posts.log" 'merged: #9' 40; then ok "a fresh ready: word makes it take the claim again and carry on"; else bad "no resume: posts=$(posts)"; fi
 kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
 if fixed_posts; then ok "the release word is a fixed template of an integer"; else bad "posts: $(posts)"; fi
-newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
-MHS=1 runint --once > "$fake/out" 2>&1
+# The work that finishes a merge (fetch, board, mergeable states) is not hold time (#1081): a slow board read after the
+# merged word must not release the claim of a working integrator, however loaded the machine.
+newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'; echo 4 > "$fake/board-sleep"
+MHS=3 runint --once > "$fake/out" 2>&1
 if posts | grep -q 'merged: #7$' && ! posts | grep -q '^released'; then ok "a merged word resets the hold clock: a working integrator is not released"; else bad "released while merging: $(posts)"; fi
 newworld; mkpr 7 code.txt 'l1\nl2\nPR\nl4\nl5\n'
 MHM=abc runint --once > "$fake/out" 2>&1; rc=$?
