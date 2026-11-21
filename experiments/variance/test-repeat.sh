@@ -55,4 +55,65 @@ if python3 "$repeat" --runs 2 -- "$work/junk.sh" > "$work/o" 2>&1; then bad "jun
 if python3 "$repeat" --runs 0 -- "$work/fake.sh" > "$work/o" 2>&1; then bad "--runs 0 exited 0"; else ok "--runs 0 is rejected"; fi
 if python3 "$repeat" --runs 2 > "$work/o" 2>&1; then bad "no command exited 0"; else ok "a missing command is rejected"; fi
 
+# failure count: runs whose verdict is not ok
+rm -f "$work/count"
+out="$(python3 "$repeat" --runs 3 -- "$work/multi.sh" 2>&1)"
+case "$out" in *"failures: 1 of 3"*) ok "failure count line";; *) bad "failures line: $out";; esac
+rm -f "$work/count"
+out="$(python3 "$repeat" --runs 3 -- "$work/fake.sh" 2>&1)"
+case "$out" in *"failures: 0 of 3"*) ok "zero failures reported";; *) bad "zero failures line: $out";; esac
+
+# isolated store: every run gets its own empty KLATCH_HOME and KLATCH_KEY_DIR under a temp dir, removed afterwards
+cat > "$work/env.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "$KLATCH_HOME" >> "$ENV_LOG"; echo "$KLATCH_KEY_DIR" >> "$ENV_LOG"
+[ -z "$(ls -A "$KLATCH_HOME")" ] || echo dirty >> "$ENV_LOG"
+touch "$KLATCH_HOME/state"
+echo '{"num_turns":1,"total_cost_usd":0.01}'
+FAKE
+chmod +x "$work/env.sh"; export ENV_LOG="$work/envlog"; : > "$ENV_LOG"
+KLATCH_HOME=/should/not/leak python3 "$repeat" --runs 2 -- "$work/env.sh" > "$work/o" 2>&1
+if [ "$(sort -u "$ENV_LOG" | wc -l | tr -d ' ')" = 4 ] && ! grep -q -e dirty -e /should/not/leak "$ENV_LOG"; then ok "each run has fresh private store dirs"; else bad "env log: $(cat "$ENV_LOG")"; fi
+first="$(head -1 "$ENV_LOG")"
+if [ ! -e "$first" ]; then ok "temp stores are removed afterwards"; else bad "store left behind: $first"; fi
+
+# spend cap: stop once total cost reaches the cap (0.10, 0.20, 0.30 ... per run), report why, exit 3
+rm -f "$work/count"
+out="$(python3 "$repeat" --runs 10 --max-cost 0.35 -- "$work/fake.sh" 2>&1)"; code=$?
+if [ "$code" -eq 3 ]; then ok "spend cap stop exits 3"; else bad "cap exit $code: $out"; fi
+if [ "$(cat "$work/count")" = 3 ]; then ok "loop stopped once cumulative cost passed the cap"; else bad "ran $(cat "$work/count") times"; fi
+case "$out" in *"spend cap"*"0.35"*) ok "report says the cap stopped it";; *) bad "cap message: $out";; esac
+case "$out" in *"runs: 3"*) ok "report covers the runs that happened";; *) bad "runs line: $out";; esac
+
+# a run that reports no cost cannot be capped: fail loudly rather than run blind
+cat > "$work/nocost.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo '{"num_turns":1}'
+FAKE
+chmod +x "$work/nocost.sh"
+if python3 "$repeat" --runs 2 --max-cost 1 -- "$work/nocost.sh" > "$work/o" 2>&1; then bad "no-cost run under a cap exited 0"; else ok "a run with no cost under --max-cost fails loudly"; fi
+
+# per-run timeout: the hung scenario and its children are killed, counted as a failure, the loop goes on
+cat > "$work/hang.sh" <<'FAKE'
+#!/usr/bin/env bash
+n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_COUNT"
+if [ "$n" = 1 ]; then
+  sleep 300 &
+  echo $! > "$HANG_PID"
+  wait
+fi
+echo '{"num_turns":2,"total_cost_usd":0.01}'
+FAKE
+chmod +x "$work/hang.sh"; rm -f "$work/count"; export HANG_PID="$work/hangpid"
+out="$(python3 "$repeat" --runs 2 --timeout 3 -- "$work/hang.sh" 2>&1)"; code=$?
+case "$out" in *"failures: 1 of 2"*) ok "timeout counted as a failure, loop continued";; *) bad "timeout report: $out";; esac
+case "$out" in *"timeout 1"*) ok "outcome says timeout";; *) bad "timeout outcome: $out";; esac
+if [ "$code" -eq 1 ]; then ok "a timed-out run makes the exit non-zero"; else bad "timeout exit $code"; fi
+if [ -f "$HANG_PID" ] && ! kill -0 "$(cat "$HANG_PID")" 2>/dev/null; then ok "the hung child was killed"; else bad "hung child still alive"; kill -9 "$(cat "$HANG_PID")" 2>/dev/null; fi
+
+# a crashing scenario no longer aborts the loop
+printf '#!/usr/bin/env bash\nexit 7\n' > "$work/crash.sh"; chmod +x "$work/crash.sh"
+out="$(python3 "$repeat" --runs 2 -- "$work/crash.sh" 2>&1)"
+case "$out" in *"failures: 2 of 2"*) ok "crashes are counted and the loop continues";; *) bad "crash report: $out";; esac
+
 if [ "$fails" -eq 0 ]; then echo "all passed"; exit 0; else echo "$fails failed"; exit 1; fi

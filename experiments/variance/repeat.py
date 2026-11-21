@@ -16,14 +16,23 @@ object as the last line of stdout, in either form:
   * {"agents": {"<name>": {"turns", "tokens", "cost_usd", "duration_s", "outcome"}, ...}} for several agents; any
     field may be missing.
 
+Each run gets a fresh empty KLATCH_HOME and KLATCH_KEY_DIR (under a temp dir, removed afterwards; also
+KLATCH_RUN_DIR for scratch), so no run touches ~/.klatch or the Keychain. --timeout SECONDS kills a hung run and its
+children and counts it as a failure; --max-cost USD stops the loop once total cost reaches the cap (exit 3; it needs
+cost in every result). A run that crashes, times out or prints no JSON is a failure, not an abort (exit 1 at the end).
+
 This script never starts an agent itself and spends nothing; the cost is whatever your scenario command costs, so run
 real scenarios on demand (the human's choice), not in CI. Tests use a fake agent (test-repeat.sh).
 """
 import argparse
 import json
 import math
+import os
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 
 METRICS = ["turns", "tokens", "cost_usd", "duration_s"]
 
@@ -83,7 +92,8 @@ def report(runs, results):
                     a.setdefault(m, []).append(float(rec[m]))
             oc = str(rec.get("outcome", "unknown"))
             a["outcomes"][oc] = a["outcomes"].get(oc, 0) + 1
-    out = {"runs": runs, "agents": {}}
+    failed = sum(1 for per_run in results if any(str(r.get("outcome", "unknown")) != "ok" for r in per_run.values()))
+    out = {"runs": runs, "failures": failed, "agents": {}}
     for name, a in agents.items():
         entry = {m: stats(a[m]) for m in METRICS if m in a}
         entry["outcomes"] = a["outcomes"]
@@ -94,6 +104,7 @@ def report(runs, results):
 def print_report(rep):
     n = rep["runs"]
     print("runs: %d" % n)
+    print("failures: %d of %d" % (rep["failures"], n))
     for name, a in rep["agents"].items():
         print("agent %s" % name)
         for m in METRICS:
@@ -108,6 +119,38 @@ def print_report(rep):
         print("  %-11s ok %d/%d%s" % ("outcome", ok, n, rest))
 
 
+def run_once(cmd, timeout):
+    """Run the scenario once in its own private stores. Returns (stdout, failure) where failure is None or an
+    outcome word (crashed, timeout). The scenario runs in its own process group so a timeout kills its children."""
+    base = tempfile.mkdtemp(prefix="klatch-repeat-")
+    env = dict(os.environ)
+    env["KLATCH_HOME"] = os.path.join(base, "home")
+    env["KLATCH_KEY_DIR"] = os.path.join(base, "keys")
+    os.makedirs(env["KLATCH_HOME"])
+    os.makedirs(env["KLATCH_KEY_DIR"])
+    env["KLATCH_RUN_DIR"] = base
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, env=env, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        failure = None if proc.returncode == 0 else "crashed"
+        if failure:
+            print("the scenario exited %d" % proc.returncode, file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        out, failure = "", "timeout"
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        shutil.rmtree(base, ignore_errors=True)
+    return out, failure
+
+
 def main():
     argv = sys.argv[1:]
     cmd = []
@@ -117,28 +160,52 @@ def main():
     p = argparse.ArgumentParser(description="Repeat a scenario N times and report variance (#243).")
     p.add_argument("--runs", type=int, default=5)
     p.add_argument("--json", help="write the raw per-run values and the statistics to this file")
+    p.add_argument("--max-cost", type=float, help="hard total USD limit; stop starting runs once the sum reaches it")
+    p.add_argument("--timeout", type=float, help="kill a run that takes longer than this many seconds")
     args = p.parse_args(argv)
     if args.runs < 1:
         p.error("--runs must be at least 1")
     if not cmd:
         p.error("give the scenario command after --")
     results = []
+    harness_failures = 0
+    spent = 0.0
+    capped = False
     for i in range(1, args.runs + 1):
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
-        if proc.returncode != 0:
-            print("run %d: the scenario exited %d" % (i, proc.returncode), file=sys.stderr)
-            return 1
-        try:
-            results.append(parse_result(proc.stdout))
-        except ValueError as e:
-            print("run %d: %s" % (i, e), file=sys.stderr)
-            return 1
-    rep = report(args.runs, results)
+        out, failure = run_once(cmd, args.timeout)
+        if failure is None:
+            try:
+                res = parse_result(out)
+            except ValueError as e:
+                print("run %d: %s" % (i, e), file=sys.stderr)
+                failure = "unparseable"
+        if failure is not None:
+            harness_failures += 1
+            results.append({"scenario": {"outcome": failure}})
+            continue
+        results.append(res)
+        if args.max_cost is not None:
+            costs = [r["cost_usd"] for r in res.values() if isinstance(r.get("cost_usd"), (int, float))]
+            if not costs:
+                print("run %d: no cost in the result, cannot enforce --max-cost" % i, file=sys.stderr)
+                return 1
+            spent += sum(costs)
+            if spent >= args.max_cost and i < args.runs:
+                capped = True
+                break
+    rep = report(len(results), results)
     print_report(rep)
+    rep["spent_usd"] = spent
+    if args.max_cost is not None:
+        print("spent: %.2f of %.2f USD" % (spent, args.max_cost))
+    if capped:
+        print("stopped: spend cap %.2f USD reached after %d of %d runs" % (args.max_cost, len(results), args.runs))
     if args.json:
         with open(args.json, "w") as f:
             json.dump(rep, f, indent=2)
-    return 0
+    if capped:
+        return 3
+    return 1 if harness_failures else 0
 
 
 if __name__ == "__main__":
