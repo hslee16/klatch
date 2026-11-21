@@ -32,9 +32,8 @@ use klatch::session::Session;
 use klatch::session::mcp::{MCP_VERSION, McpServer};
 use serde_json::{Value, json};
 use std::io::Cursor;
-use std::os::fd::{AsRawFd, RawFd};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const PATH: &str = "/mcp";
 
@@ -98,20 +97,12 @@ fn instructions(member: &str) -> String {
     )
 }
 
-/// Whether the client has closed its end: a non-blocking peek that reads end-of-file. Pending bytes (a pipelined
-/// request) and an empty socket both mean it is still there. Nothing is consumed and the socket's mode is untouched.
-fn peer_closed(fd: RawFd) -> bool {
-    let mut byte = 0u8;
-    // SAFETY: `fd` is the open socket of the calling connection, which outlives this call; the buffer is one byte.
-    let n = unsafe {
-        libc::recv(
-            fd,
-            (&raw mut byte).cast(),
-            1,
-            libc::MSG_PEEK | libc::MSG_DONTWAIT,
-        )
-    };
-    n == 0
+/// Whether the client has closed its end: a peek that reads end-of-file. The peek waits at most a millisecond (the
+/// request has been read, and the reply sets its own timeouts), consumes nothing, and an empty socket or pending bytes
+/// (a pipelined request) both mean the client is still there.
+fn peer_closed(stream: &Stream) -> bool {
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1)));
+    matches!(stream.peek(&mut [0u8; 1]), Ok(0))
 }
 
 /// `POST /mcp`: the whole exchange, the bytes to send back.
@@ -163,8 +154,10 @@ pub fn post(
     let line = format!("{message}\n");
     let session = Session::over(&shared.backend, &who, &shared.config);
     // a wait ends early when the server is stopping or the client has hung up (#1125)
-    let fd = stream.as_raw_fd();
-    let cancel = move || crate::daemon::STOP.load(Ordering::SeqCst) || peer_closed(fd);
+    let watch = stream.try_clone().ok();
+    let cancel = move || {
+        crate::daemon::STOP.load(Ordering::SeqCst) || watch.as_ref().is_some_and(peer_closed)
+    };
     let server = McpServer::new(&session, instructions(&who.member)).with_cancel(&cancel);
     let mut answer = Vec::new();
     if server
