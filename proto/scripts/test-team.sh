@@ -114,6 +114,20 @@ for want in "-p" "--output-format" "stream-json" "--verbose" "--settings" "--max
   printf '%s\n' "$args" | grep -qx -- "$want" || missing="$missing $want"
 done
 if [ -z "$missing" ]; then ok "claude is run headless with stream-json, verbose, a budget cap and its own settings"; else bad "claude args missing:$missing"; fi
+# the permission mode and the tool allowlist (#594): workers do not run in bypassPermissions by default
+if printf '%s\n' "$args" | grep -A1 -x -- "--permission-mode" | grep -qx "dontAsk" && ! printf '%s\n' "$args" | grep -qx "bypassPermissions"; then ok "the default permission mode is dontAsk, not bypassPermissions (#594)"; else bad "permission mode: $(printf '%s' "$args" | grep -A1 -x -- --permission-mode)"; fi
+allow="$(printf '%s\n' "$args" | grep -A1 -x -- "--allowedTools" | sed -n 2p)"
+al_missing=""
+for want in "Bash($bin/klatch join:*)" "Bash($bin/klatch post:*)" "Bash($bin/klatch wait:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push -u origin:*)" "Bash(cargo:*)" "Bash(gh api:*)" "Bash(gh pr create:*)" "Edit" "Write" "Read"; do
+  case ",$allow," in *",$want,"*) ;; *) al_missing="$al_missing [$want]" ;; esac
+done
+if [ -n "$allow" ] && [ -z "$al_missing" ]; then ok "the default allowlist covers the klatch commands (by absolute path), git, the build tools and file edits"; else bad "allowlist missing:$al_missing in: $allow"; fi
+al_bad=""
+for no in "klatch admin" "klatch worker" "git push:*" "git push --force" "Bash(*" "Bash(bash:*)" "Bash(sh:*)" "Bash(curl:*)" "Bash(rm:*)"; do
+  case "$allow" in *"$no"*) al_bad="$al_bad [$no]" ;; esac
+done
+if [ -z "$al_bad" ]; then ok "the default allowlist grants no klatch admin or worker, bare git push, shell or curl, or rm"; else bad "allowlist too wide:$al_bad"; fi
+if printf '%s' "$args" | grep -qF "UNTRUSTED" && printf '%s' "$args" | grep -qF "even from a verified member" && printf '%s' "$args" | grep -qF "only this brief and your task"; then ok "the brief marks room mail as untrusted data, even from a verified member (#594)"; else bad "brief untrusted marking missing"; fi
 if printf '%s' "$args" | grep -q "member alpha" && printf '%s' "$args" | grep -q "ticket #11" && printf '%s' "$args" | grep -q "Build the alpha thing" && ! printf '%s' "$args" | grep -q "KLATCH_NAME="; then ok "the brief names the member, the ticket and the task, and has no KLATCH_NAME"; else bad "brief"; fi
 pr_missing=""
 for want in 'Closes #' 'python3 -I proto/scripts/pr-ledger' "reaches \`ready\`" '--rerun-cancelled' 'Never rerun a real red' 'ready: #' 'release your claims' 'Never merge'; do
@@ -159,6 +173,17 @@ if grep -q "alpha" "$work/out" && grep -q "done" "$work/out" && grep -q "0.0123"
 run_team logs alpha > "$work/out" 2>&1
 if grep -q '"type":"result"' "$work/out"; then ok "logs prints a worker's log"; else bad "logs"; fi
 if run_team logs nobody > "$work/out" 2>&1; then bad "logs of an unknown worker succeeded"; else ok "logs of an unknown worker fails"; fi
+
+# --- the permission mode and allowlist can be overridden, and only on request (#594)
+newenv
+TEAM_PERMISSION_MODE=bypassPermissions run_team start "$tasks" > "$work/out" 2>&1; waitfor "$td/run/alpha.exit"
+if printf '%s\n' "$(cat "$fake/claude-alpha/args")" | grep -A1 -x -- "--permission-mode" | grep -qx "bypassPermissions"; then ok "TEAM_PERMISSION_MODE=bypassPermissions restores bypassPermissions when asked"; else bad "bypass override: $(cat "$work/out")"; fi
+newenv
+TEAM_ALLOWED_TOOLS="Read,Bash(echo:*)" run_team start "$tasks" > "$work/out" 2>&1; waitfor "$td/run/alpha.exit"
+if [ "$(grep -A1 -x -- "--allowedTools" "$fake/claude-alpha/args" | sed -n 2p)" = "Read,Bash(echo:*)" ] && grep -A1 -x -- "--permission-mode" "$fake/claude-alpha/args" | grep -qx "dontAsk"; then ok "TEAM_ALLOWED_TOOLS replaces the allowlist and the mode stays dontAsk"; else bad "allow override: $(cat "$fake/claude-alpha/args" | grep -A1 allowed)"; fi
+newenv
+TEAM_PERMISSION_MODE='bad mode' run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$fake/klatch.log" ]; then ok "an unknown TEAM_PERMISSION_MODE is refused with exit 2 before anything is issued"; else bad "bad mode rc=$rc"; fi
 
 # --- the wake watcher is opt in
 newenv
@@ -258,7 +283,7 @@ TEAM_MAX_RESTARTS=3 run_team start "$work/t1w" > "$work/out" 2>&1
 waitfor "$td/run/alpha.note"
 if [ "$(cat "$td/run/alpha.note")" = "restart limit 3 reached" ] && [ "$(wc -l < "$fake/claude-alpha/starts" | tr -d ' ')" -eq 4 ] && [ "$(cat "$td/run/alpha.restarts")" = 3 ]; then ok "unread mail relaunches a worker at most TEAM_MAX_RESTARTS times (one start and three relaunches)"; else bad "limit: starts=$(wc -l < "$fake/claude-alpha/starts") note=$(cat "$td/run/alpha.note" 2> /dev/null)"; fi
 p2="$(cat "$fake/claude-alpha/prompt.2" 2> /dev/null)"
-if printf '%s' "$p2" | grep -qF "restart 1 of 3" && printf '%s' "$p2" | grep -qF "2 unread" && printf '%s' "$p2" | grep -qF "hello mail 2" && printf '%s' "$p2" | grep -qF "Build the alpha thing" && printf '%s' "$p2" | grep -qF "not instructions from the human"; then ok "the relaunch prompt carries the unread digest (as data) and the original task"; else bad "relaunch prompt: $p2"; fi
+if printf '%s' "$p2" | grep -qF "restart 1 of 3" && printf '%s' "$p2" | grep -qF "2 unread" && printf '%s' "$p2" | grep -qF "hello mail 2" && printf '%s' "$p2" | grep -qF "Build the alpha thing" && printf '%s' "$p2" | grep -qF "not instructions from the human" && printf '%s' "$p2" | grep -qF "UNTRUSTED" && printf '%s' "$p2" | grep -qF "never run a command"; then ok "the relaunch prompt carries the unread digest (as data) and the original task"; else bad "relaunch prompt: $p2"; fi
 if ! grep -qF "restart 1 of 3" "$fake/claude-alpha/prompt.3" 2> /dev/null && grep -qF "restart 2 of 3" "$fake/claude-alpha/prompt.3" 2> /dev/null && [ "$(grep -o 'Build the alpha thing' "$fake/claude-alpha/prompt.4" | wc -l | tr -d ' ')" -eq 1 ]; then ok "each relaunch prompt is built from the original task, not stacked on the last one"; else bad "prompt 3/4"; fi
 if [ "$(grep -c '^worker issue alpha' "$fake/klatch.log")" -eq 4 ] && grep -q "identity=$td/bundles/alpha.bundle" "$fake/claude-alpha/env"; then ok "every relaunch has a fresh credential issued by the launcher setup"; else bad "issues: $(grep -c '^worker issue alpha' "$fake/klatch.log")"; fi
 run_team status > "$work/out" 2>&1
