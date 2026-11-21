@@ -1,0 +1,1 @@
+- The default worker allowlist of `proto/scripts/team` allows `git push -u origin` only for the worker's own `alee/NAME` branch (exact rule) and `gh api` only as plain GETs of its own ticket and comments (no wildcard); `gh pr checks` is added and workers no longer file tickets with `gh api` (#1156).

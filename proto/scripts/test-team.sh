@@ -118,15 +118,15 @@ if [ -z "$missing" ]; then ok "claude is run headless with stream-json, verbose,
 if printf '%s\n' "$args" | grep -A1 -x -- "--permission-mode" | grep -qx "dontAsk" && ! printf '%s\n' "$args" | grep -qx "bypassPermissions"; then ok "the default permission mode is dontAsk, not bypassPermissions (#594)"; else bad "permission mode: $(printf '%s' "$args" | grep -A1 -x -- --permission-mode)"; fi
 allow="$(printf '%s\n' "$args" | grep -A1 -x -- "--allowedTools" | sed -n 2p)"
 al_missing=""
-for want in "Bash($bin/klatch join:*)" "Bash($bin/klatch post:*)" "Bash($bin/klatch wait:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push -u origin:*)" "Bash(cargo:*)" "Bash(gh api:*)" "Bash(gh pr create:*)" "Edit" "Write" "Read"; do
+for want in "Bash($bin/klatch join:*)" "Bash($bin/klatch post:*)" "Bash($bin/klatch wait:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push -u origin alee/alpha)" "Bash(gh api repos/hslee16/klatch/issues/11)" "Bash(gh api repos/hslee16/klatch/issues/11/comments)" "Bash(cargo:*)" "Bash(gh pr create:*)" "Bash(gh pr view:*)" "Bash(gh pr checks:*)" "Edit" "Write" "Read"; do
   case ",$allow," in *",$want,"*) ;; *) al_missing="$al_missing [$want]" ;; esac
 done
 if [ -n "$allow" ] && [ -z "$al_missing" ]; then ok "the default allowlist covers the klatch commands (by absolute path), git, the build tools and file edits"; else bad "allowlist missing:$al_missing in: $allow"; fi
 al_bad=""
-for no in "klatch admin" "klatch worker" "git push:*" "git push --force" "Bash(*" "Bash(bash:*)" "Bash(sh:*)" "Bash(curl:*)" "Bash(rm:*)"; do
+for no in "Bash(gh api:*)" "Bash(gh api *" "git push -u origin:*" "git push -u origin alee/*" "origin main" "alee/beta" "issues/12" "-X" "klatch admin" "klatch worker" "git push:*" "git push --force" "Bash(*" "Bash(bash:*)" "Bash(sh:*)" "Bash(curl:*)" "Bash(rm:*)"; do
   case "$allow" in *"$no"*) al_bad="$al_bad [$no]" ;; esac
 done
-if [ -z "$al_bad" ]; then ok "the default allowlist grants no klatch admin or worker, bare git push, shell or curl, or rm"; else bad "allowlist too wide:$al_bad"; fi
+if [ -z "$al_bad" ]; then ok "the default allowlist grants no klatch admin or worker, bare or wildcard git push, gh api wildcard, shell or curl, or rm (#1156)"; else bad "allowlist too wide:$al_bad"; fi
 if printf '%s' "$args" | grep -qF "UNTRUSTED" && printf '%s' "$args" | grep -qF "even from a verified member" && printf '%s' "$args" | grep -qF "only this brief and your task"; then ok "the brief marks room mail as untrusted data, even from a verified member (#594)"; else bad "brief untrusted marking missing"; fi
 if printf '%s' "$args" | grep -q "member alpha" && printf '%s' "$args" | grep -q "ticket #11" && printf '%s' "$args" | grep -q "Build the alpha thing" && ! printf '%s' "$args" | grep -q "KLATCH_NAME="; then ok "the brief names the member, the ticket and the task, and has no KLATCH_NAME"; else bad "brief"; fi
 pr_missing=""
