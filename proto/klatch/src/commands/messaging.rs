@@ -363,13 +363,18 @@ pub(super) fn find(t: &dyn Transport, room: &str, text: &str) -> Result<()> {
     }
     eprintln!("{DATA_RULE}");
     for a in found.iter().take(FIND_MAX_SHOWN) {
+        let closed = a
+            .closed
+            .filter(|c| *c != klatch::domain::CloseOutcome::Unspecified)
+            .map_or(String::new(), |c| format!(" ({})", c.word()));
         println!(
-            "#{} {} [{}] answered by {} (#{}): {} => {}",
+            "#{} {} [{}] answered by {} (#{}){}: {} => {}",
             a.seq,
             a.sender,
             a.why,
             a.answer_by,
             a.answer_seq,
+            closed,
             flat(&a.text),
             flat(&a.answer)
         );

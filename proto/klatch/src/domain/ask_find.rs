@@ -10,7 +10,9 @@
 //! No stemming, no synonyms, no ranking by meaning: a match is shown with the reason (`substring` or the shared
 //! words) so the asker judges it. An ask nobody answered, or one reopened after its answer, is not listed.
 
-use crate::domain::{ASK_PREFIX, Message, answer_target, is_ask, reopen_target};
+use crate::domain::{
+    ASK_PREFIX, CloseOutcome, Message, answer_target, is_ask, latest_close, reopen_target,
+};
 use std::collections::BTreeSet;
 
 /// Shortest word that counts as a keyword.
@@ -25,6 +27,8 @@ pub struct AnsweredAsk {
     pub answer_seq: i64,
     pub answer_by: String,
     pub answer: String,
+    /// How the asker closed the ask after that answer (#232), if they did.
+    pub closed: Option<CloseOutcome>,
     /// `substring`, or the shared keywords joined by commas.
     pub why: String,
 }
@@ -58,6 +62,7 @@ pub fn find_answered(messages: &[Message], query: &str) -> Vec<AnsweredAsk> {
             answer_seq: answer.seq,
             answer_by: answer.sender.clone(),
             answer: after.to_string(),
+            closed: latest_close(messages, ask),
             why,
         });
     }
@@ -182,6 +187,24 @@ mod tests {
         m.push(msg(6, "carol", "answer to #3: me again"));
         m.push(msg(7, "carol", "closed #3"));
         assert!(find_answered(&m, "release pipeline").is_empty());
+    }
+
+    #[test]
+    fn an_answered_ask_shows_how_the_asker_closed_it() {
+        let mut m = room();
+        assert_eq!(find_answered(&m, "gateway listen")[0].closed, None);
+        m.push(msg(6, "alice", "closed #1 ok"));
+        assert_eq!(
+            find_answered(&m, "gateway listen")[0].closed,
+            Some(CloseOutcome::Ok)
+        );
+        m.push(msg(7, "alice", "reopen #1: wrong"));
+        m.push(msg(8, "erin", "answer to #1: 9000"));
+        m.push(msg(9, "alice", "closed #1 unresolved"));
+        assert_eq!(
+            find_answered(&m, "gateway listen")[0].closed,
+            Some(CloseOutcome::Unresolved)
+        );
     }
 
     #[test]
