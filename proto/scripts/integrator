@@ -1,0 +1,600 @@
+#!/usr/bin/env bash
+# integrator: the merge queue's integrator PROCESS (#866, step 3 of epic #863). See INTEGRATOR.md.
+#
+#   integrator [--once]        run until a signal (INT, TERM, HUP); --once drains the queue and exits (for a hand run)
+#   integrator --normalize     (internal) turn a stream of webhook payloads on standard input into tab separated lines
+#   integrator --pr | --pulls | --checks    (internal) validate one gh api answer on standard input
+#
+# It runs OUTSIDE the klatch binary, with its OWN gh and git login on its own machine. The klatch binary makes no
+# network call and holds no credential; this process talks to klatch only through the `klatch` command line (wait, board,
+# post, claim, release) as a member that holds the `integrator` role (`klatch admin integrator <member>`, the human's
+# act). Identity is the environment, as for every helper (a worker credential or KLATCH_NAME); nothing is passed here.
+#
+# What it does: takes the `merge:main` claim to learn (and prove) it may, starts `gh webhook forward --repo <repo> --events
+# pull_request,check_suite,workflow_run` as a child, reconciles with a read of the open PR list, and then waits in
+# `klatch wait` for `ready:` words (no polling of GitHub). For each queued PR on the board, in order: conflict pre-check
+# (git merge-tree; a code conflict posts `dropped: #N conflict`), `integrating: #N`, merge origin/main into the PR branch
+# (never a rebase, never a force-push; docs conflicts keep both sides as pr-sweep does), the project gate, push,
+# `checking: #N`, wait for the checks of the CURRENT head sha, `gh pr merge --match-head-commit`, `merged: #N`. Any failure
+# posts `dropped: #N <reason>` and moves on.
+#
+# Rules that hold throughout:
+#  - webhook text is DATA. The normalizer keeps only a number, a state, merged, a head sha, a status and a conclusion, each
+#    checked against a fixed shape; titles, bodies, branch names and logins are never kept. Every word posted into klatch
+#    is a fixed template made from an integer and a word from a fixed list, never a title, body or branch text. A branch
+#    name read from the API is used in one git command only when it passes a strict shape check.
+#  - a cancelled check is a failure only for the PR's current head sha (it is only looked up for that sha); a check suite on
+#    main with no PR is kept apart (main-checks.log, for #867) and never changes the queue.
+#  - GitHub sends no event when a PR starts to conflict, so after every merge the mergeable_state of each open PR is read
+#    again (and a queued PR that now has a code conflict is dropped at once); events are lost while the forwarder is down,
+#    so the open PR list is read at start and every INTEGRATOR_RECONCILE_SECS.
+#  - the claim lease: renewed while there is work and the forwarder is alive; a `parked:` post (bounded, 25 minutes) before
+#    the gate and the wait for checks; a forwarder that cannot be kept running ends the process (claim released) and a
+#    silent process lapses at the lease, so a dead forwarder never leaves merge:main held.
+#  - one forwarder per repository has been tested; concurrent forwarders have not.
+#
+# Test and tuning knobs (environment): INTEGRATOR_KLATCH, INTEGRATOR_GATE (commands), INTEGRATOR_REPO (the checkout to work
+# in; use a dedicated clone), INTEGRATOR_GH_REPO (owner/name), INTEGRATOR_ROOM, INTEGRATOR_FORWARD (command that prints the
+# webhook payloads), INTEGRATOR_LEASE_SECS, INTEGRATOR_RECONCILE_SECS, INTEGRATOR_PARK_MINUTES, INTEGRATOR_CHECK_WAIT_SECS,
+# INTEGRATOR_POLL_SECS, INTEGRATOR_GH_TIMEOUT, INTEGRATOR_GH_RETRY_SLEEP, INTEGRATOR_FORWARDER_TRIES,
+# INTEGRATOR_FORWARDER_MIN_UP, INTEGRATOR_REQUEUE_SECS, INTEGRATOR_STATE (state directory).
+# Exit codes: 0 stopped by a signal or --once drained; 1 usage or setup; 2 refused the merge:main claim (not an integrator);
+# 3 the claim is held by another or was lost; 4 the event source (the forwarder) could not be kept running.
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the data filters (python3 -I, standard library only). Everything that enters this process from GitHub goes through one.
+# ---------------------------------------------------------------------------------------------------------------------
+py_filter() {
+  python3 -I -c "$(cat <<'PY'
+import json, re, sys
+mode = sys.argv[1]
+HEX = re.compile(r'^[0-9a-f]{40}$')
+STATUS = {'queued', 'in_progress', 'completed', 'requested', 'waiting', 'pending'}
+CONCL = {'success', 'failure', 'cancelled', 'timed_out', 'neutral', 'skipped', 'action_required', 'startup_failure', 'stale'}
+MSTATE = {'clean', 'dirty', 'blocked', 'behind', 'unstable', 'unknown', 'draft', 'has_hooks'}
+REF = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$')
+REPO = re.compile(r'^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$')
+
+def num(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10**9 else None
+def sha(v):
+    return v if isinstance(v, str) and HEX.match(v) else None
+def word(v, allowed):
+    if v is None:
+        return '-'
+    return v if isinstance(v, str) and v in allowed else 'other'
+def get(d, *path):
+    for k in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+def normalize(obj):
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(obj.get('pull_request'), dict):
+        n, s, h = num(obj.get('number')), get(obj, 'pull_request', 'state'), sha(get(obj, 'pull_request', 'head', 'sha'))
+        if n is None or s not in ('open', 'closed') or h is None:
+            return None
+        return 'pr\t%d\t%s\t%s\t%s' % (n, s, 'true' if get(obj, 'pull_request', 'merged') is True else 'false', h)
+    for key in ('check_suite', 'workflow_run'):
+        if isinstance(obj.get(key), dict):
+            h = sha(get(obj, key, 'head_sha'))
+            if h is None:
+                return None
+            prs = get(obj, key, 'pull_requests')
+            nums = sorted({num(p.get('number')) for p in prs if isinstance(p, dict)} - {None}) if isinstance(prs, list) else []
+            return 'check\t%s\t%s\t%s\t%s' % (h, word(get(obj, key, 'status'), STATUS), word(get(obj, key, 'conclusion'), CONCL),
+                                              ','.join(str(x) for x in nums) or '-')
+    return None
+
+if mode == 'normalize':
+    # a stream of payloads, one per line or pretty printed; each is emitted as soon as it is complete
+    dec = json.JSONDecoder()
+    buf = ''
+    for line in sys.stdin:
+        buf += line
+        while True:
+            s = buf.lstrip()
+            if not s:
+                buf = ''
+                break
+            try:
+                obj, j = dec.raw_decode(s)
+            except ValueError:
+                if s[0] not in '{[':
+                    nl = s.find('\n')
+                    buf = '' if nl < 0 else s[nl + 1:]
+                    continue
+                buf = '' if len(s) > 4000000 else s
+                break
+            r = normalize(obj)
+            if r:
+                sys.stdout.write(r + '\n')
+                sys.stdout.flush()
+            buf = s[j:]
+    sys.exit(0)
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+if mode == 'pr':
+    st = get(data, 'state')
+    ref = get(data, 'head', 'ref')
+    repo = get(data, 'head', 'repo', 'full_name')
+    ms = get(data, 'mergeable_state')
+    print('\t'.join([
+        st if st in ('open', 'closed') else 'other',
+        'true' if get(data, 'merged') is True else 'false',
+        sha(get(data, 'head', 'sha')) or '-',
+        ref if isinstance(ref, str) and REF.match(ref) and '..' not in ref and not ref.endswith(('.lock', '/', '.')) else '-',
+        repo if isinstance(repo, str) and REPO.match(repo) else '-',
+        ms if ms in MSTATE else 'other']))
+elif mode == 'pulls':
+    if isinstance(data, list):
+        for p in data:
+            n, h = num(get(p, 'number')), sha(get(p, 'head', 'sha'))
+            if n is not None and h is not None:
+                print('%d\t%s' % (n, h))
+elif mode == 'checks':
+    runs = get(data, 'check_runs')
+    if not isinstance(runs, list) or not runs:
+        print('none')
+    else:
+        v = 'green'
+        for r in runs:
+            if get(r, 'status') != 'completed':
+                if v == 'green':
+                    v = 'pending'
+                continue
+            if get(r, 'conclusion') not in ('success', 'skipped', 'neutral'):
+                v = 'red'
+                break
+        print(v)
+PY
+)" "$1"
+}
+
+case "${1:-}" in
+  --normalize) py_filter normalize; exit $? ;;
+  --pr) py_filter pr; exit $? ;;
+  --pulls) py_filter pulls; exit $? ;;
+  --checks) py_filter checks; exit $? ;;
+  -h | --help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+once=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once) once=1 ;;
+    *) echo "integrator: unknown argument $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+export PATH="$HOME/.cargo/bin:$PATH"
+slug="${INTEGRATOR_GH_REPO:-hslee16/klatch}"
+room="${INTEGRATOR_ROOM:-lobby}"
+klatch="${INTEGRATOR_KLATCH:-klatch}"
+lease="${INTEGRATOR_LEASE_SECS:-600}"
+reconcile_secs="${INTEGRATOR_RECONCILE_SECS:-300}"
+park_min="${INTEGRATOR_PARK_MINUTES:-25}"
+check_wait="${INTEGRATOR_CHECK_WAIT_SECS:-5400}"
+poll="${INTEGRATOR_POLL_SECS:-1}"
+gh_timeout="${INTEGRATOR_GH_TIMEOUT:-60}"
+gh_retry_sleep="${INTEGRATOR_GH_RETRY_SLEEP:-2}"
+fwd_tries="${INTEGRATOR_FORWARDER_TRIES:-3}"
+fwd_min_up="${INTEGRATOR_FORWARDER_MIN_UP:-30}"
+requeue_secs="${INTEGRATOR_REQUEUE_SECS:-30}"
+
+say() { printf 'integrator: %s\n' "$*" >&2; }
+nap() { /bin/sleep "$1"; }
+
+case "$lease$reconcile_secs$park_min$check_wait" in *[!0-9]*) say "the lease, reconcile, park and check-wait settings must be whole numbers"; exit 1 ;; esac
+[ "$reconcile_secs" -ge 1 ] && [ "$reconcile_secs" -le 300 ] || { say "INTEGRATOR_RECONCILE_SECS must be 1 to 300"; exit 1; }
+
+repo="${INTEGRATOR_REPO:-}"
+[ -n "$repo" ] || { say "set INTEGRATOR_REPO to a dedicated clone of $slug (see INTEGRATOR.md); this process switches its branches"; exit 1; }
+cd "$repo" || { say "cannot enter $repo"; exit 1; }
+run="${INTEGRATOR_STATE:-$(mktemp -d "${TMPDIR:-/tmp}/integrator-run.XXXXXX")}" || { say "cannot make a state directory"; exit 1; }
+mkdir -p "$run"
+: > "$run/ev.tsv"; : > "$run/checks.log"; : > "$run/main-checks.log"
+
+docs_re='^(DESIGN.md|CHANGELOG.md|VERSIONING.md|RESEARCH-NOTES.md|proto/klatch-bench/src/scenarios/mod.rs)$' # as pr-sweep
+
+# ---------------------------------------------------------------------------------------------------------------------
+# process control: every long command runs in the background and is waited for, so a signal is handled at once
+# ---------------------------------------------------------------------------------------------------------------------
+fpid=""; npid=""; cpid=""; held=0; cur=""; stopping=0
+cleanup() {
+  [ "$stopping" -eq 1 ] && return
+  stopping=1
+  trap '' INT TERM HUP
+  [ -n "$cpid" ] && kill -TERM "$cpid" 2> /dev/null
+  stop_forwarder
+  [ -n "$cur" ] && git merge --abort > /dev/null 2>&1
+  if [ "$held" -eq 1 ]; then "$klatch" release "$room" merge:main > /dev/null 2>&1; held=0; fi
+  rm -rf "$run"
+}
+on_signal() { say "signal received; stopping"; cleanup; exit 0; }
+trap on_signal INT TERM HUP
+trap cleanup EXIT
+
+bg() { # outfile, command...: run it in the background, wait (a trap can interrupt), print nothing; its exit code
+  local out=$1 rc
+  shift
+  "$@" > "$out" 2>&1 &
+  cpid=$!
+  wait "$cpid"; rc=$?
+  cpid=""
+  return $rc
+}
+
+ghx() { # gh arguments: stdout of gh, 3 tries, a timeout (a perl alarm survives the exec; macOS has no timeout)
+  local i=0 out rc
+  while [ "$i" -lt 3 ]; do
+    out="$(perl -e 'alarm shift; exec @ARGV' "$gh_timeout" gh "$@" 2> /dev/null)"; rc=$?
+    if [ "$rc" -eq 0 ]; then printf '%s\n' "$out"; return 0; fi
+    i=$((i + 1))
+    [ "$i" -lt 3 ] && [ "$gh_retry_sleep" != 0 ] && nap "$gh_retry_sleep"
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# klatch: the claim and the words. A word is a fixed template of an integer and a fixed reason.
+# ---------------------------------------------------------------------------------------------------------------------
+post() { # the whole word (built only by the helpers below)
+  "$klatch" post "$room" "$1" > /dev/null 2>&1 || say "post failed: $1"
+  renew_claim
+}
+post_integrating() { post "$(printf 'integrating: #%d' "$1")"; }
+post_checking() { post "$(printf 'checking: #%d' "$1")"; }
+post_merged() { post "$(printf 'merged: #%d' "$1")"; }
+post_dropped() { # PR, reason from the fixed list: conflict checks-failed closed timeout head-changed error
+  case "$2" in conflict | checks-failed | closed | timeout | head-changed | error) ;; *) set -- "$1" error ;; esac
+  say "#$1 dropped: $2"
+  post "$(printf 'dropped: #%d %s' "$1" "$2")"
+}
+post_parked() { # what is awaited: gate | checks
+  case "$2" in gate) post "$(printf 'parked: running the gate for #%d, back by %dm' "$1" "$park_min")" ;;
+    *) post "$(printf 'parked: waiting for checks on #%d, back by %dm' "$1" "$park_min")" ;; esac
+}
+
+# the claim: taken to start work and renewed while it goes on, only while the event source is alive
+take_claim() { # 0 held; 1 refused by the role rule; 2 held by another or failed
+  local out
+  out="$("$klatch" claim "$room" merge:main --ttl "$lease" --reason integrating 2>&1)" && { held=1; return 0; }
+  printf '%s\n' "$out" | head -3 >&2
+  case "$out" in *"refused"*) return 1 ;; esac
+  return 2
+}
+renew_claim() {
+  [ "$held" -eq 1 ] || return 0
+  [ -n "$fpid" ] && ! kill -0 "$fpid" 2> /dev/null && return 0 # a dead event source gets no renewal: the claim lapses
+  "$klatch" claim "$room" merge:main --ttl "$lease" --reason integrating > /dev/null 2>&1 || { say "the merge:main claim was lost"; claim_lost=1; }
+}
+claim_lost=0
+drop_claim() {
+  if [ "$held" -eq 1 ]; then "$klatch" release "$room" merge:main > /dev/null 2>&1; held=0; fi
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the event source: gh webhook forward as a child (own login, needs repo admin), and the files its events land in
+# ---------------------------------------------------------------------------------------------------------------------
+fwd_fails=0; fwd_started=0; off=0
+start_forwarder() {
+  rm -f "$run/raw"
+  mkfifo "$run/raw" || return 1
+  if [ -n "${INTEGRATOR_FORWARD:-}" ]; then "$INTEGRATOR_FORWARD" > "$run/raw" 2> /dev/null &
+  else gh webhook forward --repo "$slug" --events pull_request,check_suite,workflow_run > "$run/raw" 2> /dev/null &
+  fi
+  fpid=$!
+  python3 -I - "$run/raw" "$run/ev.tsv" "$0" <<'PY' &
+import subprocess, sys
+raw, out, me = sys.argv[1:4]
+with open(raw, 'rb') as src, open(out, 'ab') as dst:
+    subprocess.run(['bash', me, '--normalize'], stdin=src, stdout=dst)
+PY
+  npid=$!
+  fwd_started=$(date +%s)
+}
+stop_forwarder() { # TERM first: gh removes its temporary webhook on exit (a -9 would leave it on the repository)
+  local i=0
+  if [ -n "$fpid" ]; then
+    kill -TERM "$fpid" 2> /dev/null
+    while kill -0 "$fpid" 2> /dev/null && [ "$i" -lt 50 ]; do nap 0.1; i=$((i + 1)); done
+    kill -0 "$fpid" 2> /dev/null && kill -9 "$fpid" 2> /dev/null
+    fpid=""
+  fi
+  if [ -n "$npid" ]; then kill -TERM "$npid" 2> /dev/null; wait "$npid" 2> /dev/null; npid=""; fi
+}
+ensure_forwarder() { # 0 running (restarted if it had died, then reconciled), 1 cannot be kept running
+  [ -n "$fpid" ] && kill -0 "$fpid" 2> /dev/null && return 0
+  local up=$(($(date +%s) - fwd_started))
+  if [ "$up" -lt "$fwd_min_up" ]; then fwd_fails=$((fwd_fails + 1)); else fwd_fails=0; fi
+  say "the webhook forwarder is not running (up $up s); fail count $fwd_fails"
+  stop_forwarder
+  if [ "$fwd_fails" -ge "$fwd_tries" ]; then return 1; fi
+  start_forwarder || return 1
+  reconcile
+  return 0
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# state read from events and from the reconcile: head-N (current head sha), old-N (heads replaced), open-N, mstate-N
+# ---------------------------------------------------------------------------------------------------------------------
+note_head() { # PR, sha
+  grep -qx "$2" "$run/old-$1" 2> /dev/null && return 0
+  printf '%s\n' "$2" > "$run/head-$1"
+}
+supersede() { # PR, the sha replaced by a push of ours
+  printf '%s\n' "$2" >> "$run/old-$1"
+}
+drain_events() {
+  local total kind a b c d
+  total="$(wc -l < "$run/ev.tsv" | tr -d ' ')"
+  [ "$total" -gt "$off" ] || return 0
+  while IFS=$'\t' read -r kind a b c d; do
+    case "$kind" in
+      pr) # number state merged sha
+        case "$a" in '' | *[!0-9]*) continue ;; esac
+        if [ "$b" = open ]; then : > "$run/open-$a"; note_head "$a" "$d"; else rm -f "$run/open-$a"; fi
+        [ "$c" = true ] && : > "$run/merged-$a" ;;
+      check) # sha status conclusion prs
+        if [ "$d" != "-" ] || grep -qx "$a" "$run"/head-* 2> /dev/null; then printf '%s %s %s\n' "$a" "$b" "$c" >> "$run/checks.log"
+        else printf '%s %s %s\n' "$a" "$b" "$c" >> "$run/main-checks.log"; fi ;;
+    esac
+  done < <(tail -n +"$((off + 1))" "$run/ev.tsv" | head -n "$((total - off))")
+  off=$total
+}
+wait_events() { # up to $1 seconds for the event file to grow (a local file; GitHub is not read here)
+  local end=$(($(date +%s) + $1)) size
+  size="$(wc -l < "$run/ev.tsv" | tr -d ' ')"
+  while [ "$(date +%s)" -lt "$end" ]; do
+    [ "$(wc -l < "$run/ev.tsv" | tr -d ' ')" -gt "$size" ] && return 0
+    nap "$poll"
+  done
+  return 1
+}
+
+pr_read() { # PR: sets pr_state pr_merged pr_sha pr_ref pr_repo pr_ms (validated); 1 when it could not be read
+  local out
+  out="$(ghx api "repos/$slug/pulls/$1" | py_filter pr)" || return 1
+  [ -n "$out" ] || return 1
+  IFS=$'\t' read -r pr_state pr_merged pr_sha pr_ref pr_repo pr_ms <<< "$out"
+  return 0
+}
+mstate_of() { # PR: the mergeable_state, asked again while GitHub says unknown
+  local u=0
+  pr_read "$1" || return 1
+  while [ "$pr_ms" = unknown ] && [ "$u" -lt 6 ]; do nap "$poll"; pr_read "$1" || return 1; u=$((u + 1)); done
+  return 0
+}
+next_reconcile=0
+reconcile() { # the open PR list (events are lost while the forwarder is down) and each open PR's mergeable_state
+  local list n s f
+  next_reconcile=$(($(date +%s) + reconcile_secs))
+  list="$(ghx api "repos/$slug/pulls?state=open&per_page=100" | py_filter pulls)" || { say "reconcile: could not read the open PR list"; return 1; }
+  for f in "$run"/open-*; do [ -e "$f" ] && rm -f "$f"; done
+  while IFS=$'\t' read -r n s; do
+    [ -n "$n" ] || continue
+    : > "$run/open-$n"
+    note_head "$n" "$s"
+  done <<< "$list"
+  read_mstates
+  return 0
+}
+read_mstates() { # after every merge and every reconcile: GitHub sends no event when a PR starts to conflict
+  local f n
+  for f in "$run"/open-*; do
+    [ -e "$f" ] || continue
+    n="${f##*open-}"
+    if pr_read "$n"; then printf '%s\n' "$pr_ms" > "$run/mstate-$n"; fi
+  done
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the steps for one PR
+# ---------------------------------------------------------------------------------------------------------------------
+code_conflicts() { # base ref, PR ref: 0 none or docs only, 1 a code conflict, 2 could not tell
+  local out rc files bad
+  out="$(git merge-tree --write-tree --name-only "$1" "$2" 2> /dev/null)"; rc=$?
+  case "$rc" in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  files="$(printf '%s\n' "$out" | sed '1d;/^$/,$d')"
+  bad="$(printf '%s\n' "$files" | grep -vE "$docs_re" | sed '/^$/d')"
+  [ -n "$bad" ] && return 1
+  [ -z "$files" ] && return 1
+  return 0
+}
+fetch_pr() { # PR
+  git fetch -q --no-prune origin main "+pull/$1/head:refs/pr-integrator/$1" > /dev/null 2>&1
+}
+run_gate() {
+  if [ -n "${INTEGRATOR_GATE:-}" ]; then bg "$run/gate.log" "$INTEGRATOR_GATE"
+  else bg "$run/gate.log" bash -c 'cd proto && ./scripts/gate'; fi
+}
+green_on() { # head sha: 0 green, 1 not yet, 2 red, 3 unreadable
+  local v
+  v="$(ghx api "repos/$slug/commits/$1/check-runs?per_page=100" | py_filter checks)" || return 3
+  case "$v" in green) return 0 ;; red) return 2 ;; *) return 1 ;; esac
+}
+event_red() { # sha: a completed check of that sha that failed (a cancelled one counts: this is only asked for the current head)
+  grep -Eq "^$1 completed (failure|timed_out|cancelled|startup_failure|action_required)$" "$run/checks.log" 2> /dev/null
+}
+event_done() { # sha: a completed success is in
+  grep -Eq "^$1 completed success$" "$run/checks.log" 2> /dev/null
+}
+
+# wait for the checks of $2, the head we pushed (or found), to be green. 0 green; otherwise the reason (word) in $why
+why=""
+wait_checks() { # PR, sha
+  local n=$1 sha=$2 end g first=1 left tick=0 hd
+  end=$(($(date +%s) + check_wait))
+  post_parked "$n" checks
+  while true; do
+    [ "$stopping" -eq 1 ] && return 1
+    drain_events
+    if [ ! -e "$run/open-$n" ] && [ "$first" -eq 0 ]; then why=closed; return 1; fi
+    hd=""; [ -s "$run/head-$n" ] && read -r hd < "$run/head-$n"
+    if [ -n "$hd" ] && [ "$hd" != "$sha" ]; then why='head-changed'; return 1; fi
+    if event_red "$sha"; then why=checks-failed; return 1; fi
+    if [ "$first" -eq 1 ] || [ "$tick" -eq 1 ] || event_done "$sha"; then
+      tick=0
+      green_on "$sha"; g=$?
+      case "$g" in 0) return 0 ;; 2) why=checks-failed; return 1 ;; esac
+    fi
+    first=0
+    if [ "$(date +%s)" -ge "$end" ]; then why=timeout; return 1; fi
+    ensure_forwarder || { why=forwarder; return 1; }
+    left=$((next_reconcile - $(date +%s))); [ "$left" -lt 1 ] && left=1
+    wait_events "$left"
+    if [ "$(date +%s)" -ge "$next_reconcile" ]; then
+      reconcile
+      tick=1
+      renew_claim
+      [ "$claim_lost" -eq 1 ] && { why=claim; return 1; }
+    fi
+  done
+}
+
+# one PR through the queue; always ends with one word posted (merged or dropped), except when stopped or the claim is lost
+process_pr() {
+  local n=$1 rc head newhead
+  cur=$n
+  say "#$n: starting"
+  pr_read "$n" || { post_dropped "$n" error; cur=""; return; }
+  if [ "$pr_state" != open ]; then post_dropped "$n" closed; cur=""; return; fi
+  : > "$run/open-$n"
+  note_head "$n" "$pr_sha"
+  if [ "$pr_sha" = - ] || [ "$pr_ref" = - ] || [ "$pr_repo" = - ]; then post_dropped "$n" error; cur=""; return; fi
+  case "$(printf '%s' "$pr_repo" | tr '[:upper:]' '[:lower:]')" in "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')") ;; *) say "#$n: a branch of another repository is not integrated"; post_dropped "$n" error; cur=""; return ;; esac
+  if [ -n "$(git status --porcelain 2> /dev/null)" ]; then say "#$n: the working tree of $repo is not clean"; post_dropped "$n" error; cur=""; return; fi
+  fetch_pr "$n" || { say "#$n: fetch failed"; post_dropped "$n" error; cur=""; return; }
+  head="$pr_sha"
+  # conflict pre-check, before anything is posted or touched
+  code_conflicts origin/main "refs/pr-integrator/$n"; rc=$?
+  if [ "$rc" -eq 1 ]; then post_dropped "$n" conflict; cur=""; return; fi
+  if [ "$rc" -eq 2 ]; then say "#$n: git merge-tree could not tell (git 2.38 or newer is needed)"; post_dropped "$n" error; cur=""; return; fi
+  post_integrating "$n"
+  [ "$claim_lost" -eq 1 ] && { cur=""; return; }
+  if ! git merge-base --is-ancestor origin/main "refs/pr-integrator/$n" 2> /dev/null; then
+    git checkout -q -B "integrator/$n" "refs/pr-integrator/$n" > /dev/null 2>&1 || { post_dropped "$n" error; cur=""; return; }
+    if ! git merge -q --no-edit origin/main > /dev/null 2>&1; then
+      if [ -z "$(git diff --name-only --diff-filter=U)" ]; then git merge --abort > /dev/null 2>&1; post_dropped "$n" error; cur=""; return; fi
+      if git diff --name-only --diff-filter=U | grep -qvE "$docs_re"; then git merge --abort > /dev/null 2>&1; post_dropped "$n" conflict; cur=""; return; fi
+      # shellcheck disable=SC2046
+      bash "$here/pr-sweep" --resolve-docs $(git diff --name-only --diff-filter=U)
+      if git diff --name-only --diff-filter=U | xargs grep -l '^<<<<<<<' > /dev/null 2>&1; then git merge --abort > /dev/null 2>&1; post_dropped "$n" conflict; cur=""; return; fi
+      git add -u
+      git commit -q -m "Merge main into the branch (docs conflict)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" > /dev/null 2>&1 || { git merge --abort > /dev/null 2>&1; post_dropped "$n" error; cur=""; return; }
+    fi
+    post_parked "$n" gate
+    if ! run_gate; then say "#$n: the gate failed; not pushed (output kept in the state directory until exit)"; tail -5 "$run/gate.log" >&2; post_dropped "$n" checks-failed; cur=""; return; fi
+    newhead="$(git rev-parse HEAD)"
+    supersede "$n" "$head"
+    if ! git push -q origin "integrator/$n:refs/heads/$pr_ref" > /dev/null 2>&1; then say "#$n: push failed (not forced)"; post_dropped "$n" error; cur=""; return; fi
+    printf '%s\n' "$newhead" > "$run/head-$n"
+    head="$newhead"
+  fi
+  post_checking "$n"
+  [ "$claim_lost" -eq 1 ] && { cur=""; return; }
+  why=""
+  if ! wait_checks "$n" "$head"; then
+    case "$why" in forwarder | claim) cur=""; return ;; esac
+    [ "$stopping" -eq 1 ] && return
+    post_dropped "$n" "${why:-error}"; cur=""; return
+  fi
+  # merge pinned to the head the checks were green on
+  pr_read "$n" || { post_dropped "$n" error; cur=""; return; }
+  if [ "$pr_sha" != "$head" ]; then post_dropped "$n" head-changed; cur=""; return; fi
+  ghx pr merge "$n" --repo "$slug" --merge --match-head-commit "$head" > /dev/null || true
+  pr_read "$n" || { post_dropped "$n" error; cur=""; return; }
+  if [ "$pr_merged" = true ]; then
+    post_merged "$n"
+    rm -f "$run/open-$n"
+    say "#$n: merged"
+    after_merge "$n"
+  else
+    post_dropped "$n" error
+  fi
+  cur=""
+}
+
+# the queue as the board shows it: only digits and a state word are taken from the board text
+queue() {
+  "$klatch" board "$room" 2> /dev/null | awk '
+    /^queue \(/ { inq = 1; next }
+    inq && /^[^ ]/ { inq = 0 }
+    inq' | sed -nE 's/^ +[0-9]+\. #([0-9]{1,9}) (waiting|integrating|checking)( .*)?$/\1/p'
+}
+
+# after every merge: read mergeable_state of each open PR again; a queued PR that now conflicts in code is dropped at once
+after_merge() {
+  local q n
+  git fetch -q --no-prune origin main > /dev/null 2>&1
+  read_mstates
+  for n in $(queue); do
+    [ "$n" = "$1" ] && continue
+    [ "$(cat "$run/mstate-$n" 2> /dev/null)" = dirty ] || continue
+    fetch_pr "$n" || continue
+    code_conflicts origin/main "refs/pr-integrator/$n"; q=$?
+    if [ "$q" -eq 1 ]; then post_dropped "$n" conflict; fi
+  done
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------------------------------------------------
+take_claim; rc=$?
+case "$rc" in
+  0) drop_claim ;; # the probe: this member may take merge:main; it is taken again when there is work
+  1) say "this member may not take merge:main (the integrator role is the human's to grant: klatch admin integrator <member>)"; exit 2 ;;
+  *) say "merge:main is held by another member (or could not be claimed); not starting"; exit 3 ;;
+esac
+
+start_forwarder || { say "cannot start the webhook forwarder"; exit 4; }
+reconcile
+
+say "running as an integrator for $slug in room $room"
+while true; do
+  [ "$stopping" -eq 1 ] && exit 0
+  ensure_forwarder || { say "the event source cannot be kept running; releasing merge:main and stopping"; drop_claim; exit 4; }
+  drain_events
+  [ "$(date +%s)" -ge "$next_reconcile" ] && reconcile
+  q=""
+  now=$(date +%s)
+  for n in $(queue); do
+    d="$(cat "$run/done-$n" 2> /dev/null || echo 0)"
+    [ $((now - d)) -lt "$requeue_secs" ] && continue
+    q="$n"; break
+  done
+  if [ -z "$q" ]; then
+    drop_claim
+    [ "$once" -eq 1 ] && exit 0
+    # wait for a ready word, woken by klatch; the timeout is the reconcile interval
+    bg "$run/wait.out" "$klatch" wait "$room" --only "ready:" --timeout "$reconcile_secs"
+    [ "$(wc -l < "$run/ev.tsv" | tr -d ' ')" -gt 10000 ] && { : > "$run/ev.tsv"; off=0; }
+    continue
+  fi
+  if [ "$held" -eq 0 ]; then
+    take_claim; rc=$?
+    case "$rc" in
+      0) ;;
+      1) say "the integrator role was removed; stopping"; exit 2 ;;
+      *) say "merge:main is held by another member; waiting"; bg "$run/wait.out" "$klatch" wait "$room" --timeout 5; continue ;;
+    esac
+  fi
+  claim_lost=0
+  process_pr "$q"
+  date +%s > "$run/done-$q"
+  [ "$claim_lost" -eq 1 ] && { say "the claim was lost; stopping"; held=0; exit 3; }
+done

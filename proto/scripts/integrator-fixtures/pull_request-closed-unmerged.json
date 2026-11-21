@@ -1,0 +1,1 @@
+{"action":"closed","number":@N@,"pull_request":{"number":@N@,"state":"closed","title":"Add a thing","merged":false,"head":{"ref":"feat-@N@","sha":"@SHA@"},"base":{"ref":"main"}}}
