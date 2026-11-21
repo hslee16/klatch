@@ -202,8 +202,13 @@ fn two_keys_map_to_two_members_and_cannot_impersonate_each_other() {
     );
     assert_eq!(refusal_rule(&attempt, "x").as_deref(), Some("member-fixed"));
 
+    // Six forging attempts are six kept refusals, and they stop member-a at the breaker (#1084): its key is refused
+    // from now on, so the log is read through the other key.
+    let after = session(&home, &["--ssh-key", "a"], &[post("again", "still a")]);
+    assert_eq!(refusal_rule(&after, "again").as_deref(), Some("breaker"));
+
     // The log has exactly the two honest posts, each by the member its key is mapped to, and nothing forged.
-    let log = room_log(&home, "a", "r");
+    let log = room_log(&home, "b", "r");
     assert_eq!(
         log,
         vec![
