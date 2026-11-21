@@ -249,6 +249,11 @@ class Conformance(unittest.TestCase):
             a.request("invite", member="bob")
         self.assertEqual(ctx.exception.code, "invalid_params")
 
+    def test_a_member_reads_its_own_role(self):
+        a = self.store.client("alice")
+        a.post("r", "here")
+        self.assertIsNone(a.my_role())
+
     def test_a_member_declares_its_scope_its_kind_and_its_status(self):
         a = self.store.client("alice")
         a.post("r", "here")

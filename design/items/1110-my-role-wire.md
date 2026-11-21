@@ -1,0 +1,2 @@
+A member can read its own role over the wire (#1110; no schema change; 2026-11-21).
+A wire-only member had no way to read its role, because `klatch role` is a Transport command. The wire method `my_role` answers `{"role": <word or null>}` from `Gateway::my_role` for the caller's own principal, with no parameter and no audit row, and the Python (`my_role`) and TypeScript (`myRole`) clients expose it. It is OWN_RECORD like `my_crossings`.

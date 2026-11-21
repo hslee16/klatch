@@ -221,6 +221,7 @@ describe(title, { skip }, () => {
   it("a member declares its scope, its kind and its status", async () => {
     const a = await store.client("alice");
     await a.post("r", "here");
+    assert.equal(await a.myRole(), null);
     await a.setScope("git:demo-1");
     await a.claim("r", "src/a.rs");
     assert.deepEqual((await a.claims("r")).map((c) => c.scope), ["git:demo-1"]);
