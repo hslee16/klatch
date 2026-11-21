@@ -130,6 +130,7 @@ wraps.
 | `cross` | `request_crossing` | GUARDED `request_crossing`: read in the source, post in the target, the target must be one the caller has joined (#679), floors |
 | `status` | `set_status` | as wire `status` |
 | `scope` | `scope_of`, `set_scope` | OWN_RECORD; refused after the credential ends (#835) |
+| `role` | `my_role` | OWN_RECORD (#1090): the caller's own role as one fixed word, no member parameter, no audit row; refused after the credential ends (`AFTER_END`); `gateway/tests/my_role.rs` |
 | `hooks` | `hook_runs` | GUARDED `hook_runs` (another member's record with `--of`) |
 | `refusals` | `my_refusals` | OWN_RECORD, only the caller's rows; refused after the credential ends (#835) |
 | `crossings` | `my_crossings` | OWN_RECORD (#516), only the caller's rows (the requester of the queue row); no guard, like `refusals`. Returns the ids, the source pointer, the target room, a state (`waiting`, `approved`, `denied`, `released`, `blocked`) and one fixed sentence per state and category (`private-term`, `credential`, `canary`, `gone`, `floor`). Never the text, a redaction, the reviewer's or judge's own reason (it can describe the content) or the name of a scrub rule or term. Proof: `gateway/gateway/tests/crossing.rs` (`a_denied_crossing_says_it_was_denied_and_never_the_reviewers_reason`, `a_blocked_crossing_names_the_category_and_never_the_rule_name_or_term`). Wire method `my_crossings` (#961); refused after the credential ends (#835) |

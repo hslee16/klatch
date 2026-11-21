@@ -26,6 +26,7 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
             },
         )?,
         WorkCmd::Scope { scope } => scope_cmd(t, scope)?,
+        WorkCmd::Role => println!("{}", t.my_role()?.as_deref().unwrap_or("none")),
         WorkCmd::Release { room, path, note } => release(t, &room, &path, note.as_deref())?,
         WorkCmd::Cross { room, seq, to } => {
             let id = t.request_crossing(&room, seq, &to)?;

@@ -387,6 +387,7 @@ impl Transport for SharedTransport {
         receipt(room: &str, seq: i64) -> Result<crate::domain::Receipts>;
         set_scope(scope: &str) -> Result<()>;
         scope() -> Result<Option<String>>;
+        my_role() -> Result<Option<String>>;
         release(room: &str, path: &str) -> Result<()>;
         release_with_note(room: &str, path: &str, note: &str) -> Result<()>;
         last_release(room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>>;

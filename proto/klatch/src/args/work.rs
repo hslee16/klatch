@@ -31,6 +31,9 @@ pub(crate) enum WorkCmd {
     /// Show the scope you work in, or set it
     #[command(display_order = 22)]
     Scope { scope: Option<String> },
+    /// Show the role you hold (integrator, reviewer, ...), or none
+    #[command(display_order = 34)]
+    Role,
     /// Release a claim you hold
     #[command(display_order = 23)]
     Release {
