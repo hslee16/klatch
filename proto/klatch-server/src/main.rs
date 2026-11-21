@@ -11,6 +11,7 @@ mod daemon;
 mod loopback;
 #[cfg(test)]
 mod loopback_tests;
+mod mcp_http;
 mod webhook;
 #[cfg(test)]
 mod webhook_tests;
