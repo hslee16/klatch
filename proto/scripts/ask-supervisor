@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+# ask-supervisor: start a pre-issued helper for an ask nobody has answered, only when klatch says it could answer (#1170,
+# part 2 of #671, the decision on #627). See INTEGRATION.md ("A supervisor that starts helpers").
+#
+#   ask-supervisor            run until a signal (INT, TERM, HUP): poll the room's open asks, start helpers, end them on stop
+#   ask-supervisor --once     one pass, then wait for the helpers that pass started to end, then exit
+#   ask-supervisor --dry-run  one pass that only PRINTS what it would start; it starts nothing and writes no state
+#
+# It runs OUTSIDE the klatch binary. klatch never spawns anything and never issues a credential (#627): this process only
+# reads (`klatch asks ROOM`, `klatch could-answer ROOM ASK MEMBER`) and runs the launch command the human configured. It
+# posts nothing, claims nothing and issues no credential: the helper identities in ASKSUP_CANDIDATES are created once by the
+# human (`klatch worker issue`, or the human's own `proto/scripts/team`), never here. Run it as the human (the check of
+# ANOTHER member is the admin act `could-answer`; a plain member is refused and then no helper is ever started).
+#
+# One pass: for each open ask that is unclaimed, older than ASKSUP_MIN_AGE_SECS, not posted by one of the candidates, and
+# with no helper running for it, ask klatch whether each idle candidate could answer; the first `yes` is started with
+# ASKSUP_LAUNCH, run as `bash -c` with ASKSUP_ROOM, ASKSUP_ASK (the number), ASKSUP_MEMBER and ASKSUP_ACTIVE=1 in its
+# environment. The launch command is expected to stay running as long as the helper does. The text of an ask is DATA: it is
+# never run, never put in a command line and never passed to the launch command; the supervisor keeps only the number, the
+# sender name and the age, each checked against a fixed shape.
+#
+# Bounds (all of them; a start that would break one is refused and the reason is printed):
+#   ASKSUP_MAX_HELPERS     helpers running at once (default 1)
+#   ASKSUP_MAX_PER_ASK     starts for one ask over its life (default 1); a second is started only after the first ENDED
+#                          and the ask is still open, and then another identity is tried first
+#   ASKSUP_START_USD       what one start is charged against the cap, USD (default 2; set it to the helper's own budget)
+#   ASKSUP_MAX_TOTAL_USD   the most the supervisor may commit in total, kept in ASKSUP_STATE (default 10)
+#   ASKSUP_HELPER_SECS     wall clock limit per helper; past it the helper is killed with kill -9 (default 3600)
+#   ASKSUP_PAUSE_SECS      the least time between two starts (default 30), so a loop cannot drain the budget
+#   ASKSUP_OFF_FILE        while this file exists nothing is started (default ~/.klatch-ask-supervisor-off); helpers
+#                          already running keep running. `touch` it to stop new starts, `rm` it to resume
+#   no helper starts a helper: an ask posted by a candidate never starts one, and a process with ASKSUP_ACTIVE=1 in its
+#                          environment (every launched helper) refuses to run the supervisor (exit 2)
+#
+# Settings (environment): ASKSUP_CANDIDATES (required: space separated pre-issued member names, tried in order),
+# ASKSUP_LAUNCH (required unless --dry-run: the command that starts a helper for $ASKSUP_MEMBER), ASKSUP_KLATCH (default
+# klatch), ASKSUP_ROOM (default lobby), ASKSUP_POLL_SECS (default 15), ASKSUP_MIN_AGE_SECS (default 60: an ask younger than
+# this is left to the room), ASKSUP_STATE (a directory; default a temporary one that is removed at exit, so the spend cap
+# then only lasts one run: set it for a cap that survives a restart), ASKSUP_TEST_DROP_TERMS (test knob).
+# Exit codes: 0 stopped by a signal, or --once / --dry-run finished; 1 usage or setup; 2 run from inside a helper.
+# shellcheck disable=SC2329 # the stop functions are called from traps
+set -uo pipefail
+
+case "${1:-}" in
+  -h | --help) { echo "Usage: ask-supervisor [--once | --dry-run]"; sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; } ; exit 0 ;;
+esac
+
+orig_args=("$@")
+once=0
+dry=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once) once=1 ;;
+    --dry-run) dry=1 ;;
+    *) echo "ask-supervisor: unknown argument $1 (Usage: ask-supervisor [--once | --dry-run])" >&2; exit 1 ;;
+  esac
+  shift
+done
+say() { printf 'ask-supervisor: %s\n' "$*" >&2; }
+
+if [ "${ASKSUP_ACTIVE:-}" = 1 ]; then
+  say "refusing to run: ASKSUP_ACTIVE=1 means this is inside a helper this supervisor started, and a helper never starts a helper"
+  exit 2
+fi
+
+# ---------------------------------------------------------------------------------------------------------------------
+# the supervisor/worker split (#1099, as proto/scripts/integrator): bash 3.2 can lose a trapped signal that lands while the
+# shell expands a command substitution, so the loop runs in a child (ASKSUP_WORKER=1) and this small parent, which runs no
+# command substitution, only waits. A signal sets a flag; the parent then sends TERM to the worker once a second until it is
+# gone, so a TERM the worker lost is sent again. The worker stops by itself when this parent is gone (kill -9).
+# ---------------------------------------------------------------------------------------------------------------------
+sup_sig=0
+supervise() {
+  local wpid rc sp tries=0
+  ASKSUP_WORKER=1 ASKSUP_SUPERVISOR=$$ bash "$0" "$@" &
+  wpid=$!
+  trap 'sup_sig=1' INT TERM HUP
+  while kill -0 "$wpid" 2> /dev/null; do
+    if [ "$sup_sig" -eq 1 ]; then
+      tries=$((tries + 1))
+      if [ "$tries" -gt 60 ]; then kill -9 "$wpid" 2> /dev/null; else kill -TERM "$wpid" 2> /dev/null; fi
+      /bin/sleep 1 &
+      sp=$!
+      wait "$sp"
+    else
+      wait "$wpid"
+    fi
+  done
+  wait "$wpid"; rc=$?
+  return "$rc"
+}
+if [ "$dry" -eq 0 ] && [ "${ASKSUP_WORKER:-}" != 1 ]; then
+  supervise ${orig_args[@]+"${orig_args[@]}"}
+  exit $?
+fi
+sup_alive() { [ -z "${ASKSUP_SUPERVISOR:-}" ] || kill -0 "$ASKSUP_SUPERVISOR" 2> /dev/null; }
+
+# ---------------------------------------------------------------------------------------------------------------------
+# settings
+# ---------------------------------------------------------------------------------------------------------------------
+klatch="${ASKSUP_KLATCH:-klatch}"
+room="${ASKSUP_ROOM:-lobby}"
+candidates="${ASKSUP_CANDIDATES:-}"
+launch="${ASKSUP_LAUNCH:-}"
+poll="${ASKSUP_POLL_SECS:-15}"
+min_age="${ASKSUP_MIN_AGE_SECS:-60}"
+max_helpers="${ASKSUP_MAX_HELPERS:-1}"
+max_per_ask="${ASKSUP_MAX_PER_ASK:-1}"
+start_usd="${ASKSUP_START_USD:-2}"
+max_total="${ASKSUP_MAX_TOTAL_USD:-10}"
+helper_secs="${ASKSUP_HELPER_SECS:-3600}"
+pause="${ASKSUP_PAUSE_SECS:-30}"
+off_file="${ASKSUP_OFF_FILE:-$HOME/.klatch-ask-supervisor-off}"
+state_given=0; [ -n "${ASKSUP_STATE:-}" ] && state_given=1
+
+case "$room" in '' | *[!A-Za-z0-9._-]*) say "ASKSUP_ROOM must be a plain room name (letters, digits, dot, dash, underscore)"; exit 1 ;; esac
+[ -n "$candidates" ] || { say "set ASKSUP_CANDIDATES to the pre-issued helper member names (space separated); the human issues their credentials, never this process"; exit 1; }
+for c in $candidates; do
+  case "$c" in *[!A-Za-z0-9._-]*) say "ASKSUP_CANDIDATES: '$c' is not a plain member name"; exit 1 ;; esac
+done
+[ "$dry" -eq 1 ] || [ -n "$launch" ] || { say "set ASKSUP_LAUNCH to the command that starts a helper for \$ASKSUP_MEMBER (or use --dry-run)"; exit 1; }
+for v in "$poll" "$min_age" "$max_helpers" "$max_per_ask" "$helper_secs" "$pause"; do
+  case "$v" in '' | *[!0-9]*) say "the poll, age, helper, per-ask, time limit and pause settings must be whole numbers"; exit 1 ;; esac
+done
+[ "$poll" -ge 1 ] && [ "$max_helpers" -ge 1 ] && [ "$max_per_ask" -ge 1 ] && [ "$helper_secs" -ge 1 ] || { say "ASKSUP_POLL_SECS, ASKSUP_MAX_HELPERS, ASKSUP_MAX_PER_ASK and ASKSUP_HELPER_SECS must be 1 or more"; exit 1; }
+dec_re='^[0-9]+(\.[0-9]+)?$'
+for v in "$start_usd" "$max_total"; do
+  [[ $v =~ $dec_re ]] || { say "ASKSUP_START_USD and ASKSUP_MAX_TOTAL_USD must be numbers such as 2 or 0.5"; exit 1; }
+done
+
+if [ "$dry" -eq 1 ]; then
+  run="${ASKSUP_STATE:-/nonexistent-dry-run}" # read only: a dry run writes no state
+else
+  run="${ASKSUP_STATE:-$(mktemp -d "${TMPDIR:-/tmp}/ask-supervisor-run.XXXXXX")}" || { say "cannot make a state directory"; exit 1; }
+  mkdir -p "$run" || { say "cannot make $run"; exit 1; }
+  if [ -f "$run/lock" ] && other="$(cat "$run/lock" 2> /dev/null)" && [ -n "$other" ] && [ "$other" != "${ASKSUP_SUPERVISOR:-$$}" ] && kill -0 "$other" 2> /dev/null; then
+    say "another supervisor (pid $other) is using $run"; exit 1
+  fi
+  echo "${ASKSUP_SUPERVISOR:-$$}" > "$run/lock"
+  # a helper recorded as running by an earlier supervisor that is gone has no one waiting for it: mark it ended
+  for f in "$run"/h-*.pid; do
+    [ -f "$f" ] || continue
+    [ -f "${f%.pid}.exit" ] || echo lost > "${f%.pid}.exit"
+  done
+fi
+
+nap() { # seconds, in one second slices run in the background and waited for: a signal is acted on at once and a worker
+  # whose parent was killed notices within a second
+  local left="$1"
+  while [ "$left" -gt 0 ] && sup_alive; do
+    /bin/sleep 1 &
+    napid=$!
+    wait "$napid"
+    left=$((left - 1))
+  done
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# process control
+# ---------------------------------------------------------------------------------------------------------------------
+stopping=0; napid=""; dropped_terms=0; off_said=0
+kill_tree() { # pid: its children first, then it, all with kill -9
+  local c
+  for c in $(pgrep -P "$1" 2> /dev/null); do
+    pkill -9 -P "$c" 2> /dev/null
+    kill -9 "$c" 2> /dev/null
+  done
+  kill -9 "$1" 2> /dev/null
+}
+running_ids() { # ids of the helpers with a pid file and no exit file
+  local f
+  for f in "$run"/h-*.pid; do
+    [ -f "$f" ] || continue
+    [ -f "${f%.pid}.exit" ] || basename "${f%.pid}" .pid | sed 's/^h-//'
+  done
+}
+stop_helpers() {
+  local id
+  for id in $(running_ids); do
+    kill_tree "$(cat "$run/h-$id.pid")"
+    [ -f "$run/h-$id.exit" ] || echo stopped > "$run/h-$id.exit"
+  done
+}
+cleanup() {
+  [ "$stopping" -eq 1 ] && return
+  stopping=1
+  trap '' INT TERM HUP
+  [ -n "$napid" ] && kill -9 "$napid" 2> /dev/null
+  [ "$dry" -eq 1 ] && return
+  stop_helpers
+  rm -f "$run/lock"
+  [ "$state_given" -eq 1 ] || rm -rf "$run"
+}
+on_signal() {
+  [ "$stopping" -eq 1 ] && return # a repeated signal (the parent sends one a second) never cuts the cleanup short
+  # test knob: pretend the first N signals were lost, as bash 3.2 does; the parent must send them again
+  if [ "$dropped_terms" -lt "${ASKSUP_TEST_DROP_TERMS:-0}" ]; then dropped_terms=$((dropped_terms + 1)); return; fi
+  say "signal received; stopping the helpers it started"; cleanup; exit 0
+}
+trap on_signal INT TERM HUP
+trap 'cleanup' EXIT
+
+# ---------------------------------------------------------------------------------------------------------------------
+# one pass
+# ---------------------------------------------------------------------------------------------------------------------
+now_s() { date +%s; }
+is_candidate() { local c; for c in $candidates; do [ "$c" = "$1" ] && return 0; done; return 1; }
+tries_for() { # ask -> how many helpers were ever started for it
+  local n=0 f
+  for f in "$run"/h-"$1"-*.pid; do [ -f "$f" ] && n=$((n + 1)); done
+  echo "$n"
+}
+ask_running() { # ask -> 0 when a helper for it has not ended
+  local id
+  for id in $(running_ids); do case "$id" in "$1"-*) return 0 ;; esac; done
+  return 1
+}
+member_running() { # member -> 0 when that identity is running as a helper
+  local id
+  for id in $(running_ids); do [ "$(cat "$run/h-$id.member" 2> /dev/null)" = "$1" ] && return 0; done
+  return 1
+}
+member_tried() { # ask member -> 0 when that identity already ran for the ask
+  local f
+  for f in "$run"/h-"$1"-*.member; do [ -f "$f" ] && [ "$(cat "$f")" = "$2" ] && return 0; done
+  return 1
+}
+spent_now() { cat "$run/spent" 2> /dev/null || echo 0; }
+
+reap() { # report helpers that ended, kill the ones past their time limit
+  local id f now started code
+  now="$(now_s)"
+  for id in $(running_ids); do
+    started="$(cat "$run/h-$id.start" 2> /dev/null || echo "$now")"
+    if [ $((now - started)) -ge "$helper_secs" ]; then
+      say "helper $(cat "$run/h-$id.member") for ask #${id%-*} passed its time limit (${helper_secs}s); killed"
+      kill_tree "$(cat "$run/h-$id.pid")"
+      [ -f "$run/h-$id.exit" ] || echo timeout > "$run/h-$id.exit"
+    fi
+  done
+  for f in "$run"/h-*.exit; do
+    [ -f "$f" ] || continue
+    [ -f "${f%.exit}.reported" ] && continue
+    : > "${f%.exit}.reported"
+    code="$(cat "$f")"
+    id="$(basename "$f" .exit)"; id="${id#h-}"
+    say "helper $(cat "$run/h-$id.member" 2> /dev/null) for ask #${id%-*} ended ($code)"
+  done
+}
+
+start_helper() { # ask member
+  local ask="$1" member="$2" n id
+  n=$(($(tries_for "$ask") + 1)); id="$ask-$n"
+  echo "$member" > "$run/h-$id.member"
+  now_s > "$run/h-$id.start"
+  (
+    env ASKSUP_ROOM="$room" ASKSUP_ASK="$ask" ASKSUP_MEMBER="$member" ASKSUP_ACTIVE=1 bash -c "$launch" < /dev/null >> "$run/h-$id.log" 2>&1
+    echo "$?" > "$run/h-$id.exit.tmp"
+    [ -f "$run/h-$id.exit" ] || mv "$run/h-$id.exit.tmp" "$run/h-$id.exit"
+  ) &
+  echo $! > "$run/h-$id.pid"
+}
+
+ask_re='^#([0-9]{1,9}) ([A-Za-z0-9._-]{1,100}) unclaimed ([0-9]{1,9})s'
+pass() {
+  local line ask sender age cand verdict why now spent last running nstarts=0 out
+  reap
+  if [ -e "$off_file" ]; then
+    [ "$off_said" -eq 1 ] || say "the off switch is on ($off_file exists): no helper is started"
+    off_said=1; return 0
+  fi
+  off_said=0
+  if ! out="$("$klatch" asks "$room" 2> /dev/null)"; then say "klatch asks $room failed; will try again"; return 0; fi
+  now="$(now_s)"
+  running="$(running_ids | grep -c '' | tr -d ' ')"
+  last="$(cat "$run/last-start" 2> /dev/null || echo 0)"
+  spent="$(spent_now)"
+  while IFS= read -r line; do
+    [[ $line =~ $ask_re ]] || continue
+    ask="${BASH_REMATCH[1]}"; sender="${BASH_REMATCH[2]}"; age="${BASH_REMATCH[3]}"
+    [ "$age" -ge "$min_age" ] || continue
+    is_candidate "$sender" && continue # no helper starts a helper
+    ask_running "$ask" && continue
+    if [ "$(tries_for "$ask")" -ge "$max_per_ask" ]; then continue; fi
+    if [ "$running" -ge "$max_helpers" ]; then say "ask #$ask: $running helper(s) running, the most at once (ASKSUP_MAX_HELPERS); not starting another"; break; fi
+    if [ $((now - last)) -lt "$pause" ]; then say "ask #$ask: the last start was $((now - last))s ago, the pause between starts is ${pause}s; waiting"; break; fi
+    if ! awk -v s="$spent" -v c="$start_usd" -v m="$max_total" 'BEGIN { exit !(s + c <= m) }'; then
+      say "ask #$ask: starting a helper would pass the spend cap (spent $spent + $start_usd > $max_total USD, ASKSUP_MAX_TOTAL_USD); not starting"; break
+    fi
+    for cand in $candidates; do
+      member_running "$cand" && continue
+      member_tried "$ask" "$cand" && continue
+      # the read-only core check: the first line is `yes`, or `no` followed by a `rule: reason` line per blocker
+      if ! verdict="$("$klatch" could-answer "$room" "$ask" "$cand" 2> /dev/null)"; then
+        say "ask #$ask: could-answer for $cand failed (are you the human? a plain member is refused); not starting $cand"; continue
+      fi
+      if [ "$(printf '%s\n' "$verdict" | head -1)" = yes ]; then
+        if [ "$dry" -eq 1 ]; then
+          say "would start $cand for ask #$ask (could-answer: yes)"
+        else
+          say "starting $cand for ask #$ask (could-answer: yes)"
+          start_helper "$ask" "$cand"
+          spent="$(awk -v s="$spent" -v c="$start_usd" 'BEGIN { print s + c }')"
+          echo "$spent" > "$run/spent"; echo "$now" > "$run/last-start"
+        fi
+        running=$((running + 1)); last="$now"; nstarts=$((nstarts + 1))
+        break
+      fi
+      why="$(printf '%s\n' "$verdict" | sed -n '2,$p' | tr '\n' ';' | cut -c1-300)"
+      say "ask #$ask: $cand could not answer: ${why:-no reason given}"
+    done
+  done <<< "$out"
+  return 0
+}
+
+if [ "$dry" -eq 1 ]; then pass; exit 0; fi
+
+say "watching room $room for unanswered asks (candidates: $candidates; at most $max_helpers at once; state $run)"
+while sup_alive; do
+  pass
+  if [ "$once" -eq 1 ]; then
+    while sup_alive && [ -n "$(running_ids)" ]; do nap 1; reap; done
+    exit 0
+  fi
+  nap "$poll"
+done
+exit 0

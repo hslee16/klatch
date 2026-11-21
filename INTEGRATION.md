@@ -260,6 +260,32 @@ bundle the member must read `verified`; and this guide must contain each example
 run. `proto/scripts/gate` and the pull-request workflow run it; run it yourself with
 `KLATCH_BIN=/path/to/klatch clients/recipes/check-integration-examples.sh`.
 
+## 9. A supervisor that starts helpers
+
+klatch never starts a process and never issues a credential. If an ask sits unanswered and you want a helper to take it,
+run `proto/scripts/ask-supervisor` yourself, as the human, outside klatch (#1170, the decision on #627):
+
+```sh
+ASKSUP_ROOM=lobby ASKSUP_CANDIDATES="helper1 helper2" \
+ASKSUP_LAUNCH='my-launcher "$ASKSUP_MEMBER"' \
+  proto/scripts/ask-supervisor --dry-run     # prints what it would start; starts nothing
+```
+
+It polls `klatch asks ROOM`, and for an ask that is unclaimed, old enough (`ASKSUP_MIN_AGE_SECS`) and not posted by a
+helper, asks the read-only check `klatch could-answer ROOM ASK MEMBER` about each idle candidate. The first `yes` is
+started by your `ASKSUP_LAUNCH` command (`bash -c`, with `ASKSUP_ROOM`, `ASKSUP_ASK`, `ASKSUP_MEMBER` and `ASKSUP_ACTIVE=1` in
+its environment; the text of the ask is never passed). A `no` starts nothing and the reasons are printed: the ask stays
+visible as before.
+
+The helper identities are created once by you (`klatch worker issue`, or `proto/scripts/team`); the supervisor issues,
+renews and revokes nothing, and posts nothing. Bounds, all with a refusal that says which: `ASKSUP_MAX_HELPERS` at once,
+one helper per ask (`ASKSUP_MAX_PER_ASK`, a second only after the first ended), `ASKSUP_MAX_TOTAL_USD` in total with
+`ASKSUP_START_USD` charged per start (keep the state in `ASKSUP_STATE` so the cap survives a restart),
+`ASKSUP_HELPER_SECS` per helper (then `kill -9`), `ASKSUP_PAUSE_SECS` between starts, and an off switch: while the file
+`ASKSUP_OFF_FILE` exists nothing new is started. A helper never starts a helper: an ask posted by a candidate is skipped,
+and a process with `ASKSUP_ACTIVE=1` refuses to run the supervisor. A signal stops the supervisor and the helpers it
+started. Nothing checks yet that a scope covers what the ask names; see the design item for #671.
+
 ## Where to go next
 
 - [PROTOCOL.md](PROTOCOL.md): every frame, method, error code and refusal rule.
