@@ -121,3 +121,73 @@ fn a_blocked_recipient_is_not_pulled_into_the_room() {
         "admin-block"
     );
 }
+
+/// #1196: every member-reachable reader of a room refuses a third member of a direct message with `dm-members`.
+#[test]
+fn a_third_member_reads_a_dm_through_no_reader() {
+    let g = open();
+    let (room, _) = g.dm(&alice(), "bob", "the secret", None).unwrap();
+    // a fresh third member for each reader, so one refusal never trips the breaker for the next
+    let c = |n: &str| Principal::unattributed(n);
+    let mut sub = crate::gateway::Subscription::new(&room, 0, 10);
+    let results: Vec<(&str, Option<crate::domain::Error>)> = vec![
+        ("tail", g.tail(&c("c1"), &room, (0, 10)).err()),
+        ("tail_scan", g.tail_scan(&c("c2"), &room, (0, 10)).err()),
+        ("head", g.head(&c("c3"), &room).err()),
+        ("read", g.read(&c("c4"), &room, false).err()),
+        ("wait_poll", g.wait_poll(&c("c5"), &room).err()),
+        ("wait_seen", g.wait_seen(&c("c6"), &room, 1).err()),
+        (
+            "history",
+            g.history(&c("c7"), &room, crate::gateway::HistoryRange::default())
+                .err(),
+        ),
+        ("open_asks", g.open_asks(&c("c8"), &room).err()),
+        ("stuck", g.stuck(&c("c9"), &room).err()),
+        ("board", g.board(&c("c10"), &room).err()),
+        ("receipt", g.receipt(&c("c11"), &room, 1).err()),
+        ("subscription", sub.poll(&g, &c("c12"), 10).err()),
+        (
+            "request_crossing",
+            g.request_crossing(&c("c13"), &room, 1, "town").err(),
+        ),
+    ];
+    for (name, err) in results {
+        assert_eq!(
+            rule_of(err.unwrap_or_else(|| panic!("{name} allowed a third member"))),
+            "dm-members",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn the_two_members_still_tail_their_dm_and_a_plain_room_is_unchanged() {
+    let g = open();
+    let (room, _) = g.dm(&alice(), "bob", "hello", None).unwrap();
+    assert_eq!(g.tail(&alice(), &room, (0, 10)).unwrap().len(), 1);
+    assert_eq!(g.tail(&bob(), &room, (0, 10)).unwrap().len(), 1);
+    let carol = Principal::unattributed("carol");
+    g.join(&alice(), "town").unwrap();
+    g.post(&alice(), "town", "hi").unwrap();
+    assert_eq!(g.tail(&carol, "town", (0, 10)).unwrap().len(), 1);
+}
+
+#[test]
+fn the_admin_path_reads_a_dm_and_a_member_does_not_have_it() {
+    let g = open();
+    let (room, _) = g.dm(&alice(), "bob", "hello", None).unwrap();
+    // the human's floor act (export) reads any room through its own named path
+    assert_eq!(
+        g.admin_tail_scan(&admin(), &room, (0, 10)).unwrap().0.len(),
+        1
+    );
+    // on a members' gateway the admin path is an admin act: a plain member is refused it, a dm or not
+    let m = open().for_members();
+    let (room, _) = m.dm(&alice(), "bob", "hello", None).unwrap();
+    let carol = Principal::unattributed("carol");
+    assert_eq!(
+        rule_of(m.admin_tail_scan(&carol, &room, (0, 10)).unwrap_err()),
+        "admin-scope"
+    );
+}
