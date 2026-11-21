@@ -236,7 +236,7 @@ fn the_stop_hook_alone_renews_too() {
 #[test]
 fn hook_renewal_never_passes_the_cap_and_is_audited_without_the_token() {
     let (g, t, who) = worker(Some(1_000));
-    t.set(1_900);
+    t.set(1_500);
     g.sign_of_life(&who).unwrap();
     assert_eq!(expires(&g), 2_000);
     assert_eq!(renewals(&g), 1);
