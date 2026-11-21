@@ -152,7 +152,10 @@ fn a_child_with_a_name_is_its_own_member_and_siblings_do_not_hide_each_others_po
     );
     script += &format!("{reader}; true");
     let (_, text) = finish(session(&h, &fake, &script));
-    assert!(text.contains("from-one"), "sibling two never saw one: {text}");
+    assert!(
+        text.contains("from-one"),
+        "sibling two never saw one: {text}"
+    );
     let who = h.ok("obs", &["who", "lobby", "--all"]);
     assert!(who.contains("sub-one") && who.contains("sub-two"), "{who}");
     assert!(!who.contains("parent"), "the parent member appeared: {who}");
