@@ -1,0 +1,1 @@
+| `init`, `consent`, `convention`, `doctor`, `sessions` | none: they edit the human's own settings files or read the installation; none opens the store for a member | no member operation; `tests/init.rs`, `tests/doctor.rs` |

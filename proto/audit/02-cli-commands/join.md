@@ -1,0 +1,1 @@
+| `join` | `join`, or `join_with_harness` when the walk verified a Claude Code session (#877) | GUARDED `join`; plus the room's harness requirement, with the harness taken only from the verified session (never from the caller), and every other caller the generic floor (Codex too: no registry record to match, #884) |

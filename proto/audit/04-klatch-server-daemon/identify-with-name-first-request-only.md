@@ -1,0 +1,1 @@
+| `identify` with `name` (first request only) | the typed name, Unattributed | `LocalIdentity` over `DeclaredName`: the `KLATCH_NAME` rules, reserved and malformed names refused without echo; `tests/daemon.rs` |

@@ -6,14 +6,10 @@
 # Only files whose conflicts were always "both sides added lines" are listed, never a file with code bodies where
 # a line edit matters. A union merge cannot tell an added line from two edits of the same line (it keeps both), so
 # each file has a check that catches the duplicate:
-#   - AUTHZ-AUDIT.md rows are unique by operation (proto/klatch/tests/authz_audit.rs)
 #   - a duplicate `mod`, `pub use` or scenario entry does not compile or fails the unique-name test
 #     (proto/klatch-bench/src/lib.rs, every_scenario_has_a_unique_name_an_origin_and_a_known_layer)
 # proto/scripts/test-merge-union.sh proves both halves. Add a file here only with its conflict history in the
 # commit message and its duplicate check.
-
-# table rows; 4 hand-resolved conflicts in 3 days (rows added to the same table, and #1028/#1029 on the same rows)
-proto/AUTHZ-AUDIT.md merge=union
 
 # `mod x;` and `pub use x::{..};` registries; 2 conflicts in 3 days, 6 commits touching it
 proto/klatch/src/domain/mod.rs merge=union

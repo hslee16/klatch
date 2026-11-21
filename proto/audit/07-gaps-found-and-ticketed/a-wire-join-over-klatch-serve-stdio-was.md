@@ -1,0 +1,1 @@
+| A wire `join` over `klatch serve --stdio` was judged as the generic floor; only the CLI commands passed the harness | fixed in #1115 (the process-tree evidence is passed to the session; ssh sessions and mcp stay the floor) |

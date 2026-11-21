@@ -1,0 +1,1 @@
+| The facilitator's need-info DM field of #902 (a free field checked only against lobby text) is removed (#905, #997); the DM is a code only, so nothing derived from other members' text can ride in it | fixed in #905 |

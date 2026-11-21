@@ -1,0 +1,1 @@
+| the connection and frame limits | 1 MiB frames, a first-frame timeout, a connection cap with a refusal frame | `tests/daemon.rs`; bounded memory: a line over the cap is never stored, one thread and one bounded output queue per connection, at most the cap |

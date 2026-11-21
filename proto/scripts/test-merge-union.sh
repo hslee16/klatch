@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016
 # (the single-quoted strings hold literal backticks, markdown cells; nothing is meant to expand)
-# Tests for the union merge attributes in the root .gitattributes (#1065). Real temp git repos (nothing is mocked):
-# two branches that each add a line at the same place of a file with `merge=union` merge cleanly and keep both
-# lines; two branches that edit the SAME existing row are merged by the driver into two copies of it, and the
-# duplicate-row check (the awk below mirrors proto/klatch/tests/authz_audit.rs `duplicate_rows`) fails on that
-# result. A file without the attribute still conflicts. Nothing here touches the network, this repo's history or a
+# Tests for the union merge attributes in the root .gitattributes (#1065) and for the audit fragments (#1068). Real
+# temp git repos (nothing is mocked): two branches that each add a line at the same place of a file with
+# `merge=union` merge cleanly and keep both lines; a file without the attribute still conflicts. The audit is not
+# union-merged any more: one file per row under proto/audit/, assembled by proto/scripts/authz-audit. Nothing here touches the network, this repo's history or a
 # real home. The union driver is built in to git, so no config is set in the temp repos.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -41,45 +40,42 @@ newrepo() {
 add_after() { awk -v at="$2" -v new="$3" '{ print } $0 == at { print new }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"; }
 commit_all() { git -C "$r" add -A && git -C "$r" commit -q -m "$1"; }
 
-audit_base='# Audit
+# The audit is fragment files (#1068), not a union-merged table: one file per row under proto/audit/<section>/, so
+# no attribute is needed and two edits of one row are a real conflict a human resolves.
+fragments() {
+  mkdir -p "$r/proto/audit/01-wire-methods" "$r/proto/scripts"
+  printf '# Audit\n\n## Wire methods\n\n| Wire method | Proof |\n|---|---|\n' > "$r/proto/audit/01-wire-methods/_head.md"
+  printf '| `post` | test_post |\n' > "$r/proto/audit/01-wire-methods/post.md"
+  printf '| `claim` | test_claim |\n' > "$r/proto/audit/01-wire-methods/claim.md"
+  cp "$here/authz-audit" "$r/proto/scripts/authz-audit"
+  printf 'proto/AUTHZ-AUDIT.md\n' > "$r/.gitignore"
+}
+assembled() { AUTHZ_AUDIT_FRAGMENTS="$r/proto/audit" AUTHZ_AUDIT_TARGET="$r/proto/AUTHZ-AUDIT.md" bash "$r/proto/scripts/authz-audit" "$@"; }
 
-## Wire methods
-
-| Wire method | Gateway call | Proof |
-|---|---|---|
-| `post` | `post` | test_post |
-| `claim` | `claim` | test_claim |
-| `who` | `who` | test_who |
-
-## Other
-
-| `post` | same key, another section | t |
-'
-
-# 1. two branches add a different row at the same place (the end of the table): clean, both rows kept
+# 1. two branches add a different row: different files, so the merge is clean and the assembled document has both once
 newrepo add
-printf '%s' "$audit_base" > "$r/proto/AUTHZ-AUDIT.md"; commit_all base
-git -C "$r" checkout -q -b a; add_after "$r/proto/AUTHZ-AUDIT.md" '| `who` | `who` | test_who |' '| `alpha` | `alpha` | test_alpha |'; commit_all a
-git -C "$r" checkout -q main; git -C "$r" checkout -q -b b; add_after "$r/proto/AUTHZ-AUDIT.md" '| `who` | `who` | test_who |' '| `beta` | `beta` | test_beta |'; commit_all b
-if git -C "$r" merge -q --no-edit a > "$work/out" 2>&1 \
-  && grep -q '^| `alpha`' "$r/proto/AUTHZ-AUDIT.md" && grep -q '^| `beta`' "$r/proto/AUTHZ-AUDIT.md" \
-  && ! grep -q '^<<<<<<<' "$r/proto/AUTHZ-AUDIT.md" && [ -z "$(dup_rows "$r/proto/AUTHZ-AUDIT.md")" ]; then
-  ok "AUTHZ-AUDIT.md: two branches each adding a row at the same place merge cleanly and keep both rows"
+fragments; assembled; commit_all base
+git -C "$r" checkout -q -b a; printf '| `alpha` | test_alpha |\n' > "$r/proto/audit/01-wire-methods/alpha.md"; assembled; commit_all a
+git -C "$r" checkout -q main; git -C "$r" checkout -q -b b; printf '| `beta` | test_beta |\n' > "$r/proto/audit/01-wire-methods/beta.md"; commit_all b
+if git -C "$r" merge -q --no-edit a > "$work/out" 2>&1 && assembled \
+  && [ "$(grep -c '^| `alpha`' "$r/proto/AUTHZ-AUDIT.md")" -eq 1 ] && [ "$(grep -c '^| `beta`' "$r/proto/AUTHZ-AUDIT.md")" -eq 1 ] \
+  && [ -z "$(dup_rows "$r/proto/AUTHZ-AUDIT.md")" ] && assembled --check > /dev/null; then
+  ok "audit fragments: two branches each adding a row merge cleanly and the assembled document has each row once"
 else bad "audit add/add: $(cat "$work/out")"; fi
 
-# 2. two branches edit the SAME existing row: the union driver keeps both versions, and the duplicate check fails
+# 2. two branches edit the SAME row file: a real conflict, never a silent duplicate
 newrepo edit
-printf '%s' "$audit_base" > "$r/proto/AUTHZ-AUDIT.md"; commit_all base
-git -C "$r" checkout -q -b a; sed -i.bak 's/test_claim/test_claim_a/' "$r/proto/AUTHZ-AUDIT.md"; rm -f "$r/proto/AUTHZ-AUDIT.md.bak"; commit_all a
-git -C "$r" checkout -q main; git -C "$r" checkout -q -b b; sed -i.bak 's/test_claim/test_claim_b/' "$r/proto/AUTHZ-AUDIT.md"; rm -f "$r/proto/AUTHZ-AUDIT.md.bak"; commit_all b
-git -C "$r" merge -q --no-edit a > "$work/out" 2>&1; rc=$?
-dups="$(dup_rows "$r/proto/AUTHZ-AUDIT.md")"
-if [ "$rc" -eq 0 ] && grep -q 'test_claim_a' "$r/proto/AUTHZ-AUDIT.md" && grep -q 'test_claim_b' "$r/proto/AUTHZ-AUDIT.md" \
-  && [ "$dups" = 'Wire methods|`claim`' ]; then
-  ok "AUTHZ-AUDIT.md: two edits of one row are not merged silently into a pass: the duplicate-row check finds the row twice"
-else bad "audit edit/edit rc=$rc dups=[$dups] $(cat "$work/out")"; fi
-# the same key in another section is not a duplicate (the base has one)
-if [ -z "$(dup_rows "$work/add/proto/AUTHZ-AUDIT.md")" ]; then ok "the duplicate-row check allows the same key in two sections"; else bad "section keys"; fi
+fragments; assembled; commit_all base
+git -C "$r" checkout -q -b a; printf '| `claim` | test_claim_a |\n' > "$r/proto/audit/01-wire-methods/claim.md"; commit_all a
+git -C "$r" checkout -q main; git -C "$r" checkout -q -b b; printf '| `claim` | test_claim_b |\n' > "$r/proto/audit/01-wire-methods/claim.md"; commit_all b
+if ! git -C "$r" merge -q --no-edit a > "$work/out" 2>&1 && grep -q '^<<<<<<<' "$r/proto/audit/01-wire-methods/claim.md"; then
+  ok "audit fragments: two edits of one row conflict instead of leaving the row twice"
+else bad "audit edit/edit did not conflict: $(cat "$work/out")"; fi
+
+# the generated file is checked (it is not committed, so two PRs never both change it): a hand edit of it is found
+newrepo drift
+fragments; assembled; printf 'hand edit\n' >> "$r/proto/AUTHZ-AUDIT.md"
+if ! assembled --check > /dev/null 2>&1; then ok "authz-audit --check fails when the generated file was edited by hand"; else bad "drift not found"; fi
 
 # 3. the registries: `mod x;` lines and the scenario list, two branches adding at the same place
 for f in proto/klatch/src/domain/mod.rs proto/klatch-bench/src/scenarios/mod.rs; do
@@ -111,8 +107,8 @@ done
 if [ -n "$listed" ] && [ -z "$missing" ] && [ -z "$unset_attr" ]; then ok ".gitattributes: every merge=union path exists and git applies the driver ($(echo "$listed" | wc -w | tr -d ' ') files)"
 else bad ".gitattributes listed=[$listed] missing=[$missing] unset=[$unset_attr]"; fi
 
-# 6. the real audit has no duplicate row now
-if [ -z "$(dup_rows "$repo/proto/AUTHZ-AUDIT.md")" ]; then ok "the real AUTHZ-AUDIT.md has no duplicate row"; else bad "real audit dups: $(dup_rows "$repo/proto/AUTHZ-AUDIT.md")"; fi
+# 6. the real fragments assemble
+if AUTHZ_AUDIT_TARGET="$work/real-audit.md" "$here/authz-audit" && [ -z "$(dup_rows "$work/real-audit.md")" ] && [ "$(wc -l < "$work/real-audit.md")" -gt 200 ]; then ok "the real fragments assemble to a document with no duplicate row"; else bad "real fragments do not assemble cleanly"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all union merge tests passed"; else echo "$fails union merge test(s) failed"; exit 1; fi

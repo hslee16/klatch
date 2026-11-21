@@ -1,0 +1,1 @@
+| `role` | `my_role` | OWN_RECORD (#1090; wire method `my_role` #1110, `session/tests/my_role_wire.rs`): the caller's own role as one fixed word, no member parameter, no audit row; refused after the credential ends (`AFTER_END`); `gateway/tests/my_role.rs` |

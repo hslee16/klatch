@@ -1,0 +1,1 @@
+| Policy read | `rate-limit --list` (`admin_rate_limits`, action `rate-limit-list`, #1023) | guard (`Admin`, a read), not a floor (`ForbidFloors` allows it), no audit row, outside the admin agent allowlist (`admin-scope`); terminal only. Proof: GUARDED `admin_rate_limits`; `tests/rate_limit.rs` (`listing_the_limits_is_a_read_so_it_is_not_a_floor_and_is_not_audited`) |

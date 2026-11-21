@@ -1,0 +1,1 @@
+| `receipt` | `receipt` | GUARDED `receipt`; refuses anyone but the sender of the message (`receipt-sender-only`), which is what lets it return per-recipient `shown` and `read` flags (cursors, #675) to that one member; no message text is returned |

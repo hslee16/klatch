@@ -1,0 +1,1 @@
+| `my_role` | `my_role` | none (OWN_RECORD, no guard, like `my_crossings`) | OWN_RECORD `my_role` (#1110): no param is read, the answer is the transport's principal's own role word or null; `session/tests/my_role_wire.rs` |

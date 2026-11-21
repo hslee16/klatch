@@ -1,0 +1,1 @@
+| the limits | 16 KiB headers, 1 MiB bodies (413 before the body is read), a 5 second request deadline, a connection cap with `503`, a bounded inbox per session (`429`), the session's bounded output queue and stall limit (#147) | `tests/http_wire.rs`; a client that goes away ends its session at once |

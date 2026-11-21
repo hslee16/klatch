@@ -1,0 +1,1 @@
+| A process with no key bundle still acts under a typed or discovered name, `Unattributed`, by design for hand-opened sessions (DESIGN section 32 item 13); nothing is trusted for it beyond what an unattributed name earns | #161 (remaining), #152 |

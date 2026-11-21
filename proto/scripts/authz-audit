@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Assemble proto/AUTHZ-AUDIT.md from the fragments under proto/audit/ (#1068).
+#
+#   proto/scripts/authz-audit           write proto/AUTHZ-AUDIT.md
+#   proto/scripts/authz-audit --check   exit 1 if the file is not what the fragments assemble to (writes nothing)
+#
+# Layout: one directory per section (name order is document order). A section directory holds `_head.md` (the
+# heading, prose and the table header), one file per table row (`<operation>.md`, a single row line; row files are
+# taken in file-name order) and `_tail.md` (prose after the table). Either underscore file may be absent. Two PRs
+# that add or change different rows touch different files, so they never conflict. The assembly is byte-stable
+# (`LC_ALL=C` order, no timestamps) and is the same as `assemble()` in proto/klatch/tests/authz_audit.rs.
+set -euo pipefail
+export LC_ALL=C
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+proto="$(cd "$here/.." && pwd)"
+frag="${AUTHZ_AUDIT_FRAGMENTS:-$proto/audit}"
+target="${AUTHZ_AUDIT_TARGET:-$proto/AUTHZ-AUDIT.md}"
+
+assemble() {
+  local dir f
+  for dir in "$frag"/*/; do
+    [ -f "$dir/_head.md" ] && cat "$dir/_head.md"
+    for f in "$dir"*.md; do
+      [ -e "$f" ] || continue
+      case "$(basename "$f")" in _*) continue ;; esac
+      cat "$f"
+    done
+    [ -f "$dir/_tail.md" ] && cat "$dir/_tail.md"
+  done
+  return 0
+}
+
+case "${1:-}" in
+  "")
+    assemble > "$target.tmp"
+    mv "$target.tmp" "$target"
+    ;;
+  --check)
+    if assemble | cmp -s - "$target"; then
+      echo "AUTHZ-AUDIT.md is current"
+    else
+      echo "AUTHZ-AUDIT.md is not what proto/audit/ assembles to: run proto/scripts/authz-audit and commit the result" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: authz-audit [--check]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,1 @@
+| The own-record gateway methods never reached `check_guard`, so a verified principal whose credential ended could still write its own record | fixed in #835 (`check_own_record_live`); `release_all`, `record_hook_run` for `SessionEnd` and `end_credential` stay allowed after the end, each with its reason in `AFTER_END` |

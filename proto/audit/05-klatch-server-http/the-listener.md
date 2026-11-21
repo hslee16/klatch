@@ -1,0 +1,1 @@
+| the listener | `127.0.0.1` or `::1` only | `loopback::bind_loopback` refuses every other address, named, before the store is opened; the scan test `tests/no_network.rs` (one `TcpListener::bind`; `wire_http.rs` names no socket type) |

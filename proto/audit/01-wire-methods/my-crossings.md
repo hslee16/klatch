@@ -1,0 +1,1 @@
+| `my_crossings` | `my_crossings` | none (OWN_RECORD, no guard, like `refusals`) | OWN_RECORD `my_crossings` (#961): `limit` is the only param, the rows are the transport's principal's own (the requester of the queue row), no param names another member; ids, pointers, state and a fixed sentence, never text; `session/tests/crossings_wire.rs` |
