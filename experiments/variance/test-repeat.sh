@@ -116,4 +116,13 @@ printf '#!/usr/bin/env bash\nexit 7\n' > "$work/crash.sh"; chmod +x "$work/crash
 out="$(python3 "$repeat" --runs 2 -- "$work/crash.sh" 2>&1)"
 case "$out" in *"failures: 2 of 2"*) ok "crashes are counted and the loop continues";; *) bad "crash report: $out";; esac
 
+# scenario-specific metrics (adoption, message counts) get their own lines when an agent reports them (#1194)
+cat > "$work/extra.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo '{"agents":{"exchange":{"adoption":1,"lobby_messages":4,"dm_messages":8,"reply_latency_s":2.5,"outcome":"ok"}}}'
+FAKE
+chmod +x "$work/extra.sh"
+out="$(python3 "$repeat" --runs 2 -- "$work/extra.sh" 2>&1)"
+case "$out" in *"adoption"*"mean 1.00"*"dm_messages"*"mean 8.00"*"reply_latency_s"*"mean 2.50"*) ok "adoption and message counts are reported";; *) bad "extra metrics: $out";; esac
+
 if [ "$fails" -eq 0 ]; then echo "all passed"; exit 0; else echo "$fails failed"; exit 1; fi

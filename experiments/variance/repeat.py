@@ -34,7 +34,9 @@ import subprocess
 import sys
 import tempfile
 
-METRICS = ["turns", "tokens", "cost_usd", "duration_s"]
+# adoption, lobby_messages, dm_messages and reply_latency_s come from scenario-specific results such as
+# experiments/dm-adoption (#1194); an agent entry without them simply has no line for them.
+METRICS = ["turns", "tokens", "cost_usd", "duration_s", "adoption", "lobby_messages", "dm_messages", "reply_latency_s"]
 
 
 def normalise_claude(obj):
