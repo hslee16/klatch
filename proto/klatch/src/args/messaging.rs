@@ -58,11 +58,24 @@ pub(crate) enum MessagingCmd {
         #[arg(long, requires = "kind")]
         payload: Option<String>,
     },
-    /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer
-    #[command(display_order = 3)]
-    Ask { room: String, text: Vec<String> },
+    /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer.
+    /// `klatch ask --to MEMBER TEXT` asks one member privately instead: the ask is a `seeking:` in your dm with
+    /// them (#1189), seen only by the two of you, and the lobby hears nothing
+    #[command(
+        display_order = 3,
+        override_usage = "klatch ask <ROOM> [TEXT]...\n       klatch ask --to <MEMBER> [TEXT]..."
+    )]
+    Ask {
+        /// With --to: the text. Otherwise the room first, then the text
+        args: Vec<String>,
+        /// Ask this member privately, in your dm with them; no room is named. They answer with
+        /// `klatch answer dm:YOU N TEXT`
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// Answer an open ask in one call: claims `ask:<N>`, posts `answer to #N: <text>`, releases the claim (#241). If
-    /// another member holds the claim it says so and posts nothing
+    /// another member holds the claim it says so and posts nothing. ROOM may be `dm:MEMBER` (or the dm room name) to
+    /// answer a private ask (#1189)
     #[command(display_order = 4)]
     Answer {
         room: String,
