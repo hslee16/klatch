@@ -52,6 +52,24 @@ fn peek_leaves_messages_unread() {
 }
 
 #[test]
+fn count_reports_the_unread_total_and_marks_nothing_read() {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    assert_eq!(h.ok("alice", &["read", "r", "--count"]).trim(), "0");
+    h.ok("bob", &["post", "r", "one"]);
+    h.ok("bob", &["post", "r", "two"]);
+    assert_eq!(h.ok("alice", &["read", "r", "--count"]).trim(), "2");
+    assert_eq!(
+        h.ok("alice", &["read", "r", "--count"]).trim(),
+        "2",
+        "a count must not advance the cursor"
+    );
+    let out = h.ok("alice", &["read", "r"]);
+    assert!(out.contains("] one") && out.contains("] two"), "got: {out}");
+    assert_eq!(h.ok("alice", &["read", "r", "--count"]).trim(), "0");
+}
+
+#[test]
 fn who_lists_members() {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
