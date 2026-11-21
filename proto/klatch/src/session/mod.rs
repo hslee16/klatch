@@ -276,6 +276,7 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
                 if self.fixed_member
                     && let Some(field) = fixed::identity_claim(&method, &params)
                 {
+                    self.gateway.note_member_fixed(self.who);
                     return out.send_all(&frames::failure(id, &member_fixed_refusal(&field)));
                 }
                 let call = Call {

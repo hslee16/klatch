@@ -102,6 +102,11 @@ does not start if it cannot open the store. SIGTERM or SIGINT close the sessions
   verified, checked as a key bundle is; a bad one ends the connection.
 - **Limits.** 1 MiB frames, a 10 second first-frame timeout (`--first-frame-secs`), 32 concurrent connections
   (`--max-connections`; the excess gets a `daemon.connections` refusal frame).
-- **Not yet.** The client libraries cannot connect to the socket (#1095); a connection carries no sealed-label keys and
-  joins as the generic harness floor (#1096). The tests are in `tests/daemon.rs` (the daemon as a child process, a temp
-  store, scripted frames) and the design is `design/items/102-daemon-socket.md`.
+- **Client libraries.** The Python, TypeScript and Rust clients connect to the socket with a path and an identity (#1095):
+  `Client.connect_socket(path, name=...)` (Python), `Client.connectSocket(path, { name })` (TypeScript),
+  `Client::connect_socket(&path, &Identity::name(..))` (Rust, feature `client-socket`); a credential is `member` and
+  `token`. See `clients/README.md`.
+- **Not yet.** A connection carries no sealed-label keys and joins as the generic harness floor (#1096). The tests are in
+  `tests/daemon.rs` (the daemon as a child process, a temp store, scripted frames) and `tests/client_socket.rs` (the Rust
+  client and its conformance scenario over the socket); the design is `design/items/102-daemon-socket.md` and
+  `design/items/1095-client-socket-connect.md`.

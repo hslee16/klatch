@@ -55,6 +55,10 @@ test-clock = []
 # other feature (no gzip, no proxy, no platform verifier, no cookies, no json). OFF by default and not in `cli` or
 # `client`, so the shipped binary, the wheels and the npm package do not link an HTTP client.
 jev-http = ["client", "dep:ureq"]
+# The Rust client's connect to the klatch-server daemon over a Unix socket (`Client::connect_socket`, #1095): one file,
+# `src/client/socket.rs`, naming `UnixStream` and nothing else. OFF by default and not in `cli` or `client`, so the
+# shipped `klatch` binary contains no socket code; a Rust integrator asks for it with `features = ["client-socket"]`.
+client-socket = ["client"]
 
 [lints.rust]
 # cfg(kani) is set by `cargo kani` only (proto/scripts/kani); cfg(shuttle) by RUSTFLAGS in proto/scripts/shuttle only
