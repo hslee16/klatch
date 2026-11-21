@@ -1,0 +1,1 @@
+- Jev screened routing advice (`klatch::jev::facilitate::advise_route`): one request asks the route question and the noul screen, label gated, and can only narrow or pick among candidates the rules already allow; not yet called by the facilitator loop. No new wire method or command.
