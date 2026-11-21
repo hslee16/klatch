@@ -25,6 +25,11 @@
 #                          and the ask is still open, and then another identity is tried first
 #   ASKSUP_START_USD       what one start is charged against the cap, USD (default 2; set it to the helper's own budget)
 #   ASKSUP_MAX_TOTAL_USD   the most the supervisor may commit in total, kept in ASKSUP_STATE (default 10)
+#   measured cost (#1177)  every helper gets ASKSUP_COST_FILE in its environment. When the helper ends the supervisor reads
+#                          that file; if its first line is exactly one decimal number (USD, such as 0.37) that number
+#                          replaces the fixed ASKSUP_START_USD charge for this helper (it is capped at ASKSUP_MAX_TOTAL_USD).
+#                          Absent, empty, with any other text, negative or not a number: the fixed charge stays. Only the
+#                          first 32 bytes are read and the content is never run or shown
 #   ASKSUP_HELPER_SECS     wall clock limit per helper; past it the helper is killed with kill -9 (default 3600)
 #   ASKSUP_PAUSE_SECS      the least time between two starts (default 30), so a loop cannot drain the budget
 #   ASKSUP_OFF_FILE        while this file exists nothing is started (default ~/.klatch-ask-supervisor-off); helpers
@@ -245,7 +250,23 @@ reap() { # report helpers that ended, kill the ones past their time limit
     code="$(cat "$f")"
     id="$(basename "$f" .exit)"; id="${id#h-}"
     say "helper $(cat "$run/h-$id.member" 2> /dev/null) for ask #${id%-*} ended ($code)"
+    settle_cost "$id"
   done
+}
+
+settle_cost() { # id: replace the fixed charge made at the start with the cost the launcher reported, when it reported one
+  local id="$1" f="$run/h-$1.cost" val spent
+  [ -f "$f" ] || return 0
+  val="$(head -c 32 "$f" 2> /dev/null | tr -d '\r')"
+  # the whole file is one number (a trailing newline is fine); a second line with anything on it means it is not trusted
+  [ "$(printf '%s\n' "$val" | grep -c '[^[:space:]]')" -le 1 ] || val=junk
+  val="$(printf '%s\n' "$val" | head -n 1)"
+  [[ $val =~ $dec_re ]] || { say "helper for ask #${id%-*}: no usable cost in ASKSUP_COST_FILE; the fixed charge of $start_usd USD stays"; return 0; }
+  [ "${#val}" -le 24 ] || { say "helper for ask #${id%-*}: cost value too long to trust; the fixed charge stays"; return 0; }
+  spent="$(awk -v s="$(spent_now)" -v c="$start_usd" -v v="$val" -v m="$max_total" \
+    'BEGIN { if (v + 0 > m + 0) v = m; s = s - c + v; if (s < 0) s = 0; print s }')"
+  echo "$spent" > "$run/spent"
+  say "helper for ask #${id%-*} cost $val USD (measured, instead of $start_usd); total spent now $spent USD"
 }
 
 start_helper() { # ask member
@@ -254,7 +275,7 @@ start_helper() { # ask member
   echo "$member" > "$run/h-$id.member"
   now_s > "$run/h-$id.start"
   (
-    env ASKSUP_ROOM="$room" ASKSUP_ASK="$ask" ASKSUP_MEMBER="$member" ASKSUP_ACTIVE=1 bash -c "$launch" < /dev/null >> "$run/h-$id.log" 2>&1
+    env ASKSUP_ROOM="$room" ASKSUP_ASK="$ask" ASKSUP_MEMBER="$member" ASKSUP_ACTIVE=1 ASKSUP_COST_FILE="$run/h-$id.cost" bash -c "$launch" < /dev/null >> "$run/h-$id.log" 2>&1
     echo "$?" > "$run/h-$id.exit.tmp"
     [ -f "$run/h-$id.exit" ] || mv "$run/h-$id.exit.tmp" "$run/h-$id.exit"
   ) &
