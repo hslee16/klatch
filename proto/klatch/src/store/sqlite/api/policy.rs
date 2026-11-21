@@ -20,8 +20,8 @@ impl PolicyStore for SqliteStore {
         .map(|_| ())
     }
 
-    fn seal_label_converting(&self, label: &str, now: i64) -> Result<usize> {
-        self.seal_converting(label, now)
+    fn mark_label_sealed_converting(&self, label: &str, now: i64) -> Result<usize> {
+        self.mark_sealed_converting(label, now)
     }
 
     fn audit_log(&self, limit: usize) -> Result<Vec<AuditRecord>> {

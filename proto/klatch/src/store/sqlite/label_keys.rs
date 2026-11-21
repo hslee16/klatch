@@ -75,7 +75,7 @@ impl SqliteStore {
     /// Seal a label over what is already in it: mark it sealed and protect every earlier plain body and payload of
     /// the label under its key, in one transaction. Returns how many texts were converted. Archived tombstones are
     /// left alone, and nothing is marked or changed when there is something to convert and the key is not held.
-    pub(super) fn seal_converting(&self, label: &str, now: i64) -> Result<usize> {
+    pub(super) fn mark_sealed_converting(&self, label: &str, now: i64) -> Result<usize> {
         self.immediate(|| {
             let mut todo: Vec<(i64, &str, String, String)> = Vec::new();
             for row in self.label_rows(label, true)? {

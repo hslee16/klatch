@@ -37,7 +37,7 @@ pub trait PolicyStore {
     /// Mark `label` sealed and protect every earlier plain message text of the label under the label's key, as one
     /// step (#378). Returns how many texts were converted. Refused, changing nothing, when there is something to
     /// convert and the label's key is not held.
-    fn seal_label_converting(&self, _label: &str, _now: i64) -> Result<usize> {
+    fn mark_label_sealed_converting(&self, _label: &str, _now: i64) -> Result<usize> {
         unsupported("policy")
     }
 

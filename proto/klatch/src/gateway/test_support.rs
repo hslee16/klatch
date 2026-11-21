@@ -429,11 +429,11 @@ impl PolicyStore for SpyStore {
         self.inner.policy_set(key, value, now)
     }
 
-    fn seal_label_converting(&self, label: &str, now: i64) -> Result<usize> {
+    fn mark_label_sealed_converting(&self, label: &str, now: i64) -> Result<usize> {
         if let Some(hook) = self.before_policy_set.borrow().as_ref() {
             hook(&format!("sealed:{label}"));
         }
-        self.inner.seal_label_converting(label, now)
+        self.inner.mark_label_sealed_converting(label, now)
     }
 
     fn atomically(&self, act: &mut dyn FnMut() -> Result<()>) -> Result<()> {

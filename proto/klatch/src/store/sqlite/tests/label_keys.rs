@@ -87,7 +87,7 @@ fn sealing_a_label_converts_every_earlier_plain_body_and_payload_of_that_label_a
     post_handoff(&s, "secret", "old plain two", "old-payload", 2);
     post(&s, "r", "public", "left alone", 3);
     s.set_label_keys(ring("secret", 0x33));
-    let n = s.seal_label_converting("secret", 10).unwrap();
+    let n = s.mark_label_sealed_converting("secret", 10).unwrap();
     assert_eq!(n, 3, "two bodies and one payload");
     assert!(sealed(&s, "secret"));
     for body in raw_bodies(&s, "secret") {
@@ -108,7 +108,7 @@ fn a_converted_body_is_bound_to_its_message_so_a_moved_one_does_not_open() {
     post(&s, "r", "secret", "alpha", 1);
     post(&s, "r", "secret", "beta", 2);
     s.set_label_keys(ring("secret", 0x33));
-    s.seal_label_converting("secret", 10).unwrap();
+    s.mark_label_sealed_converting("secret", 10).unwrap();
     let bodies = raw_bodies(&s, "secret");
     s.conn
         .execute("UPDATE messages SET body=?1 WHERE seq=1", [&bodies[1]])
@@ -123,7 +123,7 @@ fn sealing_converts_nothing_and_seals_nothing_when_the_label_key_is_not_held() {
     let s = store();
     post(&s, "r", "secret", "old plain", 1);
     s.set_label_keys(LabelKeys::new());
-    let err = s.seal_label_converting("secret", 10).unwrap_err();
+    let err = s.mark_label_sealed_converting("secret", 10).unwrap_err();
     assert!(
         matches!(err, Error::Refused { ref rule, .. } if rule == "label-key"),
         "{err}"
@@ -136,7 +136,7 @@ fn sealing_converts_nothing_and_seals_nothing_when_the_label_key_is_not_held() {
 fn sealing_a_label_with_nothing_to_convert_needs_no_key_and_marks_it_sealed() {
     let s = store();
     s.set_label_keys(LabelKeys::new());
-    assert_eq!(s.seal_label_converting("secret", 10).unwrap(), 0);
+    assert_eq!(s.mark_label_sealed_converting("secret", 10).unwrap(), 0);
     assert!(sealed(&s, "secret"));
 }
 
@@ -153,13 +153,13 @@ fn an_archived_tombstone_is_not_sealed_and_a_repeat_converts_nothing() {
     )
     .unwrap();
     s.set_label_keys(ring("secret", 0x33));
-    assert_eq!(s.seal_label_converting("secret", 10).unwrap(), 0);
+    assert_eq!(s.mark_label_sealed_converting("secret", 10).unwrap(), 0);
     assert_eq!(
         raw_bodies(&s, "secret"),
         vec![crate::store::sqlite::archive::TOMBSTONE.to_string()]
     );
     post(&s, "r", "secret", "later", 600);
-    assert_eq!(s.seal_label_converting("secret", 11).unwrap(), 0);
+    assert_eq!(s.mark_label_sealed_converting("secret", 11).unwrap(), 0);
 }
 
 // ---- A: moving a label to a new key ----

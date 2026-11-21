@@ -148,7 +148,7 @@ impl<S: Store> Gateway<S> {
         self.check_sealable(label)?;
         let mut converted = 0;
         self.administer(who, ("seal-label", label), |now| {
-            converted = self.store.seal_label_converting(label, now)?;
+            converted = self.store.mark_label_sealed_converting(label, now)?;
             Ok(format!("converted {converted} earlier text(s)"))
         })?;
         Ok(converted)
