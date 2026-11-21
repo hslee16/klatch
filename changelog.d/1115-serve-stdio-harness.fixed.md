@@ -1,0 +1,1 @@
+- `klatch serve --stdio` in a verified Claude Code session now joins a room that has a `room-require` harness requirement, as the CLI does; every other caller is still the generic floor (#1115).
