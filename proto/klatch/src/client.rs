@@ -677,6 +677,13 @@ impl Client {
         Ok(r["crossings"].as_array().cloned().unwrap_or_default())
     }
 
+    /// Your own role as one fixed word (`librarian`, `admin`, `reviewer`, `facilitator` or `integrator`), or `None`
+    /// when you hold none. Only your own (#1110).
+    pub fn my_role(&mut self) -> Result<Option<String>> {
+        let r = self.request("my_role", json!({}))?;
+        Ok(r["role"].as_str().map(str::to_owned))
+    }
+
     /// Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict
     /// only with claims in the same scope, and a shared claim conflicts with every scope.
     pub fn set_scope(&mut self, scope: &str) -> Result<()> {
