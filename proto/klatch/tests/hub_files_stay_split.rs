@@ -24,7 +24,12 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn the_split_directories_have_no_file_over_the_line_cap() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    for dir in ["commands", "args", "kani_proofs"] {
+    for dir in [
+        "commands",
+        "args",
+        "kani_proofs",
+        "gateway/gateway/tests/zero_trust",
+    ] {
         rust_files(&src.join(dir), &mut files);
     }
     assert!(
