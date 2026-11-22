@@ -139,11 +139,15 @@ fn run_with(
     }
     // the command holds clones of the slave until it is dropped; the master reads end only when none is left
     drop(cmd);
-    drop(slave);
-    let b_master = other.map(|(m, s)| {
-        drop(s);
-        m
-    });
+    // The parent keeps its own slave descriptors open until everything is read (#1298). When the child exits and the
+    // LAST slave descriptor closes, a pseudo-terminal master can lose output the child wrote just before it exited
+    // (seen on macOS under load: the whole text came back empty). With one slave held here the master never hangs
+    // up, so the end is the child's exit and the output is then drained to the end, not a race with the close.
+    let _held_slave = slave;
+    let (b_master, _held_b_slave) = match other {
+        Some((m, s)) => (Some(m), Some(s)),
+        None => (None, None),
+    };
 
     let mfd = master.as_raw_fd();
     let mut piped_stdout = String::new();
@@ -186,7 +190,10 @@ fn run_with(
         } else if n < 0 {
             break;
         } else if child.try_wait().ok().flatten().is_some() {
-            // exited with nothing left to read
+            // The child has exited. Whatever it wrote is already in the master (the slave is held open), so drain
+            // it to the end; a prompt in it can no longer be answered.
+            drain(mfd, &mut text, 0);
+            text = text.replace('\r', "");
             break;
         }
     }
