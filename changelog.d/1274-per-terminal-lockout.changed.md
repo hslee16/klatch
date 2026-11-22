@@ -1,0 +1,1 @@
+- The admin passphrase failure limit now counts per controlling terminal instead of once for the whole store, so a program with a pseudo-terminal of its own that fails on purpose locks only its own terminal and not the human (#1274). The schedule is the same, the audit rows name the terminal, and a program that opens new terminals gets a counter of its own.

@@ -376,22 +376,63 @@ fn the_right_passphrase_does_the_act_and_the_audit_records_it_without_the_passph
     assert!(!audit.text.contains(PASS));
 }
 
+/// Run `cmd` `times` times in a row inside ONE shell on ONE pty, so every run shares the terminal (a new pty is a
+/// new terminal and has its own failure count, #1274).
+fn repeated_on_one_pty(cmd: Command, times: usize, typed: &[&str]) -> PtyRun {
+    let mut sh = Command::new("sh");
+    sh.arg("-c")
+        .arg(format!("for i in $(seq {times}); do \"$0\" \"$@\"; done"))
+        .arg(cmd.get_program())
+        .args(cmd.get_args());
+    for (k, v) in cmd.get_envs() {
+        match v {
+            Some(v) => sh.env(k, v),
+            None => sh.env_remove(k),
+        };
+    }
+    if let Some(d) = cmd.get_current_dir() {
+        sh.current_dir(d);
+    }
+    run_on_pty(sh, typed)
+}
+
 #[test]
 fn three_wrong_passphrases_lock_even_the_right_one_out_for_a_while() {
     let h = Home::new();
     h.set_passphrase();
-    for _ in 0..3 {
-        let r = run_on_pty(klatch_in(&h, &["pause".to_string()]), &[WRONG]);
-        assert!(r.text.contains("wrong passphrase"), "{}", r.text);
-    }
-    let r = run_on_pty(klatch_in(&h, &["pause".to_string()]), &[PASS]);
-    assert!(!r.ok(), "{}", r.text);
+    let r = repeated_on_one_pty(
+        klatch_in(&h, &["pause".to_string()]),
+        4,
+        &[WRONG, WRONG, WRONG, PASS],
+    );
     assert!(r.text.contains("too many wrong passphrases"), "{}", r.text);
-    assert!(
-        !r.text.contains("admin passphrase to approve"),
+    assert_eq!(
+        r.text.matches("admin passphrase to approve").count(),
+        3,
         "it must not even ask while locked: {}",
         r.text
     );
+}
+
+#[test]
+fn a_pty_of_its_own_gets_its_own_failure_count_and_cannot_lock_another_terminal() {
+    let h = Home::new();
+    h.set_passphrase();
+    // an agent's pty fails three times and is locked
+    let r = repeated_on_one_pty(
+        klatch_in(&h, &["resume".to_string()]),
+        4,
+        &[WRONG, WRONG, WRONG],
+    );
+    assert!(r.text.contains("too many wrong passphrases"), "{}", r.text);
+    // the human's terminal (another pty) is asked and its passphrase is accepted
+    let r = run_on_pty(klatch_in(&h, &["resume".to_string()]), &[PASS]);
+    assert!(
+        r.text.contains("admin passphrase to approve") && !r.text.contains("too many"),
+        "{}",
+        r.text
+    );
+    assert!(r.ok(), "{}", r.text);
 }
 
 #[test]
