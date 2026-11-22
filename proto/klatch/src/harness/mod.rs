@@ -10,6 +10,9 @@ mod capability;
 pub mod conformance;
 mod host;
 #[cfg(test)]
+#[cfg(target_os = "linux")]
+mod linux_real;
+#[cfg(test)]
 mod linux_shaped;
 mod liveness;
 mod negotiate;

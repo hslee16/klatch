@@ -1,0 +1,1 @@
+- Session discovery now has tests that run against a real Linux process table (a fake harness, a real child, a fixture registry), plus `proto/linux-discovery/run.sh` to run them in Docker (#171).
