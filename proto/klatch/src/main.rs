@@ -293,10 +293,13 @@ fn failure_line(e: &anyhow::Error, event: &str) -> String {
     if is_read_only(e) {
         return READ_ONLY_NOTICE.to_string();
     }
-    let why: String = klatch::domain::flat(&e.root_cause().to_string())
-        .chars()
-        .take(120)
-        .collect();
+    // A hook already runs with discovery on, so "pass --discover" would send the user in a circle: say what is
+    // missing instead (#1313).
+    let cause = e.root_cause().to_string().replace(
+        "or pass --discover (or KLATCH_DISCOVER=1) to act as this coding session",
+        "no session was found for this process in the harness registry",
+    );
+    let why: String = klatch::domain::flat(&cause).chars().take(120).collect();
     if event == "PreToolUse" {
         return format!(
             "[klatch] could not check claims ({why}); this call was not checked against other members' claims"
@@ -829,5 +832,27 @@ mod hardening_tests {
             libc::getrlimit(libc::RLIMIT_CORE, &mut now);
         }
         assert_eq!((now.rlim_cur, now.rlim_max), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod hook_notice_tests {
+    #[test]
+    fn a_hook_that_already_discovers_is_never_told_to_pass_discover() {
+        let e = anyhow::Error::new(klatch::domain::Error::Invalid(
+            "no member name given: set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-], \
+             or pass --discover (or KLATCH_DISCOVER=1) to act as this coding session"
+                .into(),
+        ));
+        for event in [
+            "UserPromptSubmit",
+            "PostToolUse",
+            "PreToolUse",
+            "SessionStart",
+        ] {
+            let line = super::failure_line(&e, event);
+            assert!(!line.contains("--discover"), "{event}: {line}");
+            assert!(line.contains("no session"), "{event}: {line}");
+        }
     }
 }

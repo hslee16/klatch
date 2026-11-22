@@ -175,6 +175,15 @@ mod tests {
     }
 
     #[test]
+    fn a_background_session_is_found_through_its_retitled_process() {
+        // kind "bg" record, harness process titled "claude bg-spare" (#1313)
+        let t = tree().with((10, 5), T, "claude bg-spare");
+        let reg = FakeRegistry::default().with((10, "sess-bg"), Some("Continue session"), T);
+        let f = find_session(30, &t, &reg, "darwin").unwrap();
+        assert_eq!(f.session_id, "sess-bg");
+    }
+
+    #[test]
     fn a_top_level_session_has_no_child_below_it() {
         let reg = FakeRegistry::default().with((10, "sess-A"), None, T);
         let f = find_session(30, &tree(), &reg, "darwin").unwrap();

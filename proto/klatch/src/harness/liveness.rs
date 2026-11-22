@@ -51,9 +51,11 @@ pub fn this_pid_domain() -> &'static str {
     pid_domain_for(std::env::consts::OS)
 }
 
-/// True for the Claude Code program name.
+/// True for the Claude Code program name. A background session (registry kind `bg`) rewrites its process title, so
+/// `ps -o comm=` prints `claude bg-spare` or `claude bg-pty-host`: a bare `claude` followed by a space and the
+/// title is the harness too (#1313). A path or another program name followed by words is not.
 pub fn is_claude_code(command: &str) -> bool {
-    command.rsplit('/').next() == Some("claude")
+    command.rsplit('/').next() == Some("claude") || command.starts_with("claude ")
 }
 
 #[cfg(test)]
@@ -185,5 +187,18 @@ mod tests {
         assert!(!is_claude_code("claude-helper"));
         assert!(!is_claude_code("notclaude"));
         assert!(!is_claude_code(""));
+    }
+
+    #[test]
+    fn a_retitled_background_session_is_still_the_harness() {
+        // a background session (registry kind "bg") rewrites its process title: `ps -o comm=` prints
+        // "claude bg-spare" (#1313)
+        assert!(is_claude_code("claude bg-spare"));
+        assert!(is_claude_code("claude bg-pty-host"));
+        assert!(is_claude_code("/Users/x y/.local/bin/claude"));
+        assert!(!is_claude_code("claude-helper bg-spare"));
+        assert!(!is_claude_code("notclaude bg-spare"));
+        assert!(!is_claude_code("zsh claude"));
+        assert!(!is_claude_code("/tmp/claude x"));
     }
 }
