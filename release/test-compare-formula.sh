@@ -10,7 +10,9 @@ fails=0
 ok() { echo "  ok  $1"; }
 bad() { echo "FAIL  $1" >&2; fails=1; }
 a="$work/a.rb"; b="$work/b.rb"
-cp "$here/homebrew/klatch.rb" "$a"
+# the fixtures have the shape of the tap formula of the previous release (no klatch-server lines), whatever the staged copy now says
+sed -e 's/^    bin.install "klatch", "klatch-server"$/    bin.install "klatch"/' -e '/klatch-server --help/d' "$here/homebrew/klatch.rb" > "$work/base.rb"
+cp "$work/base.rb" "$a"
 cmp_() { "$here/compare-formula.sh" "$a" "$b" > "$work/out" 2> "$work/err"; }
 
 cp "$a" "$b"
@@ -56,7 +58,7 @@ cp "$work/s.rb" "$b"; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "
 if cmp_allow; then bad "the allowance hid a license change"; else ok "the allowance does not hide another difference"; fi
 # a different extra line next to the klatch-server lines fails
 cp "$work/s.rb" "$a"; printf '  # a comment\n' >> "$a"
-cp "$here/homebrew/klatch.rb" "$b"
+cp "$work/base.rb" "$b"
 if cmp_allow; then bad "an extra comment passed with the allowance"; else ok "any other extra line fails with the allowance"; fi
 cp "$work/s.rb" "$a"; sed -i.bak 's#klatch-server --help#klatch-server --version#' "$a"; rm -f "$a.bak"
 if cmp_allow; then bad "a different klatch-server test line passed"; else ok "a different klatch-server test line fails with the allowance"; fi
@@ -65,9 +67,9 @@ if cmp_allow; then bad "a different install line passed"; else ok "a different i
 cp "$work/s.rb" "$a"; sed -i.bak 's#^\(    assert_match "usage: klatch-server".*\)$#\1\n\1#' "$a"; rm -f "$a.bak"
 if cmp_allow; then bad "a duplicated klatch-server test line passed"; else ok "a duplicated klatch-server test line fails with the allowance"; fi
 # the tap ahead of the staged copy is not allowed (the allowance is one way)
-cp "$here/homebrew/klatch.rb" "$a"; cp "$work/s.rb" "$b"
+cp "$work/base.rb" "$a"; cp "$work/s.rb" "$b"
 if cmp_allow; then bad "a tap ahead of the staged copy passed"; else ok "a tap ahead of the staged copy fails"; fi
-cp "$here/homebrew/klatch.rb" "$a"; cp "$here/homebrew/klatch.rb" "$b"
+cp "$work/base.rb" "$a"; cp "$work/base.rb" "$b"
 
 # usage and missing files
 if "$here/compare-formula.sh" "$a" > /dev/null 2>&1; then bad "one argument passed"; else ok "one argument is refused"; fi
