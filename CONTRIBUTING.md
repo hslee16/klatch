@@ -235,6 +235,13 @@ Settings are environment variables listed at the top of the script (budget `TEAM
   file with code bodies. `proto/scripts/test-merge-union.sh` proves it. A union-merged `mod` registry can also be
   in an order rustfmt rejects: after merging main run `proto/scripts/fmt-after-merge` (cargo fmt, commit if changed,
   cargo check; the integrator and pr-sweep run it for you, #1093).
+- Adding a gateway method to `Transport` (#1071): the trait is split by area under `proto/klatch/src/gateway/transport/`
+  (`messages`, `delivery`, `members`, `hooks`, `claims`, `board`, `review`, `admin`, `access`, `limits`, `scrub`). Each file holds the area's
+  trait, its `Direct` impl and its `SharedTransport` forwards (the `forward!` list), so a new method edits ONE area file;
+  `transport.rs` and `shared.rs` do not change. A new area is a new file plus one line in `transport.rs` (the `mod`, the
+  `areas` re-export and the `Transport` bounds). A wire addition still also touches the client wrappers (`client.rs`,
+  `klatch.ts`, the Python client) and PROTOCOL.md (#1069), but not the trait's old shared hotspots.
+  `klatch/tests/shared_forward.rs` walks the directory and fails on a method that has no forward.
 - Never claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md and the like) in a room (#533). A claim is
   exclusive per path and an advisory claim held while its owner waits stalls everyone who needs one line. Put the change
   in a fragment file instead; the claim code has no append-only or section kind, by decision.

@@ -15,9 +15,7 @@
 //! The `klatch` binary keeps building its own `Direct` over its own gateway and does not use this module.
 
 use crate::domain::{Error, Principal, Result};
-use crate::gateway::{
-    Batch, ClaimSpec, Direct, Gateway, Handoff, HistoryRange, Subscription, Transport,
-};
+use crate::gateway::{Batch, Direct, Gateway, HistoryRange, Subscription, Transport};
 use crate::protocol::ServerFrame;
 use crate::session::{Backend, Call};
 use crate::store::Store;
@@ -90,7 +88,7 @@ impl Drop for Owner {
 #[derive(Clone)]
 pub struct SharedGateway {
     tx: mpsc::Sender<Job>,
-    posts: Arc<AtomicU64>,
+    pub(in crate::gateway) posts: Arc<AtomicU64>,
     _owner: Arc<Owner>,
 }
 
@@ -227,7 +225,7 @@ impl SharedGateway {
     }
 
     /// Run `f` on the owner thread and wait for its answer. `Backend` when the owner is gone or `f` panicked.
-    fn call<R: Send + 'static>(
+    pub(in crate::gateway) fn call<R: Send + 'static>(
         &self,
         (principal, harness): (&Principal, &Option<HarnessMaker>),
         f: impl FnOnce(&dyn Transport) -> R + Send + 'static,
@@ -350,9 +348,9 @@ fn gone() -> Error {
 /// The client side of a shared gateway for one identity. `Clone`, `Send` and `Sync`.
 #[derive(Clone)]
 pub struct SharedTransport {
-    gateway: SharedGateway,
-    principal: Principal,
-    harness: Option<HarnessMaker>,
+    pub(in crate::gateway) gateway: SharedGateway,
+    pub(in crate::gateway) principal: Principal,
+    pub(in crate::gateway) harness: Option<HarnessMaker>,
 }
 
 impl SharedTransport {
@@ -366,7 +364,7 @@ impl SharedTransport {
         self
     }
 
-    fn call<R: Send + 'static>(
+    pub(in crate::gateway) fn call<R: Send + 'static>(
         &self,
         f: impl FnOnce(&dyn Transport) -> Result<R> + Send + 'static,
     ) -> Result<R> {
@@ -376,7 +374,7 @@ impl SharedTransport {
     }
 
     /// A call that stores a message: the posts count moves after it, so a waiter's change token moves.
-    fn posting<R: Send + 'static>(
+    pub(in crate::gateway) fn posting<R: Send + 'static>(
         &self,
         f: impl FnOnce(&dyn Transport) -> Result<R> + Send + 'static,
     ) -> Result<R> {
@@ -387,12 +385,12 @@ impl SharedTransport {
 }
 
 /// An argument that can be copied to the owner thread: the owned form, and how to lend the borrowed form back.
-trait Own {
+pub(in crate::gateway) trait Own {
     type Owned: Send + 'static;
     fn own(&self) -> Self::Owned;
 }
 
-trait Lend<'a> {
+pub(in crate::gateway) trait Lend<'a> {
     type Borrowed;
     fn lend(&'a self) -> Self::Borrowed;
 }
@@ -452,198 +450,9 @@ by_copy!(
 macro_rules! forward {
     ($($name:ident($($a:ident: $t:ty),*) -> $ret:ty;)*) => {$(
         fn $name(&self $(, $a: $t)*) -> $ret {
-            $(let $a = Own::own(&$a);)*
-            self.call(move |t| t.$name($(Lend::lend(&$a)),*))
+            $(let $a = $crate::gateway::shared::Own::own(&$a);)*
+            self.call(move |t| t.$name($($crate::gateway::shared::Lend::lend(&$a)),*))
         }
     )*};
 }
-
-impl Transport for SharedTransport {
-    forward! {
-        join(room: &str) -> Result<()>;
-        read(room: &str, advance: bool) -> Result<Vec<crate::domain::Message>>;
-        history(room: &str, range: HistoryRange) -> Result<crate::gateway::History>;
-        wait_poll(room: &str) -> Result<Vec<crate::domain::Message>>;
-        wakeable(room: &str) -> Result<usize>;
-        wake_summary(room: &str) -> Result<(usize, i64)>;
-        outside_view(room: &str) -> Result<Option<(usize, i64)>>;
-        wake_mark(room: &str) -> Result<()>;
-        wait_seen(room: &str, seq: i64) -> Result<()>;
-        who(room: &str) -> Result<Vec<crate::domain::MemberInfo>>;
-        receipt(room: &str, seq: i64) -> Result<crate::domain::Receipts>;
-        set_scope(scope: &str) -> Result<()>;
-        scope() -> Result<Option<String>>;
-        my_role() -> Result<Option<String>>;
-        release(room: &str, path: &str) -> Result<()>;
-        release_with_note(room: &str, path: &str, note: &str) -> Result<()>;
-        last_release(room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>>;
-        release_all() -> Result<usize>;
-        end_credential() -> Result<bool>;
-        admin_close_room(room: &str, closed: bool) -> Result<()>;
-        admin_pause(paused: bool) -> Result<()>;
-        admin_remove_member(room: &str, member: &str) -> Result<()>;
-        admin_allow_member(room: &str, member: &str) -> Result<()>;
-        admin_audit(limit: usize) -> Result<Vec<crate::domain::AuditRecord>>;
-        admin_run_create(run: &str) -> Result<()>;
-        admin_run_end(run: &str) -> Result<crate::store::DeletedRooms>;
-        anchor_done(anchor: &str) -> Result<usize>;
-        admin_set_room_label(room: &str, label: &str) -> Result<()>;
-        admin_set_clearance(member: &str, label: &str) -> Result<()>;
-        admin_set_cap(label: &str) -> Result<()>;
-        admin_set_librarian(member: &str, on: bool) -> Result<()>;
-        admin_set_reviewer(member: &str, on: bool) -> Result<()>;
-        admin_set_facilitator(member: &str, on: bool) -> Result<()>;
-        admin_set_integrator(member: &str, on: bool) -> Result<()>;
-        admin_set_ssh_key(label: &str, member: &str, on: bool) -> Result<()>;
-        admin_set_admin_agent(member: &str, on: bool) -> Result<()>;
-        admin_set_room_creation_granted(on: bool) -> Result<()>;
-        admin_grant_room_capability(member: &str, on: bool) -> Result<()>;
-        invite(member: &str, room: &str, via: &str) -> Result<()>;
-        grant_room_clearance(room: &str, member: &str, label: &str) -> Result<()>;
-        admin_set_room_grantor(room: &str, member: &str, on: bool) -> Result<()>;
-        admin_set_room_clearance(room: &str, member: &str, label: Option<&str>) -> Result<()>;
-        admin_set_rate_limit(limit: Option<(usize, i64)>) -> Result<()>;
-        admin_set_member_rate_limit(member: &str, limit: Option<(usize, i64)>) -> Result<()>;
-        admin_rate_limits() -> Result<Vec<crate::gateway::RateLimitEntry>>;
-        admin_set_lease_cap(secs: Option<i64>) -> Result<()>;
-        admin_set_lease_grace(secs: Option<i64>) -> Result<()>;
-        admin_set_room_stale(room: &str, secs: Option<i64>) -> Result<()>;
-        admin_set_room_ask_lease(room: &str, secs: Option<i64>) -> Result<()>;
-        admin_set_room_require(room: &str, spec: Option<&str>) -> Result<()>;
-        claim_ttl(room: &str, path: &str, requested: Option<i64>) -> Result<i64>;
-        admin_plant_canary(room: &str) -> Result<()>;
-        admin_retire_canary(room: &str) -> Result<()>;
-        admin_add_scrub_term(name: &str, term: &str) -> Result<()>;
-        admin_remove_scrub_term(name: &str) -> Result<()>;
-        admin_scrub_terms() -> Result<Vec<(String, String)>>;
-        admin_refusals(limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
-        my_refusals(limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
-        my_crossings(limit: usize) -> Result<Vec<crate::domain::CrossingStatus>>;
-        review_next() -> Result<Option<crate::domain::ReviewItem>>;
-        claims(room: &str) -> Result<Vec<crate::domain::Claim>>;
-        digest() -> Result<crate::gateway::Digest>;
-        digest_with(backlog: bool) -> Result<crate::gateway::Digest>;
-        record_hook_run(event: &str, bytes: usize) -> Result<()>;
-        hook_runs(member: &str) -> Result<Vec<crate::domain::HookRun>>;
-        note_member_mode(mode: &str) -> Result<()>;
-        note_session(session_id: &str) -> Result<()>;
-        record_stop(background_tasks: usize, crons: usize) -> Result<()>;
-        sign_of_life() -> Result<()>;
-        prune_members(older_than: i64) -> Result<usize>;
-        set_status(room: &str, status: &str) -> Result<()>;
-        rooms() -> Result<Vec<String>>;
-        set_muted(room: &str, muted: bool) -> Result<()>;
-        delivery_view() -> Result<crate::gateway::DeliveryView>;
-        set_delivery_view(view: crate::gateway::DeliveryView) -> Result<()>;
-        request_crossing(from: &str, seq: i64, to: &str) -> Result<i64>;
-        review_queue(limit: usize) -> Result<Vec<crate::store::QueuedReview>>;
-        board(room: &str) -> Result<crate::domain::Board>;
-        member_card(room: &str, member: &str) -> Result<Option<crate::domain::Card>>;
-        open_asks(room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
-        stuck(room: &str) -> Result<Vec<crate::domain::StuckEvent>>;
-        could_answer(room: &str, member: &str, ask: i64) -> Result<crate::domain::CouldAnswer>;
-        process_exited(room: &str, member: &str) -> Result<bool>;
-        ack(room: &str, seq: i64) -> Result<()>;
-    }
-
-    // The calls that store a message also move the posts count, so a waiter's change token moves.
-    fn dm(
-        &self,
-        to: &str,
-        body: &str,
-        label: Option<&str>,
-    ) -> Result<(String, crate::domain::Posted)> {
-        let (to, body, label) = (Own::own(&to), Own::own(&body), Own::own(&label));
-        self.posting(move |t| t.dm(Lend::lend(&to), Lend::lend(&body), Lend::lend(&label)))
-    }
-    fn post_labeled(
-        &self,
-        room: &str,
-        body: &str,
-        label: Option<&str>,
-    ) -> Result<crate::domain::Posted> {
-        let (room, body, label) = (Own::own(&room), Own::own(&body), Own::own(&label));
-        self.posting(move |t| {
-            t.post_labeled(Lend::lend(&room), Lend::lend(&body), Lend::lend(&label))
-        })
-    }
-    fn post_handoff(
-        &self,
-        (room, body, label): (&str, &str, Option<&str>),
-        handoff: &Handoff,
-    ) -> Result<crate::domain::Posted> {
-        let (room, body, label) = (Own::own(&room), Own::own(&body), Own::own(&label));
-        let (kind, payload) = (Own::own(&handoff.kind), Own::own(&handoff.payload));
-        self.posting(move |t| {
-            let handoff = Handoff {
-                kind: Lend::lend(&kind),
-                payload: Lend::lend(&payload),
-            };
-            t.post_handoff(
-                (Lend::lend(&room), Lend::lend(&body), Lend::lend(&label)),
-                &handoff,
-            )
-        })
-    }
-
-    fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()> {
-        let room = Own::own(&room);
-        let (path, reason, anchor) = (
-            Own::own(&spec.path),
-            Own::own(&spec.reason),
-            Own::own(&spec.anchor),
-        );
-        let (ttl, shared) = (spec.ttl, spec.shared);
-        self.call(move |t| {
-            let mut spec = ClaimSpec::new(Lend::lend(&path), ttl, Lend::lend(&reason));
-            spec.shared = shared;
-            spec.anchor = Lend::lend(&anchor);
-            t.claim(Lend::lend(&room), &spec)
-        })
-    }
-    fn admin_set_label_chain(&self, names: &[&str]) -> Result<()> {
-        let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
-        self.call(move |t| {
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            t.admin_set_label_chain(&names)
-        })
-    }
-    fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()> {
-        let verdict = verdict.clone();
-        self.call(move |t| t.review_verdict(id, &verdict))
-    }
-
-    /// The store's own token (it moves when another process commits) joined with the count of posts made through the
-    /// handles (the store's does not move for the owner's own commits). `None` when the store has none.
-    fn change_token(&self) -> Option<u64> {
-        let store = self
-            .gateway
-            .call((&self.principal, &None), |t| t.change_token())
-            .ok()
-            .flatten()?;
-        let posts = self.gateway.posts.load(Ordering::SeqCst);
-        Some(store.wrapping_add(posts.rotate_left(32)))
-    }
-
-    fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
-        let room = Own::own(&room);
-        self.call(move |t| t.subscribe(Lend::lend(&room), from_seq))
-    }
-    /// The subscription lives with the caller and goes to the owner for the length of one poll.
-    fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch> {
-        let mut moved = std::mem::replace(subscription, Subscription::new("", 0, 0));
-        let r = self
-            .gateway
-            .call((&self.principal, &self.harness), move |t| {
-                let batch = t.poll(&mut moved, max);
-                (batch, moved)
-            });
-        match r {
-            Ok((batch, back)) => {
-                *subscription = back;
-                batch
-            }
-            Err(e) => Err(e),
-        }
-    }
-}
+pub(in crate::gateway) use forward;

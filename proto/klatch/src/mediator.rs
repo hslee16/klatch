@@ -156,6 +156,7 @@ impl Mediator {
 mod tests {
     use super::*;
     use crate::domain::Principal;
+    use crate::gateway::areas::*;
     use crate::gateway::{AllowAll, ClaimSpec, Clock, Direct, Gateway};
     use crate::store::SqliteStore;
     use std::cell::Cell;

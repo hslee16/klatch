@@ -4,6 +4,7 @@
 
 use super::*;
 use klatch::gateway::FixedClock;
+use klatch::gateway::areas::*;
 
 /// Two gateways over one database, as in production: the human's (the terminal, no role needed) and the members'.
 struct World {

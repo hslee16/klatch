@@ -1,194 +1,64 @@
-use crate::domain::{Claim, MemberInfo, Message, Posted, Principal, Result};
-use crate::gateway::{
-    Batch, ClaimSpec, DEFAULT_WINDOW, Digest, Gateway, History, HistoryRange, Subscription,
-};
+//! The client side of the gateway, split by area (#1071).
+//!
+//! Each file under `transport/` holds one area: its trait, the `Direct` impl and the `SharedTransport` forwards. A new
+//! gateway method is added to exactly one of them. `Transport` is the sum of the area traits.
+
+mod access;
+mod admin;
+mod board;
+mod claims;
+mod delivery;
+mod hooks;
+mod limits;
+mod members;
+mod messages;
+mod review;
+mod scrub;
+
+/// Every area trait. A caller that names a concrete `Direct` or `SharedTransport` (a test, say) calls area methods
+/// with `use crate::gateway::areas::*;`; one that holds a `Transport` needs no import.
+pub mod areas {
+    pub use super::access::Access;
+    pub use super::admin::Admin;
+    pub use super::board::Board;
+    pub use super::claims::Claims;
+    pub use super::delivery::Delivery;
+    pub use super::hooks::Hooks;
+    pub use super::limits::Limits;
+    pub use super::members::Members;
+    pub use super::messages::Messages;
+    pub use super::review::Review;
+    pub use super::scrub::Scrub;
+}
+
+use crate::domain::Principal;
+use crate::gateway::Gateway;
 use crate::store::Store;
+use areas::{
+    Access, Admin, Board, Claims, Delivery, Hooks, Limits, Members, Messages, Review, Scrub,
+};
 use std::rc::Rc;
 
 /// The client side of the gateway, bound to one identity when it is created. Callers never pass who they
 /// are per call, so a remote transport can take identity from the connection (DESIGN section 20 rule 11).
-pub trait Transport {
-    fn join(&self, room: &str) -> Result<()>;
-    fn post(&self, room: &str, body: &str) -> Result<Posted> {
-        self.post_labeled(room, body, None)
-    }
-    /// Send a direct message: post to the two-member room shared with `to`. Returns the room and the post.
-    fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)>;
-    /// Post under a label lower than the room's own (`None` for the room's).
-    fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted>;
-    /// Post a message that carries a handoff: a kind and optionally an opaque payload.
-    fn post_handoff(
-        &self,
-        message: (&str, &str, Option<&str>),
-        handoff: &crate::gateway::Handoff,
-    ) -> Result<Posted>;
-    fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
-    /// Look back in a room: everyone's messages in `range`, moving no cursor (#518).
-    fn history(&self, room: &str, range: HistoryRange) -> Result<History>;
-    /// Unread messages a wait has not looked at yet; moves no cursor, refreshes presence.
-    fn wait_poll(&self, room: &str) -> Result<Vec<Message>>;
-    /// How many unread messages would wake the caller in a room (mute aware); moves no cursor.
-    fn wakeable(&self, room: &str) -> Result<usize>;
-    /// The wakeable count and the newest wakeable seq (0 when none).
-    fn wake_summary(&self, room: &str) -> Result<(usize, i64)>;
-    /// How many unread messages the caller's narrowed view holds back in a room, and the newest seq (#673).
-    fn outside_view(&self, room: &str) -> Result<Option<(usize, i64)>>;
-    /// Record that a watcher pointed at what is unread in the room; it stays unread and `wait` still sees it.
-    fn wake_mark(&self, room: &str) -> Result<()>;
-    /// A wait has looked at the room up to `seq`; the messages stay unread.
-    fn wait_seen(&self, room: &str, seq: i64) -> Result<()>;
-    /// The store's change token (#616): differs after any other connection commits. A waiter takes it before it polls
-    /// and sleeps until it differs. The default has none, so a waiter polls on a timer.
-    fn change_token(&self) -> Option<u64> {
-        None
-    }
-    fn who(&self, room: &str) -> Result<Vec<MemberInfo>>;
-    /// Per-recipient liveness states for a message the caller sent (#546); no text, no read state.
-    fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts>;
-    /// Take a claim (optionally shared with every scope).
-    fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()>;
-    /// Declare the scope the caller works in.
-    fn set_scope(&self, scope: &str) -> Result<()>;
-    /// The scope the caller declared or was given.
-    fn scope(&self) -> Result<Option<String>>;
-    /// The role the caller holds, as its word, or `None` (#1090).
-    fn my_role(&self) -> Result<Option<String>>;
-    fn release(&self, room: &str, path: &str) -> Result<()>;
-    /// `release` with a note on what the caller changed.
-    fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()>;
-    /// The latest release of a path that carried a note.
-    fn last_release(&self, room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>>;
-    /// Release every claim the caller holds in every room (its session ended); returns how many.
-    fn release_all(&self) -> Result<usize>;
-    /// A worker's session ended: revoke the caller's own credential (nothing for a caller that holds none).
-    fn end_credential(&self) -> Result<bool>;
-    /// Administrative acts (`klatch admin`, R11); who may call them is the caller's decision, not the gateway's.
-    fn admin_close_room(&self, room: &str, closed: bool) -> Result<()>;
-    fn admin_pause(&self, paused: bool) -> Result<()>;
-    fn admin_remove_member(&self, room: &str, member: &str) -> Result<()>;
-    fn admin_allow_member(&self, room: &str, member: &str) -> Result<()>;
-    fn admin_audit(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>>;
-    /// Open a run: its rooms (`run.<id>.<name>`) may be used from now on (#746).
-    fn admin_run_create(&self, run: &str) -> Result<()>;
-    /// End a run and delete its rooms, with no archive (a caller over the wire never names a file); returns how many
-    /// rooms and messages went (#746).
-    fn admin_run_end(&self, run: &str) -> Result<crate::store::DeletedRooms>;
-    /// A work item is done: release the claims anchored to it; returns how many (#746).
-    fn anchor_done(&self, anchor: &str) -> Result<usize>;
-    /// Labels and clearance (epic #9): a room's label, a member's clearance, the agent cap and the label order.
-    fn admin_set_room_label(&self, room: &str, label: &str) -> Result<()>;
-    fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()>;
-    fn admin_set_cap(&self, label: &str) -> Result<()>;
-    fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()>;
-    fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()>;
-    fn admin_set_facilitator(&self, member: &str, on: bool) -> Result<()>;
-    fn admin_set_integrator(&self, member: &str, on: bool) -> Result<()>;
-    fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()>;
-    /// Room creation and invites as a capability (#188): the policy and a member's grant, both the human's.
-    fn admin_set_room_creation_granted(&self, on: bool) -> Result<()>;
-    fn admin_grant_room_capability(&self, member: &str, on: bool) -> Result<()>;
-    /// Invite `member` to `room` with a pointer posted in `via` (#188): needs the capability, is audited.
-    fn invite(&self, member: &str, room: &str, via: &str) -> Result<()>;
-    /// The room grantor grants `member` a clearance in `room` only, within its own clearance, the room label and the
-    /// agent cap (#893): audited, refused with the rule that failed.
-    fn grant_room_clearance(&self, room: &str, member: &str, label: &str) -> Result<()>;
-    /// The human names the grantor of a room, or takes the role away; and sets or revokes a room grant (#893).
-    fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()>;
-    fn admin_set_room_clearance(&self, room: &str, member: &str, label: Option<&str>)
-    -> Result<()>;
-    /// The human maps an ssh forced-command key label to one member, or takes the mapping away (#107).
-    fn admin_set_ssh_key(&self, label: &str, member: &str, on: bool) -> Result<()>;
-    /// Limit every member to `posts` posts in `secs` seconds over all rooms, or with `None` lift it (#187).
-    fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()>;
-    /// One member's own limit, over the global one; `None` makes it inherit again (#972).
-    fn admin_set_member_rate_limit(&self, member: &str, limit: Option<(usize, i64)>) -> Result<()>;
-    /// The global limit (member `None`) and every member limit in force, sorted by name (#1023).
-    fn admin_rate_limits(&self) -> Result<Vec<crate::gateway::RateLimitEntry>>;
-    /// The lease cap and the grace period, in seconds, or with `None` back to the default (#537).
-    fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()>;
-    fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()>;
-    /// A room's stale-ask threshold and its default `ask:` claim lease, in seconds, or with `None` back to the
-    /// built-in value (#242).
-    fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()>;
-    fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()>;
-    /// Require harness capabilities of a room as `refuse:CAPS` or `flag:CAPS`, or with `None` lift it (#61).
-    fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()>;
-    /// The lease a claim gets in a room: the one asked for, else the default for the path (the room's setting for an
-    /// `ask:` claim) (#242).
-    fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64>;
-    fn admin_set_label_chain(&self, names: &[&str]) -> Result<()>;
-    /// Plant a canary, a fake secret, in a room (#46); text carrying it into any other room trips a wire.
-    fn admin_plant_canary(&self, room: &str) -> Result<()>;
-    /// End the canary of a room (#347).
-    fn admin_retire_canary(&self, room: &str) -> Result<()>;
-    /// The scrubber (#44): list a private term under a rule name, stop it, and show what is listed.
-    fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()>;
-    fn admin_remove_scrub_term(&self, name: &str) -> Result<()>;
-    fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>>;
-    /// The latest refused calls, newest first.
-    fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
-    /// The caller's own latest refusals, newest first (#678); never another member's.
-    fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
-    /// The caller's own crossings with their state and a fixed reason (#516); never text or a reviewer's reason.
-    fn my_crossings(&self, limit: usize) -> Result<Vec<crate::domain::CrossingStatus>>;
-    /// The reviewer's two calls (#509): the oldest waiting item it may read, and a verdict on a waiting item.
-    fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>>;
-    fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()>;
-    fn claims(&self, room: &str) -> Result<Vec<Claim>>;
-    fn digest(&self) -> Result<Digest>;
-    /// `digest`, with the backlog of open unclaimed asks from others when `backlog` is set.
-    fn digest_with(&self, backlog: bool) -> Result<Digest>;
-    /// Record a hook run (event and bytes printed) for the caller.
-    fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()>;
-    /// The latest run of each hook event recorded for `member`.
-    fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>>;
-    /// Remember the permission mode the caller's session reported in a hook input (#553).
-    fn note_member_mode(&self, mode: &str) -> Result<()>;
-    /// Remember that the caller is the member of harness session `session_id`.
-    fn note_session(&self, session_id: &str) -> Result<()>;
-    /// The Stop hook: end any park, then park the caller if background tasks or crons still run.
-    fn record_stop(&self, background_tasks: usize, crons: usize) -> Result<()>;
-    /// Any other hook ran: a sign of life, which ends a park.
-    fn sign_of_life(&self) -> Result<()>;
-    /// Housekeeping: remove members not seen for `older_than` seconds; returns how many.
-    fn prune_members(&self, older_than: i64) -> Result<usize>;
-    /// Set the caller's own status in a room.
-    fn set_status(&self, room: &str, status: &str) -> Result<()>;
-    /// The rooms the caller has joined, read without consuming any message.
-    fn rooms(&self) -> Result<Vec<String>>;
-    /// Mute or unmute a room for the caller: its hook then shows only messages that mention the caller.
-    fn set_muted(&self, room: &str, muted: bool) -> Result<()>;
-    /// The caller's delivery view: what hooks and the wake count show it (#186).
-    fn delivery_view(&self) -> Result<crate::gateway::DeliveryView>;
-    fn set_delivery_view(&self, view: crate::gateway::DeliveryView) -> Result<()>;
-    /// Ask for a message to be copied into a lower-labelled room (#497); queued for a verdict, returns the queue id.
-    fn request_crossing(&self, from: &str, seq: i64, to: &str) -> Result<i64>;
-    /// The review queue with verdicts and outcomes, newest first; pointers, never text (#497).
-    fn review_queue(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>>;
-    /// The room's board (open asks, current offers, members with status).
-    fn board(&self, room: &str) -> Result<crate::domain::Board>;
-    /// One member's card from the board and the live claims, or `None` when it is not listed (#251).
-    fn member_card(&self, room: &str, member: &str) -> Result<Option<crate::domain::Card>>;
-    /// Asks in a room nobody has answered or closed.
-    fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>>;
-    /// The stuck cases of a room as structured events, ids and numbers only (#271).
-    fn stuck(&self, room: &str) -> Result<Vec<crate::domain::StuckEvent>>;
-    /// Whether `member` could answer open ask `ask` in `room` now, and every reason it could not (#671). A read only.
-    fn could_answer(
-        &self,
-        room: &str,
-        member: &str,
-        ask: i64,
-    ) -> Result<crate::domain::CouldAnswer>;
-    /// Whether the process behind a room member's session has exited, by the liveness probe (#790). False for
-    /// anything the probe cannot say, so unknown counts as alive.
-    fn process_exited(&self, room: &str, member: &str) -> Result<bool>;
-    /// Start a stream of a room from `from_seq` (0 for the beginning). Poll it with `poll`.
-    fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription>;
-    /// The next batch of a subscription, at most `max` messages.
-    fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch>;
-    /// Acknowledge messages up to `seq`: advances this member's read cursor.
-    fn ack(&self, room: &str, seq: i64) -> Result<()>;
+pub trait Transport:
+    Messages + Delivery + Members + Hooks + Claims + Board + Review + Admin + Access + Limits + Scrub
+{
+}
+
+impl<T> Transport for T where
+    T: Messages
+        + Delivery
+        + Members
+        + Hooks
+        + Claims
+        + Board
+        + Review
+        + Admin
+        + Access
+        + Limits
+        + Scrub
+{
 }
 
 /// In-process transport: calls the gateway directly. No daemon, no socket.
@@ -216,339 +86,11 @@ impl<S: Store> Direct<S> {
     }
 }
 
-impl<S: Store> Transport for Direct<S> {
-    fn join(&self, room: &str) -> Result<()> {
-        match &self.harness {
-            Some(h) => self
-                .gateway
-                .join_with_harness(&self.principal, room, h.as_ref())
-                .map(|_| ()),
-            None => self.gateway.join(&self.principal, room),
-        }
-    }
-    fn dm(&self, to: &str, body: &str, label: Option<&str>) -> Result<(String, Posted)> {
-        self.gateway.dm(&self.principal, to, body, label)
-    }
-    fn post_labeled(&self, room: &str, body: &str, label: Option<&str>) -> Result<Posted> {
-        self.gateway
-            .post_labeled(&self.principal, (room, body, label))
-    }
-    fn post_handoff(
-        &self,
-        message: (&str, &str, Option<&str>),
-        handoff: &crate::gateway::Handoff,
-    ) -> Result<Posted> {
-        self.gateway.post_handoff(&self.principal, message, handoff)
-    }
-    fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
-        self.gateway.read(&self.principal, room, advance)
-    }
-    fn history(&self, room: &str, range: HistoryRange) -> Result<History> {
-        self.gateway.history(&self.principal, room, range)
-    }
-    fn wake_mark(&self, room: &str) -> Result<()> {
-        self.gateway.wake_mark(&self.principal, room)
-    }
-    fn wakeable(&self, room: &str) -> Result<usize> {
-        self.gateway.wakeable(&self.principal, room)
-    }
-    fn wake_summary(&self, room: &str) -> Result<(usize, i64)> {
-        self.gateway.wake_summary(&self.principal, room)
-    }
-    fn outside_view(&self, room: &str) -> Result<Option<(usize, i64)>> {
-        self.gateway.outside_view(&self.principal, room)
-    }
-    fn wait_poll(&self, room: &str) -> Result<Vec<Message>> {
-        self.gateway.wait_poll(&self.principal, room)
-    }
-    fn wait_seen(&self, room: &str, seq: i64) -> Result<()> {
-        self.gateway.wait_seen(&self.principal, room, seq)
-    }
-    fn change_token(&self) -> Option<u64> {
-        self.gateway.change_token()
-    }
-    fn receipt(&self, room: &str, seq: i64) -> Result<crate::domain::Receipts> {
-        self.gateway.receipt(&self.principal, room, seq)
-    }
-    fn who(&self, room: &str) -> Result<Vec<MemberInfo>> {
-        self.gateway.who(&self.principal, room)
-    }
-    fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()> {
-        self.gateway.claim(&self.principal, room, spec)
-    }
-
-    fn set_scope(&self, scope: &str) -> Result<()> {
-        self.gateway.set_scope(&self.principal, scope)
-    }
-    fn scope(&self) -> Result<Option<String>> {
-        self.gateway.scope_of(&self.principal)
-    }
-    fn my_role(&self) -> Result<Option<String>> {
-        self.gateway.my_role(&self.principal)
-    }
-    fn release(&self, room: &str, path: &str) -> Result<()> {
-        self.gateway.release(&self.principal, room, path)
-    }
-    fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()> {
-        self.gateway
-            .release_with_note(&self.principal, (room, path), note)
-    }
-    fn last_release(&self, room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>> {
-        self.gateway.last_release(&self.principal, room, path)
-    }
-    fn release_all(&self) -> Result<usize> {
-        self.gateway.release_all(&self.principal)
-    }
-    fn end_credential(&self) -> Result<bool> {
-        self.gateway.end_credential(&self.principal)
-    }
-    fn admin_close_room(&self, room: &str, closed: bool) -> Result<()> {
-        self.gateway.admin_close_room(&self.principal, room, closed)
-    }
-    fn admin_run_create(&self, run: &str) -> Result<()> {
-        self.gateway.admin_run_create(&self.principal, run)
-    }
-    fn admin_run_end(&self, run: &str) -> Result<crate::store::DeletedRooms> {
-        self.gateway.admin_run_end(&self.principal, run, None)
-    }
-    fn anchor_done(&self, anchor: &str) -> Result<usize> {
-        self.gateway.anchor_done(&self.principal, anchor)
-    }
-    fn admin_pause(&self, paused: bool) -> Result<()> {
-        self.gateway.admin_pause(&self.principal, paused)
-    }
-    fn admin_remove_member(&self, room: &str, member: &str) -> Result<()> {
-        self.gateway
-            .admin_remove_member(&self.principal, room, member)
-    }
-    fn admin_allow_member(&self, room: &str, member: &str) -> Result<()> {
-        self.gateway
-            .admin_allow_member(&self.principal, room, member)
-    }
-    fn admin_audit(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
-        self.gateway.admin_audit(&self.principal, limit)
-    }
-    fn admin_set_room_label(&self, room: &str, label: &str) -> Result<()> {
-        self.gateway
-            .admin_set_room_label(&self.principal, room, label)
-    }
-    fn admin_set_clearance(&self, member: &str, label: &str) -> Result<()> {
-        self.gateway
-            .admin_set_clearance(&self.principal, member, label)
-    }
-    fn admin_set_librarian(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_librarian(&self.principal, member, on)
-    }
-    fn admin_set_reviewer(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway.admin_set_reviewer(&self.principal, member, on)
-    }
-    fn admin_set_facilitator(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_facilitator(&self.principal, member, on)
-    }
-    fn admin_set_integrator(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_integrator(&self.principal, member, on)
-    }
-    fn admin_set_rate_limit(&self, limit: Option<(usize, i64)>) -> Result<()> {
-        self.gateway.admin_set_rate_limit(&self.principal, limit)
-    }
-    fn admin_rate_limits(&self) -> Result<Vec<crate::gateway::RateLimitEntry>> {
-        self.gateway.admin_rate_limits(&self.principal)
-    }
-    fn admin_set_member_rate_limit(&self, member: &str, limit: Option<(usize, i64)>) -> Result<()> {
-        self.gateway
-            .admin_set_member_rate_limit(&self.principal, member, limit)
-    }
-    fn admin_set_lease_cap(&self, secs: Option<i64>) -> Result<()> {
-        self.gateway.admin_set_lease_cap(&self.principal, secs)
-    }
-    fn admin_set_lease_grace(&self, secs: Option<i64>) -> Result<()> {
-        self.gateway.admin_set_lease_grace(&self.principal, secs)
-    }
-    fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()> {
-        self.gateway
-            .admin_set_room_stale(&self.principal, room, secs)
-    }
-    fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()> {
-        self.gateway
-            .admin_set_room_require(&self.principal, room, spec)
-    }
-    fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()> {
-        self.gateway
-            .admin_set_room_ask_lease(&self.principal, room, secs)
-    }
-    fn claim_ttl(&self, room: &str, path: &str, requested: Option<i64>) -> Result<i64> {
-        self.gateway
-            .claim_ttl_for(&self.principal, (room, path), requested)
-    }
-    fn admin_set_admin_agent(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_admin_agent(&self.principal, member, on)
-    }
-    fn admin_set_room_creation_granted(&self, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_room_creation_granted(&self.principal, on)
-    }
-    fn admin_grant_room_capability(&self, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_grant_room_capability(&self.principal, member, on)
-    }
-    fn invite(&self, member: &str, room: &str, via: &str) -> Result<()> {
-        self.gateway.invite(&self.principal, member, room, via)
-    }
-    fn grant_room_clearance(&self, room: &str, member: &str, label: &str) -> Result<()> {
-        self.gateway
-            .grant_room_clearance(&self.principal, room, member, label)
-    }
-    fn admin_set_ssh_key(&self, label: &str, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_ssh_key(&self.principal, label, member, on)
-    }
-    fn admin_set_room_grantor(&self, room: &str, member: &str, on: bool) -> Result<()> {
-        self.gateway
-            .admin_set_room_grantor(&self.principal, room, member, on)
-    }
-    fn admin_set_room_clearance(
-        &self,
-        room: &str,
-        member: &str,
-        label: Option<&str>,
-    ) -> Result<()> {
-        self.gateway
-            .admin_set_room_clearance(&self.principal, room, member, label)
-    }
-    fn admin_set_cap(&self, label: &str) -> Result<()> {
-        self.gateway.admin_set_cap(&self.principal, label)
-    }
-    fn admin_set_label_chain(&self, names: &[&str]) -> Result<()> {
-        self.gateway.admin_set_label_chain(&self.principal, names)
-    }
-    fn admin_plant_canary(&self, room: &str) -> Result<()> {
-        self.gateway.admin_plant_canary(&self.principal, room)
-    }
-    fn admin_retire_canary(&self, room: &str) -> Result<()> {
-        self.gateway.admin_retire_canary(&self.principal, room)
-    }
-    fn admin_add_scrub_term(&self, name: &str, term: &str) -> Result<()> {
-        self.gateway
-            .admin_add_scrub_term(&self.principal, name, term)
-    }
-    fn admin_remove_scrub_term(&self, name: &str) -> Result<()> {
-        self.gateway.admin_remove_scrub_term(&self.principal, name)
-    }
-    fn admin_scrub_terms(&self) -> Result<Vec<(String, String)>> {
-        self.gateway.admin_scrub_terms(&self.principal)
-    }
-    fn admin_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
-        self.gateway.admin_refusals(&self.principal, limit)
-    }
-    fn my_refusals(&self, limit: usize) -> Result<Vec<crate::domain::RefusalRecord>> {
-        self.gateway.my_refusals(&self.principal, limit)
-    }
-    fn my_crossings(&self, limit: usize) -> Result<Vec<crate::domain::CrossingStatus>> {
-        self.gateway.my_crossings(&self.principal, limit)
-    }
-    fn review_next(&self) -> Result<Option<crate::domain::ReviewItem>> {
-        self.gateway.review_next(&self.principal)
-    }
-    fn review_verdict(&self, id: i64, verdict: &crate::domain::Verdict) -> Result<()> {
-        self.gateway.review_verdict(&self.principal, id, verdict)
-    }
-    fn claims(&self, room: &str) -> Result<Vec<Claim>> {
-        self.gateway.claims(&self.principal, room)
-    }
-    fn digest(&self) -> Result<Digest> {
-        self.gateway.digest(&self.principal)
-    }
-    fn digest_with(&self, backlog: bool) -> Result<Digest> {
-        self.gateway.digest_with(&self.principal, backlog)
-    }
-    fn record_hook_run(&self, event: &str, bytes: usize) -> Result<()> {
-        self.gateway.record_hook_run(&self.principal, event, bytes)
-    }
-    fn hook_runs(&self, member: &str) -> Result<Vec<crate::domain::HookRun>> {
-        self.gateway.hook_runs(&self.principal, member)
-    }
-    fn note_member_mode(&self, mode: &str) -> Result<()> {
-        self.gateway.note_member_mode(&self.principal, mode)
-    }
-    fn note_session(&self, session_id: &str) -> Result<()> {
-        self.gateway.note_session(&self.principal, session_id)
-    }
-    fn record_stop(&self, background_tasks: usize, crons: usize) -> Result<()> {
-        self.gateway
-            .record_stop(&self.principal, background_tasks, crons)
-    }
-    fn sign_of_life(&self) -> Result<()> {
-        self.gateway.sign_of_life(&self.principal)
-    }
-    fn prune_members(&self, older_than: i64) -> Result<usize> {
-        self.gateway.prune_members(&self.principal, older_than)
-    }
-    fn set_status(&self, room: &str, status: &str) -> Result<()> {
-        self.gateway.set_status(&self.principal, room, status)
-    }
-    fn rooms(&self) -> Result<Vec<String>> {
-        self.gateway.rooms(&self.principal)
-    }
-    fn delivery_view(&self) -> Result<crate::gateway::DeliveryView> {
-        self.gateway.delivery_view(&self.principal)
-    }
-    fn set_delivery_view(&self, view: crate::gateway::DeliveryView) -> Result<()> {
-        self.gateway.set_delivery_view(&self.principal, view)
-    }
-    fn set_muted(&self, room: &str, muted: bool) -> Result<()> {
-        self.gateway.set_muted(&self.principal, room, muted)
-    }
-    fn request_crossing(&self, from: &str, seq: i64, to: &str) -> Result<i64> {
-        self.gateway
-            .request_crossing(&self.principal, from, seq, to)
-    }
-    fn review_queue(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
-        self.gateway.review_queue(&self.principal, limit)
-    }
-    fn board(&self, room: &str) -> Result<crate::domain::Board> {
-        self.gateway.board(&self.principal, room)
-    }
-    fn member_card(&self, room: &str, member: &str) -> Result<Option<crate::domain::Card>> {
-        self.gateway.member_card(&self.principal, room, member)
-    }
-    fn open_asks(&self, room: &str) -> Result<Vec<crate::domain::OpenAsk>> {
-        self.gateway.open_asks(&self.principal, room)
-    }
-    fn stuck(&self, room: &str) -> Result<Vec<crate::domain::StuckEvent>> {
-        self.gateway.stuck(&self.principal, room)
-    }
-    fn could_answer(
-        &self,
-        room: &str,
-        member: &str,
-        ask: i64,
-    ) -> Result<crate::domain::CouldAnswer> {
-        self.gateway
-            .could_answer(&self.principal, room, member, ask)
-    }
-    fn process_exited(&self, room: &str, member: &str) -> Result<bool> {
-        self.gateway.process_exited(&self.principal, room, member)
-    }
-    fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {
-        Ok(Subscription::new(room, from_seq, DEFAULT_WINDOW))
-    }
-    fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch> {
-        subscription.poll(&self.gateway, &self.principal, max)
-    }
-    fn ack(&self, room: &str, seq: i64) -> Result<()> {
-        self.gateway.ack(&self.principal, room, seq)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gateway::test_support::SpyStore;
-    use crate::gateway::{AllowAll, FixedClock};
+    use crate::gateway::{AllowAll, ClaimSpec, DEFAULT_WINDOW, FixedClock};
 
     fn pair() -> (Direct<SpyStore>, Direct<SpyStore>) {
         let g = Rc::new(Gateway::new(SpyStore::new(), FixedClock(10), AllowAll));
