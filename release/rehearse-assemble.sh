@@ -3,9 +3,10 @@
 #
 #   release/rehearse-assemble.sh [root]      (root defaults to the repository)
 #
-# In the copy it runs release/changelog-fragments.sh collect, release/design-fragments.sh assemble,
-# release/research-fragments.sh assemble and release/check-versions.sh, then prints the diff stat, the count of changelog
-# entries, and the "design item for #NNN" and "research note for #NNN" references that still need a number. The copy is
+# In the copy it runs release/design-fragments.sh assemble, release/research-fragments.sh assemble, release/renumber-refs.sh,
+# release/changelog-fragments.sh collect (after the renumbering, so the entries carry the numbers) and release/check-versions.sh, then prints the diff stat, the count of changelog
+# entries, and the "design item for #NNN" and "research note for #NNN" references that still need a number (none, after
+# release/renumber-refs.sh has run on the copy, #1244; a reference with no item makes it fail). The copy is
 # removed on exit, also on failure. Exit status is non-zero when any step failed (the stat is still printed).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -31,11 +32,23 @@ step() { # label command...
   if "$@"; then :; else echo "STEP FAILED  $label" >&2; fail=1; fi
 }
 
+map="$copy/.rehearse-map.txt"
+: > "$map"
+# the assemble summaries (on stderr) are the ticket to number map that renumber-refs.sh reads
+# shellcheck disable=SC2016
+assemble() { # script root map
+  local rc=0
+  "$1" assemble "$2" 2> "$3.err" || rc=$?
+  cat "$3.err" >&2; cat "$3.err" >> "$3"; rm -f "$3.err"
+  return "$rc"
+}
+step "design-fragments.sh assemble" assemble "$copy/release/design-fragments.sh" "$copy" "$map"
+step "research-fragments.sh assemble" assemble "$copy/release/research-fragments.sh" "$copy" "$map"
+step "renumber-refs.sh" "$copy/release/renumber-refs.sh" "$map" "$copy"
 changelog_out="$copy/.rehearse-changelog.txt"
 # shellcheck disable=SC2016
 step "changelog-fragments.sh collect" bash -c '"$1/release/changelog-fragments.sh" collect "$1" > "$2"' _ "$copy" "$changelog_out"
-step "design-fragments.sh assemble" "$copy/release/design-fragments.sh" assemble "$copy"
-step "research-fragments.sh assemble" "$copy/release/research-fragments.sh" assemble "$copy"
+rm -f "$map"
 step "check-versions.sh" "$copy/release/check-versions.sh" "$copy"
 
 entries=0
