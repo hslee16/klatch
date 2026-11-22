@@ -1,0 +1,1 @@
+- The release workflow checks the tag of the Python jobs through release/pep440.sh like the other jobs, so v0.2.0a1 and v0.2.0-alpha.1 both pass; the wheel job also refuses a Python version that is not the crate's release (#1260).

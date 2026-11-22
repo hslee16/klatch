@@ -88,6 +88,10 @@ of the bumped formula at `file://` URLs in a temporary local tap and runs `brew 
 `brew install --build-from-source` and `brew test`, then removes the tap. It changes your local Homebrew while it runs,
 and prints a message and skips when `brew` is missing.
 
+The bump first compares the tap formula with the staged copy `release/homebrew/klatch.rb` (`release/compare-formula.sh`): any
+difference beyond the version, URLs and hashes stops it, and after a good bump the staged copy is replaced by the bumped
+formula, so commit it with the release. `release/verify-published.sh` repeats the comparison against the live tap (`tap-drift`).
+
 The staged copy in this repository, `release/homebrew/klatch.rb`, is the file to edit first: `release/check-versions.sh`
 checks its `version`, its four URLs (release tag and archive name, from `release/pep440.sh`) and, when they are
 present, its SHA-256 lines, so a version bump cannot leave it behind. After the release exists, check the checksums
