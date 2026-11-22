@@ -2,12 +2,16 @@
 # Bump the Homebrew formula for a release (#1241): version, the four download URLs and their SHA-256 values from the
 # release's SHA256SUMS, plus the klatch-server install and test lines (RELEASING.md section 4).
 #
-#   release/bump-formula.sh [--patch FILE] [--pr-body FILE] [--rehearse ARCHIVES_DIR] <semver> <SHA256SUMS> <tap-checkout>
+#   release/bump-formula.sh [--patch FILE] [--pr-body FILE] [--staged FILE] [--rehearse ARCHIVES_DIR] <semver> <SHA256SUMS> <tap-checkout>
 #
 # It rewrites <tap-checkout>/Formula/klatch.rb, checks the result (one version, four URLs with the tag, four SHA-256 values
 # equal to the SHA256SUMS lines, klatch-server installed and tested), prints the patch, and prints the REST commands that
 # open the tap pull request. It never pushes, never calls gh or git, and never touches the network: the human runs the
 # printed commands. A failure leaves the formula as it was.
+#
+# Before it rewrites anything it compares the tap formula with the staged copy in this repository (release/homebrew/klatch.rb,
+# or --staged FILE) through release/compare-formula.sh: any difference beyond the version, URLs and hashes is drift, and the
+# script stops (#1260). After a good bump the staged copy is replaced by the bumped formula, so commit it with the release.
 #
 # --rehearse DIR: after the bump, a local rehearsal with Homebrew against the archives in DIR through file:// URLs
 # (brew audit --strict --new, brew install --build-from-source, brew test), in a temporary local tap that is removed at the
@@ -15,21 +19,25 @@
 # can spare, not a production one.
 set -euo pipefail
 
-patch_file=""; pr_body=""; rehearse_dir=""
+here="$(cd "$(dirname "$0")" && pwd)"
+patch_file=""; pr_body=""; rehearse_dir=""; staged="$here/homebrew/klatch.rb"
 while [ $# -gt 0 ]; do
   case "$1" in
     --patch) patch_file="${2:?--patch needs a file}"; shift 2 ;;
     --pr-body) pr_body="${2:?--pr-body needs a file}"; shift 2 ;;
+    --staged) staged="${2:?--staged needs a file}"; shift 2 ;;
     --rehearse) rehearse_dir="${2:?--rehearse needs a directory}"; shift 2 ;;
     -*) echo "bump-formula: unknown option $1" >&2; exit 2 ;;
     *) break ;;
   esac
 done
-[ $# -eq 3 ] || { echo "usage: release/bump-formula.sh [--patch FILE] [--pr-body FILE] [--rehearse ARCHIVES_DIR] <semver> <SHA256SUMS> <tap-checkout>" >&2; exit 2; }
+[ $# -eq 3 ] || { echo "usage: release/bump-formula.sh [--patch FILE] [--pr-body FILE] [--staged FILE] [--rehearse ARCHIVES_DIR] <semver> <SHA256SUMS> <tap-checkout>" >&2; exit 2; }
 version="$1"; sums="$2"; tap="$3"
 formula="$tap/Formula/klatch.rb"
 [ -f "$sums" ] || { echo "bump-formula: no SHA256SUMS at $sums" >&2; exit 1; }
 [ -f "$formula" ] || { echo "bump-formula: no formula at $formula" >&2; exit 1; }
+[ -f "$staged" ] || { echo "bump-formula: no staged formula at $staged" >&2; exit 1; }
+"$here/compare-formula.sh" "$staged" "$formula" || { echo "bump-formula: the tap formula and the staged formula ($staged) have drifted apart; reconcile them first" >&2; exit 1; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/klatch-bump.XXXXXX")"
 tapname=""
@@ -138,6 +146,7 @@ tag="$(cat "$work/tag")"
 
 diff -u --label a/Formula/klatch.rb --label b/Formula/klatch.rb "$formula" "$work/klatch.rb" > "$work/change.patch" || true
 cp "$work/klatch.rb" "$formula"
+cp "$work/klatch.rb" "$staged"
 if [ -s "$work/change.patch" ]; then cat "$work/change.patch"; else echo "bump-formula: the formula already matches $version (no change)"; fi
 [ -z "$patch_file" ] || cp "$work/change.patch" "$patch_file"
 

@@ -60,6 +60,7 @@ class Klatch < Formula
   end
 end
 RB
+  cp "$tap/Formula/klatch.rb" "$work/staged.rb"   # the staged copy in the repository, in step with the tap
   v=0.2.0-alpha.1
   {
     echo "$(h 1)  klatch-$v-aarch64-apple-darwin.tar.gz"
@@ -72,7 +73,7 @@ RB
     echo "$(h 8)  install.sh"
   } > "$work/SHA256SUMS"
 }
-run() { PATH="$bin:$PATH" "$here/bump-formula.sh" "$@" > "$work/out" 2> "$work/err"; }
+run() { PATH="$bin:$PATH" "$here/bump-formula.sh" --staged "$work/staged.rb" "$@" > "$work/out" 2> "$work/err"; }
 f="$tap/Formula/klatch.rb"
 
 fresh
@@ -115,6 +116,20 @@ fresh; if run 0.2.0-alpha.1 "$work/nonexistent" "$tap"; then bad "no SHA256SUMS 
 fresh; sed -i.bak '/on_intel do/,/end/{/sha256/d;}' "$f"; rm -f "$f.bak"
 if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "a formula with a missing sha256 line passed"; else ok "a formula that does not have four url and sha256 pairs fails"; fi
 
+# drift between the staged copy and the tap formula (#1260): refused, and nothing is written
+fresh; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$work/staged.rb"; rm -f "$work/staged.rb.bak"; cp "$f" "$work/before"; cp "$work/staged.rb" "$work/staged.before"
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "a staged copy that drifted from the tap passed"; else ok "a staged copy that differs from the tap fails"; fi
+grep -q 'license' "$work/err" && ok "the drift is shown as a diff" || bad "no diff: $(cat "$work/err")"
+cmp -s "$f" "$work/before" && cmp -s "$work/staged.rb" "$work/staged.before" && ok "and neither formula is changed" || bad "a formula changed on drift"
+fresh; rm "$work/staged.rb"
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "a missing staged copy passed"; else ok "a missing staged copy fails"; fi
+# after a good bump the staged copy is the bumped formula, so the post-publish comparison with the tap holds
+fresh
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" && cmp -s "$f" "$work/staged.rb"; then ok "the staged copy is updated to the bumped formula"; else bad "staged copy not updated"; fi
+# the default staged copy is the one in this repository (the fake tap here is not like it)
+fresh
+if PATH="$bin:$PATH" "$here/bump-formula.sh" 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" > "$work/out" 2> "$work/err"; then bad "the default staged copy was not compared"; else grep -q 'staged' "$work/err" && ok "without --staged the repository copy is compared" || bad "unexpected error: $(cat "$work/err")"; fi
+
 # rehearsal: brew is called in order against file:// archives; without brew it skips with a message
 fresh; mkdir -p "$work/archives"
 if run --rehearse "$work/archives" 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then ok "--rehearse exits 0 with a fake brew"; else bad "rehearse failed: $(cat "$work/err")"; fi
@@ -123,5 +138,5 @@ grep -q 'file://' "$work/out" && ok "the rehearsal uses file:// archives" || bad
 grep -q '^brew untap\|^brew uninstall' "$work/brew.log" && ok "the rehearsal cleans up after itself" || bad "no cleanup in brew log"
 [ ! -e "$work/forbidden.log" ] && ok "rehearsal never called gh, git or curl" || bad "called: $(cat "$work/forbidden.log")"
 fresh; mkdir -p "$work/archives"; rm "$bin/brew"
-if PATH="$bin:/usr/bin:/bin" "$here/bump-formula.sh" --rehearse "$work/archives" 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" > "$work/out" 2> "$work/err"; then grep -qi 'brew is not installed' "$work/out" && ok "without brew the rehearsal says so and skips" || bad "no skip message: $(cat "$work/out")"; else bad "no brew failed the script: $(cat "$work/err")"; fi
+if PATH="$bin:/usr/bin:/bin" "$here/bump-formula.sh" --staged "$work/staged.rb" --rehearse "$work/archives" 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" > "$work/out" 2> "$work/err"; then grep -qi 'brew is not installed' "$work/out" && ok "without brew the rehearsal says so and skips" || bad "no skip message: $(cat "$work/out")"; else bad "no brew failed the script: $(cat "$work/err")"; fi
 exit "$fails"

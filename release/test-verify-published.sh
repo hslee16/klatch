@@ -95,6 +95,8 @@ PY
     done
     echo 'end'
   } > "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")"
+  # the tap formula as a REST read returns it: the staged copy with this release's version (drift is checked, #1260)
+  sed -e "s/0\.1\.0-dev\.2/$v/g" -e "s/v0\.1\.0\.dev2/$tag/g" "$here/homebrew/klatch.rb" > "$web/gh_$(key repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb)"
   printf '%s\n' "$v" > "$web/installed_version"
   : > "$web/has_server"
 }
@@ -103,7 +105,7 @@ status() { grep -E "^(PASS|FAIL|SKIP) +$1" "$work/out" | head -1 | cut -d' ' -f1
 
 fresh
 if run $v; then ok "exits 0 when everything is in place"; else bad "good case failed: $(cat "$work/out" "$work/err")"; fi
-for label in pypi npm-version npm-latest npm-provenance crates github-release github-assets tap-formula install-klatch install-klatch-server; do
+for label in pypi npm-version npm-latest npm-provenance crates github-release github-assets tap-formula tap-drift install-klatch install-klatch-server; do
   [ "$(status "$label")" = PASS ] && ok "PASS $label" || bad "$label is '$(status "$label")'"
 done
 [ -z "$(ls -A "$work/tmp")" ] && ok "the temporary install prefix is removed" || bad "left behind: $(ls "$work/tmp")"
@@ -138,6 +140,9 @@ PY
 failcase "an SBOM is missing" github-assets
 grep -q 'x86_64-unknown-linux-musl.cdx.json' "$work/out" && ok "the missing asset is named" || bad "missing asset not named"
 fresh; sed -i.bak 's/^  version ".*"$/  version "0.1.0-dev.2"/' "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")"; rm -f "$web"/*.bak; failcase "the tap formula is not bumped" tap-formula
+tapf="$web/gh_$(key repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb)"
+fresh; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$tapf"; rm -f "$web"/*.bak; failcase "the tap formula drifted from the staged copy" tap-drift
+fresh; rm "$tapf"; failcase "the tap formula cannot be read over REST" tap-drift
 fresh; printf '0.1.0-dev.2\n' > "$web/installed_version"; failcase "the installed klatch prints another version" install-klatch
 fresh; rm "$web/has_server"; failcase "the install has no klatch-server" install-klatch-server
 

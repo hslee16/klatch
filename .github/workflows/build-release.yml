@@ -48,7 +48,8 @@ jobs:
         run: |
           set -euo pipefail
           version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("pyproject.toml").read(), re.M).group(1))')
-          if [ "$TAG" != "v$version" ]; then
+          # pyproject.toml holds the PEP 440 spelling (0.2.0a1); the tag may carry either spelling of the release
+          if ! { . "$GITHUB_WORKSPACE/release/pep440.sh"; tag_matches "$TAG" "$(pep440_to_semver "$version")"; }; then
             echo "tag $TAG does not match version $version" >&2
             exit 1
           fi
@@ -94,7 +95,10 @@ jobs:
           set -euo pipefail
           pypi=$(sed -n 's/^version = "\(.*\)"$/\1/p' clients/python/pyproject.toml | head -1)
           cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
-          [ "$TAG" = "v$pypi" ] || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
+          . "$GITHUB_WORKSPACE/release/pep440.sh"
+          # the wheels (PEP 440) and the archives (SemVer) must be one release, and the tag must name it in either spelling
+          [ "$(pep440_to_semver "$pypi")" = "$cargo" ] || { echo "the Python version $pypi and the Cargo version $cargo are not the same release" >&2; exit 1; }
+          tag_matches "$TAG" "$cargo" || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
           echo "PYPI_VERSION=$pypi" >> "$GITHUB_ENV"
           echo "CARGO_VERSION=$cargo" >> "$GITHUB_ENV"
 

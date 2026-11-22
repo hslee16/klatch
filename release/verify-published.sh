@@ -99,6 +99,16 @@ if out="$(fetch "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/
   if printf '%s\n' "$out" | grep -qF "version \"$version\"" && [ "$urls" -eq 4 ]; then pass tap-formula "the tap formula is at $version with four $tag URLs (its CI result is on the tap pull request)"; else fail tap-formula "the tap formula does not name version $version with four $tag URLs (found $urls)"; fi
 else fail tap-formula "could not fetch Formula/klatch.rb from hslee16/homebrew-klatch main"; fi
 
+# Homebrew tap drift: the tap formula, read over REST, equals the staged copy in this repository (release/homebrew/klatch.rb)
+# in everything but the version, URLs and hashes (#1260)
+here="$(cd "$(dirname "$0")" && pwd)"
+tapfile="$(mktemp "${TMPDIR:-/tmp}/klatch-tapformula.XXXXXX")"
+if gh api "repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb" -H "Accept: application/vnd.github.raw+json" > "$tapfile" 2> /dev/null && [ -s "$tapfile" ]; then
+  if drift="$("$here/compare-formula.sh" "$here/homebrew/klatch.rb" "$tapfile" 2>&1)"; then pass tap-drift "the tap formula equals release/homebrew/klatch.rb apart from the version, URLs and hashes"
+  else fail tap-drift "the tap formula differs from release/homebrew/klatch.rb: $(printf '%s\n' "$drift" | grep '^[-+][^-+]' | head -3 | tr '\n' ' ')"; fi
+else fail tap-drift "could not read Formula/klatch.rb from hslee16/homebrew-klatch over REST (gh api)"; fi
+rm -f "$tapfile"
+
 # a clean install from PyPI into a throwaway virtual environment, then run both binaries
 if [ "$skip_install" -eq 1 ]; then
   record SKIP install-klatch "--skip-install"
