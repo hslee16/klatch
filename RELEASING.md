@@ -2,7 +2,8 @@
 
 How a release is made. The workflow is `.github/workflows/release.yml`; the rules are in [VERSIONING.md](VERSIONING.md).
 Publishing needs the maintainer: the `release` environment approval in GitHub Actions, and the approval of the staged
-npm version on npmjs.com with a security key. Nothing here can be done by an agent alone, by design.
+npm version on npmjs.com with a security key. Nothing here can be done by an agent alone, by design. Which account owns
+which registry name, and how a second maintainer takes one over, is in [OWNERS.md](OWNERS.md).
 
 ## 1. Pick the number and bump every place it lives
 
