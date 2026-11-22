@@ -132,6 +132,13 @@ pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
                 capped.omitted
             );
         }
+        // a wait that consumed what it returned hands the dm help over itself; a peek or a filter leaves the messages
+        // unread, so the hook digest carries it (#1209)
+        if filter.is_open() && !a.peek {
+            for line in dm_help_lines(t, a.caller.0, room, &found) {
+                println!("{line}");
+            }
+        }
         if !found.is_empty() {
             eprintln!("{DATA_RULE}");
             return Ok(true);

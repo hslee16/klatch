@@ -42,7 +42,7 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
             if count {
                 unread_count(t, &room)?
             } else {
-                read(t, &room, peek)?
+                read(t, ctx.me, &room, peek)?
             }
         }
         MessagingCmd::History { room, last, since } => history_of(t, room, since, last)?,
@@ -329,17 +329,81 @@ pub(super) fn unread_count(t: &dyn Transport, room: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(t: &dyn Transport, room: &str, peek: bool) -> Result<()> {
+pub(super) fn read(t: &dyn Transport, me: &str, room: &str, peek: bool) -> Result<()> {
     let messages = t.read(room, !peek)?;
     if messages.is_empty() {
         eprintln!("{EMPTY_READ_NOTE}");
     } else {
         eprintln!("{DATA_RULE}");
     }
-    for m in messages {
-        println!("{}", message_row(&m));
+    for m in &messages {
+        println!("{}", message_row(m));
+    }
+    // a peek leaves the messages unread, so the hook digest still shows them and carries the help itself
+    if !peek {
+        for line in dm_help_lines(t, me, room, &messages) {
+            println!("{line}");
+        }
     }
     Ok(())
+}
+
+/// The dm help for messages `wait` or `read` just handed over and consumed (#1209), as separate trailing lines: the
+/// reply hint when `room` is a dm with `me` in it, or the nudge when these messages complete a long two-member
+/// exchange in a room of three or more with no dm yet. The same fixed templates as the hook digest (#1190, #1192):
+/// validated names, a count and the room, never message text. A message is handed over once, so each line appears
+/// once; a room that cannot be looked at adds nothing, since a note never hides the messages.
+pub(super) fn dm_help_lines(
+    t: &dyn Transport,
+    me: &str,
+    room: &str,
+    handed: &[klatch::domain::Message],
+) -> Vec<String> {
+    use klatch::domain::{crossing_exchange, dm_reply_hint, dm_room, move_to_dm_nudge};
+    if handed.is_empty() {
+        return Vec::new();
+    }
+    let Ok(members) = t.who(room) else {
+        return Vec::new();
+    };
+    if room.starts_with(klatch::domain::DM_PREFIX) {
+        // a dm made by `dm` has exactly its two members; the name alone cannot say it for a hashed room name
+        let peer = klatch::domain::dm_peer_in_room(me, room).or_else(|| {
+            let others: Vec<_> = members.iter().filter(|m| m.name != me).collect();
+            let named = members.iter().any(|m| m.name == me) && others.len() == 1;
+            named
+                .then(|| others[0].name.clone())
+                .filter(|p| klatch::domain::valid_name(p))
+        });
+        return peer
+            .map(|p| format!("klatch: {}", dm_reply_hint(&p)))
+            .into_iter()
+            .collect();
+    }
+    if members.len() < 3 {
+        return Vec::new();
+    }
+    let range = klatch::gateway::HistoryRange {
+        since: None,
+        last: Some(klatch::domain::DM_NUDGE_WINDOW),
+    };
+    let Ok(history) = t.history(room, range) else {
+        return Vec::new();
+    };
+    let rows: Vec<(i64, &str)> = history
+        .messages
+        .iter()
+        .map(|m| (m.seq, m.sender.as_str()))
+        .collect();
+    let seqs: Vec<i64> = handed.iter().map(|m| m.seq).collect();
+    let Some((peer, n)) = crossing_exchange(me, &rows, &seqs) else {
+        return Vec::new();
+    };
+    // a dm between the two that already exists makes the nudge pointless
+    if t.who(&dm_room(me, &peer)).is_ok() {
+        return Vec::new();
+    }
+    vec![move_to_dm_nudge(&peer, n, room)]
 }
 
 /// One message as `read` and `history` print it: marked, one line, handoff folded in.

@@ -26,6 +26,44 @@ pub fn exchange_run<'a>(senders: &[&'a str]) -> Option<(&'a str, &'a str, usize)
     Some((last, other, len))
 }
 
+/// The long exchange `me` is shown the Nth message of (#1190, #1209): from a room's newest messages as `(seq, sender)`
+/// pairs in order, and the `seq`s handed to `me` just now, the peer and the length of the newest run of messages sent
+/// by only two members, when `me` is one of them, the run is at least `DM_NUDGE_MESSAGES` long, the peer's name is
+/// valid, and `shown` carries the first message of the peer at or past the Nth place of the run (the one that crosses
+/// the threshold for `me`, since its own messages are never shown to it). That message is handed over once, so the
+/// answer is given once, whichever of the digest, `wait` or `read` hands it over. Pure: whether the room has three
+/// members and whether the two have a dm are the caller's to check.
+pub fn crossing_exchange(me: &str, rows: &[(i64, &str)], shown: &[i64]) -> Option<(String, usize)> {
+    let senders: Vec<&str> = rows.iter().map(|r| r.1).collect();
+    let (last, other, len) = exchange_run(&senders)?;
+    if len < DM_NUDGE_MESSAGES || (last != me && other != me) {
+        return None;
+    }
+    let peer = if last == me { other } else { last };
+    if !valid_name(peer) {
+        return None;
+    }
+    let run = &rows[rows.len() - len..];
+    let crossing = run
+        .iter()
+        .skip(DM_NUDGE_MESSAGES - 1)
+        .find(|r| r.1 == peer)?;
+    shown.contains(&crossing.0).then(|| (peer.to_string(), len))
+}
+
+/// The line that names the reply command on a message from a dm peer: the same words in the hook digest, `wait` and
+/// `read`. A validated name only, never message text.
+pub fn dm_reply_hint(peer: &str) -> String {
+    format!("dm from {peer}: reply with klatch dm {peer} \"<text>\"")
+}
+
+/// The line that suggests moving a long two-member exchange to a dm: validated names, a count and a room.
+pub fn move_to_dm_nudge(peer: &str, n: usize, room: &str) -> String {
+    format!(
+        "klatch: you and {peer} exchanged {n} messages in {room}; for a longer exchange use: klatch dm {peer} \"<text>\""
+    )
+}
+
 /// The room two members share: `dm.<a>.<b>` with the names sorted, or `dm.` and 16 hex digits of a hash of the
 /// pair when that would not fit in a room name.
 pub fn dm_room(a: &str, b: &str) -> String {
@@ -78,6 +116,36 @@ mod tests {
         );
         assert_eq!(exchange_run(&["ann", "ann", "ann"]), None);
         assert_eq!(exchange_run(&[]), None);
+    }
+
+    #[test]
+    fn the_nudge_belongs_to_the_message_that_crosses_the_threshold() {
+        let rows = [(1, "bo"), (2, "ann"), (3, "bo"), (4, "ann"), (5, "bo")];
+        // ann is handed bo's 3 and 5; the 4th place of the run is ann's own, so 5 is the crossing message
+        assert_eq!(
+            crossing_exchange("ann", &rows, &[1, 3, 5]),
+            Some(("bo".to_string(), 5))
+        );
+        assert_eq!(crossing_exchange("ann", &rows, &[1, 3]), None);
+        // bo is handed only ann's: the 4th place is ann's message 4
+        assert_eq!(
+            crossing_exchange("bo", &rows, &[2, 4]),
+            Some(("ann".to_string(), 5))
+        );
+        assert_eq!(crossing_exchange("cy", &rows, &[1, 2, 3, 4, 5]), None);
+        assert_eq!(crossing_exchange("ann", &rows[..3], &[1, 3]), None);
+    }
+
+    #[test]
+    fn the_help_lines_are_fixed_templates() {
+        assert_eq!(
+            dm_reply_hint("bob"),
+            "dm from bob: reply with klatch dm bob \"<text>\""
+        );
+        assert_eq!(
+            move_to_dm_nudge("bob", 4, "lobby"),
+            "klatch: you and bob exchanged 4 messages in lobby; for a longer exchange use: klatch dm bob \"<text>\""
+        );
     }
 
     #[test]
