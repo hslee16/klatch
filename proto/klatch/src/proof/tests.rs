@@ -374,6 +374,68 @@ fn a_verifier_of_weaker_cost_is_rewritten_at_the_next_success() {
     .unwrap();
 }
 
+/// A stored row that parses to a stale verifier but is not byte-identical to its canonical encoding
+/// (parameters in another order, a leading zero).
+fn non_canonical_stale_row(s: &SqliteStore) -> String {
+    let v = Verifier::create(PASS, CHEAP).unwrap();
+    let canon = v.encode();
+    let (cost, rest) = canon
+        .strip_prefix("argon2id$")
+        .unwrap()
+        .split_once('$')
+        .unwrap();
+    assert_eq!(cost, "m=64,t=1,p=1");
+    let row = format!("argon2id$p=1,t=01,m=64${rest}");
+    s.policy_set(VERIFIER_KEY, Some(&row), 1).unwrap();
+    row
+}
+
+#[test]
+fn a_stale_row_that_is_not_its_canonical_text_proves_but_is_left_as_it_was() {
+    let s = store();
+    let row = non_canonical_stale_row(&s);
+    let parsed = Verifier::parse(&row).unwrap();
+    assert!(parsed.is_stale());
+    assert_ne!(parsed.encode(), row);
+    prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(10),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
+    assert_eq!(
+        s.policy_get(VERIFIER_KEY).unwrap().as_deref(),
+        Some(row.as_str()),
+        "a row that is not the canonical encoding was rewritten"
+    );
+    assert!(!actions(&s).contains(&"passphrase-rehashed".to_string()));
+}
+
+#[test]
+fn a_row_with_upper_case_hex_is_corrupt_and_never_proves() {
+    let s = store();
+    with_pass(&s);
+    let row = s.policy_get(VERIFIER_KEY).unwrap().unwrap();
+    let (head, tail) = row.rsplit_once('$').unwrap();
+    s.policy_set(
+        VERIFIER_KEY,
+        Some(&format!("{head}${}", tail.to_uppercase())),
+        2,
+    )
+    .unwrap();
+    let e = prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(10),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
+    assert_eq!(e, ProofError::Corrupt);
+}
+
 #[test]
 fn init_sets_the_first_passphrase_twice_typed_and_keeps_only_a_verifier() {
     let s = store();
