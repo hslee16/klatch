@@ -466,11 +466,14 @@ mod tests {
 
     #[test]
     fn the_design_item_lists_every_unverified_codex_claim_as_a_live_check() {
-        let item = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../design/items/64-codex-adapter.md"
-        ))
-        .unwrap();
+        // the item was a fragment in design/items/ until it was assembled into DESIGN.md at the release
+        let design =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../DESIGN.md"))
+                .unwrap();
+        let at = design
+            .find("Live check of the Codex adapter")
+            .expect("DESIGN.md has the live check list of the Codex adapter");
+        let item = &design[at..];
         for c in Capability::ALL {
             if Codex::ground(c).contains("NOT VERIFIED") {
                 assert!(
