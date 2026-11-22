@@ -101,17 +101,20 @@ class HttpStore(Store):
             [SERVER_BIN, "http", "--listen", "127.0.0.1:0"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log
         )
         self.port = None
-        until = time.monotonic() + 30
+        until = time.monotonic() + 60
+        text = ""
         while self.port is None and time.monotonic() < until:
             self.log.seek(0)
-            m = re.search(r"http listening on 127\.0\.0\.1:(\d+)", self.log.read())
+            text = self.log.read()
+            # The line counts only once it is complete (its newline is there), never half an address.
+            m = re.search(r"http listening on 127\.0\.0\.1:(\d+) [^\n]*\n", text)
             if m:
                 self.port = int(m.group(1))
             else:
                 time.sleep(0.02)
         if self.port is None:
             self.close()
-            raise RuntimeError("the server never listened")
+            raise RuntimeError("the server never listened; its stderr was:\n" + text)
 
     def token(self, name):
         if name not in self.tokens:

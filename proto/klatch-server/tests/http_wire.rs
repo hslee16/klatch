@@ -118,10 +118,12 @@ impl Server {
             addr: "127.0.0.1:0".parse().unwrap(),
             log: dir.0.join("err.log"),
         };
-        let until = Instant::now() + Duration::from_secs(30);
+        let until = Instant::now() + Duration::from_secs(60);
         while Instant::now() < until {
             let text = std::fs::read_to_string(&server.log).unwrap_or_default();
+            // Trust the line only once it is complete (its newline is there), never half an address (#1173, #1207).
             if let Some(rest) = text.split("http listening on ").nth(1)
+                && rest.contains('\n')
                 && let Some(addr) = rest.split_whitespace().next()
             {
                 server.addr = addr.parse().expect("the logged address");
@@ -129,7 +131,10 @@ impl Server {
             }
             std::thread::sleep(Duration::from_millis(25));
         }
-        panic!("the server never listened");
+        panic!(
+            "the server never listened; its stderr was:\n{}",
+            std::fs::read_to_string(&server.log).unwrap_or_default()
+        );
     }
 
     fn signal(&self, sig: libc::c_int) {

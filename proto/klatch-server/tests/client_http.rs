@@ -80,15 +80,20 @@ impl Home {
                 .stderr(Stdio::from(std::fs::File::create(self.log()).unwrap()))
                 .spawn()
                 .expect("start klatch-server");
-            let until = Instant::now() + Duration::from_secs(30);
+            let until = Instant::now() + Duration::from_secs(60);
             let addr = loop {
                 let text = std::fs::read_to_string(self.log()).unwrap_or_default();
+                // Trust the line only once it is complete (its newline is there), never half an address (#1173, #1207).
                 if let Some(rest) = text.split("http listening on ").nth(1)
+                    && rest.contains('\n')
                     && let Some(a) = rest.split_whitespace().next()
                 {
                     break a.parse().expect("the logged address");
                 }
-                assert!(Instant::now() < until, "the server never listened");
+                assert!(
+                    Instant::now() < until,
+                    "the server never listened; its stderr was:\n{text}"
+                );
                 std::thread::sleep(Duration::from_millis(25));
             };
             *server = Some((child, addr));

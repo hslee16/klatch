@@ -87,15 +87,18 @@ class HttpStore extends Store {
     if (this.server) return;
     const log = join(this.home, "err.log");
     this.server = spawn(SERVER_BIN, ["http", "--listen", "127.0.0.1:0"], { env: this.env(), stdio: ["ignore", "ignore", openSync(log, "w")] });
-    for (let i = 0; i < 1500; i++) {
-      const m = /http listening on 127\.0\.0\.1:(\d+)/.exec(readFileSync(log, "utf8"));
+    let text = "";
+    for (let i = 0; i < 3000; i++) {
+      text = readFileSync(log, "utf8");
+      // The line counts only once it is complete (its newline is there), never half an address.
+      const m = /http listening on 127\.0\.0\.1:(\d+) [^\n]*\n/.exec(text);
       if (m) {
         this.port = Number(m[1]);
         return;
       }
       await sleep(20);
     }
-    throw new Error("the server never listened");
+    throw new Error(`the server never listened; its stderr was:\n${text}`);
   }
   private token(name: string): string {
     let t = this.tokens.get(name);
