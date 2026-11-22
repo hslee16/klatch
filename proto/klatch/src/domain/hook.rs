@@ -252,14 +252,12 @@ fn render_dm_help(d: &RoomDigest, out: &mut String) {
         return;
     }
     if let Some(peer) = &d.dm_peer {
-        out.push_str(&format!(
-            "  dm from {peer}: reply with klatch dm {peer} \"<text>\"\n"
-        ));
+        out.push_str(&format!("  {}\n", crate::domain::dm_reply_hint(peer)));
     }
     if let Some((peer, n)) = &d.move_to_dm {
         out.push_str(&format!(
-            "  klatch: you and {peer} exchanged {n} messages in {}; for a longer exchange use: klatch dm {peer} \"<text>\"\n",
-            d.room
+            "  {}\n",
+            crate::domain::move_to_dm_nudge(peer, *n, &d.room)
         ));
     }
 }

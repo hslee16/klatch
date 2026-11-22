@@ -1,0 +1,1 @@
+- `klatch wait` and `klatch read` now print the dm reply hint and the long-exchange dm nudge as separate trailing `klatch: ` lines when they hand over the messages (the hook digest is empty for an agent that reads through them); same fixed templates, no message text (#1209).

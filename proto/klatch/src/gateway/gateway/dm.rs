@@ -44,36 +44,22 @@ impl<S: Store> Gateway<S> {
         room: &str,
         shown: &[Message],
     ) -> Result<Option<(String, usize)>> {
-        use crate::domain::{DM_NUDGE_MESSAGES as N, DM_NUDGE_WINDOW as WINDOW};
+        use crate::domain::DM_NUDGE_WINDOW as WINDOW;
         if shown.is_empty() || self.store.members(room)?.len() < 3 {
             return Ok(None);
         }
         let head = self.store.head(room)?;
         let after = (head - WINDOW as i64).max(0);
         let rows = Self::without_canary(self.store.tail(room, after, WINDOW)?);
-        let senders: Vec<&str> = rows.iter().map(|m| m.sender.as_str()).collect();
-        let Some((last, other, len)) = crate::domain::exchange_run(&senders) else {
+        let pairs: Vec<(i64, &str)> = rows.iter().map(|m| (m.seq, m.sender.as_str())).collect();
+        let seqs: Vec<i64> = shown.iter().map(|m| m.seq).collect();
+        let Some((peer, len)) = crate::domain::crossing_exchange(&who.member, &pairs, &seqs) else {
             return Ok(None);
         };
-        let pair = [last, other];
-        let run = &rows[rows.len() - len..];
-        if len < N || !pair.contains(&who.member.as_str()) {
+        if self.dm_pair(&dm_room(&who.member, &peer))?.is_some() {
             return Ok(None);
         }
-        let peer = if pair[0] == who.member {
-            pair[1]
-        } else {
-            pair[0]
-        };
-        if !valid_name(peer) || self.dm_pair(&dm_room(&who.member, peer))?.is_some() {
-            return Ok(None);
-        }
-        // the first message of the peer at or past the Nth place of the run: the one that crosses the threshold for
-        // this member, since its own messages are never shown to it
-        let crossing = run.iter().skip(N - 1).find(|m| m.sender == peer);
-        Ok(crossing
-            .filter(|m| shown.iter().any(|s| s.seq == m.seq))
-            .map(|_| (peer.to_string(), len)))
+        Ok(Some((peer, len)))
     }
 
     /// The long exchange standing in `room` as a stuck-case event for the mediator (#1191): the same newest run of
