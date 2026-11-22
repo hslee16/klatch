@@ -22,6 +22,53 @@ const MAX_LINE: usize = 1024;
 
 pub struct TtyPrompt;
 
+/// Whether two descriptors are the same device node: the same device and inode and, for a terminal, the same
+/// terminal. Two fds opened on one pty slave by different paths agree; a pty someone else made does not.
+fn same_device(a: i32, b: i32) -> bool {
+    // SAFETY: fstat fills a plain struct for a descriptor.
+    unsafe {
+        let mut sa: libc::stat = std::mem::zeroed();
+        let mut sb: libc::stat = std::mem::zeroed();
+        libc::fstat(a, &mut sa) == 0
+            && libc::fstat(b, &mut sb) == 0
+            && sa.st_dev == sb.st_dev
+            && sa.st_ino == sb.st_ino
+            && sa.st_rdev == sb.st_rdev
+    }
+}
+
+/// Whether `fd` is `/dev/null`.
+fn is_dev_null(fd: i32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(null) = std::fs::metadata("/dev/null") else {
+        return false;
+    };
+    // SAFETY: fstat fills a plain struct for a descriptor.
+    unsafe {
+        let mut s: libc::stat = std::mem::zeroed();
+        libc::fstat(fd, &mut s) == 0
+            && (s.st_mode & libc::S_IFMT) == libc::S_IFCHR
+            && s.st_rdev as u64 == null.rdev()
+    }
+}
+
+/// For an act that prints a secret or stored text: standard output must be this process's controlling terminal AND
+/// the very terminal the passphrase and the confirmation are read from and written to (the same device, found with
+/// `fstat`, so a pty in another session that merely IS a terminal does not count), and standard error must be that
+/// terminal or `/dev/null`. It stops a program that gives its own pty to standard output while the person's terminal
+/// is the prompt, or captures standard error through a pipe. It does NOT stop a program that relays or hosts the
+/// WHOLE terminal the person types at (SECURITY.md).
+pub fn output_is_the_prompt_terminal() -> bool {
+    is_controlling_tty(1)
+        && open_tty().is_ok_and(|t| same_device(t.fd, 1))
+        && (same_device(2, 1) || is_dev_null(2))
+}
+
+/// For the admin shell: standard input and output must both be this process's controlling terminal and one device.
+pub fn input_and_output_are_one_terminal() -> bool {
+    is_controlling_tty(0) && is_controlling_tty(1) && same_device(0, 1)
+}
+
 /// Whether descriptor `fd` IS this process's controlling terminal: a terminal, and the one whose session is ours.
 /// A pty an agent made for itself and handed to a child as standard input or output is a terminal too, but not the
 /// controlling one (the person's is), so this tells them apart: a person approving a prompt on their own terminal

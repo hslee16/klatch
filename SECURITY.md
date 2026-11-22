@@ -31,8 +31,9 @@ Supported versions: the newest release only, the current practice and not a poli
   least 10 characters); only an Argon2id verifier (19 MiB, 2 passes, the parameters recorded in the stored value so
   they can be raised) is kept, in the store's policy, never the passphrase. It is never read from the environment,
   an argument, a file or a pipe: standard input counts only when it is a terminal, else the controlling terminal.
-  A detached or double-forked process, `setsid`, and a script with no terminal at all have nothing to ask on and are
-  refused. A program that opens a pseudo-terminal of its own can be asked and is then refused for not knowing the
+  A process with no terminal at all (a detached or double-forked process, a script with no controlling terminal and
+  none on standard input) has nothing to ask on and is refused. `setsid` alone is not a defence: a program that
+  gives itself a pseudo-terminal of its own can be asked like anyone and is then refused for not knowing the
   passphrase. A program started from YOUR terminal shares it, so it can still make a prompt appear there even when
   it pipes its own standard input; it cannot answer it, and it cannot confirm for you (the typed-back confirmation
   of a destructive act is read from the terminal, never from a pipe) or feed `klatch admin shell` (which refuses
@@ -41,10 +42,14 @@ Supported versions: the newest release only, the current practice and not a poli
   passphrase only for a command you asked for.
   Commands that print a secret or stored text (`admin recovery`, `export`, `run-archive`, `rotate-key`,
   `rotate-label-key`, `audit`, `refusals`, `review-queue`, `scrub-list`, `archives`) refuse before any prompt unless
-  standard output IS the process's controlling terminal (not a pipe, a file, or a pty some other program holds the
-  other end of), `klatch admin shell` needs standard input and output to be it, and `recovery` asks for a typed
-  confirmation that names what it confirms. Text from arguments is shown as printable ASCII only (everything else
-  as `?`), a recovery code is never shown (every word after `admin recover` is hidden), and the prompt names the
+  three things hold: standard output is this process's controlling terminal; it is the SAME terminal device (compared
+  with `fstat`: device, inode, terminal) as the one the passphrase and the confirmation are read from and written to;
+  and standard error is that terminal or `/dev/null`. `klatch admin shell` needs standard input and output to be one
+  controlling terminal. What this stops: output sent to a pipe, a file or a pty that is not the terminal you are
+  typing at, including a pty a program made in a session of its own while your terminal supplies the prompt. What it
+  does not stop: a program that hosts or relays the terminal you type at, so that the prompt, your typing and the
+  output all pass through it. `recovery` also asks for a typed confirmation that names what it confirms. Text from arguments is shown as printable ASCII only (everything else
+  as `?`), a recovery code is never shown (decided from the parsed `recover` command, whatever flags come before it), and the prompt names the
   store file. Residual, said plainly: a passphrase or recovery code typed into a terminal that a program hosts or
   relays (a pty it owns and shows you, a screen it forwards) is captured, and these checks cannot prevent a relay of
   the whole terminal. The defence that remains is you reading what the prompt names and typing the passphrase only

@@ -50,30 +50,19 @@ const WORD_LIMIT: usize = 48;
 const FAMILIES: [&str; 5] = ["admin", "worker", "anchor", "run", "judge"];
 
 /// What the passphrase approves, for the prompt: the command being run. Text is whitelisted (`plain`), the family
-/// and command words are never cut, a long word is cut with its length and a digest, and a very long command is
-/// cut at a word with how many words went. For `admin recover` EVERY word after the command word is hidden
-/// (a recovery code however it is split, whatever flags or `--` come before it); a room or member that happens to
-/// be named `recover` hides nothing, because only the command word is the trigger.
+/// and command words are never cut, a long word is cut with its length and a digest, and a very long command is cut
+/// at a word with how many words went. A recovery code is NOT hidden here: that is decided from the parsed command
+/// (`admin::run`), not from words.
 pub(crate) fn describe_words(words: &[String]) -> String {
     use sha2::{Digest, Sha256};
     let family = words.iter().position(|w| FAMILIES.contains(&w.as_str()));
     let command = family.map(|f| f + 1);
-    let hide_from = match (family, command) {
-        (Some(f), Some(c))
-            if words[f] == "admin" && words.get(c).map(String::as_str) == Some("recover") =>
-        {
-            Some(c + 1)
-        }
-        _ => None,
-    };
     let protected =
         |i: usize| Some(i) == family || Some(i) == command || (family.is_none() && i < 2);
     let mut out: Vec<String> = Vec::new();
     for (i, w) in words.iter().enumerate() {
         let w = plain(w);
-        let shown = if hide_from.is_some_and(|h| i >= h) {
-            "<code>".to_string()
-        } else if !protected(i) && w.chars().count() > WORD_LIMIT {
+        let shown = if !protected(i) && w.chars().count() > WORD_LIMIT {
             let digest = data_encoding::HEXLOWER.encode(&Sha256::digest(w.as_bytes()));
             format!(
                 "{}...({} chars, sha256 {})",
@@ -319,26 +308,6 @@ mod describe_tests {
             d(&["admin", "label", "recover", "private"]),
             "admin label recover private"
         );
-    }
-
-    #[test]
-    fn only_the_command_word_recover_hides_and_it_hides_every_word_after_it() {
-        let shown = d(&[
-            "admin",
-            "recover",
-            "--",
-            "KLATCH-AAAA",
-            "--label",
-            "private",
-            "BBBB",
-        ]);
-        for secret in ["AAAA", "BBBB", "private", "--label", "--"] {
-            assert!(!shown.contains(secret), "{secret} in {shown}");
-        }
-        assert!(shown.starts_with("admin recover"), "{shown}");
-        // global flags before the family do not move the command word
-        let shown = d(&["--as-member", "x", "admin", "recover", "KLATCH-ZZZZ"]);
-        assert!(!shown.contains("ZZZZ"), "{shown}");
     }
 
     #[test]

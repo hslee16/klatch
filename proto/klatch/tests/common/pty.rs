@@ -54,27 +54,40 @@ fn pty() -> (OwnedFd, OwnedFd) {
 
 /// Run `cmd` on a pseudo-terminal, typing `typed` one line per prompt. Kills the child after 120 seconds.
 pub fn run_on_pty(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, false)
+    run_with(cmd, typed, None, false, 0)
 }
 
 /// The terminal the human has (pty A, the child's controlling terminal, carrying standard ERROR) while standard input
 /// and OUTPUT are a second pty B that the caller owns, as an agent that makes itself a pty for fd 0 and 1 without
 /// `setsid` would: B's master output comes back as `piped_stdout` (#1233).
 pub fn run_on_pty_split(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, true)
+    run_with(cmd, typed, None, false, 1)
+}
+
+/// The human's terminal H is standard INPUT (the one the test types at), while the child is the leader of a session of
+/// its own on a pty P that the caller owns, as an agent that forks a pty (`forkpty`) would be: standard output and
+/// error are P, and P is the child's controlling terminal. P's master output comes back as `piped_stdout` (#1233).
+pub fn run_on_pty_forked_session(cmd: Command, typed: &[&str]) -> PtyRun {
+    run_with(cmd, typed, None, false, 2)
+}
+
+/// As `run_on_pty`, but standard ERROR is a pipe (the terminal is still the controlling terminal, input and output);
+/// what it carried comes back as `piped_stdout` (#1233).
+pub fn run_on_pty_stderr_piped(cmd: Command, typed: &[&str]) -> PtyRun {
+    run_with(cmd, typed, None, false, 3)
 }
 
 /// As `run_on_pty`, but standard OUTPUT is a pipe (`klatch admin recovery | cat`) while the terminal stays the
 /// controlling terminal, standard input and error: a program that shares the human's terminal and captures what a
 /// command prints (#1233).
 pub fn run_on_pty_stdout_piped(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, true, false)
+    run_with(cmd, typed, None, true, 0)
 }
 
 /// As `run_on_pty`, but standard input is a PIPE carrying `stdin_text` while the terminal is still the child's
 /// controlling terminal and its output: an agent that shares the human's terminal and pipes its own input (#1233).
 pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRun {
-    run_with(cmd, typed, Some(stdin_text), false, false)
+    run_with(cmd, typed, Some(stdin_text), false, 0)
 }
 
 fn run_with(
@@ -82,11 +95,15 @@ fn run_with(
     typed: &[&str],
     piped: Option<&str>,
     out_piped: bool,
-    split: bool,
+    layout: u8,
 ) -> PtyRun {
     let (master, slave) = pty();
-    let other = split.then(pty);
-    cmd.stderr(Stdio::from(slave.try_clone().unwrap()));
+    let other = (layout == 1 || layout == 2).then(pty);
+    match (layout, &other) {
+        (2, Some((_, p))) => cmd.stderr(Stdio::from(p.try_clone().unwrap())),
+        (3, _) => cmd.stderr(Stdio::piped()),
+        _ => cmd.stderr(Stdio::from(slave.try_clone().unwrap())),
+    };
     if let Some((_, b_slave)) = &other {
         cmd.stdout(Stdio::from(b_slave.try_clone().unwrap()));
     } else if out_piped {
@@ -94,18 +111,24 @@ fn run_with(
     } else {
         cmd.stdout(Stdio::from(slave.try_clone().unwrap()));
     }
-    if let Some((_, b_slave)) = &other {
+    if let (1, Some((_, b_slave))) = (layout, &other) {
         cmd.stdin(Stdio::from(b_slave.try_clone().unwrap()));
     } else if piped.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
         cmd.stdin(Stdio::from(slave.try_clone().unwrap()));
     }
-    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours. Descriptor 2 is always the terminal.
+    // the descriptor that becomes the controlling terminal: the one that is the terminal in this layout
+    let tty_fd: i32 = match layout {
+        2 => 1,
+        3 => 0,
+        _ => 2,
+    };
+    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours.
     unsafe {
-        cmd.pre_exec(|| {
+        cmd.pre_exec(move || {
             libc::setsid();
-            libc::ioctl(2, libc::TIOCSCTTY as _, 0);
+            libc::ioctl(tty_fd, libc::TIOCSCTTY as _, 0);
             Ok(())
         });
     }
@@ -123,6 +146,7 @@ fn run_with(
     });
 
     let mfd = master.as_raw_fd();
+    let mut piped_stdout = String::new();
     let started = Instant::now();
     let mut text = String::new();
     let mut next = 0;
@@ -131,6 +155,10 @@ fn run_with(
         if started.elapsed() > Duration::from_secs(120) {
             let _ = child.kill();
             panic!("the command did not finish on its pty; so far:\n{text}");
+        }
+        // the other terminal is read as it goes (some systems drop what is unread when the child closes it)
+        if let Some(b) = &b_master {
+            drain(b.as_raw_fd(), &mut piped_stdout, 0);
         }
         let mut p = libc::pollfd {
             fd: mfd,
@@ -162,35 +190,45 @@ fn run_with(
             break;
         }
     }
-    let mut piped_stdout = String::new();
     if let Some(b) = &b_master {
-        loop {
-            let mut p = libc::pollfd {
-                fd: b.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: one pollfd, live for the call.
-            if unsafe { libc::poll(&mut p, 1, 200) } <= 0 {
-                break;
-            }
-            let mut buf = [0u8; 4096];
-            // SAFETY: reads into a live buffer of that length.
-            let got = unsafe { libc::read(b.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
-            if got <= 0 {
-                break;
-            }
-            piped_stdout.push_str(&String::from_utf8_lossy(&buf[..got as usize]));
-        }
+        drain(b.as_raw_fd(), &mut piped_stdout, 200);
     }
     if let Some(mut out) = child.stdout.take() {
         use std::io::Read;
         let _ = out.read_to_string(&mut piped_stdout);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        use std::io::Read;
+        let _ = err.read_to_string(&mut piped_stdout);
     }
     let status = child.wait().expect("wait");
     PtyRun {
         status,
         text,
         piped_stdout,
+    }
+}
+
+/// Read what is waiting on a master descriptor into `into`, waiting up to `wait_ms` for the first byte.
+fn drain(fd: i32, into: &mut String, wait_ms: i32) {
+    let mut wait = wait_ms;
+    loop {
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one pollfd, live for the call.
+        if unsafe { libc::poll(&mut p, 1, wait) } <= 0 {
+            return;
+        }
+        wait = 0;
+        let mut buf = [0u8; 4096];
+        // SAFETY: reads into a live buffer of that length.
+        let got = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if got <= 0 {
+            return;
+        }
+        into.push_str(&String::from_utf8_lossy(&buf[..got as usize]));
     }
 }

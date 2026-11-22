@@ -933,3 +933,98 @@ fn the_confirmation_says_what_is_being_confirmed() {
         r.text
     );
 }
+
+// ---- the fourth review of #1271 ----
+
+#[test]
+fn a_pty_in_a_session_of_its_own_on_stdout_is_not_where_the_prompt_is() {
+    // the child leads a session on pty P (stdout, stderr) while standard input is the human's own terminal H: the
+    // prompt would appear on H and the answer go to whoever holds P
+    let h = Home::new();
+    h.set_passphrase();
+    for args in [
+        vec!["recovery".to_string()],
+        vec!["export".to_string(), "r".to_string()],
+        vec!["audit".to_string()],
+    ] {
+        let r = common::pty::run_on_pty_forked_session(klatch_in(&h, &args), &[PASS, "x", "x"]);
+        assert!(!r.ok(), "{args:?} ran:\n{}\n{}", r.text, r.piped_stdout);
+        assert!(
+            !r.text.contains("admin passphrase to approve"),
+            "{args:?}: the human was asked to approve a command whose answer goes to another session's pty:\n{}",
+            r.text
+        );
+        assert!(
+            !r.piped_stdout.contains("KLATCH-"),
+            "{args:?}: {}",
+            r.piped_stdout
+        );
+        assert!(
+            r.piped_stdout.contains("terminal"),
+            "{args:?}: {}",
+            r.piped_stdout
+        );
+    }
+}
+
+#[test]
+fn the_shell_needs_input_and_output_on_one_terminal() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = common::pty::run_on_pty_forked_session(klatch_in(&h, &["shell".to_string()]), &[PASS]);
+    assert!(!r.ok(), "{}\n{}", r.text, r.piped_stdout);
+    assert!(
+        !r.text.contains("admin passphrase to approve"),
+        "{}",
+        r.text
+    );
+}
+
+#[test]
+fn standard_error_must_be_the_terminal_or_nothing_for_the_acts_that_print_stored_text() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = common::pty::run_on_pty_stderr_piped(klatch_in(&h, &["audit".to_string()]), &[PASS]);
+    assert!(!r.ok(), "{}\n{}", r.text, r.piped_stdout);
+    assert!(
+        !r.text.contains("admin passphrase to approve"),
+        "{}",
+        r.text
+    );
+}
+
+#[test]
+fn a_recovery_code_is_hidden_whatever_sits_before_the_subcommand_and_a_room_named_recover_is_not() {
+    let code = "KLATCH-HIDE-ME-PLEASE";
+    let shapes: Vec<Vec<String>> = vec![
+        // a global flag between the family and the subcommand
+        vec!["admin", "--as-member", "bob", "recover", code],
+        // a flag value that is itself a family name
+        vec!["--as-member", "admin", "admin", "recover", code],
+        // flags and `--` after it
+        vec!["admin", "recover", "--label", "private", "--", code],
+    ]
+    .into_iter()
+    .map(|v| v.into_iter().map(String::from).collect())
+    .collect();
+    for args in shapes {
+        // a home of its own each time: three wrong passphrases in one would lock the rest out
+        let h = Home::new();
+        h.set_passphrase();
+        let r = run_on_pty(klatch_raw(&h, &args), &[WRONG, WRONG]);
+        assert!(
+            !r.text.contains("HIDE-ME"),
+            "{args:?} showed the code:\n{}",
+            r.text
+        );
+        assert!(r.text.contains("admin recover"), "{args:?}: {}", r.text);
+    }
+    // under another command the word is just a name
+    let h = Home::new();
+    h.set_passphrase();
+    let r = run_on_pty(
+        klatch_in(&h, &["close".to_string(), "recover".to_string()]),
+        &[WRONG],
+    );
+    assert!(r.text.contains("admin close recover"), "{}", r.text);
+}

@@ -339,23 +339,36 @@ fn room_of(room: Option<String>, all_rooms: bool) -> String {
 
 /// Ask for the target typed back when the act is destructive. The line comes from the TERMINAL, never from standard
 /// input when that is a pipe: a program sharing the person's terminal cannot confirm for them.
-fn confirm(expected: Option<String>) -> Result<()> {
+fn confirm(expected: Option<String>, what: &str) -> Result<()> {
     use klatch::proof::Prompt;
     let Some(expected) = expected else {
         return Ok(());
     };
-    // the label says what is being confirmed, in text from arguments cleaned the same way as the passphrase prompt
     let line = klatch::proof::TtyPrompt
-        .line(&format!(
-            "type {} to confirm `{}`",
-            prove::plain(&expected),
-            prove::describe()
-        ))
+        .line(&confirm_label(&expected, what))
         .map_err(anyhow::Error::from)?;
     if !typed_back(&expected, &line) {
         bail!("not confirmed; nothing was changed");
     }
     Ok(())
+}
+
+/// The label of the typed-back confirmation: what is typed and what it confirms, in text from arguments cleaned the
+/// same way as the passphrase prompt. A name that had to be cleaned (so two lookalikes could read the same) also
+/// shows its length and a digest of the real name.
+fn confirm_label(expected: &str, what: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let shown = prove::plain(expected);
+    if shown == expected {
+        format!("type {shown} to confirm `{what}`")
+    } else {
+        let digest = data_encoding::HEXLOWER.encode(&Sha256::digest(expected.as_bytes()));
+        format!(
+            "type {shown} ({} chars, sha256 {}) to confirm `{what}`",
+            expected.chars().count(),
+            &digest[..8]
+        )
+    }
 }
 
 /// What the passphrase approves when the command is the admin shell.
@@ -387,9 +400,16 @@ fn prints_stored_text(route: &Route) -> bool {
 
 pub fn run(cmd: AdminCmd) -> Result<()> {
     let typed_target = confirmation(&cmd);
+    // What the passphrase approves. A recovery code is hidden by what the command PARSED as, never by looking at the
+    // words: whatever flags or `--` sit before it, and a room or member named `recover` under another command shows.
+    let what = if matches!(cmd, AdminCmd::Recover { .. }) {
+        "admin recover <code hidden>".to_string()
+    } else {
+        prove::describe()
+    };
     let db = db_path()?;
     let route = Route::from(cmd);
-    if prints_stored_text(&route) && !klatch::proof::is_controlling_tty(1) {
+    if prints_stored_text(&route) && !klatch::proof::output_is_the_prompt_terminal() {
         bail!(
             "this command prints stored text or a secret and standard output is not your terminal (a pipe, a file or another pty), so nothing was asked or done; run it yourself in a terminal"
         );
@@ -409,12 +429,12 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
         // verifier cannot be either: the recovery code and the typed confirmation approve them then
         Route::Keystore(k) if needs_store_less_proof(&k) && !prove::store_readable(&db) => {
             let proof = prove::recovery_proof(&db, &k)?;
-            confirm(typed_target)?;
+            confirm(typed_target, &what)?;
             keys::key_command(&db, &proof, k)
         }
         route => {
-            let (store, proof) = prove::open_and_require(&db)?;
-            confirm(typed_target)?;
+            let (store, proof) = prove::open_and_require_for(&db, &what)?;
+            confirm(typed_target, &what)?;
             match route {
                 Route::Passphrase(Passphrase::Window { secs, off }) => {
                     prove::unlock_window(&store, &proof, secs, off)
@@ -488,5 +508,20 @@ mod tests {
         assert!(typed_back("lobby", "lobby\n"));
         assert!(!typed_back("lobby", "lobb\n"));
         assert!(!typed_back("lobby", "\n"));
+    }
+}
+
+#[cfg(test)]
+mod confirm_label_tests {
+    use super::confirm_label;
+
+    #[test]
+    fn a_plain_name_is_shown_as_it_is_and_a_lookalike_gets_its_length_and_digest() {
+        let plain = confirm_label("lobby", "admin close lobby");
+        assert_eq!(plain, "type lobby to confirm `admin close lobby`");
+        let a = confirm_label("caf\u{e9}", "admin close caf?");
+        let b = confirm_label("cafe\u{301}", "admin close caf?");
+        assert!(a.contains("caf?") && a.contains("sha256"), "{a}");
+        assert_ne!(a, b, "two lookalike names must not read the same");
     }
 }
