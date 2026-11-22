@@ -478,16 +478,17 @@ fn the_shell_runs_only_the_five_families_and_refuses_a_wrong_passphrase_at_the_s
 fn init_passphrase_needs_two_matching_long_enough_entries() {
     let h = Home::new();
     let c = || h.launcher_command(&["admin", "init-passphrase"]);
-    let short = run_on_pty(c(), &["short", "short"]);
+    let short = run_on_pty(c(), &["short", "short", "short"]);
     assert!(!short.ok());
     assert!(short.text.contains("at least"), "{}", short.text);
-    let differ = run_on_pty(c(), &[PASS, NEW]);
+    let differ = run_on_pty(c(), &[PASS, NEW, PASS, NEW, PASS, NEW]);
     assert!(!differ.ok());
     assert!(differ.text.contains("differ"), "{}", differ.text);
     // nothing was set by either, so an admin act still says so
     let r = run_on_pty(klatch_in(&h, &["pause".to_string()]), &[PASS]);
     assert!(r.text.contains("init-passphrase"), "{}", r.text);
-    let ok = run_on_pty(c(), &[PASS, PASS]);
+    // asked again: short, mismatched, then a matching pair
+    let ok = run_on_pty(c(), &["short", PASS, NEW, PASS, PASS]);
     assert!(ok.ok(), "{}", ok.text);
     let after = run_on_pty(
         klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),

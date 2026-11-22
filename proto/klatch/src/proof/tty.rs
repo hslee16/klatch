@@ -211,6 +211,10 @@ impl Prompt for TtyPrompt {
         Ok(Zeroizing::new(text))
     }
 
+    fn notice(&mut self, text: &str) {
+        eprintln!("{text}");
+    }
+
     fn line(&mut self, label: &str) -> Result<String, ProofError> {
         let line = read_tty_line(label, true)?;
         String::from_utf8(line.to_vec()).map_err(|_| ProofError::Wrong)

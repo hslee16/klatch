@@ -351,15 +351,27 @@ fn a_verifier_of_weaker_cost_is_rewritten_at_the_next_success() {
 fn init_sets_the_first_passphrase_twice_typed_and_keeps_only_a_verifier() {
     let s = store();
     let unlock = Unlock::new();
-    // too short, then mismatched, change nothing
+    // three too short, or three mismatched, change nothing
     assert!(matches!(
-        init(&s, &mut Typed::new(&["short"]), at(1), &unlock),
+        init(
+            &s,
+            &mut Typed::new(&["short", "short", "short"]),
+            at(1),
+            &unlock
+        ),
         Err(ProofError::Rejected(_))
     ));
     assert!(matches!(
         init(
             &s,
-            &mut Typed::new(&[PASS, "something else entirely"]),
+            &mut Typed::new(&[
+                PASS,
+                "something else entirely",
+                PASS,
+                "something else entirely",
+                PASS,
+                "something else entirely"
+            ]),
             at(2),
             &unlock
         ),
@@ -603,4 +615,102 @@ fn a_passphrase_changed_while_asking_is_neither_overwritten_by_a_rehash_nor_prov
         "the change was overwritten"
     );
     assert!(!actions(&s).contains(&"passphrase-rehashed".to_string()));
+}
+
+/// Records what the person is told between attempts.
+struct Noted {
+    typed: Typed,
+    notes: Vec<String>,
+}
+
+impl Prompt for Noted {
+    fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError> {
+        self.typed.secret(label)
+    }
+    fn notice(&mut self, text: &str) {
+        self.notes.push(text.to_string());
+    }
+}
+
+#[test]
+fn init_asks_again_after_a_short_or_mismatched_entry_and_says_why() {
+    let s = store();
+    let mut p = Noted {
+        typed: Typed::new(&["short", PASS, "not the same at all", PASS, PASS]),
+        notes: vec![],
+    };
+    init(&s, &mut p, at(1), &Unlock::new()).unwrap();
+    assert!(is_set(&s).unwrap());
+    assert_eq!(p.notes.len(), 2, "{:?}", p.notes);
+    assert!(p.notes[0].contains("at least"), "{:?}", p.notes);
+    assert!(p.notes[1].contains("differ"), "{:?}", p.notes);
+    assert!(p.notes.iter().all(|n| !n.contains(PASS)));
+    assert_eq!(actions(&s), vec!["passphrase-set"]);
+}
+
+#[test]
+fn two_short_entries_then_a_good_pair_succeeds_and_three_bad_attempts_stop_with_nothing_written() {
+    let s = store();
+    init(
+        &s,
+        &mut Typed::new(&["short", "tiny", PASS, PASS]),
+        at(1),
+        &Unlock::new(),
+    )
+    .unwrap();
+    let s = store();
+    let mut p = Typed::new(&["a", "b", "c", PASS, PASS]);
+    let e = init(&s, &mut p, at(1), &Unlock::new()).unwrap_err();
+    assert!(matches!(e, ProofError::Rejected(_)), "{e:?}");
+    assert_eq!(p.asked, NEW_ATTEMPTS, "the cap is the constant");
+    assert!(!is_set(&s).unwrap());
+    assert!(actions(&s).is_empty());
+}
+
+#[test]
+fn retries_for_a_new_passphrase_are_not_lockout_failures() {
+    let s = store();
+    with_pass(&s);
+    let unlock = Unlock::new();
+    // change: old proved once, then two bad new ones and a good one
+    change(
+        &s,
+        &mut Typed::new(&[
+            PASS,
+            "short",
+            "tiny",
+            "brand new passphrase",
+            "brand new passphrase",
+        ]),
+        at(1),
+        &unlock,
+    )
+    .unwrap();
+    assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
+    // three bad new ones: rejected, and the failure count is still clear
+    let e = change(
+        &s,
+        &mut Typed::new(&["brand new passphrase", "x", "y", "z"]),
+        at(2),
+        &unlock,
+    )
+    .unwrap_err();
+    assert!(matches!(e, ProofError::Rejected(_)), "{e:?}");
+    assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
+    // reset: the code is charged once and cleared on success; retries add nothing
+    reset(
+        &s,
+        "KLATCH-ABCD EFGH",
+        &mut Typed::new(&[
+            "KLATCH-ABCD EFGH",
+            "a",
+            "b",
+            "after the reset",
+            "after the reset",
+        ]),
+        at(3),
+        &unlock,
+    )
+    .unwrap();
+    assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
 }
