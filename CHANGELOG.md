@@ -233,6 +233,7 @@ These are early pre-releases with no outside security review.
 - The default rules judge and the storage credential check now see through mechanical wrapping: zero-width characters, spaced or line-split values, base64, hex and reversed credentials, secret JSON field names such as `refresh_token`, and values spelled out one character at a time. Plain-word passphrases and context-only secrets are still left to the opt-in hosted judge (#987).
 - Integration tests under klatch/tests and the klatch-bench crate make their scratch directories with the guarded `TestDir` (shared by a path attribute), and the scan test now covers them too (#995).
 - release/compare-formula.sh has one named allowance, --allow-klatch-server, used by release/bump-formula.sh: the staged formula may be ahead of the tap by exactly the klatch-server install and test lines (the tap holds the previous release). release/verify-published.sh stays strict after the release (#1287).
+- `klatch admin init-passphrase` and `reset-passphrase` ask again after a too-short or mismatched new passphrase, up to 3 attempts in all, saying why each time; the retries do not count toward the passphrase lockout (#1293).
 
 ### Fixed
 
