@@ -144,17 +144,38 @@ def agent_from_result(path):
     return rec
 
 
-NUDGE_LINE = "for a longer exchange use: klatch dm"
+# the nudge line of every wording so far starts "klatch: you and NAME exchanged N messages in ROOM"; counted at the
+# start of a line, so a model quoting it mid-sentence or a message body (flattened to one row) does not count
+NUDGE_LINE = re.compile(r"^[ \t]*klatch: you and \S+ exchanged \d+ messages in \S+", re.M)
+
+
+def tool_result_texts(ev):
+    """The text of every tool_result block in a stream-json `user` event (a string or a list of text blocks)."""
+    msg = ev.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if not isinstance(content, list):
+        return []
+    out = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        c = block.get("content")
+        if isinstance(c, str):
+            out.append(c)
+        elif isinstance(c, list):
+            out.extend(b.get("text", "") for b in c if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return out
 
 
 def hook_counts(path):
     """Count what the hooks said in a `claude -p --output-format stream-json --include-hook-events` stream (#1210).
 
-    hook_events is the number of hook_response events, hook_post_tool_use those of the PostToolUse hook, nudge_lines
-    the digest nudge lines in hook output (one text counted once though output and stdout repeat it). Only hook
-    events are read: a model quoting the line does not count. A missing file counts zero.
+    hook_events is the number of hook_response events, hook_post_tool_use those of the PostToolUse hook, hook_nudge_lines
+    the nudge lines in hook output (one text counted once though output and stdout repeat it), tool_result_nudge_lines
+    those in tool results (what `klatch wait` and `klatch read` print, #1222), and nudge_lines their sum. Only hook
+    events and tool results are read: a model quoting the line does not count. A missing file counts zero.
     """
-    rec = {"hook_events": 0, "hook_post_tool_use": 0, "nudge_lines": 0}
+    rec = {"hook_events": 0, "hook_post_tool_use": 0, "hook_nudge_lines": 0, "tool_result_nudge_lines": 0, "nudge_lines": 0}
     try:
         f = open(path)
     except OSError:
@@ -165,14 +186,21 @@ def hook_counts(path):
                 ev = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(ev, dict) or ev.get("type") != "system" or ev.get("subtype") != "hook_response":
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("type") == "user":
+                for text in tool_result_texts(ev):
+                    rec["tool_result_nudge_lines"] += len(NUDGE_LINE.findall(text))
+                continue
+            if ev.get("type") != "system" or ev.get("subtype") != "hook_response":
                 continue
             rec["hook_events"] += 1
             if ev.get("hook_event") == "PostToolUse":
                 rec["hook_post_tool_use"] += 1
             text = ev.get("output") or ev.get("stdout") or ""
             if isinstance(text, str):
-                rec["nudge_lines"] += text.count(NUDGE_LINE)
+                rec["hook_nudge_lines"] += len(NUDGE_LINE.findall(text))
+    rec["nudge_lines"] = rec["hook_nudge_lines"] + rec["tool_result_nudge_lines"]
     return rec
 
 

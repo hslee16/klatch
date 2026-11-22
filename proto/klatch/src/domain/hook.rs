@@ -1626,7 +1626,7 @@ mod tests {
         let out = render_hook(&[d], 0);
         shows!(
             out,
-            "  klatch: you and bob exchanged 4 messages in lobby; for a longer exchange use: klatch dm bob \"<text>\"\n"
+            "  klatch: you and bob exchanged 4 messages in lobby. Do this now: klatch dm bob \"<text>\" (send your next message there, not in lobby)\n"
         );
     }
 

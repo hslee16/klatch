@@ -190,6 +190,7 @@ fn who_line_shows_repo_and_dir_and_flattens_them() {
     m.place = Some(MemberPlace {
         repository: Some("git:proj-1".into()),
         directory: Some("pro\nj".into()),
+        scope_differs: false,
     });
     let shown = render_who(&[m], 1000, true);
     assert_eq!(shown.lines().count(), 1, "{shown:?}");
@@ -286,4 +287,24 @@ fn who_marks_an_advisory_member_and_leaves_others_unmarked() {
         "{out}"
     );
     assert!(!line("plain").contains("advisory"), "{out}");
+}
+
+#[test]
+fn who_marks_a_declared_scope_that_differs_from_the_derived_repository() {
+    // #894: the declared scope wins; the mismatch is only made visible, as one fixed word and never a path
+    let mut m = peer("alice", 1000, None);
+    m.place = Some(MemberPlace {
+        repository: Some("git:proj-1".into()),
+        directory: Some("proj".into()),
+        scope_differs: true,
+    });
+    let shown = render_who(&[m], 1000, true);
+    assert!(shown.contains("\tscope!=repo"), "{shown:?}");
+    let mut same = peer("bob", 1000, None);
+    same.place = Some(MemberPlace {
+        repository: Some("git:proj-1".into()),
+        directory: Some("proj".into()),
+        scope_differs: false,
+    });
+    assert!(!render_who(&[same], 1000, true).contains("scope!=repo"));
 }

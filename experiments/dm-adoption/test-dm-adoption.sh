@@ -136,7 +136,7 @@ case " $* " in
   *" --include-hook-events "*)
     printf '{"type":"system","subtype":"init"}\n'
     printf '{"type":"system","subtype":"hook_response","hook_event":"SessionStart","output":"convention text"}\n'
-    printf '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"klatch: you and helper exchanged 4 messages in lobby; for a longer exchange use: klatch dm helper","stdout":"klatch: you and helper exchanged 4 messages in lobby; for a longer exchange use: klatch dm helper"}\n'
+    printf '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"klatch: you and helper exchanged 4 messages in lobby. Do this now: klatch dm helper","stdout":"klatch: you and helper exchanged 4 messages in lobby. Do this now: klatch dm helper"}\n'
     printf '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"","stdout":""}\n'
     printf '{"type":"result","num_turns":3,"total_cost_usd":0.01,"duration_ms":2000,"is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}\n' ;;
   *)
@@ -218,12 +218,36 @@ out="$(KLATCH_HOME="$work/hh2" KLATCH_KEY_DIR="$work/kh2" scen stay --arm nudge 
 if grep '^alpha ' "$FAKE_LOG" | grep -q -- 'include-hook-events'; then bad "hook flag leaked without --hook-events"; else ok "no hook flag without --hook-events"; fi
 if python3 -c "import json,sys; a=json.loads(sys.argv[1])['agents']['alpha']; sys.exit(0 if 'nudge_lines' not in a else 1)" "$out"; then ok "no nudge count when hook events are not recorded"; else bad "nudge count without hooks: $out"; fi
 # metric.py alone: one hook line counts once though output and stdout repeat it; model text and hook_started do not count
-printf '%s\n' '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"a for a longer exchange use: klatch dm x","stdout":"a for a longer exchange use: klatch dm x"}' '{"type":"system","subtype":"hook_started","hook_event":"PostToolUse"}' '{"type":"assistant","message":"for a longer exchange use: klatch dm quoted by the model"}' > "$work/ev.jsonl"
+NL='klatch: you and x exchanged 4 messages in lobby. Do this now: klatch dm x'
+printf '%s\n' "{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_event\":\"PostToolUse\",\"output\":\"  $NL\",\"stdout\":\"  $NL\"}" '{"type":"system","subtype":"hook_started","hook_event":"PostToolUse"}' "{\"type\":\"assistant\",\"message\":\"I saw $NL in the output\"}" > "$work/ev.jsonl"
 out="$(python3 "$metric" --history "$work/canned.txt" --hook-events alpha="$work/ev.jsonl" 2>&1)"
 if python3 -c "
 import json,sys
 a=json.loads(sys.argv[1])['agents']['alpha']
 sys.exit(0 if a['nudge_lines']==1 and a['hook_events']==1 and a['hook_post_tool_use']==1 else 1)" "$out"; then ok "metric counts nudge lines only from hook responses, once each"; else bad "metric hook events: $out"; fi
+# nudge lines that arrive in tool results (wait and read output, as a string or as text blocks) count too (#1222); a quote in
+# a model message or in the middle of a line does not, and the earlier wording of the line still counts
+OLD='klatch: you and x exchanged 5 messages in lobby; for a longer exchange use: klatch dm x'
+cat > "$work/mk-tr.py" <<'PY'
+import json, sys
+path, new, old = sys.argv[1:4]
+ev = [
+    {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "1", "content": "[lobby 5 9 bob] hi\n" + new}]}},
+    {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "2", "content": [{"type": "text", "text": "[lobby 6 9 bob] hi\n" + old}]}]}},
+    {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "3", "content": "[lobby 7 9 bob] say " + new}]}},
+    {"type": "user", "message": {"content": [{"type": "text", "text": new}]}},
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": new}]}},
+    {"type": "system", "subtype": "hook_response", "hook_event": "PostToolUse", "output": "  " + new},
+]
+open(path, "w").write("\n".join(json.dumps(e) for e in ev) + "\n")
+PY
+python3 "$work/mk-tr.py" "$work/tr.jsonl" "$NL" "$OLD"
+out="$(python3 "$metric" --history "$work/canned.txt" --hook-events alpha="$work/tr.jsonl" 2>&1)"
+if python3 -c "
+import json,sys
+a=json.loads(sys.argv[1])
+x=a['agents']['alpha']
+sys.exit(0 if x['tool_result_nudge_lines']==2 and x['hook_nudge_lines']==1 and x['nudge_lines']==3 and a['agents']['exchange']['nudge_lines']==3 else 1)" "$out"; then ok "metric counts nudge lines in tool results as well as hook events"; else bad "metric tool results: $out"; fi
 out="$(python3 "$metric" --history "$work/canned.txt" --hook-events alpha="$work/nope.jsonl" 2>&1)"
 if python3 -c "import json,sys; a=json.loads(sys.argv[1])['agents']['alpha']; sys.exit(0 if a['nudge_lines']==0 and a['hook_events']==0 else 1)" "$out"; then ok "a missing hook events file counts zero"; else bad "missing events: $out"; fi
 if scen stay --arm bogus > "$work/o" 2>&1; then bad "an unknown arm exited 0"; else ok "an unknown arm is rejected"; fi

@@ -46,6 +46,10 @@ pub fn short_dir_name(dir: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.chars().take(40).collect())
 }
 
+/// The fixed marker `who` and the board show when a member's declared scope names another repository than the one it
+/// runs in (#894).
+pub const SCOPE_MISMATCH_MARK: &str = "scope!=repo";
+
 /// ` repo: ..., dir: ...` pieces of a member's place, tab separated, empty when it has none.
 pub(super) fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
     let Some(p) = place else { return Vec::new() };
@@ -55,6 +59,9 @@ pub(super) fn place_parts(place: Option<&MemberPlace>) -> Vec<String> {
     }
     if let Some(d) = &p.directory {
         parts.push(format!("dir: {}", flat(d)));
+    }
+    if p.scope_differs {
+        parts.push(SCOPE_MISMATCH_MARK.to_string());
     }
     parts
 }

@@ -2,6 +2,7 @@
 
 use super::shared::SharedGateway;
 use crate::domain::{Error, Principal};
+use crate::gateway::areas::*;
 use crate::gateway::{
     AllowAll, ClaimSpec, Gateway, HistoryRange, SystemClock, Transport, pause_for_change,
 };

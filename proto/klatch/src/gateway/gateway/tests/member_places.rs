@@ -107,3 +107,40 @@ fn a_shared_repository_value_changes_no_outcome() {
     assert_eq!(ms.len(), 2);
     assert!(g.read(&bob(), "lobby", true).is_ok());
 }
+
+fn differs(g: &Gateway<SpyStore>, member: &str) -> bool {
+    g.who(&bob(), "lobby")
+        .unwrap()
+        .iter()
+        .find(|m| m.name == member)
+        .and_then(|m| m.place.as_ref())
+        .is_some_and(|p| p.scope_differs)
+}
+
+#[test]
+fn a_declared_scope_naming_another_repository_is_flagged_and_still_wins() {
+    // #894: alice runs in git:proj-1 but declared another repository as her scope
+    let g = lobby();
+    g.set_scope(&alice(), "git:other-9").unwrap();
+    assert!(differs(&g, "alice"));
+    assert_eq!(
+        g.scope_of(&alice()).unwrap().as_deref(),
+        Some("git:other-9")
+    );
+}
+
+#[test]
+fn a_scope_equal_to_the_repository_a_non_repository_scope_or_no_repository_is_not_flagged() {
+    let g = lobby();
+    g.set_scope(&alice(), "git:proj-1").unwrap();
+    assert!(!differs(&g, "alice"), "the scope is the repository");
+    // a non-coding or role scope (#297) names no repository, so there is nothing to differ from
+    g.set_scope(&alice(), "frontend").unwrap();
+    assert!(!differs(&g, "alice"));
+    // no derived repository (a plain directory): nothing to compare
+    g.store
+        .note_member_attrs("bob", &MemberAttrs::new("m-b", "", "/tmp/scratch/"), 2)
+        .unwrap();
+    g.set_scope(&bob(), "git:other-9").unwrap();
+    assert!(!differs(&g, "bob"));
+}

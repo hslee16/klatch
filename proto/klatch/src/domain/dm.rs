@@ -9,6 +9,10 @@ pub const DM_PREFIX: &str = "dm.";
 /// How many messages in a row between the same two members in a shared room make the digest suggest a dm (#1190).
 pub const DM_NUDGE_MESSAGES: usize = 4;
 
+/// The run lengths at which the digest, `wait` and `read` show the nudge: first at 4, and once more at 6 for a pair
+/// that is still exchanging with no dm yet (#1222).
+pub const DM_NUDGE_THRESHOLDS: [usize; 2] = [DM_NUDGE_MESSAGES, 6];
+
 /// How many of a room's newest messages the nudge looks at: a bounded read, never the room's whole history.
 pub const DM_NUDGE_WINDOW: usize = 64;
 
@@ -44,11 +48,69 @@ pub fn crossing_exchange(me: &str, rows: &[(i64, &str)], shown: &[i64]) -> Optio
         return None;
     }
     let run = &rows[rows.len() - len..];
-    let crossing = run
+    // the newest threshold the run has reached whose crossing message was handed over now: the first nudge at 4, a
+    // repeat at 6 for a pair that did not move (#1222)
+    DM_NUDGE_THRESHOLDS
         .iter()
-        .skip(DM_NUDGE_MESSAGES - 1)
-        .find(|r| r.1 == peer)?;
-    shown.contains(&crossing.0).then(|| (peer.to_string(), len))
+        .rev()
+        .filter(|t| len >= **t)
+        .find_map(|t| {
+            let crossing = run.iter().skip(*t - 1).find(|r| r.1 == peer)?;
+            shown.contains(&crossing.0).then(|| (peer.to_string(), len))
+        })
+}
+
+/// The second need-info round of one ask between `me` and a peer (#1223), from a room's newest messages as
+/// `(seq, sender, body)` in order and the `seq`s handed to `me` just now: the peer and the number of messages the two
+/// sent from the first need-info through the second. The structured words decide, never the prose: the peer's
+/// `need-info #N:` and `me`'s `info #N:` for the same ask N, then the peer's second `need-info #N:`, which must be
+/// among `shown`. It is the pair's first such second round in the window, so it is handed over once and a third round
+/// does not trigger again. Pure, like `crossing_exchange`.
+pub fn clarification_round(
+    me: &str,
+    rows: &[(i64, &str, &str)],
+    shown: &[i64],
+) -> Option<(String, usize)> {
+    use crate::domain::parse_clarification;
+    let mut done: Vec<&str> = Vec::new();
+    for (i, (seq, peer, body)) in rows.iter().enumerate() {
+        if *peer == me || done.contains(peer) {
+            continue;
+        }
+        let Some((true, ask, _)) = parse_clarification(body) else {
+            continue;
+        };
+        // the peer's first need-info for this ask, and my info after it
+        let first = rows[..i].iter().position(|r| {
+            r.1 == *peer && matches!(parse_clarification(r.2), Some((true, n, _)) if n == ask)
+        });
+        let Some(first) = first else { continue };
+        let second_round = rows[first + 1..i].iter().any(|r| {
+            r.1 == me && matches!(parse_clarification(r.2), Some((false, n, _)) if n == ask)
+        }) && rows[first + 1..i].iter().all(|r| {
+            r.1 != *peer || !matches!(parse_clarification(r.2), Some((true, n, _)) if n == ask)
+        });
+        if !second_round {
+            continue;
+        }
+        done.push(peer);
+        if shown.contains(seq) && valid_name(peer) {
+            let n = rows[first..=i]
+                .iter()
+                .filter(|r| r.1 == me || r.1 == *peer)
+                .count();
+            return Some((peer.to_string(), n));
+        }
+    }
+    None
+}
+
+/// Whether `me` is to be shown the dm nudge for the messages handed to it: a long two-member exchange
+/// (`crossing_exchange`) or the second need-info round of one ask (`clarification_round`), from a room's newest
+/// messages as `(seq, sender, body)`. One answer, so a handover that carries both prints one line.
+pub fn dm_nudge(me: &str, rows: &[(i64, &str, &str)], shown: &[i64]) -> Option<(String, usize)> {
+    let pairs: Vec<(i64, &str)> = rows.iter().map(|r| (r.0, r.1)).collect();
+    crossing_exchange(me, &pairs, shown).or_else(|| clarification_round(me, rows, shown))
 }
 
 /// The line that names the reply command on a message from a dm peer: the same words in the hook digest, `wait` and
@@ -60,7 +122,7 @@ pub fn dm_reply_hint(peer: &str) -> String {
 /// The line that suggests moving a long two-member exchange to a dm: validated names, a count and a room.
 pub fn move_to_dm_nudge(peer: &str, n: usize, room: &str) -> String {
     format!(
-        "klatch: you and {peer} exchanged {n} messages in {room}; for a longer exchange use: klatch dm {peer} \"<text>\""
+        "klatch: you and {peer} exchanged {n} messages in {room}. Do this now: klatch dm {peer} \"<text>\" (send your next message there, not in {room})"
     )
 }
 
@@ -136,15 +198,137 @@ mod tests {
         assert_eq!(crossing_exchange("ann", &rows[..3], &[1, 3]), None);
     }
 
+    fn alternating(n: i64) -> Vec<(i64, &'static str)> {
+        (1..=n)
+            .map(|i| (i, if i % 2 == 1 { "ann" } else { "bo" }))
+            .collect()
+    }
+
+    #[test]
+    fn a_pair_still_exchanging_at_six_crosses_a_second_threshold() {
+        let rows = alternating(7);
+        // ann is handed bo's 6: the 6th place of the run is bo's, so it is the second crossing
+        assert_eq!(
+            crossing_exchange("ann", &rows[..6], &[6]),
+            Some(("bo".to_string(), 6))
+        );
+        assert_eq!(
+            crossing_exchange("ann", &rows[..5], &[4]),
+            Some(("bo".to_string(), 5))
+        );
+        // a message past the threshold that is not the crossing one does not repeat it
+        assert_eq!(crossing_exchange("ann", &rows, &[]), None);
+        assert_eq!(crossing_exchange("ann", &alternating(8), &[8]), None);
+        // bo is handed ann's 7: the 6th place is bo's own, so ann's 7 is the crossing message for bo
+        assert_eq!(
+            crossing_exchange("bo", &rows, &[7]),
+            Some(("ann".to_string(), 7))
+        );
+        assert_eq!(crossing_exchange("bo", &rows[..6], &[3]), None);
+    }
+
+    fn talk<'a>(turns: &[(&'a str, &'a str)]) -> Vec<(i64, &'a str, &'a str)> {
+        turns
+            .iter()
+            .enumerate()
+            .map(|(i, (who, body))| (i as i64 + 1, *who, *body))
+            .collect()
+    }
+
+    #[test]
+    fn the_second_need_info_round_of_one_ask_nudges_the_recipient_once() {
+        let rows = talk(&[
+            ("helper", "need-info #7: which court?"),
+            ("alpha", "info #7: the high court"),
+            ("helper", "need-info #7: which year?"),
+        ]);
+        assert_eq!(
+            clarification_round("alpha", &rows, &[3]),
+            Some(("helper".to_string(), 3))
+        );
+        // not before it is handed over, and not to the sender
+        assert_eq!(clarification_round("alpha", &rows, &[1]), None);
+        assert_eq!(clarification_round("helper", &rows, &[2, 3]), None);
+        // the first round alone is not enough
+        assert_eq!(clarification_round("alpha", &rows[..1], &[1]), None);
+        // a third round is not the trigger again
+        let mut more = rows.clone();
+        more.push((4, "alpha", "info #7: 2024"));
+        more.push((5, "helper", "need-info #7: and the docket?"));
+        assert_eq!(clarification_round("alpha", &more, &[5]), None);
+        assert_eq!(
+            clarification_round("alpha", &more, &[3, 5]),
+            Some(("helper".to_string(), 3))
+        );
+    }
+
+    #[test]
+    fn the_clarification_trigger_needs_one_ask_one_pair_and_the_forms() {
+        let other_ask = talk(&[
+            ("helper", "need-info #7: a?"),
+            ("alpha", "info #7: x"),
+            ("helper", "need-info #8: b?"),
+        ]);
+        assert_eq!(clarification_round("alpha", &other_ask, &[3]), None);
+        let no_info = talk(&[
+            ("helper", "need-info #7: a?"),
+            ("helper", "need-info #7: b?"),
+        ]);
+        assert_eq!(clarification_round("alpha", &no_info, &[2]), None);
+        let third = talk(&[
+            ("helper", "need-info #7: a?"),
+            ("cy", "info #7: x"),
+            ("helper", "need-info #7: b?"),
+        ]);
+        assert_eq!(clarification_round("alpha", &third, &[3]), None);
+        let prose = talk(&[
+            ("helper", "I could say need-info #7: a?"),
+            ("alpha", "info #7: x"),
+            ("helper", "need-info #7: b?"),
+        ]);
+        assert_eq!(clarification_round("alpha", &prose, &[3]), None);
+        let rev = talk(&[
+            ("alpha", "need-info #7: a?"),
+            ("helper", "info #7: x"),
+            ("alpha", "need-info #7: b?"),
+        ]);
+        assert_eq!(
+            clarification_round("helper", &rev, &[3]),
+            Some(("alpha".to_string(), 3))
+        );
+    }
+
+    #[test]
+    fn dm_nudge_takes_either_rule() {
+        let rows = talk(&[
+            ("helper", "need-info #7: a?"),
+            ("alpha", "info #7: x"),
+            ("helper", "need-info #7: b?"),
+        ]);
+        assert_eq!(
+            dm_nudge("alpha", &rows, &[3]),
+            Some(("helper".to_string(), 3))
+        );
+        let long = talk(&[("ann", "a"), ("bo", "b"), ("ann", "c"), ("bo", "d")]);
+        assert_eq!(dm_nudge("ann", &long, &[4]), Some(("bo".to_string(), 4)));
+        assert_eq!(dm_nudge("ann", &long, &[]), None);
+    }
+
+    #[test]
+    fn the_nudge_is_an_imperative_with_the_exact_command() {
+        let line = move_to_dm_nudge("bob", 4, "lobby");
+        assert_eq!(
+            line,
+            "klatch: you and bob exchanged 4 messages in lobby. Do this now: klatch dm bob \"<text>\" (send your next message there, not in lobby)"
+        );
+        assert!(!line.contains('\n'));
+    }
+
     #[test]
     fn the_help_lines_are_fixed_templates() {
         assert_eq!(
             dm_reply_hint("bob"),
             "dm from bob: reply with klatch dm bob \"<text>\""
-        );
-        assert_eq!(
-            move_to_dm_nudge("bob", 4, "lobby"),
-            "klatch: you and bob exchanged 4 messages in lobby; for a longer exchange use: klatch dm bob \"<text>\""
         );
     }
 
