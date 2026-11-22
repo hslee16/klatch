@@ -1,0 +1,1 @@
+- Hooks in a Claude Code background or continued session no longer print "could not read the rooms" on every prompt and tool call: the session is found even though its process title reads `claude bg-spare`, and the notice no longer says to pass `--discover` (#1313).
