@@ -772,7 +772,9 @@ fn is_wake(hook: &Value) -> bool {
 
 fn enforce_entry(bin: &str) -> Result<Value, String> {
     let cmd = hook_command(bin, "PreToolUse", None, true)?;
-    Ok(json!({"matcher": ENFORCE_MATCHER, "hooks": [{"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS}]}))
+    Ok(
+        json!({"matcher": ENFORCE_MATCHER, "hooks": [{"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS}]}),
+    )
 }
 
 fn wake_entry(bin: &str) -> Result<Value, String> {
@@ -1164,8 +1166,15 @@ mod tests {
         set_enforce(&mut v, BIN, Switch::On).unwrap();
         let mut seen = 0;
         for (event, list) in v["hooks"].as_object().unwrap() {
-            for hook in list.as_array().unwrap().iter().flat_map(|m| m["hooks"].as_array().unwrap()) {
-                let t = hook["timeout"].as_u64().unwrap_or_else(|| panic!("{event} has no timeout"));
+            for hook in list
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|m| m["hooks"].as_array().unwrap())
+            {
+                let t = hook["timeout"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{event} has no timeout"));
                 assert!(t > klatch::keys::KEYCHAIN_READ_LIMIT_SECS, "{event}: {t}");
                 seen += 1;
             }
@@ -1181,9 +1190,15 @@ mod tests {
             "PostToolUse": [{"hooks": [{"type": "command", "command": "/opt/klatch/klatch --discover hook --event PostToolUse", "timeout": 2}]}]
         }});
         let v = merge_hooks(Some(&old), BIN, None, true).unwrap();
-        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["timeout"], HOOK_TIMEOUT_SECS);
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["hooks"][0]["timeout"],
+            HOOK_TIMEOUT_SECS
+        );
         assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["timeout"], 120);
-        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"], HOOK_TIMEOUT_SECS);
+        assert_eq!(
+            v["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"],
+            HOOK_TIMEOUT_SECS
+        );
     }
 
     #[test]
