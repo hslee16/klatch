@@ -20,6 +20,10 @@ launches the workers and decides what work exists; klatch carries the coordinati
 `clients/recipes/launcher-demo.sh` runs that whole flow with no model and checks every step; CI runs it. The client libraries
 (`clients/`) speak the wire protocol from Python, TypeScript and Rust for a factory that is not written in Rust.
 
+## At the start of a session
+
+A coordinating session runs `proto/scripts/gh-watch ensure` and arms a Monitor on the watcher log, so it hears about a red `main`, a failed check or a conflicting pull request without polling. The routine, and who may start the forwarder, is in `proto/scripts/PR-SWEEP.md`, section "At the start of a session"; the repository rules are in `CLAUDE.md`.
+
 ## Recipes that were run
 
 - **A script or factory as launcher, workers as processes.** `clients/recipes/launcher-demo.sh`, above. Run in CI. Fifty

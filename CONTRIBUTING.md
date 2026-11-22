@@ -207,6 +207,8 @@ Settings are environment variables listed at the top of the script (budget `TEAM
 
 ## Working on klatch
 
+- A coordinating session starts with `proto/scripts/gh-watch ensure` and a Monitor on its log; see `proto/scripts/PR-SWEEP.md`,
+  section "At the start of a session". `CLAUDE.md` at the repository root lists the rules an agent follows.
 - Run `proto/scripts/gate` before you open a pull request. Branch and open a pull request; never push to `main`. Merge only
   after every check is confirmed green.
 - Write the test first and watch it fail; say so in the pull request if a test was not red first.
