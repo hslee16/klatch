@@ -99,6 +99,9 @@ pub trait Prompt {
     /// A secret, typed with echo off.
     fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError>;
 
+    /// Tell the person why an entry was not taken (never the entry itself). The default says nothing.
+    fn notice(&mut self, _text: &str) {}
+
     /// A line the person types back with echo on (the confirmation of a destructive act). It comes from the
     /// terminal and never from a pipe. A prompt that cannot reach a person answers `NoTerminal`.
     fn line(&mut self, _label: &str) -> Result<String, ProofError> {
@@ -264,17 +267,34 @@ pub fn store_verifier<S: PolicyStore + ?Sized>(
     Ok(())
 }
 
-/// Ask for a new passphrase twice and check it.
+/// How many times a new passphrase is asked for in all: a too-short or mismatched entry is said so and asked again
+/// until this many attempts have been used. Choosing a new passphrase proves nothing about an old one, so these
+/// attempts are never charged to the failure limit.
+pub const NEW_ATTEMPTS: usize = 3;
+
+/// Ask for a new passphrase twice and check it, up to `NEW_ATTEMPTS` times, saying why each attempt failed.
 fn ask_new(prompt: &mut dyn Prompt) -> Result<Zeroizing<String>, ProofError> {
-    let first = prompt.secret("new admin passphrase")?;
-    check_new(&first).map_err(ProofError::Rejected)?;
-    let second = prompt.secret("new admin passphrase again")?;
-    if *first != *second {
-        return Err(ProofError::Rejected(
-            "the two passphrases differ; nothing was changed".into(),
-        ));
+    let mut why = String::new();
+    for attempt in 1..=NEW_ATTEMPTS {
+        let first = prompt.secret("new admin passphrase")?;
+        why = match check_new(&first) {
+            Err(e) => e,
+            Ok(()) => {
+                let second = prompt.secret("new admin passphrase again")?;
+                if *first == *second {
+                    return Ok(first);
+                }
+                "the two passphrases differ".to_string()
+            }
+        };
+        if attempt < NEW_ATTEMPTS {
+            prompt.notice(&format!(
+                "{why}; try again ({} of {NEW_ATTEMPTS} attempts left)",
+                NEW_ATTEMPTS - attempt
+            ));
+        }
     }
-    Ok(first)
+    Err(ProofError::Rejected(format!("{why}; nothing was changed")))
 }
 
 /// Set the first passphrase. Refused when one is set (use `change`). This is the one act with no proof to check
