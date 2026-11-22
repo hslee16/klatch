@@ -94,12 +94,12 @@ fn a_version_26_database_gains_the_member_mode_table_and_keeps_its_data() {
 }
 
 #[test]
-fn a_fresh_database_is_at_schema_version_35() {
+fn a_fresh_database_is_at_the_current_schema_version() {
     assert_eq!(version(&store()), SCHEMA_VERSION);
 }
 
 #[test]
-fn a_version_1_database_is_migrated_to_35_and_keeps_its_messages() {
+fn a_version_1_database_is_migrated_to_the_current_version_and_keeps_its_messages() {
     let path = temp_db("migrate-v1");
     {
         let c = keyed(&path);
@@ -477,6 +477,36 @@ fn a_version_34_database_gains_the_audit_lookup_index_and_keeps_its_rows() {
         s.last_audit_ts("renew-credential", "bob", 0).unwrap(),
         Some(7)
     );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_35_database_gains_the_claim_yields_table_and_keeps_its_claims() {
+    let path = temp_db("migrate-v35-claim-yields");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.claim(
+            &crate::store::ClaimRequest::new(("r", "alice"), "p", 500, ""),
+            1,
+        )
+        .unwrap();
+        s.conn
+            .execute_batch("DROP TABLE claim_yields; PRAGMA user_version = 35;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='claim_yields'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(s.claims("r", 2).unwrap().len(), 1);
+    assert!(s.claim_overwrites("r", 2).unwrap().is_empty());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 

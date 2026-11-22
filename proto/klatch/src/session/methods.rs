@@ -304,6 +304,17 @@ fn stuck_json(events: &[crate::domain::StuckEvent]) -> Value {
                 v["claim"] = json!(claim);
                 v["holder"] = json!(holder);
             }
+            StuckEvent::PossibleOverwrite {
+                room,
+                path,
+                previous,
+                new,
+            } => {
+                v["room"] = json!(room);
+                v["path"] = json!(path);
+                v["previous"] = json!(previous);
+                v["new"] = json!(new);
+            }
         }
         v
     };

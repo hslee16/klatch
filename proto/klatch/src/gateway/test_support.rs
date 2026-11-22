@@ -323,6 +323,16 @@ impl ClaimStore for SpyStore {
         self.inner.wait_cycles(room, now)
     }
 
+    fn note_yield_release(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.note_yield_release(room, owner, path, now)
+    }
+
+    fn claim_overwrites(&self, room: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        self.gate()?;
+        self.inner.claim_overwrites(room, now)
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,

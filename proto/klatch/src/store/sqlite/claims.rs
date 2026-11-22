@@ -2,7 +2,9 @@
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
 use super::{SqliteStore, WAIT_WINDOW_SECS};
-use crate::domain::{AgedClaim, Error, Result, due_milestone, overlaps, scopes_collide};
+use crate::domain::{
+    AgedClaim, Error, Result, YIELD_WINDOW_SECS, due_milestone, overlaps, scopes_collide,
+};
 use crate::store::ClaimRequest;
 use rusqlite::params;
 
@@ -96,16 +98,95 @@ impl SqliteStore {
         )
     }
 
-    /// Whether a refusal of `req` closes a cycle of waits: some holder that refuses it is waiting (a refused claim
-    /// attempt within the window) for something a member holds who is waiting for something ... that the requester
-    /// holds. Every holder that refuses counts, not only the one named: a cycle through the second of two holders is
-    /// as much a deadlock (#648, found by the model).
-    fn closes_cycle(&self, req: &Attempt, held: &[Held]) -> Result<bool> {
+    /// The holders that refuse `req` and wait, directly or through others, for something the requester holds: the
+    /// other parties to the deadlock the refusal closes, so a refusal closes a cycle when there is one (#648). Every
+    /// holder that refuses counts, not only the one named: a cycle through the second of two holders is as much a
+    /// deadlock (found by the model).
+    fn cycle_holders(&self, req: &Attempt, held: &[Held]) -> Result<Vec<String>> {
         let waits = self.room_waits(req.room)?;
         Ok(held
             .iter()
-            .filter(|h| refuses(h, req))
-            .any(|h| reaches(&h.owner, req.owner, &waits, held)))
+            .filter(|h| refuses(h, req) && reaches(&h.owner, req.owner, &waits, held))
+            .map(|h| h.owner.clone())
+            .collect())
+    }
+
+    /// Mark the parties to a deadlock (#909): the requester and every holder on the cycle, as of now.
+    fn mark_yield_parties(&self, req: &Attempt, holders: &[String]) -> Result<()> {
+        for member in std::iter::once(req.owner).chain(holders.iter().map(String::as_str)) {
+            self.exec(
+                "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,'',?3,'')
+                 ON CONFLICT(room,member,path) DO UPDATE SET ts=?3",
+                params![req.room, member, req.now],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A claim just taken by someone who is not the member that released an overlapping path inside the window after a
+    /// deadlock: that release is now overwritten, as far as klatch can see (#909).
+    fn note_overwrites(&self, req: &Attempt) -> Result<()> {
+        let released: Vec<(String, String)> = self.rows(
+            "SELECT member,path FROM claim_yields WHERE room=?1 AND path<>'' AND taker='' AND member<>?2 AND ts>=?3",
+            params![req.room, req.owner, req.now - YIELD_WINDOW_SECS],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        for (member, path) in released.into_iter().filter(|(_, p)| overlaps(p, req.path)) {
+            self.exec(
+                "UPDATE claim_yields SET taker=?4, ts=?5 WHERE room=?1 AND member=?2 AND path=?3",
+                params![req.room, member, path, req.owner, req.now],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Before `owner` releases `path` (#909): when it has a live claim there and was a party to a deadlock inside the
+    /// window, remember the release so a take of the path by someone else is flagged.
+    pub(super) fn do_note_yield_release(
+        &self,
+        room: &str,
+        owner: &str,
+        path: &str,
+        now: i64,
+    ) -> Result<()> {
+        self.immediate(|| {
+            let live = self
+                .optional(
+                    "SELECT 1 FROM claims WHERE room=?1 AND path=?2 AND owner=?3 AND expires>?4",
+                    params![room, path, owner, now],
+                    |r| r.get::<_, i64>(0),
+                )?
+                .is_some();
+            let marked = self
+                .optional(
+                    "SELECT 1 FROM claim_yields WHERE room=?1 AND member=?2 AND path='' AND ts>=?3",
+                    params![room, owner, now - YIELD_WINDOW_SECS],
+                    |r| r.get::<_, i64>(0),
+                )?
+                .is_some();
+            if live && marked {
+                self.exec(
+                    "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,?3,?4,'')
+                     ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, taker=''",
+                    params![room, owner, path, now],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The claims flagged by `note_overwrites` that are still inside the window: `(path, previous, new)`, sorted.
+    pub(super) fn standing_overwrites(
+        &self,
+        room: &str,
+        now: i64,
+    ) -> Result<Vec<(String, String, String)>> {
+        self.rows(
+            "SELECT path,member,taker FROM claim_yields WHERE room=?1 AND path<>'' AND taker<>'' AND ts>=?2
+             ORDER BY path,member,taker",
+            params![room, now - YIELD_WINDOW_SECS],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
     }
 
     fn room_waits(&self, room: &str) -> Result<Vec<Wait>> {
@@ -150,12 +231,17 @@ impl SqliteStore {
              ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, scope=?5, told=0",
             params![req.room, req.owner, req.path, req.now, req.scope],
         )?;
+        let cycle = self.cycle_holders(req, held)?;
+        let deadlock = !cycle.is_empty();
+        if deadlock {
+            self.mark_yield_parties(req, &cycle)?;
+        }
         Ok(Error::Conflict {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
             secs_left: crate::domain::secs_between(blocker.expires, req.now),
             held_secs: held_for(blocker.since, req.now),
-            deadlock: self.closes_cycle(req, held)?,
+            deadlock,
         })
     }
 
@@ -225,6 +311,10 @@ impl SqliteStore {
             "DELETE FROM claim_waits WHERE ts<?1",
             params![req.now - WAIT_WINDOW_SECS],
         )?;
+        self.exec(
+            "DELETE FROM claim_yields WHERE ts<?1",
+            params![req.now - YIELD_WINDOW_SECS],
+        )?;
         let held = self.live_claims(req.room)?;
         let blocker = held.iter().find(|h| refuses(h, req));
         if let Some(blocker) = blocker {
@@ -232,6 +322,7 @@ impl SqliteStore {
         }
         self.end_waits(req)?;
         self.insert_claim(req)?;
+        self.note_overwrites(req)?;
         self.tell_completed_cycles(req)?;
         Ok(Ok(()))
     }

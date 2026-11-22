@@ -41,7 +41,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);
  CREATE TABLE member_mode(member TEXT PRIMARY KEY, mode TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
- CREATE INDEX member_attrs_repository ON member_attrs(repository);";
+ CREATE INDEX member_attrs_repository ON member_attrs(repository);
+ CREATE TABLE claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -416,6 +417,17 @@ pub(super) fn migrate_v34(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 35 to 36: the record behind the `possible_overwrite` stuck event (#909). A row with an empty path marks a
+/// member that was a party to a claim deadlock at `ts`; a row with a path is a claim that member released inside the
+/// window after such a mark, and `taker` names the other member that then took an overlapping path (empty until then).
+/// Names, paths and times only, never text; rows older than the window are deleted.
+pub(super) fn migrate_v35(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));",
+    )
+    .map_err(be)
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -468,6 +480,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v32,
     migrate_v33,
     migrate_v34,
+    migrate_v35,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

@@ -30,7 +30,7 @@
     {
       "name": "overwrite-after-deadlock",
       "source": "#272, runs fourteen and fifteen",
-      "note": "after the deadlock the yielder lets go and the later editor takes the file and replaces the earlier result; nothing klatch can see is stuck any more, so no event and no proposal: whether the second edit should build on the first is semantic",
+      "note": "after the deadlock one party lets go and the other takes the file and replaces the earlier result; detectable since #909 (option C) as a possible_overwrite: klatch flags the pattern, a claim taken on a path released inside the window after a deadlock, and never judges whether the second edit built on the first (that stays semantic)",
       "steps": [
         ["ann", "claim", "lobby", "p"],
         ["bo", "claim", "lobby", "q"],
@@ -40,9 +40,9 @@
         ["bo", "claim", "lobby", "p"],
         ["bo", "release", "lobby", "p"]
       ],
-      "detectable": false,
-      "expect_kinds": [],
-      "expect_proposals": 0
+      "detectable": true,
+      "expect_kinds": ["possible_overwrite"],
+      "expect_proposals": 1
     },
     {
       "name": "two-tasks-need-the-same-result",

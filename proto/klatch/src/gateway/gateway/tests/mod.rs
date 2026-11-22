@@ -48,6 +48,7 @@ mod my_role;
 mod notify;
 mod own_refusals;
 mod parked;
+mod possible_overwrite;
 mod pr_lifecycle;
 mod process_exited;
 mod qa_correlation;

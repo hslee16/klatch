@@ -58,6 +58,28 @@ impl<S: Store> Gateway<S> {
             .clear_done(Seat::new(room, &who.member), self.now())
     }
 
+    /// The `possible_overwrite` stuck events of `room` (#909): a claim taken, inside the window, on a path another member
+    /// released after a claim deadlock. By path, then names. Flag only; read only.
+    pub(super) fn overwrite_events(
+        &self,
+        room: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::StuckEvent>> {
+        Ok(self
+            .store
+            .claim_overwrites(room, now)?
+            .into_iter()
+            .map(
+                |(path, previous, new)| crate::domain::StuckEvent::PossibleOverwrite {
+                    room: room.to_string(),
+                    path: crate::domain::claim_label(&path),
+                    previous,
+                    new,
+                },
+            )
+            .collect())
+    }
+
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {
         check_member(who)?;
         check_room(room)?;
@@ -65,6 +87,8 @@ impl<S: Store> Gateway<S> {
         let path = crate::domain::canonical_claim_path(path);
         let path = path.as_str();
         self.authorize(who, &Operation::release(room, path))?;
+        self.store
+            .note_yield_release(room, &who.member, path, self.now())?;
         self.store.release(room, &who.member, path)
     }
 
@@ -89,6 +113,8 @@ impl<S: Store> Gateway<S> {
             ));
         }
         self.authorize(who, &Operation::release(room, path))?;
+        self.store
+            .note_yield_release(room, &who.member, path, self.now())?;
         self.store.release_with(
             &Release::new((room, &who.member), path, note.trim()),
             self.now(),

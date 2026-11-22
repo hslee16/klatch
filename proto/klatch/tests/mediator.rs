@@ -85,10 +85,7 @@ fn the_undetectable_cases_are_marked_so_and_show_nothing() {
         .filter(|c| c["detectable"] == false)
         .map(|c| c["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(
-        names,
-        ["overwrite-after-deadlock", "two-tasks-need-the-same-result"]
-    );
+    assert_eq!(names, ["two-tasks-need-the-same-result"]);
 }
 
 #[test]

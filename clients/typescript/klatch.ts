@@ -557,7 +557,7 @@ export class Client {
     return await this.request("could_answer", { room, member, ask });
   }
 
-  /** The stuck cases of a room as events (stale_ask, nobody_capable, ask_cycle, claim_deadlock, long_exchange, dead_holder): a kind, a stable key, and ids, member names and numbers, never message text. */
+  /** The stuck cases of a room as events (stale_ask, nobody_capable, ask_cycle, claim_deadlock, long_exchange, dead_holder, possible_overwrite): a kind, a stable key, and ids, member names and numbers, never message text. */
   async stuck(room: string): Promise<Record<string, any>[]> {
     return (await this.request("stuck", { room })).events;
   }
