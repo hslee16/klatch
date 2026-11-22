@@ -609,17 +609,17 @@ fn the_recovery_code_resets_a_forgotten_passphrase_and_a_wrong_code_does_not() {
 fn the_unlock_window_is_shown_and_set_with_the_proof_and_is_bounded() {
     let h = Home::new();
     let shown = h.admin(&["unlock-window"], &[]);
-    assert!(shown.text.contains("300 seconds"), "{}", shown.text);
-    assert!(h.admin(&["unlock-window", "60"], &[]).ok());
-    assert!(h.admin(&["unlock-window"], &[]).text.contains("60 seconds"));
-    let bad = h.admin(&["unlock-window", "5"], &[]);
-    assert!(!bad.ok(), "{}", bad.text);
-    assert!(h.admin(&["unlock-window", "--off"], &[]).ok());
+    assert!(shown.text.contains("60 seconds"), "{}", shown.text);
+    assert!(h.admin(&["unlock-window", "120"], &[]).ok());
     assert!(
         h.admin(&["unlock-window"], &[])
             .text
-            .contains("300 seconds")
+            .contains("120 seconds")
     );
+    let bad = h.admin(&["unlock-window", "5"], &[]);
+    assert!(!bad.ok(), "{}", bad.text);
+    assert!(h.admin(&["unlock-window", "--off"], &[]).ok());
+    assert!(h.admin(&["unlock-window"], &[]).text.contains("60 seconds"));
 }
 
 #[test]

@@ -36,7 +36,7 @@ pub const VERIFIER_KEY: &str = "admin-passphrase";
 pub const WINDOW_KEY: &str = "admin-unlock-secs";
 /// The member name of the person, once proved. Reserved: no member may take it.
 pub const HUMAN: &str = "human";
-pub const DEFAULT_WINDOW_SECS: i64 = 300;
+pub const DEFAULT_WINDOW_SECS: i64 = 60;
 pub const MIN_WINDOW_SECS: i64 = 10;
 pub const MAX_WINDOW_SECS: i64 = 1800;
 

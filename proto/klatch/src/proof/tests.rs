@@ -114,7 +114,7 @@ fn the_right_passphrase_builds_a_proof_that_is_the_verified_human_and_is_audited
     assert_eq!(who.attribution, Attribution::Verified);
     assert_eq!(actions(&s), vec!["proof-ok"]);
     let row = &s.audit_log(1).unwrap()[0];
-    assert_eq!(row.detail, "window 300s");
+    assert_eq!(row.detail, "window 60s");
 }
 
 #[test]
@@ -263,10 +263,10 @@ fn a_second_proof_inside_the_window_does_not_ask_and_one_after_it_does() {
     };
     prove(&s, &mut Typed::new(&[PASS]), when(0, 10), &unlock, "a test").unwrap();
     let mut quiet = Typed::new(&[]);
-    prove(&s, &mut quiet, when(299, 309), &unlock, "a test").unwrap();
+    prove(&s, &mut quiet, when(59, 69), &unlock, "a test").unwrap();
     assert_eq!(quiet.asked, 0, "inside the window: no prompt");
     let mut again = Typed::new(&[PASS]);
-    prove(&s, &mut again, when(300, 310), &unlock, "a test").unwrap();
+    prove(&s, &mut again, when(60, 70), &unlock, "a test").unwrap();
     assert_eq!(again.asked, 1, "after the window: asked");
 }
 
@@ -338,7 +338,8 @@ fn an_unlock_earned_before_a_change_of_passphrase_is_void() {
 fn a_length_of_the_window_comes_from_policy_and_is_bounded() {
     let s = store();
     with_pass(&s);
-    assert_eq!(window_len(&s), Duration::from_secs(300));
+    assert_eq!(window_len(&s), Duration::from_secs(60));
+    assert_eq!(DEFAULT_WINDOW_SECS, 60);
     let proof = prove(
         &s,
         &mut Typed::new(&[PASS]),
@@ -347,12 +348,12 @@ fn a_length_of_the_window_comes_from_policy_and_is_bounded() {
         "a test",
     )
     .unwrap();
-    set_window(&s, &proof, Some(60), 2).unwrap();
-    assert_eq!(window_len(&s), Duration::from_secs(60));
+    set_window(&s, &proof, Some(120), 2).unwrap();
+    assert_eq!(window_len(&s), Duration::from_secs(120));
     assert!(set_window(&s, &proof, Some(5), 3).is_err());
     assert!(set_window(&s, &proof, Some(100_000), 3).is_err());
     s.policy_set(WINDOW_KEY, Some("junk"), 4).unwrap();
-    assert_eq!(window_len(&s), Duration::from_secs(300));
+    assert_eq!(window_len(&s), Duration::from_secs(60));
     set_window(&s, &proof, None, 5).unwrap();
     assert_eq!(s.policy_get(WINDOW_KEY).unwrap(), None);
 }
