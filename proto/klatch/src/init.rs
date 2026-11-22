@@ -644,6 +644,26 @@ fn new_entry(cmd: &str) -> Value {
     json!({"hooks": [{"type": "command", "command": cmd}]})
 }
 
+/// The timeout, in seconds, written into every ordinary hook entry `init` installs (#1246). The first read by a new
+/// binary may wait on the Keychain for up to `klatch::keys::KEYCHAIN_READ_LIMIT_SECS` before it fails with a message
+/// that says what to do; the Claude Code default was not verified, so the entry says it outright, with room to spare.
+const HOOK_TIMEOUT_SECS: u64 = 30;
+
+/// Give every hook of klatch's in `list` a timeout of at least `HOOK_TIMEOUT_SECS`: add it where it is missing,
+/// raise a lower one, keep a longer one the user chose.
+fn ensure_timeout(list: &mut [Value], owns: fn(&Value) -> bool) {
+    for hook in list
+        .iter_mut()
+        .filter_map(|m| m.get_mut("hooks").and_then(Value::as_array_mut))
+        .flatten()
+        .filter(|h| owns(h))
+    {
+        if hook.get("timeout").and_then(Value::as_u64) < Some(HOOK_TIMEOUT_SECS) {
+            hook["timeout"] = json!(HOOK_TIMEOUT_SECS);
+        }
+    }
+}
+
 /// `settings` with klatch's hook entries set to exactly what is asked: added when missing, updated in place when
 /// present, everything else left as it was. Fails (writing nothing) when the file is not a JSON object or its
 /// `hooks` is not an object.
@@ -653,7 +673,11 @@ pub fn merge_hooks(
     board: Option<&str>,
     join: bool,
 ) -> Result<Value, String> {
-    merge_commands(existing, |event| hook_command(bin, event, board, join))
+    let mut settings = merge_commands(existing, |event| hook_command(bin, event, board, join))?;
+    for event in EVENTS {
+        ensure_timeout(event_list(hooks_of(&mut settings)?, event)?, is_ours);
+    }
+    Ok(settings)
 }
 
 /// `merge_hooks` with the hook command of each event given by `command` (Codex's differs from Claude Code's).
@@ -693,6 +717,7 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
     if !sync_entries(list, &cmd, on) && on {
         list.push(new_entry(&cmd));
     }
+    ensure_timeout(list, is_ours);
     if list.is_empty() {
         hooks.remove(EVENT);
     }
@@ -747,7 +772,7 @@ fn is_wake(hook: &Value) -> bool {
 
 fn enforce_entry(bin: &str) -> Result<Value, String> {
     let cmd = hook_command(bin, "PreToolUse", None, true)?;
-    Ok(json!({"matcher": ENFORCE_MATCHER, "hooks": [{"type": "command", "command": cmd}]}))
+    Ok(json!({"matcher": ENFORCE_MATCHER, "hooks": [{"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS}]}))
 }
 
 fn wake_entry(bin: &str) -> Result<Value, String> {
@@ -781,6 +806,8 @@ fn set_optional(
         list.push(entry);
     } else if how != Switch::Off && spec.refresh {
         refresh_owned(list, spec.owns, &entry["hooks"][0]);
+    } else if how != Switch::Off && spec.event == "PreToolUse" {
+        ensure_timeout(list, is_ours);
     }
     if list.is_empty() {
         hooks.remove(spec.event);
@@ -1128,6 +1155,35 @@ mod tests {
         set_enforce(&mut on, "/other/klatch", Switch::Keep).unwrap();
         assert!(commands(&on, "PreToolUse")[0].starts_with("/other/klatch"));
         assert_eq!(commands(&on, "PreToolUse").len(), 1);
+    }
+
+    #[test]
+    fn every_installed_hook_entry_has_a_timeout_longer_than_the_keychain_read_limit() {
+        let mut v = merge_hooks(None, BIN, None, true).unwrap();
+        set_session_end(&mut v, BIN, true).unwrap();
+        set_enforce(&mut v, BIN, Switch::On).unwrap();
+        let mut seen = 0;
+        for (event, list) in v["hooks"].as_object().unwrap() {
+            for hook in list.as_array().unwrap().iter().flat_map(|m| m["hooks"].as_array().unwrap()) {
+                let t = hook["timeout"].as_u64().unwrap_or_else(|| panic!("{event} has no timeout"));
+                assert!(t > klatch::keys::KEYCHAIN_READ_LIMIT_SECS, "{event}: {t}");
+                seen += 1;
+            }
+        }
+        assert!(seen >= 5, "{seen}");
+    }
+
+    #[test]
+    fn rerunning_init_adds_a_timeout_to_an_old_entry_and_keeps_a_longer_one() {
+        let old = json!({"hooks": {
+            "SessionStart": [{"hooks": [{"type": "command", "command": "/opt/klatch/klatch --discover hook --event SessionStart"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "/opt/klatch/klatch --discover hook --event Stop", "timeout": 120}]}],
+            "PostToolUse": [{"hooks": [{"type": "command", "command": "/opt/klatch/klatch --discover hook --event PostToolUse", "timeout": 2}]}]
+        }});
+        let v = merge_hooks(Some(&old), BIN, None, true).unwrap();
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["timeout"], HOOK_TIMEOUT_SECS);
+        assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["timeout"], 120);
+        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"], HOOK_TIMEOUT_SECS);
     }
 
     #[test]
