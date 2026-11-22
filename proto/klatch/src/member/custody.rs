@@ -206,6 +206,11 @@ fn opens_existing_store(db: &Path, key: &Key) -> bool {
     !has_data(db) || is_plaintext(db) || SqliteStore::open(db, key).is_ok()
 }
 
+/// Whether `key` opens the store file (true when there is no store with data yet to open).
+pub fn key_opens_store(db: &Path, key: &Key) -> bool {
+    opens_existing_store(db, key)
+}
+
 /// Put `key` in as the store's key, after checking that it opens the store when one exists.
 pub fn restore_key(db: &Path, key: &Key) -> Result<()> {
     let kh = key_home(db);

@@ -19,24 +19,98 @@ fn at() -> At {
     }
 }
 
-/// The proof of the person, asked for on the terminal unless this process holds an open unlock window. A refusal
-/// is an error whose text says what to do and never holds what was typed.
-pub(crate) fn require(store: &SqliteStore) -> Result<AdminProof> {
-    require_with(store, &mut TtyPrompt)
+/// The command line the person is being asked to approve, set by the shell for each line it runs.
+static SHELL_LINE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub(crate) fn set_shell_line(line: Option<String>) {
+    *SHELL_LINE.lock().unwrap_or_else(|e| e.into_inner()) = line;
 }
 
-pub(crate) fn require_with(
-    store: &SqliteStore,
-    prompt: &mut dyn proof::Prompt,
-) -> Result<AdminProof> {
-    proof::prove(store, prompt, at(), &proof::PROCESS_WINDOW).map_err(Into::into)
+/// What the passphrase approves, for the prompt: the command being run, with no control characters, a recovery
+/// code given as an argument left out, and a bounded length.
+pub(crate) fn describe_words(words: &[String]) -> String {
+    let mut out = Vec::new();
+    let mut hide = false;
+    for w in words {
+        if hide {
+            out.push("<code>".to_string());
+            hide = false;
+            continue;
+        }
+        hide = w == "recover";
+        out.push(
+            w.chars()
+                .map(|c| if c.is_control() { '?' } else { c })
+                .collect::<String>(),
+        );
+    }
+    let text = out.join(" ");
+    if text.chars().count() > 160 {
+        format!("{}...", text.chars().take(157).collect::<String>())
+    } else {
+        text
+    }
+}
+
+fn describe() -> String {
+    if let Some(line) = SHELL_LINE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return line;
+    }
+    describe_words(&std::env::args().skip(1).collect::<Vec<_>>())
+}
+
+/// The proof of the person, asked for on the terminal unless this process holds an open unlock window. A refusal
+/// is an error whose text says what to do and never holds what was typed. The prompt names `what`.
+fn require_for(store: &SqliteStore, what: &str) -> Result<AdminProof> {
+    proof::prove(store, &mut TtyPrompt, at(), &proof::PROCESS_WINDOW, what).map_err(Into::into)
 }
 
 /// `require` for a command that has not opened the store yet: the store and the proof.
 pub(crate) fn open_and_require(db: &Path) -> Result<(SqliteStore, AdminProof)> {
+    open_and_require_for(db, &describe())
+}
+
+pub(crate) fn open_and_require_for(db: &Path, what: &str) -> Result<(SqliteStore, AdminProof)> {
     let store = custody::open_store(db)?;
-    let proof = require(&store)?;
+    let proof = require_for(&store, what)?;
     Ok((store, proof))
+}
+
+/// Whether the store can be read with the key the keystore holds (without making anything).
+pub(crate) fn store_readable(db: &Path) -> bool {
+    db.exists()
+        && matches!(custody::current_key(db), Ok(Some(k)) if SqliteStore::open(db, &k).is_ok())
+}
+
+/// The proof for `recover` (store key) and `restore` when the store cannot be read, so the passphrase verifier
+/// cannot either. `recover`: the recovery code given is the credential and counts only if its key opens the store
+/// file. `restore`: the person types the store's recovery code. Both are followed by the typed confirmation.
+pub(super) fn recovery_proof(db: &Path, act: &super::route::Keystore) -> Result<AdminProof> {
+    use super::route::{KeyAct, Keystore};
+    eprintln!(
+        "the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead"
+    );
+    match act {
+        Keystore::Key(KeyAct::Recover { code, .. }) => {
+            let key = klatch::keys::restore(&code.join(" ")).map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(proof::prove_by_key_that_opens(custody::key_opens_store(
+                db, &key,
+            ))?)
+        }
+        Keystore::Key(KeyAct::Restore { .. }) => {
+            let key = custody::current_key(db)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this store has no key; restore the key first with `klatch admin recover`"
+                )
+            })?;
+            Ok(proof::prove_by_recovery_code(
+                &klatch::keys::recovery_code(&key),
+                &mut TtyPrompt,
+                "admin restore",
+            )?)
+        }
+        _ => anyhow::bail!("only recover and restore can be approved without the store"),
+    }
 }
 
 /// `klatch admin init-passphrase`: set the first passphrase, or change the one set (the old one is asked for first).
@@ -129,6 +203,7 @@ pub(crate) fn proof_for_tests() -> AdminProof {
         &mut Typed("a test passphrase"),
         at(),
         &klatch::proof::Unlock::new(),
+        "a test",
     )
     .unwrap()
 }

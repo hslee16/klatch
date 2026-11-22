@@ -44,5 +44,5 @@ while True:
     elif proc.poll() is not None:
         break
 code = proc.wait()
-sys.stdout.write(text.replace("\r", "").replace("admin passphrase: \n", ""))
+sys.stdout.write("".join(l for l in text.replace("\r", "").splitlines(True) if not l.startswith("admin passphrase to approve")))
 sys.exit(code)

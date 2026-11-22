@@ -94,7 +94,14 @@ impl From<crate::domain::Error> for ProofError {
 /// Where a secret comes from. The real one is `TtyPrompt`; a test supplies its own. A prompt that cannot reach a
 /// person answers `NoTerminal`, and that is a refusal.
 pub trait Prompt {
+    /// A secret, typed with echo off.
     fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError>;
+
+    /// A line the person types back with echo on (the confirmation of a destructive act). It comes from the
+    /// terminal and never from a pipe. A prompt that cannot reach a person answers `NoTerminal`.
+    fn line(&mut self, _label: &str) -> Result<String, ProofError> {
+        Err(ProofError::NoTerminal)
+    }
 }
 
 /// Evidence that the caller typed the admin passphrase (or the recovery code) just now or inside the unlock window.
@@ -168,11 +175,15 @@ pub fn is_set<S: PolicyStore + ?Sized>(store: &S) -> Result<bool, ProofError> {
 /// Order: the window; the wait of the failure limit (nothing is asked while it runs); the prompt (no terminal is
 /// a refusal that charges nothing); the attempt is charged; then it is checked in constant time. Success clears
 /// the failures, opens the window and rewrites a verifier of weaker cost under the current one.
+///
+/// `what` is shown in the prompt: the passphrase approves exactly that command (`admin close lobby`), so a person
+/// who is asked by a program that shares their terminal can see what they are about to allow.
 pub fn prove<S: PolicyStore + ?Sized>(
     store: &S,
     prompt: &mut dyn Prompt,
     at: At,
     unlock: &Unlock,
+    what: &str,
 ) -> Result<AdminProof, ProofError> {
     let verifier = load(store)?;
     let id = verifier.id();
@@ -184,7 +195,7 @@ pub fn prove<S: PolicyStore + ?Sized>(
         audit_throttled(store, "proof-locked", "", &format!("wait {wait}s"), at.unix);
         return Err(ProofError::Locked(wait));
     }
-    let typed = match prompt.secret("admin passphrase") {
+    let typed = match prompt.secret(&format!("admin passphrase to approve `{what}`")) {
         Ok(t) => t,
         Err(ProofError::NoTerminal) => {
             audit_throttled(store, "proof-refused", "no-terminal", "", at.unix);
@@ -266,7 +277,21 @@ pub fn init<S: PolicyStore + ?Sized>(
     }
     let new = ask_new(prompt)?;
     let v = Verifier::create(&new, verifier::CURRENT).map_err(ProofError::Store)?;
-    store_verifier(store, &v, at.unix)?;
+    // the check and the store are one write transaction: two processes setting the first passphrase at once, or
+    // one set while this was asking, cannot both win and the second never replaces the first
+    let taken = std::cell::Cell::new(false);
+    store.atomically(&mut || {
+        if store.policy_get(VERIFIER_KEY)?.is_some() {
+            taken.set(true);
+            return Ok(());
+        }
+        store.policy_set(VERIFIER_KEY, Some(&v.encode()), at.unix)
+    })?;
+    if taken.get() {
+        return Err(ProofError::Rejected(
+            "an admin passphrase was set meanwhile; nothing was changed".into(),
+        ));
+    }
     limit::clear(store, at.unix)?;
     audit(store, "passphrase-set", "", "first passphrase", at.unix);
     unlock.open(at.mono, &v.id());
@@ -283,7 +308,7 @@ pub fn change<S: PolicyStore + ?Sized>(
 ) -> Result<AdminProof, ProofError> {
     // the old passphrase is asked for even inside the window: a change is never done on an old entry
     unlock.close();
-    let _old = prove(store, prompt, at, unlock)?;
+    let _old = prove(store, prompt, at, unlock, "change the admin passphrase")?;
     let new = ask_new(prompt)?;
     let v = Verifier::create(&new, verifier::CURRENT).map_err(ProofError::Store)?;
     store_verifier(store, &v, at.unix)?;
@@ -339,6 +364,42 @@ pub fn reset<S: PolicyStore + ?Sized>(
     audit(store, "passphrase-reset", "", "by recovery code", at.unix);
     unlock.open(at.mono, &v.id());
     Ok(AdminProof(()))
+}
+
+/// The proof for the two keystore acts that must work when the store cannot be read (and so the verifier cannot):
+/// `admin restore` with the store lost or damaged. The person types the store's recovery code (`expected`, as
+/// `klatch admin recovery` shows it); the comparison is constant time. No failure limit exists to charge (it lives
+/// in the store), and none is needed against a 256-bit code. Whoever holds the code can already restore the key and
+/// read the store.
+pub fn prove_by_recovery_code(
+    expected: &str,
+    prompt: &mut dyn Prompt,
+    what: &str,
+) -> Result<AdminProof, ProofError> {
+    use subtle::ConstantTimeEq;
+    let typed = prompt.secret(&format!("recovery code to approve `{what}`"))?;
+    let norm = |s: &str| {
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_uppercase()
+    };
+    let (a, b) = (norm(&typed), norm(expected));
+    if a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes())) {
+        Ok(AdminProof(()))
+    } else {
+        Err(ProofError::Wrong)
+    }
+}
+
+/// The proof for `admin recover` when the key is lost: the recovery code the person gave is the credential, and it
+/// counts only if the key it makes opens the store (`opens`, which the caller checks against the store file).
+pub fn prove_by_key_that_opens(opens: bool) -> Result<AdminProof, ProofError> {
+    if opens {
+        Ok(AdminProof(()))
+    } else {
+        Err(ProofError::Wrong)
+    }
 }
 
 /// Set the unlock window, in seconds (`None` puts back the default). Needs a proof.

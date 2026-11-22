@@ -30,10 +30,15 @@ Supported versions: the newest release only, the current practice and not a poli
   for the admin passphrase, typed at a real terminal with echo off. `klatch admin init-passphrase` sets it (twice, at
   least 10 characters); only an Argon2id verifier (19 MiB, 2 passes, the parameters recorded in the stored value so
   they can be raised) is kept, in the store's policy, never the passphrase. It is never read from the environment,
-  an argument, a file or a pipe: standard input counts only when it is a terminal, else the controlling terminal, so
-  a detached or double-forked process, `setsid`, a worker's process and a script have nothing to answer and are
+  an argument, a file or a pipe: standard input counts only when it is a terminal, else the controlling terminal.
+  A detached or double-forked process, `setsid`, and a script with no terminal at all have nothing to ask on and are
   refused. A program that opens a pseudo-terminal of its own can be asked and is then refused for not knowing the
-  passphrase. A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  passphrase. A program started from YOUR terminal shares it, so it can still make a prompt appear there even when
+  it pipes its own standard input; it cannot answer it, and it cannot confirm for you (the typed-back confirmation
+  of a destructive act is read from the terminal, never from a pipe) or feed `klatch admin shell` (which refuses
+  unless standard input is itself a terminal). The prompt names the exact command it approves (`admin close
+  lobby`; the shell says it opens an unlock window for ALL admin and launcher commands): read it, and type the
+  passphrase only for a command you asked for. A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
   three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
   audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
   constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
@@ -44,6 +49,10 @@ Supported versions: the newest release only, the current practice and not a poli
   child or another `klatch` starts locked, and changing the passphrase voids it. If you forget the passphrase,
   `klatch admin reset-passphrase` takes the store's recovery code (`klatch admin recovery` shows it; keep it) and sets
   a new one; whoever holds that code can already restore the key and read the store, so it gives them nothing more.
+  The verifier lives in the encrypted store, so when the key is lost (or the store file is) it cannot be read:
+  `klatch admin recover` (the store key) and `klatch admin restore` are then approved by the recovery code (given
+  as the argument for `recover`, and it must open the store file; typed for `restore`) and the typed confirmation
+  instead of the passphrase, and the command says so. Whoever holds the code can already do both.
   Upgrading an existing install: until a passphrase is set every admin, launcher and keystore command refuses and
   says to run `klatch admin init-passphrase`; run it once, right after upgrading, in a terminal of your own. The old
   terminal and process-tree check is gone, not kept as a fallback.

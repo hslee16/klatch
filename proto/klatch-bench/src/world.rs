@@ -297,7 +297,7 @@ impl World {
             crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string(), typed.to_string()]);
         Run {
             ok,
-            stdout: text.replace("admin passphrase: \n", ""),
+            stdout: crate::pty::without_prompts(&text),
             stderr: String::new(),
         }
     }
@@ -324,7 +324,7 @@ impl World {
         );
         Run {
             ok,
-            stdout: text.replace("admin passphrase: \n", ""),
+            stdout: crate::pty::without_prompts(&text),
             stderr: String::new(),
         }
     }
@@ -498,7 +498,7 @@ impl World {
         let (ok, text) = crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string()]);
         Run {
             ok,
-            stdout: text.replace("admin passphrase: \n", ""),
+            stdout: crate::pty::without_prompts(&text),
             stderr: String::new(),
         }
     }

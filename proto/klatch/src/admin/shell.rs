@@ -113,6 +113,18 @@ fn dispatch(words: Vec<String>) -> Result<()> {
     }
 }
 
+/// The shell reads its commands from standard input, so standard input itself must be a terminal (no fallback to
+/// the controlling terminal): a pipe is refused, so a program that shares the person's terminal cannot feed it.
+pub(super) fn need_a_terminal() -> Result<()> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "the admin shell reads its commands from the terminal; standard input is not one (run `klatch admin shell` yourself in a terminal)"
+        );
+    }
+    Ok(())
+}
+
 /// The shell loop. The caller already holds a proof, so the window is open when this starts.
 pub(super) fn run() -> Result<()> {
     println!(
@@ -131,7 +143,11 @@ pub(super) fn run() -> Result<()> {
             Ok(Line::Nothing) => {}
             Ok(Line::Leave) => break,
             Ok(Line::Run(words)) => {
-                if let Err(e) = dispatch(words) {
+                // the prompt of a command asks the person to approve exactly this line
+                super::prove::set_shell_line(Some(super::prove::describe_words(&words)));
+                let done = dispatch(words);
+                super::prove::set_shell_line(None);
+                if let Err(e) = done {
                     eprintln!("{e:#}");
                 }
             }

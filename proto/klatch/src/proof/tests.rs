@@ -82,7 +82,7 @@ fn everything_kept(s: &SqliteStore) -> String {
 fn nothing_is_asked_and_nothing_let_in_while_no_passphrase_is_set() {
     let s = store();
     let mut p = Typed::new(&[PASS]);
-    let r = prove(&s, &mut p, at(10), &Unlock::new());
+    let r = prove(&s, &mut p, at(10), &Unlock::new(), "a test");
     assert_eq!(r.unwrap_err(), ProofError::NotSet);
     assert_eq!(p.asked, 0);
 }
@@ -91,7 +91,14 @@ fn nothing_is_asked_and_nothing_let_in_while_no_passphrase_is_set() {
 fn the_right_passphrase_builds_a_proof_that_is_the_verified_human_and_is_audited() {
     let s = store();
     store_verifier(&s, &Verifier::create(PASS, CURRENT_COST).unwrap(), 1).unwrap();
-    let proof = prove(&s, &mut Typed::new(&[PASS]), at(10), &Unlock::new()).unwrap();
+    let proof = prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(10),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
     let who = proof.principal();
     assert_eq!(who.member, "human");
     assert_eq!(who.attribution, Attribution::Verified);
@@ -105,7 +112,13 @@ fn a_wrong_or_empty_passphrase_is_refused_charged_audited_and_never_kept() {
     let s = store();
     with_pass(&s);
     for typed in ["wrong passphrase", "", "correct horse batterY"] {
-        let r = prove(&s, &mut Typed::new(&[typed]), at(10), &Unlock::new());
+        let r = prove(
+            &s,
+            &mut Typed::new(&[typed]),
+            at(10),
+            &Unlock::new(),
+            "a test",
+        );
         assert_eq!(r.unwrap_err(), ProofError::Wrong, "{typed:?}");
     }
     assert_eq!(
@@ -124,7 +137,13 @@ fn no_terminal_is_a_refusal_that_charges_nothing_and_is_audited_at_most_once_a_m
     let s = store();
     with_pass(&s);
     for t in 0..20 {
-        let r = prove(&s, &mut Typed::nobody(), at(1000 + t), &Unlock::new());
+        let r = prove(
+            &s,
+            &mut Typed::nobody(),
+            at(1000 + t),
+            &Unlock::new(),
+            "a test",
+        );
         assert_eq!(r.unwrap_err(), ProofError::NoTerminal);
     }
     assert_eq!(
@@ -133,7 +152,7 @@ fn no_terminal_is_a_refusal_that_charges_nothing_and_is_audited_at_most_once_a_m
         "one row for twenty tries"
     );
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None, "nothing charged");
-    prove(&s, &mut Typed::nobody(), at(1100), &Unlock::new()).unwrap_err();
+    prove(&s, &mut Typed::nobody(), at(1100), &Unlock::new(), "a test").unwrap_err();
     assert_eq!(actions(&s).len(), 2, "a new minute, a new row");
 }
 
@@ -147,11 +166,12 @@ fn after_three_wrong_ones_even_the_right_passphrase_waits_and_nothing_is_asked()
             &mut Typed::new(&["nope nope nope"]),
             at(100),
             &Unlock::new(),
+            "a test",
         )
         .unwrap_err();
     }
     let mut p = Typed::new(&[PASS]);
-    let e = prove(&s, &mut p, at(101), &Unlock::new()).unwrap_err();
+    let e = prove(&s, &mut p, at(101), &Unlock::new(), "a test").unwrap_err();
     assert!(
         matches!(e, ProofError::Locked(w) if w > 0 && w <= 30),
         "{e:?}"
@@ -159,7 +179,14 @@ fn after_three_wrong_ones_even_the_right_passphrase_waits_and_nothing_is_asked()
     assert_eq!(p.asked, 0, "not even asked while locked");
     assert!(actions(&s).contains(&"proof-locked".to_string()));
     // the wait over, the right passphrase is accepted and the count is forgotten
-    prove(&s, &mut Typed::new(&[PASS]), at(131), &Unlock::new()).unwrap();
+    prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(131),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
 }
 
@@ -175,6 +202,7 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
             &mut Typed::new(&["nope nope nope"]),
             at(now),
             &Unlock::new(),
+            "a test",
         )
         .unwrap_err();
         let w = limit::wait_secs(&s, now).unwrap();
@@ -189,7 +217,14 @@ fn a_damaged_failure_count_reads_as_locked_not_as_free() {
     let s = store();
     with_pass(&s);
     s.policy_set(limit::KEY, Some("garbage"), 1).unwrap();
-    let e = prove(&s, &mut Typed::new(&[PASS]), at(50), &Unlock::new()).unwrap_err();
+    let e = prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(50),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
     assert!(matches!(e, ProofError::Locked(_)), "{e:?}");
 }
 
@@ -200,7 +235,7 @@ fn a_damaged_verifier_lets_nobody_in() {
         .unwrap();
     let mut p = Typed::new(&[PASS]);
     assert_eq!(
-        prove(&s, &mut p, at(1), &Unlock::new()).unwrap_err(),
+        prove(&s, &mut p, at(1), &Unlock::new(), "a test").unwrap_err(),
         ProofError::Corrupt
     );
     assert_eq!(p.asked, 0);
@@ -216,12 +251,12 @@ fn a_second_proof_inside_the_window_does_not_ask_and_one_after_it_does() {
         unix,
         mono: t0 + Duration::from_secs(secs),
     };
-    prove(&s, &mut Typed::new(&[PASS]), when(0, 10), &unlock).unwrap();
+    prove(&s, &mut Typed::new(&[PASS]), when(0, 10), &unlock, "a test").unwrap();
     let mut quiet = Typed::new(&[]);
-    prove(&s, &mut quiet, when(299, 309), &unlock).unwrap();
+    prove(&s, &mut quiet, when(299, 309), &unlock, "a test").unwrap();
     assert_eq!(quiet.asked, 0, "inside the window: no prompt");
     let mut again = Typed::new(&[PASS]);
-    prove(&s, &mut again, when(300, 310), &unlock).unwrap();
+    prove(&s, &mut again, when(300, 310), &unlock, "a test").unwrap();
     assert_eq!(again.asked, 1, "after the window: asked");
 }
 
@@ -230,12 +265,12 @@ fn another_process_does_not_share_the_unlock() {
     let s = store();
     with_pass(&s);
     let mine = Unlock::new();
-    prove(&s, &mut Typed::new(&[PASS]), at(10), &mine).unwrap();
+    prove(&s, &mut Typed::new(&[PASS]), at(10), &mine, "a test").unwrap();
     // a second process has a window of its own, which starts closed
     let theirs = Unlock::new();
     let mut p = Typed::nobody();
     assert_eq!(
-        prove(&s, &mut p, at(11), &theirs).unwrap_err(),
+        prove(&s, &mut p, at(11), &theirs, "a test").unwrap_err(),
         ProofError::NoTerminal
     );
     assert_eq!(p.asked, 1);
@@ -246,7 +281,7 @@ fn an_unlock_earned_before_a_change_of_passphrase_is_void() {
     let s = store();
     with_pass(&s);
     let unlock = Unlock::new();
-    prove(&s, &mut Typed::new(&[PASS]), at(10), &unlock).unwrap();
+    prove(&s, &mut Typed::new(&[PASS]), at(10), &unlock, "a test").unwrap();
     // the passphrase is replaced behind the open window (by any route)
     store_verifier(
         &s,
@@ -256,7 +291,7 @@ fn an_unlock_earned_before_a_change_of_passphrase_is_void() {
     .unwrap();
     let mut p = Typed::nobody();
     assert_eq!(
-        prove(&s, &mut p, at(12), &unlock).unwrap_err(),
+        prove(&s, &mut p, at(12), &unlock, "a test").unwrap_err(),
         ProofError::NoTerminal,
         "the old unlock must not replay"
     );
@@ -267,7 +302,14 @@ fn a_length_of_the_window_comes_from_policy_and_is_bounded() {
     let s = store();
     with_pass(&s);
     assert_eq!(window_len(&s), Duration::from_secs(300));
-    let proof = prove(&s, &mut Typed::new(&[PASS]), at(1), &Unlock::new()).unwrap();
+    let proof = prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(1),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
     set_window(&s, &proof, Some(60), 2).unwrap();
     assert_eq!(window_len(&s), Duration::from_secs(60));
     assert!(set_window(&s, &proof, Some(5), 3).is_err());
@@ -283,12 +325,26 @@ fn a_verifier_of_weaker_cost_is_rewritten_at_the_next_success() {
     let s = store();
     with_pass(&s);
     let before = s.policy_get(VERIFIER_KEY).unwrap().unwrap();
-    prove(&s, &mut Typed::new(&[PASS]), at(10), &Unlock::new()).unwrap();
+    prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(10),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
     let after = s.policy_get(VERIFIER_KEY).unwrap().unwrap();
     assert_ne!(before, after);
     assert!(after.starts_with("argon2id$m=19456,t=2,p=1$"), "{after}");
     assert!(actions(&s).contains(&"passphrase-rehashed".to_string()));
-    prove(&s, &mut Typed::new(&[PASS]), at(11), &Unlock::new()).unwrap();
+    prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(11),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -328,7 +384,7 @@ fn a_change_needs_the_old_passphrase_even_inside_the_window() {
     let s = store();
     with_pass(&s);
     let unlock = Unlock::new();
-    prove(&s, &mut Typed::new(&[PASS]), at(1), &unlock).unwrap();
+    prove(&s, &mut Typed::new(&[PASS]), at(1), &unlock, "a test").unwrap();
     // wrong old: nothing changes
     let before = s.policy_get(VERIFIER_KEY).unwrap();
     let e = change(
@@ -354,7 +410,14 @@ fn a_change_needs_the_old_passphrase_even_inside_the_window() {
     .unwrap();
     assert!(actions(&s).contains(&"passphrase-changed".to_string()));
     assert_eq!(
-        prove(&s, &mut Typed::new(&[PASS]), at(4), &Unlock::new()).unwrap_err(),
+        prove(
+            &s,
+            &mut Typed::new(&[PASS]),
+            at(4),
+            &Unlock::new(),
+            "a test"
+        )
+        .unwrap_err(),
         ProofError::Wrong
     );
     prove(
@@ -362,6 +425,7 @@ fn a_change_needs_the_old_passphrase_even_inside_the_window() {
         &mut Typed::new(&["brand new passphrase"]),
         at(5),
         &Unlock::new(),
+        "a test",
     )
     .unwrap();
 }
@@ -399,6 +463,7 @@ fn the_recovery_code_resets_the_passphrase_and_a_wrong_code_is_charged_like_a_wr
         &mut Typed::new(&["after the reset"]),
         at(3),
         &Unlock::new(),
+        "a test",
     )
     .unwrap();
     assert!(actions(&s).contains(&"passphrase-reset".to_string()));
@@ -419,7 +484,14 @@ fn guesses_at_the_recovery_code_share_the_limit_with_the_passphrase() {
         )
         .unwrap_err();
     }
-    let e = prove(&s, &mut Typed::new(&[PASS]), at(11), &Unlock::new()).unwrap_err();
+    let e = prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(11),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
     assert!(matches!(e, ProofError::Locked(_)), "{e:?}");
 }
 
@@ -451,4 +523,43 @@ fn attempts_made_at_once_from_many_processes_are_each_charged() {
     );
     let s = SqliteStore::open(&path, &key).unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap().as_deref(), Some("3,500"));
+}
+
+/// Types the new passphrase twice, and in between another process sets one (the race `init` must not lose).
+struct RacingPrompt<'a> {
+    store: &'a SqliteStore,
+    asked: usize,
+}
+
+impl Prompt for RacingPrompt<'_> {
+    fn secret(&mut self, _label: &str) -> Result<Zeroizing<String>, ProofError> {
+        self.asked += 1;
+        if self.asked == 2 {
+            store_verifier(
+                self.store,
+                &Verifier::create("the other process won", CHEAP).unwrap(),
+                5,
+            )
+            .unwrap();
+        }
+        Ok(Zeroizing::new(PASS.to_string()))
+    }
+}
+
+#[test]
+fn init_does_not_overwrite_a_passphrase_set_while_it_was_asking() {
+    let s = store();
+    let mut p = RacingPrompt {
+        store: &s,
+        asked: 0,
+    };
+    let e = init(&s, &mut p, at(10), &Unlock::new()).unwrap_err();
+    assert!(matches!(e, ProofError::Rejected(_)), "{e:?}");
+    let kept = Verifier::parse(&s.policy_get(VERIFIER_KEY).unwrap().unwrap()).unwrap();
+    assert!(
+        kept.verify("the other process won"),
+        "the first set was replaced"
+    );
+    assert!(!kept.verify(PASS));
+    assert!(!actions(&s).contains(&"passphrase-set".to_string()));
 }

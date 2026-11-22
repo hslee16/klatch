@@ -257,7 +257,7 @@ fn a_detached_process_with_no_terminal_is_refused_for_every_admin_command() {
         let (ok, text) = detached(klatch_in(&h, &args), None);
         assert!(!ok, "{name} ran with no terminal:\n{text}");
         assert!(
-            text.contains("real terminal") || text.contains("no admin passphrase"),
+            text.contains("terminal") || text.contains("no admin passphrase"),
             "{name}: {text}"
         );
     }
@@ -388,7 +388,7 @@ fn three_wrong_passphrases_lock_even_the_right_one_out_for_a_while() {
     assert!(!r.ok(), "{}", r.text);
     assert!(r.text.contains("too many wrong passphrases"), "{}", r.text);
     assert!(
-        !r.text.contains("admin passphrase: "),
+        !r.text.contains("admin passphrase to approve"),
         "it must not even ask while locked: {}",
         r.text
     );
@@ -434,7 +434,7 @@ fn the_shell_asks_once_and_a_second_process_still_asks() {
     );
     assert!(r.ok(), "{}", r.text);
     assert_eq!(
-        r.text.matches("admin passphrase: ").count(),
+        r.text.matches("admin passphrase to approve").count(),
         1,
         "one passphrase for two commands:\n{}",
         r.text
@@ -446,7 +446,7 @@ fn the_shell_asks_once_and_a_second_process_still_asks() {
         &[PASS],
     );
     assert!(again.ok(), "{}", again.text);
-    assert_eq!(again.text.matches("admin passphrase: ").count(), 1);
+    assert_eq!(again.text.matches("admin passphrase to approve").count(), 1);
 }
 
 #[test]
@@ -595,4 +595,142 @@ fn a_member_cannot_take_the_name_the_proof_makes() {
     let h = Home::new();
     let o = h.run("human", &["join", "r"]);
     assert!(!o.status.success(), "a member named human joined");
+}
+
+// ---- a process that shares the human's terminal (#1233 review) ----
+
+fn recovery_code_of(h: &Home) -> String {
+    let shown = h.admin(&["recovery"], &[]);
+    assert!(shown.ok(), "{}", shown.text);
+    shown
+        .text
+        .lines()
+        .find(|l| l.trim_start().starts_with("KLATCH-"))
+        .unwrap_or_else(|| panic!("no recovery code in:\n{}", shown.text))
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn a_pipe_never_supplies_the_confirmation_even_when_the_terminal_is_shared() {
+    // an agent started from the human's terminal inherits it as the controlling terminal and pipes its own input
+    let h = Home::new();
+    h.set_passphrase();
+    let r = common::pty::run_on_pty_piped(
+        klatch_in(&h, &["close".to_string(), "lobby".to_string()]),
+        &[PASS, "nope"],
+        "lobby\n",
+    );
+    assert!(!r.ok(), "the piped line confirmed the act:\n{}", r.text);
+    assert!(r.text.contains("not confirmed"), "{}", r.text);
+    // and the human, who is shown the prompt, is told exactly what the passphrase would approve
+    assert!(r.text.contains("admin close lobby"), "{}", r.text);
+}
+
+#[test]
+fn the_shell_refuses_piped_input_even_when_the_terminal_is_shared() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = common::pty::run_on_pty_piped(
+        klatch_in(&h, &["shell".to_string()]),
+        &[PASS],
+        "admin lease-cap 100\nexit\n",
+    );
+    assert!(!r.ok(), "{}", r.text);
+    assert!(r.text.contains("terminal"), "{}", r.text);
+    assert!(
+        !r.text.contains("admin passphrase"),
+        "the human must not be asked to unlock a shell that reads a pipe:\n{}",
+        r.text
+    );
+    assert!(!r.text.contains("klatch> "), "{}", r.text);
+}
+
+#[test]
+fn the_passphrase_prompt_names_the_command_and_a_shell_names_every_command() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[WRONG],
+    );
+    assert!(r.text.contains("admin lease-cap 100"), "{}", r.text);
+    let w = h.launcher_command(&["worker", "revoke", "w-1"]);
+    let r = run_on_pty(w, &[WRONG]);
+    assert!(r.text.contains("worker revoke w-1"), "{}", r.text);
+    let r = run_on_pty(klatch_in(&h, &["shell".to_string()]), &[WRONG]);
+    assert!(
+        r.text.contains("ALL admin and launcher commands"),
+        "{}",
+        r.text
+    );
+    // a recovery code given as an argument is never echoed into the prompt
+    let r = run_on_pty(
+        klatch_in(
+            &h,
+            &["recover".to_string(), "KLATCH-SECRET-CODE".to_string()],
+        ),
+        &[WRONG, WRONG],
+    );
+    assert!(!r.text.contains("SECRET-CODE"), "{}", r.text);
+}
+
+#[test]
+fn recover_works_when_the_store_key_is_lost() {
+    let h = Home::new();
+    let code = recovery_code_of(&h);
+    // the key is gone from the keystore; the store (and the verifier in it) cannot be read
+    std::fs::remove_dir_all(h.0.join("keys")).unwrap();
+    std::fs::create_dir(h.0.join("keys")).unwrap();
+    // a detached process cannot do it
+    let (ok, text) = detached(klatch_in(&h, &["recover".to_string(), code.clone()]), None);
+    assert!(!ok, "{text}");
+    assert!(text.contains("terminal"), "{text}");
+    // a wrong code, or no typed confirmation, changes nothing
+    let bad = run_on_pty(
+        klatch_in(&h, &["recover".to_string(), "KLATCH-AAAA-AAAA".to_string()]),
+        &["recover"],
+    );
+    assert!(!bad.ok(), "{}", bad.text);
+    let unconfirmed = run_on_pty(
+        klatch_in(&h, &["recover".to_string(), code.clone()]),
+        &["nope"],
+    );
+    assert!(!unconfirmed.ok(), "{}", unconfirmed.text);
+    assert!(
+        unconfirmed.text.contains("not confirmed"),
+        "{}",
+        unconfirmed.text
+    );
+    // the right code and the typed confirmation put the key back
+    let ok = run_on_pty(klatch_in(&h, &["recover".to_string(), code]), &["recover"]);
+    assert!(ok.ok(), "{}", ok.text);
+    assert!(ok.text.contains("the key is back"), "{}", ok.text);
+    // and the store is readable again, with its passphrase
+    let after = h.admin(&["lease-cap", "100"], &[]);
+    assert!(after.ok(), "{}", after.text);
+}
+
+#[test]
+fn restore_works_when_the_store_is_lost_and_asks_for_the_recovery_code() {
+    let h = Home::new();
+    let backup = h.0.join("backup.db");
+    let made = h.admin(&["backup", backup.to_str().unwrap()], &[]);
+    assert!(made.ok(), "{}", made.text);
+    let code = recovery_code_of(&h);
+    for f in ["rooms.db", "rooms.db-wal", "rooms.db-shm"] {
+        let _ = std::fs::remove_file(h.0.join(f));
+    }
+    let path = backup.to_str().unwrap().to_string();
+    let restore =
+        |typed: &[&str]| run_on_pty(klatch_in(&h, &["restore".to_string(), path.clone()]), typed);
+    let (ok, text) = detached(klatch_in(&h, &["restore".to_string(), path.clone()]), None);
+    assert!(!ok, "{text}");
+    let bad = restore(&["KLATCH-AAAA-AAAA", "restore"]);
+    assert!(!bad.ok(), "{}", bad.text);
+    let good = restore(&[&code, "restore"]);
+    assert!(good.ok(), "{}", good.text);
+    // the backup carried the verifier: the passphrase works again
+    let after = h.admin(&["lease-cap", "100"], &[]);
+    assert!(after.ok(), "{}", after.text);
 }

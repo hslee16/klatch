@@ -15,6 +15,13 @@ use test_dir::TestDir;
 
 pub mod pty;
 
+/// The terminal text without the passphrase prompt lines (they are the terminal's, not the command's output).
+pub fn without_prompts(text: &str) -> String {
+    text.split_inclusive('\n')
+        .filter(|l| !l.starts_with("admin passphrase to approve"))
+        .collect()
+}
+
 /// Run in a session of its own, so the child has no controlling terminal. A person who runs `cargo test` at a
 /// terminal would otherwise be asked for the admin passphrase by a test that runs an admin or launcher command
 /// without a terminal of its own (#1233): such a test means to be refused, and `/dev/tty` would let it ask.
@@ -107,7 +114,7 @@ impl Home {
         lines.extend_from_slice(typed);
         let mut run = pty::run_on_pty(self.launcher_command(args), &lines);
         // the prompt is the terminal's, not the command's output
-        run.text = run.text.replace("admin passphrase: \n", "");
+        run.text = without_prompts(&run.text);
         run
     }
     /// `launcher_typing` with nothing more typed, as a plain `Output`.

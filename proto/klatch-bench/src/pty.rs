@@ -133,3 +133,10 @@ impl TtyChild {
         })
     }
 }
+
+/// The terminal text without the passphrase prompt lines (they are the terminal's, not the command's output).
+pub fn without_prompts(text: &str) -> String {
+    text.split_inclusive('\n')
+        .filter(|l| !l.starts_with("admin passphrase to approve"))
+        .collect()
+}

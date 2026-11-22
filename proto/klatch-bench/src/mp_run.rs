@@ -91,7 +91,7 @@ impl Site<'_> {
             let (ok, text) =
                 crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string(), String::new()]);
             return if ok {
-                Ok(text.replace("admin passphrase: \n", ""))
+                Ok(crate::pty::without_prompts(&text))
             } else {
                 Err(first_line(&text))
             };

@@ -6,6 +6,12 @@
 //! agent's command, a detached or double-forked process, `setsid`) has no controlling terminal and is refused.
 //! A process that makes a pseudo-terminal of its own can be asked; it is then refused for not knowing the
 //! passphrase, which is the point.
+//!
+//! What this does NOT do: a program started from the person's own terminal inherits it as its controlling
+//! terminal, so it can trigger a prompt there even with a pipe (or nothing) on standard input. It still cannot
+//! answer it. The defence is the person reading the prompt, which names the exact command the passphrase approves;
+//! typed-back confirmations and the admin shell never take a pipe (`klatch admin shell` needs standard input itself
+//! to be a terminal). SECURITY.md says the same.
 
 use super::{Prompt, ProofError};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -88,44 +94,67 @@ impl Drop for Silent {
     }
 }
 
-impl Prompt for TtyPrompt {
-    fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError> {
-        let tty = open_tty()?;
-        let mut line = Zeroizing::new(Vec::<u8>::with_capacity(128));
-        let too_long;
-        {
-            let _silent = Silent::on(tty.fd)?;
-            write_all(tty.fd, &format!("{label}: "));
-            let mut overflow = false;
-            loop {
-                let mut b = 0u8;
-                // SAFETY: reads one byte into a live local.
-                let n = unsafe { libc::read(tty.fd, (&mut b as *mut u8).cast(), 1) };
-                if n <= 0 {
+/// Read one line from the terminal. With `echo` off the typed text is not shown (a secret); on, it is (a confirmation).
+/// The buffer is allocated to its largest size first, so it never reallocates and leaves a copy behind, and it is
+/// wiped when dropped.
+fn read_tty_line(label: &str, echo: bool) -> Result<Zeroizing<Vec<u8>>, ProofError> {
+    let tty = open_tty()?;
+    let mut line = Zeroizing::new(Vec::<u8>::with_capacity(MAX_LINE));
+    let mut overflow = false;
+    {
+        let _quiet = if echo {
+            None
+        } else {
+            Some(Silent::on(tty.fd)?)
+        };
+        if echo {
+            // anything typed ahead, or injected, before the prompt is thrown away either way
+            // SAFETY: flushes the input queue of a terminal descriptor.
+            unsafe { libc::tcflush(tty.fd, libc::TCIFLUSH) };
+        }
+        write_all(tty.fd, &format!("{label}: "));
+        loop {
+            let mut b = 0u8;
+            // SAFETY: reads one byte into a live local.
+            let n = unsafe { libc::read(tty.fd, (&mut b as *mut u8).cast(), 1) };
+            if n <= 0 {
+                write_all(tty.fd, "\n");
+                return Err(ProofError::Aborted);
+            }
+            match b {
+                b'\n' => break,
+                // Ctrl-C or Ctrl-D typed as a character: stop
+                3 | 4 if !echo => {
                     write_all(tty.fd, "\n");
                     return Err(ProofError::Aborted);
                 }
-                match b {
-                    b'\n' => break,
-                    // Ctrl-C or Ctrl-D typed as a character: stop
-                    3 | 4 => {
-                        write_all(tty.fd, "\n");
-                        return Err(ProofError::Aborted);
-                    }
-                    _ if line.len() >= MAX_LINE => overflow = true,
-                    _ => line.push(b),
-                }
+                _ if line.len() >= MAX_LINE => overflow = true,
+                _ => line.push(b),
             }
-            too_long = overflow;
+        }
+        if !echo {
             write_all(tty.fd, "\n");
         }
-        if too_long {
-            return Err(ProofError::Wrong);
-        }
-        while line.last() == Some(&b'\r') {
-            line.pop();
-        }
+    }
+    if overflow {
+        return Err(ProofError::Wrong);
+    }
+    while line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    Ok(line)
+}
+
+impl Prompt for TtyPrompt {
+    fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError> {
+        let mut line = read_tty_line(label, false)?;
+        // the Vec moves into the String (no copy) and the String is wiped when dropped
         let text = String::from_utf8(std::mem::take(&mut *line)).map_err(|_| ProofError::Wrong)?;
         Ok(Zeroizing::new(text))
+    }
+
+    fn line(&mut self, label: &str) -> Result<String, ProofError> {
+        let line = read_tty_line(label, true)?;
+        String::from_utf8(line.to_vec()).map_err(|_| ProofError::Wrong)
     }
 }

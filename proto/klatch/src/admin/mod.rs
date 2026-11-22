@@ -336,20 +336,25 @@ fn room_of(room: Option<String>, all_rooms: bool) -> String {
     }
 }
 
-/// Ask for the target typed back when the act is destructive.
+/// Ask for the target typed back when the act is destructive. The line comes from the TERMINAL, never from standard
+/// input when that is a pipe: a program sharing the person's terminal cannot confirm for them.
 fn confirm(expected: Option<String>) -> Result<()> {
+    use klatch::proof::Prompt;
     let Some(expected) = expected else {
         return Ok(());
     };
-    print!("type {expected} to confirm: ");
-    std::io::stdout().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
+    let line = klatch::proof::TtyPrompt
+        .line(&format!("type {expected} to confirm"))
+        .map_err(anyhow::Error::from)?;
     if !typed_back(&expected, &line) {
         bail!("not confirmed; nothing was changed");
     }
     Ok(())
 }
+
+/// What the passphrase approves when the command is the admin shell.
+const SHELL_APPROVAL: &str =
+    "open an admin shell: an unlock window for ALL admin and launcher commands";
 
 pub fn run(cmd: AdminCmd) -> Result<()> {
     let typed_target = confirmation(&cmd);
@@ -358,17 +363,28 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
         // the two acts that cannot ask for the passphrase: there is none yet, or it is forgotten
         Route::Passphrase(Passphrase::Init) => prove::init_passphrase(&db),
         Route::Passphrase(Passphrase::Reset) => prove::reset_passphrase(&db),
+        // the shell reads its commands from standard input, so that must itself be a terminal: a pipe, even with a
+        // terminal shared with a person, is refused before anyone is asked for anything
+        Route::Passphrase(Passphrase::Shell) => {
+            shell::need_a_terminal()?;
+            let (_store, _proof) = prove::open_and_require_for(&db, SHELL_APPROVAL)?;
+            shell::run()
+        }
+        // `recover` (the store key) and `restore` must work when the store cannot be read, which is when the
+        // verifier cannot be either: the recovery code and the typed confirmation approve them then
+        Route::Keystore(k) if needs_store_less_proof(&k) && !prove::store_readable(&db) => {
+            let proof = prove::recovery_proof(&db, &k)?;
+            confirm(typed_target)?;
+            keys::key_command(&db, &proof, k)
+        }
         route => {
             let (store, proof) = prove::open_and_require(&db)?;
             confirm(typed_target)?;
             match route {
-                Route::Passphrase(Passphrase::Init | Passphrase::Reset) => {
-                    unreachable!("handled above")
-                }
                 Route::Passphrase(Passphrase::Window { secs, off }) => {
                     prove::unlock_window(&store, &proof, secs, off)
                 }
-                Route::Passphrase(Passphrase::Shell) => shell::run(),
+                Route::Passphrase(_) => unreachable!("handled above"),
                 Route::Keystore(k) => keys::key_command(&db, &proof, k),
                 Route::Gateway(act) => {
                     let gateway =
@@ -380,6 +396,15 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
             }
         }
     }
+}
+
+/// The keystore acts that run exactly when the store may be unreadable: the store key's recovery and a restore.
+fn needs_store_less_proof(k: &route::Keystore) -> bool {
+    use route::{KeyAct, Keystore};
+    matches!(
+        k,
+        Keystore::Key(KeyAct::Recover { label: None, .. } | KeyAct::Restore { .. })
+    )
 }
 
 #[cfg(test)]

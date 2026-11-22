@@ -51,20 +51,38 @@ fn pty() -> (OwnedFd, OwnedFd) {
 }
 
 /// Run `cmd` on a pseudo-terminal, typing `typed` one line per prompt. Kills the child after 120 seconds.
-pub fn run_on_pty(mut cmd: Command, typed: &[&str]) -> PtyRun {
+pub fn run_on_pty(cmd: Command, typed: &[&str]) -> PtyRun {
+    run_with_stdin(cmd, typed, None)
+}
+
+/// As `run_on_pty`, but standard input is a PIPE carrying `stdin_text` while the terminal is still the child's
+/// controlling terminal and its output: an agent that shares the human's terminal and pipes its own input (#1233).
+pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRun {
+    run_with_stdin(cmd, typed, Some(stdin_text))
+}
+
+fn run_with_stdin(mut cmd: Command, typed: &[&str], piped: Option<&str>) -> PtyRun {
     let (master, slave) = pty();
-    cmd.stdin(Stdio::from(slave.try_clone().unwrap()))
-        .stdout(Stdio::from(slave.try_clone().unwrap()))
+    cmd.stdout(Stdio::from(slave.try_clone().unwrap()))
         .stderr(Stdio::from(slave.try_clone().unwrap()));
-    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours.
+    if piped.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::from(slave.try_clone().unwrap()));
+    }
+    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours. Descriptor 1 is always the terminal.
     unsafe {
         cmd.pre_exec(|| {
             libc::setsid();
-            libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+            libc::ioctl(1, libc::TIOCSCTTY as _, 0);
             Ok(())
         });
     }
     let mut child = cmd.spawn().expect("spawn on a pty");
+    if let (Some(text), Some(mut stdin)) = (piped, child.stdin.take()) {
+        use std::io::Write;
+        let _ = stdin.write_all(text.as_bytes());
+    }
     // the command holds clones of the slave until it is dropped; the master reads end only when none is left
     drop(cmd);
     drop(slave);
