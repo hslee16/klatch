@@ -1,0 +1,4 @@
+The `anchor github` passphrase prompt says where its events came from, how many bytes and how many events (#1279; no schema change; 2026-11-22).
+`klatch anchor github` reads `gh api` output or a webhook payload from standard input or `--file`, and releases claims from it. Run by a program on a shared terminal with a piped input, the prompt used to name the command and not the payload. The command now reads its input first (up to 4 MiB) and the prompt adds `[events from standard input: N bytes, M event(s)]`, or the file name in plain text; input that is not JSON shows as `unreadable as JSON`. No digest is shown, for the reason in the design item for #1283.
+
+Refusing a piped input unless `--file` is given was the other option; it would break the documented `gh api ... | klatch anchor github`, so it is left to the owner to ask for. `anchor reap` reads a directory the launcher names on its command line, which the prompt already shows.

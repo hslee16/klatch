@@ -5,7 +5,7 @@
 use super::*;
 use clap::Subcommand;
 use klatch::gateway::AnchorAdapter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Subcommand)]
 pub enum AnchorCmd {
@@ -110,9 +110,37 @@ fn read_events(file: Option<&PathBuf>) -> Result<String> {
     Ok(text)
 }
 
+/// What the passphrase prompt adds for `anchor github`, which acts on data the caller supplies and the person cannot
+/// see (#1279): where it came from, how many bytes, and how many events it holds. Counted, never trusted: the text
+/// is only parsed as JSON here, and a file name is shown as plain text.
+pub(crate) fn events_note(file: Option<&Path>, text: &str) -> String {
+    let source = match file {
+        Some(f) => format!("file {}", crate::admin::prove::plain(&f.to_string_lossy())),
+        None => "standard input".to_string(),
+    };
+    let count = match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Array(a)) => format!("{} event(s)", a.len()),
+        Ok(_) => "1 event(s)".to_string(),
+        Err(_) => "unreadable as JSON".to_string(),
+    };
+    format!("[events from {source}: {} bytes, {count}]", text.len())
+}
+
 pub fn run(cmd: AnchorCmd) -> Result<()> {
+    // `anchor github` reads its data before the prompt, so the prompt can say what it is about to act on (#1279)
+    let (what, events) = match &cmd {
+        AnchorCmd::Github { file } => {
+            let text = read_events(file.as_ref())?;
+            let note = events_note(file.as_deref(), &text);
+            (
+                format!("{} {note}", crate::admin::prove::describe()),
+                Some(text),
+            )
+        }
+        _ => (crate::admin::prove::describe(), None),
+    };
     // the passphrase first (#1233): nothing below is reachable without the proof
-    let (store, proof) = crate::admin::prove::open_and_require(&db_path()?)?;
+    let (store, proof) = crate::admin::prove::open_and_require_for(&db_path()?, &what)?;
     let gateway = Gateway::new(
         store,
         CliClock,
@@ -131,8 +159,8 @@ pub fn run(cmd: AnchorCmd) -> Result<()> {
             };
             gateway.reap_anchors(&launcher, &routed)?
         }
-        AnchorCmd::Github { file } => {
-            gateway.github_events(&launcher, &read_events(file.as_ref())?)?
+        AnchorCmd::Github { .. } => {
+            gateway.github_events(&launcher, &events.unwrap_or_default())?
         }
     };
     println!("released {released} claim(s)");
@@ -142,6 +170,27 @@ pub fn run(cmd: AnchorCmd) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_prompt_note_says_where_the_events_came_from_and_how_many() {
+        let piped = events_note(None, "[{\"a\":1},{\"b\":2}]");
+        assert!(piped.contains("standard input"), "{piped}");
+        assert!(piped.contains("2 event(s)"), "{piped}");
+        assert!(piped.contains("17 bytes"), "{piped}");
+        let one = events_note(Some(Path::new("/tmp/e.json")), "{\"a\":1}");
+        assert!(
+            one.contains("file /tmp/e.json") && one.contains("1 event(s)"),
+            "{one}"
+        );
+        let bad = events_note(None, "not json");
+        assert!(bad.contains("unreadable as JSON"), "{bad}");
+    }
+
+    #[test]
+    fn the_prompt_note_shows_a_file_name_as_plain_text_only() {
+        let n = events_note(Some(Path::new("a\u{1b}[2Jb")), "{}");
+        assert!(!n.contains('\u{1b}'), "{n:?}");
+    }
 
     #[test]
     fn an_anchor_becomes_a_safe_file_name_and_never_a_path() {
