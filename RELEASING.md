@@ -84,6 +84,11 @@ of the bumped formula at `file://` URLs in a temporary local tap and runs `brew 
 `brew install --build-from-source` and `brew test`, then removes the tap. It changes your local Homebrew while it runs,
 and prints a message and skips when `brew` is missing.
 
+The staged copy in this repository, `release/homebrew/klatch.rb`, is the file to edit first: `release/check-versions.sh`
+checks its `version`, its four URLs (release tag and archive name, from `release/pep440.sh`) and, when they are
+present, its SHA-256 lines, so a version bump cannot leave it behind. After the release exists, check the checksums
+too: `release/check-versions.sh . release/homebrew/klatch.rb path/to/SHA256SUMS`. Then copy the file to the tap.
+
 ## Rolling back
 
 Nothing published is deleted. A bad release is **replaced by the next number** (see VERSIONING.md) and the bad one is

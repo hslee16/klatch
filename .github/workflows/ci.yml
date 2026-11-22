@@ -92,7 +92,7 @@ jobs:
       - name: Shell scripts pass shellcheck
         if: runner.os == 'Linux'
         working-directory: .
-        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh clients/recipes/check-integration-examples.sh release/check-versions.sh release/check-timeouts.sh release/test-check-versions.sh release/changelog-fragments.sh release/test-changelog-fragments.sh
+        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh clients/recipes/check-integration-examples.sh release/check-versions.sh release/pep440.sh release/test-pep440.sh release/check-timeouts.sh release/test-check-versions.sh release/changelog-fragments.sh release/test-changelog-fragments.sh
       - name: The README quickstart runs against the real binary
         run: |
           export KLATCH_BIN="$PWD/target/debug/klatch"
