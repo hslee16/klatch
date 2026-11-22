@@ -174,6 +174,36 @@ impl<S: Store> Gateway<S> {
         Ok(seen.is_some_and(|o| o.verdict == Verdict::Gone))
     }
 
+    /// The askers among `served` (members of the room with a recorded session) whose process the probe finds gone,
+    /// each once (#790). Unknown counts as alive; no lease source means none.
+    pub(super) fn exited_askers(
+        &self,
+        served: &[crate::domain::Served],
+        members: &[crate::domain::MemberInfo],
+        now: i64,
+    ) -> Result<Vec<String>> {
+        let Some(source) = &self.leases else {
+            return Ok(Vec::new());
+        };
+        let now_ms = u64::try_from(now).unwrap_or(0) * 1000;
+        let mut out: Vec<String> = Vec::new();
+        for s in served {
+            if out.contains(&s.asker) || !members.iter().any(|m| m.name == s.asker) {
+                continue;
+            }
+            let Some(session) = self.store.session_of_member(&s.asker)? else {
+                continue;
+            };
+            let gone = source
+                .observe(&s.asker, &session, now_ms)
+                .is_some_and(|o| o.verdict == Verdict::Gone);
+            if gone {
+                out.push(s.asker.clone());
+            }
+        }
+        Ok(out)
+    }
+
     /// The live claims of `room` whose holder has a registry record and a process the probe finds provably gone, as
     /// `dead_holder` stuck events (#1182): by claim path, in order. Flag only: it moves no lease and releases nothing.
     /// Unknown counts as alive, so no lease source, no session record or a record the probe cannot read flags nothing.
