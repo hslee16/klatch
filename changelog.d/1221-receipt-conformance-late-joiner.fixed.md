@@ -1,0 +1,1 @@
+- The conformance test for `receipt` no longer fails intermittently: it posted from the second member after the message it asked about, which made that member a late joiner (not a recipient) whenever the two posts fell in different seconds. The product was right; the test now joins the second member first (#1221, #1272).

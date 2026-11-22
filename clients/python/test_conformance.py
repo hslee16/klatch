@@ -320,8 +320,10 @@ class Conformance(unittest.TestCase):
     def test_a_member_reads_its_rooms_its_board_and_its_receipt(self):
         a = self.store.client("alice")
         b = self.store.client("bob")
-        sent = a.post("r", "offering: review help")
+        # Bob joins first: a member who joins after the post is a late joiner and no recipient, and the join time has
+        # one-second resolution, so posting after Alice only passed when both fell in the same second (#1221, #1272).
         b.post("r", "hi")
+        sent = a.post("r", "offering: review help")
         self.assertEqual(a.my_rooms(), ["r"])
         self.assertIn("review help", a.board("r"))
         rows = a.receipt("r", sent["seq"])["recipients"]

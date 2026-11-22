@@ -1,0 +1,4 @@
+The receipt conformance test joins its recipient before the post (#1221, #1272; no schema change; 2026-11-22).
+The Python and TypeScript conformance tests for `receipt` failed intermittently (recipients empty, expected bob). The cause was in the tests, not the product: bob posted after alice's message, so bob joined after it, and by the rule in `receipt_of` a member who joined after the post is a late joiner and not a recipient. Join times have one-second resolution and the rule compares `joined > ts`, so the test only passed when both posts fell in the same second. Reproduced deterministically by waiting 1.1 s between the two posts (the assertion failed with `[] != ['bob']`); 48 unloaded and loaded standalone runs did not hit it because the window is the second boundary.
+
+The tests now have bob join the room first, then alice post. No sleep, no timing luck. Product code is unchanged; the late-joiner rule is covered by the unit test in `domain/receipt.rs`.
