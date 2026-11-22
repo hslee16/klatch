@@ -1,0 +1,1 @@
+- `admin recover` and `admin restore` now have a failure limit when the store cannot be read: attempts are counted in a file beside the store (3 free, then doubling waits) and audited once the store opens again (#1281).

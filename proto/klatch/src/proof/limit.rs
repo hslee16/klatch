@@ -36,7 +36,7 @@ fn read<S: PolicyStore + ?Sized>(store: &S, now: i64) -> Result<(u32, i64)> {
     })
 }
 
-fn remaining(count: u32, last: i64, now: i64) -> i64 {
+pub(super) fn remaining(count: u32, last: i64, now: i64) -> i64 {
     // a clock that went back must not shorten the wait or lengthen it past the cap
     (last + lock_secs(count) - now).clamp(0, MAX_LOCK_SECS)
 }

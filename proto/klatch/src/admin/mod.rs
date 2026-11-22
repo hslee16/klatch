@@ -430,7 +430,13 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
         Route::Keystore(k) if needs_store_less_proof(&k) && !prove::store_readable(&db) => {
             let proof = prove::recovery_proof(&db, &k)?;
             confirm(typed_target, &what)?;
-            keys::key_command(&db, &proof, k)
+            let done = keys::key_command(&db, &proof, k);
+            if done.is_ok()
+                && let Ok(store) = custody::open_store(&db)
+            {
+                klatch::proof::settle_recovery_attempts(&db, &store);
+            }
+            done
         }
         route => {
             let (store, proof) = prove::open_and_require_for(&db, &what)?;
