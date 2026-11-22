@@ -247,3 +247,90 @@ impl<G: Guard> Guard for ForbidFloors<G> {
         self.inner.check(who, op)
     }
 }
+
+/// The guard of the gateways the person's own commands use (`klatch admin`, `worker`, `anchor`, `run`, `judge`,
+/// #1233): every operation needs the principal an `AdminProof` makes, the member `human` with `Verified`
+/// attribution, and nothing else passes, a member named `admin`, an unattributed `human` or any other verified
+/// member. The name is reserved (no member may take it) and only `proof::AdminProof::principal` makes one on a
+/// command line. An agent role (the admin agent) never goes through this guard: it acts on a members' gateway,
+/// where the role check and its allowlist decide. It composes with `ForbidFloors` (the launcher commands add it).
+pub struct RequireHuman<G: Guard> {
+    inner: G,
+}
+
+impl<G: Guard> RequireHuman<G> {
+    pub fn new(inner: G) -> Self {
+        Self { inner }
+    }
+}
+
+impl<G: Guard> Guard for RequireHuman<G> {
+    fn check(&self, who: &Principal, op: &Operation) -> Result<()> {
+        if who.member != crate::proof::HUMAN
+            || who.attribution != crate::domain::Attribution::Verified
+        {
+            return Err(Error::Refused {
+                rule: "needs-human".into(),
+                reason: "this act needs the admin passphrase, proved at a terminal (klatch admin)"
+                    .into(),
+            });
+        }
+        self.inner.check(who, op)
+    }
+}
+
+#[cfg(test)]
+mod require_human_tests {
+    use super::*;
+
+    fn ask(who: &Principal) -> Result<()> {
+        RequireHuman::new(AllowAll).check(who, &Operation::admin("pause", "*"))
+    }
+
+    #[test]
+    fn only_the_verified_human_passes() {
+        assert!(ask(&Principal::verified("human")).is_ok());
+        for bad in [
+            Principal::unattributed("human"),
+            Principal::unattributed("admin"),
+            Principal::verified("admin"),
+            Principal::verified("mallory"),
+            Principal::verified("Human"),
+            Principal::verified("human "),
+            Principal::verified(""),
+        ] {
+            let e = ask(&bad).unwrap_err();
+            assert!(
+                matches!(&e, Error::Refused { rule, .. } if rule == "needs-human"),
+                "{bad:?}: {e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn it_refuses_every_kind_of_operation_not_only_admin_acts() {
+        let g = RequireHuman::new(AllowAll);
+        let nobody = Principal::unattributed("bob");
+        for op in [
+            Operation::admin("audit", ""),
+            Operation::read("r", false),
+            Operation::Join { room: "r".into() },
+            Operation::ReviewNext,
+        ] {
+            assert!(g.check(&nobody, &op).is_err(), "{op:?}");
+        }
+    }
+
+    #[test]
+    fn the_name_is_one_no_member_can_take() {
+        assert!(crate::domain::is_reserved_name(crate::proof::HUMAN));
+    }
+
+    #[test]
+    fn it_still_asks_the_guard_it_wraps() {
+        let g = RequireHuman::new(ForbidFloors::new(AllowAll));
+        let human = Principal::verified("human");
+        assert!(g.check(&human, &Operation::admin("pause", "*")).is_ok());
+        assert!(g.check(&human, &Operation::admin("cap", "x")).is_err());
+    }
+}

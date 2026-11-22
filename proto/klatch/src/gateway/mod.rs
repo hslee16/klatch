@@ -41,7 +41,7 @@ pub use gateway::{
     MAX_CREDENTIAL_TTL_SECS, Observed, RateLimitEntry, Refused, RunInfo, check_credential,
     invite_text, lease_action, run_prefix, valid_run_id,
 };
-pub use guard::{AllowAll, ForbidFloors, Guard, Operation};
+pub use guard::{AllowAll, ForbidFloors, Guard, Operation, RequireHuman};
 pub use identity::{DeclaredName, FixedIdentity, Identity, LocalIdentity, PeerEvidence, Secret};
 pub use judge::{DRAIN_LIMIT, Drained, drain, rules_judge};
 pub use listener::{Connection, Connector, EvidenceTable, Listener};

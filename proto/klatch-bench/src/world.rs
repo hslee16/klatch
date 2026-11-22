@@ -216,7 +216,15 @@ impl World {
         if let Some(c) = &cap {
             args.extend(["--max-life", c]);
         }
-        self.ok("launcher", &args)?;
+        // a launcher command asks for the admin passphrase at a terminal (#1233)
+        self.set_passphrase();
+        let (ok, text) = crate::pty::run_on_pty(
+            self.command("launcher", &args),
+            vec![crate::pty::PASS.to_string()],
+        );
+        if !ok {
+            return Err(format!("klatch {} failed: {}", args.join(" "), text.trim()));
+        }
         Ok(out)
     }
 
@@ -239,6 +247,12 @@ impl World {
 
     /// Run `klatch <args>` as member `who`.
     pub fn run(&self, who: &str, args: &[&str]) -> Run {
+        // the launcher's commands ask for the admin passphrase at a terminal (#1233)
+        if who == "launcher"
+            && matches!(args.first(), Some(&("worker" | "anchor" | "run" | "judge")))
+        {
+            return self.launcher(args);
+        }
         match self.command(who, args).output() {
             Ok(o) => Run {
                 ok: o.status.success(),
@@ -253,38 +267,65 @@ impl World {
         }
     }
 
-    /// Run `klatch admin <args>` the way a person would at a terminal (the test binary stands in for the terminal),
-    /// typing `typed` when it asks for confirmation.
+    /// Set the admin passphrase of this world's store once (typed twice at a pseudo-terminal), as a person does after
+    /// installing (#1233). Every admin and launcher command asks for it.
+    pub fn set_passphrase(&self) {
+        let marker = self.home.join("passphrase-was-set");
+        if marker.exists() {
+            return;
+        }
+        let c = self.command("admin", &["admin", "init-passphrase"]);
+        let (ok, text) = crate::pty::run_on_pty(
+            c,
+            vec![crate::pty::PASS.to_string(), crate::pty::PASS.to_string()],
+        );
+        if ok {
+            let _ = std::fs::write(marker, "");
+        } else {
+            eprintln!("could not set the bench passphrase: {text}");
+        }
+    }
+
+    /// Run `klatch admin <args>` the way a person would at a terminal: a pseudo-terminal where the admin passphrase
+    /// is typed when asked, then `typed` for a confirmation. The output is what the terminal showed.
     pub fn admin(&self, args: &[&str], typed: &str) -> Run {
-        use std::io::Write;
+        self.set_passphrase();
         let mut full = vec!["admin"];
         full.extend_from_slice(args);
-        let mut c = self.command("admin", &full);
-        c.env("KLATCH_ADMIN_TEST_TERMINAL", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let Ok(mut child) = c.spawn() else {
-            return Run {
-                ok: false,
-                stdout: String::new(),
-                stderr: "could not start klatch".into(),
-            };
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "{typed}");
+        let c = self.command("admin", &full);
+        let (ok, text) =
+            crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string(), typed.to_string()]);
+        Run {
+            ok,
+            stdout: crate::pty::without_prompts(&text),
+            stderr: String::new(),
         }
-        match child.wait_with_output() {
-            Ok(o) => Run {
-                ok: o.status.success(),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-            },
-            Err(e) => Run {
-                ok: false,
-                stdout: String::new(),
-                stderr: e.to_string(),
-            },
+    }
+
+    /// Start `klatch admin <args>` at a pseudo-terminal without waiting, for scenarios that run several at once. The
+    /// passphrase and the confirmation line are typed when it asks.
+    pub fn spawn_admin(&self, args: &[&str]) -> std::io::Result<crate::pty::TtyChild> {
+        self.set_passphrase();
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        crate::pty::TtyChild::start(
+            self.command("admin", &full),
+            vec![crate::pty::PASS.to_string(), String::new()],
+        )
+    }
+
+    /// Run a launcher command (`run`, `worker`, `anchor`, `judge`) at a pseudo-terminal where the admin passphrase is
+    /// typed when asked (#1233). The output is what the terminal showed.
+    pub fn launcher(&self, args: &[&str]) -> Run {
+        self.set_passphrase();
+        let (ok, text) = crate::pty::run_on_pty(
+            self.command("launcher", args),
+            vec![crate::pty::PASS.to_string()],
+        );
+        Run {
+            ok,
+            stdout: crate::pty::without_prompts(&text),
+            stderr: String::new(),
         }
     }
 
@@ -387,25 +428,6 @@ impl World {
         .to_string()
     }
 
-    /// Start `klatch admin <args>` at the test terminal without waiting, for scenarios that run several at once. The
-    /// confirmation line is already typed.
-    pub fn spawn_admin(&self, args: &[&str]) -> std::io::Result<std::process::Child> {
-        use std::io::Write;
-        let mut full = vec!["admin"];
-        full.extend_from_slice(args);
-        let mut child = self
-            .command("admin", &full)
-            .env("KLATCH_ADMIN_TEST_TERMINAL", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin);
-        }
-        Ok(child)
-    }
-
     /// Start a klatch process with a piped standard input, for scenarios that feed it by hand or kill it.
     pub fn spawn_piped(&self, who: &str, args: &[&str]) -> std::io::Result<std::process::Child> {
         self.command(who, args)
@@ -471,17 +493,13 @@ impl World {
         );
         c.env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
             .env("HOME", &self.home);
-        match c.output() {
-            Ok(o) => Run {
-                ok: o.status.success(),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-            },
-            Err(e) => Run {
-                ok: false,
-                stdout: String::new(),
-                stderr: format!("could not start {}: {e}", self.bin.display()),
-            },
+        // the judge asks for the admin passphrase at a terminal (#1233)
+        self.set_passphrase();
+        let (ok, text) = crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string()]);
+        Run {
+            ok,
+            stdout: crate::pty::without_prompts(&text),
+            stderr: String::new(),
         }
     }
 

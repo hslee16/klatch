@@ -36,7 +36,11 @@ fn export_text_line(m: &klatch::domain::Message) -> String {
 }
 
 pub(super) fn export(ctx: &KeyCtx, room: &str, json: bool) -> Result<()> {
-    let gateway = Gateway::new(custody::open_store(ctx.db)?, CliClock, AllowAll);
+    let gateway = Gateway::new(
+        custody::open_store(ctx.db)?,
+        CliClock,
+        RequireHuman::new(AllowAll),
+    );
     gateway.use_label_keys(custody::label_ring(ctx.db, &gateway.sealed_labels()?)?);
     // audited before anything is printed: the act is recorded even if the output is cut short
     gateway.admin_note(&ctx.who, ("export", room), "readable transcript printed")?;

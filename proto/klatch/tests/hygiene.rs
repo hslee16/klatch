@@ -126,8 +126,14 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
 #[test]
 fn unsafe_code_is_only_where_it_was_reviewed() {
     // main.rs of both binaries: lowering the core dump limit. The harness module: the process table. The daemon (#102):
-    // the peer-credential calls, umask, signal handlers and poll, all libc. Nothing else.
+    // the peer-credential calls, umask, signal handlers and poll, all libc. The admin passphrase prompt (#1233): termios
+    // and read on a terminal descriptor. The tests that drive the binary on a pseudo-terminal (openpty, setsid, poll).
+    // Nothing else.
     let allowed = [
+        "klatch/src/proof/tty.rs",
+        "klatch/tests/common/",
+        "klatch/tests/admin_proof.rs",
+        "klatch-bench/src/pty.rs",
         "klatch/src/main.rs",
         "klatch-server/src/main.rs",
         "klatch-server/src/daemon.rs",

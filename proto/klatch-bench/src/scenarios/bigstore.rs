@@ -119,7 +119,7 @@ impl LiveLoad {
 }
 
 /// While the archive runs, the live store must keep answering: posts from fresh members and reads (under the R22 cap).
-fn probe_live_store(w: &World, child: &mut std::process::Child) -> Result<LiveLoad, String> {
+fn probe_live_store(w: &World, child: &mut crate::pty::TtyChild) -> Result<LiveLoad, String> {
     let mut live = LiveLoad {
         ops: 0,
         max_ms: 0.0,
@@ -260,7 +260,7 @@ fn count_accepted(children: Vec<std::process::Child>) -> Result<usize, String> {
 }
 
 /// Waits for the racing archives: how many won, how many met a file of the same name, and nothing else is allowed.
-fn settle_racing_archives(children: Vec<std::process::Child>) -> Result<(usize, usize), String> {
+fn settle_racing_archives(children: Vec<crate::pty::TtyChild>) -> Result<(usize, usize), String> {
     let (mut won, mut collided, mut other) = (0, 0, Vec::new());
     for c in children {
         let o = c.wait_with_output().map_err(|e| e.to_string())?;

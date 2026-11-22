@@ -7,11 +7,46 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::AtomicU32;
 
+pub use pty::PtyRun;
+
 #[path = "../../src/store/test_dir.rs"]
 pub mod test_dir;
 use test_dir::TestDir;
 
+pub mod pty;
+
+/// The terminal text without the passphrase prompt lines (they are the terminal's, not the command's output).
+pub fn without_prompts(text: &str) -> String {
+    text.split_inclusive('\n')
+        .filter(|l| !l.starts_with("admin passphrase to approve"))
+        .collect()
+}
+
+/// Run in a session of its own, so the child has no controlling terminal. A person who runs `cargo test` at a
+/// terminal would otherwise be asked for the admin passphrase by a test that runs an admin or launcher command
+/// without a terminal of its own (#1233): such a test means to be refused, and `/dev/tty` would let it ask.
+pub trait Detach {
+    fn detached(&mut self) -> &mut Self;
+}
+
+impl Detach for Command {
+    fn detached(&mut self) -> &mut Self {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: setsid is async-signal-safe and touches nothing of the parent.
+        unsafe {
+            self.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        self
+    }
+}
+
 pub static N: AtomicU32 = AtomicU32::new(0);
+
+/// The admin passphrase the tests set (#1233). It is typed at a pseudo-terminal, the only way the product reads one.
+pub const PASS: &str = "correct horse battery staple";
 
 /// A throwaway KLATCH_HOME (removed when dropped, also when the test panics; #995). `.0` is the path, `.1` holds it.
 pub struct Home(pub PathBuf, TestDir);
@@ -23,6 +58,7 @@ impl Home {
     }
     pub fn run(&self, who: &str, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .detached()
             .env_remove("KLATCH_IDENTITY_FILE")
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_KEY_DIR", self.0.join("keys"))
@@ -42,26 +78,61 @@ impl Home {
             .unwrap();
         child.wait_with_output().unwrap()
     }
-    /// Run as a launcher would: no name, and a home with no harness registry, so no coding-agent session is found
+    /// The command for a launcher: no name, and a home with no harness registry, so no coding-agent session is found
     /// above the process (the tests themselves may run inside one).
-    pub fn launcher(&self, args: &[&str]) -> Output {
+    pub fn launcher_command(&self, args: &[&str]) -> Command {
         let fake = self.0.join("fake-home");
         std::fs::create_dir_all(&fake).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_klatch"))
-            .env_remove("KLATCH_NAME")
+        let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+        c.env_remove("KLATCH_NAME")
             .env_remove("KLATCH_IDENTITY_FILE")
             .env("HOME", &fake)
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_KEY_DIR", self.0.join("keys"))
-            .args(args)
-            .output()
-            .unwrap()
+            .args(args);
+        c
+    }
+    /// Set the admin passphrase of this home once (typed twice at a pseudo-terminal), as a person does after
+    /// installing. Idempotent.
+    pub fn set_passphrase(&self) {
+        let marker = self.0.join("passphrase-was-set");
+        if marker.exists() {
+            return;
+        }
+        let r = pty::run_on_pty(
+            self.launcher_command(&["admin", "init-passphrase"]),
+            &[PASS, PASS],
+        );
+        assert!(r.ok(), "init-passphrase failed:\n{}", r.text);
+        std::fs::write(marker, "").unwrap();
+    }
+    /// Run as a launcher would, at a terminal where the person types the admin passphrase when asked (and `typed`
+    /// after that, for a confirmation). The output is what the terminal showed.
+    pub fn launcher_typing(&self, args: &[&str], typed: &[&str]) -> PtyRun {
+        self.set_passphrase();
+        let mut lines = vec![PASS];
+        lines.extend_from_slice(typed);
+        let mut run = pty::run_on_pty(self.launcher_command(args), &lines);
+        // the prompt is the terminal's, not the command's output
+        run.text = without_prompts(&run.text);
+        run
+    }
+    /// `launcher_typing` with nothing more typed, as a plain `Output`.
+    pub fn launcher(&self, args: &[&str]) -> Output {
+        self.launcher_typing(args, &[]).into_output()
+    }
+    /// `klatch admin ...` at a terminal, typing the passphrase and then `typed` for a confirmation.
+    pub fn admin(&self, args: &[&str], typed: &[&str]) -> PtyRun {
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        self.launcher_typing(&full, typed)
     }
     /// Run as a worker holding a key bundle: only the path is given, and no key directory or name.
     pub fn worker(&self, bundle: &std::path::Path, args: &[&str]) -> Output {
         let fake = self.0.join("fake-home");
         std::fs::create_dir_all(&fake).unwrap();
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .detached()
             .env_remove("KLATCH_NAME")
             .env_remove("KLATCH_KEY_DIR")
             .env("HOME", &fake)
@@ -73,6 +144,7 @@ impl Home {
     }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))
+            .detached()
             .env_remove("KLATCH_IDENTITY_FILE")
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_KEY_DIR", self.0.join("keys"))

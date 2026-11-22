@@ -3,10 +3,11 @@ pub fn valid_name(s: &str) -> bool {
     safe_name_bytes(s.as_bytes())
 }
 
-/// The names the system acts under (#523): `admin` is the human and `canary` the tripwire; `all` is the broadcast word
+/// The names the system acts under (#523): `admin` is the launcher and the audit's name for the person, `human` is
+/// the principal a proved admin passphrase makes (#1233), and `canary` the tripwire; `all` is the broadcast word
 /// (`@all`, #674). No member, worker or session may be named one, so nothing that later keys on a member name can be
 /// forged by typing it.
-pub const RESERVED_NAMES: [&str; 3] = ["admin", "canary", "all"];
+pub const RESERVED_NAMES: [&str; 4] = ["admin", "human", "canary", "all"];
 
 /// Whether `name` is one the system acts under and no member may take.
 pub fn is_reserved_name(name: &str) -> bool {

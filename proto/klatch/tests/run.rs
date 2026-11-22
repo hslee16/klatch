@@ -107,7 +107,7 @@ fn a_worker_cannot_open_end_or_list_runs_and_a_bad_id_is_refused() {
     ] {
         let o = h.worker(&bundle, &args);
         assert!(
-            !o.status.success() && text(&o).contains("worker cannot"),
+            !o.status.success() && text(&o).contains("real terminal"),
             "{args:?}: {}",
             text(&o)
         );

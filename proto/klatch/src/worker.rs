@@ -50,19 +50,6 @@ pub enum WorkerCmd {
     List,
 }
 
-/// Why this process may not manage credentials, or `None`.
-fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
-    if holds_a_bundle {
-        return Some("a worker cannot issue, revoke or list credentials");
-    }
-    if agent_above {
-        return Some(
-            "credentials cannot be managed from inside a coding-agent session; run this from a launcher of your own",
-        );
-    }
-    None
-}
-
 /// The most workers one call may issue.
 const MAX_BATCH: usize = 500;
 
@@ -168,19 +155,15 @@ fn issue_one(
 }
 
 pub fn run(cmd: WorkerCmd) -> Result<()> {
-    if let Some(why) = refusal(
-        std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
-        discover_session().is_ok(),
-    ) {
-        bail!("{why}");
-    }
     let db = db_path()?;
+    // the passphrase first (#1233): nothing below is reachable without the proof
+    let (store, proof) = crate::admin::prove::open_and_require(&db)?;
     let gateway = Gateway::new(
-        custody::open_store(&db)?,
+        store,
         CliClock,
-        ForbidFloors::new(AllowAll),
+        ForbidFloors::new(RequireHuman::new(AllowAll)),
     );
-    let launcher = Principal::unattributed("admin");
+    let launcher = proof.principal();
     match cmd {
         WorkerCmd::Issue {
             member,
@@ -238,21 +221,4 @@ pub fn run(cmd: WorkerCmd) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn neither_a_worker_nor_an_agent_session_may_manage_credentials() {
-        assert!(refusal(false, false).is_none());
-        assert!(refusal(true, false).unwrap().contains("worker cannot"));
-        assert!(
-            refusal(false, true)
-                .unwrap()
-                .contains("coding-agent session")
-        );
-        assert!(refusal(true, true).is_some());
-    }
 }

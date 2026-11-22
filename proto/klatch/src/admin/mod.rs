@@ -1,22 +1,24 @@
 //! `klatch admin ...`: the controls a person uses to stop things (R11, ticket #23): close or reopen a room, pause or
 //! resume every room, remove a member from a room (or from all rooms) and allow it back, and read the audit.
 //!
-//! Who may administer is decided here, not in the gateway: a command must run at a real terminal (agents run
-//! commands with none), with no coding-agent session above the process, and the destructive ones ask for the target
-//! typed back. That is a heuristic, not proof: an agent running as the same user could open a pseudo-terminal.
-//! Real proof needs roles and authentication (epic #10, #152), at which point only `gate` changes.
+//! Who may administer is proved, not guessed (#1233): every command first asks for the admin passphrase on a real
+//! terminal (`prove::require`, `klatch::proof`), and only the `AdminProof` it returns reaches the gateway, as the
+//! principal `human` (`Verified`) that `RequireHuman` accepts. The destructive commands then also ask for the target
+//! typed back. The terminal-and-process-tree heuristic this replaced is gone.
 
 use super::*;
 use clap::{Subcommand, ValueEnum};
-use route::Route;
-use std::io::{BufRead, IsTerminal, Write};
+use route::{Passphrase, Route};
+use std::io::{BufRead, Write};
 
 mod acts;
 mod archive;
 mod export;
 mod keys;
 mod listing;
+pub(crate) mod prove;
 mod route;
+mod shell;
 
 #[cfg(test)]
 mod command_tests;
@@ -272,6 +274,22 @@ pub enum AdminCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Set the admin passphrase every admin, worker, anchor, run and judge command asks for (typed twice, at a terminal,
+    /// never from an argument or the environment; only a verifier is kept). With one set, change it: the old one is
+    /// asked for first
+    InitPassphrase,
+    /// Set a new admin passphrase when the old one is forgotten, proved by the store's recovery code (`admin recovery`)
+    ResetPassphrase,
+    /// Show or set how long one typed passphrase stays good for the commands of ONE long-lived process, in seconds
+    /// (10 to 1800, default 300; `--off` puts the default back). Only `admin shell` is such a process
+    UnlockWindow {
+        secs: Option<i64>,
+        #[arg(long, conflicts_with = "secs")]
+        off: bool,
+    },
+    /// Read admin, worker, anchor, run and judge commands from the terminal under one passphrase, held in this
+    /// process's memory for the unlock window and nowhere else; `exit` or end of input leaves it
+    Shell,
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -289,25 +307,12 @@ pub enum AdminCmd {
     },
 }
 
-/// Why an admin command may not run here, or `Ok`. `terminal` is a real terminal on standard input and output;
-/// `agent_above` is a coding-agent session above this process.
-pub fn gate(terminal: bool, agent_above: bool) -> Result<(), &'static str> {
-    if agent_above {
-        return Err(
-            "admin commands cannot run inside a coding-agent session; run them from a terminal of your own",
-        );
-    }
-    if !terminal {
-        return Err("admin commands need a real terminal; run them yourself in a terminal");
-    }
-    Ok(())
-}
-
 /// What must be typed back to confirm, if the command is destructive.
 fn confirmation(cmd: &AdminCmd) -> Option<String> {
     match cmd {
         AdminCmd::Pause => Some("pause".into()),
         AdminCmd::Close { room } => Some(room.clone()),
+        AdminCmd::Recovery => Some("recovery".into()),
         AdminCmd::Recover { .. } => Some("recover".into()),
         AdminCmd::RotateKey => Some("rotate".into()),
         AdminCmd::RotateLabelKey { label } => Some(label.clone()),
@@ -332,41 +337,129 @@ fn room_of(room: Option<String>, all_rooms: bool) -> String {
     }
 }
 
-/// Refuse unless this is a person at a terminal, and ask for the target typed back when the act is destructive.
-fn authorize(cmd: &AdminCmd) -> Result<()> {
-    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    // a test build can stand in for the terminal; a normal build never does
-    #[cfg(feature = "test-clock")]
-    let terminal = terminal || std::env::var("KLATCH_ADMIN_TEST_TERMINAL").is_ok_and(|v| v == "1");
-    if let Err(why) = gate(terminal, discover_session().is_ok()) {
-        bail!("{why}");
-    }
-    let Some(expected) = confirmation(cmd) else {
+/// Ask for the target typed back when the act is destructive. The line comes from the TERMINAL, never from standard
+/// input when that is a pipe: a program sharing the person's terminal cannot confirm for them.
+fn confirm(expected: Option<String>, what: &str) -> Result<()> {
+    use klatch::proof::Prompt;
+    let Some(expected) = expected else {
         return Ok(());
     };
-    print!("type {expected} to confirm: ");
-    std::io::stdout().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
+    let line = klatch::proof::TtyPrompt
+        .line(&confirm_label(&expected, what))
+        .map_err(anyhow::Error::from)?;
     if !typed_back(&expected, &line) {
         bail!("not confirmed; nothing was changed");
     }
     Ok(())
 }
 
+/// The label of the typed-back confirmation: what is typed and what it confirms, in text from arguments cleaned the
+/// same way as the passphrase prompt. A name that had to be cleaned (so two lookalikes could read the same) also
+/// shows its length and a digest of the real name.
+fn confirm_label(expected: &str, what: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let shown = prove::plain(expected);
+    if shown == expected {
+        format!("type {shown} to confirm `{what}`")
+    } else {
+        let digest = data_encoding::HEXLOWER.encode(&Sha256::digest(expected.as_bytes()));
+        format!(
+            "type {shown} ({} chars, sha256 {}) to confirm `{what}`",
+            expected.chars().count(),
+            &digest[..8]
+        )
+    }
+}
+
+/// What the passphrase approves when the command is the admin shell.
+const SHELL_APPROVAL: &str =
+    "open an admin shell: an unlock window for ALL admin and launcher commands";
+
+/// The acts that print a secret or stored text: a recovery code, the plaintext of a room or an archive, the audit,
+/// the refusals, the review queue, the scrub terms, the archive listing. Run with standard output going anywhere
+/// but THIS process's controlling terminal (a pipe, a file, or a pty someone else holds the other end of), the
+/// person would approve a prompt for something another program reads, so they are refused before anyone is asked
+/// (#1233).
+fn prints_stored_text(route: &Route) -> bool {
+    use route::{Act, ArchiveAct, KeyAct, Keystore, ListingAct, ScrubAct};
+    matches!(
+        route,
+        Route::Gateway(Act::Listing(
+            ListingAct::Refusals { .. } | ListingAct::Audit { .. } | ListingAct::ReviewQueue { .. }
+        )) | Route::Gateway(Act::Scrub(ScrubAct::List))
+            | Route::Keystore(Keystore::Archive(ArchiveAct::Archives))
+            | Route::Keystore(Keystore::Key(
+                KeyAct::Recovery
+                    | KeyAct::Export { .. }
+                    | KeyAct::RunArchive { .. }
+                    | KeyAct::RotateKey
+                    | KeyAct::RotateLabelKey { .. }
+            ))
+    )
+}
+
 pub fn run(cmd: AdminCmd) -> Result<()> {
-    authorize(&cmd)?;
+    let typed_target = confirmation(&cmd);
+    // What the passphrase approves. A recovery code is hidden by what the command PARSED as, never by looking at the
+    // words: whatever flags or `--` sit before it, and a room or member named `recover` under another command shows.
+    let what = if matches!(cmd, AdminCmd::Recover { .. }) {
+        "admin recover <code hidden>".to_string()
+    } else {
+        prove::describe()
+    };
     let db = db_path()?;
-    match Route::from(cmd) {
-        Route::Keystore(k) => keys::key_command(&db, k),
-        Route::Gateway(act) => {
-            let store = custody::open_store(&db)?;
-            let gateway = Rc::new(Gateway::new(store, CliClock, AllowAll));
-            // the person administering holds every label key
-            gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
-            acts::execute(&Direct::new(gateway, Principal::unattributed("admin")), act)
+    let route = Route::from(cmd);
+    if prints_stored_text(&route) && !klatch::proof::output_is_the_prompt_terminal() {
+        bail!(
+            "this command prints stored text or a secret and standard output is not your terminal (a pipe, a file or another pty), so nothing was asked or done; run it yourself in a terminal"
+        );
+    }
+    match route {
+        // the two acts that cannot ask for the passphrase: there is none yet, or it is forgotten
+        Route::Passphrase(Passphrase::Init) => prove::init_passphrase(&db),
+        Route::Passphrase(Passphrase::Reset) => prove::reset_passphrase(&db),
+        // the shell reads its commands from standard input, so that must itself be a terminal: a pipe, even with a
+        // terminal shared with a person, is refused before anyone is asked for anything
+        Route::Passphrase(Passphrase::Shell) => {
+            shell::need_a_terminal()?;
+            let (_store, _proof) = prove::open_and_require_for(&db, SHELL_APPROVAL)?;
+            shell::run()
+        }
+        // `recover` (the store key) and `restore` must work when the store cannot be read, which is when the
+        // verifier cannot be either: the recovery code and the typed confirmation approve them then
+        Route::Keystore(k) if needs_store_less_proof(&k) && !prove::store_readable(&db) => {
+            let proof = prove::recovery_proof(&db, &k)?;
+            confirm(typed_target, &what)?;
+            keys::key_command(&db, &proof, k)
+        }
+        route => {
+            let (store, proof) = prove::open_and_require_for(&db, &what)?;
+            confirm(typed_target, &what)?;
+            match route {
+                Route::Passphrase(Passphrase::Window { secs, off }) => {
+                    prove::unlock_window(&store, &proof, secs, off)
+                }
+                Route::Passphrase(_) => unreachable!("handled above"),
+                Route::Keystore(k) => keys::key_command(&db, &proof, k),
+                Route::Gateway(act) => {
+                    let gateway =
+                        Rc::new(Gateway::new(store, CliClock, RequireHuman::new(AllowAll)));
+                    // the person administering holds every label key
+                    gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
+                    acts::execute(&Direct::new(gateway, proof.principal()), act)
+                }
+            }
         }
     }
+}
+
+/// The keystore acts that run exactly when the store may be unreadable: the store key's recovery and a restore.
+fn needs_store_less_proof(k: &route::Keystore) -> bool {
+    use route::{KeyAct, Keystore};
+    matches!(
+        k,
+        Keystore::Key(KeyAct::Recover { label: None, .. } | KeyAct::Restore { .. })
+    )
 }
 
 #[cfg(test)]
@@ -401,18 +494,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_real_terminal_with_no_agent_session_above_may_administer() {
-        assert!(gate(true, false).is_ok());
-        assert!(gate(false, false).unwrap_err().contains("real terminal"));
-        assert!(
-            gate(true, true)
-                .unwrap_err()
-                .contains("coding-agent session")
-        );
-        assert!(gate(false, true).is_err());
-    }
-
-    #[test]
     fn the_destructive_commands_ask_for_the_target_typed_back() {
         assert_eq!(confirmation(&AdminCmd::Pause).as_deref(), Some("pause"));
         assert_eq!(
@@ -427,5 +508,20 @@ mod tests {
         assert!(typed_back("lobby", "lobby\n"));
         assert!(!typed_back("lobby", "lobb\n"));
         assert!(!typed_back("lobby", "\n"));
+    }
+}
+
+#[cfg(test)]
+mod confirm_label_tests {
+    use super::confirm_label;
+
+    #[test]
+    fn a_plain_name_is_shown_as_it_is_and_a_lookalike_gets_its_length_and_digest() {
+        let plain = confirm_label("lobby", "admin close lobby");
+        assert_eq!(plain, "type lobby to confirm `admin close lobby`");
+        let a = confirm_label("caf\u{e9}", "admin close caf?");
+        let b = confirm_label("cafe\u{301}", "admin close caf?");
+        assert!(a.contains("caf?") && a.contains("sha256"), "{a}");
+        assert_ne!(a, b, "two lookalike names must not read the same");
     }
 }

@@ -102,11 +102,19 @@ impl Env {
     }
 
     fn key_cmd(&self, act: KeyAct) -> Result<()> {
-        keys::key_command(&self.db(), Keystore::Key(act))
+        keys::key_command(
+            &self.db(),
+            &super::prove::proof_for_tests(),
+            Keystore::Key(act),
+        )
     }
 
     fn archive_cmd(&self, act: ArchiveAct) -> Result<()> {
-        keys::key_command(&self.db(), Keystore::Archive(act))
+        keys::key_command(
+            &self.db(),
+            &super::prove::proof_for_tests(),
+            Keystore::Archive(act),
+        )
     }
 
     fn retention(&self, room: &str, days: &str) -> Result<()> {

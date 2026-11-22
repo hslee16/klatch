@@ -120,6 +120,15 @@ impl<S: Store> Gateway<S> {
         self.administer(who, (action, target), |_| Ok(outcome.to_string()))
     }
 
+    /// Ask the guard whether `who` may do the keystore act `action` (#1233), BEFORE it touches the key or the store
+    /// file: the keystore family acts outside the gateway (`custody`), so this is its one gate, the same guard and the
+    /// same role check as every other admin act. It records nothing itself; each act writes its own audit row, and
+    /// a refusal is kept in the refusals like any other.
+    pub fn admin_authorize(&self, who: &Principal, action: &str, target: &str) -> Result<()> {
+        check_member(who)?;
+        self.check_guard(who, &Operation::admin(action, target))
+    }
+
     /// The latest administrative acts, newest first.
     pub fn admin_audit(
         &self,

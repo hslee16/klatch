@@ -33,6 +33,8 @@ fn a_post_labelled_above_an_unlabelled_room_is_refused() {
 #[test]
 fn the_label_commands_need_a_real_terminal_like_every_admin_command() {
     let h = Home::new();
+    // a passphrase is set, so the refusal is for the missing terminal (#1233)
+    h.set_passphrase();
     for args in [
         vec!["admin", "label", "lobby", "private"],
         vec!["admin", "clear", "alice", "private"],
@@ -45,10 +47,7 @@ fn the_label_commands_need_a_real_terminal_like_every_admin_command() {
         vec!["admin", "canary", "lobby"],
     ] {
         let err = h.fail("alice", &args);
-        assert!(
-            err.contains("real terminal") || err.contains("coding-agent session"),
-            "{args:?}: {err}"
-        );
+        assert!(err.contains("terminal"), "{args:?}: {err}");
     }
 }
 

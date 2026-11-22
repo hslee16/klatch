@@ -1,1 +1,1 @@
-| `anchor` | `anchor_done`, `reap_anchors`, `github_events` | the launcher heuristic: gap #834 |
+| `anchor` | `anchor_done`, `reap_anchors`, `github_events` | the admin passphrase (#1233): the command asks for it on a real terminal before anything else (`prove::open_and_require`), runs as the principal `human` behind `ForbidFloors(RequireHuman)`, and a detached process, a worker's process and an agent's pseudo-terminal are each refused (`tests/admin_proof.rs`) |

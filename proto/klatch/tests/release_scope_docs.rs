@@ -185,12 +185,3 @@ fn uninstall_removes_both_binaries_the_socket_and_the_daemon() {
         assert!(text.contains(phrase), "UNINSTALL.md lacks '{phrase}'");
     }
 }
-
-#[test]
-fn the_admin_passphrase_is_described_as_one_line_with_a_marked_placeholder() {
-    let text = read("SECURITY.md");
-    assert!(
-        text.contains("PASSPHRASE-PROOF-PLACEHOLDER"),
-        "SECURITY.md carries the marked placeholder until #1233 merges (finish it, then delete this check)"
-    );
-}

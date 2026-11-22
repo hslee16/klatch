@@ -59,18 +59,6 @@ fn parse_band(s: &str) -> Result<f64, String> {
         .ok_or_else(|| "the confidence band must be a number from 0 to 1".to_string())
 }
 
-fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
-    if holds_a_bundle {
-        return Some("a worker cannot run the judge");
-    }
-    if agent_above {
-        return Some(
-            "the judge cannot be run from inside a coding-agent session; run this from a launcher of your own",
-        );
-    }
-    None
-}
-
 /// One pass: open the store, run the queue past the judge, then apply recorded verdicts with the floors checked
 /// again. The store is opened afresh so a long loop never holds a stale handle.
 fn pass(hosted: Option<&dyn Judge>) -> Result<()> {
@@ -147,12 +135,9 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
         hosted_ceiling,
         hosted_confidence_band,
     } = cmd;
-    if let Some(why) = refusal(
-        std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
-        discover_session().is_ok(),
-    ) {
-        bail!("{why}");
-    }
+    // the passphrase first (#1233); the loop below runs under this one proof. The judge's own principal stays
+    // `judge` (it is what the audit names for a release), so the proof is the gate here, not a guard.
+    let (_, _proof) = crate::admin::prove::open_and_require(&db_path()?)?;
     let limit = if once { Some(1) } else { max_passes };
     let scratch;
     let hosted = match (hosted_judge, hosted_ceiling) {
@@ -198,13 +183,6 @@ pub fn run(cmd: JudgeCmd) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_worker_or_an_agent_session_is_refused() {
-        assert!(refusal(false, false).is_none());
-        assert!(refusal(true, false).unwrap().contains("worker"));
-        assert!(refusal(false, true).unwrap().contains("coding-agent"));
-    }
 
     #[derive(clap::Parser)]
     struct Probe {

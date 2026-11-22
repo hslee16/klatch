@@ -24,6 +24,55 @@ Supported versions: the newest release only, the current practice and not a poli
   prompt (#563); a locked keyring may read as "no key" (#561). The key is never put in the environment, on a command
   line, in a log or in a crash report, and it is wiped from memory when dropped. A recovery code
   (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
+- **Administering, launching and the keystore (the admin passphrase, #1233).** Every `klatch admin` command, every
+  launcher command (`worker`, `anchor`, `run`, `judge`) and every act on the key or the store file (`recovery`,
+  `recover`, `seal-label`, `rotate-key`, `rotate-label-key`, `backup`, `restore`, `export`, the archive commands) asks
+  for the admin passphrase, typed at a real terminal with echo off. `klatch admin init-passphrase` sets it (twice, at
+  least 10 characters); only an Argon2id verifier (19 MiB, 2 passes, the parameters recorded in the stored value so
+  they can be raised) is kept, in the store's policy, never the passphrase. It is never read from the environment,
+  an argument, a file or a pipe: standard input counts only when it is a terminal, else the controlling terminal.
+  A process with no terminal at all (a detached or double-forked process, a script with no controlling terminal and
+  none on standard input) has nothing to ask on and is refused. `setsid` alone is not a defence: a program that
+  gives itself a pseudo-terminal of its own can be asked like anyone and is then refused for not knowing the
+  passphrase. A program started from YOUR terminal shares it, so it can still make a prompt appear there even when
+  it pipes its own standard input; it cannot answer it, and it cannot confirm for you (the typed-back confirmation
+  of a destructive act is read from the terminal, never from a pipe) or feed `klatch admin shell` (which refuses
+  unless standard input is itself a terminal). The prompt names the exact command it approves (`admin close
+  lobby`; the shell says it opens an unlock window for ALL admin and launcher commands): read it, and type the
+  passphrase only for a command you asked for.
+  Commands that print a secret or stored text (`admin recovery`, `export`, `run-archive`, `rotate-key`,
+  `rotate-label-key`, `audit`, `refusals`, `review-queue`, `scrub-list`, `archives`) refuse before any prompt unless
+  three things hold: standard output is this process's controlling terminal; it is the SAME terminal device (compared
+  with `fstat`: device, inode, terminal) as the one the passphrase and the confirmation are read from and written to;
+  and standard error is that terminal or `/dev/null`. `klatch admin shell` needs standard input and output to be one
+  controlling terminal. What this stops: output sent to a pipe, a file or a pty that is not the terminal you are
+  typing at, including a pty a program made in a session of its own while your terminal supplies the prompt. What it
+  does not stop: a program that hosts or relays the terminal you type at, so that the prompt, your typing and the
+  output all pass through it. `recovery` also asks for a typed confirmation that names what it confirms. Text from arguments is shown as printable ASCII only (everything else
+  as `?`), a recovery code is never shown (decided from the parsed `recover` command, whatever flags come before it), and the prompt names the
+  store file. Residual, said plainly: a passphrase or recovery code typed into a terminal that a program hosts or
+  relays (a pty it owns and shows you, a screen it forwards) is captured, and these checks cannot prevent a relay of
+  the whole terminal. The defence that remains is you reading what the prompt names and typing the passphrase only
+  for a command you asked for. `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
+  reads its events from standard input and the prompt cannot show them (#1279); an open `klatch admin shell` window
+  on a shared terminal is exposed to injected keystrokes (#1280). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
+  audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
+  constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
+  that accepts nothing else decides every act; the admin agent role is unchanged (it acts inside its allowlist and
+  never edits a floor). One `klatch` command is one process, so each command asks. `klatch admin shell` is the one
+  long-lived process: it asks once and holds an unlock window (5 minutes by default, `klatch admin unlock-window`
+  sets 10 to 1800 seconds) in its own memory and nowhere else; no file, environment variable or token carries it, a
+  child or another `klatch` starts locked, and changing the passphrase voids it. If you forget the passphrase,
+  `klatch admin reset-passphrase` takes the store's recovery code (`klatch admin recovery` shows it; keep it) and sets
+  a new one; whoever holds that code can already restore the key and read the store, so it gives them nothing more.
+  The verifier lives in the encrypted store, so when the key is lost (or the store file is) it cannot be read:
+  `klatch admin recover` (the store key) and `klatch admin restore` are then approved by the recovery code (given
+  as the argument for `recover`, and it must open the store file; typed for `restore`) and the typed confirmation
+  instead of the passphrase, and the command says so. `recover` counts only when the code opens an existing encrypted store file (no store, an empty or a plaintext one is refused), and the `restore` prompt names the backup file. Whoever holds the code can already do both. These attempts have no failure limit (#1281).
+  Upgrading an existing install: until a passphrase is set every admin, launcher and keystore command refuses and
+  says to run `klatch admin init-passphrase`; run it once, right after upgrading, in a terminal of your own. The old
+  terminal and process-tree check is gone, not kept as a fallback.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and
   indexing use memory, not temporary files.
 - **On the wire.** Remote transports are not part of this release. On one machine klatch uses stdio, a Unix socket and,
@@ -39,8 +88,7 @@ Supported versions: the newest release only, the current practice and not a poli
     only for tools that cannot use stdio or the socket, and never forward or proxy the port. Exposing it other than
     through ssh or mutual TLS (`clients/recipes/behind-a-tunnel.md`) is unsupported and unprotected.
 - **Human proof for administration.** Admin, launcher and keystore acts ask for the admin passphrase typed at the terminal
-  (#1233) [PASSPHRASE-PROOF-PLACEHOLDER: finish this sentence once #1233 has merged; until then these acts rest on a
-  terminal and process-tree heuristic that a detached process escapes, #834 and #318].
+  (#1233); the bullet "Administering, launching and the keystore" above says how it works and what it does not stop.
 - **In code.** Every public gateway operation is listed and a test fails if one reaches the store without asking the
   guard. Dependencies are checked for licence, advisories and sources, and a list of weak or home-grown crypto crates
   is refused.
@@ -64,6 +112,15 @@ Supported versions: the newest release only, the current practice and not a poli
 - **A hostile process running as you.** It can read the key (the macOS item is readable by any program of yours so
   that rebuilt, unsigned binaries do not prompt; the `security` tool reads it too), read or attach to a running
   klatch, and read any key file. Encryption cannot help once the attacker can ask for the key. Root can do anything.
+- **What the admin passphrase does not stop.** It proves the caller knows a secret typed at a terminal; it does not
+  prove the caller is a person. Out of scope, as for every secret typed on a machine: a process that watches your
+  keyboard (a keylogger, a terminal you share, an agent that reads your terminal's screen or scrollback) and a process
+  that reads the memory of an unlocked `klatch admin shell`. Also not stopped: a process of yours that does not use
+  the `klatch` command line, but opens the store with the key it can read and rewrites the verifier or the failure
+  count itself (#1261); stronger options for that (a Keychain item with user presence, a separate OS user) stay
+  open in #318. An install that has not set a passphrase has an unauthenticated first set: until you run
+  `klatch admin init-passphrase`, a program with a terminal could set it first (it is refused with no terminal and
+  from inside a detected coding-agent session, and audited; #1262). Set it before anything else.
 - **Identity.** A member name is as strong as the process that typed it. A clearance rests on that name, so it is as
   spoofable as the name unless the member holds a worker key bundle. A process with no key bundle acts as Unattributed
   under a typed or discovered name, by design (#161). A key bundle proves a member, not its harness: workers, wire joins

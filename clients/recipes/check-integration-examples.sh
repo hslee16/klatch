@@ -49,8 +49,40 @@ fi
 # authentication: a launcher issues a bundle, the member is told by the path only, and its posts read as verified
 # (a home with no harness registry: a launcher is never itself a coding-agent session, and issuing refuses inside one)
 mkdir "$WORK/fakehome"
-HOME="$WORK/fakehome" "$BIN" worker issue w-guide --clearance internal --ttl 600 --out "$WORK/w-guide.bundle" > /dev/null 2>&1 \
-  || fail "worker issue failed"
+# (the admin passphrase is typed at a terminal, never read from the environment, so this runs the launcher on a
+# pseudo-terminal of its own and types it, #1233)
+HOME="$WORK/fakehome" python3 -I - "$BIN" "$WORK/w-guide.bundle" << 'PY' > /dev/null 2>&1 || fail "worker issue failed"
+import os, pty, subprocess, sys, select
+binp, out = sys.argv[1:3]
+PASS = "integration check passphrase"
+def on_pty(args, typed):
+    m, s = os.openpty()
+    def child():
+        os.setsid()
+        import fcntl, termios
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    p = subprocess.Popen([binp] + args, stdin=s, stdout=s, stderr=s, preexec_fn=child)
+    os.close(s)
+    text, n, answered = "", 0, 0
+    while True:
+        r, _, _ = select.select([m], [], [], 0.2)
+        if r:
+            try:
+                d = os.read(m, 4096)
+            except OSError:
+                break
+            if not d:
+                break
+            text += d.decode(errors="replace")
+            if (text.endswith(": ") or text.endswith("> ")) and len(text) > answered and n < len(typed):
+                os.write(m, (typed[n] + "\n").encode()); n += 1; answered = len(text)
+        elif p.poll() is not None:
+            break
+    return p.wait()
+if on_pty(["admin", "init-passphrase"], [PASS, PASS]) != 0:
+    sys.exit(1)
+sys.exit(on_pty(["worker", "issue", "w-guide", "--clearance", "internal", "--ttl", "600", "--out", out], [PASS]))
+PY
 out="$(KLATCH_IDENTITY_FILE="$WORK/w-guide.bundle" python3 -I "$EX/room_bot.py" lobby 2>&1)" \
   || { printf '%s\n' "$out" >&2; fail "the bundle run exited with an error"; }
 expect "$out" "member: w-guide (verified)" "a key bundle makes the member verified"

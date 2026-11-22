@@ -115,7 +115,7 @@ fn lost_key(w: &World) -> Res {
         "the store is readable on disk",
     )?;
     // the code is shown behind the terminal gate and is audited
-    let code = w.admin(&["recovery"], "");
+    let code = w.admin(&["recovery"], "recovery");
     check(code.ok, format!("recovery failed: {}", code.stderr))?;
     let code_line = code
         .stdout
@@ -282,7 +282,7 @@ fn protect_private_label(w: &World) -> Result<(), String> {
 
 /// The recovery code that `admin recovery` prints for the label key.
 fn label_recovery_code(w: &World) -> Result<String, String> {
-    let codes = w.admin(&["recovery"], "");
+    let codes = w.admin(&["recovery"], "recovery");
     let code = codes
         .stdout
         .lines()
@@ -484,10 +484,7 @@ fn check_revocation_and_expiry(w: &World, hi_path: &std::path::Path) -> Result<(
 fn runs(w: &World) -> Res {
     w.set_clock(T0);
     for id in ["a", "b"] {
-        check(
-            w.run("launcher", &["run", "create", id]).ok,
-            "run create failed",
-        )?;
+        check(w.launcher(&["run", "create", id]).ok, "run create failed")?;
     }
     w.ok(
         "alice",
@@ -498,7 +495,7 @@ fn runs(w: &World) -> Res {
     w.ok("bob", &["post", "lobby", "an ordinary room"])?;
     let archive = w.home.join("run-a.archive");
     let archive_s = archive.to_string_lossy().into_owned();
-    let ended = w.run("launcher", &["run", "end", "a", "--archive", &archive_s]);
+    let ended = w.launcher(&["run", "end", "a", "--archive", &archive_s]);
     check(ended.ok, format!("run end failed: {}", ended.stderr))?;
     has(
         &ended.stdout,

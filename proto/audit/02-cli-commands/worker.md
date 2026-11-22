@@ -1,1 +1,1 @@
-| `worker` | `admin_issue_credential`, `admin_revoke_credential`, `admin_credentials` | the launcher heuristic, not a role: gap #834 |
+| `worker` | `admin_issue_credential`, `admin_revoke_credential`, `admin_credentials` | the admin passphrase (#1233): the command asks for it on a real terminal before anything else (`prove::open_and_require`), runs as the principal `human` behind `ForbidFloors(RequireHuman)`, and a detached process, a worker's process and an agent's pseudo-terminal are each refused (`tests/admin_proof.rs`) |
