@@ -210,7 +210,7 @@ impl<S: Store> Gateway<S> {
                 });
             }
         }
-        out.sort_by(|a, b| a.key().cmp(&b.key()));
+        out.sort_by_key(|a| a.key());
         Ok(out)
     }
 
