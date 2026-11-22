@@ -570,15 +570,15 @@ fn the_unlock_window_is_shown_and_set_with_the_proof_and_is_bounded() {
     let shown = h.admin(&["unlock-window"], &[]);
     assert!(shown.text.contains("60 seconds"), "{}", shown.text);
     assert!(h.admin(&["unlock-window", "120"], &[]).ok());
-    assert!(h.admin(&["unlock-window"], &[]).text.contains("120 seconds"));
-    let bad = h.admin(&["unlock-window", "5"], &[]);
-    assert!(!bad.ok(), "{}", bad.text);
-    assert!(h.admin(&["unlock-window", "--off"], &[]).ok());
     assert!(
         h.admin(&["unlock-window"], &[])
             .text
-            .contains("60 seconds")
+            .contains("120 seconds")
     );
+    let bad = h.admin(&["unlock-window", "5"], &[]);
+    assert!(!bad.ok(), "{}", bad.text);
+    assert!(h.admin(&["unlock-window", "--off"], &[]).ok());
+    assert!(h.admin(&["unlock-window"], &[]).text.contains("60 seconds"));
 }
 
 #[test]
