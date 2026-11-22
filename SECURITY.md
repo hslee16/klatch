@@ -62,6 +62,8 @@ Supported versions: the newest release only, the current practice and not a poli
   reads its events from standard input and the prompt cannot show them (#1279); an open `klatch admin shell` window
   on a shared terminal is exposed to injected keystrokes (#1280; see below). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
   three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
+  on a shared terminal is exposed to injected keystrokes (#1280). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The count is kept per controlling terminal (#1274): a program with a pseudo-terminal of its own that fails on purpose locks only that terminal, not yours. A program that opens new terminals gets a counter of its own each time, so the limit slows guesses from one terminal and does not bound a program that makes many. The
   audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
   constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
   that accepts nothing else decides every act; the admin agent role is unchanged (it acts inside its allowlist and

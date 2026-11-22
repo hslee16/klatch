@@ -17,6 +17,7 @@ const CHEAP: Cost = Cost {
 struct Typed {
     lines: VecDeque<Result<String, ProofError>>,
     asked: usize,
+    tty: &'static str,
 }
 
 impl Typed {
@@ -24,17 +25,26 @@ impl Typed {
         Self {
             lines: lines.iter().map(|l| Ok(l.to_string())).collect(),
             asked: 0,
+            tty: "ttys001/s1",
         }
+    }
+    fn on(mut self, tty: &'static str) -> Self {
+        self.tty = tty;
+        self
     }
     fn nobody() -> Self {
         Self {
             lines: VecDeque::from([Err(ProofError::NoTerminal)]),
             asked: 0,
+            tty: "ttys001/s1",
         }
     }
 }
 
 impl Prompt for Typed {
+    fn terminal(&self) -> String {
+        self.tty.to_string()
+    }
     fn secret(&mut self, _label: &str) -> Result<Zeroizing<String>, ProofError> {
         self.asked += 1;
         self.lines
@@ -205,7 +215,7 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
             "a test",
         )
         .unwrap_err();
-        let w = limit::wait_secs(&s, now).unwrap();
+        let w = limit::wait_secs(&s, "ttys001/s1", now).unwrap();
         waits.push(w);
         now += w;
     }
@@ -549,7 +559,10 @@ fn the_recovery_code_resets_the_passphrase_and_a_wrong_code_is_charged_like_a_wr
         .unwrap_err(),
         ProofError::Wrong
     );
-    assert_eq!(s.policy_get(limit::KEY).unwrap().as_deref(), Some("1,1"));
+    assert_eq!(
+        s.policy_get(limit::KEY).unwrap().as_deref(),
+        Some("ttys001/s1=1,1")
+    );
     // spacing and case do not matter; the new passphrase is asked twice
     reset(
         &s,
@@ -611,7 +624,7 @@ fn attempts_made_at_once_from_many_processes_are_each_charged() {
             let path = path.clone();
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-                limit::charge(&s, 500).unwrap().is_ok()
+                limit::charge(&s, "ttys001/s1", 500).unwrap().is_ok()
             })
         })
         .collect::<Vec<_>>()
@@ -624,7 +637,10 @@ fn attempts_made_at_once_from_many_processes_are_each_charged() {
         "eight at once, only the free three get through: {charged:?}"
     );
     let s = SqliteStore::open(&path, &key).unwrap();
-    assert_eq!(s.policy_get(limit::KEY).unwrap().as_deref(), Some("3,500"));
+    assert_eq!(
+        s.policy_get(limit::KEY).unwrap().as_deref(),
+        Some("ttys001/s1=3,500")
+    );
 }
 
 /// Types the new passphrase twice, and in between another process sets one (the race `init` must not lose).
@@ -803,4 +819,103 @@ fn retries_for_a_new_passphrase_are_not_lockout_failures() {
     )
     .unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
+}
+
+#[test]
+fn a_second_terminal_failing_three_times_does_not_lock_the_first() {
+    let s = store();
+    with_pass(&s);
+    for _ in 0..limit::FREE {
+        prove(
+            &s,
+            &mut Typed::new(&["nope nope nope"]).on("ttys009/s9"),
+            at(100),
+            &Unlock::new(),
+            "a test",
+        )
+        .unwrap_err();
+    }
+    // the second terminal is locked
+    let mut other = Typed::new(&[PASS]).on("ttys009/s9");
+    let e = prove(&s, &mut other, at(101), &Unlock::new(), "a test").unwrap_err();
+    assert!(matches!(e, ProofError::Locked(w) if w > 0), "{e:?}");
+    assert_eq!(other.asked, 0);
+    // the first terminal is still free, and its success clears only its own count
+    prove(
+        &s,
+        &mut Typed::new(&["nope nope nope"]),
+        at(102),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
+    prove(
+        &s,
+        &mut Typed::new(&[PASS]),
+        at(103),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap();
+    let e = prove(
+        &s,
+        &mut Typed::new(&[PASS]).on("ttys009/s9"),
+        at(104),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, ProofError::Locked(_)),
+        "a success on one terminal must not clear another's count: {e:?}"
+    );
+    let kept = everything_kept(&s);
+    assert!(kept.contains("failures=3"), "{kept}");
+}
+
+#[test]
+fn old_terminals_are_pruned_and_the_table_stays_small() {
+    let s = store();
+    for i in 0..100 {
+        limit::charge(&s, &format!("pts{i}/s{i}"), 1000 + i)
+            .unwrap()
+            .unwrap();
+    }
+    let row = s.policy_get(limit::KEY).unwrap().unwrap();
+    assert_eq!(row.split(';').count(), 64, "capped, newest kept");
+    assert!(row.contains("pts99/s99=1,1099") && !row.contains("pts0/s0="));
+    // a terminal idle for a week is forgotten the next time anyone fails
+    limit::charge(&s, "late/s1", 1099 + 8 * 24 * 3600)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.policy_get(limit::KEY).unwrap().as_deref(),
+        Some(format!("late/s1=1,{}", 1099 + 8 * 24 * 3600).as_str())
+    );
+}
+
+#[test]
+fn a_row_from_before_per_terminal_counting_is_still_honoured() {
+    let s = store();
+    s.policy_set(limit::KEY, Some("5,100"), 1).unwrap();
+    assert!(limit::wait_secs(&s, "ttys001/s1", 101).unwrap() > 0);
+    limit::clear(&s, "ttys001/s1", 101).unwrap();
+    assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
+}
+
+#[test]
+fn the_audit_names_the_terminal_and_never_an_attempt() {
+    let s = store();
+    with_pass(&s);
+    prove(
+        &s,
+        &mut Typed::new(&["hunter2 hunter2"]).on("ttys042/s7"),
+        at(5),
+        &Unlock::new(),
+        "a test",
+    )
+    .unwrap_err();
+    let kept = everything_kept(&s);
+    assert!(kept.contains("failures=1 terminal=ttys042/s7"), "{kept}");
+    assert!(!kept.contains("hunter2"));
 }

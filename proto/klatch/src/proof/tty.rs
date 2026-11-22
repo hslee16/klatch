@@ -87,6 +87,43 @@ pub fn is_controlling_tty(fd: i32) -> bool {
     }
 }
 
+/// The raw label of this process's controlling terminal (cleaned by `terminal::current`): `<device>/s<session id>` (`ttys003/s4121`), or `none` when
+/// the process has no terminal (it cannot be asked anyway, so nothing is charged to it).
+pub fn terminal_label() -> String {
+    // SAFETY: these only inspect descriptors and the process; the name buffer is ours and NUL ended.
+    unsafe {
+        let mut fd = -1;
+        let mut device = String::new();
+        for candidate in [0, 1, 2] {
+            if super::tty::is_controlling_tty(candidate) {
+                let mut buf = [0 as libc::c_char; 128];
+                if libc::ttyname_r(candidate, buf.as_mut_ptr(), buf.len()) == 0 {
+                    device = std::ffi::CStr::from_ptr(buf.as_ptr())
+                        .to_string_lossy()
+                        .trim_start_matches("/dev/")
+                        .to_string();
+                }
+                fd = candidate;
+                break;
+            }
+        }
+        if fd < 0 {
+            // no standard descriptor is the terminal: the controlling terminal, if there is one
+            let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/tty")
+            else {
+                return "none".into();
+            };
+            use std::os::fd::AsRawFd;
+            let sid = libc::tcgetsid(file.as_raw_fd());
+            return format!("tty/s{sid}");
+        }
+        format!("{device}/s{}", libc::tcgetsid(fd))
+    }
+}
+
 /// A terminal to ask on: standard input, or the controlling terminal.
 struct Tty {
     fd: i32,
