@@ -122,6 +122,7 @@ Join the room first, read it, and post one short line saying what you took ($t).
 - A new DESIGN item goes in its own file \`design/items/<ticket>-<slug>.md\` (line 1 is the item title, the rest is the text; see design/items/README.md); never append to DESIGN.md and never pick an item number (#807). Refer to an item that is not yet assembled as "the design item for #NNN".
 - A new RESEARCH-NOTES section goes in its own file \`research/notes/<ticket>-<slug>.md\` (line 1 is the section title, \`###\` headings are subsections; see research/notes/README.md); never append a section to RESEARCH-NOTES.md and never pick a section number (#859).
 - Never read or print the environment; never touch the macOS Keychain or the live store; never run \`klatch admin\` or \`klatch worker\`.
+- Never wait with an \`until grep\` or \`sleep\` loop (14 duplicate loops were left behind by one builder, #1340). For a long command start it once with run_in_background, post \`parked:\` and end the turn; one wait per long command. To wait on a room use \`$k wait\`.
 - Use \`kill -9\` to kill; never sleep in the foreground. If a design needs a human decision, file a ticket labeled \`needs-human\` and move on.
 - Commit trailer: Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>. A PR body ends with: Generated with [Claude Code](https://claude.com/claude-code).
 

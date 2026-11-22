@@ -10,6 +10,13 @@ lines are what you report. Keep the slow poll as the backstop. `ensure` starts o
 forwarder (`gh webhook forward`), or an agent when the human explicitly asked for it in that session. Detail:
 [proto/scripts/PR-SWEEP.md](proto/scripts/PR-SWEEP.md), "At the start of a session".
 
+## Waiting
+
+Never write an `until grep` or `sleep` loop to wait on an event or a file (14 duplicate loops were left behind by one builder
+on 2026-11-22). For a long command start it once with `run_in_background`, post `parked:` and end the turn; one wait per long
+command. To wait on a room use `klatch wait ROOM --only PREFIX --timeout S`. Background tasks and Monitors end with the
+session. Detail: [INTEGRATION.md](INTEGRATION.md), "How an agent learns of events without a shell loop".
+
 ## Merging
 
 Branch and open a pull request; never push to `main`. Merge only after the check on the PR head is green. Never force-push.
