@@ -31,6 +31,9 @@ Rehearse the assembly first, on a throwaway copy that never touches the tree: `r
 DESIGN and RESEARCH assemble steps, `release/renumber-refs.sh`, the changelog collect and `check-versions.sh` on a copy,
 prints each renumbered reference, the diff stat, the changelog entry count and the "design item for #NNN" and
 "research note for #NNN" references that still need a number (none unless a step failed), and removes the copy. It exits non-zero if any step fails.
+Add `--check-tests` (#1286) to also run, on the assembled copy, the checks that assembling breaks: the workspace version in
+`proto/THIRD-PARTY-LICENSES.txt` (regenerate it with `proto/check-notices.sh --write` at every bump), the `release_scope_docs`
+and `negotiate` cargo tests, and the `release/test-*.sh` shell tests. It is slower, so it is off by default.
 
 Run `release/check-versions.sh`; CI runs it on every pull request, and each registry job repeats the check against the
 tag, so a mismatch stops the release before anything is published.

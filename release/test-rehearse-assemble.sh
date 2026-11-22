@@ -50,5 +50,33 @@ if run; then bad "a bodiless design fragment passed"; else ok "a bad design frag
 fresh; sed -i.bak 's/^version = "\(.*\)"$/version = "9.9.9"/' "$t/proto/Cargo.toml"; rm -f "$t/proto/Cargo.toml.bak"
 if run; then bad "a version mismatch passed"; else ok "a version mismatch exits non-zero"; fi
 
+# --check-tests (#1286): the checks assembling can break, run on the copy. Fake cargo records its calls.
+fakecargo="$work/fakecargo"
+cat > "$fakecargo" <<'FAKE'
+#!/usr/bin/env bash
+echo "cargo $* (in $(pwd))" >> "$FAKE_LOG"
+[ -z "${FAKE_CARGO_FAIL:-}" ] || { echo "fake cargo: failing"; exit 101; }
+FAKE
+chmod +x "$fakecargo"
+export FAKE_LOG="$work/fake.log"
+ct() { : > "$FAKE_LOG"; TMPDIR="$work/tmp" REHEARSE_CARGO="$fakecargo" "$here/rehearse-assemble.sh" --check-tests "$t" > "$work/out" 2> "$work/err"; }
+notices() { printf 'x\n- klatch %s (https://example.invalid)\n- klatch-bench %s\n' "$1" "$1" > "$t/proto/THIRD-PARTY-LICENSES.txt"; }
+curver() { sed -n 's/^version = "\(.*\)"$/\1/p' "$t/proto/Cargo.toml" | head -1; }
+fresh; notices "$(curver)"; printf '#!/usr/bin/env bash\necho shell-test-ran >> "$FAKE_LOG"\n' > "$t/release/test-fake.sh"; chmod +x "$t/release/test-fake.sh"
+printf '#!/usr/bin/env bash\necho recursion >> "$FAKE_LOG"\n' > "$t/release/test-rehearse-assemble.sh"; chmod +x "$t/release/test-rehearse-assemble.sh"
+before="$(snapshot)"
+if ct; then ok "--check-tests passes on a good tree"; else bad "--check-tests failed: $(cat "$work/err")"; fi
+if grep -q 'test -p klatch --test release_scope_docs' "$FAKE_LOG" && grep -q 'test -p klatch --lib negotiate' "$FAKE_LOG"; then ok "runs the doc pinning cargo tests"; else bad "cargo calls: $(cat "$FAKE_LOG")"; fi
+if grep -q 'in .*klatch-rehearse-copy.*/proto)' "$FAKE_LOG"; then ok "cargo runs in the throwaway copy"; else bad "cwd: $(cat "$FAKE_LOG")"; fi
+if grep -q shell-test-ran "$FAKE_LOG" && ! grep -q recursion "$FAKE_LOG"; then ok "runs the release shell tests but not itself"; else bad "shell tests: $(cat "$FAKE_LOG")"; fi
+if [ "$(snapshot)" = "$before" ]; then ok "--check-tests leaves the tree unchanged"; else bad "tree changed"; fi
+
+fresh; notices 0.0.1-stale; if ct; then bad "a stale notices version passed"; else ok "a stale notices version exits non-zero"; fi
+if grep -q 'THIRD-PARTY-LICENSES' "$work/err"; then ok "names the notices file"; else bad "err: $(cat "$work/err")"; fi
+fresh; notices "$(curver)"; FAKE_CARGO_FAIL=1 ct && bad "a failing cargo test passed" || ok "a failing cargo test exits non-zero"
+fresh; notices "$(curver)"; printf '#!/usr/bin/env bash\nexit 1\n' > "$t/release/test-bad.sh"; chmod +x "$t/release/test-bad.sh"
+if ct; then bad "a failing shell test passed"; else ok "a failing release shell test exits non-zero"; fi
+fresh; notices 0.0.1-stale; if run; then ok "default rehearsal skips the extra checks"; else bad "default ran extra checks: $(cat "$work/err")"; fi
+
 if TMPDIR="$work/tmp" "$here/rehearse-assemble.sh" "$work/nonexistent" > /dev/null 2>&1; then bad "a missing root passed"; else ok "a missing root exits non-zero"; fi
 exit "$fails"
