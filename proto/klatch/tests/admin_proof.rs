@@ -736,6 +736,41 @@ fn restore_works_when_the_store_is_lost_and_asks_for_the_recovery_code() {
     assert!(after.ok(), "{}", after.text);
 }
 
+// ---- #1281: the recovery code has a failure limit when the store cannot be read ----
+
+#[test]
+fn restore_without_a_store_waits_after_three_wrong_codes_and_audits_once_the_store_is_back() {
+    let h = Home::new();
+    let backup = h.0.join("backup.db");
+    let made = h.admin(&["backup", backup.to_str().unwrap()], &[]);
+    assert!(made.ok(), "{}", made.text);
+    let code = recovery_code_of(&h);
+    for f in ["rooms.db", "rooms.db-wal", "rooms.db-shm"] {
+        let _ = std::fs::remove_file(h.0.join(f));
+    }
+    let path = backup.to_str().unwrap().to_string();
+    let restore =
+        |typed: &[&str]| run_on_pty(klatch_in(&h, &["restore".to_string(), path.clone()]), typed);
+    for _ in 0..3 {
+        let bad = restore(&["KLATCH-AAAA-AAAA", "restore"]);
+        assert!(!bad.ok(), "{}", bad.text);
+    }
+    // the fourth is refused before it is asked, even with the right code
+    let waits = restore(&[&code, "restore"]);
+    assert!(!waits.ok(), "{}", waits.text);
+    assert!(waits.text.contains("try again in"), "{}", waits.text);
+    // the attempts sit in a file beside the store; clearing the wait is the owner's act on their own files
+    let file = h.0.join("rooms.db.recovery-fails");
+    assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), 3);
+    std::fs::remove_file(&file).unwrap();
+    let good = restore(&[&code, "restore"]);
+    assert!(good.ok(), "{}", good.text);
+    // a success with nothing charged before it still leaves one attempt, recorded in the audit once the store opens
+    assert!(!file.exists(), "the attempts file outlived the restore");
+    let audit = h.admin(&["audit"], &[]);
+    assert!(audit.text.contains("recovery-attempts"), "{}", audit.text);
+}
+
 // ---- the second review of #1271 ----
 
 #[test]

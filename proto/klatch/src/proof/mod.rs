@@ -13,6 +13,7 @@
 //! Policy keys: `admin-passphrase` (the verifier), `admin-passphrase-fails` (the failure count, `limit`) and
 //! `admin-unlock-secs` (the unlock window, default `DEFAULT_WINDOW_SECS`).
 
+mod filelimit;
 mod limit;
 mod tty;
 mod verifier;
@@ -404,9 +405,9 @@ pub fn reset<S: PolicyStore + ?Sized>(
 }
 
 /// The proof for `admin restore` when the store is lost or damaged (so the verifier cannot be read): the person types
-/// the store's recovery code, which is compared in constant time with the code of the key in the keystore. There is no
-/// failure limit to charge (it lives in the store; ticketed); a 256-bit code is not guessable. Whoever holds the
-/// code can already restore the key and read the store. Private checks below build the proof; nothing outside this
+/// the store's recovery code, which is compared in constant time with the code of the key in the keystore. The failure
+/// limit (#1281) is kept in a file beside the store, since the store is unreadable (`filelimit`); `settle_recovery_attempts`
+/// audits it once the store opens again. Private checks below build the proof; nothing outside this
 /// module can build one from a bare yes.
 pub fn recovery_proof_for_restore(
     db: &std::path::Path,
@@ -420,7 +421,25 @@ pub fn recovery_proof_for_restore(
                 "this store has no key; restore the key first with `klatch admin recover`".into(),
             )
         })?;
+    charge_file_limit(db)?;
     prove_by_recovery_code(&crate::keys::recovery_code(&key), prompt, what)
+}
+
+/// Charge one attempt to the file limit of a store that cannot be read; a wait not over is `Locked`.
+fn charge_file_limit(db: &std::path::Path) -> Result<(), ProofError> {
+    use filelimit::Charge;
+    let now = crate::member::now();
+    filelimit::charge(db, now).map_err(|c| match c {
+        Charge::Wait(s) => ProofError::Locked(s),
+        Charge::Io(e) => ProofError::Store(format!(
+            "cannot keep the count of recovery attempts, so none is allowed: {e}"
+        )),
+    })
+}
+
+/// The store opens again after a recovery or restore: audit the attempts made while it could not be read.
+pub fn settle_recovery_attempts<S: PolicyStore + ?Sized>(db: &std::path::Path, store: &S) {
+    filelimit::settle(db, store, crate::member::now());
 }
 
 /// The proof for `admin recover` (the store key) when the key is lost: the recovery code given is the credential,
@@ -431,6 +450,7 @@ pub fn recovery_proof_for_recover(
     code: &str,
 ) -> Result<AdminProof, ProofError> {
     let key = crate::keys::restore(code).map_err(|e| ProofError::Rejected(e.to_string()))?;
+    charge_file_limit(db)?;
     prove_by_key_that_opens(crate::member::custody::opens_encrypted_store(db, &key))
 }
 
