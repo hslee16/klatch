@@ -1,1 +1,0 @@
-- The Python and TypeScript clients have `history(room, last, since)` returning the messages and `more`, like the Rust client, with the same conformance step in each (#611).

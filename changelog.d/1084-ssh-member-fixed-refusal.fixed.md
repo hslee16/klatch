@@ -1,1 +1,0 @@
-- A request that claims an identity on an ssh forced-command session (`serve --stdio --ssh-key`) is now kept in `klatch admin refusals` (rule `member-fixed`, operation `session`, no peer text) and counts toward the breaker (#1084).

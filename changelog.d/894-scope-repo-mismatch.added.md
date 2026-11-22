@@ -1,1 +1,0 @@
-- `klatch who` and the board mark a member whose declared scope names another repository than the one it runs in with `scope!=repo`, and that member's SessionStart digest says so once (#894). The declared scope still wins; claims and delivery are unchanged.

@@ -1,1 +1,0 @@
-- The shared gateway's fairness is measured (a short request waits at most the length of the slowest single request, about 50 ms for a 10000 message run end); no second read path was needed, and the measurement is an ignored test to rerun (#1086).

@@ -1,1 +1,0 @@
-- The local gate's last step, the release and shell checks, now prints the failing check's command line and the last 40 lines of its stdout and stderr instead of discarding the output, and `GATE_LOG=<file>` appends every check's full output to a file; a passing gate is as quiet as before (#1081).

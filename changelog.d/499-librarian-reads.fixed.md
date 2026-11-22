@@ -1,1 +1,0 @@
-- A librarian's peek read no longer refreshes its presence or adds it to the room as a member; looking at a room leaves no trace in who.

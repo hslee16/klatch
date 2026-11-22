@@ -1,1 +1,0 @@
-- `proto/scripts/ask-supervisor`: a launcher can report the real cost of a helper by writing one decimal USD number to the file named by `ASKSUP_COST_FILE`; the supervisor charges it (capped at `ASKSUP_MAX_TOTAL_USD`) instead of the fixed `ASKSUP_START_USD` when the helper ends, and keeps the fixed charge when the file is absent or not a plain number (#1177).

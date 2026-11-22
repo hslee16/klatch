@@ -1,1 +1,0 @@
-- Two `klatch admin archive` runs in the same second could trample each other's partial file, print raw SQLite errors, and put an empty archive in place while the live messages were tombstoned (#598). Each run now has its own partial file and the archive is put in place without replacing an existing file.

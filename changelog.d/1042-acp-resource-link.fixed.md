@@ -1,1 +1,0 @@
-- `klatch acp --stdio` reads a `resource_link` prompt block as its text form (name and uri, control characters removed, each cut to 256 characters), so a link-only editor prompt is answered instead of getting the help text; `session/cancel` is unchanged (#1042).

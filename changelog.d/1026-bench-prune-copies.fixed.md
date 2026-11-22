@@ -1,1 +1,0 @@
-- klatch-bench keeps only the newest three content-named klatch copies in `target/bench-bin` and removes older ones under the build lock (#1026).

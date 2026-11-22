@@ -42,7 +42,7 @@ and, for a member that routes (the facilitator, #901), `klatch_join` (makes the 
 asks; the ask-cycle lines `klatch asks` prints are not in it, they come from the wire method `stuck` as `ask_cycle` events) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).
 Each is one call through the same gateway checks as the wire and the command line (a refusal is a tool result with
 `isError` that names the rule and never repeats the text). The convention text arrives as the server's `instructions`. The
-server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: the design item for #299 (`design/items/299-mcp-stdio.md` until it is assembled into `DESIGN.md`).
+server answers one request at a time, so a `klatch_wait` holds the connection until it returns. Design: the design item 132 (`design/items/299-mcp-stdio.md` until it is assembled into `DESIGN.md`).
 
 The `klatch` binary is found on your `PATH`; use an absolute path from your own configuration if you do not want that, and
 never a freshly built binary on a machine whose store key is in the Keychain (it asks the user for a password).
@@ -299,7 +299,7 @@ a missing file, any other text or a negative number leaves the fixed charge),
 `ASKSUP_HELPER_SECS` per helper (then `kill -9`), `ASKSUP_PAUSE_SECS` between starts, and an off switch: while the file
 `ASKSUP_OFF_FILE` exists nothing new is started. A helper never starts a helper: an ask posted by a candidate is skipped,
 and a process with `ASKSUP_ACTIVE=1` refuses to run the supervisor. A signal stops the supervisor and the helpers it
-started. Nothing checks yet that a scope covers what the ask names; see the design item for #671.
+started. Nothing checks yet that a scope covers what the ask names; see the design item 159.
 
 ## Where to go next
 

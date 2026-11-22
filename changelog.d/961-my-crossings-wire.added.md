@@ -1,1 +1,0 @@
-- A session client can list its own crossings over the wire: the method `my_crossings` (own rows only, a state and one fixed sentence each, never text) and wrappers in the Python, TypeScript and Rust clients (#961).

@@ -1,1 +1,0 @@
-- An open `klatch serve --stdio --ssh-key LABEL` session now ends with a refusal (rule `ssh-key-unmapped`, or `ssh-key-remapped` when the label points at another member) as soon as the human unmaps the key with `klatch admin ssh-key LABEL MEMBER --off`: the mapping is read before each batch of requests and on every idle tick, so no `kill -9` is needed (#1083).

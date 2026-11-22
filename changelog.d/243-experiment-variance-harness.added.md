@@ -1,1 +1,0 @@
-- `experiments/variance/repeat.py` repeats a scenario N times and prints mean, spread, min and max of turns, tokens, cost and duration per agent, so a comparison can state its variance (#243). The rerun of earlier conclusions needs real runs and is not done.

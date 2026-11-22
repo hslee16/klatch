@@ -1,6 +1,0 @@
-Research notes are fragments (#859; no schema change; 2026-11-20).
-New RESEARCH-NOTES sections are one file each in `research/notes/<ticket>-<slug>.md` instead of text appended to RESEARCH-NOTES.md, for the reason DESIGN items became fragments (#807): parallel pull requests that each add the next section number or edit the file tail conflicted (seen on #822, #825, #826), decided in #533.
-
-`release/research-fragments.sh check|collect|assemble` mirrors `release/design-fragments.sh`. Line 1 of a fragment is the section title; `### ` headings in the body are numbered `N.k` at assembly; a `## ` heading in the body, an em dash, a bad name or a missing body fails `check`, which the gate runs along with `release/test-research-fragments.sh`. At release `assemble` appends the sections after the highest `## N.` in RESEARCH-NOTES.md, in ticket order, and deletes the fragments.
-
-Nothing existing was converted. Sections 1 to 53 and every subsection number stay exactly where they are, because code comments, tests, CONTRIBUTING.md and DESIGN.md cite them by number (for example section 42.8, 52, 53.5 and 53.7); renumbering them was never needed to get conflict-free additions. Refer to an unassembled note as "the research note for #NNN".

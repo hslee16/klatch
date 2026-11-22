@@ -1,1 +1,0 @@
-- The release bench builds the test binary in its own profile, so it no longer runs a stale release build left behind by an earlier manual build.

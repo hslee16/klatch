@@ -1,1 +1,0 @@
-- A broadcast is now a message kind: `klatch post --kind broadcast` reaches every member through a narrowed delivery view and counts as addressed in a busy digest. The word `@all` still works. `all` is now a reserved member name, so no member collides with the broadcast word (#674, decision on #635).

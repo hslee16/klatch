@@ -1,1 +1,0 @@
-- A session start prints at most 600 bytes of "room X not shown" notes and ends them with a count of the refused rooms left out, so many refused rooms can no longer starve the digest or push the hook text past its budget (#612).

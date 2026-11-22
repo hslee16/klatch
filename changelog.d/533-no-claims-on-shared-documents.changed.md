@@ -1,1 +1,0 @@
-- Agents are told never to claim a shared document (DESIGN.md, CHANGELOG.md, RESEARCH-NOTES.md); changes go through fragment files, and claims gain no append-only or section kind (#533).

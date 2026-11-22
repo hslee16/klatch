@@ -1,1 +1,0 @@
-- A consumer that stops reading a session's output no longer stalls the whole session: the output sits behind a bounded queue, and a consumer that makes no progress for 30 seconds ends the session and, if it reads again, finds a `stream.slow_consumer` refusal. A transport can now give the session a closer so the input reader thread ends with the session (#147, #146).

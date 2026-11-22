@@ -1,1 +1,0 @@
-- Documentation: a park is the one exception to the 24 hour claim cap (DESIGN D5, items 25, 46, 52; #646). A parked member's claims are held at most seven days; every claim of a member that is not parked stays within 24 hours. No behavior changed.

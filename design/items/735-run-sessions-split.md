@@ -1,2 +1,0 @@
-`klatch sessions` is split into small functions (#735; no schema change; 2026-11-20).
-The `run_sessions` command handler in `main.rs` had cyclomatic complexity 9 (the code-health threshold is below 9). It now only resolves the registry and calls `print_live_sessions`, `print_ignored_sessions` (with `liveness_reason`) and `note_ignored_sessions`. Output, stderr text and exit codes are unchanged; `tests/sessions.rs` pins them and was green before and after. No operation changed, so AUTHZ-AUDIT.md is unchanged. `main.rs` is not split by area here (that is #860).

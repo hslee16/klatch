@@ -1,1 +1,0 @@
-- `klatch board` shows the integrator's `reverted: #N` (the PR shows as reverted in the merge queue) and `halted: main red after #N` / `halted: main not verified after #N` (an `integrator halted` line at the top of the queue section until a later integrator word). Only an integrator or the human counts, as for the other state words (#1094).

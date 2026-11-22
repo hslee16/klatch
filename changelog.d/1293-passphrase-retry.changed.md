@@ -1,1 +1,0 @@
-- `klatch admin init-passphrase` and `reset-passphrase` ask again after a too-short or mismatched new passphrase, up to 3 attempts in all, saying why each time; the retries do not count toward the passphrase lockout (#1293).

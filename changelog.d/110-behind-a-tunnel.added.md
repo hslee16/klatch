@@ -1,1 +1,0 @@
-- A guide for reaching a loopback-only `klatch-server http` through an ssh forward or a same-host TLS terminator (`clients/recipes/behind-a-tunnel.md`), tests that forwarded-identity headers give no identity and that no source reads one, and an authorization audit row for every HTTP route, including the webhook intake (#110, #161).

@@ -1,1 +1,0 @@
-- A busy room's hook digest now keeps the newest messages and the ones addressed to the member when not all fit, instead of the oldest; the count of what was left out is unchanged (#185).

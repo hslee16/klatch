@@ -1,1 +1,0 @@
-- The plaintext conversion test no longer fails on a busy refusal under load: it runs the conversion again, as the refusal message says, and still checks no acknowledged write is lost (#904).

@@ -1,1 +1,0 @@
-- `release_crossings` now takes a principal and is the guarded admin act `release-crossings`; `klatch judge` runs it as `judge`, a reviewer's verdict releases under the reviewer's name, and each crossing audit row ends `applied by <who>` (#836).

@@ -1,1 +1,0 @@
-- `pr-ledger` shows a PR that has no checks because it conflicts with main as a conflict, not as "no checks".

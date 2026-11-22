@@ -1,7 +1,7 @@
 class Klatch < Formula
   desc "Substrate for agent rooms: claims, asks, a board and a durable encrypted log"
   homepage "https://github.com/hslee16/klatch"
-  version "0.1.0-dev.2"
+  version "0.2.0-alpha.1"
   license "MIT"
 
   # An early pre-release: no outside security review, not for sensitive data.
@@ -9,33 +9,34 @@ class Klatch < Formula
   # hslee16/klatch (verify with `gh attestation verify`; see SECURITY.md in that repository).
   on_macos do
     on_arm do
-      url "https://github.com/hslee16/klatch/releases/download/v0.1.0.dev2/klatch-0.1.0-dev.2-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-aarch64-apple-darwin.tar.gz"
       sha256 "b0fc61917d5fe074c10950b922824368a758a1d3ad2a791d554ba1c1d764d8a9"
     end
     on_intel do
-      url "https://github.com/hslee16/klatch/releases/download/v0.1.0.dev2/klatch-0.1.0-dev.2-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-x86_64-apple-darwin.tar.gz"
       sha256 "26482262ea32854057d8d2e217accdb1981ee1624705a2c37a624c342fc605c0"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/hslee16/klatch/releases/download/v0.1.0.dev2/klatch-0.1.0-dev.2-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "4f37c00b6b484244f62ccd431cea3ce047081b7b5ad6172b9a195200a5dd9bd8"
     end
     on_intel do
-      url "https://github.com/hslee16/klatch/releases/download/v0.1.0.dev2/klatch-0.1.0-dev.2-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "551946c2f28a85f452e0cbf2c84a0ca5952f531f302527b73d44c5574f88c087"
     end
   end
 
   def install
-    bin.install "klatch"
+    bin.install "klatch", "klatch-server"
     doc.install "LICENSE", "THIRD-PARTY-LICENSES.txt"
   end
 
   test do
     assert_match "klatch #{version}", shell_output("#{bin}/klatch --version")
+    assert_match "usage: klatch-server", shell_output("#{bin}/klatch-server --help")
     # a whole round trip in a throwaway store: the key goes in a directory under the test home
     ENV["KLATCH_HOME"] = testpath/"home"
     ENV["KLATCH_KEY_DIR"] = testpath/"keys"

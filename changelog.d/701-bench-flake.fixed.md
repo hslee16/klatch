@@ -1,1 +1,0 @@
-- The bench no longer fails now and then with "bad pid file": a fake session now publishes its pid by renaming a finished file, so the harness cannot read it half written. A bench failure now names the failed scenarios in its summary line, and a build failure says cargo failed and where its error is (#701).

@@ -1,1 +1,0 @@
-- `klatch who` with no room lists the members of every room you have joined; `who ROOM` is unchanged (#227).

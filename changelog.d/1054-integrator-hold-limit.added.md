@@ -1,1 +1,0 @@
-- The integrator helper releases its own merge:main claim after INTEGRATOR_MAX_HOLD_MINUTES (default 60) with no merged word, posts why, and takes it again only for a fresh ready word; it refuses to run unless it holds merge:main in its configured room, and the lobby is documented as the one room (#1054, #1055).

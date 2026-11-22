@@ -1,1 +1,0 @@
-- A subagent run under `--discover` (a coding-agent process below a session with no registry record of its own) is refused with a message to set `KLATCH_NAME`, instead of silently taking the parent session's member name and sharing its cursor with its siblings (#503). Top level sessions, typed names, key bundles and hooks are unchanged.

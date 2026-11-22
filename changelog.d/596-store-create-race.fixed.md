@@ -1,1 +1,0 @@
-- Sixteen processes starting on an empty home at once no longer fail with "the store's key is missing" (#596): the key and the store are created under one directory lock, and everyone else waits for it.

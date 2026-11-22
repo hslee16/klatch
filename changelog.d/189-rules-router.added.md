@@ -1,1 +1,0 @@
-- `klatch router`: the reference rules-based router, a deterministic member that invites the members holding a claim on an asker's topic into a topic room, using only guard-checked calls and no message text. `klatch invite` now refuses a member below the room's label (#189).

@@ -1,1 +1,0 @@
-- A room grant into a room whose label is sealed is refused (rule `sealed-key`) when the grantee lacks the global clearance for that label, with the next step in the message, instead of failing at first read (#896).

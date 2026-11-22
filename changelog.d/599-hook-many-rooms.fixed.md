@@ -1,1 +1,0 @@
-- The hook digest no longer overshoots its byte budget when more than about 45 rooms have news: rooms that do not fit, member-owned asks and claims first and then newest activity, collapse into one "N more rooms have news" line (#599).

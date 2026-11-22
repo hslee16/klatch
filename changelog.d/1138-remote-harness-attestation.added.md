@@ -1,1 +1,0 @@
-- Design only: a signed attestation of harness evidence from a remote host, so a remote wire join can be judged by its harness (threat model, who signs, what is attested, key trust and revocation, replay protection, order of work, open questions; no code, #1138).

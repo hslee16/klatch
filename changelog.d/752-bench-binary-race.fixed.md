@@ -1,1 +1,0 @@
-- The bench no longer loses its klatch binary when tests or test binaries build at once: it builds once per process under a file lock and runs a private copy that cargo never replaces (#752).

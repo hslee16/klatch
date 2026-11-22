@@ -1,1 +1,0 @@
-- The board text (`klatch board` and the `board` wire method) is capped at 16000 bytes: entry lines are dropped from the end, every section header stays, and a last line counts the entries left out (#1162).

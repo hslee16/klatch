@@ -1,1 +1,0 @@
-- The daemon loads the sealed-label keys a connection's clearance reaches for each request (and no others), and judges a `join` by Claude Code for an unidentified connection whose peer pid is inside a verified Claude Code session, so a sealed label and a harness-requiring room work over the socket (#1096).

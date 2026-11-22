@@ -1,1 +1,0 @@
-- release/compare-formula.sh, used by release/bump-formula.sh (new --staged option, and it updates the staged copy) and by a tap-drift check in release/verify-published.sh: the tap formula and release/homebrew/klatch.rb may differ only in version, URLs and hashes (#1260).

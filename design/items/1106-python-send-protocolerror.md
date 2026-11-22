@@ -1,2 +1,0 @@
-The Python client raises ProtocolError when a request cannot be sent on a dead socket, not a raw OSError (#1106; no schema change; 2026-11-21).
-`Client._send` now wraps `OSError` (BrokenPipeError, ConnectionResetError) and `ValueError` (a closed stream) from the write and flush in `ProtocolError`, chained to the cause, so a caller handles one error type as with the TypeScript client. The tests no longer accept a raw `OSError`, and one injects the failure through a writer that raises `BrokenPipeError`, so it does not depend on the platform's ECONNRESET behaviour (#1105).

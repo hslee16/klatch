@@ -1,1 +1,0 @@
-- The Rust client (`klatch::client`, feature `client`) now takes request structs: `Client::post(PostRequest::new(room, body).label(..).handoff(kind, payload))` and `Client::claim(ClaimRequest::new(room, path).ttl(..).reason(..))` replace the five-argument forms (a breaking change to the Rust client API; the wire protocol and the command line are unchanged) (#698).

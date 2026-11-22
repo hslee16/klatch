@@ -1,1 +1,0 @@
-- `pr-sweep` fetches a PR with `--no-prune`, so a machine with `fetch.prune=true` no longer deletes the PR ref it just fetched; a merge that fails without any conflicted file is reported as such, not as a code conflict.

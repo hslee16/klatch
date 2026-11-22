@@ -1,1 +1,0 @@
-- An optional real HTTPS transport to Jev (cargo feature `jev-http`, off by default and not in any shipped build) with certificate verification, a pinned host, no redirects, no proxy, hard timeouts and a bounded reply, and images sent as multipart. No new wire method or command.

@@ -1,1 +1,0 @@
-- The PreToolUse hook now denies a klatch command that a subagent runs inside the session's own process without naming itself (no `KLATCH_NAME=` or `--as-member`), with a message telling it to set `KLATCH_NAME`; other commands and the parent's own commands are untouched (#1152).

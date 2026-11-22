@@ -1,1 +1,0 @@
-- `pr-sweep --batch [--max N]`: land several ready PRs through one integration, one gate, one batch pull request and one bench instead of one at a time; a PR that would conflict in a non-docs file is dropped and reported before anything is merged, and `--dry-run` prints the plan (#852).

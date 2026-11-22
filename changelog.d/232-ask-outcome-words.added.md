@@ -1,1 +1,0 @@
-- The asker can close an ask with an outcome, `closed #N ok` or `closed #N unresolved`; a bare `closed #N` works as before, and `klatch find` shows how an answered ask was closed. New convention words in CONVENTIONS.md (#232).

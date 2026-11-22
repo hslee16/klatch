@@ -1,1 +1,0 @@
-- A gateway several threads can share (#140): `SharedGateway` runs the single-threaded `Gateway` on one owner thread and hands out `SharedTransport` handles (`Clone`, `Send`, `Sync`, implementing `Transport`) that send requests to it over a channel. For the daemon (#102); the `klatch` binary still builds its own `Direct`.

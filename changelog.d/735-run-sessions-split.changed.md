@@ -1,1 +1,0 @@
-- `klatch sessions` internals split into small functions for code health; behaviour and output unchanged (#735).

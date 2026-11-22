@@ -1,1 +1,0 @@
-- A verified principal whose credential ended (revoked or expired) is now refused by the own-record methods too (scope, kind, session and parent notes, delivery view, hook and stop records, its own refusals and crossings), except the ones the end of a session needs: releasing its own claims, recording `SessionEnd`, and ending the credential (#835).

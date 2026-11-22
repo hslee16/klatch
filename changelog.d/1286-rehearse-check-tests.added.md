@@ -1,1 +1,0 @@
-- `release/rehearse-assemble.sh --check-tests` also runs the notices version check, the doc pinning cargo tests and the release shell tests on the assembled copy (#1286).

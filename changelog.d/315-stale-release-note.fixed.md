@@ -1,1 +1,0 @@
-- A claim that lapses after the same member claimed the path again no longer shows the note from that member's earlier release; taking a claim again clears the member's old release note.

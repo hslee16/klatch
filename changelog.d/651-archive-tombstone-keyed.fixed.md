@@ -1,1 +1,0 @@
-- `klatch admin archive` of a very large room no longer holds the write lock for minutes: the set of copied rows it tombstones is keyed (#651).

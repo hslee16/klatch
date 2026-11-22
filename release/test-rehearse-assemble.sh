@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # release/rehearse-assemble.sh must assemble on a throwaway copy, print the stat and the renumbering candidates, fail on a bad
 # fragment, and never touch the tree it was given (#1239).
+# shellcheck disable=SC2015,SC2016
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$here/.." && pwd)"

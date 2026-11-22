@@ -1,1 +1,0 @@
-- Documented and pinned that an ask whose asker holds no claim is left to the mediator's stale-ask proposal instead of being routed (#892).

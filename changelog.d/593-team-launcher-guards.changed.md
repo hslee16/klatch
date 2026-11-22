@@ -1,1 +1,0 @@
-- `proto/scripts/team start` honours `TEAM_MAX_TOTAL_USD` (a team-wide dollar cap that counts money already spent) and skips a task whose ticket another member already claims on the board (#593).

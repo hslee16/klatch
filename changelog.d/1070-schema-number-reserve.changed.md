@@ -1,1 +1,0 @@
-- A migration PR no longer hand-edits the schema version literal: `SCHEMA_VERSION` is the length of the migration list, a test requires the list to read `migrate_v0`, `migrate_v1`, ... once each in order, and `proto/scripts/next-schema` prints the next free schema number from origin/main and the open PRs (#1070).

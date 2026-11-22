@@ -1,1 +1,0 @@
-- `klatch role` shows the role you hold (`integrator`, `reviewer`, ...) or `none`, a read of your own role only (#1090).

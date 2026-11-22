@@ -1,1 +1,0 @@
-- Converting a plaintext store to the encrypted format while an old klatch is still writing to it no longer loses that write or leaves the new store malformed: the plaintext stays locked until the swap is done, a copy made stale by a write in between is made again, and a store another klatch keeps open is refused with a reason and left as it was (#373).

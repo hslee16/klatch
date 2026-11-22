@@ -1,1 +1,0 @@
-- The Kani harness for the label chain rules compares names by index in its oracle, cutting its run from 610 s to about 190 s (#831); no product change.

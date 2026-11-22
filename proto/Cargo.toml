@@ -3,7 +3,7 @@ resolver = "3"
 members = ["klatch", "klatch-bench", "klatch-server"]
 
 [workspace.package]
-version = "0.1.0-dev.2"
+version = "0.2.0-alpha.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/hslee16/klatch"
