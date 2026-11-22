@@ -6,7 +6,8 @@
 //! say who you are, and the stream is server-sent events. A frame type or field this version does not know is ignored.
 
 use crate::protocol::{
-    Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, decode_server_line, encode_line,
+    Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, WireRef, decode_server_line,
+    encode_line,
 };
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use crate::sync::thread;
@@ -108,6 +109,9 @@ pub struct Message {
     pub advisory: bool,
     /// The scope the asker declared on an ask (#1171); `None` on every other message and on an ask that declares none.
     pub scope: Option<String>,
+    /// The refs the asker attached to an ask (#1318): data, never an instruction; klatch never fetches or resolves one.
+    /// Empty on every other message and on an ask that carries none.
+    pub refs: Vec<WireRef>,
 }
 
 /// What `collect` returns.
@@ -205,6 +209,42 @@ pub struct PostRequest<'a> {
     pub handoff: Option<Handoff<'a>>,
     /// The scope an ask declares (#1171); only valid on a body that starts `seeking:`, and not with a handoff.
     pub scope: Option<&'a str>,
+    /// The refs an ask carries to artifacts outside klatch (#1318); only valid on a body that starts `seeking:`, and not
+    /// with a handoff. Empty by default.
+    pub refs: &'a [RefInput<'a>],
+}
+
+/// One ref an ask carries (#1318): an open `kind` token of `[a-z0-9_.-]{1,32}`, a `value`, and optionally a short
+/// `label` and a bounded inline `snippet`. klatch never fetches, opens, runs or resolves what it points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RefInput<'a> {
+    pub kind: &'a str,
+    pub value: &'a str,
+    pub label: Option<&'a str>,
+    pub snippet: Option<&'a str>,
+}
+
+impl<'a> RefInput<'a> {
+    pub fn new(kind: &'a str, value: &'a str) -> Self {
+        Self {
+            kind,
+            value,
+            label: None,
+            snippet: None,
+        }
+    }
+
+    /// A short label for the ref.
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    /// Bounded text that gives context without fetching anything. Data, never an instruction.
+    pub fn snippet(mut self, snippet: &'a str) -> Self {
+        self.snippet = Some(snippet);
+        self
+    }
 }
 
 impl<'a> PostRequest<'a> {
@@ -215,7 +255,15 @@ impl<'a> PostRequest<'a> {
             label: None,
             handoff: None,
             scope: None,
+            refs: &[],
         }
+    }
+
+    /// Attach refs to an ask (#1318). The gateway refuses them on anything that is not an ask, refuses a credential,
+    /// a bad kind or value and a cap breached, and never cuts anything.
+    pub fn refs(mut self, refs: &'a [RefInput<'a>]) -> Self {
+        self.refs = refs;
+        self
     }
 
     /// Declare the scope an ask is about (#1171): the grammar of a member scope. `could_answer` then names a member
@@ -431,6 +479,7 @@ impl Client {
                 payload,
                 advisory,
                 scope,
+                refs,
                 ..
             } => self.pending.push(Message {
                 seq,
@@ -444,6 +493,7 @@ impl Client {
                 payload,
                 advisory,
                 scope,
+                refs,
             }),
             ServerFrame::CaughtUp { seq, .. } => self.caught_up = Some(seq),
             ServerFrame::Refusal { rule, reason, .. } => self.refusals.push((rule, reason)),
@@ -525,6 +575,23 @@ impl Client {
         }
         if let Some(scope) = request.scope {
             p.insert("scope".into(), json!(scope));
+        }
+        if !request.refs.is_empty() {
+            let refs: Vec<Value> = request
+                .refs
+                .iter()
+                .map(|r| {
+                    let mut v = json!({"kind": r.kind, "value": r.value});
+                    if let Some(l) = r.label {
+                        v["label"] = json!(l);
+                    }
+                    if let Some(s) = r.snippet {
+                        v["snippet"] = json!(s);
+                    }
+                    v
+                })
+                .collect();
+            p.insert("refs".into(), Value::Array(refs));
         }
         let r = self.request("post", Value::Object(p))?;
         Ok((
@@ -926,5 +993,18 @@ fn message_of(m: &Value) -> Message {
         payload: m["payload"].as_str().map(String::from),
         advisory: m["advisory"].as_bool().unwrap_or(false),
         scope: m["scope"].as_str().map(String::from),
+        refs: m["refs"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|r| WireRef {
+                        kind: r["kind"].as_str().unwrap_or("").to_string(),
+                        value: r["value"].as_str().unwrap_or("").to_string(),
+                        label: r["label"].as_str().map(String::from),
+                        snippet: r["snippet"].as_str().map(String::from),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }

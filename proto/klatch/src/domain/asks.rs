@@ -114,6 +114,8 @@ pub struct OpenAsk {
     /// The scope the asker declared on the ask (#1171), if any. The fold of messages leaves it `None`; the store
     /// fills it from the ask's scope record.
     pub scope: Option<String>,
+    /// The references the asker attached (#1318); the store fills them from the ask's record. Empty when none.
+    pub refs: Vec<crate::domain::AskRef>,
 }
 
 impl MovedDm {
@@ -525,6 +527,7 @@ pub fn open_asks(messages: &[Message], live_claims: &[Claim]) -> Vec<OpenAsk> {
             room: None,
             moved: moved_to(messages, a),
             scope: None,
+            refs: Vec::new(),
         })
         .collect()
 }
@@ -572,6 +575,7 @@ mod tests {
             payload: None,
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         }
     }
 

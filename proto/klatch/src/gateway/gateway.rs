@@ -22,6 +22,7 @@ pub struct Refused {
 
 mod admin;
 mod anchors;
+mod ask_refs;
 mod github_anchor;
 pub use anchors::{AnchorAdapter, valid_anchor};
 use github_anchor::{normalize_anchor, parse_events};
@@ -187,21 +188,47 @@ impl<S: Store> Gateway<S> {
     /// body must be an ask (`seeking:`) and the scope valid, both checked before anything is posted; every other rule
     /// is the one `post_labeled` meets. The scope is stored beside the ask and shown with it, never read from text.
     pub fn post_scoped(&self, who: &Principal, post: PostArgs, scope: &str) -> Result<Posted> {
+        self.post_ask(who, post, Some(scope), &[])
+    }
+
+    /// Post an ask that may declare a scope (#1171) and carry refs to artifacts outside klatch (#1318). Everything is
+    /// checked before anything is posted: the body is an ask, the scope is valid, every ref is well formed and within
+    /// its caps (refused, never cut), carries no credential, passes the secret, canary and private-term rules the
+    /// body does, and cannot launder a label (see `check_refs_label`). klatch never fetches or resolves a ref: they
+    /// are stored beside the ask, as data, and shown with it, never read from the text.
+    pub fn post_ask(
+        &self,
+        who: &Principal,
+        post: PostArgs,
+        scope: Option<&str>,
+        refs: &[crate::domain::AskRef],
+    ) -> Result<Posted> {
         check_member(who)?;
-        if !crate::domain::valid_scope(scope) {
+        if let Some(scope) = scope
+            && !crate::domain::valid_scope(scope)
+        {
             return Err(Error::Invalid(
                 "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
             ));
         }
-        if !post.1.starts_with(crate::domain::ASK_PREFIX) {
+        if (scope.is_some() || !refs.is_empty()) && !post.1.starts_with(crate::domain::ASK_PREFIX) {
             return Err(Error::Invalid(
-                "a scope can only be declared on an ask (a message that starts with `seeking:`)"
+                "a scope or refs can only go on an ask (a message that starts with `seeking:`)"
                     .into(),
             ));
         }
         let room = post.0;
+        if !refs.is_empty() {
+            check_room(room)?;
+            self.check_refs_before_post(who, (room, post.2), refs)?;
+        }
         let posted = self.post_with(who, post, None)?;
-        self.store.set_ask_scope(room, posted.seq, scope)?;
+        if let Some(scope) = scope {
+            self.store.set_ask_scope(room, posted.seq, scope)?;
+        }
+        if !refs.is_empty() {
+            self.store.set_ask_refs(room, posted.seq, refs)?;
+        }
         Ok(posted)
     }
 

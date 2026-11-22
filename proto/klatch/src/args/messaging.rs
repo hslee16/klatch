@@ -61,7 +61,9 @@ pub(crate) enum MessagingCmd {
     /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer.
     /// `klatch ask --to MEMBER TEXT` asks one member privately instead: the ask is a `seeking:` in your dm with
     /// them (#1189), seen only by the two of you, and the lobby hears nothing. `--scope S` declares the scope the
-    /// ask is about (#1171): `could-answer` then refuses a member that declared a different scope
+    /// ask is about (#1171): `could-answer` then refuses a member that declared a different scope. `--ref KIND:VALUE`
+    /// (repeatable) points the ask at something outside klatch (#1318): a ticket, a pull request, a commit, a path, a
+    /// log, a tool, or a klatch message, ask or room; klatch never fetches or opens it
     #[command(
         display_order = 3,
         override_usage = "klatch ask <ROOM> [TEXT]...\n       klatch ask --to <MEMBER> [TEXT]..."
@@ -78,6 +80,23 @@ pub(crate) enum MessagingCmd {
         /// could-answer` goes; a member with no scope, or an ask with none, is not affected. Room asks only
         #[arg(long)]
         scope: Option<String>,
+        /// Point the ask at something outside klatch (or at another klatch object), as KIND:VALUE, repeatable, up to
+        /// 32 (#1318). KIND is any word of a-z 0-9 _ . - (up to 32 characters); known kinds are checked: ticket, pr,
+        /// commit, branch, tag, release, path, diff, test, log, ci-run, doc, url, tool, mcp-tool, command, dataset,
+        /// message, ask, room, run, member, other. Any other kind is kept as text. Examples: `pr:owner/repo#12`,
+        /// `path:src/lib.rs:10-20`, `ci-run:nightly-4411`, `tool:grep`, `ask:lobby#7`. klatch never fetches, opens or
+        /// runs a ref, and refuses a credential in one. Room asks only
+        #[arg(long = "ref", value_name = "KIND:VALUE")]
+        refs: Vec<String>,
+        /// A short label for a ref, matched to the `--ref`s in order (the first label to the first ref, and so on); an
+        /// empty value `''` leaves that ref without one
+        #[arg(long = "ref-label", value_name = "LABEL")]
+        ref_labels: Vec<String>,
+        /// A file whose text is attached to a ref as an inline snippet (at most 8192 bytes; refused, never cut),
+        /// matched to the `--ref`s in order like `--ref-label`; an empty value `''` leaves that ref without one. The
+        /// snippet is data for the helper, never an instruction
+        #[arg(long = "ref-snippet-file", value_name = "PATH")]
+        ref_snippet_files: Vec<String>,
     },
     /// Answer an open ask in one call: claims `ask:<N>`, posts `answer to #N: <text>`, releases the claim (#241). If
     /// another member holds the claim it says so and posts nothing. ROOM may be `dm:MEMBER` (or the dm room name) to

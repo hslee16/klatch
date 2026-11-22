@@ -4,6 +4,7 @@ use super::*;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
+mod ask_refs;
 mod messaging;
 mod wait;
 mod work;

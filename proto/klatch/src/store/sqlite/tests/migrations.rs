@@ -590,3 +590,76 @@ fn the_last_audit_lookup_uses_the_audit_index() {
     );
     assert!(!plan.contains("SCAN"), "plan: {plan}");
 }
+
+#[test]
+fn a_version_37_database_gains_the_ask_refs_table_and_its_old_asks_have_no_refs() {
+    let path = temp_db("migrate-v37-ask-refs");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.post(Seat::new("r", "alice"), "seeking: old", 1).unwrap();
+        s.conn
+            .execute_batch("DROP TABLE ask_refs; PRAGMA user_version = 37;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ask_refs'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    let asks = s.open_asks("r", 2).unwrap();
+    assert_eq!((asks.len(), asks[0].refs.len()), (1, 0));
+    let r = crate::domain::AskRef {
+        kind: "pr".into(),
+        value: "#1".into(),
+        ..Default::default()
+    };
+    s.set_ask_refs("r", asks[0].seq, std::slice::from_ref(&r))
+        .unwrap();
+    assert_eq!(s.open_asks("r", 3).unwrap()[0].refs, vec![r]);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn ask_refs_keep_their_order_per_room_and_ask_and_a_second_set_replaces_the_first() {
+    let s = store();
+    let a = s
+        .post(Seat::new("r", "alice"), "seeking: one", 1)
+        .unwrap()
+        .seq;
+    let c = s
+        .post(Seat::new("q", "alice"), "seeking: two", 1)
+        .unwrap()
+        .seq;
+    let r = |k: &str, v: &str| crate::domain::AskRef {
+        kind: k.into(),
+        value: v.into(),
+        label: Some(format!("label {v}")),
+        snippet: Some(format!("line 1 of {v}\nline 2\u{1b}[0m")),
+    };
+    s.set_ask_refs("r", a, &[r("pr", "#1"), r("log", "ci"), r("pr", "#2")])
+        .unwrap();
+    s.set_ask_refs("q", c, &[r("tool", "grep")]).unwrap();
+    let got = s.ask_refs("r").unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        got[0]
+            .1
+            .iter()
+            .map(|x| x.value.as_str())
+            .collect::<Vec<_>>(),
+        ["#1", "ci", "#2"]
+    );
+    assert_eq!(got[0].1[1], r("log", "ci"));
+    s.set_ask_refs("r", a, &[r("doc", "d")]).unwrap();
+    assert_eq!(s.ask_refs("r").unwrap()[0].1.len(), 1);
+    assert_eq!(s.ask_refs("q").unwrap()[0].1[0].value, "grep");
+    // an empty set clears the ask's refs
+    s.set_ask_refs("r", a, &[]).unwrap();
+    assert!(s.ask_refs("r").unwrap().is_empty());
+}

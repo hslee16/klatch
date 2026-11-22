@@ -23,11 +23,21 @@ pub trait AskStore: MessageStore + ClaimStore {
         } else {
             self.ask_scopes(room)?
         };
+        let mut refs = if asks.is_empty() {
+            Vec::new()
+        } else {
+            self.ask_refs(room)?
+        };
         for a in &mut asks {
             a.scope = scopes
                 .iter()
                 .find(|(seq, _)| *seq == a.seq)
                 .map(|(_, scope)| scope.clone());
+            a.refs = refs
+                .iter()
+                .position(|(seq, _)| *seq == a.seq)
+                .map(|i| refs.swap_remove(i).1)
+                .unwrap_or_default();
             a.room = rooms
                 .iter()
                 .find(|r| r.name == format!("ask-{}", a.seq))
@@ -46,6 +56,18 @@ pub trait AskStore: MessageStore + ClaimStore {
     /// The declared scope of each ask of `room` that has one, as (seq, scope) pairs (#1171). An ask without a
     /// declared scope has no pair. The default knows none.
     fn ask_scopes(&self, _room: &str) -> Result<Vec<(i64, String)>> {
+        Ok(Vec::new())
+    }
+
+    /// Remember the refs the asker attached to ask `seq` of `room` (#1318), in order. A second call replaces the first;
+    /// an empty list clears them. The default remembers nothing.
+    fn set_ask_refs(&self, _room: &str, _seq: i64, _refs: &[crate::domain::AskRef]) -> Result<()> {
+        Ok(())
+    }
+
+    /// The refs of each ask of `room` that carries any, as (seq, refs) pairs, each in the order given (#1318). An ask
+    /// with none has no pair. The default knows none.
+    fn ask_refs(&self, _room: &str) -> Result<Vec<(i64, Vec<crate::domain::AskRef>)>> {
         Ok(Vec::new())
     }
 

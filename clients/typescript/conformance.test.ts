@@ -197,6 +197,39 @@ describe(title, { skip }, () => {
     await assert.rejects(a.post("r", "hello", { scope: "git:foo" }), ApiError);
   });
 
+  it("ask refs survive post, read, history and asks, and bad refs are refused (#1318)", async () => {
+    const [a, b] = [await store.client("alice"), await store.client("bob")];
+    await a.post("r", "seeking: plain");
+    const refs = [
+      { kind: "pr", value: "o/r#12", label: "the fix" },
+      { kind: "log", value: "ci.log", snippet: "boom\nbang" },
+      { kind: "figma-frame", value: "login" },
+    ];
+    const { seq } = await a.post("r", "seeking: with refs", { refs });
+    const messages = await b.read("r", true);
+    assert.ok(!("refs" in messages[0]));
+    assert.deepEqual(messages[1].refs, refs);
+    assert.deepEqual((await b.history("r")).messages[1].refs, refs);
+    const asks = (await b.asks("r")) as any[];
+    assert.deepEqual(asks[1].refs, refs);
+    assert.deepEqual(asks[0].refs, []);
+    await b.join("r");
+    const answer = await b.couldAnswer("r", "bob", seq);
+    assert.deepEqual(answer.refs.map((r: any) => r.kind), ["pr", "log", "figma-frame"]);
+    assert.ok(!("snippet" in answer.refs[1]));
+    const many = Array.from({ length: 33 }, (_, i) => ({ kind: "other", value: `v${i}` }));
+    for (const bad of [
+      [{ kind: "Bad Kind", value: "x" }],
+      [{ kind: "path", value: "/etc/passwd" }],
+      [{ kind: "url", value: "https://u:pw@example.com/x" }],
+      many,
+    ]) {
+      await assert.rejects(a.post("r", "seeking: x", { refs: bad }), ApiError);
+    }
+    await assert.rejects(a.post("r", "hello", { refs }), ApiError);
+    assert.equal((await b.read("r", true)).length, 2);
+  });
+
   it("history looks back without moving the cursor and pages with since", async () => {
     const [a, b] = [await store.client("alice"), await store.client("bob")];
     for (let i = 1; i <= 5; i++) await a.post("r", `m${i}`);

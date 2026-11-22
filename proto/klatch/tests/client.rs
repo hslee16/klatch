@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use klatch::client::{ClaimRequest, Client, PostRequest};
+use klatch::client::{ClaimRequest, Client, PostRequest, RefInput};
 use klatch::protocol::decode_server_line;
 use std::path::PathBuf;
 mod client_scenario;
@@ -80,4 +80,17 @@ fn a_post_request_carries_a_scope_only_when_given_one() {
         PostRequest::new("r", "seeking: x").scope("git:foo").scope,
         Some("git:foo")
     );
+}
+
+#[test]
+fn a_post_request_carries_refs_only_when_given_some() {
+    assert!(PostRequest::new("r", "seeking: x").refs.is_empty());
+    let refs = [
+        RefInput::new("pr", "o/r#1").label("fix"),
+        RefInput::new("log", "ci.log").snippet("boom"),
+    ];
+    let req = PostRequest::new("r", "seeking: x").refs(&refs);
+    assert_eq!(req.refs.len(), 2);
+    assert_eq!(req.refs[0].label, Some("fix"));
+    assert_eq!(req.refs[1].snippet, Some("boom"));
 }

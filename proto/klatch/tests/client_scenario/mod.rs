@@ -6,7 +6,7 @@
 //! typed name, `verified` over HTTP, where every member has a credential. The steps and their assertions are the same in both, so
 //! the same events and sequence numbers are required of both transports.
 
-use klatch::client::{ClaimRequest, Error, PostRequest, Verdict};
+use klatch::client::{ClaimRequest, Error, PostRequest, RefInput, Verdict};
 use klatch::protocol::PROTOCOL_VERSION;
 use std::time::Duration;
 
@@ -94,6 +94,47 @@ fn an_ask_scope_survives_post_read_the_stream_and_asks_and_could_answer_names_a_
         a.post(PostRequest::new("r", "hello").scope("git:foo"))
             .is_err()
     );
+}
+
+#[test]
+fn ask_refs_survive_post_read_the_stream_and_asks_and_a_bad_ref_is_refused() {
+    let h = home();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    a.post(PostRequest::new("r", "seeking: plain")).unwrap();
+    let refs = [
+        RefInput::new("pr", "o/r#12").label("the fix"),
+        RefInput::new("log", "ci.log").snippet("boom\nbang"),
+        RefInput::new("figma-frame", "login"),
+    ];
+    let (seq, _) = a
+        .post(PostRequest::new("r", "seeking: with refs").refs(&refs))
+        .unwrap();
+    let ms = b.read("r", false).unwrap();
+    assert!(ms[0].refs.is_empty());
+    assert_eq!(
+        ms[1]
+            .refs
+            .iter()
+            .map(|r| r.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pr", "log", "figma-frame"]
+    );
+    assert_eq!(ms[1].refs[0].label.as_deref(), Some("the fix"));
+    assert_eq!(ms[1].refs[1].snippet.as_deref(), Some("boom\nbang"));
+    assert_eq!(b.subscribe("r", 0).unwrap(), 2);
+    let seen = b.collect(true, Duration::from_secs(10)).unwrap();
+    assert_eq!(seen.messages[1].refs.len(), 3);
+    assert_eq!(b.asks("r").unwrap()[1]["refs"][0]["value"], "o/r#12");
+    let answer = b
+        .could_answer("r", "bob", i64::try_from(seq).unwrap())
+        .unwrap();
+    assert_eq!(answer["refs"][0]["kind"], "pr");
+    let bad = [RefInput::new("path", "/etc/passwd")];
+    assert!(
+        a.post(PostRequest::new("r", "seeking: x").refs(&bad))
+            .is_err()
+    );
+    assert!(a.post(PostRequest::new("r", "hello").refs(&refs)).is_err());
 }
 
 #[test]
