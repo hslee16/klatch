@@ -3,6 +3,7 @@
 
 use super::shared::SharedGateway;
 use crate::domain::Principal;
+use crate::gateway::areas::*;
 use crate::gateway::{AllowAll, Gateway, HistoryRange, SystemClock, Transport};
 use crate::store::SqliteStore;
 use crate::store::test_dir::temp_db;

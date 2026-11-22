@@ -50,7 +50,7 @@ pub use shared::{SharedBackend, SharedGateway, SharedTransport};
 pub use ssh_key::{SshKeyIdentity, ssh_key_member, valid_label as valid_ssh_key_label};
 pub use subscription::{Batch, DEFAULT_WINDOW, Subscription};
 pub use sys_lease::SysLeaseSource;
-pub use transport::{Direct, Transport};
+pub use transport::{Direct, Transport, areas};
 pub use wake::{Pause, WAKE_FALLBACK, WAKE_TICK, pause_for_change};
 
 #[cfg(test)]

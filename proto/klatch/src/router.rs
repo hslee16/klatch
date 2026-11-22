@@ -144,6 +144,7 @@ impl Router {
 mod tests {
     use super::*;
     use crate::domain::Principal;
+    use crate::gateway::areas::*;
     use crate::gateway::{AllowAll, ClaimSpec, Direct, FixedClock, Gateway};
     use crate::store::SqliteStore;
     use std::rc::Rc;
