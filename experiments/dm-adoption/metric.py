@@ -14,6 +14,8 @@ divided by exchanges (0.0 to 1.0), or null when there was no exchange (outcome "
 as a failed run instead of a silent zero).
 
 The line is in the form experiments/variance/repeat.py reads: {"agents": {"exchange": {...}, "alpha": {...}}}.
+`--hook-events NAME=FILE` (stream-json recorded with --include-hook-events) adds per agent hook_events,
+hook_post_tool_use and nudge_lines, and the sum of nudge_lines on the exchange entry (#1210).
 `--result NAME=FILE` adds an agent from a `claude -p --output-format json` result (turns, tokens, cost_usd,
 duration_s, outcome). Besides adoption the exchange entry has exchanges, moved, lobby_messages, dm_messages
 (dm and ask-N rooms), reply_latency_s (mean gap between consecutive messages by different members in dm and ask-N
@@ -142,6 +144,38 @@ def agent_from_result(path):
     return rec
 
 
+NUDGE_LINE = "for a longer exchange use: klatch dm"
+
+
+def hook_counts(path):
+    """Count what the hooks said in a `claude -p --output-format stream-json --include-hook-events` stream (#1210).
+
+    hook_events is the number of hook_response events, hook_post_tool_use those of the PostToolUse hook, nudge_lines
+    the digest nudge lines in hook output (one text counted once though output and stdout repeat it). Only hook
+    events are read: a model quoting the line does not count. A missing file counts zero.
+    """
+    rec = {"hook_events": 0, "hook_post_tool_use": 0, "nudge_lines": 0}
+    try:
+        f = open(path)
+    except OSError:
+        return rec
+    with f:
+        for line in f:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict) or ev.get("type") != "system" or ev.get("subtype") != "hook_response":
+                continue
+            rec["hook_events"] += 1
+            if ev.get("hook_event") == "PostToolUse":
+                rec["hook_post_tool_use"] += 1
+            text = ev.get("output") or ev.get("stdout") or ""
+            if isinstance(text, str):
+                rec["nudge_lines"] += text.count(NUDGE_LINE)
+    return rec
+
+
 def run_history(binary, member, args):
     env = dict(os.environ)
     env["KLATCH_NAME"] = member
@@ -185,6 +219,9 @@ def main():
     p.add_argument("--as", dest="member", default="alpha", help="the member to read as (default alpha)")
     p.add_argument("--min-dm", type=int, default=3, help="messages a dm or ask-N room needs to count as a move (default 3)")
     p.add_argument("--arm", help="the arm label, copied into the result")
+    p.add_argument("--hook-events", action="append", default=[], metavar="NAME=FILE", help="a stream-json file with hook events for one agent; adds hook_events, hook_post_tool_use and nudge_lines")
+    p.add_argument("--binary", help="the klatch binary under test, copied into the result")
+    p.add_argument("--binary-sha256", help="its checksum, copied into the result")
     p.add_argument("--result", action="append", default=[], metavar="NAME=FILE", help="a claude -p JSON result for one agent")
     args = p.parse_args()
     if bool(args.history) == bool(args.klatch):
@@ -201,9 +238,23 @@ def main():
             p.error("--result wants NAME=FILE")
         agents[name] = agent_from_result(path)
     agents["exchange"] = analyse(rooms, args.min_dm)
+    if args.hook_events:
+        total = 0
+        for item in args.hook_events:
+            name, _, path = item.partition("=")
+            if not name or not path:
+                p.error("--hook-events wants NAME=FILE")
+            counts = hook_counts(path)
+            agents.setdefault(name, {}).update(counts)
+            total += counts["nudge_lines"]
+        agents["exchange"]["nudge_lines"] = total
     out = {"agents": agents}
     if args.arm:
         out["arm"] = args.arm
+    if args.binary:
+        out["binary"] = args.binary
+    if args.binary_sha256:
+        out["binary_sha256"] = args.binary_sha256
     print(json.dumps(out, sort_keys=True))
     return 0
 

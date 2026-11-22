@@ -1,0 +1,1 @@
+- The dm adoption scenario (experiments/dm-adoption) has arms with distinct binaries (baseline, text, nudge), neutral prompts with no use-this-binary-only list or lobby anchor, and `--hook-events` to record the headless hook stream and count digest nudge lines (#1210).

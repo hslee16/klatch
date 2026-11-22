@@ -125,19 +125,31 @@ cat > "$work/claude" <<'FAKE'
 # fake claude -p: alpha and helper play a 2-question exchange, in the lobby (FAKE_MODE=stay) or in a dm (move)
 k="$KLATCH_BIN"
 echo "$KLATCH_NAME $*" >> "$FAKE_LOG"
+echo "$KLATCH_NAME $KLATCH_BIN" >> "$FAKE_BINLOG"
 case "$KLATCH_NAME:$FAKE_MODE" in
   alpha:stay) "$k" post lobby "seeking: slug"; "$k" post lobby "info #1: underscore"; "$k" post lobby "info #1: 40" ;;
   helper:stay) "$k" post lobby "need-info #1: separator"; "$k" post lobby "need-info #1: length"; "$k" post lobby "answer to #1: ok" ;;
   alpha:move) "$k" post lobby "seeking: slug"; "$k" dm helper "a1"; "$k" dm helper "a2" ;;
   helper:move) "$k" post lobby "moved: dm with alpha"; "$k" dm alpha "q1"; "$k" dm alpha "q2" ;;
 esac
-printf '{"num_turns":3,"total_cost_usd":0.01,"duration_ms":2000,"is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}\n'
+case " $* " in
+  *" --include-hook-events "*)
+    printf '{"type":"system","subtype":"init"}\n'
+    printf '{"type":"system","subtype":"hook_response","hook_event":"SessionStart","output":"convention text"}\n'
+    printf '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"klatch: you and helper exchanged 4 messages in lobby; for a longer exchange use: klatch dm helper","stdout":"klatch: you and helper exchanged 4 messages in lobby; for a longer exchange use: klatch dm helper"}\n'
+    printf '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"","stdout":""}\n'
+    printf '{"type":"result","num_turns":3,"total_cost_usd":0.01,"duration_ms":2000,"is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}\n' ;;
+  *)
+    printf '{"num_turns":3,"total_cost_usd":0.01,"duration_ms":2000,"is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}\n' ;;
+esac
 FAKE
 chmod +x "$work/klatch" "$work/claude"
-export FAKE_LOG="$work/claude.log"
-scen() { # mode [extra args]
+export FAKE_LOG="$work/claude.log" FAKE_BINLOG="$work/claude.bins"
+cp "$work/klatch" "$work/klatch-base"; cp "$work/klatch" "$work/klatch-text"; cp "$work/klatch" "$work/klatch-nudge"
+scen() { # mode [extra args]; every arm gets its own binary, so a result shows which one ran
   mode=$1; shift
-  FAKE_MODE=$mode KLATCH_BIN="$work/klatch" CLAUDE_BIN="$work/claude" bash "$run" "$@"
+  FAKE_MODE=$mode KLATCH_BIN="$work/klatch" KLATCH_BASELINE_BIN="$work/klatch-base" KLATCH_TEXT_BIN="$work/klatch-text" \
+    KLATCH_NUDGE_BIN="$work/klatch-nudge" CLAUDE_BIN="$work/claude" bash "$run" "$@"
 }
 kh="$work/home1"; kk="$work/keys1"; mkdir -p "$kh" "$kk"
 out="$(KLATCH_HOME="$kh" KLATCH_KEY_DIR="$kk" scen stay 2>"$work/err")"; code=$?
@@ -158,12 +170,68 @@ a_base="$(KLATCH_HOME="$work/home4" KLATCH_KEY_DIR="$work/keys4" scen stay --arm
 a_priv="$(KLATCH_HOME="$work/home5" KLATCH_KEY_DIR="$work/keys5" scen stay --arm private >/dev/null 2>&1; grep '^alpha ' "$FAKE_LOG" | tail -1)"
 if [ -n "$a_base" ] && [ "$a_base" != "$a_priv" ]; then ok "the private arm changes the asker prompt"; else bad "arm prompts equal"; fi
 case "$a_base" in *"klatch dm"*|*" dm "*) bad "the baseline prompt names dm";; *) ok "the baseline prompt never names dm";; esac
+# neutral prompts (#1210): no "use this binary only" anchor, no ask/answer list, no lobby anchor
+for arm in baseline text nudge; do
+  : > "$FAKE_LOG"
+  KLATCH_HOME="$work/h-$arm" KLATCH_KEY_DIR="$work/k-$arm" scen stay --arm $arm > /dev/null 2>&1
+  pr="$(cat "$FAKE_LOG")"
+  case "$pr" in *"use this binary only"*|*"Commands ("*) bad "$arm prompt has the command list anchor";; *) ok "$arm prompt has no use-this-binary-only list";; esac
+  case "$pr" in *" ask lobby"*|*" asks lobby"*|*" answer lobby"*) bad "$arm prompt lists ask/asks/answer";; *) ok "$arm prompt lists no ask/answer commands";; esac
+  case "$pr" in *"Ask the lobby"*|*"in the lobby"*) bad "$arm prompt anchors to the lobby";; *) ok "$arm prompt does not anchor to the lobby";; esac
+  case "$pr" in *"klatch-"*" post "*) ok "$arm prompt says how to call klatch";; *) bad "$arm prompt lacks the call path";; esac
+done
+# the arms give the same prompt text apart from the binary path
+norm() { sed -e 's#/[^ "]*klatch-[a-z]*#BIN#g' -e 's#^\(alpha\|helper\) .* -p #\1 #'; }
+: > "$FAKE_LOG"; KLATCH_HOME="$work/ha" KLATCH_KEY_DIR="$work/ka" scen stay --arm baseline > /dev/null 2>&1; pb="$(grep '^alpha ' "$FAKE_LOG" | norm)"
+: > "$FAKE_LOG"; KLATCH_HOME="$work/hb" KLATCH_KEY_DIR="$work/kb" scen stay --arm nudge > /dev/null 2>&1; pn="$(grep '^alpha ' "$FAKE_LOG" | norm)"
+if [ -n "$pb" ] && [ "$pb" = "$pn" ]; then ok "baseline and nudge arms give the same prompt text"; else bad "arm prompts differ: $pb /// $pn"; fi
+
+# arms with distinct binaries (#1210)
+: > "$FAKE_BINLOG"
+for arm in baseline text nudge; do
+  out="$(KLATCH_HOME="$work/hx-$arm" KLATCH_KEY_DIR="$work/kx-$arm" scen stay --arm $arm 2>/dev/null | tail -1)"
+  if [ "$arm" = baseline ]; then want="$work/klatch-base"; else want="$work/klatch-$arm"; fi
+  if python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['binary']==sys.argv[2] and len(d['binary_sha256'])==64 else 1)" "$out" "$want"; then ok "$arm records its own binary and checksum"; else bad "$arm binary: $out"; fi
+  if grep -q " $want\$" "$FAKE_BINLOG"; then ok "$arm agents ran with the $arm binary"; else bad "$arm agents binary: $(cat "$FAKE_BINLOG")"; fi
+done
+# baseline and text refuse to fall back on the generic binary (that is how the first runs got one binary for two arms)
+if env -u KLATCH_BASELINE_BIN FAKE_MODE=stay KLATCH_BIN="$work/klatch" CLAUDE_BIN="$work/claude" KLATCH_HOME="$work/hz1" KLATCH_KEY_DIR="$work/kz1" bash "$run" --arm baseline > "$work/o" 2>&1; then bad "baseline without KLATCH_BASELINE_BIN exited 0"; elif grep -q KLATCH_BASELINE_BIN "$work/o"; then ok "baseline needs KLATCH_BASELINE_BIN"; else bad "baseline msg: $(cat "$work/o")"; fi
+if env -u KLATCH_TEXT_BIN FAKE_MODE=stay KLATCH_BIN="$work/klatch" CLAUDE_BIN="$work/claude" KLATCH_HOME="$work/hz2" KLATCH_KEY_DIR="$work/kz2" bash "$run" --arm text > "$work/o" 2>&1; then bad "text without KLATCH_TEXT_BIN exited 0"; elif grep -q KLATCH_TEXT_BIN "$work/o"; then ok "text needs KLATCH_TEXT_BIN"; else bad "text msg: $(cat "$work/o")"; fi
+out="$(env -u KLATCH_NUDGE_BIN FAKE_MODE=stay KLATCH_BIN="$work/klatch" CLAUDE_BIN="$work/claude" KLATCH_HOME="$work/hz3" KLATCH_KEY_DIR="$work/kz3" bash "$run" --arm nudge 2>/dev/null | tail -1)"
+if python3 -c "import json,sys; sys.exit(0 if json.loads(sys.argv[1])['binary']==sys.argv[2] else 1)" "$out" "$work/klatch"; then ok "nudge falls back on KLATCH_BIN"; else bad "nudge fallback: $out"; fi
+
+# --hook-events: stream-json with hook events kept in the run dir; the metric counts digest nudge lines (#1210)
+: > "$FAKE_LOG"
+rd="$work/rundir"; mkdir -p "$rd"
+out="$(KLATCH_RUN_DIR="$rd" KLATCH_HOME="$work/hh1" KLATCH_KEY_DIR="$work/kh1" scen stay --arm nudge --hook-events 2>/dev/null | tail -1)"
+al="$(grep '^alpha ' "$FAKE_LOG")"
+case "$al" in *"--include-hook-events"*"--verbose"*|*"--verbose"*"--include-hook-events"*) ok "--hook-events adds --include-hook-events and --verbose";; *) bad "hook flags: $al";; esac
+case "$al" in *"--output-format stream-json"*) ok "--hook-events switches to stream-json";; *) bad "output format: $al";; esac
+if [ -s "$rd/dm-adoption-run/alpha.stream.jsonl" ] && grep -q PostToolUse "$rd/dm-adoption-run/helper.stream.jsonl"; then ok "the stream-json is written to the run directory"; else bad "no stream files: $(ls "$rd/dm-adoption-run" 2>&1)"; fi
+if python3 -c "
+import json,sys
+d=json.loads(sys.argv[1])['agents']
+a=d['alpha']
+sys.exit(0 if a['hook_events']==3 and a['hook_post_tool_use']==2 and a['nudge_lines']==1 and d['exchange']['nudge_lines']==2 and a['turns']==3 else 1)" "$out"; then ok "the result counts hook events and digest nudge lines"; else bad "hook counts: $out"; fi
+: > "$FAKE_LOG"
+out="$(KLATCH_HOME="$work/hh2" KLATCH_KEY_DIR="$work/kh2" scen stay --arm nudge 2>/dev/null | tail -1)"
+if grep '^alpha ' "$FAKE_LOG" | grep -q -- 'include-hook-events'; then bad "hook flag leaked without --hook-events"; else ok "no hook flag without --hook-events"; fi
+if python3 -c "import json,sys; a=json.loads(sys.argv[1])['agents']['alpha']; sys.exit(0 if 'nudge_lines' not in a else 1)" "$out"; then ok "no nudge count when hook events are not recorded"; else bad "nudge count without hooks: $out"; fi
+# metric.py alone: one hook line counts once though output and stdout repeat it; model text and hook_started do not count
+printf '%s\n' '{"type":"system","subtype":"hook_response","hook_event":"PostToolUse","output":"a for a longer exchange use: klatch dm x","stdout":"a for a longer exchange use: klatch dm x"}' '{"type":"system","subtype":"hook_started","hook_event":"PostToolUse"}' '{"type":"assistant","message":"for a longer exchange use: klatch dm quoted by the model"}' > "$work/ev.jsonl"
+out="$(python3 "$metric" --history "$work/canned.txt" --hook-events alpha="$work/ev.jsonl" 2>&1)"
+if python3 -c "
+import json,sys
+a=json.loads(sys.argv[1])['agents']['alpha']
+sys.exit(0 if a['nudge_lines']==1 and a['hook_events']==1 and a['hook_post_tool_use']==1 else 1)" "$out"; then ok "metric counts nudge lines only from hook responses, once each"; else bad "metric hook events: $out"; fi
+out="$(python3 "$metric" --history "$work/canned.txt" --hook-events alpha="$work/nope.jsonl" 2>&1)"
+if python3 -c "import json,sys; a=json.loads(sys.argv[1])['agents']['alpha']; sys.exit(0 if a['nudge_lines']==0 and a['hook_events']==0 else 1)" "$out"; then ok "a missing hook events file counts zero"; else bad "missing events: $out"; fi
 if scen stay --arm bogus > "$work/o" 2>&1; then bad "an unknown arm exited 0"; else ok "an unknown arm is rejected"; fi
 
 # isolation: refuses the live store, and makes private dirs when the harness gave none
 if KLATCH_HOME="$HOME/.klatch" KLATCH_KEY_DIR="$work/k" scen stay > "$work/o" 2>&1; then bad "the live ~/.klatch was accepted"; else ok "refuses KLATCH_HOME=\$HOME/.klatch"; fi
 # shellcheck disable=SC2016
-out="$(env -u KLATCH_HOME -u KLATCH_KEY_DIR bash -c 'FAKE_MODE=stay KLATCH_BIN="$1" CLAUDE_BIN="$2" bash "$3"' _ "$work/klatch" "$work/claude" "$run" 2>/dev/null | tail -1)"
+out="$(env -u KLATCH_HOME -u KLATCH_KEY_DIR bash -c 'FAKE_MODE=stay KLATCH_BIN="$1" KLATCH_BASELINE_BIN="$1" CLAUDE_BIN="$2" bash "$3"' _ "$work/klatch" "$work/claude" "$run" 2>/dev/null | tail -1)"
 if python3 -c "import json,sys; json.loads(sys.argv[1])" "$out" 2>/dev/null; then ok "without KLATCH_HOME the scenario makes its own private store"; else bad "self isolation: $out"; fi
 if [ ! -e "$HOME/.klatch/rooms" ] || ! grep -q 'seeking: slug' "$HOME/.klatch/rooms/lobby" 2>/dev/null; then ok "nothing was written to the live store"; else bad "live store touched"; fi
 
@@ -176,7 +244,7 @@ if [ $((n % 2)) = 1 ]; then export FAKE_MODE=stay; else export FAKE_MODE=move; f
 exec bash "$RUN_SH"
 FAKE
 chmod +x "$work/alt.sh"
-export ALT_COUNT="$work/altcount" RUN_SH="$run" KLATCH_BIN="$work/klatch" CLAUDE_BIN="$work/claude"
+export ALT_COUNT="$work/altcount" RUN_SH="$run" KLATCH_BIN="$work/klatch" KLATCH_BASELINE_BIN="$work/klatch" CLAUDE_BIN="$work/claude"
 out="$(python3 "$repeat" --runs 4 --timeout 60 --json "$work/agg.json" -- "$work/alt.sh" 2>&1)"; code=$?
 if [ "$code" -eq 0 ]; then ok "repeat.py runs the scenario N times"; else bad "repeat exit $code: $out"; fi
 case "$out" in *"agent exchange"*"adoption"*"mean 0.50"*"sd 0.58"*) ok "the aggregate reports adoption share 0.50 with sd 0.58";; *) bad "aggregate: $out";; esac
