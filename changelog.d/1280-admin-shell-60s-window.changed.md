@@ -1,0 +1,1 @@
+- The `klatch admin shell` unlock window now defaults to 60 seconds instead of 5 minutes (still 10 to 1800 seconds through `klatch admin unlock-window`), and SECURITY.md names the keystroke injection risk of an open shell and what a worker or agent can and cannot do at the prompt (#1280, #1276).

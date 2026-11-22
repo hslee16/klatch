@@ -281,7 +281,7 @@ pub enum AdminCmd {
     /// Set a new admin passphrase when the old one is forgotten, proved by the store's recovery code (`admin recovery`)
     ResetPassphrase,
     /// Show or set how long one typed passphrase stays good for the commands of ONE long-lived process, in seconds
-    /// (10 to 1800, default 300; `--off` puts the default back). Only `admin shell` is such a process
+    /// (10 to 1800, default 60; `--off` puts the default back). Only `admin shell` is such a process
     UnlockWindow {
         secs: Option<i64>,
         #[arg(long, conflicts_with = "secs")]

@@ -53,15 +53,20 @@ Supported versions: the newest release only, the current practice and not a poli
   store file. Residual, said plainly: a passphrase or recovery code typed into a terminal that a program hosts or
   relays (a pty it owns and shows you, a screen it forwards) is captured, and these checks cannot prevent a relay of
   the whole terminal. The defence that remains is you reading what the prompt names and typing the passphrase only
-  for a command you asked for. `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
+  for a command you asked for. A worker or agent started from your terminal can cause the prompt to appear but cannot
+  answer it: the prompt names the exact command and you decide (#1276; the old worker and agent refusals went with
+  #1233, and the passphrase is the proof). A program that hosts or relays the whole terminal is the documented residual
+  above (#1261 covers the other stated limits). While `klatch admin shell` is open, a program that shares its terminal
+  may inject keystrokes (TIOCSTI, where the OS allows it) and run admin and launcher commands without a prompt; the
+  60 second default window keeps that short, and klatch does not probe for TIOCSTI (#1280). `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
   reads its events from standard input and the prompt cannot show them (#1279); an open `klatch admin shell` window
-  on a shared terminal is exposed to injected keystrokes (#1280). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  on a shared terminal is exposed to injected keystrokes (#1280; see below). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
   three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
   audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
   constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
   that accepts nothing else decides every act; the admin agent role is unchanged (it acts inside its allowlist and
   never edits a floor). One `klatch` command is one process, so each command asks. `klatch admin shell` is the one
-  long-lived process: it asks once and holds an unlock window (5 minutes by default, `klatch admin unlock-window`
+  long-lived process: it asks once and holds an unlock window (60 seconds by default, `klatch admin unlock-window`
   sets 10 to 1800 seconds) in its own memory and nowhere else; no file, environment variable or token carries it, a
   child or another `klatch` starts locked, and changing the passphrase voids it. If you forget the passphrase,
   `klatch admin reset-passphrase` takes the store's recovery code (`klatch admin recovery` shows it; keep it) and sets
