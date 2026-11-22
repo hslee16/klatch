@@ -117,7 +117,7 @@ pub use scope::{
     MemberAttrs, SHARED_SCOPE, WORK_ITEM_NOUNS, canonical_claim_path, claim_scope, scopes_collide,
     valid_scope, work_item_name,
 };
-pub use stuck::{StuckEvent, stuck_events};
+pub use stuck::{StuckEvent, claim_label, stuck_events};
 pub use subagent_name::invokes_klatch_unnamed;
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
