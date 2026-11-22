@@ -51,7 +51,7 @@ pub(crate) enum MessagingCmd {
         #[arg(long)]
         label: Option<String>,
         /// Make this a handoff: a short kind (letters, digits, dot, dash, underscore) that klatch stores and
-        /// delivers and never interprets
+        /// delivers and never interprets, except `broadcast`: a message for every member, shown even in a narrowed view
         #[arg(long)]
         kind: Option<String>,
         /// An opaque payload for the next member (at most 16 KiB; needs --kind); held to the same rules as the body
@@ -156,7 +156,7 @@ pub(crate) enum MessagingCmd {
     #[command(display_order = 25)]
     Unmute { room: String },
     /// Show or set what your hook and wake show without being asked: `all` (the default) or `scope` (only your own
-    /// scope, messages addressed to you as @your-name, and broadcasts as @all). `read` and `history` still show all
+    /// scope, messages addressed to you as @your-name, and broadcasts, `post --kind broadcast` or the older @all). `read` and `history` still show all
     #[command(display_order = 26)]
     View {
         /// `all` or `scope`; omit to show the current view

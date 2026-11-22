@@ -11,6 +11,15 @@ const KEY: &str = "view:";
 /// The word that addresses every member (`@all`).
 pub(super) const BROADCAST: &str = "all";
 
+/// The message kind of a broadcast (#674, decided on #635): a message for every member, whatever their view. The
+/// word `@all` in a body still counts until clients move to the kind; `all` is a reserved name so no member collides.
+pub const BROADCAST_KIND: &str = "broadcast";
+
+/// Whether `m` is a broadcast: it has the kind `broadcast`, or (the older form) it mentions `@all`.
+pub(super) fn is_broadcast(m: &Message) -> bool {
+    m.kind.as_deref() == Some(BROADCAST_KIND) || crate::domain::mentions(&m.body, BROADCAST)
+}
+
 /// What a member is shown without asking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryView {
@@ -66,8 +75,7 @@ impl<S: Store> Gateway<S> {
         let mut kept = Vec::new();
         let mut hidden = Vec::new();
         for m in messages {
-            let addressed = crate::domain::mentions(&m.body, &who.member)
-                || crate::domain::mentions(&m.body, BROADCAST);
+            let addressed = crate::domain::mentions(&m.body, &who.member) || is_broadcast(&m);
             let same_scope = match scopes.get(&m.sender) {
                 Some(s) => *s == mine,
                 None => {

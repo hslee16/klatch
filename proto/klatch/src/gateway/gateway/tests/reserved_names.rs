@@ -44,3 +44,12 @@ fn the_human_keeps_acting_as_admin_on_the_launchers_gateway() {
     g.join(&alice(), "r").unwrap();
     g.admin_set_admin_agent(&admin(), "ada", true).unwrap();
 }
+
+// #674: `all` is the broadcast word (`@all`), so no member may take it
+#[test]
+fn all_is_reserved_so_no_member_collides_with_the_broadcast_word() {
+    let g = members_gateway();
+    let p = Principal::unattributed("all");
+    assert_eq!(rule_of(g.join(&p, "r").unwrap_err()), "reserved-name");
+    assert!(crate::domain::is_reserved_name("all"));
+}
