@@ -15,6 +15,7 @@
 
 mod filelimit;
 mod limit;
+mod terminal;
 mod tty;
 mod verifier;
 mod window;
@@ -99,6 +100,12 @@ impl From<crate::domain::Error> for ProofError {
 pub trait Prompt {
     /// A secret, typed with echo off.
     fn secret(&mut self, label: &str) -> Result<Zeroizing<String>, ProofError>;
+
+    /// The terminal this prompt is on, as a short label that is not secret (#1274). The failure limit counts per
+    /// terminal. The default names the process's controlling terminal; a test supplies its own.
+    fn terminal(&self) -> String {
+        terminal::current()
+    }
 
     /// Tell the person why an entry was not taken (never the entry itself). The default says nothing.
     fn notice(&mut self, _text: &str) {}
@@ -191,14 +198,21 @@ pub fn prove<S: PolicyStore + ?Sized>(
     unlock: &Unlock,
     what: &str,
 ) -> Result<AdminProof, ProofError> {
+    let term = prompt.terminal();
     let verifier = load(store)?;
     let id = verifier.id();
     if unlock.is_open(at, &id, window_len(store)) {
         return Ok(AdminProof(()));
     }
-    let wait = limit::wait_secs(store, at.unix)?;
+    let wait = limit::wait_secs(store, &term, at.unix)?;
     if wait > 0 {
-        audit_throttled(store, "proof-locked", "", &format!("wait {wait}s"), at.unix);
+        audit_throttled(
+            store,
+            "proof-locked",
+            "",
+            &format!("wait {wait}s terminal={term}"),
+            at.unix,
+        );
         return Err(ProofError::Locked(wait));
     }
     let typed = match prompt.secret(&format!("admin passphrase to approve `{what}`")) {
@@ -209,7 +223,7 @@ pub fn prove<S: PolicyStore + ?Sized>(
         }
         Err(e) => return Err(e),
     };
-    let count = match limit::charge(store, at.unix)? {
+    let count = match limit::charge(store, &term, at.unix)? {
         Ok(c) => c,
         Err(wait) => return Err(ProofError::Locked(wait)),
     };
@@ -222,12 +236,12 @@ pub fn prove<S: PolicyStore + ?Sized>(
             store,
             "proof-failed",
             "",
-            &format!("failures={count}"),
+            &format!("failures={count} terminal={term}"),
             at.unix,
         );
         return Err(ProofError::Wrong);
     }
-    limit::clear(store, at.unix)?;
+    limit::clear(store, &term, at.unix)?;
     let mut opened_for = id;
     if verifier.is_stale()
         && let Ok(fresh) = Verifier::create(&typed, verifier::CURRENT)
@@ -313,6 +327,7 @@ pub fn init<S: PolicyStore + ?Sized>(
                 .into(),
         ));
     }
+    let term = prompt.terminal();
     let new = ask_new(prompt)?;
     let v = Verifier::create(&new, verifier::CURRENT).map_err(ProofError::Store)?;
     // the check and the store are one write transaction: two processes setting the first passphrase at once, or
@@ -330,7 +345,7 @@ pub fn init<S: PolicyStore + ?Sized>(
             "an admin passphrase was set meanwhile; nothing was changed".into(),
         ));
     }
-    limit::clear(store, at.unix)?;
+    limit::clear(store, &term, at.unix)?;
     audit(store, "passphrase-set", "", "first passphrase", at.unix);
     unlock.open(at, &v.id());
     Ok(AdminProof(()))
@@ -367,13 +382,20 @@ pub fn reset<S: PolicyStore + ?Sized>(
     unlock: &Unlock,
 ) -> Result<AdminProof, ProofError> {
     use subtle::ConstantTimeEq;
-    let wait = limit::wait_secs(store, at.unix)?;
+    let term = prompt.terminal();
+    let wait = limit::wait_secs(store, &term, at.unix)?;
     if wait > 0 {
-        audit_throttled(store, "proof-locked", "", &format!("wait {wait}s"), at.unix);
+        audit_throttled(
+            store,
+            "proof-locked",
+            "",
+            &format!("wait {wait}s terminal={term}"),
+            at.unix,
+        );
         return Err(ProofError::Locked(wait));
     }
     let typed = prompt.secret("recovery code")?;
-    let count = match limit::charge(store, at.unix)? {
+    let count = match limit::charge(store, &term, at.unix)? {
         Ok(c) => c,
         Err(wait) => return Err(ProofError::Locked(wait)),
     };
@@ -390,7 +412,7 @@ pub fn reset<S: PolicyStore + ?Sized>(
             store,
             "proof-failed",
             "recovery",
-            &format!("failures={count}"),
+            &format!("failures={count} terminal={term}"),
             at.unix,
         );
         return Err(ProofError::Wrong);
@@ -398,7 +420,7 @@ pub fn reset<S: PolicyStore + ?Sized>(
     let new = ask_new(prompt)?;
     let v = Verifier::create(&new, verifier::CURRENT).map_err(ProofError::Store)?;
     store_verifier(store, &v, at.unix)?;
-    limit::clear(store, at.unix)?;
+    limit::clear(store, &term, at.unix)?;
     audit(store, "passphrase-reset", "", "by recovery code", at.unix);
     unlock.open(at, &v.id());
     Ok(AdminProof(()))
