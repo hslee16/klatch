@@ -1,0 +1,1 @@
+- Tests pin that a stale admin passphrase verifier whose stored text is not its canonical encoding proves but is not rewritten, and that upper-case hex is corrupt (#1284).

@@ -1,0 +1,4 @@
+The stale-rehash compare leaves a non-canonical verifier row alone, and a test pins it (#1284; no schema change; 2026-11-22).
+`prove` raises the cost of a weaker verifier only when the stored row is exactly `Verifier::encode()` of the one it verified, inside one transaction. `Verifier::parse` is lenient about parameter order and leading zeros (`p=1,t=01,m=64`) but strict about lower-case hex, so a row can be a valid stale verifier without being its canonical text. Such a row proves the passphrase, is not rewritten and is not audited as rehashed. Upper-case hex does not parse, so it is corrupt and refuses.
+
+Canonicalising on read was the other option; it would let a row be rewritten that no code of ours wrote, and the exact compare is what makes the rewrite safe against a concurrent change (#1233). Only klatch writes this row, so the case is a hand edit and is left alone. Two tests pin both behaviours.
