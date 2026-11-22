@@ -454,7 +454,7 @@ fn input_box(input: io::BufReader<Inbox>) -> Box<dyn BufRead + Send> {
 /// Write the readiness line as one complete write, newline included. `eprintln!` can reach the stream in several
 /// writes, so a launcher polling the log could read half an address ("127.0.0.1:" or a port cut short) and parse it
 /// (#1173, #1207). Launchers also wait for the newline before they trust the line.
-fn announce_listening(out: &mut dyn Write, addr: &std::net::SocketAddr, max_connections: usize) {
+fn announce_listening(out: &mut dyn Write, addr: &dyn std::fmt::Display, max_connections: usize) {
     let line = format!(
         "klatch-server: http listening on {addr} (loopback only, up to {max_connections} connections), GET {STREAM_PATH}, POST {FRAMES_PATH} and POST {} (MCP)\n",
         crate::mcp_http::PATH
@@ -521,8 +521,7 @@ mod tests {
     fn the_listening_line_reaches_the_stream_in_one_write() {
         // A reader that polls the log must never see half of the line, so the whole line is one write (#1173, #1207).
         let mut out = Counting::default();
-        let addr: std::net::SocketAddr = "127.0.0.1:43210".parse().unwrap();
-        announce_listening(&mut out, &addr, 8);
+        announce_listening(&mut out, &"127.0.0.1:43210", 8);
         assert_eq!(out.writes, 1);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.starts_with("klatch-server: http listening on 127.0.0.1:43210 "));
