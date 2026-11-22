@@ -1,0 +1,1 @@
+- On Linux, a bus with no login collection (gnome-keyring says "Object does not exist") is now reported as a locked keyring with what to do, instead of "no key"; the container tests cover it and a locked collection (#561).

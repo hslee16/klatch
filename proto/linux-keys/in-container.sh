@@ -17,7 +17,16 @@ if [ "$variant" = locked ]; then
   # the keyring daemon is running but its login collection was never unlocked and there is no display to ask on
   gnome-keyring-daemon --start --components=secrets > /dev/null 2>&1
   cd /src/proto
-  cargo test -q --locked -p klatch --test linux_locked -- --ignored
+  cargo test -q --locked -p klatch --test linux_locked -- --ignored a_locked_keyring_fails a_real_keyring_with_no_login
+  # the login collection exists and is then locked again (a desktop session that ended), on a bus of its own
+  dbus-run-session -- bash -c '
+    echo -n throwaway-login-password | gnome-keyring-daemon --unlock --components=secrets > /dev/null 2>&1
+    echo -n 0000 | secret-tool store --label seed service klatch-seed name seed
+    busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service Lock \
+      ao 1 /org/freedesktop/secrets/collection/login > /dev/null
+    cd /src/proto
+    DISPLAY= cargo test -q --locked -p klatch --test linux_locked -- --ignored a_real_locked_login 2>&1
+  '
   exit 0
 fi
 
