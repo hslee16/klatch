@@ -179,6 +179,7 @@ repo_checks() {
     && check release/test-verify-published.sh \
     && check proto/scripts/test-team.sh \
     && check proto/scripts/test-sweep.sh \
+    && check proto/scripts/test-gh-watch.sh \
     && check proto/scripts/test-integrator.sh \
     && check proto/scripts/test-ask-supervisor.sh \
     && check proto/scripts/test-merge-union.sh \
@@ -191,7 +192,7 @@ repo_checks() {
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/check-integration-examples.sh \
     && check env KLATCH_BIN="$proto/target/debug/klatch" bash clients/recipes/launcher-demo.sh \
     && { ! command -v actionlint > /dev/null 2>&1 || check actionlint; } \
-    && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh experiments/dm-adoption/run.sh experiments/dm-adoption/test-dm-adoption.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/test-merge-union.sh proto/scripts/authz-audit proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh proto/scripts/ask-supervisor proto/scripts/test-ask-supervisor.sh; }
+    && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh experiments/dm-adoption/run.sh experiments/dm-adoption/test-dm-adoption.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/gh-watch proto/scripts/test-gh-watch.sh proto/scripts/test-merge-union.sh proto/scripts/authz-audit proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh proto/scripts/ask-supervisor proto/scripts/test-ask-supervisor.sh; }
 }
 step "release and shell checks"     no    "$root" repo_checks
 

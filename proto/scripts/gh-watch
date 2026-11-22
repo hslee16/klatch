@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Launcher for the webhook-driven GitHub watcher (#1329; docs in PR-SWEEP.md, "GitHub watcher").
+#   gh-watch serve [receiver options]   run the loopback receiver in the foreground (detach it with nohup, see the docs)
+#   gh-watch selftest                   run the fixture tests (nothing leaves this machine)
+#   gh-watch forward-command [opts]     PRINT the commands the human runs; it runs none of them
+# serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
+#                --post-min INFO|ALERT --max-body BYTES   (--bind is accepted but only loopback is allowed)
+# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either.
+set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+receiver="$here/gh-watch-receiver.py"
+repo_slug="hslee16/klatch"
+events="pull_request,check_run,workflow_run,push,issues,issue_comment"
+
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; }
+die() { echo "gh-watch: $*" >&2; exit 2; }
+
+default_out="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"
+out_dir="$default_out"; secret_file=""; port=8787
+
+# read --out-dir, --secret-file and --port out of the arguments (the rest is passed on untouched)
+scan_args() {
+  rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out-dir) [ $# -ge 2 ] || die "--out-dir needs a value"; out_dir="$2"; shift 2 ;;
+      --secret-file) [ $# -ge 2 ] || die "--secret-file needs a value"; secret_file="$2"; shift 2 ;;
+      --port) [ $# -ge 2 ] || die "--port needs a value"; port="$2"; shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  [ -n "$secret_file" ] || secret_file="$out_dir/secret"
+  case "$port" in '' | *[!0-9]*) die "--port must be a number" ;; esac
+  case "$out_dir/" in */.klatch/*) die "--out-dir must not be inside .klatch (never the live store)" ;; esac
+}
+
+cmd_serve() {
+  scan_args "$@"
+  exec python3 -I "$receiver" --out-dir "$out_dir" --secret-file "$secret_file" --port "$port" ${rest[@]+"${rest[@]}"}
+}
+
+cmd_selftest() { exec python3 -I "$here/test_gh_watch.py"; }
+
+cmd_forward_command() {
+  scan_args "$@"
+  echo "# Run these yourself; gh-watch never runs them. Nothing here is run by an agent."
+  echo
+  echo "# 1. One time: allow gh to manage repository webhooks (opens a browser to confirm)"
+  echo "gh auth refresh -s admin:repo_hook"
+  echo
+  echo "# 2. One time: create the secret file (mode 0600, only you can read it; the receiver refuses anything looser)"
+  # shellcheck disable=SC2016
+  printf "(umask 077; mkdir -p %q; python3 -c 'import secrets; print(secrets.token_hex(32))' > %q)\n" "$out_dir" "$secret_file"
+  echo
+  echo "# 3. Start the receiver (see PR-SWEEP.md for the nohup form):"
+  printf '%q serve --out-dir %q --secret-file %q --port %s\n' "$here/gh-watch" "$out_dir" "$secret_file" "$port"
+  echo
+  echo "# 4. Forward the repository events to it (keep it running; it creates a development webhook on the repository)"
+  # shellcheck disable=SC2016  # the $(cat ...) is meant to be printed, not expanded here
+  printf 'gh webhook forward --repo=%s --events=%s --url=http://127.0.0.1:%s/hook --secret "$(cat %q)"\n' "$repo_slug" "$events" "$port" "$secret_file"
+  echo
+  echo "# Watch the notes with:  tail -F $out_dir/gh-watch.log"
+}
+
+case "${1:-}" in
+  serve) shift; cmd_serve "$@" ;;
+  selftest) cmd_selftest ;;
+  forward-command) shift; cmd_forward_command "$@" ;;
+  -h | --help | help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
