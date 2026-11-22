@@ -120,7 +120,19 @@ step "clippy (warnings are errors)" no    "$proto" cargo clippy --workspace --al
 step "feature and bare builds"      no    "$proto" bash -c 'cargo build -p klatch --no-default-features --features client --locked && cargo build -p klatch --no-default-features --locked'
 # the optional real Jev transport (#871) is behind a feature no default build compiles: lint and test it here
 step "jev-http feature"             no    "$proto" bash -c 'cargo clippy -p klatch --features jev-http --all-targets --locked -- -D warnings && cargo test -p klatch --features jev-http --lib --locked jev::'
-step "workspace tests"              hegel "$proto" cargo test --workspace --locked
+# The CI step "Unit and integration tests" runs cargo nextest and then the doctests (#1331). A machine without nextest
+# falls back to cargo test and says so (cargo install cargo-nextest --locked, or brew install cargo-nextest).
+workspace_tests() {
+  if cargo nextest --version > /dev/null 2>&1; then
+    cargo nextest run --workspace --locked && cargo test --workspace --doc --locked
+  else
+    cargo test --workspace --locked
+  fi
+}
+if ! cargo nextest --version > /dev/null 2>&1; then
+  echo "gate: cargo-nextest is not installed; the workspace tests run with cargo test (CI uses nextest; install it for the faster, same run)"
+fi
+step "workspace tests"              hegel "$proto" workspace_tests
 # a credentialed worker runs this gate with KLATCH_IDENTITY_FILE set (#613); set a throwaway one on purpose and run
 # the suites that build their own homes, to prove they are immune to it
 step "immune to an inherited bundle" no   "$proto" env KLATCH_IDENTITY_FILE=/nonexistent/gate-bogus.bundle cargo test -p klatch --locked --test caller --test anchor --test board --test lobby --test claim_target --test clarify

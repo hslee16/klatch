@@ -92,6 +92,15 @@ else
   if grep -q "licence notices .*skipped (cargo-about is not installed; CI runs it)" "$work/out"; then ok "without cargo-about the notices step is skipped and says so (#1034)"; else bad "notices skip: $(cat "$work/out")"; fi
 fi
 
+# the workspace tests use nextest, then the doctests, as CI does (#1331); without nextest the gate says so and uses cargo test
+run_gate ""
+if grep -q "^nextest run --workspace --locked" "$work/log" && grep -q "^test --workspace --doc --locked" "$work/log" && ! grep -q "^test --workspace --locked" "$work/log"; then ok "with nextest the gate runs nextest and the doctests, as CI does (#1331)"; else bad "nextest step: $(cat "$work/log")"; fi
+run_gate "nextest --version"
+if grep -q "GATE PASSED" "$work/out" && grep -q "cargo-nextest is not installed" "$work/out" && grep -q "^test --workspace --locked" "$work/log" && ! grep -q "^nextest run" "$work/log"; then ok "without nextest the gate prints a notice and falls back to cargo test (#1331)"; else bad "nextest fallback: $(cat "$work/out")"; fi
+if run_gate "nextest run"; then bad "the gate passed although nextest failed (#1331)"; else
+  if grep -q "FAILED at step" "$work/out" && grep -q "workspace tests" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing nextest run fails the gate at the workspace tests step (#1331)"; else bad "nextest failure: $(cat "$work/out")"; fi
+fi
+
 run_gate "" --long
 if grep -q "cases=5000" "$work/log"; then ok "--long raises the case budget"; else bad "--long: $(cat "$work/log")"; fi
 run_gate ""

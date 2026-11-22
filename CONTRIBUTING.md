@@ -211,7 +211,10 @@ Settings are environment variables listed at the top of the script (budget `TEAM
   after every check is confirmed green.
 - Write the test first and watch it fail; say so in the pull request if a test was not red first.
 - `cd proto && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` before you
-  push (CI fails on a formatting difference).
+  push (CI fails on a formatting difference). CI and the gate run the tests with `cargo nextest run --workspace --locked`
+  (install it with `cargo install cargo-nextest --locked` or `brew install cargo-nextest`; about twice as fast, #1331), then
+  `cargo test --workspace --doc --locked` for doctests, which nextest does not run. Without nextest the gate falls back to
+  `cargo test --workspace` and says so.
 - Property tests (Hegel) are in `proto/klatch/tests/properties.rs`; see "Property tests" above.
 - A bug, gap or limitation you find gets a GitHub issue, even if you fix it in the same pull request.
 - Parallel pull requests must not share a line (#502). **CHANGELOG:** add a fragment file in `changelog.d/` (see its
