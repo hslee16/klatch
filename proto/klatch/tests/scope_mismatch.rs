@@ -18,6 +18,7 @@ fn hook(h: &Home, scope: Option<&str>, event: &str, sid: &str, cwd: &str) -> Out
         r#"{{"session_id":"{sid}","cwd":"{cwd}","hook_event_name":"{event}","transcript_path":"/x"}}"#
     );
     let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+    c.env_remove("KLATCH_IDENTITY_FILE");
     c.env_clear()
         .env("KLATCH_HOME", &h.0)
         .env("KLATCH_KEY_DIR", h.0.join("keys"))
