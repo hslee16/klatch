@@ -1,0 +1,1 @@
+- `klatch-server` ships next to `klatch` in every release archive, in the platform wheels (as a second command) and, once the tap is updated, in the Homebrew formula; `install.sh` installs both, one CycloneDX SBOM per archive covers both, `klatch-server --version` is new, and a release check refuses a non-loopback bind on the packaged binary (#1236).

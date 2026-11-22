@@ -27,10 +27,13 @@ How you installed it decides:
 
 | Installed with | Remove with |
 |---|---|
-| Homebrew | `brew uninstall klatch` (and `brew untap hslee16/klatch`) |
-| the install script | `rm ~/.local/bin/klatch` (or your `KLATCH_INSTALL_DIR`) |
-| `cargo install` | `cargo uninstall klatch` |
-| `pip` / `npm` | `pip uninstall klatch` / `npm uninstall @klatch/client` (these are the client libraries; they never contained the binary) |
+| Homebrew | `brew uninstall klatch` (removes `klatch-server` too; and `brew untap hslee16/klatch`) |
+| the install script | `rm ~/.local/bin/klatch ~/.local/bin/klatch-server` (or in your `KLATCH_INSTALL_DIR`) |
+| `cargo install` | `cargo uninstall klatch` (`klatch-server` is not on crates.io; if you built it yourself with `cargo install --path proto/klatch-server`, `cargo uninstall klatch-server`) |
+| `pip` | `pip uninstall klatch` (the platform wheel holds both binaries; the pure client wheel holds neither) |
+| `npm` | `npm uninstall @klatch/client` (the client library; it never contained a binary) |
+
+If a `klatch-server daemon` is running, stop it first (`kill` its process; SIGTERM removes its socket).
 
 `klatch init` writes the absolute path of the binary into the hooks, so remove the hooks first (or at the same time);
 a hook that points at a binary that is gone prints one visible line and does nothing else.

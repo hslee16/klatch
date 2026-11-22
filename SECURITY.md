@@ -34,6 +34,15 @@ reviewed by an outside person before release (#167).
   (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
   of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
+- **`klatch-server` is a second binary with a second, different claim.** It ships next to `klatch` in every archive,
+  wheel and Homebrew install, and it does open sockets, so the claim above does not cover it. Its claim is:
+  klatch-server opens loopback listeners only, starts no program and makes no outbound connection. A non-loopback bind
+  (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
+  closes a peer of another user, and no networking crate or HTTP client is in its dependency tree.
+  `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
+  the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
+  packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
+  not published on crates.io; it comes from the archives, the platform wheels and Homebrew.
 
 ## What is not protected (read this)
 
@@ -75,8 +84,8 @@ made with `gh` or `curl` are not.
 
 The release carries, for each of macOS arm64, macOS x86_64, and Linux x86_64 and aarch64 (each in a dynamic glibc build
 and a static musl build): the archive
-(`klatch-<version>-<target>.tar.gz`: the binary, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a CycloneDX 1.5 SBOM
-(`klatch-<version>-<target>.cdx.json`). For the whole release: `SHA256SUMS` and its Sigstore signature
+(`klatch-<version>-<target>.tar.gz`: `klatch`, `klatch-server`, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a
+CycloneDX 1.5 SBOM covering both binaries (`klatch-<version>-<target>.cdx.json`). For the whole release: `SHA256SUMS` and its Sigstore signature
 `SHA256SUMS.sigstore.json`.
 
 **1. Build provenance (GitHub CLI).** Proves the file was built by this repository's release workflow, from which

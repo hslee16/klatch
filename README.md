@@ -92,6 +92,10 @@ short-lived credential bundle so its messages are marked verified. klatch runs a
 transport: **other processes running as the same user can read the store and the key**, and it is not isolation from a
 hostile worker. There has been no outside review. [SECURITY.md](SECURITY.md) lists what is and is not protected.
 
+The release also ships a second binary, `klatch-server`, next to `klatch`. Its claim is a different one: klatch-server
+opens loopback listeners only, starts no program and makes no outbound connection. It refuses a non-loopback bind, and
+the "no network transport" wording above is about `klatch`.
+
 **Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in everything
 klatch does.** At rest is done; on the wire there is nothing to encrypt yet because there is no network transport. An
 outside review is a hard gate for an unmarked release (`DESIGN.md` section 23).

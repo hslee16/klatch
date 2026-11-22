@@ -13,12 +13,17 @@ fail() { printf '  FAIL  %s\n' "$1"; fails=$((fails + 1)); }
 
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
-# a fake release for tag v0.1.0.dev1 (files are named for version 0.1.0-dev.1) and one target
-make_release() { # dir target
+# a fake release for tag v0.1.0.dev1 (files are named for version 0.1.0-dev.1) and one target; the archive holds klatch and
+# klatch-server, as every release archive does (#1236), unless a third argument says "no-server"
+make_release() { # dir target [no-server]
   rel="$1/v0.1.0.dev1"; target="$2"; name="klatch-0.1.0-dev.1-$target"
   mkdir -p "$rel" "$1/stage/$name"
   printf '#!/bin/sh\necho "klatch 0.1.0-dev.1"\n' > "$1/stage/$name/klatch"
   chmod 755 "$1/stage/$name/klatch"
+  if [ "${3:-}" != "no-server" ]; then
+    printf '#!/bin/sh\necho "klatch-server 0.1.0-dev.1"\n' > "$1/stage/$name/klatch-server"
+    chmod 755 "$1/stage/$name/klatch-server"
+  fi
   echo MIT > "$1/stage/$name/LICENSE"; echo notices > "$1/stage/$name/THIRD-PARTY-LICENSES.txt"
   tar -czf "$rel/$name.tar.gz" -C "$1/stage" "$name"
   printf '%s  %s\n' "$(sha256 "$rel/$name.tar.gz")" "$name.tar.gz" > "$rel/SHA256SUMS"
@@ -109,6 +114,45 @@ d="$work/t10-bad"; mkdir -p "$d"; make_release "$d" x86_64-unknown-linux-gnu
 if env KLATCH_LIBC=uclibc KLATCH_LDD_OUTPUT="ldd (GNU libc) 2.35" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1; then fail "accepted KLATCH_LIBC=uclibc"; elif grep -q "KLATCH_LIBC must be gnu or musl" "$d/out" && ! grep -q "^klatch .* for " "$d/out"; then pass "refuses an unknown KLATCH_LIBC with a message"; else fail "wrong refusal: $(cat "$d/out")"; fi
 d="$work/t10-mac"; mkdir -p "$d"; make_release "$d" aarch64-apple-darwin
 if env KLATCH_LIBC=musl KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION=v0.1.0.dev1 KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Darwin KLATCH_ARCH=arm64 sh "$installer" >"$d/out" 2>&1 && [ -x "$d/bin/klatch" ]; then pass "macOS ignores KLATCH_LIBC"; else fail "macOS with KLATCH_LIBC: $(cat "$d/out")"; fi
+
+# 11. both binaries are installed, executable, and the new one runs (#1236)
+d="$work/t11"; mkdir -p "$d"; make_release "$d" x86_64-unknown-linux-gnu
+if run_install "$d" && [ -x "$d/bin/klatch" ] && [ -x "$d/bin/klatch-server" ] && [ "$("$d/bin/klatch-server")" = "klatch-server 0.1.0-dev.1" ]; then
+  pass "installs klatch and klatch-server"
+else
+  fail "both binaries: $(cat "$d/out")"
+fi
+if grep -q "klatch-server" "$d/out"; then pass "says it installed klatch-server"; else fail "no klatch-server message: $(cat "$d/out")"; fi
+if [ -n "$(find "$d/bin" -name '.klatch*' 2>/dev/null)" ]; then fail "left a temporary file in the install directory"; else pass "leaves no temporary file beside the binaries"; fi
+
+# 12. an archive with no klatch-server installs nothing, not even klatch, and leaves an old install whole
+d="$work/t12"; mkdir -p "$d/bin"; make_release "$d" x86_64-unknown-linux-gnu no-server
+printf '#!/bin/sh\necho old\n' > "$d/bin/klatch"; chmod 755 "$d/bin/klatch"
+if run_install "$d"; then
+  fail "installed an archive without klatch-server"
+elif [ "$("$d/bin/klatch")" = "old" ] && [ ! -e "$d/bin/klatch-server" ] && grep -q "klatch-server" "$d/out"; then
+  pass "an archive without klatch-server installs nothing and keeps the old klatch"
+else
+  fail "no-server: $(cat "$d/out")"
+fi
+
+# 13. an upgrade replaces both, and a refused upgrade keeps both
+d="$work/t13"; mkdir -p "$d/bin"; make_release "$d" x86_64-unknown-linux-gnu
+for b in klatch klatch-server; do printf '#!/bin/sh\necho old\n' > "$d/bin/$b"; chmod 755 "$d/bin/$b"; done
+if run_install "$d" && [ "$("$d/bin/klatch")" = "klatch 0.1.0-dev.1" ] && [ "$("$d/bin/klatch-server")" = "klatch-server 0.1.0-dev.1" ]; then
+  pass "an upgrade replaces both binaries"
+else
+  fail "upgrade both: $(cat "$d/out")"
+fi
+d="$work/t13b"; mkdir -p "$d/bin"; make_release "$d" x86_64-unknown-linux-gnu
+for b in klatch klatch-server; do printf '#!/bin/sh\necho old\n' > "$d/bin/$b"; chmod 755 "$d/bin/$b"; done
+echo tamper >> "$d/v0.1.0.dev1/klatch-0.1.0-dev.1-x86_64-unknown-linux-gnu.tar.gz"
+run_install "$d" >/dev/null 2>&1
+if [ "$("$d/bin/klatch")" = "old" ] && [ "$("$d/bin/klatch-server")" = "old" ]; then pass "a refused upgrade keeps both old binaries"; else fail "refused upgrade replaced a binary"; fi
+
+# 14. the uninstall guide removes both binaries
+root=$(cd "$here/.." && pwd)
+if grep -q 'rm ~/.local/bin/klatch ~/.local/bin/klatch-server' "$root/UNINSTALL.md"; then pass "UNINSTALL.md removes klatch-server with klatch"; else fail "UNINSTALL.md does not remove klatch-server"; fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all install tests passed"; else echo "$fails install test(s) failed"; exit 1; fi

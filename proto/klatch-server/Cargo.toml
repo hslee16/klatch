@@ -7,9 +7,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
-# Not published or packaged until the zero-trust gate (epic #1056): nothing here is in a release archive, a wheel or the
-# npm package. The `klatch` binary stays network-free; whatever opens a socket lives in this crate, with its own scan
-# test (tests/no_network.rs).
+# Packaged but not published (#1236, decision D1): `klatch-server` is the second binary of every release archive, the
+# platform wheels and the Homebrew formula, and stays off crates.io, so `cargo install klatch` keeps installing only the
+# network-free binary. The `klatch` binary stays network-free; whatever opens a socket lives in this crate, with its own
+# scan test (tests/no_network.rs).
 
 [[bin]]
 name = "klatch-server"

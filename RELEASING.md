@@ -50,7 +50,10 @@ version is not republished: bump to the next number.
 
 The formula in `hslee16/homebrew-klatch` is bumped by hand: the version, the four download URLs and the four SHA-256
 values from the release's `SHA256SUMS` (`Formula/klatch.rb`). Open a pull request there; its CI audits, installs and
-tests the formula on macOS and Linux.
+tests the formula on macOS and Linux. Since #1236 every archive holds two binaries, so the formula's `install` must
+install both (`bin.install "klatch"` and `bin.install "klatch-server"`) and its `test do` must run both
+(`klatch --version` and `klatch-server --version`); a bump that only changes the URLs and checksums leaves
+`klatch-server` out of the Homebrew install.
 
 ## Rolling back
 

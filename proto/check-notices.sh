@@ -65,6 +65,18 @@ for entry in "${vendored[@]}"; do
   first=$(grep -m1 -v '^[[:space:]]*$' "$f")
   grep -qF -- "$first" "$out" || { echo "text of ${entry%%|*} is missing from $out" >&2; exit 1; }
 done
+# Both shipped binaries are covered (#1236): the notices name klatch-server and every crate in its dependency tree (it
+# pulls in its own: libc, sha2, subtle, hmac), as well as every crate in klatch's.
+for pkg in klatch klatch-server; do
+  deps=$( (cd "$here" && cargo tree -p "$pkg" --edges normal,build --prefix none --locked --offline --format '{p}') \
+    | awk '{ print $1 " " $2 }' | sed 's/^\(.*\) v/\1 /' | sort -u)
+  [ "$(printf '%s\n' "$deps" | wc -l)" -gt 5 ] || { echo "cargo tree for $pkg listed too few crates" >&2; exit 1; }
+  while read -r name ver; do
+    case "$name" in "$pkg" | "") continue ;; esac
+    grep -qF -- "- $name $ver " "$out" || { echo "$out does not list $name $ver, a dependency of $pkg" >&2; exit 1; }
+  done <<< "$deps"
+  grep -qF -- "- $pkg " "$out" || { echo "$out does not list $pkg itself" >&2; exit 1; }
+done
 grep -qi "zetetic" "$sqlcipher_dir/sqlcipher/LICENSE-sqlcipher" || { echo "unexpected SQLCipher licence text" >&2; exit 1; }
 if grep -q '&quot;\|&amp;\|&lt;' "$out"; then
   echo "$out has HTML-escaped text" >&2

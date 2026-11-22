@@ -313,11 +313,67 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
 }
 
 #[test]
-fn the_crate_is_not_published() {
+fn the_crate_is_not_published_and_ships_through_archives_wheels_and_the_formula() {
+    // Decision D1 (#1236): klatch-server is the second binary of every release archive, the platform wheels and the
+    // Homebrew formula. It stays off crates.io on purpose: `cargo install klatch` keeps installing only the network-free
+    // binary, and a crate that opens sockets is not a thing a user gets by accident. Publishing it later is a decision
+    // that removes this line and adds `cargo publish --dry-run --locked -p klatch-server` to CI and the gate.
     let toml =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
     assert!(
         toml.lines().any(|l| l.trim() == "publish = false"),
-        "klatch-server stays unpublished until the zero-trust gate"
+        "klatch-server is not published to crates.io (#1236)"
     );
+}
+
+#[test]
+fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
+    // `jev-http` (ureq, rustls, ring, webpki-roots) is an optional feature of the klatch library that no shipped binary
+    // may link (#871). klatch-server depends on the library with its default features, so none of them may appear in
+    // its build, with every kind of edge counted.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = Command::new(cargo)
+        .args([
+            "tree",
+            "-p",
+            "klatch-server",
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--offline",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tree = String::from_utf8(out.stdout).unwrap();
+    let deps: Vec<&str> = tree
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    for n in ["ureq", "rustls", "ring", "webpki-roots", "rustls-webpki"] {
+        assert!(
+            !deps.contains(&n),
+            "{n} (the jev-http transport) is linked into klatch-server"
+        );
+    }
+}
+
+#[test]
+fn the_documents_state_the_servers_own_claim() {
+    // The claim for `klatch-server` is the one this audit backs; the shorter claim for `klatch` ("no telemetry, no
+    // outbound calls") is not reused for it (#1236).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let claim = "klatch-server opens loopback listeners only, starts no program and makes no outbound connection";
+    for doc in ["SECURITY.md", "README.md"] {
+        // the documents wrap their lines: compare with the whitespace folded
+        let text = std::fs::read_to_string(root.join(doc)).unwrap();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(text.contains(claim), "{doc} does not state: {claim}");
+    }
 }

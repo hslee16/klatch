@@ -5,11 +5,12 @@ name: Release
 # repository, workflow file and environment name. All the building lives in build-release.yml, which this workflow
 # calls and which release-dry-run.yml also runs on pull requests, so a release is never the first run of its builds.
 #
-# The release also attaches the klatch binary, as archives with checksums, to the GitHub release: macOS arm64 and
+# The release also attaches the klatch and klatch-server binaries (#1236), as archives with checksums, to the GitHub
+# release: macOS arm64 and
 # x86_64, Linux x86_64 and aarch64 as a dynamic build (glibc 2.34 or later, built on Ubuntu 22.04) and as a fully
-# static musl build that needs no system libraries. Each archive holds the binary, LICENSE
+# static musl build that needs no system libraries. Each archive holds both binaries, LICENSE
 # and THIRD-PARTY-LICENSES.txt (SQLCipher's BSD licence requires its notice in a binary distribution). Beside each
-# archive go a CycloneDX SBOM, and for the whole release SHA256SUMS, its Sigstore signature, and GitHub build
+# archive go a CycloneDX SBOM covering both binaries, and for the whole release SHA256SUMS, its Sigstore signature, and GitHub build
 # provenance attestations for every file.
 #
 # One release tag publishes all three: PyPI, npm and crates.io, which must carry the same pre-release number (Python

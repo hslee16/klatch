@@ -70,6 +70,7 @@ jobs:
           release/check-versions.sh
           release/check-timeouts.sh
           release/test-check-versions.sh
+          release/test-package-archive.sh
           release/changelog-fragments.sh check
           release/test-changelog-fragments.sh
       # The workflows are code too: this checks their expressions, their job graph and the shell inside them.
@@ -92,7 +93,7 @@ jobs:
       - name: Shell scripts pass shellcheck
         if: runner.os == 'Linux'
         working-directory: .
-        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh clients/recipes/check-integration-examples.sh release/check-versions.sh release/check-timeouts.sh release/test-check-versions.sh release/changelog-fragments.sh release/test-changelog-fragments.sh
+        run: shellcheck install/install.sh install/test-install.sh clients/recipes/launcher-demo.sh clients/recipes/readme-quickstart.sh clients/recipes/check-integration-examples.sh release/check-versions.sh release/check-timeouts.sh release/test-check-versions.sh release/changelog-fragments.sh release/test-changelog-fragments.sh release/package-archive.sh release/check-archive.sh release/check-packaged-server.sh release/test-package-archive.sh
       - name: The README quickstart runs against the real binary
         run: |
           export KLATCH_BIN="$PWD/target/debug/klatch"
