@@ -1,0 +1,15 @@
+[package]
+name = "turso-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# Spike for #620: a Turso Database backend behind klatch's Store trait. Standalone: not a workspace member, not built
+# by CI, its own lockfile, and the main workspace's Cargo.lock and deny.toml never see turso.
+[dependencies]
+klatch = { path = "../../proto/klatch" }
+turso = "=0.9.0-pre.6"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[workspace]
