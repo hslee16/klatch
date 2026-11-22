@@ -90,6 +90,16 @@ pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRu
     run_with(cmd, typed, Some(stdin_text), false, 0)
 }
 
+/// Whether the output so far ends in a prompt the child is waiting at (see the module note).
+///
+/// `main` returning `Err` prints `Error: ` and the message as separate writes, so a read can end right after
+/// `Error: ` (it ends in `: ` too). That half line is not a prompt; typing at it spends a typed line while echo is
+/// on and leaves the real next prompt unanswered (#1316).
+pub fn is_prompt(text: &str) -> bool {
+    let last = text.rsplit('\n').next().unwrap_or("");
+    (text.ends_with(": ") || text.ends_with("> ")) && !last.starts_with("Error:")
+}
+
 fn run_with(
     mut cmd: Command,
     typed: &[&str],
@@ -179,7 +189,7 @@ fn run_with(
                 break;
             }
             text.push_str(&String::from_utf8_lossy(&buf[..got as usize]).replace('\r', ""));
-            let prompting = text.ends_with(": ") || text.ends_with("> ");
+            let prompting = is_prompt(&text);
             if prompting && text.len() > answered_at && next < typed.len() {
                 let line = format!("{}\n", typed[next]);
                 next += 1;
