@@ -1,0 +1,1 @@
+- `gh-watch status` and `gh-watch ensure` (receiver and forwarder report with exit codes 0, 3, 4; start only the receiver detached), an "At the start of a session" section in `proto/scripts/PR-SWEEP.md`, and a root `CLAUDE.md` with the repository rules (#1335).

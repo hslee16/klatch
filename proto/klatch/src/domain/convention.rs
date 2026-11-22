@@ -124,6 +124,7 @@ mod tests {
             payload: None,
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         }]);
         assert_eq!(opened.len(), 1);
         assert!(crate::domain::is_merged_note("merged"));

@@ -71,6 +71,10 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
                     println!("{}: {}", b.rule, flat(&b.reason));
                 }
             }
+            // what the ask points at (#1318); no verdict depends on it
+            for line in klatch::domain::ref_lines(&c.refs, false) {
+                println!("{line}");
+            }
         }
         WorkCmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
@@ -180,6 +184,10 @@ pub(super) fn asks(ctx: &Ctx, room: &str) -> Result<()> {
             klatch::domain::secs_between(ctx.now, a.ts),
             flat(&a.text)
         );
+        // what the ask points at (#1318): inert text, one line each
+        for line in klatch::domain::ref_lines(&a.refs, false) {
+            println!("{line}");
+        }
     }
     // a cycle through asks (#273): anyone can see it, and it names who yields
     let claims = ctx.t.claims(room).unwrap_or_default();

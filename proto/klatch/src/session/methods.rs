@@ -51,6 +51,21 @@ struct PostParams {
     /// A scope declared on an ask (#1171): only on a body that starts `seeking:`, and not with a handoff.
     #[serde(default)]
     scope: Option<String>,
+    /// References an ask carries to artifacts outside klatch (#1318): only on a body that starts `seeking:`, and not
+    /// with a handoff. An omitted list is none.
+    #[serde(default)]
+    refs: Vec<RefParam>,
+}
+/// One ref of a `post` (#1318). An unknown key is refused, so a misspelt `snippet` is never silently dropped.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefParam {
+    kind: String,
+    value: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    snippet: Option<String>,
 }
 #[derive(Deserialize)]
 struct ReadParams {
@@ -215,6 +230,7 @@ fn asks_json(asks: &[crate::domain::OpenAsk]) -> Value {
             "room": a.room.as_ref().map(|r| r.name.clone()),
             "moved_to": a.moved.as_ref().filter(|m| m.room.is_some()).map(|m| m.counterpart(&a.sender)),
             "scope": a.scope,
+            "refs": crate::session::frames::refs_json(&a.refs, true),
         })
     };
     json!({ "asks": asks.iter().map(one).collect::<Vec<_>>() })
@@ -345,14 +361,29 @@ pub(crate) fn handle<S: Store>(
     match call.method.clone().as_str() {
         "post" => call.run(
             |p: PostParams| match (p.kind.as_deref(), p.payload.as_deref()) {
-                (None, None) if p.scope.is_some() => g.post_scoped(
-                    who,
-                    (&p.room, &p.body, p.label.as_deref()),
-                    p.scope.as_deref().unwrap_or_default(),
-                ),
-                (_, _) if p.scope.is_some() => Err(crate::domain::Error::Invalid(
-                    "a scope belongs to an ask and cannot go with a kind or payload".into(),
-                )),
+                (None, None) if p.scope.is_some() || !p.refs.is_empty() => {
+                    let refs: Vec<crate::domain::AskRef> = p
+                        .refs
+                        .iter()
+                        .map(|r| crate::domain::AskRef {
+                            kind: r.kind.clone(),
+                            value: r.value.clone(),
+                            label: r.label.clone(),
+                            snippet: r.snippet.clone(),
+                        })
+                        .collect();
+                    g.post_ask(
+                        who,
+                        (&p.room, &p.body, p.label.as_deref()),
+                        p.scope.as_deref(),
+                        &refs,
+                    )
+                }
+                (_, _) if p.scope.is_some() || !p.refs.is_empty() => {
+                    Err(crate::domain::Error::Invalid(
+                        "a scope or refs belong to an ask and cannot go with a kind or payload".into(),
+                    ))
+                }
                 (None, None) => g.post_labeled(who, (&p.room, &p.body, p.label.as_deref())),
                 (None, Some(_)) => Err(crate::domain::Error::Invalid(
                     "a payload needs a kind".into(),
@@ -437,12 +468,17 @@ pub(crate) fn handle<S: Store>(
         "could_answer" => call.run(
             |p: CouldAnswerParams| g.could_answer(who, &p.room, &p.member, p.ask),
             |c: crate::domain::CouldAnswer| {
-                json!({
+                let mut v = json!({
                     "member": c.member,
                     "ask": c.ask,
                     "could": c.could(),
                     "blockers": c.blockers.iter().map(|b| json!({ "rule": b.rule, "reason": b.reason })).collect::<Vec<_>>(),
-                })
+                });
+                // what the ask points at (#1318), with no snippet; the key is absent when the ask has no refs
+                if !c.refs.is_empty() {
+                    v["refs"] = crate::session::frames::refs_json(&c.refs, false);
+                }
+                v
             },
         ),
         "label_order" => call.run(

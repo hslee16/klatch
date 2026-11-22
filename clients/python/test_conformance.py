@@ -204,6 +204,38 @@ class Conformance(unittest.TestCase):
         with self.assertRaises(kc.ApiError):
             a.post("r", "hello", scope="git:foo")
 
+    def test_ask_refs_survive_post_read_history_and_asks_and_bad_refs_are_refused(self):
+        a, b = self.store.client("alice"), self.store.client("bob")
+        a.post("r", "seeking: plain")
+        refs = [
+            {"kind": "pr", "value": "o/r#12", "label": "the fix"},
+            {"kind": "log", "value": "ci.log", "snippet": "boom\nbang"},
+            {"kind": "figma-frame", "value": "login"},
+        ]
+        seq = a.post("r", "seeking: with refs", refs=refs)["seq"]
+        messages = b.read("r", peek=True)
+        self.assertNotIn("refs", messages[0])
+        self.assertEqual(messages[1]["refs"], refs)
+        self.assertEqual(b.history("r")["messages"][1]["refs"], refs)
+        asks = b.asks("r")
+        self.assertEqual(asks[1]["refs"], refs)
+        self.assertEqual(asks[0]["refs"], [])
+        b.join("r")
+        answer = b.could_answer("r", "bob", seq)
+        self.assertEqual([r["kind"] for r in answer["refs"]], ["pr", "log", "figma-frame"])
+        self.assertNotIn("snippet", answer["refs"][1])
+        for bad in (
+            [{"kind": "Bad Kind", "value": "x"}],
+            [{"kind": "path", "value": "/etc/passwd"}],
+            [{"kind": "url", "value": "https://u:pw@example.com/x"}],
+            [{"kind": "other", "value": f"v{i}"} for i in range(33)],
+        ):
+            with self.assertRaises(kc.ApiError):
+                a.post("r", "seeking: x", refs=bad)
+        with self.assertRaises(kc.ApiError):
+            a.post("r", "hello", refs=refs)
+        self.assertEqual(len(b.read("r", peek=True)), 2)
+
     def test_history_looks_back_without_moving_the_cursor_and_pages_with_since(self):
         a, b = self.store.client("alice"), self.store.client("bob")
         for i in range(1, 6):

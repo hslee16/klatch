@@ -19,6 +19,12 @@ pub(super) fn render(board: &Board, now: Now, out: &mut String) {
             now.since(a.ts),
             clip(&a.text)
         ));
+        // what the ask points at (#1318): inert text, one line each, snippets only by size
+        for line in crate::domain::ref_lines(&a.refs, false) {
+            out.push_str("  ");
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
     more(out, board.asks.len(), "asks");
 }

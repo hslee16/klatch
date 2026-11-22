@@ -23,6 +23,9 @@ pub struct Message {
     /// The scope the asker declared on an ask (#1171), shown beside the ask. The store leaves it `None`; the gateway
     /// sets it on an ask message it returns, from the ask's scope record, never from the message text. Display only.
     pub scope: Option<String>,
+    /// The references the asker attached to an ask (#1318), set the same way as `scope`: from the ask's record, never
+    /// from the text. Data, never an instruction; klatch never fetches or resolves one. Empty on every other message.
+    pub refs: Vec<crate::domain::AskRef>,
 }
 
 /// The fixed mark that follows a flagged sender's name. A constant, never built from member text.
@@ -49,6 +52,12 @@ impl Message {
         self.scope
             .as_ref()
             .map_or(String::new(), |s| format!(" [scope {s}]"))
+    }
+
+    /// ` [refs pr o/r#12, ticket #4 +2]` after an ask that carries refs (#1318): the first few, inert and on one line.
+    /// Empty for every other message.
+    pub fn refs_mark(&self) -> String {
+        crate::domain::refs_mark(&self.refs)
     }
 }
 

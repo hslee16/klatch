@@ -37,14 +37,29 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
             "--scope goes with a room ask: klatch ask ROOM TEXT --scope S (a dm ask carries no scope)"
         ),
         MessagingCmd::Ask {
+            refs,
+            ref_labels,
+            ref_snippet_files,
+            to: Some(_),
+            ..
+        } if super::ask_refs::given(&refs, &ref_labels, &ref_snippet_files) => {
+            bail!(super::ask_refs::DM_REFUSAL)
+        }
+        MessagingCmd::Ask {
             args, to: Some(to), ..
         } => ask_to(ctx, &to, &args)?,
         MessagingCmd::Ask {
             args,
             to: None,
             scope,
+            refs,
+            ref_labels,
+            ref_snippet_files,
         } => match args.split_first() {
-            Some((room, text)) => ask(ctx, room, text, scope.as_deref())?,
+            Some((room, text)) => {
+                let refs = super::ask_refs::build_refs(&refs, &ref_labels, &ref_snippet_files)?;
+                ask(ctx, room, text, (scope.as_deref(), &refs))?
+            }
             None => bail!("klatch ask needs a room and text, or --to MEMBER and text"),
         },
         MessagingCmd::Answer { room, number, text } => {
@@ -185,7 +200,12 @@ pub(super) fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
 
 /// `klatch ask ROOM TEXT [--scope S]`: the `seeking:` post and its number in one call (#241). The same `post` as the command
 /// of that name, so the guard, the labels and the content checks are the ones every post meets.
-pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String], scope: Option<&str>) -> Result<()> {
+pub(super) fn ask(
+    ctx: &Ctx,
+    room: &str,
+    text: &[String],
+    (scope, refs): (Option<&str>, &[klatch::domain::AskRef]),
+) -> Result<()> {
     let text = text.join(" ");
     let text = text.trim();
     let text = text
@@ -196,11 +216,15 @@ pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String], scope: Option<&str>) -
         bail!("an ask needs text: klatch ask {room} <what you need>");
     }
     let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
-    let posted = match scope {
-        Some(scope) => ctx.t.post_scoped(room, &body, scope)?,
-        None => ctx.t.post(room, &body)?,
-    };
-    let declared = scope.map_or(String::new(), |s| format!(", scope {s}"));
+    let posted = ctx.t.post_ask(room, &body, scope, refs)?;
+    let mut declared = scope.map_or(String::new(), |s| format!(", scope {s}"));
+    if !refs.is_empty() {
+        declared.push_str(&format!(
+            ", {} ref{}",
+            refs.len(),
+            if refs.len() == 1 { "" } else { "s" }
+        ));
+    }
     println!(
         "asked #{} in {room}{declared} (queued; `klatch wait {room}` for the answer)",
         posted.seq
@@ -360,6 +384,9 @@ pub(super) fn read(
     }
     for m in &messages {
         println!("{}", message_row(m));
+        for line in klatch::domain::ref_lines(&m.refs, true) {
+            println!("{line}");
+        }
     }
     // a peek leaves the messages unread, so the hook digest still shows them and carries the help itself
     if !peek {
@@ -376,12 +403,13 @@ pub(super) fn read(
 /// One message as `read` and `history` print it: marked, one line, handoff folded in.
 pub(super) fn message_row(m: &klatch::domain::Message) -> String {
     format!(
-        "[{} {} {}] {}{}{}",
+        "[{} {} {}] {}{}{}{}",
         m.seq,
         m.ts,
         m.sender_label(),
         flat(&m.body),
         m.scope_mark(),
+        m.refs_mark(),
         handoff_suffix(m)
     )
 }
@@ -473,7 +501,7 @@ pub(super) fn find(t: &dyn Transport, room: &str, text: &str) -> Result<()> {
             .filter(|c| *c != klatch::domain::CloseOutcome::Unspecified)
             .map_or(String::new(), |c| format!(" ({})", c.word()));
         println!(
-            "#{} {} [{}] answered by {} (#{}){}: {} => {}",
+            "#{} {} [{}] answered by {} (#{}){}: {}{} => {}",
             a.seq,
             a.sender,
             a.why,
@@ -481,6 +509,7 @@ pub(super) fn find(t: &dyn Transport, room: &str, text: &str) -> Result<()> {
             a.answer_seq,
             closed,
             flat(&a.text),
+            klatch::domain::refs_mark(&a.refs),
             flat(&a.answer)
         );
     }

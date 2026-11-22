@@ -41,6 +41,7 @@ impl<S: Store> Gateway<S> {
             member: member.into(),
             ask,
             blockers: Vec::new(),
+            refs: Vec::new(),
         };
         let Some(open) = self
             .store
@@ -60,6 +61,15 @@ impl<S: Store> Gateway<S> {
                 format!("{member} asked #{ask} itself and cannot answer it"),
             ));
         }
+        // what the ask points at (#1318), for the supervisor; no snippet, and it changes no verdict
+        out.refs = open
+            .refs
+            .iter()
+            .map(|r| crate::domain::AskRef {
+                snippet: None,
+                ..r.clone()
+            })
+            .collect();
         self.scope_blocker(&mut out, open.scope.as_deref())?;
         self.claim_blockers(&mut out, room, ask, now)?;
         self.credential_blocker(&mut out)?;
