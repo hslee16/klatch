@@ -487,6 +487,7 @@ mod tests {
             kind: Some("note".into()),
             payload: Some("p".into()),
             advisory: false,
+            scope: None,
         };
         let line = export_json_line("lobby", &m);
         assert!(!line.contains('\n'));

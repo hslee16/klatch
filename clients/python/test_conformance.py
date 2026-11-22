@@ -184,6 +184,26 @@ class Conformance(unittest.TestCase):
         self.assertEqual(len(b.read("r")), 2)
         self.assertEqual(b.read("r"), [])
 
+    def test_an_ask_scope_survives_post_read_history_and_asks_and_could_answer_names_a_mismatch(self):
+        a, b = self.store.client("alice"), self.store.client("bob")
+        b.set_scope("git:bar")
+        a.post("r", "seeking: plain")
+        seq = a.post("r", "seeking: scoped", scope="git:foo")["seq"]
+        messages = b.read("r", peek=True)
+        self.assertNotIn("scope", messages[0])
+        self.assertEqual(messages[1]["scope"], "git:foo")
+        self.assertEqual(b.history("r")["messages"][1]["scope"], "git:foo")
+        asks = b.asks("r")
+        self.assertEqual(asks[1]["scope"], "git:foo")
+        self.assertIsNone(asks[0].get("scope"))
+        answer = b.could_answer("r", "bob", seq)
+        self.assertFalse(answer["could"])
+        self.assertEqual(answer["blockers"][0]["rule"], "scope")
+        with self.assertRaises(kc.ApiError):
+            a.post("r", "seeking: x", scope="has space")
+        with self.assertRaises(kc.ApiError):
+            a.post("r", "hello", scope="git:foo")
+
     def test_history_looks_back_without_moving_the_cursor_and_pages_with_since(self):
         a, b = self.store.client("alice"), self.store.client("bob")
         for i in range(1, 6):
@@ -320,8 +340,10 @@ class Conformance(unittest.TestCase):
     def test_a_member_reads_its_rooms_its_board_and_its_receipt(self):
         a = self.store.client("alice")
         b = self.store.client("bob")
-        sent = a.post("r", "offering: review help")
+        # Bob joins first: a member who joins after the post is a late joiner and no recipient, and the join time has
+        # one-second resolution, so posting after Alice only passed when both fell in the same second (#1221, #1272).
         b.post("r", "hi")
+        sent = a.post("r", "offering: review help")
         self.assertEqual(a.my_rooms(), ["r"])
         self.assertIn("review help", a.board("r"))
         rows = a.receipt("r", sent["seq"])["recipients"]

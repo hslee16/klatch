@@ -1,0 +1,1 @@
+- OWNERS.md names which account owns each registry name (PyPI, npm, crates.io, the Homebrew tap, GitHub) and what a second maintainer needs to take one over (#1245).

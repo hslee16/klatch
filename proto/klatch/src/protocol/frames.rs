@@ -49,6 +49,10 @@ pub enum ServerFrame {
         /// then, so a consumer that does not know it sees what it always saw. Display only, never authority.
         #[serde(default, skip_serializing_if = "is_false")]
         advisory: bool,
+        /// The scope an asker declared on an ask (#1171), added within protocol version 1: present only on an ask
+        /// that declares one, so a consumer that does not know it sees what it always saw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
     },
     CaughtUp {
         v: u32,

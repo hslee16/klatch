@@ -41,6 +41,7 @@ fn msg(seq: i64, sender: &str, body: &str) -> Message {
         kind: None,
         payload: None,
         advisory: false,
+        scope: None,
     }
 }
 

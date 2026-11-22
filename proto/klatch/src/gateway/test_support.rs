@@ -368,6 +368,16 @@ impl AskStore for SpyStore {
         self.gate()?;
         self.inner.rooms_with_prefix(prefix)
     }
+
+    fn set_ask_scope(&self, room: &str, seq: i64, scope: &str) -> Result<()> {
+        self.gate()?;
+        self.inner.set_ask_scope(room, seq, scope)
+    }
+
+    fn ask_scopes(&self, room: &str) -> Result<Vec<(i64, String)>> {
+        self.gate()?;
+        self.inner.ask_scopes(room)
+    }
 }
 impl ReviewStore for SpyStore {
     fn enqueue_review(&self, item: &crate::store::NewReview, now: i64) -> Result<i64> {

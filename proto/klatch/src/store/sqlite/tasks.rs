@@ -65,6 +65,7 @@ impl SqliteStore {
                     kind: None,
                     payload: None,
                     advisory: false,
+                    scope: None,
                 },
             ))
         })?;

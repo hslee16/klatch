@@ -182,6 +182,29 @@ impl<S: Store> Gateway<S> {
         self.post_with(who, post, Some(handoff))
     }
 
+    /// Post an ask that declares a scope (#1171): the asker names the repository, bot area or project the ask is
+    /// about, in the grammar of a member scope. `could_answer` then refuses a member whose own scope differs. The
+    /// body must be an ask (`seeking:`) and the scope valid, both checked before anything is posted; every other rule
+    /// is the one `post_labeled` meets. The scope is stored beside the ask and shown with it, never read from text.
+    pub fn post_scoped(&self, who: &Principal, post: PostArgs, scope: &str) -> Result<Posted> {
+        check_member(who)?;
+        if !crate::domain::valid_scope(scope) {
+            return Err(Error::Invalid(
+                "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
+            ));
+        }
+        if !post.1.starts_with(crate::domain::ASK_PREFIX) {
+            return Err(Error::Invalid(
+                "a scope can only be declared on an ask (a message that starts with `seeking:`)"
+                    .into(),
+            ));
+        }
+        let room = post.0;
+        let posted = self.post_with(who, post, None)?;
+        self.store.set_ask_scope(room, posted.seq, scope)?;
+        Ok(posted)
+    }
+
     fn post_with(
         &self,
         who: &Principal,

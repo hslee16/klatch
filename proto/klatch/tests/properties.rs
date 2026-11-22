@@ -162,6 +162,7 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
             kind: tc.draw(gs::booleans()).then(|| "note".to_string()),
             payload: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
             advisory: false,
+            scope: None,
         });
     }
     for _ in 0..count(12) {
@@ -190,6 +191,7 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
         waiting_on_asker: None,
         room: None,
         moved: None,
+        scope: None,
     };
     for seq in 1..=count(8) as i64 {
         d.stale.push(ask(seq, nasty_text(tc)));

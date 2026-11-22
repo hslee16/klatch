@@ -114,7 +114,30 @@ impl<S: Store> Gateway<S> {
                 .iter()
                 .any(|(key, _)| key.strip_prefix(&prefix) == Some(m.sender.as_str()));
         }
+        self.mark_ask_scopes(room, &mut messages)?;
         Ok(messages)
+    }
+
+    /// The same overlay shows the scope an asker declared on an ask (#1171): an ask message (`seeking:`) gets the
+    /// scope stored for its seq. The scope comes from the ask's record, never from the text, and a stored message is
+    /// never changed. One read, skipped when no message is an ask.
+    fn mark_ask_scopes(&self, room: &str, messages: &mut [Message]) -> Result<()> {
+        if !messages
+            .iter()
+            .any(|m| m.body.starts_with(crate::domain::ASK_PREFIX))
+        {
+            return Ok(());
+        }
+        let scopes = self.store.ask_scopes(room)?;
+        for m in messages {
+            if m.body.starts_with(crate::domain::ASK_PREFIX) {
+                m.scope = scopes
+                    .iter()
+                    .find(|(seq, _)| *seq == m.seq)
+                    .map(|(_, scope)| scope.clone());
+            }
+        }
+        Ok(())
     }
 
     /// Fill in the kind of each member listed: a session record first, else the member's declaration. One read of

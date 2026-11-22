@@ -1,0 +1,2 @@
+OWNERS.md names the account that owns each registry name (#1245; no schema change; 2026-11-22).
+The repository root has an OWNERS.md: one table of PyPI klatch, npm @klatch, crates.io klatch, the Homebrew tap and the GitHub repository, all owned by Alex Lee on the owner's word (#417). It records how each registry is published and which rights need the owner (the crates.io yank token, the npm security key), and a pointer list for a second maintainer. Recovery codes are kept outside the repository and are never written down in it.

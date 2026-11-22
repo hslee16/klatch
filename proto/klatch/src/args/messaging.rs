@@ -60,7 +60,8 @@ pub(crate) enum MessagingCmd {
     },
     /// Ask a question in a room: posts `seeking: <text>` and says its number (#241). Then `wait` for the answer.
     /// `klatch ask --to MEMBER TEXT` asks one member privately instead: the ask is a `seeking:` in your dm with
-    /// them (#1189), seen only by the two of you, and the lobby hears nothing
+    /// them (#1189), seen only by the two of you, and the lobby hears nothing. `--scope S` declares the scope the
+    /// ask is about (#1171): `could-answer` then refuses a member that declared a different scope
     #[command(
         display_order = 3,
         override_usage = "klatch ask <ROOM> [TEXT]...\n       klatch ask --to <MEMBER> [TEXT]..."
@@ -72,6 +73,11 @@ pub(crate) enum MessagingCmd {
         /// `klatch answer dm:YOU N TEXT`
         #[arg(long)]
         to: Option<String>,
+        /// Declare the scope the ask is about (for example `git:klatch-3fa9c1d2`, `bot:grok`, `project:acme`): the
+        /// grammar of a member scope. A member whose own scope differs cannot answer it as far as `klatch
+        /// could-answer` goes; a member with no scope, or an ask with none, is not affected. Room asks only
+        #[arg(long)]
+        scope: Option<String>,
     },
     /// Answer an open ask in one call: claims `ask:<N>`, posts `answer to #N: <text>`, releases the claim (#241). If
     /// another member holds the claim it says so and posts nothing. ROOM may be `dm:MEMBER` (or the dm room name) to

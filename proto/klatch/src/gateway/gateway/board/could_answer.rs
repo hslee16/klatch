@@ -13,7 +13,7 @@ impl<S: Store> Gateway<S> {
     /// about any other member is the admin act `could-answer` (the human, never a plain member, and not the admin
     /// agent), because it reveals another member's clearance, role and claims.
     ///
-    /// The checks: the ask is open; the member is not its asker; no live claim holds it; the member holds no claim
+    /// The checks: the ask is open; the member is not its asker; when both the ask and the member declare a scope they are the same (#1171); no live claim holds it; the member holds no claim
     /// anywhere (busy); its credential, if it has one, is live; it is not stopped (breaker, removed from the room,
     /// paused, room closed or tripped, run and direct-message rules); its clearance in the room (global or a room
     /// grant) dominates the room's label; and its role may post an answer. The answer carries rule words, member
@@ -60,10 +60,32 @@ impl<S: Store> Gateway<S> {
                 format!("{member} asked #{ask} itself and cannot answer it"),
             ));
         }
+        self.scope_blocker(&mut out, open.scope.as_deref())?;
         self.claim_blockers(&mut out, room, ask, now)?;
         self.credential_blocker(&mut out)?;
         self.standing_blockers(&mut out, room, ask)?;
         Ok(out)
+    }
+
+    /// The ask declares a scope and the member declares a different one (#1171). When either side declares none,
+    /// nothing is added: scope is advisory in klatch, so a missing declaration never refuses.
+    fn scope_blocker(&self, out: &mut CouldAnswer, ask_scope: Option<&str>) -> Result<()> {
+        let Some(wanted) = ask_scope else {
+            return Ok(());
+        };
+        let Some(theirs) = self.store.member_scope(&out.member)? else {
+            return Ok(());
+        };
+        if theirs != wanted {
+            out.blockers.push(blocker(
+                "scope",
+                format!(
+                    "ask #{} declares scope {wanted} and {} works in scope {theirs}",
+                    out.ask, out.member
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// The ask is held, or the member is busy with a claim of its own anywhere.

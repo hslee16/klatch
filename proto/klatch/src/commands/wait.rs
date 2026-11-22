@@ -118,11 +118,12 @@ pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Resul
         );
         for m in &capped.shown {
             println!(
-                "[{room} {} {} {}] {}{}",
+                "[{room} {} {} {}] {}{}{}",
                 m.seq,
                 m.ts,
                 m.sender_label(),
                 flat(&m.body),
+                m.scope_mark(),
                 handoff_suffix(m)
             );
         }

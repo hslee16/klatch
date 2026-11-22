@@ -248,6 +248,7 @@ mod tests {
             waiting_on_asker: None,
             room: None,
             moved: None,
+            scope: None,
         }
     }
 

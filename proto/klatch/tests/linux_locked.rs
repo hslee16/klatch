@@ -49,3 +49,33 @@ fn a_locked_keyring_fails_fast_with_a_reason_and_leaves_no_key_file() {
         "a key file was written behind the keyring's back"
     );
 }
+
+use klatch::keys::{Error, KeySource, SecretService};
+
+/// Read a key the way a command on an existing store does, against whatever state the keyring is in. The answer
+/// must be a Locked error that says what to do, never "no key" (which could make a second key, #561).
+fn read_must_be_locked(expect: &str) {
+    let svc = SecretService::detect("existing-store")
+        .expect("a session bus and secret-tool are needed: run proto/linux-keys/run.sh locked");
+    let got = svc.get("existing-store");
+    assert!(
+        matches!(&got, Err(Error::Locked(m)) if m.contains(expect)),
+        "a keyring that cannot be read was reported as {got:?}"
+    );
+    assert!(
+        matches!(svc.delete("existing-store"), Err(Error::Locked(_))),
+        "a revoke on a keyring that cannot be read reported success"
+    );
+}
+
+#[test]
+#[ignore = "needs a session bus whose login collection does not exist; run proto/linux-keys/run.sh locked"]
+fn a_real_keyring_with_no_login_collection_reads_as_locked_not_no_key() {
+    read_must_be_locked("no default collection");
+}
+
+#[test]
+#[ignore = "needs a session bus whose login collection is locked; run proto/linux-keys/run.sh locked"]
+fn a_real_locked_login_collection_reads_as_locked_not_no_key() {
+    read_must_be_locked("keyring is locked");
+}

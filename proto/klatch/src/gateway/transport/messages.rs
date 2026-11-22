@@ -31,6 +31,8 @@ pub trait Messages {
         message: (&str, &str, Option<&str>),
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted>;
+    /// Post an ask that declares a scope (#1171): `body` starts `seeking:` and `scope` is a valid scope.
+    fn post_scoped(&self, room: &str, body: &str, scope: &str) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
     /// Look back in a room: everyone's messages in `range`, moving no cursor (#518).
     fn history(&self, room: &str, range: HistoryRange) -> Result<History>;
@@ -67,6 +69,10 @@ impl<S: Store> Messages for Direct<S> {
         handoff: &crate::gateway::Handoff,
     ) -> Result<Posted> {
         self.gateway.post_handoff(&self.principal, message, handoff)
+    }
+    fn post_scoped(&self, room: &str, body: &str, scope: &str) -> Result<Posted> {
+        self.gateway
+            .post_scoped(&self.principal, (room, body, None), scope)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
@@ -134,6 +140,12 @@ impl Messages for SharedTransport {
                 (Lend::lend(&room), Lend::lend(&body), Lend::lend(&label)),
                 &handoff,
             )
+        })
+    }
+    fn post_scoped(&self, room: &str, body: &str, scope: &str) -> Result<crate::domain::Posted> {
+        let (room, body, scope) = (Own::own(&room), Own::own(&body), Own::own(&scope));
+        self.posting(move |t| {
+            t.post_scoped(Lend::lend(&room), Lend::lend(&body), Lend::lend(&scope))
         })
     }
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {

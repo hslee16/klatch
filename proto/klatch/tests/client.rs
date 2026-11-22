@@ -72,3 +72,12 @@ fn a_request_builder_sets_only_what_it_is_given() {
     let claim = ClaimRequest::new("r", "a.rs").ttl(60).reason("why");
     assert_eq!((claim.ttl, claim.reason), (Some(60), Some("why")));
 }
+
+#[test]
+fn a_post_request_carries_a_scope_only_when_given_one() {
+    assert_eq!(PostRequest::new("r", "seeking: x").scope, None);
+    assert_eq!(
+        PostRequest::new("r", "seeking: x").scope("git:foo").scope,
+        Some("git:foo")
+    );
+}

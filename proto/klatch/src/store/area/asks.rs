@@ -18,7 +18,16 @@ pub trait AskStore: MessageStore + ClaimStore {
         let messages = self.words(room, &crate::domain::ASK_WORDS)?;
         let mut asks = open_asks(&messages, &self.claims(room, now)?);
         let rooms = self.rooms_with_prefix("ask-")?;
+        let scopes = if asks.is_empty() {
+            Vec::new()
+        } else {
+            self.ask_scopes(room)?
+        };
         for a in &mut asks {
+            a.scope = scopes
+                .iter()
+                .find(|(seq, _)| *seq == a.seq)
+                .map(|(_, scope)| scope.clone());
             a.room = rooms
                 .iter()
                 .find(|r| r.name == format!("ask-{}", a.seq))
@@ -26,6 +35,18 @@ pub trait AskStore: MessageStore + ClaimStore {
             self.attach_dm(a)?;
         }
         Ok(asks)
+    }
+
+    /// Remember the scope the asker declared on ask `seq` of `room` (#1171). A second call replaces the first. The
+    /// default remembers nothing.
+    fn set_ask_scope(&self, _room: &str, _seq: i64, _scope: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// The declared scope of each ask of `room` that has one, as (seq, scope) pairs (#1171). An ask without a
+    /// declared scope has no pair. The default knows none.
+    fn ask_scopes(&self, _room: &str) -> Result<Vec<(i64, String)>> {
+        Ok(Vec::new())
     }
 
     /// Finds the dm a moved ask points at (#1188). The pointer stands only when that room exists with both members

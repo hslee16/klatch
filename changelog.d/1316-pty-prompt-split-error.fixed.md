@@ -1,0 +1,1 @@
+- The pty test helper no longer types at a half-written `Error: ` line, which made the per-terminal lockout test hang on Linux CI (#1316).
