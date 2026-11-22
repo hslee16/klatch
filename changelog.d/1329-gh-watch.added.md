@@ -1,0 +1,1 @@
+- `proto/scripts/gh-watch`: a read-only, webhook-driven GitHub watcher (a loopback receiver for `gh webhook forward` events with HMAC verification, a digest of ALERT and INFO notes, a `tail -F` log and an optional klatch room post), replacing polling for awareness; the setup is in `proto/scripts/PR-SWEEP.md` (#1329).
