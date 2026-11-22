@@ -108,7 +108,7 @@ pub(super) fn timeout_notes(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Vec
 }
 
 /// Print the messages that woke a wait; true when there were any.
-pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
+pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Result<bool> {
     for (room, filter) in a.rooms {
         let found = look(t, room, filter, a.peek)?;
         let capped = klatch::domain::cap_wake(
@@ -138,6 +138,11 @@ pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
             for line in dm_help_lines(t, a.caller.0, room, &found) {
                 println!("{line}");
             }
+            // the cycle was said before the wait began (#273); the rest is derived from the room now (#789)
+            let now = a.caller.1 + waited as i64;
+            for line in asks_note_lines(t, (a.caller.0, now), room, !found.is_empty(), false) {
+                println!("{line}");
+            }
         }
         if !found.is_empty() {
             eprintln!("{DATA_RULE}");
@@ -147,8 +152,101 @@ pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs) -> Result<bool> {
     Ok(false)
 }
 
+/// The stop-waiting notes derived from `room` now (#789), as trailing lines for messages `wait` or `read` just handed
+/// over: askers the caller serves that are gone, its own asks past their bound, and (when `cycles`) the ask cycles it is
+/// in. Fixed templates, so each line is data about the room, never message text. Nothing is said when `handed` is
+/// false, and a room that cannot be read adds nothing, since a note never hides the messages.
+pub(super) fn asks_note_lines(
+    t: &dyn Transport,
+    (me, now): (&str, i64),
+    room: &str,
+    handed: bool,
+    cycles: bool,
+) -> Vec<String> {
+    if !handed {
+        return Vec::new();
+    }
+    let (Ok(asks), Ok(claims)) = (t.open_asks(room), t.claims(room)) else {
+        return Vec::new();
+    };
+    if asks.is_empty() {
+        return Vec::new();
+    }
+    let served = served_in(t, me, room, now).unwrap_or_default();
+    let exited = exited_askers(t, room, &served);
+    let members = t.who(room).unwrap_or_default();
+    klatch::domain::derived_asks_notes(&klatch::domain::AsksView {
+        asks: &asks,
+        claims: &claims,
+        served: &served,
+        members: &members,
+        exited: &exited,
+        me,
+        now,
+        with_cycles: cycles,
+    })
+}
+
+/// The dm help for messages `wait` or `read` just handed over and consumed (#1209), as separate trailing lines: the
+/// reply hint when `room` is a dm with `me` in it, or the nudge when these messages complete a long two-member
+/// exchange in a room of three or more with no dm yet. The same fixed templates as the hook digest (#1190, #1192):
+/// validated names, a count and the room, never message text. A message is handed over once, so each line appears
+/// once; a room that cannot be looked at adds nothing, since a note never hides the messages.
+pub(super) fn dm_help_lines(
+    t: &dyn Transport,
+    me: &str,
+    room: &str,
+    handed: &[klatch::domain::Message],
+) -> Vec<String> {
+    use klatch::domain::{dm_nudge, dm_reply_hint, dm_room, move_to_dm_nudge};
+    if handed.is_empty() {
+        return Vec::new();
+    }
+    let Ok(members) = t.who(room) else {
+        return Vec::new();
+    };
+    if room.starts_with(klatch::domain::DM_PREFIX) {
+        // a dm made by `dm` has exactly its two members; the name alone cannot say it for a hashed room name
+        let peer = klatch::domain::dm_peer_in_room(me, room).or_else(|| {
+            let others: Vec<_> = members.iter().filter(|m| m.name != me).collect();
+            let named = members.iter().any(|m| m.name == me) && others.len() == 1;
+            named
+                .then(|| others[0].name.clone())
+                .filter(|p| klatch::domain::valid_name(p))
+        });
+        return peer
+            .map(|p| format!("klatch: {}", dm_reply_hint(&p)))
+            .into_iter()
+            .collect();
+    }
+    if members.len() < 3 {
+        return Vec::new();
+    }
+    let range = klatch::gateway::HistoryRange {
+        since: None,
+        last: Some(klatch::domain::DM_NUDGE_WINDOW),
+    };
+    let Ok(history) = t.history(room, range) else {
+        return Vec::new();
+    };
+    let rows: Vec<(i64, &str, &str)> = history
+        .messages
+        .iter()
+        .map(|m| (m.seq, m.sender.as_str(), m.body.as_str()))
+        .collect();
+    let seqs: Vec<i64> = handed.iter().map(|m| m.seq).collect();
+    let Some((peer, n)) = dm_nudge(me, &rows, &seqs) else {
+        return Vec::new();
+    };
+    // a dm between the two that already exists makes the nudge pointless
+    if t.who(&dm_room(me, &peer)).is_ok() {
+        return Vec::new();
+    }
+    vec![move_to_dm_nudge(&peer, n, room)]
+}
+
 /// How many recent messages a waiting helper reads to find the asks it answered (#226).
-pub(super) const SERVED_WINDOW: usize = 200;
+pub(super) const SERVED_WINDOW: usize = klatch::domain::SERVED_WINDOW;
 
 /// The asks the caller `me` serves in `room`, from its recent messages and its claims. A room that cannot be read
 /// serves nothing.
@@ -339,7 +437,7 @@ pub(super) fn wait(t: &dyn Transport, a: &WaitArgs) -> Result<()> {
     loop {
         // The token is taken before the poll, so a commit in between is a change the pause sees at once (#616).
         let seen = t.change_token();
-        if print_woken(t, a)? {
+        if print_woken(t, a, started.elapsed().as_secs())? {
             return Ok(());
         }
         let left = deadline.saturating_duration_since(Instant::now());

@@ -46,6 +46,38 @@ impl<S: Store> Gateway<S> {
             .collect())
     }
 
+    /// The stop-waiting notes derived from the room as it is now (#789): see `domain::derived_asks_notes`. Nothing is
+    /// stored, so the same lines come at every digest while the condition holds. A room with no open ask has none.
+    pub(super) fn asks_notes(&self, room: &str, me: &str, now: i64) -> Result<Vec<String>> {
+        let asks = self.store.open_asks(room, now)?;
+        if asks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let claims = self.store.claims(room, now)?;
+        let head = self.store.head(room)?;
+        let window = crate::domain::SERVED_WINDOW as i64;
+        let recent = Self::without_canary(self.store.tail(
+            room,
+            (head - window).max(0),
+            crate::domain::SERVED_WINDOW,
+        )?);
+        let served = crate::domain::served_by(&recent, (&asks, &claims), (me, now));
+        let members = self.store.members(room)?;
+        let exited = self.exited_askers(&served, &members, now)?;
+        Ok(crate::domain::derived_asks_notes(
+            &crate::domain::AsksView {
+                asks: &asks,
+                claims: &claims,
+                served: &served,
+                members: &members,
+                exited: &exited,
+                me,
+                now,
+                with_cycles: true,
+            },
+        ))
+    }
+
     /// Unread messages and others' claims for every room the caller has joined. A room the guard refuses
     /// is reported in `refused`, never dropped silently; store failures are errors.
     pub fn digest(&self, who: &Principal) -> Result<Digest> {
@@ -87,6 +119,7 @@ impl<S: Store> Gateway<S> {
             let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
             let aged = self.store.claim_ages(&room, &who.member, now)?;
             let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
+            let asks_notes = self.asks_notes(&room, &who.member, now)?;
             let crossings = self.crossing_notices(&room, &who.member)?;
             let unowned_prs = if backlog {
                 let mut prs = self.open_prs_of(&room, now)?;
@@ -117,6 +150,7 @@ impl<S: Store> Gateway<S> {
                 lapsed,
                 aged,
                 cycles,
+                asks_notes,
                 crossings,
                 unowned_prs,
                 dm_peer,
