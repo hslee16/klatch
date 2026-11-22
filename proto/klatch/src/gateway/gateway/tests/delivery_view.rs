@@ -172,3 +172,54 @@ fn a_singular_hidden_message_reads_correctly() {
         "{text}"
     );
 }
+
+fn broadcast_post(g: &Gateway<SpyStore>, who: &Principal, body: &str) {
+    let h = crate::gateway::Handoff {
+        kind: "broadcast",
+        payload: None,
+    };
+    g.post_handoff(who, ("lobby", body, None), &h).unwrap();
+}
+
+// #674: a broadcast is a message kind, so a narrowed view passes it with no @all in the text
+#[test]
+fn a_narrowed_view_shows_a_message_of_kind_broadcast() {
+    let g = lobby();
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    g.post(&carol(), "lobby", "other repository chatter")
+        .unwrap();
+    broadcast_post(&g, &carol(), "the build is red");
+    assert_eq!(
+        bodies(&g.digest(&alice()).unwrap()),
+        vec!["the build is red"]
+    );
+}
+
+// #674: the old word keeps working until clients move; a kind other than broadcast is no broadcast
+#[test]
+fn the_all_word_still_broadcasts_and_another_kind_does_not() {
+    let g = lobby();
+    g.set_delivery_view(&alice(), DeliveryView::Scope).unwrap();
+    let h = crate::gateway::Handoff {
+        kind: "work-order",
+        payload: None,
+    };
+    g.post_handoff(&carol(), ("lobby", "some order", None), &h)
+        .unwrap();
+    g.post(&carol(), "lobby", "@all the old way").unwrap();
+    assert_eq!(
+        bodies(&g.digest(&alice()).unwrap()),
+        vec!["@all the old way"]
+    );
+}
+
+// #674: a busy digest keeps a kind broadcast before newer messages, like an @all one
+#[test]
+fn a_message_of_kind_broadcast_counts_as_addressed_in_a_busy_digest() {
+    let g = lobby();
+    broadcast_post(&g, &carol(), "heads up");
+    g.post(&carol(), "lobby", "chatter").unwrap();
+    let d = g.digest(&alice()).unwrap();
+    let r = d.rooms.iter().find(|r| r.room == "lobby").unwrap();
+    assert_eq!(r.addressed, vec![1]);
+}
