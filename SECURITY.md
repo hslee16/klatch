@@ -162,7 +162,8 @@ Supported versions: the newest release only, the current practice and not a poli
 ## Reporting a problem
 
 Use **Report a vulnerability** on the Security tab of https://github.com/hslee16/klatch (GitHub private vulnerability
-reporting). Please do not file public issues for vulnerabilities. There is no project email address yet.
+reporting). Please do not file public issues for vulnerabilities. There is no project email address yet. Who owns the
+repository and each registry name (the people who can publish, yank or fix a release) is in [OWNERS.md](OWNERS.md).
 
 ## Verifying a download
 
