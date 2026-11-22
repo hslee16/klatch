@@ -16,7 +16,7 @@ for tool in gh cargo npm; do
 done
 printf '#!/bin/sh\necho "git $*" >> "%s/calls.log"\nexit 99\n' "$work" > "$bin/git"
 chmod +x "$bin"/*
-secret_gh="ghp_DUMMYSECRETGH"; secret_cargo="cio_DUMMYSECRETCARGO"; secret_npm="npm_DUMMYSECRETNPM"
+secret_gh="ghp_DUMMYSECRETGH"; secret_cargo="cio_DUMMYSECRETCARGO"; secret_npm="npm_DUMMYSECRETNPM"  # npm is set only to prove it is never used
 clean_env() { env -u GH_TOKEN -u GITHUB_TOKEN -u CARGO_REGISTRY_TOKEN -u NPM_TOKEN PATH="$bin:$PATH" TMPDIR="$work/tmp" "$@"; }
 full_env() { env GH_TOKEN="$secret_gh" CARGO_REGISTRY_TOKEN="$secret_cargo" NPM_TOKEN="$secret_npm" PATH="$bin:$PATH" TMPDIR="$work/tmp" "$@"; }
 
@@ -34,8 +34,9 @@ if clean_env "$here/rollback-rehearsal.sh" 0.3.0-dev.7 2> /dev/null | grep -q 'c
 # --execute refuses without its environment, and says which names are missing (never a value)
 rm -f "$work/calls.log"
 if clean_env "$here/rollback-rehearsal.sh" --execute 0.2.0-alpha.1 > "$work/out" 2> "$work/err"; then bad "--execute ran with no tokens"; else ok "--execute refuses with no tokens"; fi
-grep -q 'GH_TOKEN' "$work/err" && grep -q 'CARGO_REGISTRY_TOKEN' "$work/err" && grep -q 'NPM_TOKEN' "$work/err" && ok "the refusal names every missing variable" || bad "refusal text: $(cat "$work/err")"
-if env GH_TOKEN="$secret_gh" CARGO_REGISTRY_TOKEN="$secret_cargo" PATH="$bin:$PATH" TMPDIR="$work/tmp" "$here/rollback-rehearsal.sh" --execute 0.2.0-alpha.1 > /dev/null 2> "$work/err"; then bad "--execute ran with NPM_TOKEN missing"; else grep -q 'NPM_TOKEN' "$work/err" && ok "one missing token refuses" || bad "text: $(cat "$work/err")"; fi
+grep -q 'GH_TOKEN' "$work/err" && grep -q 'CARGO_REGISTRY_TOKEN' "$work/err" && ok "the refusal names every missing variable" || bad "refusal text: $(cat "$work/err")"
+grep -q 'NPM_TOKEN' "$work/err" && bad "the refusal asks for NPM_TOKEN, which npm deprecate cannot use unattended (#1295)" || ok "NPM_TOKEN is not asked for"
+if env GH_TOKEN="$secret_gh" PATH="$bin:$PATH" TMPDIR="$work/tmp" "$here/rollback-rehearsal.sh" --execute 0.2.0-alpha.1 > /dev/null 2> "$work/err"; then bad "--execute ran with CARGO_REGISTRY_TOKEN missing"; else grep -q 'CARGO_REGISTRY_TOKEN' "$work/err" && ok "one missing token refuses" || bad "text: $(cat "$work/err")"; fi
 if full_env "$here/rollback-rehearsal.sh" --execute 0.2.0 > /dev/null 2> "$work/err"; then bad "--execute ran on a release version"; else grep -qi 'pre-release' "$work/err" && ok "--execute refuses a version that is not a pre-release" || bad "text: $(cat "$work/err")"; fi
 [ ! -e "$work/calls.log" ] && ok "refusals ran nothing" || bad "ran: $(cat "$work/calls.log")"
 
@@ -49,9 +50,14 @@ cargo yank --version 0.2.0-alpha.1 klatch
 cargo yank --undo --version 0.2.0-alpha.1 klatch"
 got="$(grep -v '^npm' "$work/calls.log")"
 [ "$got" = "$want" ] && ok "gh and cargo ran exactly the reversible steps, in order" || bad "calls: $got"
-[ "$(grep -c '^npm deprecate @klatch/client@0.2.0-alpha.1 ' "$work/calls.log")" = 2 ] && ok "npm deprecate and its undo ran" || bad "npm calls: $(grep '^npm' "$work/calls.log")"
-grep -q -- '--userconfig' "$work/calls.log" && ok "npm used a private userconfig" || bad "no userconfig"
+# npm deprecate needs a one-time password (EOTP), so it never runs unattended: the two commands are printed for the owner (#1295)
+grep -q '^npm' "$work/calls.log" && bad "npm ran: $(grep '^npm' "$work/calls.log")" || ok "npm was not run (deprecate needs a one-time password)"
+grep -q 'npm deprecate "@klatch/client@0.2.0-alpha.1" "rollback rehearsal: ignore this version"' "$work/err" && grep -q 'npm deprecate "@klatch/client@0.2.0-alpha.1" ""' "$work/err" && ok "the two npm commands are printed for the owner" || bad "npm commands not printed: $(cat "$work/err")"
+grep -qi 'one-time password' "$work/err" && ok "the output says why npm is by hand" || bad "no explanation"
+grep -q -- '--otp' "$work/out" "$work/err" "$work/calls.log" && bad "--otp appears on a command line" || ok "no one-time password on any command line"
+grep -q 'NPM_TOKEN' "$here/rollback-rehearsal.sh" "$here/testdata/rollback-dry-0.2.0-alpha.1.txt" && bad "NPM_TOKEN is still referenced" || ok "NPM_TOKEN is gone"
+grep -q 'yank-version' "$work/out" && ok "the dry run notes the yank-version scope" || true
 grep -q "$secret_gh\|$secret_cargo\|$secret_npm" "$work/out" "$work/err" "$work/calls.log" && bad "a token leaked into output or arguments" || ok "no token in output or in any command line"
 grep -q '^git' "$work/calls.log" && bad "a manual step was run" || ok "PyPI and the tap revert were not run"
-[ -z "$(ls -A "$work/tmp")" ] && ok "the temporary npmrc is removed" || bad "left behind: $(ls "$work/tmp")"
+[ -z "$(ls -A "$work/tmp")" ] && ok "no temporary file is left behind" || bad "left behind: $(ls "$work/tmp")"
 exit "$fails"

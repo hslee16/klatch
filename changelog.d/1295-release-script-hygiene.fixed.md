@@ -1,0 +1,3 @@
+- The rollback rehearsal no longer tries to run `npm deprecate` unattended (it needs a one-time password): `--execute` runs the GitHub and crates.io steps and prints the two npm commands for you to run, and no longer asks for `NPM_TOKEN` (#1295). It also records that a crates.io yank needs a `yank-version` token even with trusted publishing (#1295).
+- `release/rehearse-assemble.sh --check-tests` builds in a fresh cargo target directory per run, so it never reruns a test binary built for an earlier copy (#1292).
+- The fake cargo in `proto/scripts/test-scripts.sh` forwards `cargo tree`, so the licence notices step no longer fails in the gate tests (#1306).

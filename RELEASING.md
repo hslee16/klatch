@@ -33,7 +33,9 @@ prints each renumbered reference, the diff stat, the changelog entry count and t
 "research note for #NNN" references that still need a number (none unless a step failed), and removes the copy. It exits non-zero if any step fails.
 Add `--check-tests` (#1286) to also run, on the assembled copy, the checks that assembling breaks: the workspace version in
 `proto/THIRD-PARTY-LICENSES.txt` (regenerate it with `proto/check-notices.sh --write` at every bump), the `release_scope_docs`
-and `negotiate` cargo tests, and the `release/test-*.sh` shell tests. It is slower, so it is off by default.
+and `negotiate` cargo tests, and the `release/test-*.sh` shell tests. It is slower, so it is off by default. It builds in a fresh
+cargo target directory per run (removed afterwards; `REHEARSE_TARGET_DIR` overrides and keeps it), because a shared one reruns a test
+binary built for the previous copy (#1292), so expect a full build each time.
 
 Run `release/check-versions.sh`; CI runs it on every pull request, and each registry job repeats the check against the
 tag, so a mismatch stops the release before anything is published.
@@ -135,11 +137,15 @@ yank, deprecate and revert steps are written from each tool's documented behavio
 pre-release before relying on it.
 
 **The rehearsal (#576).** `release/rollback-rehearsal.sh <version>` prints, for a version, the exact command of every
-step above and runs nothing (the default). `--execute` runs the reversible steps against a throwaway pre-release such as
-`0.2.0-alpha.9`: it creates and deletes a draft release, yanks and un-yanks the crate, deprecates the npm version and
-removes the deprecation. It needs `GH_TOKEN`, `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` in the environment, typed by you at
-run time and never stored; it refuses without all three, and refuses a version that is not a pre-release. The PyPI yank
-and the tap revert are printed for you to do by hand (PyPI has no command for a yank). Revoke the tokens afterwards.
+step above and runs nothing (the default). `--execute` runs the reversible steps
+against a throwaway pre-release such as `0.2.0-alpha.9`: it creates and deletes a draft release and yanks and un-yanks the crate.
+It needs `GH_TOKEN` and `CARGO_REGISTRY_TOKEN` in the environment, typed by you at run time and never stored; it refuses without
+both, and refuses a version that is not a pre-release. The crates.io token needs the `yank-version` scope even though releases use
+trusted publishing, because trusted publishing covers publishing only. npm is by hand (#1295): `npm deprecate` needs a one-time
+password, so the script never runs it. It prints the two commands (deprecate, then remove the deprecation) for you to run in a
+terminal where you are logged in to npm, and npm asks for the one-time password there; the script never takes a password from the
+environment or an argument. The PyPI yank and the tap revert are printed for you to do by hand too (PyPI has no command for a yank).
+Revoke the tokens afterwards.
 
 What is permanent, whatever the rehearsal does: the throwaway version number is used up on crates.io, npm and PyPI
 (published numbers are never given back, and PyPI file names are never reusable), so rehearse on a number you can spare.

@@ -6,12 +6,14 @@
 #   release/rollback-rehearsal.sh --execute <semver>         run the reversible steps against a THROWAWAY pre-release
 #
 # --execute needs the human's tokens in the environment at run time (never stored, never printed, never put on a command
-# line): GH_TOKEN (a GitHub token that can write releases of hslee16/klatch), CARGO_REGISTRY_TOKEN (crates.io, scope
-# yank-version) and NPM_TOKEN (npm, written to a private temporary npmrc that is removed at the end). It refuses a version
-# that is not a pre-release. It runs only the lines that are not comments: a draft pre-release is created and deleted,
-# the crate is yanked and un-yanked, the npm version is deprecated and the deprecation removed. The PyPI yank and the tap
-# revert are by hand (printed as comments). Every step is reversible; the throwaway version number itself is not:
-# crates.io, npm and PyPI never give a published number back, so the rehearsal consumes the version it is run for.
+# line): GH_TOKEN (a GitHub token that can write releases of hslee16/klatch) and CARGO_REGISTRY_TOKEN (crates.io, scope
+# yank-version: trusted publishing covers publishing only, so a yank needs its own token even with it). It refuses a version
+# that is not a pre-release. It runs only the lines that are not comments: a draft pre-release is created and deleted and the
+# crate is yanked and un-yanked. npm deprecate answers EOTP unless it gets a one-time password or a security key (#1295), so
+# it cannot run unattended: the script prints the two npm commands for you to run in your own logged-in terminal, where npm
+# asks for the password itself. The script never takes a one-time password from the environment or an argument. The PyPI
+# yank and the tap revert are by hand too (printed as comments). Every step is reversible; the throwaway version number
+# itself is not: crates.io, npm and PyPI never give a published number back, so the rehearsal consumes the version it is run for.
 set -euo pipefail
 
 mode="dry"; version=""
@@ -40,7 +42,7 @@ tag="v$pypi"
 sequence() {
   cat <<'EOF'
 # klatch rollback rehearsal for @VERSION@ (tag @TAG@, PyPI @PYPI@)
-# DRY RUN: these commands are printed, not run. Lines that start with "# " are notes, or commands for a real incident;
+# DRY RUN: these commands are printed, not run. Lines that start with "# " are notes, or commands for you to run by hand;
 # --execute never runs them. See RELEASING.md, "Rolling back".
 
 # 1. GitHub draft pre-release: create, read back, delete. Reversible; consumes no version.
@@ -52,14 +54,16 @@ gh api -X DELETE repos/hslee16/klatch/releases/"$RELEASE_ID"
 #   gh api -X PATCH repos/hslee16/klatch/releases/"$(gh api repos/hslee16/klatch/releases/tags/@TAG@ --jq .id)" -F draft=true
 #   gh api -X DELETE repos/hslee16/klatch/releases/assets/ASSET_ID
 
-# 2. crates.io: yank, then un-yank. Reversible. Needs CARGO_REGISTRY_TOKEN with the yank-version scope.
+# 2. crates.io: yank, then un-yank. Reversible. Needs CARGO_REGISTRY_TOKEN with the yank-version scope (trusted publishing
+# covers publishing only, so a yank needs this token even when releases publish through trusted publishing).
 cargo yank --version @VERSION@ klatch
 cargo yank --undo --version @VERSION@ klatch
 # PERMANENT: the version number. A published crate version is never deleted or reused; the next number replaces it.
 
-# 3. npm: deprecate, then undo. Reversible. Needs NPM_TOKEN (written to a private temporary npmrc, never printed).
-npm deprecate "@klatch/client@@VERSION@" "rollback rehearsal: ignore this version" --userconfig "$NPMRC"
-npm deprecate "@klatch/client@@VERSION@" "" --userconfig "$NPMRC"
+# 3. npm: deprecate, then undo. Reversible. By hand: npm deprecate needs a one-time password (EOTP), so --execute never runs
+# it. Run these two in a terminal where you are logged in (npm login); npm asks for the one-time password itself.
+#   npm deprecate "@klatch/client@@VERSION@" "rollback rehearsal: ignore this version"
+#   npm deprecate "@klatch/client@@VERSION@" ""
 # PERMANENT: the version number. An unpublished npm version can never be published again under that number.
 # A staged version that is wrong is rejected on npmjs.com (Staged Packages) instead of approved.
 
@@ -91,20 +95,15 @@ fi
 missing=""
 [ -n "${GH_TOKEN:-}" ] || missing="$missing GH_TOKEN"
 [ -n "${CARGO_REGISTRY_TOKEN:-}" ] || missing="$missing CARGO_REGISTRY_TOKEN"
-[ -n "${NPM_TOKEN:-}" ] || missing="$missing NPM_TOKEN"
 if [ -n "$missing" ]; then
   echo "rollback-rehearsal: --execute refuses: set these in the environment first (typed by you at run time, never stored):$missing" >&2
   exit 1
 fi
 [ -n "$kind" ] || { echo "rollback-rehearsal: --execute refuses a version that is not a pre-release ($version); rehearse on a throwaway pre-release such as 0.2.0-alpha.9" >&2; exit 1; }
 
-npmrc="$(mktemp "${TMPDIR:-/tmp}/klatch-npmrc.XXXXXX")"
-trap 'rm -f "$npmrc"' EXIT
-chmod 600 "$npmrc"
-printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
-export NPMRC="$npmrc"
-unset NPM_TOKEN
-echo "rollback-rehearsal: executing the reversible steps for $version (a draft release, yank and un-yank, deprecate and undo)" >&2
-# the comment lines are not run; -x shows each command (the tokens are in the environment and the npmrc, not in the commands)
+echo "rollback-rehearsal: executing the reversible steps for $version (a draft release, yank and un-yank)" >&2
+# the comment lines are not run; -x shows each command (the tokens are in the environment, not in the commands)
 printf '%s\n' "$text" | bash -e -x /dev/stdin
-echo "rollback-rehearsal: done. PyPI and the tap revert are by hand (see the dry run). $version is now used on every registry it was published to."
+echo "rollback-rehearsal: done. npm needs a one-time password, so run these two yourself in a terminal where you are logged in to npm (npm asks for the one-time password; it never goes through this script):" >&2
+printf '%s\n' "$text" | sed -n 's/^#   \(npm deprecate .*\)$/  \1/p' >&2
+echo "rollback-rehearsal: PyPI and the tap revert are by hand too (see the dry run). $version is now used on every registry it was published to." >&2
