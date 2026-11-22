@@ -42,7 +42,7 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
             if count {
                 unread_count(t, &room)?
             } else {
-                read(t, ctx.me, &room, peek)?
+                read(t, (ctx.me, ctx.now), &room, peek)?
             }
         }
         MessagingCmd::History { room, last, since } => history_of(t, room, since, last)?,
@@ -329,7 +329,12 @@ pub(super) fn unread_count(t: &dyn Transport, room: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(t: &dyn Transport, me: &str, room: &str, peek: bool) -> Result<()> {
+pub(super) fn read(
+    t: &dyn Transport,
+    (me, now): (&str, i64),
+    room: &str,
+    peek: bool,
+) -> Result<()> {
     let messages = t.read(room, !peek)?;
     if messages.is_empty() {
         eprintln!("{EMPTY_READ_NOTE}");
@@ -342,6 +347,9 @@ pub(super) fn read(t: &dyn Transport, me: &str, room: &str, peek: bool) -> Resul
     // a peek leaves the messages unread, so the hook digest still shows them and carries the help itself
     if !peek {
         for line in dm_help_lines(t, me, room, &messages) {
+            println!("{line}");
+        }
+        for line in super::wait::asks_note_lines(t, (me, now), room, !messages.is_empty(), true) {
             println!("{line}");
         }
     }

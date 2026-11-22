@@ -28,6 +28,10 @@ pub struct RoomDigest {
     /// The member's own refused claims that a claim someone else took turned into a cycle of waits, reported once
     /// (#648).
     pub cycles: Vec<crate::domain::CycleNotice>,
+    /// The stop-waiting notes derived from the room now (#789): a served asker that is gone, the member's own asks past
+    /// their bound, the ask cycles it is in. Not reported once: the same lines come at every hook while the condition
+    /// holds. Fixed templates over validated names, an ask number and a count, at most four lines of each kind.
+    pub asks_notes: Vec<String>,
     /// The member's own crossings that start in this room and have news, reported once per stage (#679): that the
     /// request waits, then the outcome. Pointers and fixed sentences, never text.
     pub crossings: Vec<crate::domain::CrossingStatus>,
@@ -226,6 +230,13 @@ fn render_cycle_notices(d: &RoomDigest, out: &mut String) {
     }
 }
 
+/// The derived stop-waiting notes (#789): one line each, as the domain made them.
+fn render_asks_notes(d: &RoomDigest, out: &mut String) {
+    for n in &d.asks_notes {
+        out.push_str(&format!("  {}\n", flat(n)));
+    }
+}
+
 /// What became of the member's own crossings (#679): one line each, a state and the fixed reason, never the text.
 fn render_crossing_notices(d: &RoomDigest, out: &mut String) {
     for c in &d.crossings {
@@ -343,6 +354,7 @@ fn other_units(d: &RoomDigest, now: i64) -> Vec<String> {
     render_claims(d, now, &mut text);
     render_aged_claims(d, &mut text);
     render_cycle_notices(d, &mut text);
+    render_asks_notes(d, &mut text);
     render_crossing_notices(d, &mut text);
     render_outside_view(d, &mut text);
     render_dm_help(d, &mut text);
@@ -487,6 +499,7 @@ fn has_own_items(d: &RoomDigest) -> bool {
         && d.lapsed.is_empty()
         && d.aged.is_empty()
         && d.cycles.is_empty()
+        && d.asks_notes.is_empty()
         && d.crossings.is_empty())
 }
 
@@ -1135,6 +1148,7 @@ mod tests {
                 path: evil.into(),
                 holder: evil.into(),
             }],
+            asks_notes: vec![format!("klatch: ask cycle: {evil}")],
             crossings: vec![crate::domain::CrossingStatus {
                 id: 1,
                 room: "r".into(),

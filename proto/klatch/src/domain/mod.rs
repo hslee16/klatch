@@ -6,6 +6,7 @@ mod ask_cycle;
 mod ask_find;
 mod asker_gone;
 mod asks;
+mod asks_notes;
 mod board;
 mod card;
 mod cascade_judge;
@@ -60,6 +61,7 @@ pub use asks::{
     closed_target, is_ask, latest_close, moved_target, open_asks, parse_clarification,
     parse_outcome, reopen_target,
 };
+pub use asks_notes::{AsksView, NOTES_PER_KIND, SERVED_WINDOW, derived_asks_notes};
 pub use board::{
     BOARD_LIST_LIMIT, BOARD_WORDS, Board, BoardMember, MEMBER_ACTIVE_SECS, MEMBER_RETENTION_SECS,
     MemberStatus, OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX,
