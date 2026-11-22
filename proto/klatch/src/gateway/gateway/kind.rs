@@ -47,10 +47,19 @@ impl<S: Store> Gateway<S> {
     /// through `who` or the board.
     pub(super) fn with_places(&self, members: &mut [MemberInfo]) -> Result<()> {
         for m in members {
+            let scope = self.store.member_scope(&m.name)?;
             m.place = self.store.member_attrs(&m.name)?.and_then(|a| {
+                let repository = (!a.repository.is_empty()).then_some(a.repository);
+                // #894: a declared scope naming a repository that is not the derived one. A scope that names no
+                // repository (a role, a bot's area) never differs.
+                let scope_differs = match (&scope, &repository) {
+                    (Some(s), Some(r)) => s.starts_with("git:") && s != r,
+                    _ => false,
+                };
                 let place = crate::domain::MemberPlace {
-                    repository: (!a.repository.is_empty()).then_some(a.repository),
+                    repository,
                     directory: crate::domain::short_dir_name(&a.directory),
+                    scope_differs,
                 };
                 (place.repository.is_some() || place.directory.is_some()).then_some(place)
             });

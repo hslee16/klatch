@@ -135,6 +135,8 @@ pub struct Member {
     pub repository: Option<String>,
     /// The short name of the member's starting directory, never a path.
     pub directory: Option<String>,
+    /// The member's declared scope names another repository than the one it runs in (#894), display only.
+    pub scope_differs: bool,
     /// The permission mode the member last reported (#677), if any hook has.
     pub mode: Option<String>,
 }
@@ -613,6 +615,7 @@ impl Client {
             kind: opt_str(&m["kind"]),
             repository: opt_str(&m["repository"]),
             directory: opt_str(&m["directory"]),
+            scope_differs: m["scope_differs"].as_bool().unwrap_or(false),
             mode: opt_str(&m["mode"]),
         }))
     }

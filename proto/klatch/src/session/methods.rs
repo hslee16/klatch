@@ -177,6 +177,9 @@ fn members_json(ms: &[MemberInfo]) -> Value {
             if let Some(d) = &place.directory {
                 v["directory"] = json!(d);
             }
+            if place.scope_differs {
+                v["scope_differs"] = json!(true);
+            }
         }
         v
     };

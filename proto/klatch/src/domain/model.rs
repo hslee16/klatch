@@ -88,6 +88,9 @@ pub struct MemberInfo {
 pub struct MemberPlace {
     pub repository: Option<String>,
     pub directory: Option<String>,
+    /// The member's declared scope names a repository (`git:...`) other than the derived one (#894). The declared
+    /// scope still wins; this only makes the difference visible, as one fixed word. Never a path or a name.
+    pub scope_differs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
