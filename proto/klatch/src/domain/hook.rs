@@ -130,6 +130,7 @@ fn message_line(room: RoomName, m: &Message) -> String {
     let total = body.chars().count();
     let shown: String = body.chars().take(DIGEST_MESSAGE_CHARS).collect();
     let mut line = format!("  #{} from {}: {}", m.seq, m.sender_label(), shown);
+    line.push_str(&m.scope_mark());
     // a handoff shows its kind and the size of its payload, never the payload: it is for the next member to read
     if let Some(kind) = &m.kind {
         let kind = flat(kind);
@@ -620,6 +621,7 @@ mod tests {
             kind: None,
             payload: None,
             advisory: false,
+            scope: None,
         }
     }
 

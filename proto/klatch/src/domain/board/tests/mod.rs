@@ -22,6 +22,7 @@ fn msg(seq: i64, said: (&str, &str), ts: i64) -> Message {
         kind: None,
         payload: None,
         advisory: false,
+        scope: None,
     }
 }
 

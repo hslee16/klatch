@@ -34,5 +34,6 @@ pub(super) fn message_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Messag
         kind: r.get(7)?,
         payload: r.get(8)?,
         advisory: false,
+        scope: None,
     })
 }

@@ -106,6 +106,8 @@ pub struct Message {
     pub payload: Option<String>,
     /// The sender was admitted in flag mode of the room's requirement (#990); set by `read` only. Display only.
     pub advisory: bool,
+    /// The scope the asker declared on an ask (#1171); `None` on every other message and on an ask that declares none.
+    pub scope: Option<String>,
 }
 
 /// What `collect` returns.
@@ -201,6 +203,8 @@ pub struct PostRequest<'a> {
     pub body: &'a str,
     pub label: Option<&'a str>,
     pub handoff: Option<Handoff<'a>>,
+    /// The scope an ask declares (#1171); only valid on a body that starts `seeking:`, and not with a handoff.
+    pub scope: Option<&'a str>,
 }
 
 impl<'a> PostRequest<'a> {
@@ -210,7 +214,15 @@ impl<'a> PostRequest<'a> {
             body,
             label: None,
             handoff: None,
+            scope: None,
         }
+    }
+
+    /// Declare the scope an ask is about (#1171): the grammar of a member scope. `could_answer` then names a member
+    /// whose own scope differs. The gateway refuses a scope on anything that is not an ask.
+    pub fn scope(mut self, scope: &'a str) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     /// Post under this label instead of the room's default.
@@ -418,6 +430,7 @@ impl Client {
                 kind,
                 payload,
                 advisory,
+                scope,
                 ..
             } => self.pending.push(Message {
                 seq,
@@ -430,6 +443,7 @@ impl Client {
                 kind,
                 payload,
                 advisory,
+                scope,
             }),
             ServerFrame::CaughtUp { seq, .. } => self.caught_up = Some(seq),
             ServerFrame::Refusal { rule, reason, .. } => self.refusals.push((rule, reason)),
@@ -508,6 +522,9 @@ impl Client {
             if let Some(payload) = payload {
                 p.insert("payload".into(), json!(payload));
             }
+        }
+        if let Some(scope) = request.scope {
+            p.insert("scope".into(), json!(scope));
         }
         let r = self.request("post", Value::Object(p))?;
         Ok((
@@ -908,5 +925,6 @@ fn message_of(m: &Value) -> Message {
         kind: m["kind"].as_str().map(String::from),
         payload: m["payload"].as_str().map(String::from),
         advisory: m["advisory"].as_bool().unwrap_or(false),
+        scope: m["scope"].as_str().map(String::from),
     }
 }

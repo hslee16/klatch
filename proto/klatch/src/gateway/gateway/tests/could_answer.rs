@@ -182,3 +182,90 @@ fn a_bad_member_name_is_invalid() {
     let (g, seq) = with_ask();
     assert!(is_invalid(g.could_answer(&admin(), "r", "bad name", seq)));
 }
+
+// An ask may declare a scope (#1171); the check blocks only when both the ask and the member declare one and they
+// differ.
+
+/// A room "r" with an ask from alice that declares `scope` (or none), and the helper's own scope.
+fn with_scopes(ask_scope: Option<&str>, member_scope: Option<&str>) -> (Gateway<SpyStore>, i64) {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.join(&helper(), "r").unwrap();
+    let seq = match ask_scope {
+        Some(s) => {
+            g.post_scoped(&alice(), ("r", "seeking: a thing", None), s)
+                .unwrap()
+                .seq
+        }
+        None => g.post(&alice(), "r", "seeking: a thing").unwrap().seq,
+    };
+    if let Some(s) = member_scope {
+        g.set_scope(&helper(), s).unwrap();
+    }
+    (g, seq)
+}
+
+#[test]
+fn differing_declared_scopes_block_and_the_reason_names_both() {
+    let (g, seq) = with_scopes(Some("git:foo"), Some("git:bar"));
+    let c = check(&g, "helper", seq);
+    assert_eq!(rules(&c), ["scope"], "{c:?}");
+    let why = &c.blockers[0].reason;
+    assert!(
+        why.contains("git:foo") && why.contains("git:bar") && why.contains("helper"),
+        "{why}"
+    );
+}
+
+#[test]
+fn equal_declared_scopes_do_not_block() {
+    let (g, seq) = with_scopes(Some("git:foo"), Some("git:foo"));
+    assert!(check(&g, "helper", seq).could());
+}
+
+#[test]
+fn an_ask_with_no_scope_or_a_member_with_none_changes_nothing() {
+    let (g, seq) = with_scopes(None, Some("git:bar"));
+    assert!(check(&g, "helper", seq).could(), "ask without a scope");
+    let (g, seq) = with_scopes(Some("git:foo"), None);
+    assert!(check(&g, "helper", seq).could(), "member without a scope");
+    let (g, seq) = with_scopes(None, None);
+    assert!(check(&g, "helper", seq).could(), "neither");
+}
+
+#[test]
+fn a_scope_on_the_ask_is_stored_and_shown_by_open_asks() {
+    let (g, seq) = with_scopes(Some("git:foo"), None);
+    let none = g.post(&alice(), "r", "seeking: plain").unwrap().seq;
+    let asks = g.open_asks(&alice(), "r").unwrap();
+    let scope = |n: i64| asks.iter().find(|a| a.seq == n).unwrap().scope.clone();
+    assert_eq!(scope(seq).as_deref(), Some("git:foo"));
+    assert_eq!(scope(none), None);
+}
+
+#[test]
+fn a_bad_scope_or_a_scope_on_something_that_is_not_an_ask_is_refused_and_posts_nothing() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    let bad = g.post_scoped(&alice(), ("r", "seeking: x", None), "has space");
+    assert!(
+        matches!(bad, Err(crate::domain::Error::Invalid(_))),
+        "{bad:?}"
+    );
+    let not_ask = g.post_scoped(&alice(), ("r", "just talking", None), "git:foo");
+    assert!(
+        matches!(not_ask, Err(crate::domain::Error::Invalid(_))),
+        "{not_ask:?}"
+    );
+    assert!(g.read(&bob(), "r", false).unwrap().is_empty());
+}
+
+#[test]
+fn a_reader_sees_the_scope_on_the_ask_message_and_not_on_others() {
+    let (g, seq) = with_scopes(Some("git:foo"), None);
+    g.post(&alice(), "r", "chatter").unwrap();
+    let seen = g.read(&bob(), "r", false).unwrap();
+    let scope = |n: i64| seen.iter().find(|m| m.seq == n).unwrap().scope.clone();
+    assert_eq!(scope(seq).as_deref(), Some("git:foo"));
+    assert_eq!(scope(seq + 1), None);
+}

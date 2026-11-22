@@ -48,6 +48,9 @@ struct PostParams {
     kind: Option<String>,
     #[serde(default)]
     payload: Option<String>,
+    /// A scope declared on an ask (#1171): only on a body that starts `seeking:`, and not with a handoff.
+    #[serde(default)]
+    scope: Option<String>,
 }
 #[derive(Deserialize)]
 struct ReadParams {
@@ -211,6 +214,7 @@ fn asks_json(asks: &[crate::domain::OpenAsk]) -> Value {
             "waiting_on_asker": a.waiting_on_asker.is_some(),
             "room": a.room.as_ref().map(|r| r.name.clone()),
             "moved_to": a.moved.as_ref().filter(|m| m.room.is_some()).map(|m| m.counterpart(&a.sender)),
+            "scope": a.scope,
         })
     };
     json!({ "asks": asks.iter().map(one).collect::<Vec<_>>() })
@@ -341,6 +345,14 @@ pub(crate) fn handle<S: Store>(
     match call.method.clone().as_str() {
         "post" => call.run(
             |p: PostParams| match (p.kind.as_deref(), p.payload.as_deref()) {
+                (None, None) if p.scope.is_some() => g.post_scoped(
+                    who,
+                    (&p.room, &p.body, p.label.as_deref()),
+                    p.scope.as_deref().unwrap_or_default(),
+                ),
+                (_, _) if p.scope.is_some() => Err(crate::domain::Error::Invalid(
+                    "a scope belongs to an ask and cannot go with a kind or payload".into(),
+                )),
                 (None, None) => g.post_labeled(who, (&p.room, &p.body, p.label.as_deref())),
                 (None, Some(_)) => Err(crate::domain::Error::Invalid(
                     "a payload needs a kind".into(),
