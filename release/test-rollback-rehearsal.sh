@@ -29,7 +29,9 @@ grep -q "$secret_gh\|$secret_cargo\|$secret_npm" "$work/out" "$work/err" && bad 
 if clean_env "$here/rollback-rehearsal.sh" --dry-run 0.2.0-alpha.1 > "$work/out2" 2>&1 && cmp -s "$work/out" "$work/out2"; then ok "--dry-run is the same as the default"; else bad "--dry-run differs"; fi
 if clean_env "$here/rollback-rehearsal.sh" 0.1.0.dev2 > /dev/null 2>&1; then bad "a PEP 440 spelling passed"; else ok "a version that is not SemVer fails"; fi
 if clean_env "$here/rollback-rehearsal.sh" > /dev/null 2>&1; then bad "no version passed"; else ok "no version fails"; fi
-if clean_env "$here/rollback-rehearsal.sh" 0.3.0-dev.7 2> /dev/null | grep -q 'cargo yank --version 0.3.0-dev.7 klatch'; then ok "the commands follow the version"; else bad "version not substituted"; fi
+# read the whole output first: grep -q closing the pipe early can SIGPIPE the script and fail the pipeline under pipefail
+clean_env "$here/rollback-rehearsal.sh" 0.3.0-dev.7 > "$work/out3" 2> /dev/null || true
+if grep -q 'cargo yank --version 0.3.0-dev.7 klatch' "$work/out3"; then ok "the commands follow the version"; else bad "version not substituted"; fi
 
 # --execute refuses without its environment, and says which names are missing (never a value)
 rm -f "$work/calls.log"
