@@ -9,22 +9,22 @@ class Klatch < Formula
   on_macos do
     on_arm do
       url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-aarch64-apple-darwin.tar.gz"
-      sha256 "b0fc61917d5fe074c10950b922824368a758a1d3ad2a791d554ba1c1d764d8a9"
+      sha256 "55970fed84011d6e9bb75e4db2a1f1dc125061750270ad1c753d6e15d7ff5328"
     end
     on_intel do
       url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-x86_64-apple-darwin.tar.gz"
-      sha256 "26482262ea32854057d8d2e217accdb1981ee1624705a2c37a624c342fc605c0"
+      sha256 "bb1524ff1f38c270b11c94bd300f2e39e7fd9ec4646223c63fb9a8655b4aa0f3"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "4f37c00b6b484244f62ccd431cea3ce047081b7b5ad6172b9a195200a5dd9bd8"
+      sha256 "08cf4461a9aed7cbf8df7c37286a6b040aadd8c0c848a23662aeef55209b4a73"
     end
     on_intel do
       url "https://github.com/hslee16/klatch/releases/download/v0.2.0a1/klatch-0.2.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "551946c2f28a85f452e0cbf2c84a0ca5952f531f302527b73d44c5574f88c087"
+      sha256 "f04d6163961610e565626cc940112b34fb7221e8b46bad9fb6a40117dc932b39"
     end
   end
 

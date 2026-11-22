@@ -1,0 +1,1 @@
+- The `klatch admin shell` unlock window now ends on whichever of the monotonic and wall clock passes its length first, so a sleep of the machine can no longer stretch it (#1277).

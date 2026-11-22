@@ -1029,3 +1029,32 @@ fn a_recovery_code_is_hidden_whatever_sits_before_the_subcommand_and_a_room_name
     );
     assert!(r.text.contains("admin close recover"), "{}", r.text);
 }
+
+/// What a signal from outside does to the terminal during the passphrase prompt (#1278): the terminal must be left
+/// with echo and signal keys on, and the process must still end on that signal.
+fn terminal_after_signal(sig: i32) {
+    let h = Home::new();
+    h.set_passphrase();
+    let args = admin_table(&h).into_iter().next().unwrap().1;
+    let (ended_on_signal, lflag) = common::pty::run_on_pty_signalled(klatch_in(&h, &args), sig);
+    assert!(ended_on_signal, "the process did not end on signal {sig}");
+    assert!(
+        lflag & libc::ECHO != 0 && lflag & libc::ISIG != 0,
+        "signal {sig} left the terminal with echo or signal keys off (lflag {lflag:#x})"
+    );
+}
+
+#[test]
+fn a_sigterm_during_the_passphrase_prompt_leaves_the_terminal_with_echo_on() {
+    terminal_after_signal(libc::SIGTERM);
+}
+
+#[test]
+fn a_sighup_during_the_passphrase_prompt_leaves_the_terminal_with_echo_on() {
+    terminal_after_signal(libc::SIGHUP);
+}
+
+#[test]
+fn a_sigint_during_the_passphrase_prompt_leaves_the_terminal_with_echo_on() {
+    terminal_after_signal(libc::SIGINT);
+}

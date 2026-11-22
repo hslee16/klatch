@@ -232,3 +232,53 @@ fn drain(fd: i32, into: &mut String, wait_ms: i32) {
         into.push_str(&String::from_utf8_lossy(&buf[..got as usize]));
     }
 }
+
+/// Run `cmd` on a pty, wait for its first prompt, send the child `signal`, wait for it to end, and report the
+/// terminal's local flags as they were left (#1278), with whether the child ended on that signal.
+pub fn run_on_pty_signalled(mut cmd: Command, signal: i32) -> (bool, libc::tcflag_t) {
+    let (master, slave) = pty();
+    cmd.stdin(Stdio::from(slave.try_clone().unwrap()))
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave.try_clone().unwrap()));
+    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            libc::ioctl(2, libc::TIOCSCTTY as _, 0);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().expect("spawn on a pty");
+    drop(cmd);
+    let mfd = master.as_raw_fd();
+    let mut text = String::new();
+    let started = Instant::now();
+    // the prompt is up, and echo is off, once the output ends in ": "
+    while !text.ends_with(": ") {
+        if started.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+            panic!("no prompt appeared; so far:\n{text}");
+        }
+        let mut p = libc::pollfd {
+            fd: mfd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one pollfd, live for the call.
+        if unsafe { libc::poll(&mut p, 1, 100) } > 0 {
+            let mut buf = [0u8; 4096];
+            // SAFETY: reads into a live buffer of that length.
+            let got = unsafe { libc::read(mfd, buf.as_mut_ptr().cast(), buf.len()) };
+            assert!(got > 0, "the command ended before it prompted:\n{text}");
+            text.push_str(&String::from_utf8_lossy(&buf[..got as usize]));
+        }
+    }
+    // SAFETY: kill on our own child.
+    unsafe { libc::kill(child.id() as i32, signal) };
+    let status = child.wait().expect("wait");
+    // SAFETY: termios is plain data; tcgetattr fills it.
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::tcgetattr(mfd, &mut t) }, 0);
+    use std::os::unix::process::ExitStatusExt;
+    (status.signal() == Some(signal), t.c_lflag)
+}

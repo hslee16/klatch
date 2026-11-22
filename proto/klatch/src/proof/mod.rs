@@ -192,7 +192,7 @@ pub fn prove<S: PolicyStore + ?Sized>(
 ) -> Result<AdminProof, ProofError> {
     let verifier = load(store)?;
     let id = verifier.id();
-    if unlock.is_open(at.mono, &id, window_len(store)) {
+    if unlock.is_open(at, &id, window_len(store)) {
         return Ok(AdminProof(()));
     }
     let wait = limit::wait_secs(store, at.unix)?;
@@ -246,7 +246,7 @@ pub fn prove<S: PolicyStore + ?Sized>(
             opened_for = fresh.id();
         }
     }
-    unlock.open(at.mono, &opened_for);
+    unlock.open(at, &opened_for);
     audit(
         store,
         "proof-ok",
@@ -331,7 +331,7 @@ pub fn init<S: PolicyStore + ?Sized>(
     }
     limit::clear(store, at.unix)?;
     audit(store, "passphrase-set", "", "first passphrase", at.unix);
-    unlock.open(at.mono, &v.id());
+    unlock.open(at, &v.id());
     Ok(AdminProof(()))
 }
 
@@ -350,7 +350,7 @@ pub fn change<S: PolicyStore + ?Sized>(
     let v = Verifier::create(&new, verifier::CURRENT).map_err(ProofError::Store)?;
     store_verifier(store, &v, at.unix)?;
     audit(store, "passphrase-changed", "", "", at.unix);
-    unlock.open(at.mono, &v.id());
+    unlock.open(at, &v.id());
     Ok(AdminProof(()))
 }
 
@@ -399,7 +399,7 @@ pub fn reset<S: PolicyStore + ?Sized>(
     store_verifier(store, &v, at.unix)?;
     limit::clear(store, at.unix)?;
     audit(store, "passphrase-reset", "", "by recovery code", at.unix);
-    unlock.open(at.mono, &v.id());
+    unlock.open(at, &v.id());
     Ok(AdminProof(()))
 }
 

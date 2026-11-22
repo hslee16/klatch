@@ -125,6 +125,34 @@ fn write_all(fd: i32, text: &str) {
 struct Silent {
     fd: i32,
     saved: libc::termios,
+    old_actions: [libc::sigaction; SIGNALS.len()],
+}
+
+/// The signals that end the process from outside while the prompt is up (#1278). SIGKILL cannot be caught.
+const SIGNALS: [i32; 4] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGQUIT];
+
+/// The terminal settings the signal handler puts back. Written before `SIGNAL_FD` is set and read only after it is
+/// seen set, so the handler never reads a half-written value; the prompt is one at a time per process.
+struct SavedForSignal(std::cell::UnsafeCell<std::mem::MaybeUninit<libc::termios>>);
+// SAFETY: see the ordering described above; there is no other access.
+unsafe impl Sync for SavedForSignal {}
+static SIGNAL_SAVED: SavedForSignal =
+    SavedForSignal(std::cell::UnsafeCell::new(std::mem::MaybeUninit::uninit()));
+static SIGNAL_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// Put the terminal back, then let the signal do what it would have done: default action, re-raised. Only
+/// async-signal-safe calls (`tcsetattr`, `signal`, `raise`).
+extern "C" fn restore_and_reraise(sig: libc::c_int) {
+    use std::sync::atomic::Ordering;
+    let fd = SIGNAL_FD.load(Ordering::Acquire);
+    if fd >= 0 {
+        // SAFETY: SIGNAL_SAVED was written before the fd was published.
+        unsafe {
+            libc::tcsetattr(fd, libc::TCSAFLUSH, (*SIGNAL_SAVED.0.get()).as_ptr());
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+    }
 }
 
 impl Silent {
@@ -141,14 +169,38 @@ impl Silent {
         if unsafe { libc::tcsetattr(fd, libc::TCSAFLUSH, &quiet) } != 0 {
             return Err(ProofError::NoTerminal);
         }
-        Ok(Self { fd, saved })
+        // SAFETY: published before the handlers can run; see `SavedForSignal`.
+        unsafe { (*SIGNAL_SAVED.0.get()).write(saved) };
+        SIGNAL_FD.store(fd, std::sync::atomic::Ordering::Release);
+        // SAFETY: sigaction takes plain structs; the handler is async-signal-safe.
+        let old_actions = unsafe {
+            let mut act: libc::sigaction = std::mem::zeroed();
+            act.sa_sigaction = restore_and_reraise as extern "C" fn(libc::c_int) as usize;
+            libc::sigemptyset(&mut act.sa_mask);
+            let mut old = [std::mem::zeroed::<libc::sigaction>(); SIGNALS.len()];
+            for (i, sig) in SIGNALS.iter().enumerate() {
+                libc::sigaction(*sig, &act, &mut old[i]);
+            }
+            old
+        };
+        Ok(Self {
+            fd,
+            saved,
+            old_actions,
+        })
     }
 }
 
 impl Drop for Silent {
     fn drop(&mut self) {
-        // SAFETY: restores the settings read in `on`.
-        unsafe { libc::tcsetattr(self.fd, libc::TCSAFLUSH, &self.saved) };
+        // SAFETY: restores the settings and the signal actions read in `on`.
+        unsafe {
+            for (i, sig) in SIGNALS.iter().enumerate() {
+                libc::sigaction(*sig, &self.old_actions[i], std::ptr::null_mut());
+            }
+            SIGNAL_FD.store(-1, std::sync::atomic::Ordering::Release);
+            libc::tcsetattr(self.fd, libc::TCSAFLUSH, &self.saved);
+        };
     }
 }
 
