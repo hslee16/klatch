@@ -1,1 +1,1 @@
-| `admin` | see below | a real terminal, no session above, typed confirmation |
+| `admin` | see below | the admin passphrase on a real terminal (#1233), then the typed confirmation |

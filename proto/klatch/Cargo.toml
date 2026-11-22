@@ -45,6 +45,7 @@ cli = [
     "dep:sha2",
     "dep:data-encoding",
     "dep:subtle",
+    "dep:argon2",
     "dep:chacha20poly1305",
     "dep:security-framework",
 ]
@@ -81,6 +82,8 @@ getrandom = { version = "0.3", optional = true }
 sha2 = { version = "0.10", optional = true }
 data-encoding = { version = "2", optional = true }
 subtle = { version = "2", optional = true }
+# The admin passphrase verifier (#1233): Argon2id, no other feature (no password-hash, no rand_core, no parallel).
+argon2 = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
 chacha20poly1305 = { version = "0.10", optional = true }
 ureq = { version = "3.5.0", default-features = false, features = ["rustls"], optional = true }
 

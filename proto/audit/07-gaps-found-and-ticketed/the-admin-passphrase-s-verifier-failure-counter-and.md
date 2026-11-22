@@ -1,0 +1,1 @@
+| The admin passphrase's verifier, failure counter and window length are policy rows in a store whose key a same-user process can read, so a process that opens the store directly (not the command line) can replace the verifier and pass the proof | #1261 |

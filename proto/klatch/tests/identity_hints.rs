@@ -12,7 +12,7 @@ fn stderr(o: &std::process::Output) -> String {
 #[test]
 fn a_missing_name_error_says_how_to_get_one_from_the_session() {
     let h = Home::new();
-    let o = h.launcher(&["join", "r"]);
+    let o = h.launcher_command(&["join", "r"]).detached().output().unwrap();
     assert!(!o.status.success());
     let err = stderr(&o);
     assert!(

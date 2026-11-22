@@ -128,6 +128,8 @@ fn a_hook_with_the_key_gone_says_so_in_the_context_and_does_not_fail_the_session
 #[test]
 fn the_key_commands_need_a_real_terminal_like_every_admin_command() {
     let h = Home::new();
+    // a passphrase is set, so the refusal is for the missing terminal (#1233)
+    h.set_passphrase();
     h.ok("alice", &["join", "r"]);
     for args in [
         vec!["admin", "recovery"],
@@ -136,7 +138,7 @@ fn the_key_commands_need_a_real_terminal_like_every_admin_command() {
     ] {
         let err = h.fail("alice", &args);
         assert!(
-            err.contains("real terminal") || err.contains("coding-agent session"),
+            err.contains("real terminal"),
             "{args:?}: {err}"
         );
     }

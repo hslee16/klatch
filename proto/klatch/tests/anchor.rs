@@ -78,7 +78,7 @@ fn a_worker_cannot_report_work_done_and_a_bad_anchor_is_refused() {
     h.ok("alice", &["claim", "r", "src/a.rs", "--anchor", "wo:7"]);
     let o = h.worker(&bundle, &["anchor", "done", "wo:7"]);
     assert!(
-        !o.status.success() && text(&o).contains("worker cannot"),
+        !o.status.success() && text(&o).contains("real terminal"),
         "{}",
         text(&o)
     );

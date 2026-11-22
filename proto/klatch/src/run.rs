@@ -77,34 +77,18 @@ pub(crate) fn read_archive(
     Ok(String::from_utf8(plain)?)
 }
 
-fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
-    if holds_a_bundle {
-        return Some("a worker cannot open, end or list runs");
-    }
-    if agent_above {
-        return Some(
-            "runs cannot be managed from inside a coding-agent session; run this from a launcher of your own",
-        );
-    }
-    None
-}
-
 pub fn run(cmd: RunCmd) -> Result<()> {
-    if let Some(why) = refusal(
-        std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
-        discover_session().is_ok(),
-    ) {
-        bail!("{why}");
-    }
     let db = db_path()?;
+    // the passphrase first (#1233): nothing below is reachable without the proof
+    let (store, proof) = crate::admin::prove::open_and_require(&db)?;
     let gateway = Gateway::new(
-        custody::open_store(&db)?,
+        store,
         CliClock,
-        ForbidFloors::new(AllowAll),
+        ForbidFloors::new(RequireHuman::new(AllowAll)),
     );
     // the person running the run holds every label key, so the archive holds what the rooms held
     gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
-    let launcher = Principal::unattributed("admin");
+    let launcher = proof.principal();
     match cmd {
         RunCmd::Create { id } => {
             gateway.admin_run_create(&launcher, &id)?;
@@ -143,20 +127,4 @@ pub fn run(cmd: RunCmd) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn neither_a_worker_nor_an_agent_session_may_manage_runs() {
-        assert!(refusal(false, false).is_none());
-        assert!(refusal(true, false).unwrap().contains("worker cannot"));
-        assert!(
-            refusal(false, true)
-                .unwrap()
-                .contains("coding-agent session")
-        );
-    }
 }

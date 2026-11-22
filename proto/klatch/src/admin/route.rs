@@ -11,6 +11,20 @@ pub(super) enum Route {
     Gateway(Act),
     /// Acts on the key or the store file, so needs the keystore as well.
     Keystore(Keystore),
+    /// The passphrase itself and the shell that holds its unlock window (#1233).
+    Passphrase(Passphrase),
+}
+
+pub(super) enum Passphrase {
+    /// Set or change it: asks for the old one itself, so it is the one act that runs before a proof.
+    Init,
+    /// Reset it with the recovery code: also before a proof, because the passphrase is what is forgotten.
+    Reset,
+    Window {
+        secs: Option<i64>,
+        off: bool,
+    },
+    Shell,
 }
 
 pub(super) enum Act {
@@ -262,6 +276,10 @@ impl From<AdminCmd> for Route {
             C::ScrubAdd { name, term } => Route::scrub(ScrubAct::Add { name, term }),
             C::ScrubRemove { name } => Route::scrub(ScrubAct::Remove { name }),
             C::ScrubList => Route::scrub(ScrubAct::List),
+            C::InitPassphrase => Route::Passphrase(Passphrase::Init),
+            C::ResetPassphrase => Route::Passphrase(Passphrase::Reset),
+            C::UnlockWindow { secs, off } => Route::Passphrase(Passphrase::Window { secs, off }),
+            C::Shell => Route::Passphrase(Passphrase::Shell),
             C::Refusals { limit } => Route::listing(ListingAct::Refusals { limit }),
             C::Audit { limit } => Route::listing(ListingAct::Audit { limit }),
             C::ReviewQueue { limit } => Route::listing(ListingAct::ReviewQueue { limit }),
@@ -328,6 +346,7 @@ mod tests {
             Route::Gateway(Act::Listing(_)) => "listing",
             Route::Keystore(Keystore::Key(_)) => "key",
             Route::Keystore(Keystore::Archive(_)) => "archive",
+            Route::Passphrase(_) => "passphrase",
         }
     }
 

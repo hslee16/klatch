@@ -1,0 +1,1 @@
+| An install that has not set an admin passphrase has an unauthenticated first set: a program with a terminal can set it before the human does (refused with no terminal and from a detected coding-agent session, audited as `passphrase-set`) | #1262 |

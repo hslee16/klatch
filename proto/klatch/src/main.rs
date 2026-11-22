@@ -26,10 +26,12 @@ use klatch::domain::{
     Asker, Claim, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json,
     judge_tool, patch_targets, render_board, render_hook, render_who,
 };
-use klatch::gateway::{AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, Transport};
+use klatch::gateway::{
+    AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, RequireHuman, Transport,
+};
 use klatch::harness::PsTable;
 use klatch::member::{
-    Call, CliClock, Who, custody, db_path, discover_session, now, registry_and_domain,
+    Call, CliClock, Who, custody, db_path, now, registry_and_domain,
 };
 use klatch::store::SqliteStore;
 use klatch::store::areas::*;

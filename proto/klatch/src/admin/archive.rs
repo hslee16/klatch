@@ -353,7 +353,7 @@ mod tests {
         e.old_messages("young", 1);
         let ctx = KeyCtx {
             db: &e.db(),
-            who: Principal::unattributed("admin"),
+            who: Principal::verified("human"),
         };
         let mut run = ArchiveRun {
             ctx: &ctx,
@@ -392,7 +392,7 @@ mod tests {
         e.old_messages("other", 1);
         let ctx = KeyCtx {
             db: &e.db(),
-            who: Principal::unattributed("admin"),
+            who: Principal::verified("human"),
         };
         let at = now();
         let mut run = ArchiveRun {

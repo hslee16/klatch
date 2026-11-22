@@ -19,6 +19,8 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("admin_run_end", |g, w| refused(g.admin_run_end(w, "a", None))),
     ("admin_runs", |g, w| refused(g.admin_runs(w))),
     ("admin_note", |g, w| refused(g.admin_note(w, ("key-test", "x"), "y"))),
+    // the keystore family's gate (#1233): asked before the act touches the key or the store file
+    ("admin_authorize", |g, w| refused(g.admin_authorize(w, "backup", ""))),
     // found by the directory scan (#161): these files were not in the hand-kept list before
     ("admin_set_librarian", |g, w| refused(g.admin_set_librarian(w, "bob", true))),
     ("admin_set_reviewer", |g, w| refused(g.admin_set_reviewer(w, "bob", true))),

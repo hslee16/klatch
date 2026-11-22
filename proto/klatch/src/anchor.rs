@@ -110,31 +110,16 @@ fn read_events(file: Option<&PathBuf>) -> Result<String> {
     Ok(text)
 }
 
-fn refusal(holds_a_bundle: bool, agent_above: bool) -> Option<&'static str> {
-    if holds_a_bundle {
-        return Some("a worker cannot report work items done");
-    }
-    if agent_above {
-        return Some(
-            "work items cannot be reported done from inside a coding-agent session; run this from a launcher of your own",
-        );
-    }
-    None
-}
 
 pub fn run(cmd: AnchorCmd) -> Result<()> {
-    if let Some(why) = refusal(
-        std::env::var_os("KLATCH_IDENTITY_FILE").is_some(),
-        discover_session().is_ok(),
-    ) {
-        bail!("{why}");
-    }
+    // the passphrase first (#1233): nothing below is reachable without the proof
+    let (store, proof) = crate::admin::prove::open_and_require(&db_path()?)?;
     let gateway = Gateway::new(
-        custody::open_store(&db_path()?)?,
+        store,
         CliClock,
-        ForbidFloors::new(AllowAll),
+        ForbidFloors::new(RequireHuman::new(AllowAll)),
     );
-    let launcher = Principal::unattributed("admin");
+    let launcher = proof.principal();
     let released = match cmd {
         AnchorCmd::Done { anchor } => gateway.anchor_done(&launcher, &anchor)?,
         AnchorCmd::Reap { dir, worktrees } => {
@@ -229,16 +214,5 @@ mod tests {
             worktrees: Some(WorktreeAnchors(root.to_path_buf())),
         };
         assert!(only_wt.is_done("wo-1").is_err());
-    }
-
-    #[test]
-    fn neither_a_worker_nor_an_agent_session_may_report_done() {
-        assert!(refusal(false, false).is_none());
-        assert!(refusal(true, false).unwrap().contains("worker cannot"));
-        assert!(
-            refusal(false, true)
-                .unwrap()
-                .contains("coding-agent session")
-        );
     }
 }

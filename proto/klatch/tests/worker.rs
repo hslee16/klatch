@@ -190,7 +190,7 @@ fn a_worker_cannot_issue_revoke_or_list_credentials() {
     ] {
         let o = h.worker(&b, &args);
         assert!(
-            !o.status.success() && text(&o).contains("worker cannot"),
+            !o.status.success() && text(&o).contains("real terminal"),
             "{args:?}: {}",
             text(&o)
         );

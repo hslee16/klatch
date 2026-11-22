@@ -1,11 +1,11 @@
 //! The commands about the key and the store file: they need the keystore as well as the gateway, and each one is in
 //! the audit. `key_command` sends each to its own function.
 
-use super::route::{KeyAct, Keystore};
+use super::route::{ArchiveAct, KeyAct, Keystore};
 use super::*;
 use std::path::Path;
 
-/// What every keystore command needs: where the store is, and who the audit says did it.
+/// What every keystore command needs: where the store is, and who the audit says did it (the principal of the proof).
 pub(super) struct KeyCtx<'a> {
     pub db: &'a Path,
     pub who: Principal,
@@ -16,7 +16,7 @@ impl KeyCtx<'_> {
         Ok(Gateway::new(
             custody::open_store(self.db)?,
             CliClock,
-            AllowAll,
+            RequireHuman::new(AllowAll),
         ))
     }
 
@@ -33,11 +33,46 @@ impl KeyCtx<'_> {
     }
 }
 
-pub(super) fn key_command(db: &Path, route: Keystore) -> Result<()> {
+/// What the guard is asked before the act: the command's own name.
+fn action_name(route: &Keystore) -> &'static str {
+    match route {
+        Keystore::Key(KeyAct::Recovery) => "recovery",
+        Keystore::Key(KeyAct::Recover { .. }) => "recover",
+        Keystore::Key(KeyAct::SealLabel { .. }) => "seal-label",
+        Keystore::Key(KeyAct::RotateKey) => "rotate-key",
+        Keystore::Key(KeyAct::RotateLabelKey { .. }) => "rotate-label-key",
+        Keystore::Key(KeyAct::Backup { .. }) => "backup",
+        Keystore::Key(KeyAct::Restore { .. }) => "restore",
+        Keystore::Key(KeyAct::RunArchive { .. }) => "run-archive",
+        Keystore::Key(KeyAct::Export { .. }) => "export",
+        Keystore::Archive(ArchiveAct::Retention { .. }) => "retention",
+        Keystore::Archive(ArchiveAct::Archive { .. }) => "archive",
+        Keystore::Archive(ArchiveAct::RestoreArchive { .. }) => "restore-archive",
+        Keystore::Archive(ArchiveAct::Archives) => "archives",
+    }
+}
+
+/// Run a keystore act. The proof is the argument that makes it callable at all, and the gateway's guard is asked
+/// for the act by name before anything touches the key or the store file (#1233).
+pub(super) fn key_command(
+    db: &Path,
+    proof: &klatch::proof::AdminProof,
+    route: Keystore,
+) -> Result<()> {
     let ctx = KeyCtx {
         db,
-        who: Principal::unattributed("admin"),
+        who: proof.principal(),
     };
+    // The guard is asked on a gateway over a store of its own (in memory): the keystore family must be gated
+    // BEFORE it opens the real store, because some acts (`recover`, `restore`) run exactly when there is no usable
+    // key and opening the store would make one. The guard decides on the principal alone here; the act's own audit
+    // row is written to the real store.
+    Gateway::new(
+        SqliteStore::open_in_memory()?,
+        CliClock,
+        RequireHuman::new(AllowAll),
+    )
+    .admin_authorize(&ctx.who, action_name(&route), "")?;
     match route {
         Keystore::Key(act) => key_act(&ctx, act),
         Keystore::Archive(act) => archive::archive_command(&ctx, act),

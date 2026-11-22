@@ -1,1 +1,1 @@
-| `run` | `admin_run_create`, `admin_run_end`, `admin_runs` | the launcher heuristic: gap #834 |
+| `run` | `admin_run_create`, `admin_run_end`, `admin_runs` | the admin passphrase (#1233): the command asks for it on a real terminal before anything else (`prove::open_and_require`), runs as the principal `human` behind `ForbidFloors(RequireHuman)`, and a detached process, a worker's process and an agent's pseudo-terminal are each refused (`tests/admin_proof.rs`) |
