@@ -42,19 +42,21 @@ pub(crate) fn plain(text: &str) -> String {
         .collect()
 }
 
-/// The longest a word after the command is shown; a longer one is cut and says how long it was and a short digest
-/// (of the whole word, which the person cannot check against the part they see: they should read the cut as unseen).
+/// The longest a word after the command is shown whole; a longer one shows its head and its tail and says how many
+/// characters between them are unseen (#1283). No digest: the person cannot check one against what they see.
 const WORD_LIMIT: usize = 48;
+
+/// How many characters of a cut word are shown at each end.
+const HEAD_TAIL: usize = 20;
 
 /// The families of command this approves, and so where the command word is.
 const FAMILIES: [&str; 5] = ["admin", "worker", "anchor", "run", "judge"];
 
 /// What the passphrase approves, for the prompt: the command being run. Text is whitelisted (`plain`), the family
-/// and command words are never cut, a long word is cut with its length and a digest, and a very long command is cut
+/// and command words are never cut, a long word is cut to its head and tail with the count unseen, and a very long command is cut
 /// at a word with how many words went. A recovery code is NOT hidden here: that is decided from the parsed command
 /// (`admin::run`), not from words.
 pub(crate) fn describe_words(words: &[String]) -> String {
-    use sha2::{Digest, Sha256};
     let family = words.iter().position(|w| FAMILIES.contains(&w.as_str()));
     let command = family.map(|f| f + 1);
     let protected =
@@ -63,13 +65,10 @@ pub(crate) fn describe_words(words: &[String]) -> String {
     for (i, w) in words.iter().enumerate() {
         let w = plain(w);
         let shown = if !protected(i) && w.chars().count() > WORD_LIMIT {
-            let digest = data_encoding::HEXLOWER.encode(&Sha256::digest(w.as_bytes()));
-            format!(
-                "{}...({} chars, sha256 {})",
-                w.chars().take(WORD_LIMIT - 8).collect::<String>(),
-                w.chars().count(),
-                &digest[..8]
-            )
+            let n = w.chars().count();
+            let head: String = w.chars().take(HEAD_TAIL).collect();
+            let tail: String = w.chars().skip(n - HEAD_TAIL).collect();
+            format!("{head}...({} chars unseen)...{tail}", n - 2 * HEAD_TAIL)
         } else {
             w
         };
@@ -344,5 +343,26 @@ mod describe_tests {
         let bad = OsString::from_vec(vec![b'a', 0xff, 0xfe, b'b']);
         let shown = describe_os(&[OsString::from("admin"), OsString::from("close"), bad]);
         assert_eq!(shown, "admin close a??b");
+    }
+
+    #[test]
+    fn a_long_word_shows_its_head_and_tail_and_says_how_much_is_unseen_with_no_digest() {
+        let word = format!("{}{}{}", "H".repeat(20), "m".repeat(60), "T".repeat(20));
+        let shown = d(&["admin", "close", &word]);
+        assert_eq!(
+            shown,
+            format!(
+                "admin close {}...(60 chars unseen)...{}",
+                "H".repeat(20),
+                "T".repeat(20)
+            )
+        );
+        assert!(!shown.contains("sha256"));
+    }
+
+    #[test]
+    fn a_word_at_the_limit_is_shown_whole() {
+        let word = "x".repeat(48);
+        assert_eq!(d(&["admin", "close", &word]), format!("admin close {word}"));
     }
 }

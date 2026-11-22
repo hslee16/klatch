@@ -1,0 +1,1 @@
+- The admin passphrase prompt shows the head and tail of a long argument with the count of unseen characters instead of an unverifiable digest (#1283).
