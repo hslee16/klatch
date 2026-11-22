@@ -1,0 +1,1 @@
+- The bench follows the admin passphrase proof: the audit order includes proof-ok and passphrase-set rows, and `admin recover` with a lost key is driven with the typed confirmation only (#1288).
