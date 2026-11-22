@@ -60,9 +60,11 @@ fn the_binary_sits_in_the_archives_top_directory() {
         metadata_value(&manifest, "bin-dir"),
         "klatch-{ version }-{ target }/{ bin }{ binary-ext }"
     );
-    let release = read("../../.github/workflows/build-release.yml");
+    // the archive is made by release/package-archive.sh (#1236): klatch (and klatch-server) under klatch-<version>-<target>/
+    let package = read("../../release/package-archive.sh");
     assert!(
-        release.contains(r#"cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch""#),
+        package.contains(r#"name="klatch-$version-$target""#)
+            && package.contains(r#"install -m 0755 "$bin_dir/klatch" "$stage/$name/klatch""#),
         "the archive layout changed"
     );
 }

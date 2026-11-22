@@ -1,8 +1,10 @@
 # Security
 
-klatch is a prototype for agent rooms. It is **not yet released**: the initial public release is blocked on the
-zero trust and encryption epic (#152), and this file is the working draft of what the release will say. It is
-reviewed by an outside person before release (#167).
+klatch is a **public local-only pre-release**: a scoped MVP, **not a 1.0**, with **no outside security review**
+(planned for the first unmarked release, #167). **Do not put sensitive data in it.** It runs on one machine for one
+person and their agents. Remote transports (TLS, mutual TLS, an HTTPS front end, a reverse proxy, WebSocket, gRPC,
+exposing `klatch-server` to other machines) are not part of this release; the README lists what is in and out of scope.
+Supported versions: the newest release only, the current practice and not a policy (#460).
 
 ## What is protected
 
@@ -44,19 +46,52 @@ reviewed by an outside person before release (#167).
   Upgrading an existing install: until a passphrase is set every admin, launcher and keystore command refuses and
   says to run `klatch admin init-passphrase`; run it once, right after upgrading, in a terminal of your own. The old
   terminal and process-tree check is gone, not kept as a fallback.
+- **Keys.** On macOS the key is in a file readable only by you (the Keychain asks for a password whenever a program it
+  has not seen reads an item, and an unsigned build is a new program each time, #480; an older login Keychain item is
+  read once, within 5 seconds, to migrate an install that predates 2026-11-14, and never written again). On Linux it is
+  in the Secret Service where there is one, or in a file readable only by you (unattended workers, and machines without
+  a keystore). On Linux, what was tested (in containers, Debian 12, aarch64, `proto/linux-keys/run.sh`): GNOME Keyring
+  through `secret-tool` on a session bus works, including replacing and deleting a key, and the key never appears on a
+  command line; with no session bus, or an address that points nowhere, klatch keeps the key in a file in a 0700
+  directory with mode 0600 and warns (`klatch doctor` shows the warning); a locked keyring with no display to unlock it
+  fails within seconds with a reason and writes no key file. Not tested: KWallet, KeePassXC, x86_64, a graphical unlock
+  prompt (#563); a locked keyring may read as "no key" (#561). The key is never put in the environment, on a command
+  line, in a log or in a crash report, and it is wiped from memory when dropped. A recovery code
+  (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and
   indexing use memory, not temporary files.
-- **On the wire.** Local stdio relies on operating-system credentials (a private directory, the peer's user id; Unix
-  sockets would too, if a daemon is ever added: klatch opens none today). Anything that leaves the machine must be mutual TLS or SSH and a plaintext listener refuses to start off
-  loopback. No network transport exists yet.
+- **On the wire.** Remote transports are not part of this release. On one machine klatch uses stdio, a Unix socket and,
+  for tools that need it, loopback HTTP with a bearer credential; none of these is encrypted, none leaves the machine,
+  and a non-loopback listener refuses to start (`proto/klatch-server/src/loopback.rs`, tested in
+  `proto/klatch-server/tests/http_wire.rs`).
+  - **stdio and the Unix socket** rely on operating-system permissions: inherited pipes, and a socket in a directory only
+    you can write to with mode 0600, where the daemon checks the peer's user id. Prefer these.
+  - **Loopback HTTP and MCP over HTTP** (`klatch-server http`) are plaintext TCP on 127.0.0.1 or ::1. Any local user can
+    reach the port, so the defence is the credential: every request needs `Authorization: Bearer` and `X-Klatch-Member`
+    (a worker credential the human issued, checked live), there is no unauthenticated tier, and forwarded headers and
+    peer addresses grant nothing (`proto/klatch-server/tests/route_audit.rs`). It is the weakest local route: use it
+    only for tools that cannot use stdio or the socket, and never forward or proxy the port. Exposing it other than
+    through ssh or mutual TLS (`clients/recipes/behind-a-tunnel.md`) is unsupported and unprotected.
+- **Human proof for administration.** Admin, launcher and keystore acts ask for the admin passphrase typed at the terminal
+  (#1233) [PASSPHRASE-PROOF-PLACEHOLDER: finish this sentence once #1233 has merged; until then these acts rest on a
+  terminal and process-tree heuristic that a detached process escapes, #834 and #318].
 - **In code.** Every public gateway operation is listed and a test fails if one reaches the store without asking the
   guard. Dependencies are checked for licence, advisories and sources, and a list of weak or home-grown crypto crates
   is refused.
-- **No telemetry, no update check, no outbound calls from the binary.** klatch depends on no networking crate, opens no
-  socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A test
-  (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
+- **No telemetry, no update check, no outbound calls from the `klatch` binary.** `klatch` depends on no networking crate,
+  binds and connects to no socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A
+  test (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
   of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
+- **`klatch-server` is a second binary with a second, different claim.** It ships next to `klatch` in every archive,
+  wheel and Homebrew install, and it does open sockets, so the claim above does not cover it. Its claim is:
+  klatch-server opens loopback listeners only, starts no program and makes no outbound connection. A non-loopback bind
+  (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
+  closes a peer of another user, and no networking crate or HTTP client is in its dependency tree.
+  `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
+  the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
+  packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
+  not published on crates.io; it comes from the archives, the platform wheels and Homebrew.
 
 ## What is not protected (read this)
 
@@ -73,18 +108,27 @@ reviewed by an outside person before release (#167).
   `klatch admin init-passphrase`, a program with a terminal could set it first (it is refused with no terminal and
   from inside a detected coding-agent session, and audited; #1262). Set it before anything else.
 - **Identity.** A member name is as strong as the process that typed it. A clearance rests on that name, so it is as
-  spoofable as the name until identity is proven by a gateway-owned socket (#152 and the identity work).
+  spoofable as the name unless the member holds a worker key bundle. A process with no key bundle acts as Unattributed
+  under a typed or discovered name, by design (#161). A key bundle proves a member, not its harness: workers, wire joins
+  and a typed name inside Claude Code are the generic floor, so a room that requires a capability refuses them (#880,
+  #881, #1003).
 - **Plaintext while in use.** Messages are plaintext in klatch's memory and in the context of the agent that reads
   them: delivering them is the product. A label check decides which agent may read what; encryption protects the data
   everywhere else.
 - **A direct message is private from other members, not from the human.** `klatch dm` makes a room of two members;
   other members cannot join, read, post to or list it, and it is held to the lower of the two clearances. The human
   who runs klatch can read every room, a dm included (`klatch admin export`), so an agent must not promise its user
-  that a dm is hidden from them. Today klatch runs plaintext and same-user (DESIGN section 23): a hostile process of
-  yours can read a dm like any message, except text in a sealed label, which stays encrypted everywhere but the
-  reading agent's context. Making a dm needs no room-creation grant (decisions #631 and #672).
-- **The first release of a store** on a machine with a running older klatch: see #373.
+  that a dm is hidden from them. klatch runs as you (DESIGN section 23): a hostile process of yours can read a dm like
+  any message, except text in a sealed label, which stays encrypted everywhere but the reading agent's context. Making a dm needs no room-creation grant (decisions #631 and #672).
 - **Claims** are advisory to every route into a file other than the claim hook.
+- **Session end.** The session-end hook cannot mark a member done when its credential idle-expired (#1027).
+- **Hand-opened Claude Code sessions** are discovered through the harness registry; Linux behaviour is unobserved (#171,
+  #797).
+- **Also open:** #1146 (the member convention text does not teach ask, answer and reopen), #1182 (a dead claim holder is
+  invisible to `stuck` until the TTL), #1042 (ACP resource links and cancel), #543 (a deadlock refusal with no cycle).
+- **Platforms.** Tested: macOS arm64 and Linux x86_64; built and smoke tested only: Linux aarch64 and macOS x86_64.
+  Windows is unsupported. The macOS binaries are not signed with an Apple Developer ID or notarized (#424): a browser
+  download is quarantined (`xattr -d com.apple.quarantine <file>` once you have verified it).
 - **Claim text is not sealed.** A sealed label protects message bodies and payloads. A claim's reason, a release note
   and a member's status are stored as plain text (inside the encrypted store, but readable by every principal that
   can read the board, `who` and the hook digest, whatever label it holds), so they must not carry secrets. A reason
@@ -107,7 +151,7 @@ made with `gh` or `curl` are not.
 
 The release carries, for each of macOS arm64, macOS x86_64, and Linux x86_64 and aarch64 (each in a dynamic glibc build
 and a static musl build): the archive
-(`klatch-<version>-<target>.tar.gz`: the binary, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a CycloneDX 1.5 SBOM
+(`klatch-<version>-<target>.tar.gz`: the `klatch` and `klatch-server` binaries, `LICENSE` and `THIRD-PARTY-LICENSES.txt`) and a CycloneDX 1.5 SBOM
 (`klatch-<version>-<target>.cdx.json`). For the whole release: `SHA256SUMS` and its Sigstore signature
 `SHA256SUMS.sigstore.json`.
 

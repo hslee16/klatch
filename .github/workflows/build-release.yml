@@ -48,7 +48,8 @@ jobs:
         run: |
           set -euo pipefail
           version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("pyproject.toml").read(), re.M).group(1))')
-          if [ "$TAG" != "v$version" ]; then
+          # pyproject.toml holds the PEP 440 spelling (0.2.0a1); the tag may carry either spelling of the release
+          if ! { . "$GITHUB_WORKSPACE/release/pep440.sh"; tag_matches "$TAG" "$(pep440_to_semver "$version")"; }; then
             echo "tag $TAG does not match version $version" >&2
             exit 1
           fi
@@ -94,7 +95,10 @@ jobs:
           set -euo pipefail
           pypi=$(sed -n 's/^version = "\(.*\)"$/\1/p' clients/python/pyproject.toml | head -1)
           cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
-          [ "$TAG" = "v$pypi" ] || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
+          . "$GITHUB_WORKSPACE/release/pep440.sh"
+          # the wheels (PEP 440) and the archives (SemVer) must be one release, and the tag must name it in either spelling
+          [ "$(pep440_to_semver "$pypi")" = "$cargo" ] || { echo "the Python version $pypi and the Cargo version $cargo are not the same release" >&2; exit 1; }
+          tag_matches "$TAG" "$cargo" || { echo "tag $TAG does not match the Python version $pypi" >&2; exit 1; }
           echo "PYPI_VERSION=$pypi" >> "$GITHUB_ENV"
           echo "CARGO_VERSION=$cargo" >> "$GITHUB_ENV"
 
@@ -114,6 +118,12 @@ jobs:
               --archive "archives/klatch-${CARGO_VERSION}-${target}.tar.gz" --out-dir wheels
           done
           ls -l wheels
+
+      # Every wheel installs both commands (#1236), executable, with the licences (#1243).
+      - name: Check each wheel holds klatch, klatch-server and the licences
+        run: |
+          set -euo pipefail
+          for w in wheels/*.whl; do release/check-package-contents.sh wheel "$w"; done
 
       # What PyPI would reject at upload (broken metadata, a bad description) fails here instead.
       - name: Check the wheels' metadata the way PyPI does
@@ -151,7 +161,7 @@ jobs:
           set -euo pipefail
           version=$(node -p 'require("./package.json").version')
           # the Python pre-release 0.1.0.dev0 and the npm pre-release 0.1.0-dev.0 are the same release
-          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+          if ! { . "$GITHUB_WORKSPACE/release/pep440.sh"; tag_matches "$TAG" "$version"; }; then
             echo "tag $TAG does not match version $version" >&2
             exit 1
           fi
@@ -162,6 +172,13 @@ jobs:
           node --experimental-strip-types --test package.test.ts
           mkdir -p "$RUNNER_TEMP/npm-dist"
           npm pack --pack-destination "$RUNNER_TEMP/npm-dist"
+
+      # dist, README, LICENSE and package.json only; the npm package holds no binary (#1243).
+      - name: The tarball holds dist, README and LICENSE and no binary
+        working-directory: .
+        run: |
+          set -euo pipefail
+          for t in "$RUNNER_TEMP"/npm-dist/*.tgz; do release/check-package-contents.sh npm "$t"; done
 
       - name: Upload the tarball
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -187,7 +204,7 @@ jobs:
           set -euo pipefail
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           # the Python pre-release 0.1.0.dev1 and the crate pre-release 0.1.0-dev.1 are the same release
-          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+          if ! { . "$GITHUB_WORKSPACE/release/pep440.sh"; tag_matches "$TAG" "$version"; }; then
             echo "tag $TAG does not match version $version" >&2
             exit 1
           fi
@@ -263,7 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' proto/Cargo.toml | head -1)
-          if [ "$TAG" != "v$version" ] && [ "$TAG" != "v$(printf '%s' "$version" | sed 's/-dev\./.dev/')" ]; then
+          if ! { . "$GITHUB_WORKSPACE/release/pep440.sh"; tag_matches "$TAG" "$version"; }; then
             echo "tag $TAG does not match version $version" >&2
             exit 1
           fi
@@ -277,13 +294,18 @@ jobs:
         if: matrix.musl
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
 
-      - name: Build the release binary
+      # Two separate builds, so the klatch binary is exactly what `cargo build -p klatch` makes (the network-free one) and
+      # klatch-server, the only binary that opens a socket, is its own artifact (#1236; both ship in every archive).
+      - name: Build the release binaries
         working-directory: proto
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --locked -p klatch --target "$TARGET"
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p klatch --target "$TARGET"
+          cargo build --release --locked -p klatch-server --target "$TARGET"
 
-      - name: Smoke test the built binary (version, then a whole launcher flow)
+      - name: Smoke test the built binaries (versions, then a whole launcher flow)
         env:
           KLATCH_BIN: ${{ github.workspace }}/proto/target/${{ matrix.target }}/release/klatch
         run: |
@@ -320,17 +342,33 @@ jobs:
         run: |
           set -euo pipefail
           name="klatch-${VERSION}-${TARGET}"
-          mkdir -p "dist/$name"
-          cp "proto/target/$TARGET/release/klatch" "dist/$name/klatch"
-          strip "dist/$name/klatch"
-          cp LICENSE proto/THIRD-PARTY-LICENSES.txt "dist/$name/"
-          tar -czf "dist/$name.tar.gz" -C dist "$name"
-          rm -rf "dist/$name"
-          # the SBOM (CycloneDX 1.5, this target's dependencies, the vendored SQLCipher and OpenSSL included); the
-          # tool writes one file per binary in the workspace and only klatch's is kept
-          (cd proto/klatch && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) cargo cyclonedx --manifest-path Cargo.toml \
+          # both binaries, stripped, then one archive (release/package-archive.sh, tested by
+          # release/test-package-archive.sh) and a check of its layout, with a start and stop of the packaged server
+          mkdir -p "stage-bin"
+          for b in klatch klatch-server; do
+            cp "proto/target/$TARGET/release/$b" "stage-bin/$b"
+            strip "stage-bin/$b"
+          done
+          release/package-archive.sh --version "$VERSION" --target "$TARGET" --bin-dir stage-bin --out-dir dist \
+            --license LICENSE --notices proto/THIRD-PARTY-LICENSES.txt
+          release/check-archive.sh "dist/$name.tar.gz" --smoke
+          # the SBOM (CycloneDX 1.5, this target's dependencies, the vendored SQLCipher and OpenSSL included): one per
+          # binary, merged into the one that covers the archive (release/merge-sbom.py)
+          export SOURCE_DATE_EPOCH
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          (cd proto/klatch && cargo cyclonedx --manifest-path Cargo.toml \
             --format json --describe binaries --target "$TARGET" --spec-version 1.5)
-          cp proto/klatch/klatch_bin.cdx.json "dist/$name.cdx.json"
+          (cd proto/klatch-server && cargo cyclonedx --manifest-path Cargo.toml \
+            --format json --describe binaries --target "$TARGET" --spec-version 1.5)
+          python3 -I release/merge-sbom.py proto/klatch/klatch_bin.cdx.json proto/klatch-server/klatch-server_bin.cdx.json \
+            "dist/$name.cdx.json"
+          python3 -I - "dist/$name.cdx.json" <<'PY'
+          import json, sys
+          names = {c["name"] for c in json.load(open(sys.argv[1]))["components"]}
+          missing = {"klatch-server", "subtle", "hmac"} - names
+          if missing:
+              sys.exit("the SBOM does not list " + ", ".join(sorted(missing)))
+          PY
           for f in "dist/$name.tar.gz" "dist/$name.cdx.json"; do
             python3 - "$f" <<'PY' > "$f.sha256"
           import hashlib, os, sys
