@@ -60,13 +60,13 @@ everything again: [UNINSTALL.md](UNINSTALL.md).
 |---|---|---|
 | macOS arm64 | tested | the maintainer's local gate and daily use; release binary smoke test; not in CI |
 | Linux x86_64 (glibc 2.34 or later, and static musl) | tested | the full `cargo test --workspace` in CI on ubuntu-latest; key tests in the manual linux-keys workflow |
-| Linux aarch64 (gnu and musl) | built and smoke tested | a native arm runner; key custody and musl tested in Docker on arm64 |
-| macOS x86_64 | built and smoke tested | a macos-15-intel runner; nothing more |
+| Linux aarch64 (gnu and musl) | tested | the full `cargo test --workspace` on a native arm runner in the manual Platform tests workflow (workflow_dispatch, run 44978689847), not in per-PR CI; key custody and musl tested in Docker on arm64 |
+| macOS x86_64 | tested | the full `cargo test --workspace` on a macos-15-intel runner in the manual Platform tests workflow (workflow_dispatch, run 44978689847), not in per-PR CI |
 | Windows | unsupported | no build |
 
 On Linux the dynamic build needs glibc 2.34 or later; the fully static (musl) build needs no system libraries, and the
-installer picks it when your glibc is older or missing. "Tested" means the test suite runs there; "built and smoke tested"
-means the binary was built and started there and nothing more.
+installer picks it when your glibc is older or missing. "Tested" means the test suite runs there. Per-PR CI runs it only on Linux x86_64; the other
+platforms were tested by manual runs and are not re-tested on every change.
 
 **Linux key custody.** The store's encryption key goes in the Secret Service (GNOME Keyring, through `secret-tool`)
 when a session bus and that command are there, and otherwise in a file readable only by you with a warning, which is

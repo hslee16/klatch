@@ -31,8 +31,8 @@ xattr -d com.apple.quarantine klatch klatch-server
 |---|---|
 | macOS arm64 | tested: the maintainer's local gate and daily use; release binary smoke test; not in CI |
 | Linux x86_64 (glibc 2.34 or later, and static musl) | tested: full `cargo test --workspace` in CI on ubuntu-latest; key tests in the manual linux-keys workflow |
-| Linux aarch64 (gnu and musl) | built and smoke tested on a native arm runner; key custody and musl tested in Docker on arm64 |
-| macOS x86_64 | built and smoke tested on a macos-15-intel runner; nothing more |
+| Linux aarch64 (gnu and musl) | tested: full `cargo test --workspace` on a native arm runner in the manual Platform tests workflow, not per-PR CI; key custody and musl tested in Docker on arm64 |
+| macOS x86_64 | tested: full `cargo test --workspace` on a macos-15-intel runner in the manual Platform tests workflow, not per-PR CI |
 | Windows | unsupported |
 
 ### What is in this release

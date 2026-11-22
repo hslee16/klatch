@@ -123,7 +123,7 @@ Supported versions: the newest release only, the current practice and not a poli
   #797).
 - **Also open:** #1146 (the member convention text does not teach ask, answer and reopen), #1182 (a dead claim holder is
   invisible to `stuck` until the TTL), #1042 (ACP resource links and cancel), #543 (a deadlock refusal with no cycle).
-- **Platforms.** Tested: macOS arm64 and Linux x86_64; built and smoke tested only: Linux aarch64 and macOS x86_64.
+- **Platforms.** Tested: macOS arm64, Linux x86_64, Linux aarch64 and macOS x86_64 (the last two by the manual Platform tests workflow, not per-PR CI).
   Windows is unsupported. The macOS binaries are not signed with an Apple Developer ID or notarized (#424): a browser
   download is quarantined (`xattr -d com.apple.quarantine <file>` once you have verified it).
 - **Claim text is not sealed.** A sealed label protects message bodies and payloads. A claim's reason, a release note
