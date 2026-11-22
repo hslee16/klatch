@@ -90,3 +90,90 @@ fn open_tasks_show_on_the_board_with_their_checkpoint_and_an_empty_board_has_no_
     let empty = render_board(&Board::default(), 10);
     assert!(!empty.contains("tasks:"), "{empty}");
 }
+
+/// A board whose asks and offers are many and long, so its text is far over a small cap.
+fn fat_board() -> Board {
+    let mut b = sample();
+    let long = format!("seeking: {}", "z".repeat(200));
+    b.asks = (1..=20).map(|i| ask(i, ("a", &long), 90)).collect();
+    b.offers = (1..=20)
+        .map(|i| Offer {
+            sender: "lib-1".into(),
+            seq: 100 + i,
+            text: format!("offering: {}", "y".repeat(200)),
+            ts: 50,
+        })
+        .collect();
+    b
+}
+
+#[test]
+fn a_board_within_the_cap_is_unchanged() {
+    let b = sample();
+    assert_eq!(
+        render_board_within(&b, 100, usize::MAX),
+        render_board(&b, 100)
+    );
+    assert!(!render_board(&b, 100).contains("not shown"));
+}
+
+#[test]
+fn a_board_over_the_cap_loses_entries_counted_and_keeps_every_header() {
+    let b = fat_board();
+    let full = render_board_within(&b, 100, usize::MAX);
+    let cap = 3000;
+    assert!(full.len() > cap, "fixture must exceed the cap");
+    let out = render_board_within(&b, 100, cap);
+    assert!(out.len() <= cap, "{} bytes: {out}", out.len());
+    let headers = |t: &str| -> Vec<String> {
+        t.lines()
+            .filter(|l| !l.starts_with(' '))
+            .map(String::from)
+            .collect()
+    };
+    assert_eq!(headers(&out), headers(&full), "a header was lost: {out}");
+    let left_out = full.lines().count() - (out.lines().count() - 1);
+    assert!(
+        out.ends_with(&format!(
+            "  [{left_out} more board entries not shown; the board text is capped at {cap} bytes]\n"
+        )),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn the_cap_never_removes_a_header_even_when_it_is_tiny() {
+    let b = fat_board();
+    let out = render_board_within(&b, 100, 10);
+    assert!(
+        out.contains("asks:") && out.contains("offers:") && out.contains("members:"),
+        "{out}"
+    );
+    assert!(out.contains("more board entries not shown"), "{out}");
+}
+
+#[test]
+fn the_default_cap_is_the_budget_constant() {
+    let mut b = fat_board();
+    b.asks = (1..=20)
+        .map(|i| ask(i, ("a", &format!("seeking: {}", "z".repeat(240))), 90))
+        .collect();
+    b.tasks = (0..20)
+        .map(|i| crate::domain::Task {
+            owner: format!("owner{i}"),
+            title: "t".repeat(240),
+            what: "t".repeat(240),
+            started: 1,
+            last: 2,
+            checkpoint: None,
+            from: None,
+            orphaned: false,
+        })
+        .collect();
+    let out = render_board(&b, 100);
+    assert!(
+        out.len() <= crate::domain::budget::BOARD_MAX_BYTES,
+        "{} bytes",
+        out.len()
+    );
+}

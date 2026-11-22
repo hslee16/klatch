@@ -92,12 +92,45 @@ const SECTIONS: &[Render] = &[
 /// The board as text for a person or an agent: one bounded line per entry, with ask and offer text treated
 /// as data. Empty sections are named so a reader can see there is nothing.
 pub fn render_board(board: &Board, now: i64) -> String {
+    render_board_within(board, now, crate::domain::budget::BOARD_MAX_BYTES)
+}
+
+/// The board text cut to at most `cap` bytes (#1162). The cut drops entry lines (the indented ones) from the end and
+/// keeps every header line, so each section is still named; a last line counts the entries left out and says nothing
+/// else about them. Headers and that line are kept even when they alone exceed a tiny `cap`.
+pub fn render_board_within(board: &Board, now: i64, cap: usize) -> String {
     let now = Now(now);
     let mut out = format!("[board {}]\n", flat(&board.room));
     for render in SECTIONS {
         render(board, now, &mut out);
     }
-    out
+    if out.len() <= cap {
+        return out;
+    }
+    let is_entry = |l: &str| l.starts_with(' ');
+    let trailer = |n: usize| {
+        format!("  [{n} more board entries not shown; the board text is capped at {cap} bytes]\n")
+    };
+    let lines: Vec<&str> = out.split_inclusive('\n').collect();
+    let headers: usize = lines
+        .iter()
+        .filter(|l| !is_entry(l))
+        .map(|l| l.len())
+        .sum();
+    let mut room = cap.saturating_sub(headers + trailer(lines.len()).len());
+    let (mut kept, mut dropped) = (String::new(), 0usize);
+    for l in lines {
+        if !is_entry(l) {
+            kept.push_str(l);
+        } else if dropped == 0 && l.len() <= room {
+            room -= l.len();
+            kept.push_str(l);
+        } else {
+            dropped += 1;
+        }
+    }
+    kept.push_str(&trailer(dropped));
+    kept
 }
 
 /// A line saying how many entries of a section were not listed.
