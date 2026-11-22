@@ -123,15 +123,26 @@ fn admin_controls(w: &World) -> Res {
         .lines()
         .filter_map(|l| l.split('\t').nth(1))
         .collect();
-    // the first join of each room (r, side) is audited as a creation (#188), under the admin acts
+    // newest first: each gated act (and the audit read itself) is preceded by a proof-ok row (#1233), the refused
+    // pause with the wrong confirmation proved the passphrase too, the passphrase is set once, and the first join
+    // of each room (r, side) is audited as a creation (#188)
     check(
         acts == [
+            "proof-ok",
             "allow",
+            "proof-ok",
             "remove",
+            "proof-ok",
             "reopen",
+            "proof-ok",
             "close",
+            "proof-ok",
             "resume",
+            "proof-ok",
             "pause",
+            "proof-ok",
+            "proof-ok",
+            "passphrase-set",
             "create-room",
             "create-room",
         ],

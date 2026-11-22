@@ -302,6 +302,21 @@ impl World {
         }
     }
 
+    /// Run `klatch admin <args>` at a pseudo-terminal for a command that runs before the store opens (`recover` with
+    /// the key lost): the store cannot be read, so there is no admin passphrase to ask for, and only the typed
+    /// confirmation is answered.
+    pub fn admin_keyless(&self, args: &[&str], typed: &str) -> Run {
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        let c = self.command("admin", &full);
+        let (ok, text) = crate::pty::run_on_pty(c, vec![typed.to_string()]);
+        Run {
+            ok,
+            stdout: crate::pty::without_prompts(&text),
+            stderr: text,
+        }
+    }
+
     /// Start `klatch admin <args>` at a pseudo-terminal without waiting, for scenarios that run several at once. The
     /// passphrase and the confirmation line are typed when it asks.
     pub fn spawn_admin(&self, args: &[&str]) -> std::io::Result<crate::pty::TtyChild> {
