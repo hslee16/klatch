@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 bad=0
-for f in .github/workflows/release.yml .github/workflows/build-release.yml .github/workflows/release-dry-run.yml; do
+for f in .github/workflows/release.yml .github/workflows/build-release.yml .github/workflows/release-dry-run.yml .github/workflows/platform-tests.yml; do
   awk -v f="$f" '
     function end_job() { if (job != "" && runs && !timeout) { printf "%s: job %s has no timeout-minutes\n", f, job; bad = 1 } }
     /^  [a-z][a-z0-9-]*:[ ]*$/ && injobs { end_job(); job = $1; runs = 0; timeout = 0; next }
