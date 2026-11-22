@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import select
+import socket
 import signal
 import stat
 import subprocess
@@ -223,6 +224,174 @@ class SourceTests(unittest.TestCase):
                                capture_output=True, text=True, timeout=30)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn(".klatch", r.stderr)
+
+
+class LauncherStateTests(unittest.TestCase):
+    """`gh-watch status` and `gh-watch ensure` (#1335): fake ps, a temporary state dir, an ephemeral port, no gh."""
+
+    FORWARDER = ("gh webhook forward --repo=hslee16/klatch --events=pull_request --url=http://127.0.0.1:%d/hook "
+                 "--secret TOPSECRETVALUE")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = self.tmp.name
+        self.state = os.path.join(self.t, "state")
+        self.bin = os.path.join(self.t, "bin")
+        os.mkdir(self.bin)
+        self.ps_out = os.path.join(self.t, "ps.out")
+        self.gh_rec = os.path.join(self.t, "gh.ran")
+        self.set_ps([])
+        for name, body in (("ps", '#!/bin/sh\ncat "%s"\n' % self.ps_out),
+                           ("gh", '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % self.gh_rec)):
+            with open(os.path.join(self.bin, name), "w") as f:
+                f.write(body)
+            os.chmod(os.path.join(self.bin, name), 0o755)
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        self.port = s.getsockname()[1]
+        s.close()
+
+    def tearDown(self):
+        self.kill_receiver()
+        p = getattr(self, "serve_proc", None)
+        if p:
+            p.wait(timeout=10)
+        self.tmp.cleanup()
+
+    def set_ps(self, lines):
+        with open(self.ps_out, "w") as f:
+            f.write("".join(l + "\n" for l in ["/sbin/launchd", "-zsh", "python3 -I x.py"] + list(lines)))
+
+    def pid(self):
+        try:
+            with open(os.path.join(self.state, "gh-watch.pid")) as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def kill_receiver(self):
+        pid = self.pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def run_cmd(self, *args):
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t}
+        return subprocess.run([LAUNCHER, *args, "--out-dir", self.state, "--port", str(self.port)], env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def make_secret(self):
+        os.makedirs(self.state, mode=0o700, exist_ok=True)
+        with open(os.path.join(self.state, "secret"), "w") as f:
+            f.write("TOPSECRETVALUE\n")
+        os.chmod(os.path.join(self.state, "secret"), 0o600)
+
+    def wait_for(self, fn, what):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if fn():
+                return
+            time.sleep(0.05)
+        self.fail("timed out waiting for " + what)
+
+    def start_serve(self):
+        self.make_secret()
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t}
+        self.serve_proc = subprocess.Popen([LAUNCHER, "serve", "--out-dir", self.state, "--port", str(self.port)], env=env,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.wait_for(lambda: self.run_cmd("status").returncode != 3, "the receiver to listen")
+
+    def test_status_receiver_down(self):
+        self.set_ps([self.FORWARDER % self.port])
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: receiver down")
+
+    def test_status_stale_pid_file_is_down(self):
+        os.makedirs(self.state, mode=0o700)
+        dead = subprocess.Popen(["/usr/bin/true"])
+        dead.wait()
+        with open(os.path.join(self.state, "gh-watch.pid"), "w") as f:
+            f.write("%d\n" % dead.pid)
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 3)
+
+    def test_status_ok_hides_forwarder_arguments(self):
+        self.start_serve()
+        self.assertIsNotNone(self.pid(), "serve wrote no pid file")
+        self.set_ps([self.FORWARDER % self.port])
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: ok")
+        for word in ("TOPSECRETVALUE", "--secret", "--events"):
+            self.assertNotIn(word, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.gh_rec), "status ran gh")
+
+    def test_status_forwarder_down(self):
+        self.start_serve()
+        for lines in ([], ["gh webhook forward --repo=someone/else --secret X"], ["vim gh-webhook-forward-notes"]):
+            self.set_ps(lines)
+            r = self.run_cmd("status")
+            self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+            self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: forwarder down")
+        self.assertFalse(os.path.exists(self.gh_rec))
+
+    def test_status_reports_log_age(self):
+        self.start_serve()
+        r = self.run_cmd("status")
+        self.assertIn("no log lines", r.stdout)
+        with open(os.path.join(self.state, "gh-watch.log"), "a") as f:
+            f.write("2026-11-22T10:00:00Z INFO hello\n")
+        os.utime(os.path.join(self.state, "gh-watch.log"), (time.time() - 120, time.time() - 120))
+        r = self.run_cmd("status")
+        self.assertRegex(r.stdout, r"last log line: 1[12]\d s ago")
+
+    def test_serve_removes_pid_file_when_receiver_dies(self):
+        self.start_serve()
+        pid = self.pid()
+        os.kill(pid, signal.SIGKILL)
+        self.wait_for(lambda: not os.path.exists(os.path.join(self.state, "gh-watch.pid")), "the pid file to go")
+        self.assertEqual(self.run_cmd("status").returncode, 3)
+
+    def test_ensure_starts_receiver_only_and_hints_forwarder(self):
+        r = self.run_cmd("ensure")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(os.path.isdir(self.state), True)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.state, "secret")).st_mode), 0o600)
+        with open(os.path.join(self.state, "secret")) as f:
+            secret = f.read().strip()
+        self.assertGreaterEqual(len(secret), 32)
+        self.assertNotIn(secret, r.stdout + r.stderr)
+        self.assertIn("forward-command", r.stdout)
+        self.assertTrue(os.path.exists(os.path.join(self.state, "serve.out")))
+        pid = self.pid()
+        self.assertIsNotNone(pid)
+        self.assertEqual(self.run_cmd("status").returncode, 4, "receiver should be up")
+        self.assertFalse(os.path.exists(self.gh_rec), "ensure ran gh")
+        r2 = self.run_cmd("ensure")
+        self.assertEqual(r2.returncode, 4)
+        self.assertEqual(self.pid(), pid, "a second receiver was started")
+        with open(os.path.join(self.state, "secret")) as f:
+            self.assertEqual(f.read().strip(), secret, "ensure replaced the secret")
+
+    def test_ensure_ok_when_forwarder_present(self):
+        self.set_ps([self.FORWARDER % self.port])
+        r = self.run_cmd("ensure")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: ok")
+        self.assertNotIn("TOPSECRETVALUE", r.stdout)
+
+    def test_ensure_source_never_names_gh(self):
+        with open(LAUNCHER) as f:
+            src = f.read()
+        self.assertIn("cmd_ensure()", src)
+        body = src.split("cmd_ensure()")[1].split("\n}\n")[0]
+        for line in body.splitlines():
+            code = line.split("#")[0]
+            self.assertNotRegex(code, r"(^|[\s;|&(])gh\s", "ensure must not run gh: " + line)
+            self.assertNotIn("webhook forward", code.replace("forward-command", ""))
 
 
 class ReceiverTests(unittest.TestCase):

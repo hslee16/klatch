@@ -3,16 +3,19 @@
 #   gh-watch serve [receiver options]   run the loopback receiver in the foreground (detach it with nohup, see the docs)
 #   gh-watch selftest                   run the fixture tests (nothing leaves this machine)
 #   gh-watch forward-command [opts]     PRINT the commands the human runs; it runs none of them
+#   gh-watch status [opts]              is the receiver up, is a forwarder for this repo running, how old is the last note;
+#                                       last line gh-watch: ok (exit 0), receiver down (3) or forwarder down (4)
+#   gh-watch ensure [opts]              start ONLY the receiver, detached, if it is down (never the forwarder, never gh); then status
 # serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
 #                --post-min INFO|ALERT --max-body BYTES   (--bind is accepted but only loopback is allowed)
-# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either.
+# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either (status uses ps, nothing else).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 receiver="$here/gh-watch-receiver.py"
 repo_slug="hslee16/klatch"
 events="pull_request,check_run,workflow_run,push,issues,issue_comment"
 
-usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "gh-watch: $*" >&2; exit 2; }
 
 default_out="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"
@@ -34,9 +37,21 @@ scan_args() {
   case "$out_dir/" in */.klatch/*) die "--out-dir must not be inside .klatch (never the live store)" ;; esac
 }
 
+pid_file() { printf '%s/gh-watch.pid' "$out_dir"; }
+
+# The receiver runs as a child so this wrapper can remove the pid file when it ends (a kill -9 of the receiver included).
 cmd_serve() {
   scan_args "$@"
-  exec python3 -I "$receiver" --out-dir "$out_dir" --secret-file "$secret_file" --port "$port" ${rest[@]+"${rest[@]}"}
+  (umask 077; mkdir -p "$out_dir") || die "cannot create $out_dir"
+  python3 -I "$receiver" --out-dir "$out_dir" --secret-file "$secret_file" --port "$port" ${rest[@]+"${rest[@]}"} &
+  local child=$! rc
+  printf '%s\n' "$child" > "$(pid_file)"
+  trap 'kill -TERM "$child" 2>/dev/null' TERM INT HUP
+  wait "$child"; rc=$?
+  trap - TERM INT HUP
+  wait "$child" 2>/dev/null
+  rm -f "$(pid_file)"
+  exit "$rc"
 }
 
 cmd_selftest() { exec python3 -I "$here/test_gh_watch.py"; }
@@ -62,7 +77,82 @@ cmd_forward_command() {
   echo "# Watch the notes with:  tail -F $out_dir/gh-watch.log"
 }
 
+# --- status and ensure (#1335) ---------------------------------------------------------------------------------------
+# "Receiver running" means BOTH: the pid in gh-watch.pid is alive (kill -0) AND a TCP connect to 127.0.0.1:PORT succeeds.
+# The pid file alone goes stale after a crash or reboot; the port alone would count any other program on that port.
+receiver_up() {
+  local pid
+  pid="$(head -n 1 "$(pid_file)" 2>/dev/null)"
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
+}
+
+# A `gh webhook forward` process for this repo, from ps. Only a yes or no leaves this function: the secret is on that
+# command line and must never be printed.
+forwarder_up() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *"gh webhook forward"*"--repo=$repo_slug"* | *"gh webhook forward"*"--repo $repo_slug"*) return 0 ;;
+    esac
+  done < <(ps -axo command= 2>/dev/null)
+  return 1
+}
+
+log_age_line() {
+  python3 -I -c '
+import os, sys, time
+p = sys.argv[1]
+try:
+    st = os.stat(p)
+except OSError:
+    print("last log line: none (no gh-watch.log yet)"); raise SystemExit
+if st.st_size == 0:
+    print("last log line: none (no log lines yet)")
+else:
+    print("last log line: %d s ago" % max(0, int(time.time() - st.st_mtime)))
+' "$out_dir/gh-watch.log"
+}
+
+print_status() {
+  local rec="down" fwd="down"
+  receiver_up && rec="up"
+  forwarder_up && fwd="up"
+  echo "receiver: $rec (127.0.0.1:$port, pid file $(pid_file))"
+  echo "forwarder for $repo_slug: $fwd"
+  log_age_line
+  if [ "$rec" = down ]; then echo "gh-watch: receiver down"; return 3; fi
+  if [ "$fwd" = down ]; then echo "gh-watch: forwarder down"; return 4; fi
+  echo "gh-watch: ok"
+}
+
+cmd_status() { scan_args "$@"; print_status; }
+
+# Starts only the receiver. Never the forwarder, never gh: the forwarder needs the human's admin:repo_hook token.
+cmd_ensure() {
+  scan_args "$@"
+  if ! receiver_up; then
+    (umask 077; mkdir -p "$out_dir") || die "cannot create $out_dir"
+    chmod 700 "$out_dir" 2>/dev/null
+    if [ ! -e "$secret_file" ]; then
+      (umask 077; python3 -I -c 'import secrets; print(secrets.token_hex(32))' > "$secret_file") || die "cannot create the secret file"
+      chmod 600 "$secret_file"
+    fi
+    nohup "$here/gh-watch" serve --out-dir "$out_dir" --secret-file "$secret_file" --port "$port" ${rest[@]+"${rest[@]}"} \
+      < /dev/null >> "$out_dir/serve.out" 2>&1 &
+    disown 2>/dev/null
+    local i=0
+    while [ "$i" -lt 100 ] && ! receiver_up; do i=$((i + 1)); sleep 0.1; done
+  fi
+  print_status; local rc=$?
+  [ "$rc" -eq 4 ] && echo "The forwarder is the human's to start (it needs the admin:repo_hook token): run gh-watch forward-command and use step 4."
+  exit "$rc"
+}
+
 case "${1:-}" in
+  status) shift; cmd_status "$@"; exit $? ;;
+  ensure) shift; cmd_ensure "$@" ;;
   serve) shift; cmd_serve "$@" ;;
   selftest) cmd_selftest ;;
   forward-command) shift; cmd_forward_command "$@" ;;

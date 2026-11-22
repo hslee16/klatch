@@ -109,9 +109,21 @@ nohup proto/scripts/gh-watch serve > ~/.local/state/klatch-gh-watch/serve.out 2>
 tail -F ~/.local/state/klatch-gh-watch/gh-watch.log
 ```
 
-Stop it with `kill -9 PID`. `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
+Stop it with `kill -9 PID` (the pid is in `gh-watch.pid` in the state dir). `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
 
 To also post each note to a klatch room, add `--klatch-bin /path/to/klatch --as-member NAME --room ROOM` (optionally `--post-min ALERT`). The post is `KLATCH_NAME=NAME klatch post ROOM LINE` with whatever `KLATCH_HOME` the caller has, so start it with the isolated factory store's home (FACTORY.md), never the live store.
+
+### At the start of a session (#1335)
+
+Every coordinating Claude session (one that merges, sweeps or answers for the open pull requests) starts the watcher routine before anything else:
+
+1. Run `proto/scripts/gh-watch ensure`. It creates the state dir (mode 0700) and the secret file (mode 0600) if they are missing, starts ONLY the receiver, detached (`nohup`, output in `serve.out` in the state dir), when it is down, and then prints the status. It never starts the forwarder and never runs `gh`; when the forwarder is down it prints a reminder to run `gh-watch forward-command`, and the human starts it (an agent only when the human explicitly asked for that in the same session). `proto/scripts/gh-watch status` prints the same report and runs nothing else.
+2. Arm a Monitor on `tail -F ~/.local/state/klatch-gh-watch/gh-watch.log | grep --line-buffered -E 'ALERT|INFO'` (use the state dir the `ensure` output names if you set `GH_WATCH_DIR` or `--out-dir`). ALERT lines are what you report to the human; INFO lines are context. A Monitor expires after 30 minutes: re-arm it when it does.
+3. Keep the slow poll as the backstop (see Limits below): events are missed while the forwarder or the receiver is down.
+
+`status` prints the receiver (up or down), whether a `gh webhook forward` process for this repository exists, the age of the last line in `gh-watch.log`, and a last line that is `gh-watch: ok` (exit 0), `gh-watch: receiver down` (exit 3) or `gh-watch: forwarder down` (exit 4). The receiver counts as up only when the pid in `gh-watch.pid` (written by `serve`, removed when it ends) is alive AND a TCP connect to `127.0.0.1:PORT` succeeds: the pid file alone goes stale after a crash, and the port alone would count any other program on it. The forwarder is found with `ps` and only a yes or no is printed, never its arguments, because the secret is on its command line. The age is that of the log file's last write, one write per line.
+
+A SessionStart hook that runs `gh-watch ensure` is not part of this: installing hooks belongs to `klatch init` and the hook installer.
 
 ### What the receiver accepts and writes
 
