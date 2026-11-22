@@ -11,7 +11,8 @@
 # in proto/THIRD-PARTY-LICENSES.txt (the cheap part of proto/check-notices.sh, which needs cargo-about), the
 # release_scope_docs and negotiate cargo tests (one forbids phrases in the assembled DESIGN.md, one reads an item by name) and the
 # release/test-*.sh shell tests (not this script's own test). REHEARSE_CARGO overrides cargo; REHEARSE_TARGET_DIR the cargo target
-# directory (default: the real tree's proto/target, so nothing is rebuilt from scratch). The copy is
+# directory (default: a fresh directory per run, removed on exit, so a test binary built for an earlier copy is never reused,
+# #1292; the cost is a full build each run). The copy is
 # removed on exit, also on failure. Exit status is non-zero when any step failed (the stat is still printed).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -77,7 +78,15 @@ shell_tests() {
 }
 if [ "$check_tests" -eq 1 ]; then
   cargo_bin="${REHEARSE_CARGO:-cargo}"
-  export CARGO_TARGET_DIR="${REHEARSE_TARGET_DIR:-$root/proto/target}"
+  # a fresh target directory per run (#1292): cargo bakes env!("CARGO_MANIFEST_DIR") into test binaries, so a shared target
+  # directory would run the binary built for the previous (deleted) copy. REHEARSE_TARGET_DIR overrides it and is kept.
+  if [ -n "${REHEARSE_TARGET_DIR:-}" ]; then
+    export CARGO_TARGET_DIR="$REHEARSE_TARGET_DIR"
+  else
+    fresh_target="$(mktemp -d "${TMPDIR:-/tmp}/klatch-rehearse-target.XXXXXX")"
+    trap 'rm -rf "$copy" "$fresh_target"' EXIT
+    export CARGO_TARGET_DIR="$fresh_target"
+  fi
   step "notices carry the workspace version" notices_version
   # shellcheck disable=SC2016
   step "cargo test release_scope_docs" bash -c 'cd "$1/proto" && "$2" test -p klatch --test release_scope_docs' _ "$copy" "$cargo_bin"

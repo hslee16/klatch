@@ -22,8 +22,8 @@ cat > "$shim/cargo" <<'SH'
 #!/bin/sh
 echo "$* | seed=${HEGEL_SEED:-} cases=${HEGEL_TEST_CASES:-}" >> "$FAKE_LOG"
 case "$*" in "build -p klatch --locked --manifest-path "*) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" > /dev/null 2>&1 ;; esac
-# the licence notices check (#1034) reads the real dependency tree, so metadata and about go to the real cargo
-case "$1" in metadata | about) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" ;; esac
+# the licence notices check (#1034) reads the real dependency tree, so metadata, about and tree go to the real cargo (#1306)
+case "$1" in metadata | about | tree) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" ;; esac
 case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"; exit 1; } ;; esac
 exit 0
 SH

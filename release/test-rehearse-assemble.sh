@@ -55,7 +55,7 @@ if run; then bad "a version mismatch passed"; else ok "a version mismatch exits 
 fakecargo="$work/fakecargo"
 cat > "$fakecargo" <<'FAKE'
 #!/usr/bin/env bash
-echo "cargo $* (in $(pwd))" >> "$FAKE_LOG"
+echo "cargo $* (in $(pwd)) target=${CARGO_TARGET_DIR:-}" >> "$FAKE_LOG"
 [ -z "${FAKE_CARGO_FAIL:-}" ] || { echo "fake cargo: failing"; exit 101; }
 FAKE
 chmod +x "$fakecargo"
@@ -71,6 +71,14 @@ if grep -q 'test -p klatch --test release_scope_docs' "$FAKE_LOG" && grep -q 'te
 if grep -q 'in .*klatch-rehearse-copy.*/proto)' "$FAKE_LOG"; then ok "cargo runs in the throwaway copy"; else bad "cwd: $(cat "$FAKE_LOG")"; fi
 if grep -q shell-test-ran "$FAKE_LOG" && ! grep -q recursion "$FAKE_LOG"; then ok "runs the release shell tests but not itself"; else bad "shell tests: $(cat "$FAKE_LOG")"; fi
 if [ "$(snapshot)" = "$before" ]; then ok "--check-tests leaves the tree unchanged"; else bad "tree changed"; fi
+# a stale test binary bakes in the previous copy's path (#1292): the default target directory is fresh per run, never the real tree's
+tgt="$(sed -n 's/.* target=\(.*\)$/\1/p' "$FAKE_LOG" | sort -u)"
+if [ "$(printf '%s\n' "$tgt" | grep -c .)" = 1 ] && [ "$tgt" != "$t/proto/target" ] && case "$tgt" in "$work/tmp"/*) true ;; *) false ;; esac; then ok "the default cargo target directory is fresh, under TMPDIR"; else bad "target dirs: $tgt"; fi
+[ ! -e "$tgt" ] && ok "the fresh target directory is removed afterwards" || bad "left behind: $tgt"
+ct; tgt2="$(sed -n 's/.* target=\(.*\)$/\1/p' "$FAKE_LOG" | sort -u)"
+[ -n "$tgt2" ] && [ "$tgt2" != "$tgt" ] && ok "a second run gets a different target directory" || bad "reused: $tgt2"
+: > "$FAKE_LOG"; mkdir "$work/mytarget"; TMPDIR="$work/tmp" REHEARSE_TARGET_DIR="$work/mytarget" REHEARSE_CARGO="$fakecargo" "$here/rehearse-assemble.sh" --check-tests "$t" > /dev/null 2>&1 || true
+if grep -q "target=$work/mytarget\$" "$FAKE_LOG" && [ -d "$work/mytarget" ]; then ok "REHEARSE_TARGET_DIR is honoured and kept"; else bad "override: $(cat "$FAKE_LOG")"; fi
 
 fresh; notices 0.0.1-stale; if ct; then bad "a stale notices version passed"; else ok "a stale notices version exits non-zero"; fi
 if grep -q 'THIRD-PARTY-LICENSES' "$work/err"; then ok "names the notices file"; else bad "err: $(cat "$work/err")"; fi
