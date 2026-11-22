@@ -43,11 +43,18 @@ fn both_members_get_the_nudge_once_each() {
     g.post(&b, "lobby", "again").unwrap();
     assert_eq!(
         nudge_for(&g, &a),
-        None,
-        "a later message does not repeat it"
+        Some(("bob".into(), 6)),
+        "a pair still exchanging at 6 is shown it once more (#1222)"
     );
+    g.post(&a, "lobby", "7").unwrap();
+    g.post(&b, "lobby", "8").unwrap();
+    assert_eq!(nudge_for(&g, &a), None, "not for the next message");
     g.post(&a, "lobby", "and again").unwrap();
-    assert_eq!(nudge_for(&g, &b), None);
+    assert_eq!(
+        nudge_for(&g, &b),
+        Some(("alice".into(), 9)),
+        "bob is first handed an alice message at or past the 6th place of the run"
+    );
 }
 
 #[test]
@@ -113,7 +120,7 @@ fn the_nudge_line_holds_names_a_count_and_the_room_never_message_text() {
     assert_eq!(
         own,
         vec![
-            "  klatch: you and bob exchanged 4 messages in lobby; for a longer exchange use: klatch dm bob \"<text>\""
+            "  klatch: you and bob exchanged 4 messages in lobby. Do this now: klatch dm bob \"<text>\" (send your next message there, not in lobby)"
         ],
         "{out}"
     );
@@ -195,4 +202,46 @@ fn stuck_shows_nothing_once_the_pair_has_a_dm() {
     assert_eq!(exchanges(&g).len(), 1);
     g.dm(&a, "bob", "moving here", None).unwrap();
     assert!(exchanges(&g).is_empty());
+}
+
+#[test]
+fn a_second_need_info_round_nudges_the_recipient_once() {
+    let (a, b) = (alice(), bob());
+    let g = open();
+    for p in [alice(), bob(), carol()] {
+        g.join(&p, "lobby").unwrap();
+    }
+    g.post(&b, "lobby", "need-info #4: which court?").unwrap();
+    g.post(&a, "lobby", "info #4: the high court").unwrap();
+    assert_eq!(nudge_for(&g, &a), None, "one round is not enough");
+    g.post(&b, "lobby", "need-info #4: which year?").unwrap();
+    assert_eq!(nudge_for(&g, &a), Some(("bob".into(), 3)));
+    assert_eq!(nudge_for(&g, &a), None, "once");
+    g.post(&a, "lobby", "info #4: 2024").unwrap();
+    g.post(&b, "lobby", "need-info #4: and the docket?")
+        .unwrap();
+    // five messages from the pair is also the first long-exchange crossing, a different trigger than the round
+    assert_eq!(nudge_for(&g, &a), Some(("bob".into(), 5)));
+}
+
+#[test]
+fn a_second_round_with_a_dm_or_across_two_asks_does_not_nudge() {
+    let (a, b) = (alice(), bob());
+    let g = open();
+    for p in [alice(), bob(), carol()] {
+        g.join(&p, "lobby").unwrap();
+    }
+    g.dm(&a, "bob", "taking this here", None).unwrap();
+    g.post(&b, "lobby", "need-info #4: which court?").unwrap();
+    g.post(&a, "lobby", "info #4: the high court").unwrap();
+    g.post(&b, "lobby", "need-info #4: which year?").unwrap();
+    assert_eq!(nudge_for(&g, &a), None);
+    let g = open();
+    for p in [alice(), bob(), carol()] {
+        g.join(&p, "lobby").unwrap();
+    }
+    g.post(&b, "lobby", "need-info #4: which court?").unwrap();
+    g.post(&a, "lobby", "info #4: x").unwrap();
+    g.post(&b, "lobby", "need-info #5: other ask").unwrap();
+    assert_eq!(nudge_for(&g, &a), None);
 }

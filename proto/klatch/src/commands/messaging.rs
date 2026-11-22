@@ -359,7 +359,7 @@ pub(super) fn dm_help_lines(
     room: &str,
     handed: &[klatch::domain::Message],
 ) -> Vec<String> {
-    use klatch::domain::{crossing_exchange, dm_reply_hint, dm_room, move_to_dm_nudge};
+    use klatch::domain::{dm_nudge, dm_reply_hint, dm_room, move_to_dm_nudge};
     if handed.is_empty() {
         return Vec::new();
     }
@@ -390,13 +390,13 @@ pub(super) fn dm_help_lines(
     let Ok(history) = t.history(room, range) else {
         return Vec::new();
     };
-    let rows: Vec<(i64, &str)> = history
+    let rows: Vec<(i64, &str, &str)> = history
         .messages
         .iter()
-        .map(|m| (m.seq, m.sender.as_str()))
+        .map(|m| (m.seq, m.sender.as_str(), m.body.as_str()))
         .collect();
     let seqs: Vec<i64> = handed.iter().map(|m| m.seq).collect();
-    let Some((peer, n)) = crossing_exchange(me, &rows, &seqs) else {
+    let Some((peer, n)) = dm_nudge(me, &rows, &seqs) else {
         return Vec::new();
     };
     // a dm between the two that already exists makes the nudge pointless

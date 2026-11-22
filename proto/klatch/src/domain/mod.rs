@@ -85,8 +85,9 @@ pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;
 pub use cycle_notice::CycleNotice;
 pub use dm::{
-    DM_NUDGE_MESSAGES, DM_NUDGE_WINDOW, DM_PREFIX, crossing_exchange, dm_peer_in_room,
-    dm_reply_hint, dm_room, exchange_run, move_to_dm_nudge,
+    DM_NUDGE_MESSAGES, DM_NUDGE_THRESHOLDS, DM_NUDGE_WINDOW, DM_PREFIX, clarification_round,
+    crossing_exchange, dm_nudge, dm_peer_in_room, dm_reply_hint, dm_room, exchange_run,
+    move_to_dm_nudge,
 };
 pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
