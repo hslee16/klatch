@@ -329,13 +329,15 @@ describe("klatch client over HTTP against the real server", { skip: !built }, ()
     const proc = spawn(SERVER_BIN, ["http", "--listen", "127.0.0.1:0"], { env, stdio: ["ignore", "ignore", openSync(log, "w")] });
     try {
       let port = 0;
-      const end = Date.now() + 30_000;
+      const end = Date.now() + 60_000;
+      let text = "";
       while (port === 0 && Date.now() < end) {
-        const m = /http listening on 127\.0\.0\.1:(\d+)/.exec(readFileSync(log, "utf8"));
+        text = readFileSync(log, "utf8");
+        const m = /http listening on 127\.0\.0\.1:(\d+) [^\n]*\n/.exec(text);
         if (m) port = Number(m[1]);
         else await sleep(20);
       }
-      assert.ok(port > 0, "the server never listened");
+      assert.ok(port > 0, `the server never listened; its stderr was:\n${text}`);
       await assert.rejects(
         Client.connectHttp(`http://127.0.0.1:${port}`, { member: "w-1", token: "not-a-live-token", connectTimeoutMs: 10_000 }),
         (e: ApiError) => {

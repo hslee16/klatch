@@ -451,6 +451,18 @@ fn input_box(input: io::BufReader<Inbox>) -> Box<dyn BufRead + Send> {
     Box::new(input)
 }
 
+/// Write the readiness line as one complete write, newline included. `eprintln!` can reach the stream in several
+/// writes, so a launcher polling the log could read half an address ("127.0.0.1:" or a port cut short) and parse it
+/// (#1173, #1207). Launchers also wait for the newline before they trust the line.
+fn announce_listening(out: &mut dyn Write, addr: &std::net::SocketAddr, max_connections: usize) {
+    let line = format!(
+        "klatch-server: http listening on {addr} (loopback only, up to {max_connections} connections), GET {STREAM_PATH}, POST {FRAMES_PATH} and POST {} (MCP)\n",
+        crate::mcp_http::PATH
+    );
+    let _ = out.write_all(line.as_bytes());
+    let _ = out.flush();
+}
+
 /// Run the server until SIGTERM or SIGINT. Order matters: the address is checked (a refusal ends the process before the
 /// store is touched), then the store is opened (one that cannot be opened ends it before it listens), then the listener
 /// is bound.
@@ -460,11 +472,10 @@ pub fn run(opts: &Options) -> Result<()> {
         .context("the server cannot open the store, so it does not start")?;
     let listener = loopback::bind_loopback(&opts.listen)?;
     crate::daemon::install_signal_handlers();
-    eprintln!(
-        "klatch-server: http listening on {} (loopback only, up to {} connections), GET {STREAM_PATH}, POST {FRAMES_PATH} and POST {} (MCP)",
-        listener.local_addr()?,
+    announce_listening(
+        &mut io::stderr().lock(),
+        &listener.local_addr()?,
         opts.max_connections,
-        crate::mcp_http::PATH
     );
     let shared = Shared {
         backend: gateway.session_backend(),
@@ -487,6 +498,36 @@ pub fn run(opts: &Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A writer that counts how many separate writes reach it.
+    #[derive(Default)]
+    struct Counting {
+        bytes: Vec<u8>,
+        writes: usize,
+    }
+
+    impl Write for Counting {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_listening_line_reaches_the_stream_in_one_write() {
+        // A reader that polls the log must never see half of the line, so the whole line is one write (#1173, #1207).
+        let mut out = Counting::default();
+        let addr: std::net::SocketAddr = "127.0.0.1:43210".parse().unwrap();
+        announce_listening(&mut out, &addr, 8);
+        assert_eq!(out.writes, 1);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(text.starts_with("klatch-server: http listening on 127.0.0.1:43210 "));
+        assert!(text.ends_with('\n'));
+    }
 
     fn events(out: &[u8]) -> Vec<String> {
         String::from_utf8(out.to_vec())

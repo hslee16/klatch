@@ -343,15 +343,17 @@ class RealServer(unittest.TestCase):
         self.addCleanup(proc.wait)
         self.addCleanup(proc.send_signal, signal.SIGKILL)
         port = None
-        until = time.monotonic() + 30
+        until = time.monotonic() + 60
+        text = ""
         while port is None and time.monotonic() < until:
             log.seek(0)
-            m = re.search(r"http listening on 127\.0\.0\.1:(\d+)", log.read())
+            text = log.read()
+            m = re.search(r"http listening on 127\.0\.0\.1:(\d+) [^\n]*\n", text)
             if m:
                 port = int(m.group(1))
             else:
                 time.sleep(0.02)
-        self.assertIsNotNone(port, "the server never listened")
+        self.assertIsNotNone(port, "the server never listened; its stderr was:\n" + text)
         with self.assertRaises(kc.ApiError) as ctx:
             kc.Client.connect_http(f"http://127.0.0.1:{port}", member="w-1", token="not-a-live-token", connect_timeout=10)
         self.assertEqual(ctx.exception.code, "identity.refused")
