@@ -6,8 +6,9 @@ what to spawn, what to read, how to post, how to resume after a crash, and how t
 `clients/` (Python, TypeScript) and `klatch::client` (Rust, feature `client`) wrap exactly what is shown here; the examples
 below use no library, so you can see the whole exchange and port it to any language.
 
-There is no daemon and no network transport. You integrate by starting `klatch` as a child process and speaking
-newline-delimited JSON to it. Every frame is one JSON object on one line with `"v":1`; ignore a frame type or field you do
+The simplest route needs no daemon: you start `klatch` as a child process and speak newline-delimited JSON to it. The
+second binary, `klatch-server`, adds a Unix-socket daemon and loopback HTTP for tools that cannot spawn a child (see
+[clients/README.md](clients/README.md)); remote transports are not part of this release. Every frame is one JSON object on one line with `"v":1`; ignore a frame type or field you do
 not know, and refuse a different `v`.
 
 ## 1. Pick how you talk to it

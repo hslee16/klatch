@@ -1,0 +1,10 @@
+The first release documents say local-only, not 1.0, and not for sensitive data (#1237, #1238; no schema change; 2026-11-21).
+The human decided on 2026-11-21 that the first release is a public local-only pre-release, a scoped MVP and not a 1.0 (epic #1232), after the decision of 2026-11-14 (#419) that marked 0.x pre-releases ship and the gate of #152 applies to the first unmarked release. The README, `SECURITY.md`, `UNINSTALL.md`, `INTEGRATION.md` and the top of DESIGN.md and section 23 now say that, and drop the sentences from before the daemon and the loopback listeners existed ("no daemon", "no network transport", "nothing is built", "stores plaintext", "no public release").
+
+**The wire statement.** Remote transports are not part of this release. On one machine klatch uses stdio, a Unix socket and, for tools that need it, loopback HTTP with a bearer credential; none of these is encrypted, none leaves the machine, and a non-loopback listener refuses to start. The second binding maxim is met as section 32 item 6 defines it for local use (operating system credentials are enough locally). Loopback HTTP is the weakest local route: prefer the Unix socket or stdio, never forward or proxy the port, and reach it from another machine only through ssh or mutual TLS (`clients/recipes/behind-a-tunnel.md`).
+
+**Two claims, not one.** The `klatch` binary opens no socket and starts only the programs `no_telemetry.rs` names. `klatch-server`, the second binary, opens loopback listeners and a Unix socket only, starts no program and makes no outbound connection (`no_network.rs`). The documents keep the two apart so the shorter claim never covers the server.
+
+**The gate is worded as "no unmarked release".** DESIGN section 23, R40 and the header say so, matching #419; the body of #152 and the milestone say the same.
+
+**Pinned by tests.** `proto/klatch/tests/release_scope_docs.rs` fails if a stale phrase returns, or if the scope sentence, the wire statement, the platform split (tested: macOS arm64 and Linux x86_64; built and smoke tested only: Linux aarch64 and macOS x86_64), the known limits or the klatch-server uninstall steps are dropped.
