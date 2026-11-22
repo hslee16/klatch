@@ -26,40 +26,54 @@ pub(crate) fn set_shell_line(line: Option<String>) {
     *SHELL_LINE.lock().unwrap_or_else(|e| e.into_inner()) = line;
 }
 
-/// A character that could dress up a prompt: a control character (newline, carriage return, escape), a bidi
-/// override or isolate, a zero-width or invisible mark.
-fn hostile(c: char) -> bool {
-    c.is_control()
-        || matches!(c,
-            '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{061c}' | '\u{180e}' | '\u{feff}' | '\u{00ad}')
-}
-
-/// Text from an argument, for a prompt: every hostile character removed.
+/// Text that comes from an argument, for a prompt: printable ASCII only. Every other character (a control or escape
+/// character, a bidi override, a zero-width or invisible mark, a separator, a tag character, a variation selector, a
+/// filler, a combining mark, any non-ASCII letter) is shown as `?`, so nothing in an argument can change what the
+/// terminal draws or pass for something else. A whitelist on purpose: a blacklist of bad characters is never done.
 pub(crate) fn plain(text: &str) -> String {
-    text.chars().filter(|c| !hostile(*c)).collect()
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_graphic() || c == ' ' {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect()
 }
 
-/// The longest a word after the command is shown; a longer one is cut and says how long it was and a short digest.
+/// The longest a word after the command is shown; a longer one is cut and says how long it was and a short digest
+/// (of the whole word, which the person cannot check against the part they see: they should read the cut as unseen).
 const WORD_LIMIT: usize = 48;
 
-/// What the passphrase approves, for the prompt: the command being run. Hostile characters are removed, the first
-/// two words (the family and the command) are never cut, a long word is cut with its length and a digest, every
-/// word after `recover` that is not a flag (a recovery code, however it is split) is hidden, and a very long
-/// command is cut at a word with how many words went.
+/// The families of command this approves, and so where the command word is.
+const FAMILIES: [&str; 5] = ["admin", "worker", "anchor", "run", "judge"];
+
+/// What the passphrase approves, for the prompt: the command being run. Text is whitelisted (`plain`), the family
+/// and command words are never cut, a long word is cut with its length and a digest, and a very long command is
+/// cut at a word with how many words went. For `admin recover` EVERY word after the command word is hidden
+/// (a recovery code however it is split, whatever flags or `--` come before it); a room or member that happens to
+/// be named `recover` hides nothing, because only the command word is the trigger.
 pub(crate) fn describe_words(words: &[String]) -> String {
     use sha2::{Digest, Sha256};
+    let family = words.iter().position(|w| FAMILIES.contains(&w.as_str()));
+    let command = family.map(|f| f + 1);
+    let hide_from = match (family, command) {
+        (Some(f), Some(c))
+            if words[f] == "admin" && words.get(c).map(String::as_str) == Some("recover") =>
+        {
+            Some(c + 1)
+        }
+        _ => None,
+    };
+    let protected =
+        |i: usize| Some(i) == family || Some(i) == command || (family.is_none() && i < 2);
     let mut out: Vec<String> = Vec::new();
-    let mut after_recover = false;
-    let mut value_next = false;
     for (i, w) in words.iter().enumerate() {
         let w = plain(w);
-        let shown = if after_recover && !w.starts_with('-') && !value_next {
+        let shown = if hide_from.is_some_and(|h| i >= h) {
             "<code>".to_string()
-        } else if i >= 2 && w.chars().count() > WORD_LIMIT {
+        } else if !protected(i) && w.chars().count() > WORD_LIMIT {
             let digest = data_encoding::HEXLOWER.encode(&Sha256::digest(w.as_bytes()));
             format!(
                 "{}...({} chars, sha256 {})",
@@ -68,17 +82,14 @@ pub(crate) fn describe_words(words: &[String]) -> String {
                 &digest[..8]
             )
         } else {
-            w.clone()
+            w
         };
-        value_next = after_recover && w.starts_with('-');
-        if w == "recover" {
-            after_recover = true;
-        }
         out.push(shown);
     }
+    let first_free = command.map_or(1, |c| c.max(1)) + 1;
     let mut text = String::new();
     for (i, w) in out.iter().enumerate() {
-        if i >= 2 && text.chars().count() + w.chars().count() > 200 {
+        if i >= first_free && text.chars().count() + w.chars().count() > 200 {
             text.push_str(&format!(" ...(+{} more words)", out.len() - i));
             break;
         }
@@ -90,11 +101,22 @@ pub(crate) fn describe_words(words: &[String]) -> String {
     text
 }
 
-fn describe() -> String {
+/// `describe_words` for arguments as the OS gives them: a byte sequence that is not UTF-8 is shown lossily.
+pub(crate) fn describe_os(args: &[std::ffi::OsString]) -> String {
+    describe_words(
+        &args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// What the passphrase approves right now: the line the shell is running, else this process's own command line.
+pub(crate) fn describe() -> String {
     if let Some(line) = SHELL_LINE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return line;
     }
-    describe_words(&std::env::args().skip(1).collect::<Vec<_>>())
+    describe_os(&std::env::args_os().skip(1).collect::<Vec<_>>())
 }
 
 /// The proof of the person, asked for on the terminal unless this process holds an open unlock window. A refusal
@@ -268,28 +290,90 @@ mod tests {
     }
 
     #[test]
-    fn every_word_after_recover_that_is_not_a_flag_is_hidden() {
-        let shown = d(&[
-            "admin",
-            "recover",
-            "KLATCH-AAAA",
-            "BBBB-CCCC",
-            "--label",
-            "private",
-        ]);
-        assert!(
-            !shown.contains("AAAA") && !shown.contains("BBBB") && !shown.contains("CCCC"),
-            "{shown}"
-        );
-        assert!(shown.contains("--label"), "{shown}");
-    }
-
-    #[test]
     fn a_long_command_keeps_its_command_word_and_says_how_much_was_cut() {
         let long = "x".repeat(500);
         let shown = d(&["admin", "scrub-add", "name", &long]);
         assert!(shown.starts_with("admin scrub-add name"), "{shown}");
         assert!(shown.chars().count() < 260, "{}", shown.chars().count());
         assert!(shown.contains("chars"), "{shown}");
+    }
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::{describe_os, describe_words};
+    use std::ffi::OsString;
+
+    fn d(words: &[&str]) -> String {
+        describe_words(&words.iter().map(|w| w.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn a_room_or_member_named_recover_hides_nothing() {
+        let shown = d(&["admin", "close", "recover"]);
+        assert_eq!(shown, "admin close recover");
+        let shown = d(&["admin", "remove", "recover", "--room", "lobby"]);
+        assert_eq!(shown, "admin remove recover --room lobby");
+        // inside the shell the family is the first word too
+        assert_eq!(
+            d(&["admin", "label", "recover", "private"]),
+            "admin label recover private"
+        );
+    }
+
+    #[test]
+    fn only_the_command_word_recover_hides_and_it_hides_every_word_after_it() {
+        let shown = d(&[
+            "admin",
+            "recover",
+            "--",
+            "KLATCH-AAAA",
+            "--label",
+            "private",
+            "BBBB",
+        ]);
+        for secret in ["AAAA", "BBBB", "private", "--label", "--"] {
+            assert!(!shown.contains(secret), "{secret} in {shown}");
+        }
+        assert!(shown.starts_with("admin recover"), "{shown}");
+        // global flags before the family do not move the command word
+        let shown = d(&["--as-member", "x", "admin", "recover", "KLATCH-ZZZZ"]);
+        assert!(!shown.contains("ZZZZ"), "{shown}");
+    }
+
+    #[test]
+    fn only_printable_ascii_is_shown_and_every_other_class_becomes_a_placeholder() {
+        for (name, ch) in [
+            ("line separator", '\u{2028}'),
+            ("paragraph separator", '\u{2029}'),
+            ("tag character", '\u{e0041}'),
+            ("variation selector", '\u{fe0f}'),
+            ("hangul filler", '\u{3164}'),
+            ("braille blank", '\u{2800}'),
+            ("interlinear annotation", '\u{fff9}'),
+            ("object replacement", '\u{fffc}'),
+            ("combining mark", '\u{0301}'),
+            ("right to left override", '\u{202e}'),
+            ("zero width space", '\u{200b}'),
+            ("escape", '\u{1b}'),
+            ("newline", '\n'),
+            ("carriage return", '\r'),
+            ("a non-ASCII letter", 'é'),
+        ] {
+            let shown = d(&["admin", "close", &format!("a{ch}b")]);
+            assert_eq!(shown, "admin close a?b", "{name}");
+        }
+        assert_eq!(
+            d(&["admin", "close", "Room_1.x-y"]),
+            "admin close Room_1.x-y"
+        );
+    }
+
+    #[test]
+    fn arguments_that_are_not_utf8_are_shown_lossily_and_never_panic() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![b'a', 0xff, 0xfe, b'b']);
+        let shown = describe_os(&[OsString::from("admin"), OsString::from("close"), bad]);
+        assert_eq!(shown, "admin close a??b");
     }
 }

@@ -839,3 +839,97 @@ fn text_from_arguments_cannot_dress_up_a_prompt() {
         );
     }
 }
+
+// ---- the third review of #1271 ----
+
+#[test]
+fn a_pty_the_caller_owns_on_stdin_and_stdout_is_not_the_controlling_terminal() {
+    // the human's terminal (A) is the controlling one; the agent gave fd 0 and 1 a pty of its own (B) and reads it
+    let h = Home::new();
+    h.set_passphrase();
+    for args in [
+        vec!["recovery".to_string()],
+        vec!["shell".to_string()],
+        vec!["export".to_string(), "r".to_string()],
+        vec!["audit".to_string()],
+    ] {
+        let r = common::pty::run_on_pty_split(klatch_in(&h, &args), &[PASS, "x", "x"]);
+        assert!(!r.ok(), "{args:?} ran:\n{}\n{}", r.text, r.piped_stdout);
+        assert!(
+            !r.text.contains("admin passphrase to approve"),
+            "{args:?}: the human was asked to approve a command whose output goes to someone else's pty:\n{}",
+            r.text
+        );
+        assert!(
+            !r.piped_stdout.contains("KLATCH-"),
+            "{args:?}: {}",
+            r.piped_stdout
+        );
+        assert!(r.text.contains("terminal"), "{args:?}: {}", r.text);
+    }
+}
+
+#[test]
+fn everything_that_prints_stored_text_is_refused_to_a_pipe() {
+    let h = Home::new();
+    h.set_passphrase();
+    let cases: Vec<Vec<String>> = vec![
+        vec!["scrub-list".into()],
+        vec!["review-queue".into()],
+        vec!["refusals".into()],
+        vec!["audit".into()],
+        vec!["archives".into()],
+    ];
+    for args in cases {
+        let r = common::pty::run_on_pty_stdout_piped(klatch_in(&h, &args), &[PASS, "x"]);
+        assert!(!r.ok(), "{args:?} printed to a pipe:\n{}", r.text);
+        assert!(r.piped_stdout.is_empty(), "{args:?}: {}", r.piped_stdout);
+        assert!(
+            !r.text.contains("admin passphrase to approve"),
+            "{args:?}: {}",
+            r.text
+        );
+    }
+}
+
+#[test]
+fn a_plaintext_or_empty_store_never_makes_a_recovery_code_good() {
+    let a = Home::new();
+    let code = recovery_code_of(&a);
+    for make in ["empty", "plaintext"] {
+        let b = Home::new();
+        let db = b.0.join("rooms.db");
+        if make == "empty" {
+            std::fs::write(&db, b"").unwrap();
+        } else {
+            let c = rusqlite::Connection::open(&db).unwrap();
+            c.execute_batch("create table t(x); insert into t values (1);")
+                .unwrap();
+        }
+        let r = run_on_pty(
+            klatch_in(&b, &["recover".to_string(), code.clone()]),
+            &["recover", "recover"],
+        );
+        assert!(!r.ok(), "{make}: a key was planted:\n{}", r.text);
+        let planted = std::fs::read_dir(b.0.join("keys"))
+            .map(|d| d.count())
+            .unwrap_or(0);
+        assert_eq!(planted, 0, "{make}: a key file was written");
+    }
+}
+
+#[test]
+fn the_confirmation_says_what_is_being_confirmed() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = run_on_pty(
+        klatch_in(&h, &["close".to_string(), "lobby".to_string()]),
+        &[PASS, "nope"],
+    );
+    assert!(r.text.contains("to confirm"), "{}", r.text);
+    assert!(
+        r.text.contains("type lobby to confirm `admin close lobby"),
+        "{}",
+        r.text
+    );
+}

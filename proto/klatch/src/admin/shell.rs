@@ -116,10 +116,11 @@ fn dispatch(words: Vec<String>) -> Result<()> {
 /// The shell reads its commands from standard input, so standard input itself must be a terminal (no fallback to
 /// the controlling terminal): a pipe is refused, so a program that shares the person's terminal cannot feed it.
 pub(super) fn need_a_terminal() -> Result<()> {
-    use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
+    // standard input and output must be THIS process's controlling terminal, not a pipe and not a pty that another
+    // program holds the other end of
+    if !klatch::proof::is_controlling_tty(0) || !klatch::proof::is_controlling_tty(1) {
         bail!(
-            "the admin shell reads its commands from the terminal; standard input is not one (run `klatch admin shell` yourself in a terminal)"
+            "the admin shell reads its commands from the terminal and shows its answers there; standard input and output are not your terminal (run `klatch admin shell` yourself in a terminal)"
         );
     }
     Ok(())

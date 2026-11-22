@@ -22,6 +22,17 @@ const MAX_LINE: usize = 1024;
 
 pub struct TtyPrompt;
 
+/// Whether descriptor `fd` IS this process's controlling terminal: a terminal, and the one whose session is ours.
+/// A pty an agent made for itself and handed to a child as standard input or output is a terminal too, but not the
+/// controlling one (the person's is), so this tells them apart: a person approving a prompt on their own terminal
+/// must not have the answer written to a pty someone else holds the other end of.
+pub fn is_controlling_tty(fd: i32) -> bool {
+    // SAFETY: these only inspect the descriptor and the process.
+    unsafe {
+        libc::isatty(fd) == 1 && libc::tcgetpgrp(fd) >= 0 && libc::tcgetsid(fd) == libc::getsid(0)
+    }
+}
+
 /// A terminal to ask on: standard input, or the controlling terminal.
 struct Tty {
     fd: i32,

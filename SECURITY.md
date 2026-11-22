@@ -39,11 +39,16 @@ Supported versions: the newest release only, the current practice and not a poli
   unless standard input is itself a terminal). The prompt names the exact command it approves (`admin close
   lobby`; the shell says it opens an unlock window for ALL admin and launcher commands): read it, and type the
   passphrase only for a command you asked for.
-  Commands that print a secret (`admin recovery`, `export`, `run-archive`, `rotate-key`, `rotate-label-key`) refuse
-  before any prompt when standard output is not a terminal, so a program on your terminal cannot capture the answer
-  through a pipe, and `recovery` asks for a typed confirmation. Text from arguments is shown with control characters,
-  escape sequences, bidi overrides and zero-width marks removed, a recovery code is never shown, and the prompt names
-  the store file. `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
+  Commands that print a secret or stored text (`admin recovery`, `export`, `run-archive`, `rotate-key`,
+  `rotate-label-key`, `audit`, `refusals`, `review-queue`, `scrub-list`, `archives`) refuse before any prompt unless
+  standard output IS the process's controlling terminal (not a pipe, a file, or a pty some other program holds the
+  other end of), `klatch admin shell` needs standard input and output to be it, and `recovery` asks for a typed
+  confirmation that names what it confirms. Text from arguments is shown as printable ASCII only (everything else
+  as `?`), a recovery code is never shown (every word after `admin recover` is hidden), and the prompt names the
+  store file. Residual, said plainly: a passphrase or recovery code typed into a terminal that a program hosts or
+  relays (a pty it owns and shows you, a screen it forwards) is captured, and these checks cannot prevent a relay of
+  the whole terminal. The defence that remains is you reading what the prompt names and typing the passphrase only
+  for a command you asked for. `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
   reads its events from standard input and the prompt cannot show them (#1279); an open `klatch admin shell` window
   on a shared terminal is exposed to injected keystrokes (#1280). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
   three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The

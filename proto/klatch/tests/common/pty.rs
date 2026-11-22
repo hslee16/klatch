@@ -54,31 +54,49 @@ fn pty() -> (OwnedFd, OwnedFd) {
 
 /// Run `cmd` on a pseudo-terminal, typing `typed` one line per prompt. Kills the child after 120 seconds.
 pub fn run_on_pty(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false)
+    run_with(cmd, typed, None, false, false)
+}
+
+/// The terminal the human has (pty A, the child's controlling terminal, carrying standard ERROR) while standard input
+/// and OUTPUT are a second pty B that the caller owns, as an agent that makes itself a pty for fd 0 and 1 without
+/// `setsid` would: B's master output comes back as `piped_stdout` (#1233).
+pub fn run_on_pty_split(cmd: Command, typed: &[&str]) -> PtyRun {
+    run_with(cmd, typed, None, false, true)
 }
 
 /// As `run_on_pty`, but standard OUTPUT is a pipe (`klatch admin recovery | cat`) while the terminal stays the
 /// controlling terminal, standard input and error: a program that shares the human's terminal and captures what a
 /// command prints (#1233).
 pub fn run_on_pty_stdout_piped(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, true)
+    run_with(cmd, typed, None, true, false)
 }
 
 /// As `run_on_pty`, but standard input is a PIPE carrying `stdin_text` while the terminal is still the child's
 /// controlling terminal and its output: an agent that shares the human's terminal and pipes its own input (#1233).
 pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRun {
-    run_with(cmd, typed, Some(stdin_text), false)
+    run_with(cmd, typed, Some(stdin_text), false, false)
 }
 
-fn run_with(mut cmd: Command, typed: &[&str], piped: Option<&str>, out_piped: bool) -> PtyRun {
+fn run_with(
+    mut cmd: Command,
+    typed: &[&str],
+    piped: Option<&str>,
+    out_piped: bool,
+    split: bool,
+) -> PtyRun {
     let (master, slave) = pty();
+    let other = split.then(pty);
     cmd.stderr(Stdio::from(slave.try_clone().unwrap()));
-    if out_piped {
+    if let Some((_, b_slave)) = &other {
+        cmd.stdout(Stdio::from(b_slave.try_clone().unwrap()));
+    } else if out_piped {
         cmd.stdout(Stdio::piped());
     } else {
         cmd.stdout(Stdio::from(slave.try_clone().unwrap()));
     }
-    if piped.is_some() {
+    if let Some((_, b_slave)) = &other {
+        cmd.stdin(Stdio::from(b_slave.try_clone().unwrap()));
+    } else if piped.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
         cmd.stdin(Stdio::from(slave.try_clone().unwrap()));
@@ -99,6 +117,10 @@ fn run_with(mut cmd: Command, typed: &[&str], piped: Option<&str>, out_piped: bo
     // the command holds clones of the slave until it is dropped; the master reads end only when none is left
     drop(cmd);
     drop(slave);
+    let b_master = other.map(|(m, s)| {
+        drop(s);
+        m
+    });
 
     let mfd = master.as_raw_fd();
     let started = Instant::now();
@@ -141,6 +163,26 @@ fn run_with(mut cmd: Command, typed: &[&str], piped: Option<&str>, out_piped: bo
         }
     }
     let mut piped_stdout = String::new();
+    if let Some(b) = &b_master {
+        loop {
+            let mut p = libc::pollfd {
+                fd: b.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: one pollfd, live for the call.
+            if unsafe { libc::poll(&mut p, 1, 200) } <= 0 {
+                break;
+            }
+            let mut buf = [0u8; 4096];
+            // SAFETY: reads into a live buffer of that length.
+            let got = unsafe { libc::read(b.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
+            if got <= 0 {
+                break;
+            }
+            piped_stdout.push_str(&String::from_utf8_lossy(&buf[..got as usize]));
+        }
+    }
     if let Some(mut out) = child.stdout.take() {
         use std::io::Read;
         let _ = out.read_to_string(&mut piped_stdout);

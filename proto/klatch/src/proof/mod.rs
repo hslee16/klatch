@@ -18,7 +18,7 @@ mod tty;
 mod verifier;
 mod window;
 
-pub use tty::TtyPrompt;
+pub use tty::{TtyPrompt, is_controlling_tty};
 pub use verifier::{CURRENT as CURRENT_COST, Cost, MAX_LEN, MIN_LEN, Verifier, check_new};
 pub use window::{PROCESS as PROCESS_WINDOW, Unlock};
 

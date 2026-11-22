@@ -344,8 +344,13 @@ fn confirm(expected: Option<String>) -> Result<()> {
     let Some(expected) = expected else {
         return Ok(());
     };
+    // the label says what is being confirmed, in text from arguments cleaned the same way as the passphrase prompt
     let line = klatch::proof::TtyPrompt
-        .line(&format!("type {expected} to confirm"))
+        .line(&format!(
+            "type {} to confirm `{}`",
+            prove::plain(&expected),
+            prove::describe()
+        ))
         .map_err(anyhow::Error::from)?;
     if !typed_back(&expected, &line) {
         bail!("not confirmed; nothing was changed");
@@ -357,34 +362,36 @@ fn confirm(expected: Option<String>) -> Result<()> {
 const SHELL_APPROVAL: &str =
     "open an admin shell: an unlock window for ALL admin and launcher commands";
 
-/// The keystore acts that print a secret (a recovery code, the plaintext of a room or an archive). Run with standard
-/// output piped, the person would approve a prompt for something the program on the other end of the pipe reads, so
-/// they are refused before anyone is asked (#1233).
-fn prints_a_secret(k: &route::Keystore) -> bool {
-    use route::{KeyAct, Keystore};
+/// The acts that print a secret or stored text: a recovery code, the plaintext of a room or an archive, the audit,
+/// the refusals, the review queue, the scrub terms, the archive listing. Run with standard output going anywhere
+/// but THIS process's controlling terminal (a pipe, a file, or a pty someone else holds the other end of), the
+/// person would approve a prompt for something another program reads, so they are refused before anyone is asked
+/// (#1233).
+fn prints_stored_text(route: &Route) -> bool {
+    use route::{Act, ArchiveAct, KeyAct, Keystore, ListingAct, ScrubAct};
     matches!(
-        k,
-        Keystore::Key(
-            KeyAct::Recovery
-                | KeyAct::Export { .. }
-                | KeyAct::RunArchive { .. }
-                | KeyAct::RotateKey
-                | KeyAct::RotateLabelKey { .. }
-        )
+        route,
+        Route::Gateway(Act::Listing(
+            ListingAct::Refusals { .. } | ListingAct::Audit { .. } | ListingAct::ReviewQueue { .. }
+        )) | Route::Gateway(Act::Scrub(ScrubAct::List))
+            | Route::Keystore(Keystore::Archive(ArchiveAct::Archives))
+            | Route::Keystore(Keystore::Key(
+                KeyAct::Recovery
+                    | KeyAct::Export { .. }
+                    | KeyAct::RunArchive { .. }
+                    | KeyAct::RotateKey
+                    | KeyAct::RotateLabelKey { .. }
+            ))
     )
 }
 
 pub fn run(cmd: AdminCmd) -> Result<()> {
-    use std::io::IsTerminal;
     let typed_target = confirmation(&cmd);
     let db = db_path()?;
     let route = Route::from(cmd);
-    if let Route::Keystore(k) = &route
-        && prints_a_secret(k)
-        && !std::io::stdout().is_terminal()
-    {
+    if prints_stored_text(&route) && !klatch::proof::is_controlling_tty(1) {
         bail!(
-            "this command prints a secret and standard output is not a terminal, so nothing was asked or done; run it yourself in a terminal"
+            "this command prints stored text or a secret and standard output is not your terminal (a pipe, a file or another pty), so nothing was asked or done; run it yourself in a terminal"
         );
     }
     match route {
