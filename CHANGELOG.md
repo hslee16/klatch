@@ -153,6 +153,7 @@ These are early pre-releases with no outside security review.
 - A session client can list its own crossings over the wire: the method `my_crossings` (own rows only, a state and one fixed sentence each, never text) and wrappers in the Python, TypeScript and Rust clients (#961).
 - `klatch admin rate-limit --member NAME POSTS SECS` gives one member its own post limit over the global one (`--member NAME --off` makes it inherit again); a floor act only the human at a terminal can set (#972).
 - A message line from a flagged (advisory) sender shows `(advisory)` after the sender on `read`, `wait` and the hook digest, and the `read` wire message carries `advisory: true` for it; an unflagged sender, or a room with no requirement, shows nothing (#990).
+- `release/rehearse-assemble.sh --check-tests` also runs the notices version check, the doc pinning cargo tests and the release shell tests on the assembled copy (#1286).
 
 ### Changed
 
@@ -231,6 +232,7 @@ These are early pre-releases with no outside security review.
 - `klatch worker list` shows the seconds left to each credential cap and when it was last renewed (#948).
 - The default rules judge and the storage credential check now see through mechanical wrapping: zero-width characters, spaced or line-split values, base64, hex and reversed credentials, secret JSON field names such as `refresh_token`, and values spelled out one character at a time. Plain-word passphrases and context-only secrets are still left to the opt-in hosted judge (#987).
 - Integration tests under klatch/tests and the klatch-bench crate make their scratch directories with the guarded `TestDir` (shared by a path attribute), and the scan test now covers them too (#995).
+- release/compare-formula.sh has one named allowance, --allow-klatch-server, used by release/bump-formula.sh: the staged formula may be ahead of the tap by exactly the klatch-server install and test lines (the tap holds the previous release). release/verify-published.sh stays strict after the release (#1287).
 
 ### Fixed
 
@@ -317,6 +319,7 @@ These are early pre-releases with no outside security review.
 - Fixed a flaky mediator test that compared the claims countdown across a second boundary (#979).
 - The facilitator one-need-info-per-ask rule now sees an earlier need-info at any depth of a DM room, not only in its oldest 5000 messages (#980).
 - The gate pass case in `proto/scripts/test-scripts.sh` builds the klatch binary the README recipes need instead of relying on a stale one, so it passes in a fresh git worktree (#982).
+- The bench follows the admin passphrase proof: the audit order includes proof-ok and passphrase-set rows, and `admin recover` with a lost key is driven with the typed confirmation only (#1288).
 
 ## [0.1.0-dev.2] - 2026-11-15
 
