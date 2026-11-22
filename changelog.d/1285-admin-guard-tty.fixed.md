@@ -1,0 +1,1 @@
+- `klatch admin audit` and the other acts that print stored text no longer refuse when standard input is a pipe or a file while standard output and error are your own terminal (the same-device check compared inode numbers against `/dev/tty`); the refusal now also names standard error, and `admin rate-limit --list` is now in the guarded list (#1285).

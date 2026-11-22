@@ -376,17 +376,18 @@ const SHELL_APPROVAL: &str =
     "open an admin shell: an unlock window for ALL admin and launcher commands";
 
 /// The acts that print a secret or stored text: a recovery code, the plaintext of a room or an archive, the audit,
-/// the refusals, the review queue, the scrub terms, the archive listing. Run with standard output going anywhere
+/// the refusals, the review queue, the scrub terms, the archive listing, the rate-limit listing. Run with standard output going anywhere
 /// but THIS process's controlling terminal (a pipe, a file, or a pty someone else holds the other end of), the
 /// person would approve a prompt for something another program reads, so they are refused before anyone is asked
 /// (#1233).
 fn prints_stored_text(route: &Route) -> bool {
-    use route::{Act, ArchiveAct, KeyAct, Keystore, ListingAct, ScrubAct};
+    use route::{Act, ArchiveAct, KeyAct, Keystore, ListingAct, PolicyAct, ScrubAct};
     matches!(
         route,
         Route::Gateway(Act::Listing(
             ListingAct::Refusals { .. } | ListingAct::Audit { .. } | ListingAct::ReviewQueue { .. }
-        )) | Route::Gateway(Act::Scrub(ScrubAct::List))
+        )) | Route::Gateway(Act::Policy(PolicyAct::RateLimit { list: true, .. }))
+            | Route::Gateway(Act::Scrub(ScrubAct::List))
             | Route::Keystore(Keystore::Archive(ArchiveAct::Archives))
             | Route::Keystore(Keystore::Key(
                 KeyAct::Recovery
@@ -411,7 +412,7 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
     let route = Route::from(cmd);
     if prints_stored_text(&route) && !klatch::proof::output_is_the_prompt_terminal() {
         bail!(
-            "this command prints stored text or a secret and standard output is not your terminal (a pipe, a file or another pty), so nothing was asked or done; run it yourself in a terminal"
+            "this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected"
         );
     }
     match route {
