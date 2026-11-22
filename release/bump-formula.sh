@@ -11,7 +11,8 @@
 #
 # Before it rewrites anything it compares the tap formula with the staged copy in this repository (release/homebrew/klatch.rb,
 # or --staged FILE) through release/compare-formula.sh: any difference beyond the version, URLs and hashes is drift, and the
-# script stops (#1260). After a good bump the staged copy is replaced by the bumped formula, so commit it with the release.
+# script stops (#1260). One named allowance (#1287): the staged copy may be ahead of the tap by exactly the klatch-server install
+# and test lines (--allow-klatch-server), because the tap holds the previous release. After a good bump the staged copy is replaced by the bumped formula, so commit it with the release.
 #
 # --rehearse DIR: after the bump, a local rehearsal with Homebrew against the archives in DIR through file:// URLs
 # (brew audit --strict --new, brew install --build-from-source, brew test), in a temporary local tap that is removed at the
@@ -37,7 +38,7 @@ formula="$tap/Formula/klatch.rb"
 [ -f "$sums" ] || { echo "bump-formula: no SHA256SUMS at $sums" >&2; exit 1; }
 [ -f "$formula" ] || { echo "bump-formula: no formula at $formula" >&2; exit 1; }
 [ -f "$staged" ] || { echo "bump-formula: no staged formula at $staged" >&2; exit 1; }
-"$here/compare-formula.sh" "$staged" "$formula" || { echo "bump-formula: the tap formula and the staged formula ($staged) have drifted apart; reconcile them first" >&2; exit 1; }
+"$here/compare-formula.sh" --allow-klatch-server "$staged" "$formula" || { echo "bump-formula: the tap formula and the staged formula ($staged) have drifted apart; reconcile them first" >&2; exit 1; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/klatch-bump.XXXXXX")"
 tapname=""

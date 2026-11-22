@@ -1,0 +1,1 @@
+- release/compare-formula.sh has one named allowance, --allow-klatch-server, used by release/bump-formula.sh: the staged formula may be ahead of the tap by exactly the klatch-server install and test lines (the tap holds the previous release). release/verify-published.sh stays strict after the release (#1287).

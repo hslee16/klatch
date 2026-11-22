@@ -90,7 +90,10 @@ and prints a message and skips when `brew` is missing.
 
 The bump first compares the tap formula with the staged copy `release/homebrew/klatch.rb` (`release/compare-formula.sh`): any
 difference beyond the version, URLs and hashes stops it, and after a good bump the staged copy is replaced by the bumped
-formula, so commit it with the release. `release/verify-published.sh` repeats the comparison against the live tap (`tap-drift`).
+formula, so commit it with the release. The one allowed difference is the `klatch-server` install and test lines: the staged
+copy is the release candidate and may have them while the tap (the previous release) does not yet (`--allow-klatch-server`,
+exactly those two lines, nothing else). `release/verify-published.sh` repeats the comparison against the live tap
+(`tap-drift`) with no allowance: after the release the tap must carry the same lines as the staged copy.
 
 The staged copy in this repository, `release/homebrew/klatch.rb`, is the file to edit first: `release/check-versions.sh`
 checks its `version`, its four URLs (release tag and archive name, from `release/pep440.sh`) and, when they are

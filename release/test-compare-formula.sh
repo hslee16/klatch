@@ -36,6 +36,39 @@ if cmp_; then bad "an added line passed"; else ok "an added line fails"; fi
 cp "$a" "$b"; sed -i.bak 's/on_intel do/on_intel_x do/' "$b"; rm -f "$b.bak"
 if cmp_; then bad "a changed block name passed"; else ok "a changed block name fails"; fi
 
+# the klatch-server allowance (#1287): the staged formula (the release candidate) may be ahead of the tap (the previous
+# release) by exactly the klatch-server install and test lines, and only with --allow-klatch-server
+ahead() { # a staged copy with the klatch-server lines, in $1
+  sed -e 's/^    bin.install "klatch"$/    bin.install "klatch", "klatch-server"/' \
+    -e '/shell_output("#{bin}\/klatch --version")$/a\
+    assert_match "usage: klatch-server", shell_output("#{bin}/klatch-server --help")' "$a" > "$1"
+}
+cmp_allow() { "$here/compare-formula.sh" --allow-klatch-server "$a" "$b" > "$work/out" 2> "$work/err"; }
+ahead "$work/s.rb"; grep -q 'klatch-server --help' "$work/s.rb" && grep -q 'bin.install "klatch", "klatch-server"' "$work/s.rb" && ok "the fixture has both klatch-server lines" || bad "fixture not built"
+cp "$a" "$b"; cp "$work/s.rb" "$a"
+if cmp_allow; then ok "staged ahead by exactly the klatch-server lines passes with the allowance"; else bad "the allowance did not apply: $(cat "$work/err")"; fi
+if cmp_; then bad "staged ahead passed without the allowance"; else ok "staged ahead fails without the allowance (strict)"; fi
+cp "$work/s.rb" "$b"
+if cmp_allow; then ok "equal formulas with the klatch-server lines pass with the allowance"; else bad "equal ahead formulas failed: $(cat "$work/err")"; fi
+if cmp_; then ok "strict compare of equal formulas with the klatch-server lines passes"; else bad "strict equal failed: $(cat "$work/err")"; fi
+cp "$work/s.rb" "$a"
+cp "$work/s.rb" "$b"; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$b"; rm -f "$b.bak"
+if cmp_allow; then bad "the allowance hid a license change"; else ok "the allowance does not hide another difference"; fi
+# a different extra line next to the klatch-server lines fails
+cp "$work/s.rb" "$a"; printf '  # a comment\n' >> "$a"
+cp "$here/homebrew/klatch.rb" "$b"
+if cmp_allow; then bad "an extra comment passed with the allowance"; else ok "any other extra line fails with the allowance"; fi
+cp "$work/s.rb" "$a"; sed -i.bak 's#klatch-server --help#klatch-server --version#' "$a"; rm -f "$a.bak"
+if cmp_allow; then bad "a different klatch-server test line passed"; else ok "a different klatch-server test line fails with the allowance"; fi
+cp "$work/s.rb" "$a"; sed -i.bak 's#bin.install "klatch", "klatch-server"#bin.install "klatch", "klatch-server", "other"#' "$a"; rm -f "$a.bak"
+if cmp_allow; then bad "a different install line passed"; else ok "a different install line fails with the allowance"; fi
+cp "$work/s.rb" "$a"; sed -i.bak 's#^\(    assert_match "usage: klatch-server".*\)$#\1\n\1#' "$a"; rm -f "$a.bak"
+if cmp_allow; then bad "a duplicated klatch-server test line passed"; else ok "a duplicated klatch-server test line fails with the allowance"; fi
+# the tap ahead of the staged copy is not allowed (the allowance is one way)
+cp "$here/homebrew/klatch.rb" "$a"; cp "$work/s.rb" "$b"
+if cmp_allow; then bad "a tap ahead of the staged copy passed"; else ok "a tap ahead of the staged copy fails"; fi
+cp "$here/homebrew/klatch.rb" "$a"; cp "$here/homebrew/klatch.rb" "$b"
+
 # usage and missing files
 if "$here/compare-formula.sh" "$a" > /dev/null 2>&1; then bad "one argument passed"; else ok "one argument is refused"; fi
 if "$here/compare-formula.sh" "$a" "$work/none.rb" > /dev/null 2>&1; then bad "a missing file passed"; else ok "a missing file is refused"; fi
