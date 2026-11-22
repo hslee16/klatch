@@ -123,6 +123,7 @@ mod tests {
             kind: None,
             payload: None,
             advisory: false,
+            scope: None,
         }]);
         assert_eq!(opened.len(), 1);
         assert!(crate::domain::is_merged_note("merged"));

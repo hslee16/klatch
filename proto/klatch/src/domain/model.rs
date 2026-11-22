@@ -20,6 +20,9 @@ pub struct Message {
     /// `read`, `wait` and the hook digest, from the room's policy keys, so it is never read from a stored message
     /// and never from a sender's text.
     pub advisory: bool,
+    /// The scope the asker declared on an ask (#1171), shown beside the ask. The store leaves it `None`; the gateway
+    /// sets it on an ask message it returns, from the ask's scope record, never from the message text. Display only.
+    pub scope: Option<String>,
 }
 
 /// The fixed mark that follows a flagged sender's name. A constant, never built from member text.
@@ -38,6 +41,14 @@ impl Message {
             label.push_str(ADVISORY_MARK);
         }
         label
+    }
+
+    /// ` [scope S]` after an ask that declares a scope (#1171), empty for every other message. A scope is 1 to 80
+    /// characters of letters, digits and `. _ : - /`, so it prints as it is and cannot carry a line break.
+    pub fn scope_mark(&self) -> String {
+        self.scope
+            .as_ref()
+            .map_or(String::new(), |s| format!(" [scope {s}]"))
     }
 }
 

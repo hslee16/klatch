@@ -1,1 +1,1 @@
-| `asks` | `open_asks` | `Read` without advance | GUARDED `open_asks` (#901): a room above the caller's clearance is refused; `session/tests/facilitator_wire.rs` |
+| `asks` | `open_asks` | `Read` without advance | GUARDED `open_asks` (#901): a room above the caller's clearance is refused; `session/tests/facilitator_wire.rs`; each ask also carries its declared `scope` (#1171, a scope word the asker chose, `null` when none), shown under the same read admit and no more than the room's own messages already are |

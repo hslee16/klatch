@@ -119,6 +119,7 @@ mod tests {
             kind: None,
             payload: None,
             advisory: false,
+            scope: None,
         }
     }
 

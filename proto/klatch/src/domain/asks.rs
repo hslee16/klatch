@@ -111,6 +111,9 @@ pub struct OpenAsk {
     pub room: Option<AskRoom>,
     /// The dm the exchange moved to (`moved #N: dm with NAME`, #1188), with the dm room once the store has found it.
     pub moved: Option<MovedDm>,
+    /// The scope the asker declared on the ask (#1171), if any. The fold of messages leaves it `None`; the store
+    /// fills it from the ask's scope record.
+    pub scope: Option<String>,
 }
 
 impl MovedDm {
@@ -166,10 +169,16 @@ impl OpenAsk {
         bracket(self.outcome_parts())
     }
 
-    /// Everything to know about the ask at a glance, for display: how helpers answered it, whether it waits on the
-    /// asker, and its working room: `[busy 1, needs info, room ask-7 3 members]`, or empty.
+    /// Everything to know about the ask at a glance, for display: the scope the asker declared, how helpers answered
+    /// it, whether it waits on the asker, and its working room: `[scope git:foo, busy 1, needs info, room ask-7 3
+    /// members]`, or empty.
     pub fn summary(&self, now: i64) -> String {
-        let mut parts = self.outcome_parts();
+        let mut parts = Vec::new();
+        if let Some(scope) = &self.scope {
+            // a scope is 1 to 80 characters of letters, digits and . _ : - /, so it is safe to print as it is (#1171)
+            parts.push(format!("scope {scope}"));
+        }
+        parts.extend(self.outcome_parts());
         if let Some(d) = self.deadline() {
             parts.push(deadline_phrase(d, now));
         }
@@ -515,6 +524,7 @@ pub fn open_asks(messages: &[Message], live_claims: &[Claim]) -> Vec<OpenAsk> {
             waiting_on_asker: waiting_on(messages, a),
             room: None,
             moved: moved_to(messages, a),
+            scope: None,
         })
         .collect()
 }
@@ -561,6 +571,7 @@ mod tests {
             kind: None,
             payload: None,
             advisory: false,
+            scope: None,
         }
     }
 
@@ -801,6 +812,20 @@ mod tests {
         no_room.moved.as_mut().unwrap().room = None;
         assert!(!no_room.room_active(100));
         assert!(!OpenAsk::default().room_active(100));
+    }
+
+    #[test]
+    fn a_declared_scope_leads_the_summary_and_no_scope_adds_nothing() {
+        let mut a = OpenAsk::default();
+        assert_eq!(a.summary(0), "");
+        a.scope = Some("git:foo".into());
+        assert_eq!(a.summary(0), "[scope git:foo]");
+        a.outcomes.push(Outcome {
+            kind: OutcomeKind::Busy,
+            by: "bob".into(),
+            reason: String::new(),
+        });
+        assert_eq!(a.summary(0), "[scope git:foo, busy 1]");
     }
 
     #[test]

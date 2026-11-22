@@ -92,6 +92,7 @@ fn seqs(f: &[ServerFrame]) -> Vec<u64> {
     messages(f).into_iter().map(|m| m.1).collect()
 }
 
+mod ask_scope;
 mod attributes;
 mod could_answer;
 mod crossings_wire;

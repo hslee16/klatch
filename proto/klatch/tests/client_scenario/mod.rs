@@ -60,6 +60,43 @@ fn a_post_is_read_by_another_member_and_a_handoff_keeps_its_kind_and_payload() {
 }
 
 #[test]
+fn an_ask_scope_survives_post_read_the_stream_and_asks_and_could_answer_names_a_mismatch() {
+    let h = home();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    b.set_scope("git:bar").unwrap();
+    a.post(PostRequest::new("r", "seeking: plain")).unwrap();
+    let (seq, _) = a
+        .post(PostRequest::new("r", "seeking: scoped").scope("git:foo"))
+        .unwrap();
+    let ms = b.read("r", false).unwrap();
+    assert_eq!(
+        ms.iter().map(|m| m.scope.as_deref()).collect::<Vec<_>>(),
+        vec![None, Some("git:foo")]
+    );
+    assert_eq!(b.subscribe("r", 0).unwrap(), 2);
+    let seen = b.collect(true, Duration::from_secs(10)).unwrap();
+    assert_eq!(
+        seen.messages
+            .iter()
+            .map(|m| m.scope.as_deref())
+            .collect::<Vec<_>>(),
+        vec![None, Some("git:foo")]
+    );
+    let asks = b.asks("r").unwrap();
+    assert_eq!(asks[1]["scope"], "git:foo");
+    let seq = i64::try_from(seq).unwrap();
+    let answer = b.could_answer("r", "bob", seq).unwrap();
+    assert!(
+        format!("{answer:?}").contains("scope"),
+        "a mismatch is named: {answer:?}"
+    );
+    assert!(
+        a.post(PostRequest::new("r", "hello").scope("git:foo"))
+            .is_err()
+    );
+}
+
+#[test]
 fn subscribe_replays_catches_up_pushes_and_resumes_after_a_reconnect() {
     let h = home();
     let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));

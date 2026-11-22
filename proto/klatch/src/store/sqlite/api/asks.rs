@@ -25,6 +25,23 @@ impl AskStore for SqliteStore {
         )
     }
 
+    fn set_ask_scope(&self, room: &str, seq: i64, scope: &str) -> Result<()> {
+        self.exec(
+            "INSERT INTO ask_scopes(room,seq,scope) VALUES(?1,?2,?3) \
+             ON CONFLICT(room,seq) DO UPDATE SET scope=excluded.scope",
+            params![room, seq, scope],
+        )
+        .map(|_| ())
+    }
+
+    fn ask_scopes(&self, room: &str) -> Result<Vec<(i64, String)>> {
+        self.rows(
+            "SELECT seq,scope FROM ask_scopes WHERE room=?1 ORDER BY seq",
+            params![room],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+
     fn lapsed_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<(OpenAsk, String)>> {
         self.immediate(|| {
             let mut out = Vec::new();

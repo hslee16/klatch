@@ -29,9 +29,22 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
                 handoff: kind.as_deref().map(|k| (k, payload.as_deref())),
             },
         )?,
-        MessagingCmd::Ask { args, to: Some(to) } => ask_to(ctx, &to, &args)?,
-        MessagingCmd::Ask { args, to: None } => match args.split_first() {
-            Some((room, text)) => ask(ctx, room, text)?,
+        MessagingCmd::Ask {
+            scope: Some(_),
+            to: Some(_),
+            ..
+        } => bail!(
+            "--scope goes with a room ask: klatch ask ROOM TEXT --scope S (a dm ask carries no scope)"
+        ),
+        MessagingCmd::Ask {
+            args, to: Some(to), ..
+        } => ask_to(ctx, &to, &args)?,
+        MessagingCmd::Ask {
+            args,
+            to: None,
+            scope,
+        } => match args.split_first() {
+            Some((room, text)) => ask(ctx, room, text, scope.as_deref())?,
             None => bail!("klatch ask needs a room and text, or --to MEMBER and text"),
         },
         MessagingCmd::Answer { room, number, text } => {
@@ -170,9 +183,9 @@ pub(super) fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
     Ok(())
 }
 
-/// `klatch ask ROOM TEXT`: the `seeking:` post and its number in one call (#241). The same `post` as the command
+/// `klatch ask ROOM TEXT [--scope S]`: the `seeking:` post and its number in one call (#241). The same `post` as the command
 /// of that name, so the guard, the labels and the content checks are the ones every post meets.
-pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String]) -> Result<()> {
+pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String], scope: Option<&str>) -> Result<()> {
     let text = text.join(" ");
     let text = text.trim();
     let text = text
@@ -183,9 +196,13 @@ pub(super) fn ask(ctx: &Ctx, room: &str, text: &[String]) -> Result<()> {
         bail!("an ask needs text: klatch ask {room} <what you need>");
     }
     let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
-    let posted = ctx.t.post(room, &body)?;
+    let posted = match scope {
+        Some(scope) => ctx.t.post_scoped(room, &body, scope)?,
+        None => ctx.t.post(room, &body)?,
+    };
+    let declared = scope.map_or(String::new(), |s| format!(", scope {s}"));
     println!(
-        "asked #{} in {room} (queued; `klatch wait {room}` for the answer)",
+        "asked #{} in {room}{declared} (queued; `klatch wait {room}` for the answer)",
         posted.seq
     );
     if let Some(note) = ctx
@@ -359,11 +376,12 @@ pub(super) fn read(
 /// One message as `read` and `history` print it: marked, one line, handoff folded in.
 pub(super) fn message_row(m: &klatch::domain::Message) -> String {
     format!(
-        "[{} {} {}] {}{}",
+        "[{} {} {}] {}{}{}",
         m.seq,
         m.ts,
         m.sender_label(),
         flat(&m.body),
+        m.scope_mark(),
         handoff_suffix(m)
     )
 }

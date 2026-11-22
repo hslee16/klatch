@@ -511,6 +511,65 @@ fn a_version_35_database_gains_the_claim_yields_table_and_keeps_its_claims() {
 }
 
 #[test]
+fn a_version_36_database_gains_the_ask_scopes_table_and_its_old_asks_have_no_scope() {
+    let path = temp_db("migrate-v36-ask-scopes");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.post(Seat::new("r", "alice"), "seeking: old", 1).unwrap();
+        s.conn
+            .execute_batch("DROP TABLE ask_scopes; PRAGMA user_version = 36;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ask_scopes'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    let asks = s.open_asks("r", 2).unwrap();
+    assert_eq!((asks.len(), asks[0].scope.clone()), (1, None));
+    s.set_ask_scope("r", asks[0].seq, "git:foo").unwrap();
+    assert_eq!(
+        s.open_asks("r", 3).unwrap()[0].scope.as_deref(),
+        Some("git:foo")
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn an_ask_scope_is_kept_per_room_and_ask_and_a_second_declaration_replaces_the_first() {
+    let s = store();
+    let a = s
+        .post(Seat::new("r", "alice"), "seeking: one", 1)
+        .unwrap()
+        .seq;
+    let b = s
+        .post(Seat::new("r", "alice"), "seeking: two", 1)
+        .unwrap()
+        .seq;
+    let c = s
+        .post(Seat::new("q", "alice"), "seeking: three", 1)
+        .unwrap()
+        .seq;
+    s.set_ask_scope("r", a, "git:foo").unwrap();
+    s.set_ask_scope("r", a, "git:bar").unwrap();
+    s.set_ask_scope("q", c, "bot:grok").unwrap();
+    let in_r = s.open_asks("r", 2).unwrap();
+    let scope = |n: i64| in_r.iter().find(|x| x.seq == n).unwrap().scope.clone();
+    assert_eq!(scope(a).as_deref(), Some("git:bar"));
+    assert_eq!(scope(b), None);
+    assert_eq!(
+        s.ask_scopes("q").unwrap(),
+        vec![(c, "bot:grok".to_string())]
+    );
+}
+
+#[test]
 fn the_last_audit_lookup_uses_the_audit_index() {
     let s = store();
     let mut stmt = s

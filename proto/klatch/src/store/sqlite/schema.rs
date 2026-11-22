@@ -42,7 +42,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE member_mode(member TEXT PRIMARY KEY, mode TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE INDEX member_attrs_repository ON member_attrs(repository);
- CREATE TABLE claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));";
+ CREATE TABLE claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));
+ CREATE TABLE ask_scopes(room TEXT NOT NULL, seq INTEGER NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(room,seq));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -428,6 +429,16 @@ pub(super) fn migrate_v35(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
+/// Version 36 to 37: the scope an asker declares on an ask (#1171), one row per ask that has one. An ask with no row
+/// has no declared scope, so every existing ask and every ask from an old client reads as before. Scope words only,
+/// never text.
+pub(super) fn migrate_v36(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ask_scopes(room TEXT NOT NULL, seq INTEGER NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(room,seq));",
+    )
+    .map_err(be)
+}
+
 /// Whether `table` has `column`: a step run again on a database that already has the newer shape must not fail.
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let n: i64 = conn
@@ -481,6 +492,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v33,
     migrate_v34,
     migrate_v35,
+    migrate_v36,
 ];
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

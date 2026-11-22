@@ -80,6 +80,7 @@ impl MessageStore for MemoryStore {
             kind: m.kind.map(String::from),
             payload: m.payload.map(String::from),
             advisory: false,
+            scope: None,
         });
         Ok(Posted { id, seq })
     }

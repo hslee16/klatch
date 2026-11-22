@@ -85,6 +85,7 @@ pub(crate) fn message_frame(room: &str, m: &Message) -> ServerFrame {
         kind: m.kind.clone(),
         payload: m.payload.clone(),
         advisory: m.advisory,
+        scope: m.scope.clone(),
     }
 }
 
@@ -194,6 +195,10 @@ pub(crate) fn message_json(m: &Message) -> Value {
     // a flagged sender (#990) adds the key; an ordinary message does not carry it
     if m.advisory {
         v["advisory"] = json!(true);
+    }
+    // the scope an asker declared on an ask (#1171); absent on every other message
+    if let Some(s) = &m.scope {
+        v["scope"] = json!(s);
     }
     v
 }

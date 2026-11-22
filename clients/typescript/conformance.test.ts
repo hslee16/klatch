@@ -178,6 +178,25 @@ describe(title, { skip }, () => {
     assert.deepEqual(await b.read("r"), []);
   });
 
+  it("an ask scope survives post, read, history and asks, and could_answer names a mismatch (#1171)", async () => {
+    const [a, b] = [await store.client("alice"), await store.client("bob")];
+    await b.setScope("git:bar");
+    await a.post("r", "seeking: plain");
+    const { seq } = await a.post("r", "seeking: scoped", { scope: "git:foo" });
+    const messages = await b.read("r", true);
+    assert.ok(!("scope" in messages[0]));
+    assert.equal(messages[1].scope, "git:foo");
+    assert.equal((await b.history("r")).messages[1].scope, "git:foo");
+    const asks = (await b.asks("r")) as any[];
+    assert.equal(asks[1].scope, "git:foo");
+    assert.equal(asks[0].scope ?? null, null);
+    const answer = await b.couldAnswer("r", "bob", seq);
+    assert.equal(answer.could, false);
+    assert.equal(answer.blockers[0].rule, "scope");
+    await assert.rejects(a.post("r", "seeking: x", { scope: "has space" }), ApiError);
+    await assert.rejects(a.post("r", "hello", { scope: "git:foo" }), ApiError);
+  });
+
   it("history looks back without moving the cursor and pages with since", async () => {
     const [a, b] = [await store.client("alice"), await store.client("bob")];
     for (let i = 1; i <= 5; i++) await a.post("r", `m${i}`);
