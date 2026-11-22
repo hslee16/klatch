@@ -1247,9 +1247,9 @@ SOFTWARE.
 ### MIT License
 
 Used by:
-- klatch 0.1.0-dev.2 (https://github.com/hslee16/klatch)
-- klatch-bench 0.1.0-dev.2
-- klatch-server 0.1.0-dev.2 (https://github.com/hslee16/klatch)
+- klatch 0.2.0-alpha.1 (https://github.com/hslee16/klatch)
+- klatch-bench 0.2.0-alpha.1
+- klatch-server 0.2.0-alpha.1 (https://github.com/hslee16/klatch)
 
 MIT License
 
