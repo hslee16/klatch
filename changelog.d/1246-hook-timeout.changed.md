@@ -1,0 +1,1 @@
+- `klatch init` writes an explicit 30 second timeout into the hooks it installs (and adds it to older entries), longer than the 5 second first Keychain read (#1246).
