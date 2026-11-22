@@ -485,8 +485,11 @@ fn a_version_35_database_gains_the_claim_yields_table_and_keeps_its_claims() {
     let path = temp_db("migrate-v35-claim-yields");
     {
         let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-        s.claim(&crate::store::ClaimRequest::new(("r", "alice"), "p", 500, ""), 1)
-            .unwrap();
+        s.claim(
+            &crate::store::ClaimRequest::new(("r", "alice"), "p", 500, ""),
+            1,
+        )
+        .unwrap();
         s.conn
             .execute_batch("DROP TABLE claim_yields; PRAGMA user_version = 35;")
             .unwrap();

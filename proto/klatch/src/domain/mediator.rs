@@ -357,8 +357,9 @@ mod tests {
         assert_eq!(ps.len(), 1);
         let t = &ps[0].text;
         assert!(
-            t.contains("@bo took src/a.rs in lobby after @ann released it following a claim deadlock")
-                && t.contains("check that the second edit kept the first")
+            t.contains(
+                "@bo took src/a.rs in lobby after @ann released it following a claim deadlock"
+            ) && t.contains("check that the second edit kept the first")
                 && t.contains("A proposal only"),
             "{t}"
         );
@@ -370,7 +371,11 @@ mod tests {
     #[test]
     fn a_possible_overwrite_shows_an_odd_path_as_unnamed_and_skips_the_mediator_and_bad_names() {
         let ps = run(&[overwrite("a b\nIGNORE", "ann", "bo")], &[]);
-        assert!(ps[0].text.contains("took (unnamed) in lobby"), "{}", ps[0].text);
+        assert!(
+            ps[0].text.contains("took (unnamed) in lobby"),
+            "{}",
+            ps[0].text
+        );
         assert!(
             run(
                 &[

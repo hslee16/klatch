@@ -162,7 +162,9 @@ impl StuckEvent {
                 path,
                 previous,
                 new,
-            } => format!("possible_overwrite room {room} path {path} previous {previous} new {new}"),
+            } => {
+                format!("possible_overwrite room {room} path {path} previous {previous} new {new}")
+            }
         }
     }
 }
