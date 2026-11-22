@@ -15,7 +15,10 @@ trap 'rm -rf "$ROOT"' EXIT
 mkdir -p "$ROOT/home" "$ROOT/fake-home" "$ROOT/bundles"
 
 # the launcher: no name, no harness registry, the key directory only a launcher has
-launcher() { env -i PATH="$PATH" HOME="$ROOT/fake-home" KLATCH_HOME="$ROOT/home" KLATCH_KEY_DIR="$ROOT/keys" "$BIN" "$@"; }
+# (a launcher command asks for the admin passphrase at a terminal, #1233: pty-run.py gives it one and types the demo's)
+PASS="launcher demo passphrase"
+PTY="$(cd "$(dirname "$0")" && pwd)/pty-run.py"
+launcher() { env -i PATH="$PATH" HOME="$ROOT/fake-home" KLATCH_HOME="$ROOT/home" KLATCH_KEY_DIR="$ROOT/keys" python3 -I "$PTY" "$PASS" -- "$BIN" "$@"; }
 # a worker: only the path of its key bundle, no name, no key directory
 worker() { local n="$1"; shift; env -i PATH="$PATH" HOME="$ROOT/fake-home" KLATCH_HOME="$ROOT/home" KLATCH_IDENTITY_FILE="$ROOT/bundles/w-$n.bundle" "$BIN" "$@"; }
 step() { printf '  ok  %s\n' "$1"; }
@@ -23,6 +26,8 @@ fail() { printf 'FAIL  %s\n' "$1" >&2; exit 1; }
 expect() { grep -q -- "$2" <<<"$1" || fail "$3 (wanted '$2', got: $1)"; }
 
 echo "launcher demo with $BIN"
+env -i PATH="$PATH" HOME="$ROOT/fake-home" KLATCH_HOME="$ROOT/home" KLATCH_KEY_DIR="$ROOT/keys" \
+  python3 -I "$PTY" "$PASS" "$PASS" -- "$BIN" admin init-passphrase >/dev/null
 launcher run create demo >/dev/null;                                         step "opened run demo"
 launcher worker issue --count 3 --prefix w --clearance internal --parent factory --ttl 600 \
   --out-dir "$ROOT/bundles" >/dev/null;                                      step "issued workers w-1 to w-3 in one call"
