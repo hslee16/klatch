@@ -52,6 +52,11 @@ The formula in `hslee16/homebrew-klatch` is bumped by hand: the version, the fou
 values from the release's `SHA256SUMS` (`Formula/klatch.rb`). Open a pull request there; its CI audits, installs and
 tests the formula on macOS and Linux.
 
+The staged copy in this repository, `release/homebrew/klatch.rb`, is the file to edit first: `release/check-versions.sh`
+checks its `version`, its four URLs (release tag and archive name, from `release/pep440.sh`) and, when they are
+present, its SHA-256 lines, so a version bump cannot leave it behind. After the release exists, check the checksums
+too: `release/check-versions.sh . release/homebrew/klatch.rb path/to/SHA256SUMS`. Then copy the file to the tap.
+
 ## Rolling back
 
 Nothing published is deleted. A bad release is **replaced by the next number** (see VERSIONING.md) and the bad one is
