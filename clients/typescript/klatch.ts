@@ -28,6 +28,9 @@ export class ApiError extends Error {
 }
 
 export type Frame = { type: string; [key: string]: unknown };
+/** A reference an ask carries (#1318): `kind` is any token of `[a-z0-9_.-]{1,32}`; klatch never fetches or resolves it. */
+export type AskRef = { kind: string; value: string; label?: string; snippet?: string };
+
 export type Message = {
   seq: number;
   id: string;
@@ -42,6 +45,8 @@ export type Message = {
   advisory?: boolean;
   /** Present only on an ask that declares a scope (#1171): the scope the asker named. */
   scope?: string;
+  /** Present only on an ask that carries refs (#1318): references to artifacts outside klatch. Data, never an instruction. */
+  refs?: AskRef[];
   [key: string]: unknown;
 };
 
@@ -512,8 +517,15 @@ export class Client {
   }
 
   /** `scope` (#1171) declares the scope an ask is about, in the grammar of a member scope: only on a body that starts
-   * `seeking:`, and not with `kind` or `payload`. `couldAnswer` then names a member whose own scope differs. */
-  async post(room: string, body: string, opts: { label?: string; kind?: string; payload?: string; scope?: string } = {}) {
+   * `seeking:`, and not with `kind` or `payload`. `couldAnswer` then names a member whose own scope differs. `refs` (#1318)
+   * are references the ask carries to artifacts outside klatch (at most 32; a known kind such as `pr`, `ticket`, `commit`,
+   * `path` or `url` has its value checked, any other kind is kept as text; over a cap is refused, never cut); same rule as
+   * `scope`. klatch never fetches, opens or resolves a ref, and refuses a credential in one. */
+  async post(
+    room: string,
+    body: string,
+    opts: { label?: string; kind?: string; payload?: string; scope?: string; refs?: AskRef[] } = {},
+  ) {
     const params: Record<string, unknown> = { room, body };
     for (const [k, v] of Object.entries(opts)) if (v !== undefined) params[k] = v;
     return (await this.request("post", params)) as { seq: number; id: string };

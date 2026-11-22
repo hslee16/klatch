@@ -43,7 +43,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE INDEX member_attrs_repository ON member_attrs(repository);
  CREATE TABLE claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));
- CREATE TABLE ask_scopes(room TEXT NOT NULL, seq INTEGER NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(room,seq));";
+ CREATE TABLE ask_scopes(room TEXT NOT NULL, seq INTEGER NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(room,seq));
+ CREATE TABLE ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -493,7 +494,18 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v34,
     migrate_v35,
     migrate_v36,
+    migrate_v37,
 ];
+
+/// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
+/// no rows carries none, so every existing ask and every ask from an old client reads as before. Data only: klatch
+/// never fetches or resolves what a ref points at.
+pub(super) fn migrate_v37(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));",
+    )
+    .map_err(be)
+}
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.
 pub(super) fn migrate(conn: &Connection, version: i64) -> Result<()> {

@@ -14,6 +14,7 @@ fn msg(seq: i64, sender: &str, body: &str, ts: i64) -> Message {
         payload: None,
         advisory: false,
         scope: None,
+        refs: Vec::new(),
     }
 }
 

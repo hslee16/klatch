@@ -488,6 +488,7 @@ mod tests {
             payload: Some("p".into()),
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         };
         let line = export_json_line("lobby", &m);
         assert!(!line.contains('\n'));

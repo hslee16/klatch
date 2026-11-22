@@ -86,7 +86,35 @@ pub(crate) fn message_frame(room: &str, m: &Message) -> ServerFrame {
         payload: m.payload.clone(),
         advisory: m.advisory,
         scope: m.scope.clone(),
+        refs: m.refs.iter().map(wire_ref).collect(),
     }
+}
+
+pub(crate) fn wire_ref(r: &crate::domain::AskRef) -> crate::protocol::WireRef {
+    crate::protocol::WireRef {
+        kind: r.kind.clone(),
+        value: r.value.clone(),
+        label: r.label.clone(),
+        snippet: r.snippet.clone(),
+    }
+}
+
+/// The refs of an ask as JSON (#1318): an array of `{kind, value}` with `label` and `snippet` when there are any.
+pub(crate) fn refs_json(refs: &[crate::domain::AskRef], with_snippets: bool) -> Value {
+    Value::Array(
+        refs.iter()
+            .map(|r| {
+                let mut v = json!({ "kind": r.kind, "value": r.value });
+                if let Some(l) = &r.label {
+                    v["label"] = json!(l);
+                }
+                if let (true, Some(s)) = (with_snippets, &r.snippet) {
+                    v["snippet"] = json!(s);
+                }
+                v
+            })
+            .collect(),
+    )
 }
 
 pub(crate) fn attribution(a: Who) -> Attribution {
@@ -199,6 +227,10 @@ pub(crate) fn message_json(m: &Message) -> Value {
     // the scope an asker declared on an ask (#1171); absent on every other message
     if let Some(s) = &m.scope {
         v["scope"] = json!(s);
+    }
+    // the refs an asker attached (#1318); the key is absent on every message that has none
+    if !m.refs.is_empty() {
+        v["refs"] = refs_json(&m.refs, true);
     }
     v
 }

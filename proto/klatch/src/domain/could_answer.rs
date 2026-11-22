@@ -16,6 +16,9 @@ pub struct CouldAnswer {
     pub ask: i64,
     /// Empty when the member could answer.
     pub blockers: Vec<Blocker>,
+    /// The refs the ask carries (#1318), so a supervisor sees what the ask points at; shown with their kind, value and
+    /// label only, never a snippet. They change no verdict. Empty when the ask has none.
+    pub refs: Vec<crate::domain::AskRef>,
 }
 
 impl CouldAnswer {
@@ -47,6 +50,7 @@ mod tests {
             member: "m".into(),
             ask: 3,
             blockers: vec![],
+            refs: vec![],
         };
         assert_eq!((c.could(), c.summary().as_str()), (true, "yes"));
         c.blockers = vec![

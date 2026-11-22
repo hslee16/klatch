@@ -249,6 +249,7 @@ mod tests {
             room: None,
             moved: None,
             scope: None,
+            refs: Vec::new(),
         }
     }
 

@@ -173,6 +173,7 @@ mod tests {
             payload: None,
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         }
     }
 

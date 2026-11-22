@@ -81,6 +81,7 @@ impl MessageStore for MemoryStore {
             payload: m.payload.map(String::from),
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         });
         Ok(Posted { id, seq })
     }

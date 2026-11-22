@@ -378,6 +378,16 @@ impl AskStore for SpyStore {
         self.gate()?;
         self.inner.ask_scopes(room)
     }
+
+    fn set_ask_refs(&self, room: &str, seq: i64, refs: &[crate::domain::AskRef]) -> Result<()> {
+        self.gate()?;
+        self.inner.set_ask_refs(room, seq, refs)
+    }
+
+    fn ask_refs(&self, room: &str) -> Result<Vec<(i64, Vec<crate::domain::AskRef>)>> {
+        self.gate()?;
+        self.inner.ask_refs(room)
+    }
 }
 impl ReviewStore for SpyStore {
     fn enqueue_review(&self, item: &crate::store::NewReview, now: i64) -> Result<i64> {

@@ -33,6 +33,15 @@ pub trait Messages {
     ) -> Result<Posted>;
     /// Post an ask that declares a scope (#1171): `body` starts `seeking:` and `scope` is a valid scope.
     fn post_scoped(&self, room: &str, body: &str, scope: &str) -> Result<Posted>;
+    /// Post an ask that may declare a scope (#1171) and carry refs to artifacts outside klatch (#1318). klatch never
+    /// fetches or resolves a ref.
+    fn post_ask(
+        &self,
+        room: &str,
+        body: &str,
+        scope: Option<&str>,
+        refs: &[crate::domain::AskRef],
+    ) -> Result<Posted>;
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>>;
     /// Look back in a room: everyone's messages in `range`, moving no cursor (#518).
     fn history(&self, room: &str, range: HistoryRange) -> Result<History>;
@@ -73,6 +82,16 @@ impl<S: Store> Messages for Direct<S> {
     fn post_scoped(&self, room: &str, body: &str, scope: &str) -> Result<Posted> {
         self.gateway
             .post_scoped(&self.principal, (room, body, None), scope)
+    }
+    fn post_ask(
+        &self,
+        room: &str,
+        body: &str,
+        scope: Option<&str>,
+        refs: &[crate::domain::AskRef],
+    ) -> Result<Posted> {
+        self.gateway
+            .post_ask(&self.principal, (room, body, None), scope, refs)
     }
     fn read(&self, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.gateway.read(&self.principal, room, advance)
@@ -146,6 +165,24 @@ impl Messages for SharedTransport {
         let (room, body, scope) = (Own::own(&room), Own::own(&body), Own::own(&scope));
         self.posting(move |t| {
             t.post_scoped(Lend::lend(&room), Lend::lend(&body), Lend::lend(&scope))
+        })
+    }
+    fn post_ask(
+        &self,
+        room: &str,
+        body: &str,
+        scope: Option<&str>,
+        refs: &[crate::domain::AskRef],
+    ) -> Result<crate::domain::Posted> {
+        let (room, body, scope) = (Own::own(&room), Own::own(&body), Own::own(&scope));
+        let refs = refs.to_vec();
+        self.posting(move |t| {
+            t.post_ask(
+                Lend::lend(&room),
+                Lend::lend(&body),
+                Lend::lend(&scope),
+                &refs,
+            )
         })
     }
     fn subscribe(&self, room: &str, from_seq: i64) -> Result<Subscription> {

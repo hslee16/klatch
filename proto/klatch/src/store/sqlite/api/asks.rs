@@ -42,6 +42,48 @@ impl AskStore for SqliteStore {
         )
     }
 
+    fn set_ask_refs(&self, room: &str, seq: i64, refs: &[crate::domain::AskRef]) -> Result<()> {
+        self.immediate(|| {
+            self.exec(
+                "DELETE FROM ask_refs WHERE room=?1 AND seq=?2",
+                params![room, seq],
+            )?;
+            for (pos, r) in refs.iter().enumerate() {
+                self.exec(
+                    "INSERT INTO ask_refs(room,seq,pos,kind,value,label,snippet) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    params![room, seq, pos as i64, r.kind, r.value, r.label, r.snippet],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    fn ask_refs(&self, room: &str) -> Result<Vec<(i64, Vec<crate::domain::AskRef>)>> {
+        let rows = self.rows(
+            "SELECT seq,kind,value,label,snippet FROM ask_refs WHERE room=?1 ORDER BY seq,pos",
+            params![room],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    crate::domain::AskRef {
+                        kind: r.get(1)?,
+                        value: r.get(2)?,
+                        label: r.get(3)?,
+                        snippet: r.get(4)?,
+                    },
+                ))
+            },
+        )?;
+        let mut out: Vec<(i64, Vec<crate::domain::AskRef>)> = Vec::new();
+        for (seq, r) in rows {
+            match out.last_mut() {
+                Some((last, refs)) if *last == seq => refs.push(r),
+                _ => out.push((seq, vec![r])),
+            }
+        }
+        Ok(out)
+    }
+
     fn lapsed_asks(&self, room: &str, member: &str, now: i64) -> Result<Vec<(OpenAsk, String)>> {
         self.immediate(|| {
             let mut out = Vec::new();

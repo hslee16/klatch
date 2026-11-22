@@ -29,8 +29,10 @@ pub struct AnsweredAsk {
     pub answer: String,
     /// How the asker closed the ask after that answer (#232), if they did.
     pub closed: Option<CloseOutcome>,
-    /// `substring`, or the shared keywords joined by commas.
+    /// `substring`, or the shared keywords joined by commas; `ref ` first when only the ask's refs matched (#1318).
     pub why: String,
+    /// The refs the ask carried (#1318), so the asker sees what the earlier ask pointed at.
+    pub refs: Vec<crate::domain::AskRef>,
 }
 
 /// The answered asks in `messages` that match `query`, newest ask first. The ask text shown and matched is the
@@ -50,7 +52,8 @@ pub fn find_answered(messages: &[Message], query: &str) -> Vec<AnsweredAsk> {
             .max_by_key(|m| m.seq);
         let Some(answer) = answer else { continue };
         let text = ask.body[ASK_PREFIX.len()..].trim();
-        let Some(why) = why_matches(query, text) else {
+        let Some(why) = why_matches(query, text).or_else(|| why_refs_match(query, &ask.refs))
+        else {
             continue;
         };
         let body = answer.body.as_str();
@@ -64,6 +67,7 @@ pub fn find_answered(messages: &[Message], query: &str) -> Vec<AnsweredAsk> {
             answer: after.to_string(),
             closed: latest_close(messages, ask),
             why,
+            refs: ask.refs.clone(),
         });
     }
     out.sort_by_key(|a| std::cmp::Reverse(a.seq));
@@ -83,6 +87,20 @@ fn keywords(s: &str) -> BTreeSet<String> {
         .filter(|w| w.chars().count() >= KEYWORD_MIN_LEN)
         .map(str::to_string)
         .collect()
+}
+
+/// Why the refs of an ask match `query` (#1318): the same rule as for the text, over every ref's kind, value, label and
+/// snippet, said as `ref substring` or `ref` and the shared words. `None` when the ask has no refs or none match.
+fn why_refs_match(query: &str, refs: &[crate::domain::AskRef]) -> Option<String> {
+    if refs.is_empty() {
+        return None;
+    }
+    let all = refs
+        .iter()
+        .map(crate::domain::AskRef::searchable)
+        .collect::<Vec<_>>()
+        .join(" ");
+    why_matches(query, &all).map(|why| format!("ref {why}"))
 }
 
 /// Why `ask_text` matches `query`, or `None` when it does not.
@@ -120,6 +138,7 @@ mod tests {
             payload: None,
             advisory: false,
             scope: None,
+            refs: Vec::new(),
         }
     }
 
@@ -228,5 +247,24 @@ mod tests {
         let found = find_answered(&m, "which port gateway");
         assert_eq!(found.iter().map(|a| a.seq).collect::<Vec<_>>(), vec![7, 1]);
         assert_eq!(found[1].answer, "9000");
+    }
+
+    #[test]
+    fn an_answered_ask_matches_by_its_refs_when_its_text_does_not() {
+        let mut ms = room();
+        ms[2].refs = vec![crate::domain::AskRef {
+            kind: "ci-run".into(),
+            value: "nightly-4411".into(),
+            label: None,
+            snippet: Some("segfault in the parser".into()),
+        }];
+        ms.push(msg(6, "bob", "answer to #3: carol owns it"));
+        let by_value = find_answered(&ms, "nightly-4411");
+        assert_eq!(by_value.len(), 1);
+        assert_eq!(by_value[0].seq, 3);
+        assert!(by_value[0].why.starts_with("ref "), "{}", by_value[0].why);
+        assert_eq!(by_value[0].refs.len(), 1);
+        assert_eq!(find_answered(&ms, "segfault in the parser").len(), 1);
+        assert!(find_answered(&ms, "no such thing anywhere").is_empty());
     }
 }

@@ -11,6 +11,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("post_labeled", |g, w| refused(g.post_labeled(w, ("r", "x", None)))),
     ("post_handoff", |g, w| refused(g.post_handoff(w, ("r", "x", None), &crate::gateway::Handoff {kind: "k", payload: None}))),
     ("post_scoped", |g, w| refused(g.post_scoped(w, ("r", "seeking: x", None), "git:foo"))),
+    ("post_ask", |g, w| refused(g.post_ask(w, ("r", "seeking: x", None), None, &[]))),
     ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
     ("read", |g, w| refused(g.read(w, "r", true))),
     ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),

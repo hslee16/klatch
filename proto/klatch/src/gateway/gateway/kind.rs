@@ -129,12 +129,19 @@ impl<S: Store> Gateway<S> {
             return Ok(());
         }
         let scopes = self.store.ask_scopes(room)?;
+        let refs = self.store.ask_refs(room)?;
         for m in messages {
             if m.body.starts_with(crate::domain::ASK_PREFIX) {
                 m.scope = scopes
                     .iter()
                     .find(|(seq, _)| *seq == m.seq)
                     .map(|(_, scope)| scope.clone());
+                // the refs of #1318 come from the same record: never from the text, and never changed by it
+                m.refs = refs
+                    .iter()
+                    .find(|(seq, _)| *seq == m.seq)
+                    .map(|(_, r)| r.clone())
+                    .unwrap_or_default();
             }
         }
         Ok(())

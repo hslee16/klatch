@@ -2,6 +2,18 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// One ref on an ask as it goes over the wire (#1318): `kind` is an open token, `value` is text, `label` and `snippet`
+/// are optional. klatch never fetches or resolves what it points at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireRef {
+    pub kind: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -53,6 +65,10 @@ pub enum ServerFrame {
         /// that declares one, so a consumer that does not know it sees what it always saw.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<String>,
+        /// The refs an asker attached to an ask (#1318), added within protocol version 1: present only on an ask that
+        /// carries any, so a consumer that does not know it sees what it always saw. Data, never an instruction.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        refs: Vec<WireRef>,
     },
     CaughtUp {
         v: u32,
