@@ -59,8 +59,15 @@ fn is_dev_null(fd: i32) -> bool {
 /// is the prompt, or captures standard error through a pipe. It does NOT stop a program that relays or hosts the
 /// WHOLE terminal the person types at (SECURITY.md).
 pub fn output_is_the_prompt_terminal() -> bool {
+    // With standard input a terminal, the prompt is on standard input, so standard output must be that very device.
+    // Otherwise the prompt is on `/dev/tty`, the controlling terminal, and a descriptor that IS the controlling
+    // terminal (`is_controlling_tty`, by session) is that same terminal; comparing inode numbers there would refuse
+    // it, because `/dev/tty` is a different node from the real device (#1285).
+    // SAFETY: isatty only inspects the descriptor.
+    let stdin_is_tty = unsafe { libc::isatty(0) } == 1;
     is_controlling_tty(1)
-        && open_tty().is_ok_and(|t| same_device(t.fd, 1))
+        && (!stdin_is_tty || same_device(0, 1))
+        && open_tty().is_ok()
         && (same_device(2, 1) || is_dev_null(2))
 }
 

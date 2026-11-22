@@ -906,6 +906,51 @@ fn a_pty_the_caller_owns_on_stdin_and_stdout_is_not_the_controlling_terminal() {
 }
 
 #[test]
+fn stored_text_acts_run_when_stdin_is_a_pipe_and_the_terminal_is_the_controlling_one() {
+    // `klatch admin audit < file` or a pipe into it: stdout and stderr are the person's own terminal, so the prompt
+    // (on /dev/tty) and the output are one device; it must not be refused as "stdout is not your terminal" (#1285)
+    let h = Home::new();
+    h.set_passphrase();
+    for args in [vec!["audit".to_string()], vec!["refusals".to_string()]] {
+        let r = common::pty::run_on_pty_piped(klatch_in(&h, &args), &[PASS], "ignored\n");
+        assert!(r.ok(), "{args:?} was refused:\n{}", r.text);
+        assert!(
+            r.text.contains("admin passphrase to approve"),
+            "{args:?}: {}",
+            r.text
+        );
+    }
+}
+
+#[test]
+fn a_refused_guard_says_how_to_run_it() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = common::pty::run_on_pty_stdout_piped(klatch_in(&h, &["audit".to_string()]), &[PASS]);
+    assert!(!r.ok());
+    assert!(
+        r.text.contains("standard error"),
+        "the refusal should name what to check: {}",
+        r.text
+    );
+}
+
+#[test]
+fn rate_limit_list_is_refused_to_a_pipe() {
+    let h = Home::new();
+    h.set_passphrase();
+    let args = vec!["rate-limit".to_string(), "--list".to_string()];
+    let r = common::pty::run_on_pty_stdout_piped(klatch_in(&h, &args), &[PASS, "x"]);
+    assert!(!r.ok(), "printed to a pipe:\n{}", r.text);
+    assert!(r.piped_stdout.is_empty(), "{}", r.piped_stdout);
+    assert!(
+        !r.text.contains("admin passphrase to approve"),
+        "{}",
+        r.text
+    );
+}
+
+#[test]
 fn everything_that_prints_stored_text_is_refused_to_a_pipe() {
     let h = Home::new();
     h.set_passphrase();
