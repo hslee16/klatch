@@ -89,7 +89,7 @@ print(json.dumps({"tag_name": sys.argv[2], "draft": False, "prerelease": True, "
 PY
   {
     echo 'class Klatch < Formula'
-    echo "  version \"$v\""
+    [ -n "${FORMULA_VERSION_LINE:-}" ] && echo "  version \"$v\""
     for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
       echo "  url \"$base/klatch-$v-$t.tar.gz\""
     done
@@ -139,7 +139,17 @@ json.dump(d, open(p, "w"))
 PY
 failcase "an SBOM is missing" github-assets
 grep -q 'x86_64-unknown-linux-musl.cdx.json' "$work/out" && ok "the missing asset is named" || bad "missing asset not named"
-fresh; sed -i.bak 's/^  version ".*"$/  version "0.1.0-dev.2"/' "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")"; rm -f "$web"/*.bak; failcase "the tap formula is not bumped" tap-formula
+fresh; sed -i.bak -e 's#/download/'"$tag"'/klatch-'"$v"'-#/download/v0.1.0.dev2/klatch-0.1.0-dev.2-#' "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")"; rm -f "$web"/*.bak; failcase "the tap formula is not bumped (its URLs name another release)" tap-formula
+# a formula with no version line (brew audit --strict rejects the redundant line, #1297) passes; one with the line passes too
+fresh
+if run $v; then ok "a tap formula with no version line passes"; else bad "no version line: $(cat "$work/out" "$work/err")"; fi
+grep -q '^  version ' "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")" && bad "the default fixture still has a version line" || ok "the default fixture has no version line"
+grep -q "$tag" "$work/out" && ok "the pass line names the $tag URLs" || bad "no tag named: $(grep tap-formula "$work/out")"
+FORMULA_VERSION_LINE=1 fresh
+if run $v && [ "$(status tap-formula)" = PASS ]; then ok "a tap formula with the version line passes"; else bad "version line: $(cat "$work/out" "$work/err")"; fi
+fresh; sed -i.bak '/^class Klatch/a\
+  version "0.1.0-dev.2"' "$web/curl_$(key "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb")"; rm -f "$web"/*.bak
+failcase "a version line naming another release" tap-formula
 tapf="$web/gh_$(key repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb)"
 fresh; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$tapf"; rm -f "$web"/*.bak; failcase "the tap formula drifted from the staged copy" tap-drift
 fresh; rm "$tapf"; failcase "the tap formula cannot be read over REST" tap-drift

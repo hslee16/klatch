@@ -72,7 +72,7 @@ SECURITY.md commands on a download) or the tap pull request's CI.
 
 ## 4. Homebrew
 
-The formula in `hslee16/homebrew-klatch` (`Formula/klatch.rb`) needs the version, the four download URLs and the four
+The formula in `hslee16/homebrew-klatch` (`Formula/klatch.rb`) needs the four download URLs and the four
 SHA-256 values from the release's `SHA256SUMS`, plus the `klatch-server` install and test lines. Do not edit it by hand:
 download `SHA256SUMS` from the release, check out the tap, and run
 
@@ -80,14 +80,16 @@ download `SHA256SUMS` from the release, check out the tap, and run
 release/bump-formula.sh --patch bump.patch --pr-body bump-pr.md <version> SHA256SUMS <tap-checkout>
 ```
 
-It rewrites the formula, checks the result (one version, four URLs with the tag, four SHA-256 values equal to the
+The formula has no `version` line: the version comes from the URLs, and `brew audit --strict` (which the tap CI runs) fails a line that
+repeats it (#1297). The bump removes the line if there is one.
+It rewrites the formula, checks the result (no `version` line, four URLs that carry the tag and the version, four SHA-256 values equal to the
 `SHA256SUMS` lines, `klatch-server` installed and tested), prints the patch, and prints the git and `gh api` (REST)
 commands that open the tap pull request. It pushes nothing and never calls `gh` or `git`: you run the printed commands
 and merge the pull request, whose CI audits, installs and tests the formula on macOS and Linux. It refuses a
 `SHA256SUMS` that lacks one of the four archives and leaves the formula as it was.
 
 Rehearse on a Mac before the pull request with `--rehearse <archives-dir>` (the downloaded archives): it points a copy
-of the bumped formula at `file://` URLs in a temporary local tap and runs `brew audit --strict --new`,
+of the bumped formula at `file://` URLs in a temporary local tap and runs `brew audit --strict --new` (the same audit the tap CI runs),
 `brew install --build-from-source` and `brew test`, then removes the tap. It changes your local Homebrew while it runs,
 and prints a message and skips when `brew` is missing.
 
@@ -99,7 +101,7 @@ exactly those two lines, nothing else). `release/verify-published.sh` repeats th
 (`tap-drift`) with no allowance: after the release the tap must carry the same lines as the staged copy.
 
 The staged copy in this repository, `release/homebrew/klatch.rb`, is the file to edit first: `release/check-versions.sh`
-checks its `version`, its four URLs (release tag and archive name, from `release/pep440.sh`) and, when they are
+checks its four URLs (release tag and archive name, from `release/pep440.sh`, which fix the version) and, when they are
 present, its SHA-256 lines, so a version bump cannot leave it behind. After the release exists, check the checksums
 too: `release/check-versions.sh . release/homebrew/klatch.rb path/to/SHA256SUMS`. Then copy the file to the tap.
 

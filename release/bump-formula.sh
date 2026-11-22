@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Bump the Homebrew formula for a release (#1241): version, the four download URLs and their SHA-256 values from the
-# release's SHA256SUMS, plus the klatch-server install and test lines (RELEASING.md section 4).
+# Bump the Homebrew formula for a release (#1241): the four download URLs and their SHA-256 values from the release's
+# SHA256SUMS, plus the klatch-server install and test lines (RELEASING.md section 4). The formula has no `version` line
+# (#1297): brew audit --strict rejects one as redundant with the version scanned from the URL, so any existing line is removed
+# and the version is whatever the four URLs carry.
 #
 #   release/bump-formula.sh [--patch FILE] [--pr-body FILE] [--staged FILE] [--rehearse ARCHIVES_DIR] <semver> <SHA256SUMS> <tap-checkout>
 #
-# It rewrites <tap-checkout>/Formula/klatch.rb, checks the result (one version, four URLs with the tag, four SHA-256 values
+# It rewrites <tap-checkout>/Formula/klatch.rb, checks the result (no version line, four URLs that carry the tag and the version, four SHA-256 values
 # equal to the SHA256SUMS lines, klatch-server installed and tested), prints the patch, and prints the REST commands that
 # open the tap pull request. It never pushes, never calls gh or git, and never touches the network: the human runs the
 # printed commands. A failure leaves the formula as it was.
@@ -15,7 +17,7 @@
 # and test lines (--allow-klatch-server), because the tap holds the previous release. After a good bump the staged copy is replaced by the bumped formula, so commit it with the release.
 #
 # --rehearse DIR: after the bump, a local rehearsal with Homebrew against the archives in DIR through file:// URLs
-# (brew audit --strict --new, brew install --build-from-source, brew test), in a temporary local tap that is removed at the
+# (brew audit --strict --new, the audit the tap CI runs, then brew install --build-from-source, brew test), in a temporary local tap that is removed at the
 # end. It is skipped with a message when brew is missing. It changes the machine's Homebrew while it runs: use a machine you
 # can spare, not a production one.
 set -euo pipefail
@@ -92,12 +94,9 @@ with open(formula_path, encoding="utf-8") as f:
     lines = f.read().split("\n")
 
 out, pending, seen = [], None, []
-vcount = 0
 for line in lines:
-    mv = re.match(r'^(\s*)version "[^"]*"\s*$', line)
-    if mv:
-        line = '%sversion "%s"' % (mv.group(1), version)
-        vcount += 1
+    if re.match(r'^\s*version "[^"]*"\s*$', line):
+        continue  # brew audit --strict: "version is redundant with version scanned from URL" (#1297)
     mu = re.match(r'^(\s*)url "[^"]*-(%s)\.tar\.gz"\s*$' % "|".join(re.escape(t) for t in TARGETS), line)
     if mu:
         t = mu.group(2)
@@ -121,16 +120,14 @@ for line in lines:
 
 if pending is not None:
     die("the last url line has no sha256 line")
-if vcount != 1:
-    die("expected one version line in the formula, found %d" % vcount)
 if sorted(seen) != sorted(TARGETS):
     die("the formula must have one url and sha256 pair for each of %s; found %s" % (", ".join(TARGETS), ", ".join(seen) or "none"))
 text = "\n".join(out)
 
 # verify what will be written
 chk = {
-    "one version line": len(re.findall(r'^\s*version "%s"$' % re.escape(version), text, re.M)) == 1,
-    "four urls with the tag": len(re.findall(r'url "%s/%s/klatch-%s-[a-z0-9_-]+\.tar\.gz"' % (re.escape(BASE), re.escape(tag), re.escape(version)), text)) == 4,
+    "no version line": not re.search(r'^\s*version "', text, re.M),
+    "four urls that carry the tag and the version": len(re.findall(r'url "%s/%s/klatch-%s-[a-z0-9_-]+\.tar\.gz"' % (re.escape(BASE), re.escape(tag), re.escape(version)), text)) == 4,
     "four sha256 values": all(('sha256 "%s"' % want[t][1]) in text for t in TARGETS) and len(re.findall(r'^\s*sha256 "', text, re.M)) == 4,
     "klatch-server installed": 'bin.install "klatch", "klatch-server"' in text,
     "klatch-server tested": "klatch-server --help" in text,

@@ -1,0 +1,1 @@
+- The Homebrew formula has no `version` line: `brew audit --strict` rejects it as redundant with the version in the URL. `release/bump-formula.sh` removes the line, and `check-versions.sh`, `compare-formula.sh` and `verify-published.sh` take the version from the four release URLs and accept a formula with or without the line (#1297).

@@ -22,6 +22,23 @@ if cmp_; then ok "identical formulas match"; else bad "identical formulas differ
 sed -e 's/0\.1\.0-dev\.2/0.2.0-alpha.1/g' -e 's/v0\.1\.0\.dev2/v0.2.0a1/g' -e 's/sha256 "[0-9a-f]*"/sha256 "0000000000000000000000000000000000000000000000000000000000000000"/' "$a" > "$b"
 if cmp_; then ok "a different version, URLs and hashes still match"; else bad "a bump was reported as drift: $(cat "$work/err")"; fi
 
+# the version line (#1297): brew audit --strict wants none when the URLs carry the version, so one side may lack it
+sed -e '/^ *version "/d' "$a" > "$work/nover.rb"
+sed -e '/^ *version "/d' -e '/^  homepage /a\
+  version "0.2.0-alpha.1"' "$a" > "$work/withver.rb"
+grep -q '^  version "' "$work/withver.rb" && ! grep -q '^ *version "' "$work/nover.rb" && ok "fixtures: one formula with a version line, one without" || bad "version fixtures not built"
+cp "$work/withver.rb" "$a"; cp "$work/nover.rb" "$b"
+if cmp_; then ok "a version line on the staged side only is not drift"; else bad "line on staged side only: $(cat "$work/err")"; fi
+cp "$work/nover.rb" "$a"; cp "$work/withver.rb" "$b"
+if cmp_; then ok "a version line on the tap side only is not drift"; else bad "line on tap side only: $(cat "$work/err")"; fi
+cp "$work/nover.rb" "$a"; cp "$work/nover.rb" "$b"
+if cmp_; then ok "two formulas with no version line match"; else bad "no line on either side: $(cat "$work/err")"; fi
+cp "$work/withver.rb" "$a"; cp "$work/withver.rb" "$b"
+if cmp_; then ok "two formulas with a version line match"; else bad "line on both sides: $(cat "$work/err")"; fi
+cp "$work/withver.rb" "$a"; cp "$work/nover.rb" "$b"; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$b"; rm -f "$b.bak"
+if cmp_; then bad "a license change hidden by a missing version line"; else ok "a missing version line does not hide other drift"; fi
+cp "$work/base.rb" "$a"; cp "$work/base.rb" "$b"
+
 cp "$a" "$b"; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$b"; rm -f "$b.bak"
 if cmp_; then bad "a changed license passed"; else ok "a changed license fails"; fi
 grep -q 'license' "$work/err" && ok "the diff names the changed line" || bad "no diff on stderr: $(cat "$work/err")"

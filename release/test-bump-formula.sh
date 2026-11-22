@@ -78,7 +78,8 @@ f="$tap/Formula/klatch.rb"
 
 fresh
 if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then ok "exits 0 on good input"; else bad "failed: $(cat "$work/err")"; fi
-grep -q '^  version "0.2.0-alpha.1"$' "$f" && ok "the version is bumped" || bad "version not bumped"
+grep -q '^ *version "' "$f" && bad "a version line is left (brew audit --strict rejects it, #1297)" || ok "the version line is removed"
+grep -q '^ *version "' "$tap/Formula/klatch.rb" "$work/staged.rb" && bad "the staged copy still has a version line" || ok "the staged copy has no version line either"
 [ "$(grep -c 'v0.2.0a1/klatch-0.2.0-alpha.1-' "$f")" = 4 ] && ok "all four URLs use the tag and the version" || bad "urls: $(grep url "$f")"
 grep -q 'dev' "$f" && bad "an old dev string is left" || ok "no old version string is left"
 for i in 1 2 3 4; do grep -q "sha256 \"$(h $i)\"" "$f" && ok "sha256 $i is in place" || bad "sha256 $i missing"; done
@@ -86,7 +87,7 @@ grep -q "$(h 5)\|$(h 7)\|$(h 8)" "$f" && bad "a checksum of a file the formula d
 grep -q 'bin.install "klatch", "klatch-server"' "$f" && ok "install lines include klatch-server" || bad "install line"
 grep -q 'klatch-server --help' "$f" && ok "the test block runs klatch-server --help" || bad "test line"
 [ "$(grep -c 'klatch-server --help' "$f")" = 1 ] && ok "one test line only" || bad "test line duplicated"
-grep -q '^--- a/Formula/klatch.rb' "$work/out" && grep -q '^+  version "0.2.0-alpha.1"' "$work/out" && ok "prints the patch" || bad "no patch in output"
+grep -q '^--- a/Formula/klatch.rb' "$work/out" && grep -q '^-  version "0.1.0-dev.2"' "$work/out" && ok "prints the patch (the version line goes)" || bad "no patch in output"
 grep -q 'gh api' "$work/out" && grep -q 'homebrew-klatch/pulls' "$work/out" && ok "prints the REST commands for the tap PR" || bad "no PR commands"
 grep -q 'graphql\|gh pr edit\|gh issue view' "$work/out" && bad "prints a GraphQL-backed gh command" || ok "no GraphQL-backed command is printed"
 [ ! -e "$work/forbidden.log" ] && ok "gh, git and curl were never called" || bad "called: $(cat "$work/forbidden.log")"
@@ -94,6 +95,13 @@ grep -q 'graphql\|gh pr edit\|gh issue view' "$work/out" && bad "prints a GraphQ
 # idempotent: a second run changes nothing
 cp "$f" "$work/after1"
 if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" && cmp -s "$f" "$work/after1"; then ok "a second run changes nothing"; else bad "not idempotent"; fi
+
+# a tap formula that already has no version line (the shape since 0.2.0-alpha.1, #1297) bumps and stays without one
+fresh; sed -i.bak '/^ *version "/d' "$f" "$work/staged.rb"; rm -f "$f.bak" "$work/staged.rb.bak"
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then ok "a tap formula with no version line bumps"; else bad "no-line bump failed: $(cat "$work/err")"; fi
+grep -q '^ *version "' "$f" && bad "the bump wrote a version line" || ok "no version line is written"
+[ "$(grep -c 'v0.2.0a1/klatch-0.2.0-alpha.1-' "$f")" = 4 ] && ok "no-line bump: all four URLs use the tag and the version" || bad "no-line urls: $(grep url "$f")"
+for i in 1 2 3 4; do grep -q "sha256 \"$(h $i)\"" "$f" && ok "no-line bump: sha256 $i is in place" || bad "no-line sha256 $i missing"; done
 
 # --patch and --pr-body write files
 fresh
