@@ -15,18 +15,22 @@ One release is one number, spelled three ways (`0.1.0-dev.2` for the crate and n
 - `CHANGELOG.md`: put the entries under the new version and date: the Unreleased entries, plus what
   `release/changelog-fragments.sh collect` prints (then delete the files in `changelog.d/`)
 - `DESIGN.md`: run `release/design-fragments.sh assemble`; it appends the fragments in `design/items/` as the next numbered
-  items in ticket order and deletes them. It prints the number each ticket got; change references written as "the design
-  item for #NNN" to the number
+  items in ticket order and deletes them. It prints the number each ticket got (keep that output in a file for
+  `release/renumber-refs.sh`, below)
 - `RESEARCH-NOTES.md`: run `release/research-fragments.sh assemble`; it appends the fragments in `research/notes/` as the
-  next numbered sections in ticket order and deletes them. It prints the number each ticket got; change references written
-  as "the research note for #NNN" to the number
+  next numbered sections in ticket order and deletes them. It prints the number each ticket got (keep that output too)
+- References: run `release/renumber-refs.sh MAPFILE`, where MAPFILE holds the two assemble outputs (`... 2> map.txt`,
+  appended for the second). It rewrites every "design item for #T" to "design item N" and every "research note for #T" to
+  "research note section N" across the tree (not release/, target/, node_modules or `*.jsonl`), prints each change, and
+  fails without changing anything if a referenced ticket has no item or section. Run it before collecting the changelog
+  entries, so those carry the numbers. Afterwards no "design item for #" or "research note for #" with a number remains
 - `README.md`: the version in the `cargo install` line and the pre-release notice
 - `VERSIONING.md`, if the protocol or store schema version changed
 
 Rehearse the assembly first, on a throwaway copy that never touches the tree: `release/rehearse-assemble.sh` runs the
-changelog collect, the DESIGN and RESEARCH assemble steps and `check-versions.sh` on a copy, prints the diff stat, the
-changelog entry count and the "design item for #NNN" and "research note for #NNN" references that still need a number,
-and removes the copy. It exits non-zero if any step fails.
+DESIGN and RESEARCH assemble steps, `release/renumber-refs.sh`, the changelog collect and `check-versions.sh` on a copy,
+prints each renumbered reference, the diff stat, the changelog entry count and the "design item for #NNN" and
+"research note for #NNN" references that still need a number (none unless a step failed), and removes the copy. It exits non-zero if any step fails.
 
 Run `release/check-versions.sh`; CI runs it on every pull request, and each registry job repeats the check against the
 tag, so a mismatch stops the release before anything is published.

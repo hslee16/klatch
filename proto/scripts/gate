@@ -168,6 +168,7 @@ repo_checks() {
     && check release/test-design-fragments.sh \
     && check release/research-fragments.sh check \
     && check release/test-research-fragments.sh \
+    && check release/test-renumber-refs.sh \
     && check release/test-rehearse-assemble.sh \
     && check release/test-release-notes.sh \
     && check release/test-bump-formula.sh \
