@@ -51,9 +51,12 @@ impl<S: Store> Gateway<S> {
         let head = self.store.head(room)?;
         let after = (head - WINDOW as i64).max(0);
         let rows = Self::without_canary(self.store.tail(room, after, WINDOW)?);
-        let pairs: Vec<(i64, &str)> = rows.iter().map(|m| (m.seq, m.sender.as_str())).collect();
+        let pairs: Vec<(i64, &str, &str)> = rows
+            .iter()
+            .map(|m| (m.seq, m.sender.as_str(), m.body.as_str()))
+            .collect();
         let seqs: Vec<i64> = shown.iter().map(|m| m.seq).collect();
-        let Some((peer, len)) = crate::domain::crossing_exchange(&who.member, &pairs, &seqs) else {
+        let Some((peer, len)) = crate::domain::dm_nudge(&who.member, &pairs, &seqs) else {
             return Ok(None);
         };
         if self.dm_pair(&dm_room(&who.member, &peer))?.is_some() {
