@@ -1,0 +1,1 @@
+- The `klatch anchor github` passphrase prompt now says where its events came from, how many bytes and how many events, so the person approving a piped payload can see what it is (#1279).
