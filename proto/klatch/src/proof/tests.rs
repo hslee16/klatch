@@ -261,6 +261,33 @@ fn a_second_proof_inside_the_window_does_not_ask_and_one_after_it_does() {
 }
 
 #[test]
+fn a_sleep_that_the_monotonic_clock_does_not_count_still_closes_the_window() {
+    let s = store();
+    with_pass(&s);
+    let unlock = Unlock::new();
+    let t0 = Instant::now();
+    let when = |mono_secs: u64, unix| At {
+        unix,
+        mono: t0 + Duration::from_secs(mono_secs),
+    };
+    prove(&s, &mut Typed::new(&[PASS]), when(0, 10), &unlock, "a test").unwrap();
+    // the machine slept: 10 s on the monotonic clock, 1000 s on the wall clock
+    let mut after_sleep = Typed::new(&[PASS]);
+    prove(&s, &mut after_sleep, when(10, 1010), &unlock, "a test").unwrap();
+    assert_eq!(
+        after_sleep.asked, 1,
+        "the wall clock passed the window: asked"
+    );
+    // a wall clock set back does not hold the window open past the monotonic clock
+    let mut back = Typed::new(&[PASS]);
+    prove(&s, &mut back, when(310, 5), &unlock, "a test").unwrap();
+    assert_eq!(
+        back.asked, 1,
+        "the monotonic clock passed the window: asked"
+    );
+}
+
+#[test]
 fn another_process_does_not_share_the_unlock() {
     let s = store();
     with_pass(&s);
