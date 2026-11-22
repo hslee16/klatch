@@ -27,7 +27,7 @@ python3 -I - "$version" "$date_arg" "$root" "$here/RELEASE-NOTES.template.md" <<
 import os, re, sys
 
 version, date, root, template_path = sys.argv[1:5]
-EM = "—"
+EM = "\u2014"
 # gap rows that name a ticket but record no limit (descriptive rows)
 SKIP_TICKETS = {"181"}
 
