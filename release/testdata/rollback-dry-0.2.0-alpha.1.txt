@@ -1,0 +1,35 @@
+# klatch rollback rehearsal for 0.2.0-alpha.1 (tag v0.2.0a1, PyPI 0.2.0a1)
+# DRY RUN: these commands are printed, not run. Lines that start with "# " are notes, or commands for a real incident;
+# --execute never runs them. See RELEASING.md, "Rolling back".
+
+# 1. GitHub draft pre-release: create, read back, delete. Reversible; consumes no version.
+RELEASE_ID=$(gh api repos/hslee16/klatch/releases -f tag_name=v0.2.0a1 -f name='klatch 0.2.0-alpha.1 (rollback rehearsal)' -F draft=true -F prerelease=true --jq .id)
+gh api repos/hslee16/klatch/releases/"$RELEASE_ID" --jq .draft
+gh api -X DELETE repos/hslee16/klatch/releases/"$RELEASE_ID"
+# Real incident, GitHub release: hide it (the installer then no longer finds it) or remove one bad file.
+# Do not delete the tag while a registry version points at it.
+#   gh api -X PATCH repos/hslee16/klatch/releases/"$(gh api repos/hslee16/klatch/releases/tags/v0.2.0a1 --jq .id)" -F draft=true
+#   gh api -X DELETE repos/hslee16/klatch/releases/assets/ASSET_ID
+
+# 2. crates.io: yank, then un-yank. Reversible. Needs CARGO_REGISTRY_TOKEN with the yank-version scope.
+cargo yank --version 0.2.0-alpha.1 klatch
+cargo yank --undo --version 0.2.0-alpha.1 klatch
+# PERMANENT: the version number. A published crate version is never deleted or reused; the next number replaces it.
+
+# 3. npm: deprecate, then undo. Reversible. Needs NPM_TOKEN (written to a private temporary npmrc, never printed).
+npm deprecate "@klatch/client@0.2.0-alpha.1" "rollback rehearsal: ignore this version" --userconfig "$NPMRC"
+npm deprecate "@klatch/client@0.2.0-alpha.1" "" --userconfig "$NPMRC"
+# PERMANENT: the version number. An unpublished npm version can never be published again under that number.
+# A staged version that is wrong is rejected on npmjs.com (Staged Packages) instead of approved.
+
+# 4. PyPI: there is no command; do it by hand on https://pypi.org/manage/project/klatch/releases/
+# Yank: open 0.2.0a1, choose "Yank release", give a reason. pip skips a yanked version unless it is pinned exactly.
+# Un-yank: the same page, "Unyank release". Deleting a release cannot be undone.
+# PERMANENT: the file names of 0.2.0a1 are never reusable, even after a delete.
+
+# 5. Homebrew tap: revert the bump commit and open a pull request (printed for a real incident, never run here).
+#   git clone https://github.com/hslee16/homebrew-klatch tap && cd tap
+#   git checkout -b revert-v0.2.0a1
+#   git revert --no-edit BUMP_COMMIT
+#   git push -u origin revert-v0.2.0a1
+#   gh api repos/hslee16/homebrew-klatch/pulls -f title='Revert klatch 0.2.0-alpha.1' -f head=revert-v0.2.0a1 -f base=main
