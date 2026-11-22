@@ -11,7 +11,7 @@
 //! process, or the store and its key directly.
 mod common;
 
-use common::pty::run_on_pty;
+use common::pty::{is_prompt, run_on_pty};
 use common::*;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -412,6 +412,18 @@ fn three_wrong_passphrases_lock_even_the_right_one_out_for_a_while() {
         "it must not even ask while locked: {}",
         r.text
     );
+}
+
+#[test]
+fn a_split_error_line_is_not_taken_for_a_prompt() {
+    // the child writes "Error: " and the message in two writes; a read can end between them (seen on Linux CI)
+    assert!(!is_prompt("admin passphrase to approve `x`: \nError: "));
+    assert!(!is_prompt("Error: "));
+    assert!(is_prompt("admin passphrase to approve `x`: "));
+    assert!(is_prompt(
+        "Error: wrong passphrase; nothing was done\nadmin passphrase to approve `x`: "
+    ));
+    assert!(is_prompt("klatch> "));
 }
 
 #[test]
