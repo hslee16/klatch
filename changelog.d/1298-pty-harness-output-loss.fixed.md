@@ -1,0 +1,1 @@
+- The pty test harness no longer loses the last output of a command that exits quickly, which made the admin_proof tests fail intermittently under load (#1298, #1301).
