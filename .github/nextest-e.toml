@@ -1,0 +1,7 @@
+# Throwaway experiment config (variant E): tests that drive a pty run at most 2 at a time.
+[test-groups]
+ptys = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = 'binary(admin_proof) | binary(stream) | binary(caller) | binary(ask_answer) | binary(identity_hints) | binary(anchor) | binary(encrypted) | binary(lobby) | binary(labels) | binary(run) | binary(worker)'
+test-group = 'ptys'

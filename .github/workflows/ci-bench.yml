@@ -1,0 +1,72 @@
+name: CI bench (throwaway)
+
+on:
+  pull_request:
+    paths: ['.github/workflows/ci-bench.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    name: bench ${{ matrix.v }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { v: A, nextest: false, nodebug: false, groups: false }
+          - { v: B, nextest: true, nodebug: false, groups: false }
+          - { v: C, nextest: false, nodebug: true, groups: false }
+          - { v: D, nextest: true, nodebug: true, groups: false }
+          - { v: E, nextest: true, nodebug: false, groups: true }
+    defaults:
+      run:
+        working-directory: proto
+    env:
+      CARGO_PROFILE_DEV_DEBUG: ${{ matrix.nodebug && '0' || '2' }}
+      CARGO_PROFILE_TEST_DEBUG: ${{ matrix.nodebug && '0' || '2' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: proto
+          shared-key: bench-${{ matrix.v }}
+      - name: Install nextest
+        if: matrix.nextest
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: nextest
+      - name: Compile tests
+        run: |
+          if [ "${{ matrix.nextest }}" = true ]; then
+            cargo nextest run --workspace --locked --no-run
+          else
+            cargo test --workspace --locked --no-run
+          fi
+      - name: Run tests
+        run: |
+          rc=0
+          if [ "${{ matrix.nextest }}" = true ]; then
+            CFG=""
+            if [ "${{ matrix.groups }}" = true ]; then CFG="--config-file ../.github/nextest-e.toml"; fi
+            cargo nextest run --workspace --locked $CFG --no-fail-fast 2>&1 | tee /tmp/run.log || rc=$?
+            echo "BENCHCOUNT ${{ matrix.v }} run: $(grep -E 'Summary' /tmp/run.log | tail -1)"
+          else
+            cargo test --workspace --locked --no-fail-fast 2>&1 | tee /tmp/run.log || rc=$?
+            echo "BENCHCOUNT ${{ matrix.v }} run: $(grep -E '^test result' /tmp/run.log | sed -E 's/.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/' | awk '{p+=$1;f+=$2} END{print p" passed, "f" failed"}')"
+          fi
+          exit $rc
+      - name: Doc tests
+        if: matrix.nextest
+        run: |
+          rc=0
+          cargo test --workspace --doc --locked --no-fail-fast 2>&1 | tee /tmp/doc.log || rc=$?
+          echo "BENCHCOUNT ${{ matrix.v }} doc: $(grep -E '^test result' /tmp/doc.log | sed -E 's/.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/' | awk '{p+=$1;f+=$2} END{print p" passed, "f" failed"}')"
+          exit $rc
