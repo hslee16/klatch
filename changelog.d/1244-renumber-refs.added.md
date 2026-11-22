@@ -1,0 +1,1 @@
+- `release/renumber-refs.sh` rewrites the "design item for #NNN" and "research note for #NNN" references to the assigned numbers after the assemble steps and fails loudly on a reference with no item; `release/rehearse-assemble.sh` runs it on its copy (#1244).

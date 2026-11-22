@@ -9,9 +9,28 @@ crates.io crate `klatch`, the PyPI package `klatch`, the npm package `@klatch/cl
 
 - **SemVer.** While the major version is 0, a minor bump may break things; from 1.0 a breaking change needs a major bump.
 - **Pre-releases.** Until the zero trust release gate is met (outside review, `DESIGN.md` section 23) every release is a
-  marked pre-release: `0.1.0-dev.N` for crates.io and npm, `0.1.0.devN` for PyPI (PEP 440 spells the same release
-  differently), tag `v0.1.0.devN`. `pip install klatch` and `npm install @klatch/client` still resolve a pre-release
+  marked pre-release. crates.io, npm, the archive names and `klatch --version` spell it in SemVer; PyPI and the git tag
+  spell the same release in PEP 440. `pip install klatch` and `npm install @klatch/client` still resolve a pre-release
   while it is the only version; `cargo install klatch` needs `--version`.
+
+  | Kind | SemVer (crate, npm, archive) | PEP 440 (PyPI, wheel) | Tag |
+  |---|---|---|---|
+  | alpha | `0.2.0-alpha.1` | `0.2.0a1` | `v0.2.0a1` |
+  | beta | `0.2.0-beta.1` | `0.2.0b1` | `v0.2.0b1` |
+  | release candidate | `0.2.0-rc.1` | `0.2.0rc1` | `v0.2.0rc1` |
+  | dev | `0.1.0-dev.2` | `0.1.0.dev2` | `v0.1.0.dev2` |
+  | stable | `0.2.0` | `0.2.0` | `v0.2.0` |
+
+  The mapping is written once, in `release/pep440.sh`. `release/check-versions.sh`, the three checks in
+  `build-release.yml` and the tests source it. `install/install.sh` is downloaded alone, so it carries a copy of the same
+  block; `release/test-pep440.sh` fails if the copy differs. A label outside the table (`-gamma.1`, `-alpha`, build
+  metadata) is refused, never passed through. The archive for a SemVer version `V` is `klatch-V-<target>.tar.gz`.
+- **Ordering.** The first release is `0.2.0-alpha.1` (PyPI `0.2.0a1`), and `0.1.0-alpha.1` must not be used. Both
+  registries sort by number first, so every `0.2.0-*` sorts above every `0.1.0-*`, including the published
+  `0.1.0-dev.2` on crates.io and npm and `0.1.0.dev2` on PyPI. `0.1.0-alpha.1` would sort below `0.1.0-dev.2` under
+  SemVer (labels compare as text, and "alpha" is before "dev"), so a user on the dev build would never be offered it.
+  The two schemes also disagree about `dev` on the same `X.Y.Z` (SemVer puts `-dev.1` above `-alpha.1`, PEP 440 puts
+  `.dev1` below `a1`), so one `X.Y.Z` line uses one kind, in the order alpha, beta, rc, final.
 - **One release, one number.** A release tag publishes the binaries, PyPI, npm and crates.io together and each job fails
   if its version does not match the tag, so the three registries always carry the same number. The client libraries
   share the binary's release number only because of that; compatibility between a client and a binary is decided by

@@ -1,0 +1,2 @@
+Manual platform test workflow (#1247; no schema change; 2026-11-21).
+`.github/workflows/platform-tests.yml` is `workflow_dispatch` only (no schedule, no pull request trigger, so CI stays light) and runs `cargo test --workspace --locked` on ubuntu-22.04-arm and macos-15-intel with a 60 minute timeout. `release/check-timeouts.sh` now covers it. The README platform table keeps "built and smoke tested" for those two rows until a manual run is green; the table says "tested" only for what a run proved.

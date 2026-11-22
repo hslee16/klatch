@@ -160,6 +160,7 @@ repo_checks() {
   check release/check-timeouts.sh \
     && check release/check-versions.sh \
     && check release/test-check-versions.sh \
+    && check release/test-package-archive.sh \
     && check bash -c 'cd clients/python && python3 -m unittest discover' \
     && check python3 -m unittest discover -s clients/recipes -p 'test_*.py' \
     && check release/changelog-fragments.sh check \
@@ -168,6 +169,14 @@ repo_checks() {
     && check release/test-design-fragments.sh \
     && check release/research-fragments.sh check \
     && check release/test-research-fragments.sh \
+    && check release/test-renumber-refs.sh \
+    && check release/test-rehearse-assemble.sh \
+    && check release/test-release-notes.sh \
+    && check release/test-bump-formula.sh \
+    && check release/test-compare-formula.sh \
+    && check release/test-tag-checks.sh \
+    && check release/test-rollback-rehearsal.sh \
+    && check release/test-verify-published.sh \
     && check proto/scripts/test-team.sh \
     && check proto/scripts/test-sweep.sh \
     && check proto/scripts/test-integrator.sh \

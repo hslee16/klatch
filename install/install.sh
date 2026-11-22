@@ -1,6 +1,6 @@
 #!/bin/sh
 # klatch installer (#429): downloads the release archive for this machine, checks its SHA-256 against the release's
-# SHA256SUMS, and installs the `klatch` binary into a directory you own. It never uses sudo and never changes an
+# SHA256SUMS, and installs the `klatch` and `klatch-server` binaries (both are in the one archive) into a directory you own. It never uses sudo and never changes an
 # existing install unless every check has passed.
 #
 #   curl -fsSLO https://github.com/hslee16/klatch/releases/download/<tag>/install.sh   # download it,
@@ -12,7 +12,7 @@
 #
 # Settings (environment):
 #   KLATCH_VERSION      release tag, for example v0.1.0.dev1 (default: the newest release, pre-releases included)
-#   KLATCH_INSTALL_DIR  where to put the binary (default: ~/.local/bin)
+#   KLATCH_INSTALL_DIR  where to put the binaries (default: ~/.local/bin)
 #
 # If the GitHub CLI is installed and logged in, the download's build provenance is verified too
 # (`gh attestation verify`); otherwise only the checksum is. See SECURITY.md for verifying by hand.
@@ -88,6 +88,46 @@ case "$arch" in
 esac
 target="$arch_part-$os_part"
 
+# The SemVer to PEP 440 mapping. This block is a copy of release/pep440.sh (the single source: change it there, then
+# copy it here; release/test-pep440.sh fails when the two differ). A downloaded installer cannot source a file.
+# BEGIN pep440
+# SemVer 0.2.0-alpha.1 to PEP 440 0.2.0a1 (a stable X.Y.Z is unchanged)
+semver_to_pep440() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|dev)\.[0-9]+)?$' || return 1
+  printf '%s\n' "$1" | sed -e 's/-alpha\.\([0-9][0-9]*\)$/a\1/' -e 's/-beta\.\([0-9][0-9]*\)$/b\1/' \
+    -e 's/-rc\.\([0-9][0-9]*\)$/rc\1/' -e 's/-dev\.\([0-9][0-9]*\)$/.dev\1/'
+}
+# PEP 440 0.2.0a1 back to SemVer 0.2.0-alpha.1
+pep440_to_semver() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+|\.dev[0-9]+)?$' || return 1
+  printf '%s\n' "$1" | sed -e 's/\.dev\([0-9][0-9]*\)$/-dev.\1/' -e 's/\([0-9]\)a\([0-9][0-9]*\)$/\1-alpha.\2/' \
+    -e 's/\([0-9]\)b\([0-9][0-9]*\)$/\1-beta.\2/' -e 's/\([0-9]\)rc\([0-9][0-9]*\)$/\1-rc.\2/'
+}
+# the git tag of a SemVer release: v0.2.0a1
+release_tag() {
+  _p=$(semver_to_pep440 "$1") || return 1
+  printf 'v%s\n' "$_p"
+}
+# the SemVer version a tag names: v0.2.0a1 gives 0.2.0-alpha.1 (a tag needs its v)
+semver_of_tag() {
+  case "$1" in v?*) pep440_to_semver "${1#v}" ;; *) return 1 ;; esac
+}
+# tag_matches TAG SEMVER: the tag is v plus the PEP 440 spelling, or v plus the SemVer spelling
+tag_matches() {
+  _p=$(semver_to_pep440 "$2") || return 1
+  [ "$1" = "v$_p" ] || [ "$1" = "v$2" ]
+}
+# the release archive of a SemVer version for a target triple: klatch-0.2.0-alpha.1-aarch64-apple-darwin.tar.gz
+archive_name() {
+  semver_to_pep440 "$1" >/dev/null || return 1
+  printf 'klatch-%s-%s.tar.gz\n' "$1" "$2"
+}
+# a SemVer version with a pre-release part
+is_prerelease() {
+  case "$1" in *-*) return 0 ;; *) return 1 ;; esac
+}
+# END pep440
+
 tag="${KLATCH_VERSION:-}"
 if [ -z "$tag" ]; then
   [ -z "${KLATCH_INSTALL_BASE_URL:-}" ] || die "set KLATCH_VERSION when KLATCH_INSTALL_BASE_URL is set"
@@ -95,10 +135,10 @@ if [ -z "$tag" ]; then
   tag=$(fetch_stdout "https://api.github.com/repos/$REPO/releases?per_page=1" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
   [ -n "$tag" ] || die "could not find the newest release; set KLATCH_VERSION"
 fi
-# a tag names the version in the files: v0.1.0.dev1 is 0.1.0-dev.1, v0.1.0 is 0.1.0
-version=$(printf '%s' "${tag#v}" | sed 's/\.dev\([0-9]\)/-dev.\1/')
-name="klatch-$version-$target"
-archive="$name.tar.gz"
+# a tag names the version in the files: v0.2.0a1 is 0.2.0-alpha.1, v0.1.0.dev1 is 0.1.0-dev.1, v0.2.0 is 0.2.0
+version=$(semver_of_tag "$tag") || die "cannot read a version from the tag '$tag' (expected v0.2.0, v0.2.0a1, v0.2.0b1, v0.2.0rc1 or v0.1.0.dev1)"
+archive=$(archive_name "$version" "$target")
+name="${archive%.tar.gz}"
 
 say "klatch $version for $target"
 case "$target" in
@@ -130,16 +170,27 @@ fi
 
 # --- install -----------------------------------------------------------------------------------------------------
 tar -xzf "$tmp/$archive" -C "$tmp" || die "could not unpack $archive"
-[ -f "$tmp/$name/klatch" ] || die "$archive does not contain klatch"
+for bin in klatch klatch-server; do
+  [ -f "$tmp/$name/$bin" ] || die "$archive does not contain $bin; nothing installed"
+done
 
 mkdir -p "$DEST" 2>/dev/null || die "cannot create $DEST (this installer never uses sudo; set KLATCH_INSTALL_DIR to a directory you own)"
 [ -w "$DEST" ] || die "cannot write to $DEST (this installer never uses sudo; set KLATCH_INSTALL_DIR to a directory you own)"
-# write beside the target and rename, so an existing install is replaced whole or not at all
-cp "$tmp/$name/klatch" "$DEST/.klatch.new.$$" || die "cannot write to $DEST"
-chmod 755 "$DEST/.klatch.new.$$"
-mv -f "$DEST/.klatch.new.$$" "$DEST/klatch"
+# Both binaries came out of the one archive whose checksum was verified above. Write both beside their targets first and
+# rename only when both are written, so an existing install is replaced whole or not at all.
+for bin in klatch klatch-server; do
+  if ! cp "$tmp/$name/$bin" "$DEST/.$bin.new.$$"; then
+    rm -f "$DEST/.klatch.new.$$" "$DEST/.klatch-server.new.$$"
+    die "cannot write to $DEST"
+  fi
+  chmod 755 "$DEST/.$bin.new.$$"
+done
+for bin in klatch klatch-server; do
+  mv -f "$DEST/.$bin.new.$$" "$DEST/$bin"
+done
 
 say "installed $("$DEST/klatch" --version) to $DEST/klatch"
+say "installed $("$DEST/klatch-server" --version) to $DEST/klatch-server"
 case "$version" in
   *-*) say "This is an early pre-release with no outside security review: not for sensitive data." ;;
 esac

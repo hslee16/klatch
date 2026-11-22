@@ -19,6 +19,10 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+/// How long a Keychain read may take, in seconds, before it is given up as waiting for a dialog. The hooks `init`
+/// installs get a timeout longer than this (#1246), so the read's own message arrives before Claude Code kills the hook.
+pub const KEYCHAIN_READ_LIMIT_SECS: u64 = 5;
+
 pub use bundle::{Bundle, BundleKeys, Token};
 pub use file::FileKeys;
 pub use key::{KEY_LEN, Key};

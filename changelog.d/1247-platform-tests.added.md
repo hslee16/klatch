@@ -1,0 +1,1 @@
+- A manual `platform-tests` workflow runs `cargo test --workspace` on Linux aarch64 and macOS x86_64, so those platforms can be promoted from "built and smoke tested" to "tested" once a run is green (#1247).

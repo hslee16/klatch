@@ -12,7 +12,8 @@ use security_framework::passwords::{
 };
 
 /// How long a Keychain read may take before it is given up as waiting for a dialog.
-const READ_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+const READ_LIMIT: std::time::Duration =
+    std::time::Duration::from_secs(crate::keys::KEYCHAIN_READ_LIMIT_SECS);
 
 use crate::sync::within;
 
