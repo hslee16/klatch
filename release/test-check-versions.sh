@@ -26,7 +26,7 @@ expect_fail "the crate version moved"            proto/Cargo.toml               
 expect_fail "the PyPI version moved"             clients/python/pyproject.toml             's/^version = "\(.*\)"$/version = "9.9.9"/'
 expect_fail "the wheel __version__ moved"        clients/python/package/wheel_init.py      's/^__version__ = ".*"$/__version__ = "9.9.9"/'
 expect_fail "the npm version moved"              clients/typescript/package.json           's/^\( *\)"version": *".*",$/\1"version": "9.9.9",/'
-expect_fail "the changelog lost the entry"       CHANGELOG.md                              's/^## \[0\.1\.0-dev\.[0-9]*\]/## [0.0.0]/'
+expect_fail "the changelog lost the entry"       CHANGELOG.md                              's/^## \[[0-9][^]]*\]/## [0.0.0]/'
 expect_fail "the README names another version"   README.md                                 's/cargo install klatch --version [^ ]*/cargo install klatch --version 9.9.9/'
 
 # --- every kind of release number (#1234): the whole tree moves to one version and must still agree ----------------------
@@ -68,21 +68,23 @@ formula_fail() { # description, expected message fragment, sed expression (on th
 }
 formula_fail "a stale version"               'formula.*version'   's/^  version ".*"$/  version "0.0.1"/'
 formula_fail "a URL for another release"     'formula.*url'       '/aarch64-apple-darwin.tar.gz"$/s#download/v[^/]*/#download/v9.9.9/#'
-formula_fail "a URL with the wrong archive"  'formula.*url'       's/klatch-0.1.0-dev.2-aarch64-apple-darwin/klatch-aarch64-apple-darwin/'
+formula_fail "a URL with the wrong archive"  'formula.*url'       's/klatch-[0-9][0-9a-z.-]*-aarch64-apple-darwin/klatch-aarch64-apple-darwin/'
 formula_fail "a URL for the wrong platform"  'formula.*aarch64-unknown-linux-gnu' 's/aarch64-unknown-linux-gnu/aarch64-unknown-linux-musl/'
 formula_fail "a missing URL"                 'formula.*url'       '/^ *url ".*x86_64-apple-darwin.tar.gz"$/,/^ *sha256 /d'
-formula_fail "a malformed SHA-256"           'formula.*sha256'    's/sha256 "b0fc6[0-9a-f]*"/sha256 "abc123"/'
+formula_fail "a malformed SHA-256"           'formula.*sha256'    's/sha256 "[0-9a-f]*"/sha256 "abc123"/'
 fresh
 if "$here/check-versions.sh" "$work/t" "$work/nope.rb" >/dev/null 2>&1; then echo "FAIL  a missing formula file passed" >&2; fails=1; else echo "  ok  a formula path that does not exist fails"; fi
 # a SHA256SUMS file: every sha256 line must match its archive's line
 sums="$work/SHA256SUMS"
+cur="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | head -n 1)"
+linux_sum="$(awk '/url ".*-x86_64-unknown-linux-gnu\.tar\.gz"/ { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | head -n 1)"
 : > "$sums"
 for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
   sum="$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$work/t/release/homebrew/klatch.rb" | head -n 1)"
-  printf '%s  klatch-0.1.0-dev.2-%s.tar.gz\n' "$sum" "$t" >> "$sums"
+  printf '%s  klatch-%s-%s.tar.gz\n' "$sum" "$cur" "$t" >> "$sums"
 done
 if "$here/check-versions.sh" "$work/t" "$work/t/release/homebrew/klatch.rb" "$sums" >"$work/out" 2>&1; then echo "  ok  the formula's SHA-256 values match SHA256SUMS"; else echo "FAIL  good SHA256SUMS: $(cat "$work/out")" >&2; fails=1; fi
-formula_fail "a wrong SHA-256 against SHA256SUMS" 'formula.*sha256.*x86_64-unknown-linux-gnu' 's/551946c2f28a85f452e0cbf2c84a0ca5952f531f302527b73d44c5574f88c087/0000000000000000000000000000000000000000000000000000000000000000/' "$sums"
+formula_fail "a wrong SHA-256 against SHA256SUMS" 'formula.*sha256.*x86_64-unknown-linux-gnu' "s/$linux_sum/0000000000000000000000000000000000000000000000000000000000000000/" "$sums"
 fresh
 grep -v '^ *sha256 ' "$work/t/release/homebrew/klatch.rb" > "$work/nosha.rb"
 if "$here/check-versions.sh" "$work/t" "$work/nosha.rb" >/dev/null 2>&1; then echo "  ok  no sha256 lines is fine without a SHA256SUMS file"; else echo "FAIL  a formula without sha256 lines was refused" >&2; fails=1; fi
