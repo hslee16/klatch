@@ -98,16 +98,10 @@ impl SqliteStore {
         )
     }
 
-    /// Whether a refusal of `req` closes a cycle of waits: some holder that refuses it is waiting (a refused claim
-    /// attempt within the window) for something a member holds who is waiting for something ... that the requester
-    /// holds. Every holder that refuses counts, not only the one named: a cycle through the second of two holders is
-    /// as much a deadlock (#648, found by the model).
-    fn closes_cycle(&self, req: &Attempt, held: &[Held]) -> Result<bool> {
-        Ok(!self.cycle_holders(req, held)?.is_empty())
-    }
-
     /// The holders that refuse `req` and wait, directly or through others, for something the requester holds: the
-    /// other parties to the deadlock the refusal closes.
+    /// other parties to the deadlock the refusal closes, so a refusal closes a cycle when there is one (#648). Every
+    /// holder that refuses counts, not only the one named: a cycle through the second of two holders is as much a
+    /// deadlock (found by the model).
     fn cycle_holders(&self, req: &Attempt, held: &[Held]) -> Result<Vec<String>> {
         let waits = self.room_waits(req.room)?;
         Ok(held
