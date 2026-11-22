@@ -92,7 +92,10 @@ impl Home {
         if marker.exists() {
             return;
         }
-        let r = pty::run_on_pty(self.launcher_command(&["admin", "init-passphrase"]), &[PASS, PASS]);
+        let r = pty::run_on_pty(
+            self.launcher_command(&["admin", "init-passphrase"]),
+            &[PASS, PASS],
+        );
         assert!(r.ok(), "init-passphrase failed:\n{}", r.text);
         std::fs::write(marker, "").unwrap();
     }

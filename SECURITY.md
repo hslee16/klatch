@@ -21,6 +21,29 @@ reviewed by an outside person before release (#167).
   file. Not tested: KWallet, KeePassXC, x86_64, a graphical unlock prompt (#563). It is never put in
   the environment, on a command line, in a log or in a crash report, and it is wiped from memory when dropped.
   A recovery code (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
+- **Administering, launching and the keystore (the admin passphrase, #1233).** Every `klatch admin` command, every
+  launcher command (`worker`, `anchor`, `run`, `judge`) and every act on the key or the store file (`recovery`,
+  `recover`, `seal-label`, `rotate-key`, `rotate-label-key`, `backup`, `restore`, `export`, the archive commands) asks
+  for the admin passphrase, typed at a real terminal with echo off. `klatch admin init-passphrase` sets it (twice, at
+  least 10 characters); only an Argon2id verifier (19 MiB, 2 passes, the parameters recorded in the stored value so
+  they can be raised) is kept, in the store's policy, never the passphrase. It is never read from the environment,
+  an argument, a file or a pipe: standard input counts only when it is a terminal, else the controlling terminal, so
+  a detached or double-forked process, `setsid`, a worker's process and a script have nothing to answer and are
+  refused. A program that opens a pseudo-terminal of its own can be asked and is then refused for not knowing the
+  passphrase. A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
+  audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
+  constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
+  that accepts nothing else decides every act; the admin agent role is unchanged (it acts inside its allowlist and
+  never edits a floor). One `klatch` command is one process, so each command asks. `klatch admin shell` is the one
+  long-lived process: it asks once and holds an unlock window (5 minutes by default, `klatch admin unlock-window`
+  sets 10 to 1800 seconds) in its own memory and nowhere else; no file, environment variable or token carries it, a
+  child or another `klatch` starts locked, and changing the passphrase voids it. If you forget the passphrase,
+  `klatch admin reset-passphrase` takes the store's recovery code (`klatch admin recovery` shows it; keep it) and sets
+  a new one; whoever holds that code can already restore the key and read the store, so it gives them nothing more.
+  Upgrading an existing install: until a passphrase is set every admin, launcher and keystore command refuses and
+  says to run `klatch admin init-passphrase`; run it once, right after upgrading, in a terminal of your own. The old
+  terminal and process-tree check is gone, not kept as a fallback.
 - **Crash output.** A panic prints where it happened and nothing it carried; crashes leave no core file; sorting and
   indexing use memory, not temporary files.
 - **On the wire.** Local stdio relies on operating-system credentials (a private directory, the peer's user id; Unix
@@ -40,6 +63,15 @@ reviewed by an outside person before release (#167).
 - **A hostile process running as you.** It can read the key (the macOS item is readable by any program of yours so
   that rebuilt, unsigned binaries do not prompt; the `security` tool reads it too), read or attach to a running
   klatch, and read any key file. Encryption cannot help once the attacker can ask for the key. Root can do anything.
+- **What the admin passphrase does not stop.** It proves the caller knows a secret typed at a terminal; it does not
+  prove the caller is a person. Out of scope, as for every secret typed on a machine: a process that watches your
+  keyboard (a keylogger, a terminal you share, an agent that reads your terminal's screen or scrollback) and a process
+  that reads the memory of an unlocked `klatch admin shell`. Also not stopped: a process of yours that does not use
+  the `klatch` command line, but opens the store with the key it can read and rewrites the verifier or the failure
+  count itself (#1261); stronger options for that (a Keychain item with user presence, a separate OS user) stay
+  open in #318. An install that has not set a passphrase has an unauthenticated first set: until you run
+  `klatch admin init-passphrase`, a program with a terminal could set it first (it is refused with no terminal and
+  from inside a detected coding-agent session, and audited; #1262). Set it before anything else.
 - **Identity.** A member name is as strong as the process that typed it. A clearance rests on that name, so it is as
   spoofable as the name until identity is proven by a gateway-owned socket (#152 and the identity work).
 - **Plaintext while in use.** Messages are plaintext in klatch's memory and in the context of the agent that reads

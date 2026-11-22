@@ -69,7 +69,10 @@ mod tests {
         assert!(w.is_open(t0 + Duration::from_secs(299), "a", win));
         assert!(!w.is_open(t0 + Duration::from_secs(300), "a", win));
         assert!(!w.is_open(t0 + Duration::from_secs(9999), "a", win));
-        assert!(!w.is_open(t0, "b", win), "an unlock of an old verifier is void");
+        assert!(
+            !w.is_open(t0, "b", win),
+            "an unlock of an old verifier is void"
+        );
         w.close();
         assert!(!w.is_open(t0, "a", win));
     }

@@ -193,10 +193,7 @@ fn admin_commands_refuse_without_a_real_terminal_and_change_nothing() {
     ] {
         let err = h.fail("alice", &args);
         // run by an agent (as here) it is refused for the session above it; run by a script, for having no terminal
-        assert!(
-            err.contains("real terminal"),
-            "{args:?}: {err}"
-        );
+        assert!(err.contains("real terminal"), "{args:?}: {err}");
     }
     h.ok("alice", &["post", "lobby", "still works"]);
     assert!(

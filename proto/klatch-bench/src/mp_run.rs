@@ -53,7 +53,6 @@ impl Site<'_> {
             .env("KLATCH_HOME", self.home)
             .env("KLATCH_KEY_DIR", self.home.join("keys"))
             .env("KLATCH_NAME", who)
-            .env("KLATCH_ADMIN_TEST_TERMINAL", "1")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -64,9 +63,39 @@ impl Site<'_> {
         c
     }
 
-    /// Run to the end, as the checker does when no worker is left.
+    /// Set the admin passphrase of this store once, as a person does after installing (#1233).
+    fn set_passphrase(&self) {
+        let marker = self.home.join("passphrase-was-set");
+        if marker.exists() {
+            return;
+        }
+        let c = self.klatch("checker", None, &["admin", "init-passphrase"]);
+        let (ok, text) = crate::pty::run_on_pty(
+            c,
+            vec![crate::pty::PASS.to_string(), crate::pty::PASS.to_string()],
+        );
+        if ok {
+            let _ = std::fs::write(marker, "");
+        } else {
+            eprintln!("could not set the bench passphrase: {text}");
+        }
+    }
+
+    /// Run to the end, as the checker does when no worker is left. An admin command runs at a pseudo-terminal where
+    /// the passphrase is typed.
     fn finish(&self, args: &[&str]) -> Result<String, String> {
         use std::io::Write;
+        if args.first() == Some(&"admin") {
+            self.set_passphrase();
+            let c = self.klatch("checker", None, args);
+            let (ok, text) =
+                crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string(), String::new()]);
+            return if ok {
+                Ok(text.replace("admin passphrase: \n", ""))
+            } else {
+                Err(first_line(&text))
+            };
+        }
         let mut child = self
             .klatch("checker", None, args)
             .spawn()
@@ -124,6 +153,8 @@ fn archive_files(home: &Path) -> Vec<PathBuf> {
 /// A process that is running, and what the ledger should say about it when it ends.
 struct Running {
     child: Child,
+    /// The terminal an admin command runs on: what it showed once it is over.
+    tty: Option<std::thread::JoinHandle<String>>,
     op: Op,
     kill_at: Option<Instant>,
     killed: bool,
@@ -191,23 +222,35 @@ fn start(site: Site, i: usize, step: &Step, warm: usize) -> Result<Running, Stri
     }
     let (args, now) = argv(site.home, i, &step.op, warm);
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let mut child = site
-        .klatch(&format!("w{}", i % 7), now, &words)
-        .spawn()
-        .map_err(|e| format!("could not start klatch: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let typed = if step.op == Op::RotateKey {
-            "rotate"
-        } else {
-            ""
-        };
-        let _ = writeln!(stdin, "{typed}");
-    }
+    let typed = if step.op == Op::RotateKey {
+        "rotate"
+    } else {
+        ""
+    };
+    let (child, tty) = if words.first() == Some(&"admin") {
+        // an admin command asks for the passphrase at a terminal: give it one, and type the answers
+        site.set_passphrase();
+        let c = site.klatch(&format!("w{}", i % 7), now, &words);
+        let (child, tty) =
+            crate::pty::spawn_on_pty(c, vec![crate::pty::PASS.to_string(), typed.to_string()])
+                .map_err(|e| format!("could not start klatch: {e}"))?;
+        (child, Some(tty))
+    } else {
+        let mut child = site
+            .klatch(&format!("w{}", i % 7), now, &words)
+            .spawn()
+            .map_err(|e| format!("could not start klatch: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{typed}");
+        }
+        (child, None)
+    };
     let kill_at = step
         .kill_after_ms
         .map(|ms| Instant::now() + Duration::from_millis(ms));
     Ok(Running {
         child,
+        tty,
         op: step.op.clone(),
         kill_at,
         killed: false,
@@ -241,7 +284,12 @@ impl Running {
 }
 
 /// The exit status and the standard error of a process that is over.
-fn outcome(child: Child) -> (bool, String) {
+fn outcome(child: Child, tty: Option<std::thread::JoinHandle<String>>) -> (bool, String) {
+    if let Some(tty) = tty {
+        let mut child = child;
+        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        return (ok, tty.join().unwrap_or_default());
+    }
     match child.wait_with_output() {
         Ok(o) => (
             o.status.success(),
@@ -261,9 +309,13 @@ impl Tally<'_> {
     /// Fold a finished process into the ledger and the refusal counts.
     fn account(&mut self, r: Running) {
         let Running {
-            child, op, killed, ..
+            child,
+            tty,
+            op,
+            killed,
+            ..
         } = r;
-        let (ok, stderr) = outcome(child);
+        let (ok, stderr) = outcome(child, tty);
         if stderr.contains("panicked") {
             self.report.violations.push(format!(
                 "{} panicked: {}",

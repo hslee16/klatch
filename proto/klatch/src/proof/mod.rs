@@ -73,10 +73,9 @@ impl std::fmt::Display for ProofError {
                 "this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal"
             ),
             ProofError::Aborted => write!(f, "no passphrase was entered; nothing was done"),
-            ProofError::Locked(s) => write!(
-                f,
-                "too many wrong passphrases; try again in {s} seconds"
-            ),
+            ProofError::Locked(s) => {
+                write!(f, "too many wrong passphrases; try again in {s} seconds")
+            }
             ProofError::Wrong => write!(f, "wrong passphrase; nothing was done"),
             ProofError::Rejected(why) => write!(f, "{why}"),
             ProofError::Store(e) => write!(f, "{e}"),
@@ -135,7 +134,13 @@ fn audit<S: PolicyStore + ?Sized>(store: &S, action: &str, target: &str, detail:
 
 /// An audit row of a refusal that anyone can cause by running a command: at most one a minute per kind, so a loop
 /// of refused commands cannot fill the audit.
-fn audit_throttled<S: PolicyStore + ?Sized>(store: &S, action: &str, target: &str, detail: &str, at: i64) {
+fn audit_throttled<S: PolicyStore + ?Sized>(
+    store: &S,
+    action: &str,
+    target: &str,
+    detail: &str,
+    at: i64,
+) {
     if store
         .last_audit_ts(action, target, at - 60)
         .ok()
@@ -192,7 +197,13 @@ pub fn prove<S: PolicyStore + ?Sized>(
         Err(wait) => return Err(ProofError::Locked(wait)),
     };
     if !verifier.verify(&typed) {
-        audit(store, "proof-failed", "", &format!("failures={count}"), at.unix);
+        audit(
+            store,
+            "proof-failed",
+            "",
+            &format!("failures={count}"),
+            at.unix,
+        );
         return Err(ProofError::Wrong);
     }
     limit::clear(store, at.unix)?;
@@ -312,7 +323,13 @@ pub fn reset<S: PolicyStore + ?Sized>(
     let (a, b) = (norm(&typed), norm(expected));
     let same = a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()));
     if !same {
-        audit(store, "proof-failed", "recovery", &format!("failures={count}"), at.unix);
+        audit(
+            store,
+            "proof-failed",
+            "recovery",
+            &format!("failures={count}"),
+            at.unix,
+        );
         return Err(ProofError::Wrong);
     }
     let new = ask_new(prompt)?;

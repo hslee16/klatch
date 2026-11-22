@@ -484,10 +484,7 @@ fn check_revocation_and_expiry(w: &World, hi_path: &std::path::Path) -> Result<(
 fn runs(w: &World) -> Res {
     w.set_clock(T0);
     for id in ["a", "b"] {
-        check(
-            w.run("launcher", &["run", "create", id]).ok,
-            "run create failed",
-        )?;
+        check(w.launcher(&["run", "create", id]).ok, "run create failed")?;
     }
     w.ok(
         "alice",
@@ -498,7 +495,7 @@ fn runs(w: &World) -> Res {
     w.ok("bob", &["post", "lobby", "an ordinary room"])?;
     let archive = w.home.join("run-a.archive");
     let archive_s = archive.to_string_lossy().into_owned();
-    let ended = w.run("launcher", &["run", "end", "a", "--archive", &archive_s]);
+    let ended = w.launcher(&["run", "end", "a", "--archive", &archive_s]);
     check(ended.ok, format!("run end failed: {}", ended.stderr))?;
     has(
         &ended.stdout,

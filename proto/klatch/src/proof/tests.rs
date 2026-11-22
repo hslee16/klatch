@@ -127,7 +127,11 @@ fn no_terminal_is_a_refusal_that_charges_nothing_and_is_audited_at_most_once_a_m
         let r = prove(&s, &mut Typed::nobody(), at(1000 + t), &Unlock::new());
         assert_eq!(r.unwrap_err(), ProofError::NoTerminal);
     }
-    assert_eq!(actions(&s), vec!["proof-refused"], "one row for twenty tries");
+    assert_eq!(
+        actions(&s),
+        vec!["proof-refused"],
+        "one row for twenty tries"
+    );
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None, "nothing charged");
     prove(&s, &mut Typed::nobody(), at(1100), &Unlock::new()).unwrap_err();
     assert_eq!(actions(&s).len(), 2, "a new minute, a new row");
@@ -138,11 +142,20 @@ fn after_three_wrong_ones_even_the_right_passphrase_waits_and_nothing_is_asked()
     let s = store();
     with_pass(&s);
     for _ in 0..limit::FREE {
-        prove(&s, &mut Typed::new(&["nope nope nope"]), at(100), &Unlock::new()).unwrap_err();
+        prove(
+            &s,
+            &mut Typed::new(&["nope nope nope"]),
+            at(100),
+            &Unlock::new(),
+        )
+        .unwrap_err();
     }
     let mut p = Typed::new(&[PASS]);
     let e = prove(&s, &mut p, at(101), &Unlock::new()).unwrap_err();
-    assert!(matches!(e, ProofError::Locked(w) if w > 0 && w <= 30), "{e:?}");
+    assert!(
+        matches!(e, ProofError::Locked(w) if w > 0 && w <= 30),
+        "{e:?}"
+    );
     assert_eq!(p.asked, 0, "not even asked while locked");
     assert!(actions(&s).contains(&"proof-locked".to_string()));
     // the wait over, the right passphrase is accepted and the count is forgotten
@@ -157,7 +170,13 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
     let mut now = 0;
     let mut waits = Vec::new();
     for _ in 0..8 {
-        prove(&s, &mut Typed::new(&["nope nope nope"]), at(now), &Unlock::new()).unwrap_err();
+        prove(
+            &s,
+            &mut Typed::new(&["nope nope nope"]),
+            at(now),
+            &Unlock::new(),
+        )
+        .unwrap_err();
         let w = limit::wait_secs(&s, now).unwrap();
         waits.push(w);
         now += w;
@@ -229,7 +248,12 @@ fn an_unlock_earned_before_a_change_of_passphrase_is_void() {
     let unlock = Unlock::new();
     prove(&s, &mut Typed::new(&[PASS]), at(10), &unlock).unwrap();
     // the passphrase is replaced behind the open window (by any route)
-    store_verifier(&s, &Verifier::create("another long passphrase", CHEAP).unwrap(), 11).unwrap();
+    store_verifier(
+        &s,
+        &Verifier::create("another long passphrase", CHEAP).unwrap(),
+        11,
+    )
+    .unwrap();
     let mut p = Typed::nobody();
     assert_eq!(
         prove(&s, &mut p, at(12), &unlock).unwrap_err(),
@@ -277,7 +301,12 @@ fn init_sets_the_first_passphrase_twice_typed_and_keeps_only_a_verifier() {
         Err(ProofError::Rejected(_))
     ));
     assert!(matches!(
-        init(&s, &mut Typed::new(&[PASS, "something else entirely"]), at(2), &unlock),
+        init(
+            &s,
+            &mut Typed::new(&[PASS, "something else entirely"]),
+            at(2),
+            &unlock
+        ),
         Err(ProofError::Rejected(_))
     ));
     assert!(!is_set(&s).unwrap());
@@ -304,7 +333,11 @@ fn a_change_needs_the_old_passphrase_even_inside_the_window() {
     let before = s.policy_get(VERIFIER_KEY).unwrap();
     let e = change(
         &s,
-        &mut Typed::new(&["not the old one", "brand new passphrase", "brand new passphrase"]),
+        &mut Typed::new(&[
+            "not the old one",
+            "brand new passphrase",
+            "brand new passphrase",
+        ]),
         at(2),
         &unlock,
     )
@@ -324,7 +357,13 @@ fn a_change_needs_the_old_passphrase_even_inside_the_window() {
         prove(&s, &mut Typed::new(&[PASS]), at(4), &Unlock::new()).unwrap_err(),
         ProofError::Wrong
     );
-    prove(&s, &mut Typed::new(&["brand new passphrase"]), at(5), &Unlock::new()).unwrap();
+    prove(
+        &s,
+        &mut Typed::new(&["brand new passphrase"]),
+        at(5),
+        &Unlock::new(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -334,7 +373,14 @@ fn the_recovery_code_resets_the_passphrase_and_a_wrong_code_is_charged_like_a_wr
     let code = "KLATCH-ABCD EFGH";
     let unlock = Unlock::new();
     assert_eq!(
-        reset(&s, code, &mut Typed::new(&["KLATCH-ZZZZ EFGH"]), at(1), &unlock).unwrap_err(),
+        reset(
+            &s,
+            code,
+            &mut Typed::new(&["KLATCH-ZZZZ EFGH"]),
+            at(1),
+            &unlock
+        )
+        .unwrap_err(),
         ProofError::Wrong
     );
     assert_eq!(s.policy_get(limit::KEY).unwrap().as_deref(), Some("1,1"));
@@ -348,7 +394,13 @@ fn the_recovery_code_resets_the_passphrase_and_a_wrong_code_is_charged_like_a_wr
     )
     .unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
-    prove(&s, &mut Typed::new(&["after the reset"]), at(3), &Unlock::new()).unwrap();
+    prove(
+        &s,
+        &mut Typed::new(&["after the reset"]),
+        at(3),
+        &Unlock::new(),
+    )
+    .unwrap();
     assert!(actions(&s).contains(&"passphrase-reset".to_string()));
     assert!(!everything_kept(&s).contains("ABCD"));
 }
@@ -358,7 +410,14 @@ fn guesses_at_the_recovery_code_share_the_limit_with_the_passphrase() {
     let s = store();
     with_pass(&s);
     for _ in 0..limit::FREE {
-        reset(&s, "KLATCH-A", &mut Typed::new(&["KLATCH-B"]), at(10), &Unlock::new()).unwrap_err();
+        reset(
+            &s,
+            "KLATCH-A",
+            &mut Typed::new(&["KLATCH-B"]),
+            at(10),
+            &Unlock::new(),
+        )
+        .unwrap_err();
     }
     let e = prove(&s, &mut Typed::new(&[PASS]), at(11), &Unlock::new()).unwrap_err();
     assert!(matches!(e, ProofError::Locked(_)), "{e:?}");
@@ -391,8 +450,5 @@ fn attempts_made_at_once_from_many_processes_are_each_charged() {
         "eight at once, only the free three get through: {charged:?}"
     );
     let s = SqliteStore::open(&path, &key).unwrap();
-    assert_eq!(
-        s.policy_get(limit::KEY).unwrap().as_deref(),
-        Some("3,500")
-    );
+    assert_eq!(s.policy_get(limit::KEY).unwrap().as_deref(), Some("3,500"));
 }

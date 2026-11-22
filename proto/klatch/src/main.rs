@@ -30,9 +30,7 @@ use klatch::gateway::{
     AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, RequireHuman, Transport,
 };
 use klatch::harness::PsTable;
-use klatch::member::{
-    Call, CliClock, Who, custody, db_path, now, registry_and_domain,
-};
+use klatch::member::{Call, CliClock, Who, custody, db_path, now, registry_and_domain};
 use klatch::store::SqliteStore;
 use klatch::store::areas::*;
 use std::path::PathBuf;

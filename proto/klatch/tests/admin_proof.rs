@@ -62,7 +62,15 @@ fn admin_table(h: &Home) -> Vec<(&'static str, Vec<String>)> {
         ("rotate-label-key", s(&["rotate-label-key", "private"])),
         ("backup", vec!["backup".into(), f("backup.db")]),
         ("restore", vec!["restore".into(), f("backup.db")]),
-        ("run-archive", vec!["run-archive".into(), f("a.jsonl"), "--run".into(), "r".into()]),
+        (
+            "run-archive",
+            vec![
+                "run-archive".into(),
+                f("a.jsonl"),
+                "--run".into(),
+                "r".into(),
+            ],
+        ),
         ("retention", s(&["retention", "r", "30"])),
         ("archive", s(&["archive", "--all-rooms"])),
         ("restore-archive", vec!["restore-archive".into(), f("x.db")]),
@@ -98,8 +106,14 @@ fn launcher_table(h: &Home) -> Vec<(&'static str, Vec<String>)> {
         ("worker revoke", s(&["worker", "revoke", "w-1"])),
         ("worker list", s(&["worker", "list"])),
         ("anchor done", s(&["anchor", "done", "a"])),
-        ("anchor reap", s(&["anchor", "reap", "--dir", "/nonexistent-klatch-dir"])),
-        ("anchor github", s(&["anchor", "github", "--file", "/dev/null"])),
+        (
+            "anchor reap",
+            s(&["anchor", "reap", "--dir", "/nonexistent-klatch-dir"]),
+        ),
+        (
+            "anchor github",
+            s(&["anchor", "github", "--file", "/dev/null"]),
+        ),
         ("run create", s(&["run", "create", "r1"])),
         ("run end", s(&["run", "end", "r1"])),
         ("run list", s(&["run", "list"])),
@@ -167,9 +181,13 @@ fn detached(mut c: Command, stdin_bytes: Option<&str>) -> (bool, String) {
             Ok(())
         });
     }
-    c.stdin(if stdin_bytes.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    c.stdin(if stdin_bytes.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = c.spawn().unwrap();
     if let (Some(text), Some(mut stdin)) = (stdin_bytes, child.stdin.take()) {
         let _ = writeln!(stdin, "{text}");
@@ -193,8 +211,7 @@ fn the_table_has_a_row_for_every_admin_variant() {
     let mut have: Vec<&str> = table.clone();
     have.sort();
     assert_eq!(
-        variants,
-        have,
+        variants, have,
         "a new AdminCmd needs a row in admin_table (and so a refusal test)"
     );
 }
@@ -266,7 +283,10 @@ fn the_passphrase_in_the_environment_an_argument_or_a_pipe_is_never_read() {
             c.env(var, PASS);
         }
         let (ok, text) = detached(c, Some(PASS));
-        assert!(!ok, "{name} accepted a passphrase from the environment or a pipe:\n{text}");
+        assert!(
+            !ok,
+            "{name} accepted a passphrase from the environment or a pipe:\n{text}"
+        );
     }
     // an argument that looks like one is just an unknown argument
     for flag in ["--passphrase", "--admin-passphrase", "--pass"] {
@@ -342,7 +362,10 @@ fn the_right_passphrase_does_the_act_and_the_audit_records_it_without_the_passph
     assert!(audit.text.contains("lease-cap"), "{}", audit.text);
     assert!(audit.text.contains("proof-ok"), "{}", audit.text);
     assert!(audit.text.contains("passphrase-set"), "{}", audit.text);
-    assert!(!audit.text.contains(PASS), "the passphrase reached the audit");
+    assert!(
+        !audit.text.contains(PASS),
+        "the passphrase reached the audit"
+    );
     // a wrong attempt is a row with a count and nothing else
     let bad = run_on_pty(klatch_in(&h, &["resume".to_string()]), &[WRONG]);
     assert!(!bad.ok());
@@ -418,7 +441,10 @@ fn the_shell_asks_once_and_a_second_process_still_asks() {
     );
     assert!(!r.text.contains("error"), "{}", r.text);
     // the unlock died with that process: the next klatch asks again
-    let again = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "300".to_string()]), &[PASS]);
+    let again = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "300".to_string()]),
+        &[PASS],
+    );
     assert!(again.ok(), "{}", again.text);
     assert_eq!(again.text.matches("admin passphrase: ").count(), 1);
 }
@@ -431,11 +457,21 @@ fn the_shell_runs_only_the_five_families_and_refuses_a_wrong_passphrase_at_the_s
         klatch_in(&h, &["shell".to_string()]),
         &[PASS, "post r hello", "admin shell", "exit"],
     );
-    assert!(r.text.contains("only admin, worker, anchor, run and judge"), "{}", r.text);
+    assert!(
+        r.text.contains("only admin, worker, anchor, run and judge"),
+        "{}",
+        r.text
+    );
     assert!(r.text.contains("already in the shell"), "{}", r.text);
-    let bad = run_on_pty(klatch_in(&h, &["shell".to_string()]), &[WRONG, "admin lease-cap 100", "exit"]);
+    let bad = run_on_pty(
+        klatch_in(&h, &["shell".to_string()]),
+        &[WRONG, "admin lease-cap 100", "exit"],
+    );
     assert!(!bad.ok());
-    assert!(!bad.text.contains("klatch> "), "no prompt without the proof");
+    assert!(
+        !bad.text.contains("klatch> "),
+        "no prompt without the proof"
+    );
 }
 
 #[test]
@@ -453,14 +489,20 @@ fn init_passphrase_needs_two_matching_long_enough_entries() {
     assert!(r.text.contains("init-passphrase"), "{}", r.text);
     let ok = run_on_pty(c(), &[PASS, PASS]);
     assert!(ok.ok(), "{}", ok.text);
-    let after = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]), &[PASS]);
+    let after = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[PASS],
+    );
     assert!(after.ok(), "{}", after.text);
 }
 
 #[test]
 fn the_first_passphrase_cannot_be_set_without_a_terminal() {
     let h = Home::new();
-    let (ok, text) = detached(h.launcher_command(&["admin", "init-passphrase"]), Some(PASS));
+    let (ok, text) = detached(
+        h.launcher_command(&["admin", "init-passphrase"]),
+        Some(PASS),
+    );
     assert!(!ok, "{text}");
     assert!(text.contains("terminal"), "{text}");
     // and so nothing is set
@@ -477,9 +519,15 @@ fn changing_the_passphrase_needs_the_old_one_and_then_only_the_new_one_works() {
     assert!(!bad.ok(), "{}", bad.text);
     let ok = run_on_pty(c(), &[PASS, NEW, NEW]);
     assert!(ok.ok(), "{}", ok.text);
-    let old = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]), &[PASS]);
+    let old = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[PASS],
+    );
     assert!(!old.ok(), "the old passphrase still works:\n{}", old.text);
-    let new = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]), &[NEW]);
+    let new = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[NEW],
+    );
     assert!(new.ok(), "{}", new.text);
 }
 
@@ -500,9 +548,15 @@ fn the_recovery_code_resets_a_forgotten_passphrase_and_a_wrong_code_does_not() {
     assert!(!bad.ok(), "{}", bad.text);
     let ok = run_on_pty(c(), &[&code, NEW, NEW]);
     assert!(ok.ok(), "{}", ok.text);
-    let old = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]), &[PASS]);
+    let old = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[PASS],
+    );
     assert!(!old.ok());
-    let new = run_on_pty(klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]), &[NEW]);
+    let new = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[NEW],
+    );
     assert!(new.ok(), "{}", new.text);
     // without a terminal it is refused
     let (ok, text) = detached(c(), Some(&code));
@@ -519,7 +573,11 @@ fn the_unlock_window_is_shown_and_set_with_the_proof_and_is_bounded() {
     let bad = h.admin(&["unlock-window", "5"], &[]);
     assert!(!bad.ok(), "{}", bad.text);
     assert!(h.admin(&["unlock-window", "--off"], &[]).ok());
-    assert!(h.admin(&["unlock-window"], &[]).text.contains("300 seconds"));
+    assert!(
+        h.admin(&["unlock-window"], &[])
+            .text
+            .contains("300 seconds")
+    );
 }
 
 #[test]

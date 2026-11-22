@@ -110,7 +110,6 @@ fn read_events(file: Option<&PathBuf>) -> Result<String> {
     Ok(text)
 }
 
-
 pub fn run(cmd: AnchorCmd) -> Result<()> {
     // the passphrase first (#1233): nothing below is reachable without the proof
     let (store, proof) = crate::admin::prove::open_and_require(&db_path()?)?;

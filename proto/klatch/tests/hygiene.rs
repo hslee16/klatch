@@ -133,6 +133,7 @@ fn unsafe_code_is_only_where_it_was_reviewed() {
         "klatch/src/proof/tty.rs",
         "klatch/tests/common/",
         "klatch/tests/admin_proof.rs",
+        "klatch-bench/src/pty.rs",
         "klatch/src/main.rs",
         "klatch-server/src/main.rs",
         "klatch-server/src/daemon.rs",

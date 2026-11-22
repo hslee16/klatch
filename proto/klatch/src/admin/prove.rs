@@ -94,7 +94,10 @@ pub(crate) fn unlock_window(
         return Ok(());
     }
     proof::set_window(store, proof, secs, now())?;
-    println!("the unlock window is now {} seconds", proof::window_len(store).as_secs());
+    println!(
+        "the unlock window is now {} seconds",
+        proof::window_len(store).as_secs()
+    );
     Ok(())
 }
 

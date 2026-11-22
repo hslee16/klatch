@@ -154,12 +154,10 @@ mod tests {
     fn words_split_on_spaces_and_keep_quoted_text_whole() {
         assert_eq!(words("close lobby"), ["close", "lobby"]);
         assert_eq!(words("  a   b  "), ["a", "b"]);
-        assert_eq!(words("scrub-add n 'two words' \"and more\""), [
-            "scrub-add",
-            "n",
-            "two words",
-            "and more"
-        ]);
+        assert_eq!(
+            words("scrub-add n 'two words' \"and more\""),
+            ["scrub-add", "n", "two words", "and more"]
+        );
         assert_eq!(words(r#"x "a \"b\" \\ c""#), ["x", r#"a "b" \ c"#]);
         assert_eq!(words(r"a\ b"), ["a b"]);
         assert_eq!(words("''"), [""]);
@@ -185,7 +183,13 @@ mod tests {
     #[test]
     fn the_shell_runs_only_the_five_families_and_never_itself() {
         // each of these parses as a command that is not one of the five (or is the shell) and so is refused
-        for line in ["post r hello", "claim r src", "init", "doctor", "admin shell"] {
+        for line in [
+            "post r hello",
+            "claim r src",
+            "init",
+            "doctor",
+            "admin shell",
+        ] {
             let w = split_words(line).unwrap();
             let err = dispatch(w).unwrap_err().to_string();
             assert!(

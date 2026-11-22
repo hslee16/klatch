@@ -49,7 +49,10 @@ pub fn wait_secs<S: PolicyStore + ?Sized>(store: &S, now: i64) -> Result<i64> {
 
 /// Charge one attempt, atomically. `Ok(Ok(count))` is the count including this attempt; `Ok(Err(secs))` means the
 /// wait is not over and nothing was charged.
-pub fn charge<S: PolicyStore + ?Sized>(store: &S, now: i64) -> Result<std::result::Result<u32, i64>> {
+pub fn charge<S: PolicyStore + ?Sized>(
+    store: &S,
+    now: i64,
+) -> Result<std::result::Result<u32, i64>> {
     let outcome = Cell::new(Ok(0u32));
     store.atomically(&mut || {
         let (count, last) = read(store, now)?;
