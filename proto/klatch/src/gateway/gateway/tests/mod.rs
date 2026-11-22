@@ -22,6 +22,7 @@ mod credential_renewal;
 mod credentials;
 mod crossing;
 mod dead_holder;
+mod possible_overwrite;
 mod delivery_view;
 mod digest;
 mod dm;

@@ -1,5 +1,5 @@
 //! Stuck cases as structured events (#271, DESIGN section 24 and 25.12): what a mediator, or anyone, may read to
-//! learn that something is stuck, without reading a message. Four kinds exist today: an ask no one took for too long
+//! learn that something is stuck, without reading a message. Seven kinds exist today: an ask no one took for too long
 //! (#225), an ask that enough helpers declined as `cannot` (#230), a cycle through asks (#273) and a cycle of claim
 //! waits (the deadlock of 25.12, as a standing fact and not only the refusal flag).
 //!
@@ -46,7 +46,22 @@ pub enum StuckEvent {
         claim: String,
         holder: String,
     },
+    /// A claim taken on a path that another member released inside the window after a claim deadlock (#909): the
+    /// pattern of an overwrite after a yield. `path` is the claim key (`claim_label`), `previous` the member that
+    /// released it, `new` the member that took it. It flags only: whether the second edit built on the first is
+    /// semantic, so the event is a prompt to check, not proof.
+    PossibleOverwrite {
+        room: String,
+        path: String,
+        previous: String,
+        new: String,
+    },
 }
+
+/// Seconds a deadlock mark, a release after it and the flag that follows each last (#909): a release counts when it
+/// comes within this long of the deadlock, a take counts when it comes within this long of the release, and the event
+/// is shown for this long after the take. Fixed, not a setting.
+pub const YIELD_WINDOW_SECS: i64 = 600;
 
 impl StuckEvent {
     /// The wire name of the kind.
@@ -58,6 +73,7 @@ impl StuckEvent {
             StuckEvent::ClaimDeadlock { .. } => "claim_deadlock",
             StuckEvent::LongExchange { .. } => "long_exchange",
             StuckEvent::DeadHolder { .. } => "dead_holder",
+            StuckEvent::PossibleOverwrite { .. } => "possible_overwrite",
         }
     }
 
@@ -79,6 +95,12 @@ impl StuckEvent {
                 format!("long_exchange:{room}:{}", members.join(","))
             }
             StuckEvent::DeadHolder { room, claim, .. } => format!("dead_holder:{room}:{claim}"),
+            StuckEvent::PossibleOverwrite {
+                room,
+                path,
+                previous,
+                new,
+            } => format!("possible_overwrite:{room}:{path}:{previous}:{new}"),
         }
     }
 
@@ -89,6 +111,9 @@ impl StuckEvent {
                 vec![asker.as_str()]
             }
             StuckEvent::DeadHolder { holder, .. } => vec![holder.as_str()],
+            StuckEvent::PossibleOverwrite { previous, new, .. } => {
+                vec![previous.as_str(), new.as_str()]
+            }
             StuckEvent::AskCycle { members, .. }
             | StuckEvent::ClaimDeadlock { members }
             | StuckEvent::LongExchange { members, .. } => {
@@ -132,6 +157,12 @@ impl StuckEvent {
                 claim,
                 holder,
             } => format!("dead_holder room {room} claim {claim} holder {holder}"),
+            StuckEvent::PossibleOverwrite {
+                room,
+                path,
+                previous,
+                new,
+            } => format!("possible_overwrite room {room} path {path} previous {previous} new {new}"),
         }
     }
 }

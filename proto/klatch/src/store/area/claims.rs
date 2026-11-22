@@ -92,6 +92,18 @@ pub trait ClaimStore {
         Ok(Vec::new())
     }
 
+    /// Remember, before `owner` releases `path`, that it let go of a claim inside the window after it was a party to a
+    /// claim deadlock (#909). The default remembers nothing.
+    fn note_yield_release(&self, _room: &str, _owner: &str, _path: &str, _now: i64) -> Result<()> {
+        Ok(())
+    }
+
+    /// The claims taken, within the window, on a path another member released after a deadlock yield (#909): `(path,
+    /// previous, new)`, sorted. Read only. The default knows none.
+    fn claim_overwrites(&self, _room: &str, _now: i64) -> Result<Vec<(String, String, String)>> {
+        Ok(Vec::new())
+    }
+
     fn deadlock_notices(
         &self,
         _room: &str,

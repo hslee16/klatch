@@ -82,6 +82,14 @@ impl ClaimStore for SqliteStore {
         self.standing_wait_cycles(room, now)
     }
 
+    fn note_yield_release(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
+        self.do_note_yield_release(room, owner, path, now)
+    }
+
+    fn claim_overwrites(&self, room: &str, now: i64) -> Result<Vec<(String, String, String)>> {
+        self.standing_overwrites(room, now)
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,

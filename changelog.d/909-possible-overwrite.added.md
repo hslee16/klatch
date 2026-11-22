@@ -1,0 +1,1 @@
+- `klatch stuck` and the wire `stuck` method show a `possible_overwrite` event (`room`, `path`, `previous`, `new`) when a claim is taken on a path another member released within 600 seconds after both were parties to a claim deadlock, and the mediator proposes with a fixed line; flag only, it does not judge the edit (#909; schema 36 adds the `claim_yields` table).

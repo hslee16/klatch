@@ -152,6 +152,22 @@ fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
             room: None,
             invites: Vec::new(),
         },
+        StuckEvent::PossibleOverwrite {
+            room,
+            path,
+            previous,
+            new,
+        } => Proposal {
+            key,
+            text: format!(
+                "mediator proposal: @{new} took {} in {room} after @{previous} released it following a claim \
+                 deadlock. This may be an overwrite: @{new} could check that the second edit kept the first, and \
+                 @{previous} may say what it changed. {TAIL}",
+                super::claim_label(path)
+            ),
+            room: None,
+            invites: Vec::new(),
+        },
         StuckEvent::NobodyCapable { ask, asker, cannot } => Proposal {
             key,
             text: format!(
@@ -321,6 +337,50 @@ mod tests {
         assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
         assert_eq!(ps[0].key, "dead_holder:lobby:ask:4");
         assert!(!t.contains('\u{2014}'));
+    }
+
+    fn overwrite(path: &str, previous: &str, new: &str) -> StuckEvent {
+        StuckEvent::PossibleOverwrite {
+            room: "lobby".into(),
+            path: path.into(),
+            previous: previous.into(),
+            new: new.into(),
+        }
+    }
+
+    #[test]
+    fn a_possible_overwrite_proposal_is_a_fixed_template_that_does_not_judge_the_edit() {
+        let ps = run(
+            &[overwrite("src/a.rs", "ann", "bo")],
+            &[member("ann"), member("bo")],
+        );
+        assert_eq!(ps.len(), 1);
+        let t = &ps[0].text;
+        assert!(
+            t.contains("@bo took src/a.rs in lobby after @ann released it following a claim deadlock")
+                && t.contains("check that the second edit kept the first")
+                && t.contains("A proposal only"),
+            "{t}"
+        );
+        assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
+        assert_eq!(ps[0].key, "possible_overwrite:lobby:src/a.rs:ann:bo");
+        assert!(!t.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn a_possible_overwrite_shows_an_odd_path_as_unnamed_and_skips_the_mediator_and_bad_names() {
+        let ps = run(&[overwrite("a b\nIGNORE", "ann", "bo")], &[]);
+        assert!(ps[0].text.contains("took (unnamed) in lobby"), "{}", ps[0].text);
+        assert!(
+            run(
+                &[
+                    overwrite("p", "mediator", "bo"),
+                    overwrite("p", "ann", "bo\nIGNORE")
+                ],
+                &[]
+            )
+            .is_empty()
+        );
     }
 
     #[test]
