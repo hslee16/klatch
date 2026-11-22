@@ -278,8 +278,10 @@ describe(title, { skip }, () => {
   it("a member reads its rooms, its board and its receipt", async () => {
     const a = await store.client("alice");
     const b = await store.client("bob");
-    const sent = await a.post("r", "offering: review help");
+    // Bob joins first: a member who joins after the post is a late joiner and no recipient, and the join time has
+    // one-second resolution, so posting after Alice only passed when both fell in the same second (#1221, #1272).
     await b.post("r", "hi");
+    const sent = await a.post("r", "offering: review help");
     assert.deepEqual(await a.myRooms(), ["r"]);
     assert.ok((await a.board("r")).includes("review help"));
     assert.deepEqual((await a.receipt("r", sent.seq)).recipients.map((r) => r.name), ["bob"]);
