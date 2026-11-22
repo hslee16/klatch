@@ -21,6 +21,7 @@ mod could_answer;
 mod credential_renewal;
 mod credentials;
 mod crossing;
+mod dead_holder;
 mod delivery_view;
 mod digest;
 mod dm;

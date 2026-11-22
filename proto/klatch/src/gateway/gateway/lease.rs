@@ -174,6 +174,46 @@ impl<S: Store> Gateway<S> {
         Ok(seen.is_some_and(|o| o.verdict == Verdict::Gone))
     }
 
+    /// The live claims of `room` whose holder has a registry record and a process the probe finds provably gone, as
+    /// `dead_holder` stuck events (#1182): by claim path, in order. Flag only: it moves no lease and releases nothing.
+    /// Unknown counts as alive, so no lease source, no session record or a record the probe cannot read flags nothing.
+    pub(super) fn dead_holder_events(
+        &self,
+        room: &str,
+        claims: &[crate::domain::Claim],
+    ) -> Result<Vec<crate::domain::StuckEvent>> {
+        let Some(source) = &self.leases else {
+            return Ok(Vec::new());
+        };
+        let now_ms = u64::try_from(self.now()).unwrap_or(0) * 1000;
+        let mut gone: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        let mut out = Vec::new();
+        for c in claims {
+            let is_gone = match gone.get(&c.owner) {
+                Some(g) => *g,
+                None => {
+                    let g = match self.store.session_of_member(&c.owner)? {
+                        Some(session) => source
+                            .observe(&c.owner, &session, now_ms)
+                            .is_some_and(|o| o.verdict == Verdict::Gone),
+                        None => false,
+                    };
+                    gone.insert(c.owner.clone(), g);
+                    g
+                }
+            };
+            if is_gone {
+                out.push(crate::domain::StuckEvent::DeadHolder {
+                    room: room.to_string(),
+                    claim: crate::domain::claim_label(&c.path),
+                    holder: c.owner.clone(),
+                });
+            }
+        }
+        out.sort_by(|a, b| a.key().cmp(&b.key()));
+        Ok(out)
+    }
+
     /// Apply the lease rules to every member holding a claim except `asker` (alive, since it is asking). Does
     /// nothing without a lease source.
     pub(super) fn settle_leases(&self, asker: &str) -> Result<()> {

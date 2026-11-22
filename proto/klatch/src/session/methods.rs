@@ -292,6 +292,15 @@ fn stuck_json(events: &[crate::domain::StuckEvent]) -> Value {
                 v["members"] = json!(members);
                 v["messages"] = json!(messages);
             }
+            StuckEvent::DeadHolder {
+                room,
+                claim,
+                holder,
+            } => {
+                v["room"] = json!(room);
+                v["claim"] = json!(claim);
+                v["holder"] = json!(holder);
+            }
         }
         v
     };

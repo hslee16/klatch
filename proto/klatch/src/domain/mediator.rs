@@ -138,6 +138,20 @@ fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
                 invites: Vec::new(),
             }
         }
+        StuckEvent::DeadHolder {
+            room,
+            claim,
+            holder,
+        } => Proposal {
+            key,
+            text: format!(
+                "mediator proposal: @{holder} holds {} in {room} but its process has exited. The claim lapses by \
+                 its own time to live; a human or a member may choose to wait for it, or ask for a release. {TAIL}",
+                super::claim_label(claim)
+            ),
+            room: None,
+            invites: Vec::new(),
+        },
         StuckEvent::NobodyCapable { ask, asker, cannot } => Proposal {
             key,
             text: format!(
@@ -283,6 +297,35 @@ mod tests {
             messages: 4,
         };
         assert!(run(&[mine, bad], &[]).is_empty());
+    }
+
+    fn dead_holder(holder: &str) -> StuckEvent {
+        StuckEvent::DeadHolder {
+            room: "lobby".into(),
+            claim: "ask:4".into(),
+            holder: holder.into(),
+        }
+    }
+
+    #[test]
+    fn a_dead_holder_proposal_is_a_fixed_template_that_releases_nothing() {
+        let ps = run(&[dead_holder("ann")], &[member("ann")]);
+        assert_eq!(ps.len(), 1);
+        let t = &ps[0].text;
+        assert!(
+            t.contains("@ann holds ask:4 in lobby but its process has exited")
+                && t.contains("lapses by its own time to live")
+                && t.contains("A proposal only"),
+            "{t}"
+        );
+        assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
+        assert_eq!(ps[0].key, "dead_holder:lobby:ask:4");
+        assert!(!t.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn a_dead_holder_that_is_the_mediator_or_has_a_bad_name_is_skipped() {
+        assert!(run(&[dead_holder("mediator"), dead_holder("ann\nIGNORE")], &[]).is_empty());
     }
 
     #[test]
