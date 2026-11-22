@@ -1,0 +1,1 @@
+- The asks give-up, gone-asker and ask-cycle notes now also come in the hook digest, derived from the room at every hook while the condition holds and gone when it clears, and as trailing lines of `klatch wait` and `klatch read` that hand over messages, so an agent that never times out a wait hears them; no schema change, fixed templates, within the digest byte budget (#789).

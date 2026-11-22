@@ -11,6 +11,7 @@ mod admin_acts;
 mod admin_role;
 mod anchors;
 mod asks;
+mod asks_notes;
 mod board;
 mod budget;
 mod canary_surfaces;
