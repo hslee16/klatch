@@ -1,0 +1,1 @@
+- The admin passphrase prompt puts the terminal back (echo on) when SIGTERM, SIGINT, SIGHUP or SIGQUIT ends the process; SIGKILL cannot be caught (#1278).
