@@ -112,11 +112,7 @@ pub fn render_board_within(board: &Board, now: i64, cap: usize) -> String {
         format!("  [{n} more board entries not shown; the board text is capped at {cap} bytes]\n")
     };
     let lines: Vec<&str> = out.split_inclusive('\n').collect();
-    let headers: usize = lines
-        .iter()
-        .filter(|l| !is_entry(l))
-        .map(|l| l.len())
-        .sum();
+    let headers: usize = lines.iter().filter(|l| !is_entry(l)).map(|l| l.len()).sum();
     let mut room = cap.saturating_sub(headers + trailer(lines.len()).len());
     let (mut kept, mut dropped) = (String::new(), 0usize);
     for l in lines {
