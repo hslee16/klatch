@@ -1,1 +1,0 @@
-- The hub files `commands.rs`, `main.rs` argument parsing and `kani_proofs.rs` are split by family (#860); no behaviour change.

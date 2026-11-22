@@ -1,1 +1,0 @@
-- pr-ledger makes fewer GitHub API calls per PR (the lists once, one check-runs call per open PR, the pull only when its checks are all green, the ticket only for a merged PR) and, like pr-sweep, takes `--budget-floor N` to skip with a message when too few calls are left. The agent PR rules and the team brief say to poll at most every 3 minutes.

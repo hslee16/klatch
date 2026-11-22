@@ -1,1 +1,0 @@
-- `pr-sweep` asks again when GitHub answers `unknown` for a PR's mergeable state, so one pass can merge more than one ready PR.

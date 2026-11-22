@@ -1,1 +1,0 @@
-- The bench builds and drives `klatch-server channel` over stdio, with a scenario that times a post to its channel notification and checks an idle channel stays quiet (#1078).

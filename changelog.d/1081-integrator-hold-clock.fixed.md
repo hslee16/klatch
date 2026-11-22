@@ -1,1 +1,0 @@
-- The integrator no longer releases merge:main just after a merge when finishing the merge takes longer than the hold limit; fixes the intermittent gate step 11 failure (#1081).

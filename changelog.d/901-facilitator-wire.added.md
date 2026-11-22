@@ -1,1 +1,0 @@
-- A facilitator or any member can route over MCP and the wire: the methods `join` and `asks`, the tools `klatch_join`, `klatch_asks` and `klatch_invite`, and wrappers in the Python, TypeScript and Rust clients (#901).

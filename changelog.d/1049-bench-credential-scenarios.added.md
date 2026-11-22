@@ -1,1 +1,0 @@
-- `klatch-bench` gains `World::issue_worker` (a credential issued inside the bench's own temporary store) and four scenarios: own-record refusal after a credential ends, the release audit naming the reviewer, `worker list` cap and last renewal, and the advisory sender mark in a flag-mode room-require room.

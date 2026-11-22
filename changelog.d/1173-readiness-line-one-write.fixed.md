@@ -1,1 +1,0 @@
-- The http server writes its "http listening on" line in a single write and the test launchers wait for the complete line (up to 60 s, printing the server stderr on failure), which fixes flaky "server never listened" and unparsable-address failures under load (#1173, #1207).

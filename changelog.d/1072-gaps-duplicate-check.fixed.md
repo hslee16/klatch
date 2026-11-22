@@ -1,1 +1,0 @@
-- The "Gaps found and ticketed" table of `proto/AUTHZ-AUDIT.md` is now checked for duplicates too: each gap row is keyed by the first ticket number in its last cell, so a union merge of two edits of one gap (stale text plus new text) fails `tests/authz_audit.rs`, proven on the real #1028/#1029 replay (#1072).

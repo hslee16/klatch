@@ -1,1 +1,0 @@
-- `klatch-bench`'s `claude:<model>` judge now uses the shared `claude` transport from `klatch::gateway` instead of its own copy; the prompt, flags, environment, budget and results are unchanged.

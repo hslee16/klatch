@@ -1,1 +1,0 @@
-- A message line from a flagged (advisory) sender shows `(advisory)` after the sender on `read`, `wait` and the hook digest, and the `read` wire message carries `advisory: true` for it; an unflagged sender, or a room with no requirement, shows nothing (#990).

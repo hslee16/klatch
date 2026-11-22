@@ -1,1 +1,0 @@
-- pr-sweep --batch fills its --max cap from the survivors of the pre-check, so PRs dropped for a code conflict no longer use up batch slots (#854).

@@ -1,1 +1,0 @@
-- The dm nudge is an imperative that carries the exact command (`Do this now: klatch dm PEER "<text>"`), is shown once more when the pair reaches 6 messages without a dm, and also fires at the second need-info round of one ask between the same pair, in the hook digest, `wait` and `read`; the dm adoption metric now counts nudge lines in tool results (#1222, #1223).

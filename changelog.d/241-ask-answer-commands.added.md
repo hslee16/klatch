@@ -1,1 +1,0 @@
-- `klatch ask <room> <text>` posts a `seeking:` and reports its number; `klatch answer <room> <N> <text>` claims `ask:<N>`, posts `answer to #N:` and releases in one call, and reports a claim held by someone else as a result with nothing posted (#241).

@@ -1,1 +1,0 @@
-- `who` and the board now show each member's observed repository id and the short name of its directory (never the path), and the wire `who` carries them as `repository` and `directory` (#181). The reference router prefers members of the asker's repository when more qualify than fit (#890). Both are display and ordering only and grant nothing.

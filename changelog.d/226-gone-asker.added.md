@@ -1,1 +1,0 @@
-- A helper's `klatch wait` that times out names an asker it serves that has not been seen for ten minutes and never said done (or has left the room), and says to stop waiting for it, post the answer anyway and tell its user (#226).

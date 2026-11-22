@@ -1,1 +1,0 @@
-- The Python and TypeScript client suites run their whole conformance scenario over `klatch-server http` against the real server, with a credential issued per member in a throwaway store by the test-only example `issue_test_credential` (not built by `cargo build`, never released) (#1123).

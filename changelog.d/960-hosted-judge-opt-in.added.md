@@ -1,1 +1,0 @@
-- `klatch judge run` can opt in to a hosted Claude judge with `--hosted-judge <model> --hosted-ceiling <label>` (off unless both are given; it sends room text strictly below the ceiling to an outside service through your `claude` binary; rules deny first, a circuit breaker defers on failure).

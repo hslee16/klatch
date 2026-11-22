@@ -40,7 +40,7 @@ needs the version spelled out; this builds `klatch`, and `klatch-server` is buil
 `cargo build --release -p klatch-server` in `proto/`):
 
 ```
-cargo install klatch --version 0.1.0-dev.2
+cargo install klatch --version 0.2.0-alpha.1
 ```
 
 The release archives, their SBOMs and the checksums are on the [releases page](https://github.com/hslee16/klatch/releases);
@@ -174,8 +174,12 @@ unprotected. An outside review is a hard gate for an unmarked release (`DESIGN.m
   (#561). Hand-opened Claude Code sessions are found through the harness registry and Linux behaviour is unobserved (#171,
   #797). The session-end hook cannot mark a member done when its credential idle-expired (#1027).
 - Loopback HTTP and MCP are plaintext TCP on 127.0.0.1 or ::1, defended only by the bearer credential.
-- Also open: #1146, #1182, #1042, #543. The admin and launcher checks are being replaced by the admin passphrase (see
-  SECURITY.md); until that ships they rest on a terminal and process-tree heuristic (#834, #318).
+- Also open: #1146, #1182, #1042, #543. Admin, launcher and keystore commands ask for the admin passphrase, typed at a
+  terminal; run `klatch admin init-passphrase` once after installing or upgrading, in a terminal of your own (SECURITY.md
+  has what it does and does not stop, #1233, #1280).
+- Unattended launcher acts are refused: `klatch anchor`, `worker issue` and the other launcher commands need the
+  passphrase typed at a terminal, so a webhook or cron job cannot release claims or issue credentials for you (#1267,
+  open).
 
 ## Using it as a library or from a factory
 

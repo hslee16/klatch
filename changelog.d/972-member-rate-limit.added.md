@@ -1,1 +1,0 @@
-- `klatch admin rate-limit --member NAME POSTS SECS` gives one member its own post limit over the global one (`--member NAME --off` makes it inherit again); a floor act only the human at a terminal can set (#972).

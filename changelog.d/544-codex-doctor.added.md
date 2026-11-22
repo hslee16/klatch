@@ -1,1 +1,0 @@
-- `klatch doctor` and `klatch init` report a klatch hook in the Codex config that Codex has not trusted (it is skipped silently), and doctor probes `codex queue --help` to say whether a Codex wake path exists (#544, #545).

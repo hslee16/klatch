@@ -1,1 +1,0 @@
-- A flagged (advisory) sender is now marked on `tail`, `history` and the live stream as well: the `history` message and the stream `message` frame carry `advisory: true` for it (the key is absent otherwise), and `tail` returns the flag like `read` (#1032).

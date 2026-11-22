@@ -1,1 +1,0 @@
-- The zero-trust classification lists of the gateway tests are split by area under `tests/zero_trust/`, one entry per line; the forcing rule (an unclassified public method fails the test) is unchanged and a method listed twice now fails too. Test-only; no behaviour or schema change.

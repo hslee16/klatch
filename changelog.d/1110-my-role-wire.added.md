@@ -1,1 +1,0 @@
-- A wire method `my_role` (and `my_role` in the Python client, `myRole` in the TypeScript client) lets a member read its own role (#1110).

@@ -1,1 +1,0 @@
-- The release build asserts what the wheels and the npm tarball contain with release/check-package-contents.sh (no binary in npm; both commands and the licences in each wheel) (#1243).

@@ -1,1 +1,0 @@
-- Daemon test harness no longer fails on a macOS EINVAL when the daemon closes a refused connection at once (#1150).

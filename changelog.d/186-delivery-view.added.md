@@ -1,1 +1,0 @@
-- `klatch view [all|scope]`: a member can narrow its hook digest and wake count to its own scope, messages addressed to it and `@all` broadcasts; `read` and `history` still show everything (#186).

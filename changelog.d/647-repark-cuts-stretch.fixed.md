@@ -1,1 +1,0 @@
-- A shorter re-park (`parked: ..., back by 5m` after `back by 3d`) now cuts the claims the earlier park stretched to the new return time, never below a claim's own ttl from now (#647, DESIGN item 81).

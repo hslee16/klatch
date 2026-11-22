@@ -1,1 +1,0 @@
-- `klatch card ROOM [MEMBER]` shows one member in one place: its scope and status, its offer, the asks it posted and their state, the asks it serves, its claims, tasks and pull requests. Derived from the board and the claims, bounded like the board, and every entry is data (#251).

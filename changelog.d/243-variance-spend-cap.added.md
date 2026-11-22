@@ -1,1 +1,0 @@
-- The experiment variance harness (experiments/variance/repeat.py) runs each repeat in isolated temp stores, takes `--timeout` and `--max-cost` (a hard USD cap), counts crashed or timed-out runs as failures and prints `failures: K of N` (#243).

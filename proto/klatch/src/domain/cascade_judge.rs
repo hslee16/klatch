@@ -58,7 +58,7 @@ pub struct CascadePolicy {
 }
 
 impl Default for CascadePolicy {
-    /// Conservative starting points, to be tuned on the dev split and scored on test (design item for #936): a deny at
+    /// Conservative starting points, to be tuned on the dev split and scored on test (design item 212): a deny at
     /// 0.9, an allow at 0.98 (both numbers), a redact always escalated.
     fn default() -> Self {
         CascadePolicy {

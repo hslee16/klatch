@@ -1,1 +1,0 @@
-- `klatch receipt ROOM SEQ` now also prints `shown` (the recipient's hook showed the message; a muted room counts only mentions) and `read` (its read cursor reached it) per recipient. Only the sender of the message can ask, as before (#675).

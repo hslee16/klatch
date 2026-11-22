@@ -1,1 +1,0 @@
-- The bench scenarios for the room canary and for crossings follow the #347 and #954 decisions: the canary is read from the first digest, and a crossing names the first real message (#1046).

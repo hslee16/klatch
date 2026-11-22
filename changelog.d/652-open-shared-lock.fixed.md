@@ -1,1 +1,0 @@
-- Many processes opening the store at once no longer queue behind one another: an ordinary open takes the shared directory lock, and only a key rotation or its repair takes the exclusive one (#652).

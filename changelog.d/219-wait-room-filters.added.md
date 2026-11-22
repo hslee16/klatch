@@ -1,1 +1,0 @@
-- `klatch wait` takes a filter per room (`wait lobby:only=seeking: dm-a-b`, or `ROOM:from=MEMBER`; name a room again for another filter) so a room of two can wake on anything while the lobby is filtered, and `--only` can be repeated to wake on any of several prefixes (#219).

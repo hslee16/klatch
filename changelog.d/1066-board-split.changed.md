@@ -1,1 +1,0 @@
-- The board code is split into one file per section (members, offers, asks, tasks, pull requests, merge queue) under `domain/board/` and `gateway/gateway/board/`, so a new board section is a new file plus one line in a list; no change in behaviour or output (#1066).

@@ -1,1 +1,0 @@
-- `klatch stuck` and the wire `stuck` method show a `dead_holder` event (`room`, `claim`, `holder`) for a live claim whose holder process is provably gone by the #790 liveness probe, and the mediator proposes with a fixed line; flag only, nothing is released (#1182).

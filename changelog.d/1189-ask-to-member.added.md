@@ -1,1 +1,0 @@
-- `klatch ask --to MEMBER TEXT` asks one member privately: a `seeking:` in your dm with them, with the ask number and the wait command printed and nothing posted in the lobby; `klatch answer dm:MEMBER N TEXT` answers it (#1189).

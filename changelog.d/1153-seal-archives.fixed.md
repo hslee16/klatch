@@ -1,1 +1,0 @@
-- `klatch admin seal-label` now seals the earlier plain text of the label in the archive files as well as the live store, and `restore-archive` seals plain archived text of a sealed label as it restores it (refusing, with nothing restored, when the label key is not held), so plain text no longer sits under a sealed label (#1153).

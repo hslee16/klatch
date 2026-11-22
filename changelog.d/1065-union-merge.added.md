@@ -1,1 +1,0 @@
-- Append-only files (`proto/AUTHZ-AUDIT.md`, the `mod x;` registries) merge with git's built-in union driver, set in the root `.gitattributes`, so two branches adding lines at the same place no longer conflict; AUTHZ-AUDIT rows must be unique by operation, and `proto/scripts/test-merge-union.sh` (in the gate) proves the merge and the duplicate check (#1065).

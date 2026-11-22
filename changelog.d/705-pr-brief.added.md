@@ -1,2 +1,0 @@
-- The `proto/scripts/team` agent brief now tells each agent to put "Closes #N" in its PR, poll it with `pr-ledger` until it is `ready`, rerun cancelled jobs, fix real red checks, then post "ready: #N" and release its claims; the same rules are in `proto/scripts/AGENT-PR-RULES.md` for agents not started by `team`.
-- `pr-ledger --post` posts the PRs needing a step to the lobby (only when the list changed), `--record-bench PR --bench-ledger FILE` tracks a `merged-not-benched` stage, and a failing job shows the first error line of its check output.

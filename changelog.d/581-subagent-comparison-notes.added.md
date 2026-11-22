@@ -1,1 +1,0 @@
-- RESEARCH-NOTES 54: Agent-tool subagents compared with launched team sessions, and what the Agent tool gives a coordinator (desk research; the live subagent run of #581 is still open).

@@ -1,1 +1,0 @@
-- The Transport trait is split into per-area files under gateway/transport/, so adding a gateway method edits one file (no behaviour change).

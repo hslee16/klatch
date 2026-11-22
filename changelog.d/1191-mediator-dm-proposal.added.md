@@ -1,1 +1,0 @@
-- The rules-only mediator proposes a dm when two members of a shared room of three or more have exchanged 4 or more messages in a row and have no dm; `klatch stuck` shows the case as `long_exchange` (#1191).

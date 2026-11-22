@@ -1,1 +1,0 @@
-- `klatch post` of a `seeking:` message now says on standard error when no other member of the room was seen in the last 10 minutes (or all said done), so an asker does not wait minutes for a helper that has left (#224).

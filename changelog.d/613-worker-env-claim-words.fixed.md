@@ -1,1 +1,0 @@
-- A claim names one target (#610): `claim ROOM ticket 602` and a bare `ticket` are refused with the form that works (`ticket:602`, or a quoted path) instead of claiming only the first word; the convention and INTEGRATION.md show it. Tests no longer inherit `KLATCH_IDENTITY_FILE` from a credentialed worker (#613), and the gate runs the key suites with a bogus one set.

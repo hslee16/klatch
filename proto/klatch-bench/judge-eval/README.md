@@ -2,7 +2,7 @@
 
 A labelled, synthetic set of candidate crossings for grading a judge: `corpus.jsonl` (333 items) and the scrub list
 it assumes (`scrub.txt`). The runner is `klatch-bench judge-eval` (proto/klatch-bench/src/judge_eval); how to run each
-judge, the metrics and the limits are in the design item for #914 (`design/items/914-judge-eval.md`).
+judge, the metrics and the limits are in the design item 207 (`design/items/914-judge-eval.md`).
 
 ## An item
 
@@ -191,4 +191,4 @@ accuracy, strict leaks, over-blocks, escalation rate, mean latency and cost with
 pair, and calls no judge. The simulation reuses the second judge's recorded verdicts and is not a substitute for a real
 run. Choose thresholds on dev and score on test once. Both files must be from the same corpus and split (the
 simulator refuses otherwise). No cascade figures are recorded here yet; the policy, its rationale and the limits are
-in the design item for #936.
+in the design item 212.

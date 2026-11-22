@@ -1,1 +1,0 @@
-- A claim named like a work item (`ticket:602`, `design-item:66`, `pr:7`) now conflicts across scopes without `--shared` and ignores case and surrounding spaces, so two members can no longer hold the same one at once (#632).

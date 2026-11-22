@@ -1,1 +1,0 @@
-- `CONVENTIONS.md` now states what `status: done` means: the sender takes no further action in this room until it speaks again (finished for an asker, leaving for a helper). The wider status vocabulary for long-lived helpers waits for the human (#223).

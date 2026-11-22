@@ -1,1 +1,0 @@
-- Claim age reminders: a claim held for 2 hours, 8 hours and then each day reminds its owner once in the hook (a path and a length of time, no message text), and a peer refused by a claim held 2 hours or more is told its age. Store schema 28 adds `claims.since` and `claims.age_noted` (#547).

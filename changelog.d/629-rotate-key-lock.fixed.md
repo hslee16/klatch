@@ -1,1 +1,0 @@
-- `klatch admin rotate-key` now holds the store directory lock for the whole rotation: two rotations run one after the other, and any process that opens the store meanwhile waits and then opens with the new key instead of failing with "file is not a database" or a missing key file. An `admin archive` that finishes after a rotation moves its files to the current key (#629).

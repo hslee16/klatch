@@ -1,1 +1,0 @@
-- Creating a room and inviting a member are a capability: by default every member has it; `klatch admin room-creation granted` and `grant-rooms MEMBER` make it a grant. A refusal names rule `room-capability`, and creations and invites are audited with the member name (#188). New wire method `invite`.

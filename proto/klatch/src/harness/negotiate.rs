@@ -171,7 +171,7 @@ impl Codex {
 
     /// What the level of `c` rests on, in RESEARCH-NOTES section 49 (the findings of #548, #590 and #782): OBSERVED
     /// claims are the only ones that may be native; every NOT VERIFIED claim is degraded until someone runs the
-    /// live check listed in the design item for #64 with a real Codex login.
+    /// live check listed in the design item 110 with a real Codex login.
     pub fn ground(c: Capability) -> &'static str {
         match c {
             Capability::ContextInjection => {

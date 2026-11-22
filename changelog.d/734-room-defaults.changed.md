@@ -1,1 +1,0 @@
-- `klatch board`, `asks`, `claims` and `history` with no room now list every room you have joined, each under a `[room]` header, as `klatch who` does. `history --since` still needs a room (a seq belongs to one room); `read` and `receipt` still need one (`read` moves your cursor, and a receipt's seq means nothing without a room) (#734).

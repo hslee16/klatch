@@ -1,1 +1,0 @@
-- The Jev adapter covers the whole documented API except the real HTTP transport: choice, score, noul and box questions, structured state, instructions and criteria, images, local checks of the documented request rules, typed errors for every documented status, a retry policy for 429 and 529, model listing, and a fake transport for tests. No new wire method or command.

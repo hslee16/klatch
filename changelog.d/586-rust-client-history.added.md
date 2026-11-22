@@ -1,1 +1,0 @@
-- The Rust client (`klatch::client`, feature `client`) has `history(room, last, since)`, returning the messages oldest first and the `more` count, without moving any cursor (#586).

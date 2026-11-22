@@ -1,1 +1,0 @@
-- A `reopen #N: <why>` message by the asker puts an answered or closed ask back among open asks for another helper; earlier declines and failures stay on it. New convention word in CONVENTIONS.md (#232).

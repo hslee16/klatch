@@ -1,1 +1,0 @@
-- `Gateway::tail` and `tail_scan` now refuse a third member of a direct message (`dm-members`) and a member below the room's label (`clearance`), like `head` and `read`; `klatch admin export` reads through a separate admin path (`admin_tail_scan`) so a direct message stays exportable by the human (#1196).

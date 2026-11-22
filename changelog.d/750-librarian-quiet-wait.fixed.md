@@ -1,1 +1,0 @@
-- A librarian that waits or watches no longer refreshes its presence or writes wait and wake positions (#750).

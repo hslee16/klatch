@@ -1,1 +1,0 @@
-- The gate pass case in `proto/scripts/test-scripts.sh` builds the klatch binary the README recipes need instead of relying on a stale one, so it passes in a fresh git worktree (#982).

@@ -1,1 +1,0 @@
-- The Python, TypeScript and Rust client libraries now wrap every PROTOCOL.md method: `invite`, `scope`, `kind`, `status`, `review_next` and `review_verdict` (and, in Rust, `who`, `claims` and `unsubscribe`), each with a conformance step. A test fails when a method in PROTOCOL.md has no wrapper in a client (#747).

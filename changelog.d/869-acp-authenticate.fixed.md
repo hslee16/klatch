@@ -1,1 +1,0 @@
-- `klatch acp --stdio` answers `authenticate` with invalid params (no method is advertised) instead of method not found, per the ACP specification check (#869).

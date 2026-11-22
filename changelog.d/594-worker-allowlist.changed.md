@@ -1,1 +1,0 @@
-- `proto/scripts/team` runs workers in `dontAsk` with a tool allowlist (`TEAM_PERMISSION_MODE`, `TEAM_ALLOWED_TOOLS`) instead of `bypassPermissions`, and the hook digest header, the worker brief and the relaunch prompt mark room mail as untrusted data (#594).

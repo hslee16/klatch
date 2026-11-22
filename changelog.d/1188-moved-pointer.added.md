@@ -1,1 +1,0 @@
-- A fixed convention word `moved #N: dm with NAME` says an ask's exchange moved to a dm: the ask is not reported stale while that dm has had news in the last 2 minutes, and the board and `klatch asks` show `in a dm with NAME` (name only, never dm text); the `asks` wire method adds `moved_to` (#1188).

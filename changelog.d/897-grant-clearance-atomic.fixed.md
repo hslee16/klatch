@@ -1,1 +1,0 @@
-- Granting a room clearance checks the grantor and writes the grant in one transaction, so a grantor, cap or label change by the human cannot land between the two (#897).

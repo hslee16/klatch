@@ -1,1 +1,0 @@
-- Unit tests under klatch/src make their scratch directories with the guarded `TestDir` (removed on drop and on a panic, size capped) instead of by hand, and a scan test keeps new ones from doing otherwise (#812).

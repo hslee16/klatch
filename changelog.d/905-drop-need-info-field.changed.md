@@ -1,1 +1,0 @@
-- The facilitator need-info DM no longer takes an optional field: it is exactly `need-info #N: CODE`, which removes the field-repeat check and its scan of the oldest 5000 lobby messages (#905, #997).

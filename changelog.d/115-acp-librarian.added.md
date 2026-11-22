@@ -1,1 +1,0 @@
-- `klatch acp --stdio`: the read-only librarian as an ACP (Agent Client Protocol) agent, so an editor such as Zed or JetBrains can ask what happened in a room (`read`, `history`, `who`, `claims`). It goes through the same gateway checks as every other front end, answers under the identity of the process and its clearance, and has no way to post, claim or change anything (#115).

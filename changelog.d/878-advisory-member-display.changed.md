@@ -1,1 +1,0 @@
-- `who` and the board show a member admitted in flag mode of a room-require as advisory (its harness lacks a capability the room asked for); a later clean join clears the mark (#878).

@@ -1,1 +1,0 @@
-- `klatch worker list` shows the seconds left to each credential cap and when it was last renewed (#948).

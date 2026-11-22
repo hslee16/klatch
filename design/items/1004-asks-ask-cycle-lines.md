@@ -1,2 +1,0 @@
-`asks` stays without the ask-cycle lines; they come from `stuck` (#1004; docs only; no schema or wire change; 2026-11-21).
-The human decided that the wire method `asks` (#901) keeps its shape: open asks only. The ask-cycle lines that `klatch asks` prints are derived from the same facts the wire method `stuck` (#271) returns as `ask_cycle` events (`members` from the member that yields, `asks`), so a client that wants them calls `stuck`. PROTOCOL.md (the `asks` row) and INTEGRATION.md (the `klatch_asks` tool) now say so. No operation changed, so AUTHZ-AUDIT.md is unchanged.

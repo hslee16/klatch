@@ -1,1 +1,0 @@
-- `proto/scripts/ask-supervisor`: a script outside klatch that starts a pre-issued helper for an unanswered ask only when `klatch could-answer` says yes, bounded (helpers at once, one per ask, total spend, time limit, pause, off file), with `--dry-run`. It issues no credential and posts nothing; INTEGRATION.md section 9 describes it (#1170, part 2 of #671).

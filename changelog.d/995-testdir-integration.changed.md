@@ -1,1 +1,0 @@
-- Integration tests under klatch/tests and the klatch-bench crate make their scratch directories with the guarded `TestDir` (shared by a path attribute), and the scan test now covers them too (#995).

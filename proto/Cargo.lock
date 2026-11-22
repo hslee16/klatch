@@ -550,7 +550,7 @@ checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
 name = "klatch"
-version = "0.1.0-dev.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "klatch-bench"
-version = "0.1.0-dev.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "klatch",
  "libc",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "klatch-server"
-version = "0.1.0-dev.2"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "hmac",

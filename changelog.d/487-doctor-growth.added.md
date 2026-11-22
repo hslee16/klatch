@@ -1,1 +1,0 @@
-- `klatch doctor` reports row counts for the tables that only grow (live messages, audit, refusals, claim notes). Information only; no pruning is done (#487).
