@@ -154,5 +154,30 @@ if [ "$("$d/bin/klatch")" = "old" ] && [ "$("$d/bin/klatch-server")" = "old" ]; 
 root=$(cd "$here/.." && pwd)
 if grep -q 'rm ~/.local/bin/klatch ~/.local/bin/klatch-server' "$root/UNINSTALL.md"; then pass "UNINSTALL.md removes klatch-server with klatch"; else fail "UNINSTALL.md does not remove klatch-server"; fi
 
+# 11. every kind of release number (#1234): the tag names the archive, the archive's version is SemVer, and only a
+# pre-release gets the early pre-release warning. Rows: tag, SemVer version, whether the warning is expected.
+for row in "v0.2.0a1 0.2.0-alpha.1 yes" "v0.2.0b2 0.2.0-beta.2 yes" "v0.2.0rc1 0.2.0-rc.1 yes" "v0.1.0.dev2 0.1.0-dev.2 yes" "v0.2.0 0.2.0 no"; do
+  # shellcheck disable=SC2086
+  set -- $row; tag=$1; ver=$2; warn=$3
+  d="$work/t11-$tag"; mkdir -p "$d/stage/klatch-$ver-x86_64-unknown-linux-gnu" "$d/$tag"
+  name="klatch-$ver-x86_64-unknown-linux-gnu"
+  printf '#!/bin/sh\necho "klatch %s"\n' "$ver" > "$d/stage/$name/klatch"; chmod 755 "$d/stage/$name/klatch"
+  printf '#!/bin/sh\necho "klatch-server %s"\n' "$ver" > "$d/stage/$name/klatch-server"; chmod 755 "$d/stage/$name/klatch-server"
+  echo MIT > "$d/stage/$name/LICENSE"; echo notices > "$d/stage/$name/THIRD-PARTY-LICENSES.txt"
+  tar -czf "$d/$tag/$name.tar.gz" -C "$d/stage" "$name"
+  printf '%s  %s\n' "$(sha256 "$d/$tag/$name.tar.gz")" "$name.tar.gz" > "$d/$tag/SHA256SUMS"
+  if env KLATCH_LDD_OUTPUT="ldd (GNU libc) 2.35" KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION="$tag" KLATCH_INSTALL_DIR="$d/bin" \
+      KLATCH_OS=Linux KLATCH_ARCH=x86_64 sh "$installer" >"$d/out" 2>&1 && [ "$("$d/bin/klatch")" = "klatch $ver" ] && grep -q "^klatch $ver for " "$d/out"; then
+    pass "tag $tag installs $name.tar.gz"
+  else fail "tag $tag: $(cat "$d/out")"; fi
+  if grep -q "early pre-release" "$d/out"; then got=yes; else got=no; fi
+  if [ "$got" = "$warn" ]; then pass "tag $tag: pre-release warning is '$warn'"; else fail "tag $tag: warning expected '$warn', got '$got'"; fi
+done
+d="$work/t11-bad"; mkdir -p "$d"
+for tag in v0.2.0-gamma.1 v0.2.0alpha1 0.2.0a1 v1; do
+  if env KLATCH_INSTALL_BASE_URL="file://$d" KLATCH_VERSION="$tag" KLATCH_INSTALL_DIR="$d/bin" KLATCH_OS=Linux KLATCH_ARCH=x86_64 KLATCH_LIBC=gnu sh "$installer" >"$d/out" 2>&1; then fail "accepted the tag $tag"
+  elif grep -q "cannot read a version from the tag" "$d/out"; then pass "refuses the tag $tag with a message"; else fail "tag $tag refusal: $(cat "$d/out")"; fi
+done
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all install tests passed"; else echo "$fails install test(s) failed"; exit 1; fi

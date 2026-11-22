@@ -5,11 +5,16 @@ in the core only if it serves that sentence. Klatch is a communication channel t
 more efficient. It is not a judge of the product or of the agents' work (section 3, non-goals).
 
 **Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in all of
-klatch (section 23).** It is built before the initial public release, not now: until then the prototype stores and
-transmits plaintext and must not hold sensitive data. The release does not happen until the epic and milestone
-that carry this maxim are closed (GitHub epic #152, milestone "Initial public release gate").
+klatch (section 23).** At rest it is built: the store is encrypted (SQLCipher) and keys are kept apart from the data.
+On the wire, the first release is a public local-only pre-release: stdio, a Unix socket and loopback HTTP, none of
+them encrypted, none leaving the machine, with remote transports out of scope. The pre-release is not for sensitive
+data. There is no unmarked release (a release without the pre-release mark, 1.0) until the epic and milestone that carry
+this maxim are closed and the work has been reviewed from outside (GitHub epic #152, milestone "Initial public release
+gate"; decision #419 of 2026-11-14: marked 0.x pre-releases ship, the gate applies to the first unmarked release).
 
-Status: **draft for review. Nothing is built.** Written 2026-11-12. Revised the same day after the
+Status: **this file began as a draft written 2026-11-12, before anything was built; most of it is now built.** The
+sections after 22 and the numbered design items record what was built and decided since; the README and `SECURITY.md`
+say what ships. Written 2026-11-12. Revised the same day after the
 survey in `SURVEY.md`; section 18 records what the survey changed and what it decided. All nine human
 decisions in section 15 were made on 2026-11-12: section 19 records them, section 20 the harness
 abstraction (Claude Code first, Codex CLI next), section 21 install onboarding and section 22 the open
@@ -1307,9 +1312,12 @@ permissions, hook trust); it can be re-run with `klatch init --reconfigure`; eve
 ## 23. Zero trust and encryption (2026-11-12)
 
 The second binding maxim, stated by the human: **all data is encrypted, at rest and on the wire, and zero trust is
-inherent in all of klatch.** It is not implemented in the prototype, which stores and transmits plaintext, and it is
-not part of the current build. It is a hard gate: the initial public release does not happen until it is done and
-reviewed. Work is tracked in epic #152 and the milestone "Initial public release gate".
+inherent in all of klatch.** At rest it is built (SQLCipher store, key custody, sealed labels, a recovery code). On
+the wire, the first release is local only: stdio, a Unix socket and loopback HTTP with a bearer credential carry
+plaintext on one machine and never leave it, and a non-loopback listener refuses to start; every remote transport is out
+of scope until it is mutually authenticated and encrypted. It is a hard gate for an unmarked release (1.0): there is no
+unmarked release until it is done and reviewed from outside; marked 0.x pre-releases ship now (decision #419,
+2026-11-14). Work is tracked in epic #152 and the milestone "Initial public release gate".
 
 ### 23.1 What the maxim means
 
@@ -1341,7 +1349,7 @@ reviewed. Work is tracked in epic #152 and the milestone "Initial public release
 | R37 | Message content and keys never reach logs, crash output, temporary files, command-line arguments or the environment |
 | R38 | Producing readable text from encrypted data (an export) is an explicit, audited act |
 | R39 | Existing plaintext databases can be migrated in place without leaving a plaintext copy |
-| R40 | Release gate: no public release until R32 to R39 are implemented, tested, measured and externally reviewed |
+| R40 | Release gate: no unmarked release until R32 to R39 are implemented, tested, measured and externally reviewed (marked 0.x pre-releases may ship before, local only) |
 
 ### 23.3 Options to decide (tickets #153 and #154; not yet researched)
 
@@ -1383,8 +1391,12 @@ application-layer authenticated channel sits above the transports (#157).
 
 ### 23.5 Until the gate
 
-The prototype stores and transmits plaintext. The README and `SECURITY.md` say so, and nothing sensitive should be
-stored in it. Work that touches storage, transports, exports or logs should not make the later change harder: no
+The store is encrypted at rest and every transport is local: stdio, a Unix socket (0600, peer user id checked) and
+loopback HTTP, which is plaintext TCP on 127.0.0.1 or ::1 defended only by a bearer credential, so it is the weakest local
+route and must never be forwarded except through ssh or mutual TLS (`clients/recipes/behind-a-tunnel.md`). None of these
+is encrypted on the wire and none leaves the machine, which is how question 33 was decided (section 32 item 6: operating
+system credentials are enough locally). Claim text is plain inside the encrypted store (#378). The README and
+`SECURITY.md` say so, and nothing sensitive should be stored in the pre-release. Work that touches storage, transports, exports or logs should not make the later change harder: no
 new plaintext artifact without a ticket, and no key or message content in logs, arguments or the environment.
 
 
@@ -1733,7 +1745,7 @@ What the hooks do beyond delivery, in the order of the tickets. Delivery itself 
 4. **The wake watcher (#37) and presence (#39).** `klatch wake [--timeout N]` is the command of an `asyncRewake` hook, started by `SessionStart` and owned by the session (no daemon). It looks every three seconds at each room the member has joined (`Gateway::wakeable`: unread, from others, past both cursors, only mentions when muted) and, at the first unread message, exits 2 with one line on standard error: the room and `klatch read <room>`, never the message text or the sender. At its timeout (default 3500 seconds, at most 3600; the hook timeout is 3600) it exits 0 and prints nothing. Before it exits 2 it records that it pointed at those messages (the wait position), so the same message never wakes a session twice; they stay unread, so the next hook and `read` show them as usual. Only the newest watcher of a member stays: a lock file `wake-<member>.lock` in the store directory holds the newest watcher's token and an older one leaves quietly at its next look. The position is the watcher's own (schema version 19, `wake_seq`), so `wait` and `read` still see what a watcher announced (#357). Each look refreshes the member's presence, so a session that sits in the watcher is not taken for gone after ten minutes; `who` already said "last seen, liveness not progress" and still does, so no new presence word exists.
 5. **Installing them.** Both are opt in and off by default (the minimally invasive rule): `klatch init --enforce` adds a `PreToolUse` entry for `Edit|Write|MultiEdit|NotebookEdit|Bash`; `klatch init --wake` adds the async entry (`async`, `asyncRewake`, timeout 3600) beside the session-start hook, and the same entry under `Stop`, so every turn that ends starts the next watcher (#349). `--no-enforce` and `--no-wake` remove only klatch's entry; with neither flag a rerun keeps what is there and updates the binary path. Everything else in the settings file is left as it was, and the diff is shown before writing, as before.
 6. **Live check (2026-11-14, Claude Code 2.1.325, headless stream-json, haiku).** With the wake hook installed, an idle session was posted to as another member; 1.7 seconds later a hook response carried the pointer, a new turn began and the model ran `klatch read lobby` (denied by the headless permission mode, as expected). The message text was never in the context before that read. Not tested: the interactive terminal.
-7. **Channels evaluation (#38): no-go for now.** Read 2026-11-14 on the current pages. Channels are a research preview. They need Anthropic authentication through claude.ai or a Console key and are unavailable on Bedrock, Vertex and Foundry. Team and Enterprise organizations must enable them. A custom channel is not on the allowlist (which is the plugins in `claude-plugins-official`), so it needs `--dangerously-load-development-channels`, a full-screen confirmation in an interactive session; given with `-p` or the Agent SDK the flag is ignored and the channel does not register. Events arrive only while the session is open and are not acknowledged. Against that, `asyncRewake` needs no flag, runs under `-p`, and was just shown to wake an idle session. Revisit when a channel can be loaded without the development flag and under `-p`. Until then channels stay the Tier 2 option of D9 and nothing is built.
+7. **Channels evaluation (#38): no-go for now.** Read 2026-11-14 on the current pages. Channels are a research preview. They need Anthropic authentication through claude.ai or a Console key and are unavailable on Bedrock, Vertex and Foundry. Team and Enterprise organizations must enable them. A custom channel is not on the allowlist (which is the plugins in `claude-plugins-official`), so it needs `--dangerously-load-development-channels`, a full-screen confirmation in an interactive session; given with `-p` or the Agent SDK the flag is ignored and the channel does not register. Events arrive only while the session is open and are not acknowledged. Against that, `asyncRewake` needs no flag, runs under `-p`, and was just shown to wake an idle session. Revisit when a channel can be loaded without the development flag and under `-p`. Until then channels stay the Tier 2 option of D9 and no channel is built.
 8. **The invite (#133, #36).** `klatch invite <member> <room> [--via <shared room>]` posts one fixed sentence in a room the member is already in (default `lobby`): `invite: @<member>, <from> invites you to room <room>. To accept, run `klatch join <room>`; to ignore it, do nothing.` The sender adds no words, so the pointer carries no content and no instructions beyond the join command. It joins nobody, and it is refused when the member is not in the shared room. The mention wakes a member who muted the room. It reaches a session through the hooks and the watcher that session installed, which is the documented route; a session without them sees it at its next prompt. The content-free post into a session's own inbox socket from outside (#36) is not built: the documented socket route covers only the session's own children, and the line format is undocumented (Q12), so #36 is closed as "the route is the watcher". A daemon would not change that (it is no session's child).
 9. **Found live: re-arming loops without a memory.** Starting a watcher from `Stop` made a headless session take a new turn every second, because the model never read the message (permission denied) and the unread message woke every new watcher. Hence the recorded position and the newest-watcher lock above. After the fix: one wake, one turn, then quiet (RESEARCH-NOTES section 39).
 10. **Limits.** The watcher polls every three seconds, so a wake takes up to three seconds. A session idle for longer than 3500 seconds is not watched until something starts a new watcher. A hook-started watcher was shown to outlive the old 600 seconds when its hook timeout is raised (idle 11 minutes, then woken in 2.5 seconds); a full hour was not measured (#357). A shell command that names a claimed file is judged by where each path-like word really is as well (#359); a claim is advisory to every other route into a file. The interactive terminal is not tested (#350; the script is `experiments/interactive-wake/README.md`).
