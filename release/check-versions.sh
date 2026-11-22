@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One release is one number (VERSIONING.md): the crate, the PyPI package, the npm package and the Python wheel's
 # __version__ must agree, CHANGELOG.md must have an entry for it, and README.md must name it in the cargo install line.
-# The Homebrew formula (the staged copy release/homebrew/klatch.rb, or the path given) must carry the version, the four
-# archive URLs and, when it has them, SHA-256 values (checked against a SHA256SUMS file when one is given). The SemVer to
+# The Homebrew formula (the staged copy release/homebrew/klatch.rb, or the path given) must carry the four
+# archive URLs (and so the version and tag; a `version` line is not wanted, and if there is one it must agree) and, when it has them, SHA-256 values (checked against a SHA256SUMS file when one is given). The SemVer to
 # PEP 440 spelling (0.2.0-alpha.1 and 0.2.0a1) comes from release/pep440.sh, the one place it is written.
 # The release workflow repeats the check against the tag; this runs on every pull request so a mismatch is found early.
 #
@@ -45,8 +45,10 @@ fcheck() { echo "MISMATCH  formula $FORMULA: $1" >&2; fail=1; }
 if [ ! -f "$FORMULA" ]; then
   fcheck "no such file"
 else
+  # brew audit --strict rejects a version line that repeats the one in the URL (#1297), so the formula normally has none and its
+  # version is what the four URLs carry (checked below against the tag and archive name). A line, if present, must still agree.
   fver=$(sed -n 's/^ *version "\(.*\)" *$/\1/p' "$FORMULA" | head -n 1)
-  [ "$fver" = "$cargo" ] || fcheck "version is '$fver', expected '$cargo'"
+  if [ -n "$fver" ] && [ "$fver" != "$cargo" ]; then fcheck "version is '$fver', expected '$cargo'"; fi
   seen=""
   pairs=""
   last=""

@@ -1,7 +1,6 @@
 class Klatch < Formula
   desc "Substrate for agent rooms: claims, asks, a board and a durable encrypted log"
   homepage "https://github.com/hslee16/klatch"
-  version "0.2.0-alpha.1"
   license "MIT"
 
   # An early pre-release: no outside security review, not for sensitive data.

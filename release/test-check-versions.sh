@@ -66,12 +66,35 @@ formula_fail() { # description, expected message fragment, sed expression (on th
   if "$here/check-versions.sh" "$work/t" "$work/t/release/homebrew/klatch.rb" ${4:+"$4"} >"$work/out" 2>&1; then echo "FAIL  formula: did not notice $1" >&2; fails=1
   elif grep -q "$2" "$work/out"; then echo "  ok  formula: notices $1"; else echo "FAIL  formula: $1 failed without naming '$2': $(cat "$work/out")" >&2; fails=1; fi
 }
-formula_fail "a stale version"               'formula.*version'   's/^  version ".*"$/  version "0.0.1"/'
+formula_fail "a stale version line"          'formula.*version'   '/^ *version "/d;/^  homepage /a\
+  version "0.0.1"'
 formula_fail "a URL for another release"     'formula.*url'       '/aarch64-apple-darwin.tar.gz"$/s#download/v[^/]*/#download/v9.9.9/#'
 formula_fail "a URL with the wrong archive"  'formula.*url'       's/klatch-[0-9][0-9a-z.-]*-aarch64-apple-darwin/klatch-aarch64-apple-darwin/'
 formula_fail "a URL for the wrong platform"  'formula.*aarch64-unknown-linux-gnu' 's/aarch64-unknown-linux-gnu/aarch64-unknown-linux-musl/'
 formula_fail "a missing URL"                 'formula.*url'       '/^ *url ".*x86_64-apple-darwin.tar.gz"$/,/^ *sha256 /d'
 formula_fail "a malformed SHA-256"           'formula.*sha256'    's/sha256 "[0-9a-f]*"/sha256 "abc123"/'
+cur0="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | head -n 1)"
+sums0="$work/SHA256SUMS0"; : > "$sums0"
+for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+  printf '%s  klatch-%s-%s.tar.gz\n' "$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | head -n 1)" "$cur0" "$t" >> "$sums0"
+done
+# --- a formula with and without the version line (#1297): the version then comes from the four URLs ------------------------
+# fixtures are built from the real staged copy: one with the line added, one with it removed
+with_line() { sed -e '/^ *version "/d' -e '/^  homepage /a\
+  version "'"$1"'"' "$work/t/release/homebrew/klatch.rb"; }
+without_line() { sed -e '/^ *version "/d' "$work/t/release/homebrew/klatch.rb"; }
+fresh
+with_line "$cur0" > "$work/with.rb"; without_line > "$work/without.rb"
+if grep -q '^  version "' "$work/with.rb" && ! grep -q '^ *version "' "$work/without.rb"; then echo "  ok  fixtures: one formula with the version line, one without"; else echo "FAIL  version-line fixtures not built" >&2; fails=1; fi
+if "$here/check-versions.sh" "$work/t" "$work/with.rb" >"$work/out" 2>&1; then echo "  ok  a formula with the version line passes"; else echo "FAIL  with line: $(cat "$work/out")" >&2; fails=1; fi
+if "$here/check-versions.sh" "$work/t" "$work/without.rb" >"$work/out" 2>&1; then echo "  ok  a formula with no version line passes (version from the URLs)"; else echo "FAIL  without line: $(cat "$work/out")" >&2; fails=1; fi
+if "$here/check-versions.sh" "$work/t" "$work/without.rb" "$sums0" >"$work/out" 2>&1; then echo "  ok  a formula with no version line passes against SHA256SUMS"; else echo "FAIL  without line, sums: $(cat "$work/out")" >&2; fails=1; fi
+with_line "9.9.9" > "$work/stale.rb"
+if "$here/check-versions.sh" "$work/t" "$work/stale.rb" >"$work/out" 2>&1; then echo "FAIL  a stale version line passed" >&2; fails=1; elif grep -q 'formula.*version' "$work/out"; then echo "  ok  notices: a version line that disagrees"; else echo "FAIL  stale line message: $(cat "$work/out")" >&2; fails=1; fi
+sed 's#/download/v[^/]*/#/download/v9.9.9/#' "$work/without.rb" > "$work/other.rb"
+if "$here/check-versions.sh" "$work/t" "$work/other.rb" >"$work/out" 2>&1; then echo "FAIL  no version line and URLs of another release passed" >&2; fails=1; elif grep -q 'formula.*url' "$work/out"; then echo "  ok  notices: no version line and the URLs name another release"; else echo "FAIL  other-release message: $(cat "$work/out")" >&2; fails=1; fi
+sed -e 's#klatch-[0-9][0-9a-z.-]*-\(aarch64-apple-darwin\)#klatch-9.9.9-\1#' "$work/without.rb" > "$work/other2.rb"
+if "$here/check-versions.sh" "$work/t" "$work/other2.rb" >"$work/out" 2>&1; then echo "FAIL  no version line and one archive of another version passed" >&2; fails=1; else echo "  ok  notices: no version line and one archive carries another version"; fi
 fresh
 if "$here/check-versions.sh" "$work/t" "$work/nope.rb" >/dev/null 2>&1; then echo "FAIL  a missing formula file passed" >&2; fails=1; else echo "  ok  a formula path that does not exist fails"; fi
 # a SHA256SUMS file: every sha256 line must match its archive's line

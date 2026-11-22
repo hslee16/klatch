@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compare two Homebrew formulas, the staged copy (release/homebrew/klatch.rb) and the tap's (#1260). They may differ in the
-# version, the download URLs and the SHA-256 values, and in nothing else: any other difference is drift, printed as a diff
+# version line (present or absent), the download URLs and the SHA-256 values, and in nothing else: any other difference is drift, printed as a diff
 # on stderr with a non-zero status.
 #
 #   release/compare-formula.sh [--allow-klatch-server] <staged formula> <tap formula>
@@ -22,7 +22,9 @@ for f in "$1" "$2"; do [ -f "$f" ] || { echo "compare-formula: no file $f" >&2; 
 work="$(mktemp -d "${TMPDIR:-/tmp}/klatch-cmpf.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 normalize() {
-  sed -E -e 's/^([[:space:]]*)version "[^"]*"[[:space:]]*$/\1version "VERSION"/' \
+  # a version line is dropped, not masked: the formula has none since #1297 (brew audit --strict rejects it as redundant with
+  # the URL), and a line on one side only is not drift when the URLs agree
+  sed -E -e '/^[[:space:]]*version "[^"]*"[[:space:]]*$/d' \
     -e 's/^([[:space:]]*)url "[^"]*"[[:space:]]*$/\1url "URL"/' \
     -e 's/^([[:space:]]*)sha256 "[^"]*"[[:space:]]*$/\1sha256 "SHA256"/' "$1"
 }

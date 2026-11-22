@@ -55,7 +55,7 @@ echo "verify-published: klatch $version (tag $tag, PyPI $pypi)"
 
 # PyPI: the version is in the index (pre-releases need --pre)
 if out="$(python3 -m pip index versions klatch --pre 2> /dev/null)"; then
-  if printf '%s\n' "$out" | sed -n 's/^Available versions: *//p' | tr ',' '\n' | tr -d ' ' | grep -qx "$pypi"; then pass pypi "klatch $pypi is on PyPI"; else fail pypi "klatch $pypi is not in 'pip index versions klatch'"; fi
+  if sed -n 's/^Available versions: *//p' <<< "$out" | tr ',' '\n' | tr -d ' ' | grep -qx "$pypi"; then pass pypi "klatch $pypi is on PyPI"; else fail pypi "klatch $pypi is not in 'pip index versions klatch'"; fi
 else fail pypi "pip index versions klatch failed (pip too old, or no network)"; fi
 
 # npm: the version exists, is the latest, and carries provenance
@@ -86,7 +86,7 @@ print("draft" if d.get("draft") else "published", "prerelease" if d.get("prerele
   have="$(printf '%s' "$out" | python3 -I -c 'import json,sys
 print("\n".join(a["name"] for a in json.load(sys.stdin).get("assets", [])))' 2> /dev/null || true)"
   missing=""
-  for a in $want_assets; do printf '%s\n' "$have" | grep -qxF "$a" || missing="$missing $a"; done
+  for a in $want_assets; do grep -qxF "$a" <<< "$have" || missing="$missing $a"; done
   if [ -z "$missing" ]; then pass github-assets "all 6 archives, 6 SBOMs, install.sh, SHA256SUMS and its signature are attached"; else fail github-assets "missing:$missing"; fi
 else
   fail github-release "no release for tag $tag (gh api repos/$repo/releases/tags/$tag failed)"
@@ -96,7 +96,11 @@ fi
 # Homebrew tap: the formula on main names this version and this tag's four archives
 if out="$(fetch "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/Formula/klatch.rb" 2> /dev/null)"; then
   urls="$(printf '%s\n' "$out" | grep -cF "/$tag/klatch-$version-" || true)"
-  if printf '%s\n' "$out" | grep -qF "version \"$version\"" && [ "$urls" -eq 4 ]; then pass tap-formula "the tap formula is at $version with four $tag URLs (its CI result is on the tap pull request)"; else fail tap-formula "the tap formula does not name version $version with four $tag URLs (found $urls)"; fi
+  # no version line is the norm (brew audit --strict rejects it, #1297): the version is what the four URLs carry; a line, if there is one, must agree
+  vlines="$(printf '%s\n' "$out" | sed -n 's/^ *version "\(.*\)" *$/\1/p')"
+  if [ "$urls" -ne 4 ]; then fail tap-formula "the tap formula does not name the four $tag URLs for klatch $version (found $urls)"
+  elif [ -n "$vlines" ] && [ "$vlines" != "$version" ]; then fail tap-formula "the tap formula has a version line '$vlines', expected none or '$version'"
+  else pass tap-formula "the tap formula names the four $tag URLs for klatch $version${vlines:+ (and a matching version line)} (its CI result is on the tap pull request)"; fi
 else fail tap-formula "could not fetch Formula/klatch.rb from hslee16/homebrew-klatch main"; fi
 
 # Homebrew tap drift: the tap formula, read over REST, equals the staged copy in this repository (release/homebrew/klatch.rb)
@@ -117,8 +121,8 @@ else
   installdir="$(mktemp -d "${TMPDIR:-/tmp}/klatch-verify.XXXXXX")"
   if python3 -m venv "$installdir/venv" > /dev/null 2>&1 && "$installdir/venv/bin/pip" install --pre --quiet "klatch==$pypi" > /dev/null 2>&1; then
     out="$(env KLATCH_HOME="$installdir/home" KLATCH_KEY_DIR="$installdir/keys" "$installdir/venv/bin/klatch" --version 2> /dev/null || true)"
-    if printf '%s\n' "$out" | grep -qF "klatch $version"; then pass install-klatch "klatch --version prints '$out'"; else fail install-klatch "klatch --version printed '${out:-nothing}', expected 'klatch $version'"; fi
-    if [ -x "$installdir/venv/bin/klatch-server" ] && out="$("$installdir/venv/bin/klatch-server" --help 2> /dev/null)" && printf '%s\n' "$out" | grep -qF "usage: klatch-server"; then pass install-klatch-server "klatch-server --help prints its usage"; else fail install-klatch-server "klatch-server is missing or its --help failed"; fi
+    if grep -qF "klatch $version" <<< "$out"; then pass install-klatch "klatch --version prints '$out'"; else fail install-klatch "klatch --version printed '${out:-nothing}', expected 'klatch $version'"; fi
+    if [ -x "$installdir/venv/bin/klatch-server" ] && out="$("$installdir/venv/bin/klatch-server" --help 2> /dev/null)" && grep -qF "usage: klatch-server" <<< "$out"; then pass install-klatch-server "klatch-server --help prints its usage"; else fail install-klatch-server "klatch-server is missing or its --help failed"; fi
   else
     fail install-klatch "could not create a virtual environment or pip install klatch==$pypi"
     fail install-klatch-server "no install to run it from"
