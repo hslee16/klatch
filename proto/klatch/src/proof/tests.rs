@@ -253,10 +253,10 @@ fn a_second_proof_inside_the_window_does_not_ask_and_one_after_it_does() {
     };
     prove(&s, &mut Typed::new(&[PASS]), when(0, 10), &unlock, "a test").unwrap();
     let mut quiet = Typed::new(&[]);
-    prove(&s, &mut quiet, when(299, 309), &unlock, "a test").unwrap();
+    prove(&s, &mut quiet, when(59, 69), &unlock, "a test").unwrap();
     assert_eq!(quiet.asked, 0, "inside the window: no prompt");
     let mut again = Typed::new(&[PASS]);
-    prove(&s, &mut again, when(300, 310), &unlock, "a test").unwrap();
+    prove(&s, &mut again, when(60, 70), &unlock, "a test").unwrap();
     assert_eq!(again.asked, 1, "after the window: asked");
 }
 
