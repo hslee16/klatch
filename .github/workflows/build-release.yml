@@ -115,26 +115,11 @@ jobs:
           done
           ls -l wheels
 
-      # Every wheel installs both commands (#1236), executable, with the licences.
+      # Every wheel installs both commands (#1236), executable, with the licences (#1243).
       - name: Check each wheel holds klatch, klatch-server and the licences
         run: |
           set -euo pipefail
-          python3 -I - wheels/*.whl <<'PY'
-          import re, sys, zipfile
-          for path in sys.argv[1:]:
-              zf = zipfile.ZipFile(path)
-              names = zf.namelist()
-              version = re.match(r"klatch-([^-]+)-", path.split("/")[-1]).group(1)
-              for want in ("scripts/klatch", "scripts/klatch-server", "licenses/LICENSE", "licenses/THIRD-PARTY-LICENSES.txt"):
-                  hits = [n for n in names if n.endswith("/" + want) and version in n]
-                  if not hits:
-                      sys.exit(path + " does not contain " + want)
-              for script in ("klatch", "klatch-server"):
-                  mode = zf.getinfo("klatch-" + version + ".data/scripts/" + script).external_attr >> 16
-                  if not mode & 0o111:
-                      sys.exit(path + ": " + script + " is not executable")
-              print(path, "ok")
-          PY
+          for w in wheels/*.whl; do release/check-package-contents.sh wheel "$w"; done
 
       # What PyPI would reject at upload (broken metadata, a bad description) fails here instead.
       - name: Check the wheels' metadata the way PyPI does
@@ -183,6 +168,13 @@ jobs:
           node --experimental-strip-types --test package.test.ts
           mkdir -p "$RUNNER_TEMP/npm-dist"
           npm pack --pack-destination "$RUNNER_TEMP/npm-dist"
+
+      # dist, README, LICENSE and package.json only; the npm package holds no binary (#1243).
+      - name: The tarball holds dist, README and LICENSE and no binary
+        working-directory: .
+        run: |
+          set -euo pipefail
+          for t in "$RUNNER_TEMP"/npm-dist/*.tgz; do release/check-package-contents.sh npm "$t"; done
 
       - name: Upload the tarball
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
