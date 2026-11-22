@@ -115,7 +115,7 @@ fn lost_key(w: &World) -> Res {
         "the store is readable on disk",
     )?;
     // the code is shown behind the terminal gate and is audited
-    let code = w.admin(&["recovery"], "");
+    let code = w.admin(&["recovery"], "recovery");
     check(code.ok, format!("recovery failed: {}", code.stderr))?;
     let code_line = code
         .stdout
@@ -282,7 +282,7 @@ fn protect_private_label(w: &World) -> Result<(), String> {
 
 /// The recovery code that `admin recovery` prints for the label key.
 fn label_recovery_code(w: &World) -> Result<String, String> {
-    let codes = w.admin(&["recovery"], "");
+    let codes = w.admin(&["recovery"], "recovery");
     let code = codes
         .stdout
         .lines()

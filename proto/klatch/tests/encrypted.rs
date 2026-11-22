@@ -137,6 +137,6 @@ fn the_key_commands_need_a_real_terminal_like_every_admin_command() {
         vec!["admin", "rotate-key"],
     ] {
         let err = h.fail("alice", &args);
-        assert!(err.contains("real terminal"), "{args:?}: {err}");
+        assert!(err.contains("terminal"), "{args:?}: {err}");
     }
 }

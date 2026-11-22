@@ -207,6 +207,10 @@ pub fn prove<S: PolicyStore + ?Sized>(
         Ok(c) => c,
         Err(wait) => return Err(ProofError::Locked(wait)),
     };
+    // the verifier is read again now that the attempt is known: a passphrase changed while the person was typing
+    // is checked against, never the old one
+    let verifier = load(store)?;
+    let id = verifier.id();
     if !verifier.verify(&typed) {
         audit(
             store,
@@ -218,15 +222,26 @@ pub fn prove<S: PolicyStore + ?Sized>(
         return Err(ProofError::Wrong);
     }
     limit::clear(store, at.unix)?;
+    let mut opened_for = id;
     if verifier.is_stale()
         && let Ok(fresh) = Verifier::create(&typed, verifier::CURRENT)
     {
-        store.policy_set(VERIFIER_KEY, Some(&fresh.encode()), at.unix)?;
-        audit(store, "passphrase-rehashed", "", "cost raised", at.unix);
-        unlock.open(at.mono, &fresh.id());
-    } else {
-        unlock.open(at.mono, &id);
+        // rewritten only if the row is still exactly the one that was verified, in one transaction
+        let old = verifier.encode();
+        let swapped = std::cell::Cell::new(false);
+        store.atomically(&mut || {
+            if store.policy_get(VERIFIER_KEY)?.as_deref() == Some(old.as_str()) {
+                store.policy_set(VERIFIER_KEY, Some(&fresh.encode()), at.unix)?;
+                swapped.set(true);
+            }
+            Ok(())
+        })?;
+        if swapped.get() {
+            audit(store, "passphrase-rehashed", "", "cost raised", at.unix);
+            opened_for = fresh.id();
+        }
     }
+    unlock.open(at.mono, &opened_for);
     audit(
         store,
         "proof-ok",
@@ -366,12 +381,38 @@ pub fn reset<S: PolicyStore + ?Sized>(
     Ok(AdminProof(()))
 }
 
-/// The proof for the two keystore acts that must work when the store cannot be read (and so the verifier cannot):
-/// `admin restore` with the store lost or damaged. The person types the store's recovery code (`expected`, as
-/// `klatch admin recovery` shows it); the comparison is constant time. No failure limit exists to charge (it lives
-/// in the store), and none is needed against a 256-bit code. Whoever holds the code can already restore the key and
-/// read the store.
-pub fn prove_by_recovery_code(
+/// The proof for `admin restore` when the store is lost or damaged (so the verifier cannot be read): the person types
+/// the store's recovery code, which is compared in constant time with the code of the key in the keystore. There is no
+/// failure limit to charge (it lives in the store; ticketed); a 256-bit code is not guessable. Whoever holds the
+/// code can already restore the key and read the store. Private checks below build the proof; nothing outside this
+/// module can build one from a bare yes.
+pub fn recovery_proof_for_restore(
+    db: &std::path::Path,
+    prompt: &mut dyn Prompt,
+    what: &str,
+) -> Result<AdminProof, ProofError> {
+    let key = crate::member::custody::current_key(db)
+        .map_err(|e| ProofError::Store(e.to_string()))?
+        .ok_or_else(|| {
+            ProofError::Rejected(
+                "this store has no key; restore the key first with `klatch admin recover`".into(),
+            )
+        })?;
+    prove_by_recovery_code(&crate::keys::recovery_code(&key), prompt, what)
+}
+
+/// The proof for `admin recover` (the store key) when the key is lost: the recovery code given is the credential,
+/// and it counts only if the key it makes opens an existing ENCRYPTED store file. No store, an empty or a plaintext
+/// one, or a key that does not open it, is refused: no code is good where there is nothing to check it against.
+pub fn recovery_proof_for_recover(
+    db: &std::path::Path,
+    code: &str,
+) -> Result<AdminProof, ProofError> {
+    let key = crate::keys::restore(code).map_err(|e| ProofError::Rejected(e.to_string()))?;
+    prove_by_key_that_opens(crate::member::custody::opens_encrypted_store(db, &key))
+}
+
+fn prove_by_recovery_code(
     expected: &str,
     prompt: &mut dyn Prompt,
     what: &str,
@@ -392,9 +433,7 @@ pub fn prove_by_recovery_code(
     }
 }
 
-/// The proof for `admin recover` when the key is lost: the recovery code the person gave is the credential, and it
-/// counts only if the key it makes opens the store (`opens`, which the caller checks against the store file).
-pub fn prove_by_key_that_opens(opens: bool) -> Result<AdminProof, ProofError> {
+fn prove_by_key_that_opens(opens: bool) -> Result<AdminProof, ProofError> {
     if opens {
         Ok(AdminProof(()))
     } else {

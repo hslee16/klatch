@@ -16,6 +16,8 @@ pub struct PtyRun {
     pub status: ExitStatus,
     /// Everything the program wrote to the terminal, with carriage returns removed.
     pub text: String,
+    /// What the child wrote to a PIPE standard output (only for `run_on_pty_stdout_piped`).
+    pub piped_stdout: String,
 }
 
 impl PtyRun {
@@ -52,29 +54,40 @@ fn pty() -> (OwnedFd, OwnedFd) {
 
 /// Run `cmd` on a pseudo-terminal, typing `typed` one line per prompt. Kills the child after 120 seconds.
 pub fn run_on_pty(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with_stdin(cmd, typed, None)
+    run_with(cmd, typed, None, false)
+}
+
+/// As `run_on_pty`, but standard OUTPUT is a pipe (`klatch admin recovery | cat`) while the terminal stays the
+/// controlling terminal, standard input and error: a program that shares the human's terminal and captures what a
+/// command prints (#1233).
+pub fn run_on_pty_stdout_piped(cmd: Command, typed: &[&str]) -> PtyRun {
+    run_with(cmd, typed, None, true)
 }
 
 /// As `run_on_pty`, but standard input is a PIPE carrying `stdin_text` while the terminal is still the child's
 /// controlling terminal and its output: an agent that shares the human's terminal and pipes its own input (#1233).
 pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRun {
-    run_with_stdin(cmd, typed, Some(stdin_text))
+    run_with(cmd, typed, Some(stdin_text), false)
 }
 
-fn run_with_stdin(mut cmd: Command, typed: &[&str], piped: Option<&str>) -> PtyRun {
+fn run_with(mut cmd: Command, typed: &[&str], piped: Option<&str>, out_piped: bool) -> PtyRun {
     let (master, slave) = pty();
-    cmd.stdout(Stdio::from(slave.try_clone().unwrap()))
-        .stderr(Stdio::from(slave.try_clone().unwrap()));
+    cmd.stderr(Stdio::from(slave.try_clone().unwrap()));
+    if out_piped {
+        cmd.stdout(Stdio::piped());
+    } else {
+        cmd.stdout(Stdio::from(slave.try_clone().unwrap()));
+    }
     if piped.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
         cmd.stdin(Stdio::from(slave.try_clone().unwrap()));
     }
-    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours. Descriptor 1 is always the terminal.
+    // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours. Descriptor 2 is always the terminal.
     unsafe {
         cmd.pre_exec(|| {
             libc::setsid();
-            libc::ioctl(1, libc::TIOCSCTTY as _, 0);
+            libc::ioctl(2, libc::TIOCSCTTY as _, 0);
             Ok(())
         });
     }
@@ -127,6 +140,15 @@ fn run_with_stdin(mut cmd: Command, typed: &[&str], piped: Option<&str>) -> PtyR
             break;
         }
     }
+    let mut piped_stdout = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        use std::io::Read;
+        let _ = out.read_to_string(&mut piped_stdout);
+    }
     let status = child.wait().expect("wait");
-    PtyRun { status, text }
+    PtyRun {
+        status,
+        text,
+        piped_stdout,
+    }
 }

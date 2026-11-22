@@ -206,9 +206,11 @@ fn opens_existing_store(db: &Path, key: &Key) -> bool {
     !has_data(db) || is_plaintext(db) || SqliteStore::open(db, key).is_ok()
 }
 
-/// Whether `key` opens the store file (true when there is no store with data yet to open).
-pub fn key_opens_store(db: &Path, key: &Key) -> bool {
-    opens_existing_store(db, key)
+/// Whether an ENCRYPTED store file exists that `key` opens. False for no file, an empty or plaintext one, and a
+/// key that fails: the proof by a recovery code (`proof::recovery_proof_for_recover`) needs a real store to check
+/// the code against, so a missing store never makes any code good.
+pub fn opens_encrypted_store(db: &Path, key: &Key) -> bool {
+    db.exists() && has_data(db) && !is_plaintext(db) && SqliteStore::open(db, key).is_ok()
 }
 
 /// Put `key` in as the store's key, after checking that it opens the store when one exists.

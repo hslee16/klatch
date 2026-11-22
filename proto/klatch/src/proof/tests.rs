@@ -563,3 +563,44 @@ fn init_does_not_overwrite_a_passphrase_set_while_it_was_asking() {
     assert!(!kept.verify(PASS));
     assert!(!actions(&s).contains(&"passphrase-set".to_string()));
 }
+
+/// Types `typed`, and while it is typing another process replaces the stored passphrase.
+struct ChangingPrompt<'a> {
+    store: &'a SqliteStore,
+    typed: &'static str,
+}
+
+impl Prompt for ChangingPrompt<'_> {
+    fn secret(&mut self, _label: &str) -> Result<Zeroizing<String>, ProofError> {
+        store_verifier(
+            self.store,
+            &Verifier::create("changed meanwhile by someone", CHEAP).unwrap(),
+            5,
+        )
+        .unwrap();
+        Ok(Zeroizing::new(self.typed.to_string()))
+    }
+}
+
+#[test]
+fn a_passphrase_changed_while_asking_is_neither_overwritten_by_a_rehash_nor_proved_against_the_old_one()
+ {
+    let s = store();
+    with_pass(&s); // a verifier of weaker cost, which a success would rewrite
+    let mut p = ChangingPrompt {
+        store: &s,
+        typed: PASS,
+    };
+    let e = prove(&s, &mut p, at(10), &Unlock::new(), "a test").unwrap_err();
+    assert_eq!(
+        e,
+        ProofError::Wrong,
+        "the old passphrase proved against the new verifier"
+    );
+    let kept = Verifier::parse(&s.policy_get(VERIFIER_KEY).unwrap().unwrap()).unwrap();
+    assert!(
+        kept.verify("changed meanwhile by someone"),
+        "the change was overwritten"
+    );
+    assert!(!actions(&s).contains(&"passphrase-rehashed".to_string()));
+}

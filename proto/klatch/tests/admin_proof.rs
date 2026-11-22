@@ -399,7 +399,7 @@ fn nothing_the_human_typed_is_left_in_any_file_of_the_home() {
     let h = Home::new();
     assert!(h.admin(&["lease-cap", "100"], &[]).ok());
     let _ = run_on_pty(klatch_in(&h, &["resume".to_string()]), &[WRONG]);
-    assert!(h.admin(&["recovery"], &[]).ok());
+    assert!(h.admin(&["recovery"], &["recovery"]).ok());
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let p = e.path();
@@ -534,7 +534,7 @@ fn changing_the_passphrase_needs_the_old_one_and_then_only_the_new_one_works() {
 #[test]
 fn the_recovery_code_resets_a_forgotten_passphrase_and_a_wrong_code_does_not() {
     let h = Home::new();
-    let shown = h.admin(&["recovery"], &[]);
+    let shown = h.admin(&["recovery"], &["recovery"]);
     assert!(shown.ok(), "{}", shown.text);
     let code = shown
         .text
@@ -600,7 +600,7 @@ fn a_member_cannot_take_the_name_the_proof_makes() {
 // ---- a process that shares the human's terminal (#1233 review) ----
 
 fn recovery_code_of(h: &Home) -> String {
-    let shown = h.admin(&["recovery"], &[]);
+    let shown = h.admin(&["recovery"], &["recovery"]);
     assert!(shown.ok(), "{}", shown.text);
     shown
         .text
@@ -733,4 +733,109 @@ fn restore_works_when_the_store_is_lost_and_asks_for_the_recovery_code() {
     // the backup carried the verifier: the passphrase works again
     let after = h.admin(&["lease-cap", "100"], &[]);
     assert!(after.ok(), "{}", after.text);
+}
+
+// ---- the second review of #1271 ----
+
+#[test]
+fn secrets_are_never_printed_to_a_pipe_even_on_a_shared_terminal() {
+    // `klatch admin recovery | cat` from a program sharing the human's terminal: refused before any prompt
+    let h = Home::new();
+    h.set_passphrase();
+    let f = h.0.join("a.jsonl").to_string_lossy().into_owned();
+    let cases: Vec<Vec<String>> = vec![
+        vec!["recovery".into()],
+        vec!["export".into(), "r".into()],
+        vec!["run-archive".into(), f, "--run".into(), "r".into()],
+        vec!["rotate-key".into()],
+        vec!["rotate-label-key".into(), "private".into()],
+    ];
+    for args in cases {
+        let r = common::pty::run_on_pty_stdout_piped(klatch_in(&h, &args), &[PASS, "x", "x"]);
+        assert!(!r.ok(), "{args:?} printed to a pipe:\n{}", r.text);
+        assert!(r.piped_stdout.is_empty(), "{args:?}: {}", r.piped_stdout);
+        assert!(r.text.contains("standard output"), "{args:?}: {}", r.text);
+        assert!(
+            !r.text.contains("admin passphrase to approve"),
+            "{args:?}: the human was asked to approve a command that cannot show them its answer:\n{}",
+            r.text
+        );
+    }
+}
+
+#[test]
+fn recovery_asks_for_a_typed_confirmation_before_it_shows_the_code() {
+    let h = Home::new();
+    h.set_passphrase();
+    let no = run_on_pty(klatch_in(&h, &["recovery".to_string()]), &[PASS, "nope"]);
+    assert!(!no.ok(), "{}", no.text);
+    assert!(no.text.contains("not confirmed"), "{}", no.text);
+    assert!(!no.text.contains("KLATCH-"), "{}", no.text);
+}
+
+#[test]
+fn recover_without_a_store_never_plants_a_key() {
+    // a valid code from another store, and a home where no store exists: nothing may be planted
+    let a = Home::new();
+    let code = recovery_code_of(&a);
+    let b = Home::new();
+    let r = run_on_pty(
+        klatch_in(&b, &["recover".to_string(), code]),
+        &["recover", "recover"],
+    );
+    assert!(
+        !r.ok(),
+        "a key was planted where no store exists:\n{}",
+        r.text
+    );
+    let planted = std::fs::read_dir(b.0.join("keys"))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(planted, 0, "a key file was written");
+}
+
+#[test]
+fn the_prompts_name_the_store_and_the_backup_file() {
+    let h = Home::new();
+    h.set_passphrase();
+    let r = run_on_pty(
+        klatch_in(&h, &["lease-cap".to_string(), "100".to_string()]),
+        &[WRONG],
+    );
+    assert!(r.text.contains("rooms.db"), "the store path: {}", r.text);
+    let backup = h.0.join("backup.db");
+    assert!(h.admin(&["backup", backup.to_str().unwrap()], &[]).ok());
+    for f in ["rooms.db", "rooms.db-wal", "rooms.db-shm"] {
+        let _ = std::fs::remove_file(h.0.join(f));
+    }
+    let r = run_on_pty(
+        klatch_in(
+            &h,
+            &["restore".to_string(), backup.to_str().unwrap().to_string()],
+        ),
+        &[WRONG, "restore"],
+    );
+    assert!(
+        r.text.contains(backup.to_str().unwrap()),
+        "the backup path must be in the prompt: {}",
+        r.text
+    );
+}
+
+#[test]
+fn text_from_arguments_cannot_dress_up_a_prompt() {
+    let h = Home::new();
+    h.set_passphrase();
+    let hostile = "lobby\u{202e}live\u{1b}[31m\u{200b}red\r\nadmin passphrase: ";
+    let r = run_on_pty(
+        klatch_in(&h, &["close".to_string(), hostile.to_string()]),
+        &[WRONG, "x"],
+    );
+    for bad in ['\u{202e}', '\u{1b}', '\u{200b}'] {
+        assert!(
+            !r.text.contains(bad),
+            "{bad:?} reached the terminal: {:?}",
+            r.text
+        );
+    }
 }

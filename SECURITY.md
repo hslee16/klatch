@@ -38,7 +38,14 @@ Supported versions: the newest release only, the current practice and not a poli
   of a destructive act is read from the terminal, never from a pipe) or feed `klatch admin shell` (which refuses
   unless standard input is itself a terminal). The prompt names the exact command it approves (`admin close
   lobby`; the shell says it opens an unlock window for ALL admin and launcher commands): read it, and type the
-  passphrase only for a command you asked for. A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
+  passphrase only for a command you asked for.
+  Commands that print a secret (`admin recovery`, `export`, `run-archive`, `rotate-key`, `rotate-label-key`) refuse
+  before any prompt when standard output is not a terminal, so a program on your terminal cannot capture the answer
+  through a pipe, and `recovery` asks for a typed confirmation. Text from arguments is shown with control characters,
+  escape sequences, bidi overrides and zero-width marks removed, a recovery code is never shown, and the prompt names
+  the store file. `worker issue` writes a bundle to the path it is given and is not covered (#1282); `anchor github`
+  reads its events from standard input and the prompt cannot show them (#1279); an open `klatch admin shell` window
+  on a shared terminal is exposed to injected keystrokes (#1280). A wrong passphrase is charged before it is checked, so many processes guessing at once each cost one:
   three are free, then 30 seconds, doubling, up to 15 minutes, and the right one is refused while the wait runs. The
   audit keeps `proof-ok`, `proof-failed` with a count, and the other rows, never an attempt. The comparison is
   constant time. Once proved, a command is the principal `human` (`Verified`, a name no member may take), and a guard
@@ -52,7 +59,7 @@ Supported versions: the newest release only, the current practice and not a poli
   The verifier lives in the encrypted store, so when the key is lost (or the store file is) it cannot be read:
   `klatch admin recover` (the store key) and `klatch admin restore` are then approved by the recovery code (given
   as the argument for `recover`, and it must open the store file; typed for `restore`) and the typed confirmation
-  instead of the passphrase, and the command says so. Whoever holds the code can already do both.
+  instead of the passphrase, and the command says so. `recover` counts only when the code opens an existing encrypted store file (no store, an empty or a plaintext one is refused), and the `restore` prompt names the backup file. Whoever holds the code can already do both. These attempts have no failure limit (#1281).
   Upgrading an existing install: until a passphrase is set every admin, launcher and keystore command refuses and
   says to run `klatch admin init-passphrase`; run it once, right after upgrading, in a terminal of your own. The old
   terminal and process-tree check is gone, not kept as a fallback.

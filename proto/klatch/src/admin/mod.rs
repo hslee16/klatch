@@ -312,6 +312,7 @@ fn confirmation(cmd: &AdminCmd) -> Option<String> {
     match cmd {
         AdminCmd::Pause => Some("pause".into()),
         AdminCmd::Close { room } => Some(room.clone()),
+        AdminCmd::Recovery => Some("recovery".into()),
         AdminCmd::Recover { .. } => Some("recover".into()),
         AdminCmd::RotateKey => Some("rotate".into()),
         AdminCmd::RotateLabelKey { label } => Some(label.clone()),
@@ -356,10 +357,37 @@ fn confirm(expected: Option<String>) -> Result<()> {
 const SHELL_APPROVAL: &str =
     "open an admin shell: an unlock window for ALL admin and launcher commands";
 
+/// The keystore acts that print a secret (a recovery code, the plaintext of a room or an archive). Run with standard
+/// output piped, the person would approve a prompt for something the program on the other end of the pipe reads, so
+/// they are refused before anyone is asked (#1233).
+fn prints_a_secret(k: &route::Keystore) -> bool {
+    use route::{KeyAct, Keystore};
+    matches!(
+        k,
+        Keystore::Key(
+            KeyAct::Recovery
+                | KeyAct::Export { .. }
+                | KeyAct::RunArchive { .. }
+                | KeyAct::RotateKey
+                | KeyAct::RotateLabelKey { .. }
+        )
+    )
+}
+
 pub fn run(cmd: AdminCmd) -> Result<()> {
+    use std::io::IsTerminal;
     let typed_target = confirmation(&cmd);
     let db = db_path()?;
-    match Route::from(cmd) {
+    let route = Route::from(cmd);
+    if let Route::Keystore(k) = &route
+        && prints_a_secret(k)
+        && !std::io::stdout().is_terminal()
+    {
+        bail!(
+            "this command prints a secret and standard output is not a terminal, so nothing was asked or done; run it yourself in a terminal"
+        );
+    }
+    match route {
         // the two acts that cannot ask for the passphrase: there is none yet, or it is forgotten
         Route::Passphrase(Passphrase::Init) => prove::init_passphrase(&db),
         Route::Passphrase(Passphrase::Reset) => prove::reset_passphrase(&db),
