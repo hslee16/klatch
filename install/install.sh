@@ -1,6 +1,6 @@
 #!/bin/sh
 # klatch installer (#429): downloads the release archive for this machine, checks its SHA-256 against the release's
-# SHA256SUMS, and installs the `klatch` binary into a directory you own. It never uses sudo and never changes an
+# SHA256SUMS, and installs the `klatch` and `klatch-server` binaries (both are in the one archive) into a directory you own. It never uses sudo and never changes an
 # existing install unless every check has passed.
 #
 #   curl -fsSLO https://github.com/hslee16/klatch/releases/download/<tag>/install.sh   # download it,
@@ -12,7 +12,7 @@
 #
 # Settings (environment):
 #   KLATCH_VERSION      release tag, for example v0.1.0.dev1 (default: the newest release, pre-releases included)
-#   KLATCH_INSTALL_DIR  where to put the binary (default: ~/.local/bin)
+#   KLATCH_INSTALL_DIR  where to put the binaries (default: ~/.local/bin)
 #
 # If the GitHub CLI is installed and logged in, the download's build provenance is verified too
 # (`gh attestation verify`); otherwise only the checksum is. See SECURITY.md for verifying by hand.
@@ -170,16 +170,27 @@ fi
 
 # --- install -----------------------------------------------------------------------------------------------------
 tar -xzf "$tmp/$archive" -C "$tmp" || die "could not unpack $archive"
-[ -f "$tmp/$name/klatch" ] || die "$archive does not contain klatch"
+for bin in klatch klatch-server; do
+  [ -f "$tmp/$name/$bin" ] || die "$archive does not contain $bin; nothing installed"
+done
 
 mkdir -p "$DEST" 2>/dev/null || die "cannot create $DEST (this installer never uses sudo; set KLATCH_INSTALL_DIR to a directory you own)"
 [ -w "$DEST" ] || die "cannot write to $DEST (this installer never uses sudo; set KLATCH_INSTALL_DIR to a directory you own)"
-# write beside the target and rename, so an existing install is replaced whole or not at all
-cp "$tmp/$name/klatch" "$DEST/.klatch.new.$$" || die "cannot write to $DEST"
-chmod 755 "$DEST/.klatch.new.$$"
-mv -f "$DEST/.klatch.new.$$" "$DEST/klatch"
+# Both binaries came out of the one archive whose checksum was verified above. Write both beside their targets first and
+# rename only when both are written, so an existing install is replaced whole or not at all.
+for bin in klatch klatch-server; do
+  if ! cp "$tmp/$name/$bin" "$DEST/.$bin.new.$$"; then
+    rm -f "$DEST/.klatch.new.$$" "$DEST/.klatch-server.new.$$"
+    die "cannot write to $DEST"
+  fi
+  chmod 755 "$DEST/.$bin.new.$$"
+done
+for bin in klatch klatch-server; do
+  mv -f "$DEST/.$bin.new.$$" "$DEST/$bin"
+done
 
 say "installed $("$DEST/klatch" --version) to $DEST/klatch"
+say "installed $("$DEST/klatch-server" --version) to $DEST/klatch-server"
 case "$version" in
   *-*) say "This is an early pre-release with no outside security review: not for sensitive data." ;;
 esac

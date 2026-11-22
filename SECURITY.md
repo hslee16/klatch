@@ -49,10 +49,15 @@ Supported versions: the newest release only, the current practice and not a poli
   test (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
   of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
-- **`klatch-server` is a separate claim.** It opens loopback listeners only (`127.0.0.1` or `::1` for `http` and the
-  webhook intake) and a Unix socket for `daemon`; it starts no program and makes no outbound connection. A test
-  (`proto/klatch-server/tests/no_network.rs`) pins this by inspecting the dependency tree and the source, again an audit
-  of what the code could do and not of one run. The shorter claim above covers `klatch` only.
+- **`klatch-server` is a second binary with a second, different claim.** It ships next to `klatch` in every archive,
+  wheel and Homebrew install, and it does open sockets, so the claim above does not cover it. Its claim is:
+  klatch-server opens loopback listeners only, starts no program and makes no outbound connection. A non-loopback bind
+  (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
+  closes a peer of another user, and no networking crate or HTTP client is in its dependency tree.
+  `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
+  the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
+  packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
+  not published on crates.io; it comes from the archives, the platform wheels and Homebrew.
 
 ## What is not protected (read this)
 

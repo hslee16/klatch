@@ -160,6 +160,7 @@ repo_checks() {
   check release/check-timeouts.sh \
     && check release/check-versions.sh \
     && check release/test-check-versions.sh \
+    && check release/test-package-archive.sh \
     && check bash -c 'cd clients/python && python3 -m unittest discover' \
     && check python3 -m unittest discover -s clients/recipes -p 'test_*.py' \
     && check release/changelog-fragments.sh check \

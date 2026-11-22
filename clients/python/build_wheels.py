@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build the klatch platform wheels (#431) from the release archives, with the standard library only.
 
-A platform wheel installs the `klatch` command (as a script in the environment's bin directory, the way ruff and uv
-ship theirs) and the Python client (`import klatch`). So `pipx install klatch` and `uvx klatch` give a working klatch
+A platform wheel installs the `klatch` and `klatch-server` commands (as scripts in the environment's bin directory, the
+way ruff and uv ship theirs) and the Python client (`import klatch`). So `pipx install klatch` and `uvx klatch` give a working klatch
 on macOS and Linux. The pure client wheel stays for every other platform.
 
     build_wheels.py --version 0.1.0.dev1 --target aarch64-apple-darwin --archive klatch-0.1.0-dev.1-aarch64-apple-darwin.tar.gz --out-dir dist
@@ -20,7 +20,8 @@ import tarfile
 import zipfile
 
 NAME = "klatch"
-SUMMARY = "A substrate for agent rooms (pre-release; the klatch command and the Python client)"
+SERVER_NAME = "klatch-server"
+SUMMARY = "A substrate for agent rooms (pre-release; the klatch and klatch-server commands and the Python client)"
 HOMEPAGE = "https://github.com/hslee16/klatch"
 REQUIRES_PYTHON = ">=3.9"
 # 1980-01-02, the earliest date a zip can hold, unless SOURCE_DATE_EPOCH says otherwise
@@ -105,19 +106,21 @@ def _metadata(version, readme_text, license_names):
     return "\n".join(lines) + "\n"
 
 
-def build_wheel(version, binary, tags, out_dir, license_file, notices_file, client_source, init_source, readme):
+def build_wheel(version, binary, server_binary, tags, out_dir, license_file, notices_file, client_source, init_source, readme):
     """Write one wheel and return its path. Raises FileNotFoundError if an input file is missing."""
     def read(path):
         with open(path, "rb") as f:
             return f.read()
 
     command = read(binary)
+    server = read(server_binary)
     dist_info = f"{NAME}-{version}.dist-info"
     data_dir = f"{NAME}-{version}.data"
     files = {  # name -> (bytes, mode)
         f"{NAME}/__init__.py": (read(init_source), 0o644),
         f"{NAME}/client.py": (read(client_source), 0o644),
         f"{data_dir}/scripts/{NAME}": (command, 0o755),
+        f"{data_dir}/scripts/{SERVER_NAME}": (server, 0o755),
         f"{dist_info}/licenses/LICENSE": (read(license_file), 0o644),
         f"{dist_info}/licenses/THIRD-PARTY-LICENSES.txt": (read(notices_file), 0o644),
     }
@@ -154,16 +157,18 @@ def from_archive(version, target, archive, out_dir, repo_root):
     tags = tags_for(target)
     with tarfile.open(archive) as tar, _scratch() as work:
         members = {os.path.basename(m.name): m for m in tar.getmembers() if m.isfile()}
-        for need in ("klatch", "LICENSE", "THIRD-PARTY-LICENSES.txt"):
+        for need in ("klatch", "klatch-server", "LICENSE", "THIRD-PARTY-LICENSES.txt"):
             if need not in members:
                 raise ValueError(f"{archive} does not contain {need}")
             with open(os.path.join(work, need), "wb") as f:
                 f.write(tar.extractfile(members[need]).read())
         binary = os.path.join(work, "klatch")
+        server_binary = os.path.join(work, "klatch-server")
         if target.endswith("apple-darwin"):
             check_macos_minimum(binary, tags[0])
+            check_macos_minimum(server_binary, tags[0])
         return build_wheel(
-            version=version, binary=binary, tags=tags, out_dir=out_dir,
+            version=version, binary=binary, server_binary=server_binary, tags=tags, out_dir=out_dir,
             license_file=os.path.join(work, "LICENSE"), notices_file=os.path.join(work, "THIRD-PARTY-LICENSES.txt"),
             client_source=os.path.join(repo_root, "clients", "python", "klatch_client.py"),
             init_source=os.path.join(repo_root, "clients", "python", "package", "wheel_init.py"),

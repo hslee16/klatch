@@ -17,6 +17,7 @@ import build_wheels as bw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAKE = b"#!/bin/sh\necho 'klatch 0.1.0-dev.1 (protocol 1, store schema 22)'\n"
+FAKE_SERVER = b"#!/bin/sh\necho 'klatch-server 0.1.0-dev.1'\n"
 
 
 def make_wheel(out, tags=("any",), version="0.1.0.dev1"):
@@ -25,12 +26,17 @@ def make_wheel(out, tags=("any",), version="0.1.0.dev1"):
     with open(binary, "wb") as f:
         f.write(FAKE)
     os.chmod(binary, 0o755)
+    server = os.path.join(work, "klatch-server")
+    with open(server, "wb") as f:
+        f.write(FAKE_SERVER)
+    os.chmod(server, 0o755)
     notices = os.path.join(work, "THIRD-PARTY-LICENSES.txt")
     with open(notices, "w") as f:
         f.write("notices\n")
     return bw.build_wheel(
         version=version,
         binary=binary,
+        server_binary=server,
         tags=list(tags),
         out_dir=out,
         license_file=os.path.join(HERE, "LICENSE"),
@@ -63,6 +69,7 @@ class WheelContents(unittest.TestCase):
             "klatch/__init__.py",
             "klatch/client.py",
             "klatch-0.1.0.dev1.data/scripts/klatch",
+            "klatch-0.1.0.dev1.data/scripts/klatch-server",
             "klatch-0.1.0.dev1.dist-info/METADATA",
             "klatch-0.1.0.dev1.dist-info/WHEEL",
             "klatch-0.1.0.dev1.dist-info/RECORD",
@@ -73,9 +80,10 @@ class WheelContents(unittest.TestCase):
 
     def test_the_command_is_executable_inside_the_wheel(self):
         zf = zipfile.ZipFile(make_wheel(self.out))
-        info = zf.getinfo("klatch-0.1.0.dev1.data/scripts/klatch")
-        mode = info.external_attr >> 16
-        self.assertTrue(stat.S_ISREG(mode) and mode & 0o111, oct(mode))
+        for script in ("klatch", "klatch-server"):
+            info = zf.getinfo(f"klatch-0.1.0.dev1.data/scripts/{script}")
+            mode = info.external_attr >> 16
+            self.assertTrue(stat.S_ISREG(mode) and mode & 0o111, f"{script} {oct(mode)}")
         # the files that are not programs are not executable
         client = zf.getinfo("klatch/client.py").external_attr >> 16
         self.assertFalse(client & 0o111, oct(client))
@@ -130,10 +138,26 @@ class WheelContents(unittest.TestCase):
         b = make_wheel(tempfile.mkdtemp(), ("any",))
         self.assertEqual(open(a, "rb").read(), open(b, "rb").read())
 
+    def test_a_missing_server_binary_is_an_error(self):
+        work = tempfile.mkdtemp(prefix="klatch-wheel-src-")
+        binary = os.path.join(work, "klatch")
+        with open(binary, "wb") as f:
+            f.write(FAKE)
+        with self.assertRaises(FileNotFoundError):
+            bw.build_wheel(
+                version="0.1.0.dev1", binary=binary, server_binary=os.path.join(work, "klatch-server"),
+                tags=["any"], out_dir=self.out,
+                license_file=os.path.join(HERE, "LICENSE"), notices_file=os.path.join(HERE, "LICENSE"),
+                client_source=os.path.join(HERE, "klatch_client.py"),
+                init_source=os.path.join(HERE, "package", "wheel_init.py"),
+                readme=os.path.join(HERE, "README.md"),
+            )
+
     def test_a_missing_binary_is_an_error(self):
         with self.assertRaises(FileNotFoundError):
             bw.build_wheel(
-                version="0.1.0.dev1", binary="/nonexistent/klatch", tags=["any"], out_dir=self.out,
+                version="0.1.0.dev1", binary="/nonexistent/klatch", server_binary="/nonexistent/klatch-server",
+                tags=["any"], out_dir=self.out,
                 license_file=os.path.join(HERE, "LICENSE"), notices_file=os.path.join(HERE, "LICENSE"),
                 client_source=os.path.join(HERE, "klatch_client.py"),
                 init_source=os.path.join(HERE, "package", "wheel_init.py"),
@@ -153,6 +177,10 @@ class Installing(unittest.TestCase):
         self.assertTrue(os.access(command, os.X_OK), "no executable klatch in the venv's bin")
         ran = subprocess.run([command, "--version"], capture_output=True, text=True, check=True)
         self.assertIn("klatch 0.1.0-dev.1", ran.stdout)
+        server = os.path.join(venv, "bin", "klatch-server")
+        self.assertTrue(os.access(server, os.X_OK), "no executable klatch-server in the venv's bin")
+        ran = subprocess.run([server, "--version"], capture_output=True, text=True, check=True)
+        self.assertIn("klatch-server 0.1.0-dev.1", ran.stdout)
         client = subprocess.run(
             [py, "-I", "-c", "import klatch; print(klatch.__version__, klatch.PROTOCOL_VERSION)"],
             capture_output=True, text=True, check=True, cwd=tempfile.gettempdir(),
@@ -160,6 +188,50 @@ class Installing(unittest.TestCase):
         # the wheel ships package/wheel_init.py, so the version it reports is the one in that file, whatever the release
         shipped = re.search(r'__version__ = "(.*)"', open(os.path.join(HERE, "package", "wheel_init.py")).read()).group(1)
         self.assertEqual(client.stdout.split(), [shipped, "1"])
+
+
+def make_archive(directory, members, name="klatch-0.1.0-dev.1-x86_64-unknown-linux-musl"):
+    """A release archive holding the named files (name -> bytes) under one directory."""
+    import io
+    import tarfile
+
+    path = os.path.join(directory, name + ".tar.gz")
+    with tarfile.open(path, "w:gz") as tar:
+        for member, data in members.items():
+            info = tarfile.TarInfo(f"{name}/{member}")
+            info.size = len(data)
+            info.mode = 0o755
+            tar.addfile(info, io.BytesIO(data))
+    return path
+
+
+class FromArchive(unittest.TestCase):
+    FILES = {
+        "klatch": FAKE, "klatch-server": FAKE_SERVER, "LICENSE": b"MIT\n", "THIRD-PARTY-LICENSES.txt": b"notices\n",
+    }
+
+    def build(self, members):
+        d = tempfile.mkdtemp(prefix="klatch-archive-")
+        return bw.from_archive(
+            "0.1.0.dev1", "x86_64-unknown-linux-musl", make_archive(d, members), os.path.join(d, "out"),
+            os.path.abspath(os.path.join(HERE, "..", "..")),
+        )
+
+    def test_a_wheel_built_from_an_archive_holds_both_commands(self):
+        names = set(zipfile.ZipFile(self.build(self.FILES)).namelist())
+        self.assertIn("klatch-0.1.0.dev1.data/scripts/klatch", names)
+        self.assertIn("klatch-0.1.0.dev1.data/scripts/klatch-server", names)
+
+    def test_the_server_in_the_wheel_is_the_server_in_the_archive(self):
+        zf = zipfile.ZipFile(self.build(self.FILES))
+        self.assertEqual(zf.read("klatch-0.1.0.dev1.data/scripts/klatch-server"), FAKE_SERVER)
+        self.assertEqual(zf.read("klatch-0.1.0.dev1.data/scripts/klatch"), FAKE)
+
+    def test_an_archive_without_the_server_is_refused(self):
+        members = {k: v for k, v in self.FILES.items() if k != "klatch-server"}
+        with self.assertRaises(ValueError) as caught:
+            self.build(members)
+        self.assertIn("klatch-server", str(caught.exception))
 
 
 class Tags(unittest.TestCase):

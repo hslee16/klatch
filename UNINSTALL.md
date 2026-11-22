@@ -49,6 +49,8 @@ How you installed them decides. Both binaries, `klatch` and `klatch-server`, go 
 | `pipx` / `uvx` / `pip` | `pipx uninstall klatch` (the wheel carries both binaries) or `pip uninstall klatch` |
 | `npm` | `npm uninstall @klatch/client` (the TypeScript client library; it never contained a binary) |
 
+If a `klatch-server daemon` is running, stop it first (`kill` its process; SIGTERM removes its socket).
+
 `klatch init` writes the absolute path of `klatch` into the hooks, so remove the hooks first (or at the same time);
 a hook that points at a binary that is gone prints one visible line and does nothing else.
 

@@ -144,6 +144,10 @@ A worker can be given a short-lived credential bundle so its messages are marked
 **other processes running as the same user can read the store and the key**, and it is not isolation from a hostile
 worker. There has been no outside review. [SECURITY.md](SECURITY.md) lists what is and is not protected.
 
+The release also ships a second binary, `klatch-server`, next to `klatch`. Its claim is a different one: klatch-server
+opens loopback listeners only, starts no program and makes no outbound connection. It refuses a non-loopback bind. The shorter
+claims about `klatch` do not cover it.
+
 **Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in everything
 klatch does.** At rest is done, with exceptions listed in SECURITY.md (claim text is plain inside the encrypted store;
 backups and archives made before a key rotation keep the old key's text). On the wire: Remote transports are not part of
