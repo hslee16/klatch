@@ -1,0 +1,1 @@
+- A page of checked launcher recipes (plain script, Makefile, team launcher, integrator, ask supervisor) with a doc test; the third-party orchestrator recipes (#414) remain unrun (#126).
