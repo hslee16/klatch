@@ -20,8 +20,9 @@ Supported versions: the newest release only, the current practice and not a poli
   through `secret-tool` on a session bus works, including replacing and deleting a key, and the key never appears on a
   command line; with no session bus, or an address that points nowhere, klatch keeps the key in a file in a 0700
   directory with mode 0600 and warns (`klatch doctor` shows the warning); a locked keyring with no display to unlock it
-  fails within seconds with a reason and writes no key file. Not tested: KWallet, KeePassXC, x86_64, a graphical unlock
-  prompt (#563); a locked keyring may read as "no key" (#561). The key is never put in the environment, on a command
+  fails within seconds with a reason and writes no key file, and so does a bus with no login collection (both read as a
+  locked-keyring error, never as "no key"). Not tested: KWallet, KeePassXC, x86_64, a graphical unlock
+  prompt (#563). The key is never put in the environment, on a command
   line, in a log or in a crash report, and it is wiped from memory when dropped. A recovery code
   (`klatch admin recovery`) restores it; with neither the keystore entry nor the code the data is gone.
 - **Administering, launching and the keystore (the admin passphrase, #1233).** Every `klatch admin` command, every

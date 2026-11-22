@@ -53,9 +53,15 @@ impl SecretService {
     /// `name` the caller is about to read, so the question that proves the service answers is also the first read
     /// and a command makes one keyring call, not two.
     pub fn detect(name: &str) -> Option<Self> {
+        Self::detect_in(SERVICE, name)
+    }
+
+    /// `detect` under another service name, so the tests against a real keyring each get items of their own.
+    #[doc(hidden)]
+    pub fn detect_in(service: &str, name: &str) -> Option<Self> {
         std::env::var_os("DBUS_SESSION_BUS_ADDRESS")?;
         Self {
-            service: SERVICE.to_string(),
+            service: service.to_string(),
             path: None,
             limit: CALL_LIMIT,
             prefetched: Default::default(),
@@ -101,7 +107,9 @@ impl SecretService {
             return Ok(());
         };
         if !out.status.success() {
-            return if said(&out).contains("Unknown object") {
+            // the text differs by daemon: gnome-keyring says "Object does not exist at path", others "Unknown object"
+            let text = said(&out);
+            return if text.contains("Unknown object") || text.contains("does not exist") {
                 Err(Error::Locked(
                     "the keyring has no default collection (no login keyring was created or unlocked); \
                      unlock or create it, then try again. klatch made no new key"
@@ -338,6 +346,9 @@ mod tests {
         (svc, dir)
     }
 
+    /// What gnome-keyring's own bus answers (seen in the container, #561).
+    const GONE_GNOME: &str = "echo \"Failed to get property Locked on interface org.freedesktop.Secret.Collection: Object does not exist at path \u{201c}/org/freedesktop/secrets/collection/login\u{201d}\" >&2; exit 1";
+
     const GONE: &str = "echo \"Failed to get property Locked: Unknown object '/org/freedesktop/secrets/aliases/default'.\" >&2; exit 1";
 
     #[test]
@@ -353,6 +364,16 @@ mod tests {
     #[test]
     fn a_silent_miss_with_no_login_collection_is_a_locked_error_not_no_key() {
         let (svc, _dir) = with_fake_bus(GONE);
+        let got = svc.get("store-a");
+        assert!(
+            matches!(&got, Err(Error::Locked(m)) if m.contains("no default collection")),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn gnome_keyrings_wording_for_a_missing_collection_is_a_locked_error_too() {
+        let (svc, _dir) = with_fake_bus(GONE_GNOME);
         let got = svc.get("store-a");
         assert!(
             matches!(&got, Err(Error::Locked(m)) if m.contains("no default collection")),

@@ -23,7 +23,7 @@ fn service_name() -> String {
 
 fn backend() -> (SecretService, String) {
     let service = service_name();
-    let svc = SecretService::detect(&service)
+    let svc = SecretService::detect_in(&service, "probe")
         .expect("a session bus and secret-tool are needed: run proto/linux-keys/run.sh");
     (svc, service)
 }
