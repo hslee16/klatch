@@ -4,7 +4,10 @@ Short list of the rules an agent follows here. Each links to the document that h
 
 ## At the start of a session
 
-If you coordinate (merge, sweep, report on open pull requests), run `proto/scripts/gh-watch ensure`, then arm a Monitor on
+If you coordinate (merge, sweep, report on open pull requests), run `proto/scripts/gh-watch status`: the durable way to keep the
+receiver and forwarder up is launchd (`proto/scripts/gh-watch install-launchd` prints the plists and commands for the human to
+run; an agent never installs them). When the receiver is down and nothing is installed, `proto/scripts/gh-watch ensure` is the
+`nohup` fallback. Then arm a Monitor on
 `tail -F <state dir>/gh-watch.log | grep --line-buffered -E 'ALERT|INFO'` and re-arm it when it expires (30 minutes). ALERT
 lines are what you report. Keep the slow poll as the backstop. `ensure` starts only the receiver. Only the human starts the
 forwarder (`gh webhook forward`), or an agent when the human explicitly asked for it in that session. Detail:

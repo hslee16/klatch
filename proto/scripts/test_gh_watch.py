@@ -615,5 +615,202 @@ class ReceiverTests(unittest.TestCase):
         self.assertTrue(stat.S_IMODE(os.stat(self.out).st_mode) & 0o077 == 0, "out dir should be private")
 
 
+class LaunchdTests(unittest.TestCase):
+    """`gh-watch install-launchd` only PRINTS (#1343); `gh-watch-forward` is the reviewed wrapper the plist points to."""
+
+    RECEIVER_LABEL = "dev.klatch.gh-watch-receiver"
+    FORWARDER_LABEL = "dev.klatch.gh-watch-forwarder"
+    SECRET_TEXT = "WRAPPERSECRETVALUE"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = self.tmp.name
+        self.bin = os.path.join(self.t, "bin")
+        os.mkdir(self.bin)
+        self.rec = os.path.join(self.t, "ran")
+        for name in ("gh", "launchctl"):
+            with open(os.path.join(self.bin, name), "w") as f:
+                f.write('#!/bin/sh\necho "%s $@" >> "%s"\nexit 0\n' % (name, self.rec))
+            os.chmod(os.path.join(self.bin, name), 0o755)
+        self.state = os.path.join(self.t, "state")
+        self.env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def install(self, *args):
+        r = subprocess.run([LAUNCHER, "install-launchd", "--out-dir", self.state, *args], env=self.env,
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def plists(self, out):
+        blocks = []
+        rest = out
+        while "<?xml" in rest:
+            a = rest.index("<?xml")
+            b = rest.index("</plist>", a) + len("</plist>")
+            blocks.append(rest[a:b])
+            rest = rest[b:]
+        return blocks
+
+    def test_prints_two_wellformed_plists(self):
+        import plistlib
+        out = self.install()
+        blocks = self.plists(out)
+        self.assertEqual(len(blocks), 2)
+        parsed = [plistlib.loads(b.encode()) for b in blocks]
+        self.assertEqual(sorted(p["Label"] for p in parsed), [self.FORWARDER_LABEL, self.RECEIVER_LABEL])
+        for p in parsed:
+            self.assertIs(p["KeepAlive"], True)
+            self.assertIs(p["RunAtLoad"], True)
+            self.assertGreaterEqual(p["ThrottleInterval"], 10)
+            self.assertTrue(p["StandardOutPath"].startswith(self.state + "/"), p["StandardOutPath"])
+            self.assertTrue(p["StandardErrorPath"].startswith(self.state + "/"), p["StandardErrorPath"])
+            self.assertTrue(os.path.isabs(p["ProgramArguments"][0]))
+            self.assertNotIn("EnvironmentVariables.SECRET", str(p))
+        by = {p["Label"]: p for p in parsed}
+        self.assertEqual(by[self.RECEIVER_LABEL]["ProgramArguments"][:2], [os.path.join(HERE, "gh-watch"), "serve"])
+        self.assertEqual(by[self.FORWARDER_LABEL]["ProgramArguments"][0], os.path.join(HERE, "gh-watch-forward"))
+        self.assertIn(os.path.join(self.state, "secret"), by[self.RECEIVER_LABEL]["ProgramArguments"])
+
+    def test_plutil_lint_when_available(self):
+        import shutil
+        if not shutil.which("plutil"):
+            self.skipTest("no plutil")
+        for i, b in enumerate(self.plists(self.install())):
+            path = os.path.join(self.t, "x%d.plist" % i)
+            with open(path, "w") as f:
+                f.write(b)
+            r = subprocess.run(["plutil", "-lint", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_no_secret_and_loopback_only(self):
+        os.makedirs(self.state, mode=0o700)
+        with open(os.path.join(self.state, "secret"), "w") as f:
+            f.write(self.SECRET_TEXT + "\n")
+        os.chmod(os.path.join(self.state, "secret"), 0o600)
+        out = self.install("--port", "9911")
+        self.assertNotIn(self.SECRET_TEXT, out)
+        for b in self.plists(out):
+            self.assertNotIn("--secret ", b)
+            self.assertNotIn("0.0.0.0", b)
+        self.assertIn("127.0.0.1", out)
+        self.assertNotIn("0.0.0.0", out)
+        self.assertIn("9911", out)
+
+    def test_prints_launchctl_commands_and_ps_note(self):
+        out = self.install()
+        for label in (self.RECEIVER_LABEL, self.FORWARDER_LABEL):
+            self.assertIn("launchctl bootstrap gui/$(id -u) ", out)
+            self.assertIn("launchctl bootout gui/$(id -u)/" + label, out)
+            self.assertIn("launchctl print gui/$(id -u)/" + label, out)
+        self.assertIn("visible in ps", out)
+        self.assertIn("#1333", out)
+        self.assertIn("~/Library/LaunchAgents", out)
+
+    def test_runs_nothing_and_writes_nothing(self):
+        self.install()
+        self.install("--systemd")
+        self.assertFalse(os.path.exists(self.rec), "install-launchd ran gh or launchctl")
+        self.assertFalse(os.path.exists(os.path.join(self.t, "Library")))
+        self.assertFalse(os.path.exists(self.state), "install-launchd created the state dir")
+
+    def test_systemd_variant(self):
+        out = self.install("--systemd")
+        self.assertEqual(self.plists(out), [])
+        self.assertEqual(out.count("[Unit]"), 2)
+        self.assertEqual(out.count("[Service]"), 2)
+        self.assertEqual(out.count("Restart=always"), 2)
+        self.assertIn("RestartSec=", out)
+        self.assertIn("WantedBy=default.target", out)
+        self.assertIn("ExecStart=" + os.path.join(HERE, "gh-watch") + " serve", out)
+        self.assertIn("ExecStart=" + os.path.join(HERE, "gh-watch-forward"), out)
+        self.assertIn("systemctl --user enable --now", out)
+        self.assertIn("StandardOutput=append:" + self.state + "/", out)
+        self.assertNotIn(self.SECRET_TEXT, out)
+
+    def test_status_reports_launchd_jobs_with_fake_launchctl(self):
+        env = dict(self.env)
+        with open(os.path.join(self.bin, "launchctl"), "w") as f:
+            f.write('#!/bin/sh\necho "launchctl $@" >> "%s"\n'
+                    'case "$2" in */%s) exit 0 ;; *) exit 113 ;; esac\n' % (self.rec, self.RECEIVER_LABEL))
+        with open(os.path.join(self.bin, "ps"), "w") as f:
+            f.write("#!/bin/sh\necho /sbin/launchd\n")
+        os.chmod(os.path.join(self.bin, "ps"), 0o755)
+        r = subprocess.run([LAUNCHER, "status", "--out-dir", self.state, "--port", "1"], env=env,
+                           capture_output=True, text=True, timeout=30)
+        self.assertIn("launchd receiver job (" + self.RECEIVER_LABEL + "): loaded", r.stdout)
+        self.assertIn("launchd forwarder job (" + self.FORWARDER_LABEL + "): not loaded", r.stdout)
+        with open(self.rec) as f:
+            calls = f.read().splitlines()
+        self.assertEqual(len(calls), 2)
+        for c in calls:
+            self.assertTrue(c.startswith("launchctl print gui/"), c)
+        self.assertFalse(any(c.startswith("gh") for c in calls))
+
+    def test_status_skips_launchd_lines_without_launchctl(self):
+        os.remove(os.path.join(self.bin, "launchctl"))
+        env = {"PATH": self.bin, "HOME": self.t, "TMPDIR": self.t}
+        # a PATH with only the fake bin (ps and friends are symlinked in) so launchctl is truly absent
+        for tool in ("ps", "head", "python3", "id", "kill", "dirname", "cat", "env", "bash"):
+            import shutil
+            src = shutil.which(tool, path="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
+            if src and not os.path.exists(os.path.join(self.bin, tool)):
+                os.symlink(src, os.path.join(self.bin, tool))
+        r = subprocess.run([LAUNCHER, "status", "--out-dir", self.state, "--port", "1"], env=env,
+                           capture_output=True, text=True, timeout=30)
+        self.assertNotIn("launchd", r.stdout)
+        self.assertNotIn("launchctl", r.stderr)
+
+    # --- the forwarder wrapper ---
+    FORWARD = os.path.join(HERE, "gh-watch-forward")
+
+    def run_forward(self, *args):
+        return subprocess.run([self.FORWARD, "--out-dir", self.state, *args], env=self.env, capture_output=True,
+                              text=True, timeout=30)
+
+    def test_wrapper_refuses_missing_secret(self):
+        r = self.run_forward()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(self.rec), "gh ran with no secret file")
+
+    def test_wrapper_refuses_loose_mode(self):
+        os.makedirs(self.state, mode=0o700)
+        path = os.path.join(self.state, "secret")
+        with open(path, "w") as f:
+            f.write(self.SECRET_TEXT + "\n")
+        os.chmod(path, 0o644)
+        r = self.run_forward()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("0600", r.stderr)
+        self.assertNotIn(self.SECRET_TEXT, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.rec), "gh ran with a loose secret file")
+
+    def test_wrapper_execs_gh_webhook_forward_and_never_echoes(self):
+        os.makedirs(self.state, mode=0o700)
+        path = os.path.join(self.state, "secret")
+        with open(path, "w") as f:
+            f.write(self.SECRET_TEXT + "\n")
+        os.chmod(path, 0o600)
+        r = self.run_forward("--port", "9911")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(self.SECRET_TEXT, r.stdout + r.stderr)
+        with open(self.rec) as f:
+            calls = f.read().splitlines()
+        self.assertEqual(len(calls), 1, calls)
+        self.assertTrue(calls[0].startswith("gh webhook forward "), calls[0])
+        self.assertIn("--repo=hslee16/klatch", calls[0])
+        self.assertIn("--url=http://127.0.0.1:9911/hook", calls[0])
+        self.assertIn("--secret " + self.SECRET_TEXT, calls[0])
+
+    def test_wrapper_source_has_no_other_gh_call(self):
+        with open(self.FORWARD, encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("auth status", src)
+        self.assertEqual(src.count("exec gh "), 1)
+        self.assertEqual([l for l in src.splitlines() if l.strip().startswith("gh ")], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

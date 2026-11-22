@@ -5,17 +5,19 @@
 #   gh-watch forward-command [opts]     PRINT the commands the human runs; it runs none of them
 #   gh-watch status [opts]              is the receiver up, is a forwarder for this repo running, how old is the last note;
 #                                       last line gh-watch: ok (exit 0), receiver down (3) or forwarder down (4)
+#   gh-watch install-launchd [opts]     PRINT two LaunchAgent plists (receiver, forwarder wrapper) and the launchctl commands;
+#                                       --systemd prints systemd user units instead. Writes nothing, runs nothing (#1343)
 #   gh-watch ensure [opts]              start ONLY the receiver, detached, if it is down (never the forwarder, never gh); then status
 # serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
 #                --post-min INFO|ALERT --max-body BYTES   (--bind is accepted but only loopback is allowed)
-# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either (status uses ps, nothing else).
+# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either (status uses ps and, when present, a read-only launchctl print).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 receiver="$here/gh-watch-receiver.py"
 repo_slug="hslee16/klatch"
 events="pull_request,check_run,workflow_run,push,issues,issue_comment"
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "gh-watch: $*" >&2; exit 2; }
 
 default_out="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"
@@ -77,6 +79,116 @@ cmd_forward_command() {
   echo "# Watch the notes with:  tail -F $out_dir/gh-watch.log"
 }
 
+# --- install-launchd (#1343): PRINTS only. No file is written, launchctl and gh are never run. -------------------------
+cmd_install_launchd() {
+  local systemd=0 args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in --systemd) systemd=1; shift ;; *) args+=("$1"); shift ;; esac
+  done
+  scan_args ${args[@]+"${args[@]}"}
+  [ ${#rest[@]} -eq 0 ] || die "install-launchd: unknown option ${rest[0]}"
+  if [ "$systemd" -eq 1 ]; then print_systemd; else print_plists; fi
+}
+
+# One plist, built with plistlib so paths are escaped correctly. Holds no secret: only the path of the secret file.
+emit_plist() {
+  python3 -I -c '
+import plistlib, sys
+here, out, secret, port, label, kind = sys.argv[1:7]
+script = "gh-watch" if kind == "receiver" else "gh-watch-forward"
+args = [here + "/" + script] + (["serve"] if kind == "receiver" else []) + [
+    "--out-dir", out, "--secret-file", secret, "--port", port]
+d = {"Label": label, "ProgramArguments": args, "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 30,
+     "StandardOutPath": out + "/" + kind + ".launchd.out", "StandardErrorPath": out + "/" + kind + ".launchd.err",
+     "EnvironmentVariables": {"PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"}}
+sys.stdout.write(plistlib.dumps(d).decode())
+' "$here" "$out_dir" "$secret_file" "$port" "$1" "$2"
+}
+
+print_plists() {
+  local rlabel="dev.klatch.gh-watch-receiver" flabel="dev.klatch.gh-watch-forwarder"
+  # shellcheck disable=SC2088  # the tilde is printed for the human to read, never expanded here
+  local la='~/Library/LaunchAgents'
+  echo "# Run these yourself; gh-watch never writes into ~/Library, never runs launchctl and never runs gh."
+  echo "# Prerequisites: the secret file exists (gh-watch forward-command, step 2) and you ran: gh auth refresh -s admin:repo_hook"
+  echo "# The plists hold no secret. The receiver reads $secret_file (mode 0600); gh-watch-forward reads it and passes"
+  echo "# it to gh webhook forward as --secret, so the secret is visible in ps to your own user until #1333 is settled."
+  echo "# Loopback only: the receiver binds 127.0.0.1:$port and the forwarder posts to http://127.0.0.1:$port/hook."
+  echo
+  echo "# 1. Save each block below as ~/Library/LaunchAgents/LABEL.plist"
+  echo
+  echo "# --- $la/$rlabel.plist"
+  emit_plist "$rlabel" receiver
+  echo
+  echo "# --- $la/$flabel.plist"
+  emit_plist "$flabel" forwarder
+  echo
+  echo "# 2. Create the state dir (the log files go there), then load both jobs:"
+  printf 'mkdir -p -m 700 %q\n' "$out_dir"
+  for label in "$rlabel" "$flabel"; do
+    echo "launchctl bootstrap gui/\$(id -u) $la/$label.plist"
+  done
+  echo
+  echo "# 3. Check them (read-only):"
+  for label in "$rlabel" "$flabel"; do
+    echo "launchctl print gui/\$(id -u)/$label"
+  done
+  echo "$here/gh-watch status"
+  echo
+  echo "# 4. To stop and unload:"
+  for label in "$rlabel" "$flabel"; do
+    echo "launchctl bootout gui/\$(id -u)/$label"
+  done
+}
+
+print_systemd() {
+  # shellcheck disable=SC2088
+  local unitdir='~/.config/systemd/user'
+  echo "# Run these yourself; gh-watch never writes a unit file, never runs systemctl and never runs gh."
+  echo "# The units hold no secret. gh-watch-forward reads $secret_file (mode 0600) and passes it to gh webhook forward"
+  echo "# as --secret, so the secret is visible in ps to your own user until #1333 is settled. Loopback only (127.0.0.1:$port)."
+  echo
+  echo "# --- $unitdir/gh-watch-receiver.service"
+  cat <<UNIT
+[Unit]
+Description=klatch gh-watch receiver (loopback)
+
+[Service]
+ExecStart=$here/gh-watch serve --out-dir $out_dir --secret-file $secret_file --port $port
+Restart=always
+RestartSec=30
+StandardOutput=append:$out_dir/receiver.launchd.out
+StandardError=append:$out_dir/receiver.launchd.err
+
+[Install]
+WantedBy=default.target
+UNIT
+  echo
+  echo "# --- $unitdir/gh-watch-forwarder.service"
+  cat <<UNIT
+[Unit]
+Description=klatch gh-watch forwarder (gh webhook forward)
+After=gh-watch-receiver.service
+
+[Service]
+ExecStart=$here/gh-watch-forward --out-dir $out_dir --secret-file $secret_file --port $port
+Restart=always
+RestartSec=30
+StandardOutput=append:$out_dir/forwarder.launchd.out
+StandardError=append:$out_dir/forwarder.launchd.err
+
+[Install]
+WantedBy=default.target
+UNIT
+  echo
+  echo "# Then:"
+  printf 'mkdir -p -m 700 %q\n' "$out_dir"
+  echo "systemctl --user daemon-reload"
+  echo "systemctl --user enable --now gh-watch-receiver.service gh-watch-forwarder.service"
+  echo "systemctl --user status gh-watch-receiver.service gh-watch-forwarder.service"
+  echo "# To stop: systemctl --user disable --now gh-watch-receiver.service gh-watch-forwarder.service"
+}
+
 # --- status and ensure (#1335) ---------------------------------------------------------------------------------------
 # "Receiver running" means BOTH: the pid in gh-watch.pid is alive (kill -0) AND a TCP connect to 127.0.0.1:PORT succeeds.
 # The pid file alone goes stale after a crash or reboot; the port alone would count any other program on that port.
@@ -115,12 +227,26 @@ else:
 ' "$out_dir/gh-watch.log"
 }
 
+# Read-only: `launchctl print gui/UID/LABEL` per job. Skipped silently where launchctl does not exist (Linux).
+launchd_lines() {
+  command -v launchctl >/dev/null 2>&1 || return 0
+  local uid st kind label
+  uid="$(id -u)"
+  for kind in receiver forwarder; do
+    label="dev.klatch.gh-watch-$kind"
+    st="not loaded"
+    launchctl print "gui/$uid/$label" >/dev/null 2>&1 && st="loaded"
+    echo "launchd $kind job ($label): $st"
+  done
+}
+
 print_status() {
   local rec="down" fwd="down"
   receiver_up && rec="up"
   forwarder_up && fwd="up"
   echo "receiver: $rec (127.0.0.1:$port, pid file $(pid_file))"
   echo "forwarder for $repo_slug: $fwd"
+  launchd_lines
   log_age_line
   if [ "$rec" = down ]; then echo "gh-watch: receiver down"; return 3; fi
   if [ "$fwd" = down ]; then echo "gh-watch: forwarder down"; return 4; fi
@@ -155,6 +281,7 @@ case "${1:-}" in
   ensure) shift; cmd_ensure "$@" ;;
   serve) shift; cmd_serve "$@" ;;
   selftest) cmd_selftest ;;
+  install-launchd) shift; cmd_install_launchd "$@" ;;
   forward-command) shift; cmd_forward_command "$@" ;;
   -h | --help | help) usage ;;
   *) usage >&2; exit 2 ;;

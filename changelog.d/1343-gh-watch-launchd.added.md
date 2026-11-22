@@ -1,0 +1,1 @@
+- `gh-watch install-launchd` prints two LaunchAgent plists (receiver and a forwarder wrapper, `proto/scripts/gh-watch-forward`) and the launchctl commands, or systemd user units with `--systemd`, so the GitHub watcher outlives Claude Code sessions; it writes and runs nothing, no plist holds the secret, and `gh-watch status` now reports whether the launchd jobs are loaded (#1343).

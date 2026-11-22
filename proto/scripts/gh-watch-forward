@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Forwarder wrapper for launchd or systemd (#1343): reads the mode-0600 secret file and execs `gh webhook forward`.
+#   gh-watch-forward [--out-dir DIR] [--secret-file FILE] [--port N] [--repo OWNER/NAME]
+# It refuses to run when the secret file is missing or not mode 0600, and it never prints the secret. It calls gh exactly
+# once, as the final exec; it runs no other gh command. `gh webhook forward` takes the secret only as `--secret VALUE`, so
+# the value is visible in ps to the same user while it runs (#1333). The listener is the loopback receiver only.
+set -uo pipefail
+repo="hslee16/klatch"
+events="pull_request,check_run,workflow_run,push,issues,issue_comment"
+out_dir="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"
+secret_file=""; port=8787
+
+die() { echo "gh-watch-forward: $*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out-dir) [ $# -ge 2 ] || die "--out-dir needs a value"; out_dir="$2"; shift 2 ;;
+    --secret-file) [ $# -ge 2 ] || die "--secret-file needs a value"; secret_file="$2"; shift 2 ;;
+    --port) [ $# -ge 2 ] || die "--port needs a value"; port="$2"; shift 2 ;;
+    --repo) [ $# -ge 2 ] || die "--repo needs a value"; repo="$2"; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+[ -n "$secret_file" ] || secret_file="$out_dir/secret"
+case "$port" in '' | *[!0-9]*) die "--port must be a number" ;; esac
+
+[ -f "$secret_file" ] || die "the secret file $secret_file is missing (create it with gh-watch forward-command, step 2)"
+mode="$(stat -f %Lp "$secret_file" 2>/dev/null || stat -c %a "$secret_file" 2>/dev/null)"
+[ "$mode" = "600" ] || die "the secret file $secret_file must be mode 0600 (it is ${mode:-unknown})"
+secret="$(cat "$secret_file")" || die "cannot read the secret file"
+[ -n "$secret" ] || die "the secret file is empty"
+
+exec gh webhook forward "--repo=$repo" "--events=$events" "--url=http://127.0.0.1:$port/hook" --secret "$secret"
