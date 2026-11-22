@@ -27,6 +27,11 @@ pub const DIGEST_MAX_BYTES: usize = 8000;
 /// The most bytes of text one hook prints in all, digest, convention and boards together, measured escaped. The
 /// 9.7 KB measured safe less the JSON wrapper and the notice around the text (#557).
 pub const HOOK_MAX_BYTES: usize = 9400;
+/// The most bytes of board text `render_board` returns (the `board` wire method and `klatch board`), cut by entry
+/// lines with a count of the entries left out and every section header kept (#1162). An explicit board read is sized
+/// like an explicit `history` read (`HISTORY_MAX_BYTES`), not like the hook's digest; only a board of many long
+/// lines is cut, the hook cuts its own copy further (`board_within`).
+pub const BOARD_MAX_BYTES: usize = 16_000;
 /// What a session start keeps for the boards before the digest takes the rest: a board is cut line by line before
 /// messages are, but never to nothing.
 pub const BOARD_FLOOR_BYTES: usize = 1000;
