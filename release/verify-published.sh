@@ -100,7 +100,7 @@ if out="$(fetch "https://raw.githubusercontent.com/hslee16/homebrew-klatch/main/
 else fail tap-formula "could not fetch Formula/klatch.rb from hslee16/homebrew-klatch main"; fi
 
 # Homebrew tap drift: the tap formula, read over REST, equals the staged copy in this repository (release/homebrew/klatch.rb)
-# in everything but the version, URLs and hashes (#1260)
+# in everything but the version, URLs and hashes (#1260), with no klatch-server allowance: after the release both must match (#1287)
 here="$(cd "$(dirname "$0")" && pwd)"
 tapfile="$(mktemp "${TMPDIR:-/tmp}/klatch-tapformula.XXXXXX")"
 if gh api "repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb" -H "Accept: application/vnd.github.raw+json" > "$tapfile" 2> /dev/null && [ -s "$tapfile" ]; then

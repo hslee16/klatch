@@ -143,6 +143,19 @@ fresh; sed -i.bak 's/^  version ".*"$/  version "0.1.0-dev.2"/' "$web/curl_$(key
 tapf="$web/gh_$(key repos/hslee16/homebrew-klatch/contents/Formula/klatch.rb)"
 fresh; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$tapf"; rm -f "$web"/*.bak; failcase "the tap formula drifted from the staged copy" tap-drift
 fresh; rm "$tapf"; failcase "the tap formula cannot be read over REST" tap-drift
+# after a release the check is strict (#1287): a tap that lacks the klatch-server lines the staged copy has is drift, with no allowance
+fresh
+mkdir -p "$work/rel/homebrew"; cp "$here/verify-published.sh" "$here/compare-formula.sh" "$work/rel/"
+sed -e 's/^    bin.install "klatch"$/    bin.install "klatch", "klatch-server"/' \
+  -e '/shell_output("#{bin}\/klatch --version")$/a\
+    assert_match "usage: klatch-server", shell_output("#{bin}/klatch-server --help")' "$here/homebrew/klatch.rb" > "$work/rel/homebrew/klatch.rb"
+sed -e "s/0\.1\.0-dev\.2/$v/g" -e "s/v0\.1\.0\.dev2/$tag/g" "$work/rel/homebrew/klatch.rb" > "$tapf"
+vp() { env PATH="$bin:$PATH" FAKE_WEB="$web" FAKE_LOG="$work/log" REAL_PY="$REAL_PY" TMPDIR="$work/tmp" "$work/rel/verify-published.sh" "$@" > "$work/out" 2> "$work/err"; }
+if vp $v; then ok "a published tap equal to the staged copy passes the strict check"; else bad "equal tap failed: $(cat "$work/out")"; fi
+[ "$(status tap-drift)" = PASS ] && ok "tap-drift is PASS when the tap equals the staged copy" || bad "tap-drift is '$(status tap-drift)'"
+sed -e "s/0\.1\.0-dev\.2/$v/g" -e "s/v0\.1\.0\.dev2/$tag/g" "$here/homebrew/klatch.rb" | sed -e 's/^    bin.install "klatch", "klatch-server"$/    bin.install "klatch"/' -e '/klatch-server --help/d' > "$tapf"
+if vp $v; then bad "a tap without the klatch-server lines passed the strict check"; else ok "a tap without the klatch-server lines fails the strict check"; fi
+[ "$(status tap-drift)" = FAIL ] && ok "tap-drift is FAIL, no allowance after release" || bad "tap-drift is '$(status tap-drift)'"
 fresh; printf '0.1.0-dev.2\n' > "$web/installed_version"; failcase "the installed klatch prints another version" install-klatch
 fresh; rm "$web/has_server"; failcase "the install has no klatch-server" install-klatch-server
 
