@@ -123,6 +123,21 @@ grep -q 'license' "$work/err" && ok "the drift is shown as a diff" || bad "no di
 cmp -s "$f" "$work/before" && cmp -s "$work/staged.rb" "$work/staged.before" && ok "and neither formula is changed" || bad "a formula changed on drift"
 fresh; rm "$work/staged.rb"
 if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "a missing staged copy passed"; else ok "a missing staged copy fails"; fi
+# the staged copy is the release candidate: ahead of the tap by exactly the klatch-server lines is accepted (#1287)
+ahead() {
+  sed -e 's/^    bin.install "klatch"$/    bin.install "klatch", "klatch-server"/' \
+    -e '/shell_output("#{bin}\/klatch --version")$/a\
+    assert_match "usage: klatch-server", shell_output("#{bin}/klatch-server --help")' "$work/staged.rb" > "$work/ahead.rb"
+  cp "$work/ahead.rb" "$work/staged.rb"
+}
+fresh; ahead
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then ok "a staged copy ahead by the klatch-server lines bumps"; else bad "staged ahead was refused: $(cat "$work/err")"; fi
+[ "$(grep -c 'klatch-server --help' "$f")" = 1 ] && grep -q 'bin.install "klatch", "klatch-server"' "$f" && ok "the bumped tap formula has the klatch-server lines" || bad "bumped formula lacks the klatch-server lines"
+cmp -s "$f" "$work/staged.rb" && ok "and the staged copy equals the bumped formula" || bad "staged copy differs after the bump"
+fresh; ahead; sed -i.bak 's/^  license "MIT"$/  license "Apache-2.0"/' "$work/staged.rb"; rm -f "$work/staged.rb.bak"
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "staged ahead plus another change passed"; else ok "staged ahead plus any other change fails"; fi
+fresh; ahead; printf '  # extra\n' >> "$work/staged.rb"
+if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap"; then bad "staged ahead plus an extra line passed"; else ok "staged ahead plus an extra line fails"; fi
 # after a good bump the staged copy is the bumped formula, so the post-publish comparison with the tap holds
 fresh
 if run 0.2.0-alpha.1 "$work/SHA256SUMS" "$tap" && cmp -s "$f" "$work/staged.rb"; then ok "the staged copy is updated to the bumped formula"; else bad "staged copy not updated"; fi

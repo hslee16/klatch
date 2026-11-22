@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Rehearse the release assembly (#1239) on a throwaway copy of the tree, so the real tree is never touched.
 #
-#   release/rehearse-assemble.sh [root]      (root defaults to the repository)
+#   release/rehearse-assemble.sh [--check-tests] [root]      (root defaults to the repository)
 #
 # In the copy it runs release/design-fragments.sh assemble, release/research-fragments.sh assemble, release/renumber-refs.sh,
 # release/changelog-fragments.sh collect (after the renumbering, so the entries carry the numbers) and release/check-versions.sh, then prints the diff stat, the count of changelog
 # entries, and the "design item for #NNN" and "research note for #NNN" references that still need a number (none, after
 # release/renumber-refs.sh has run on the copy, #1244; a reference with no item makes it fail). The copy is
+# With --check-tests (#1286) it also runs, on the assembled copy, the cheap checks that assembling breaks: the workspace version
+# in proto/THIRD-PARTY-LICENSES.txt (the cheap part of proto/check-notices.sh, which needs cargo-about), the
+# release_scope_docs and negotiate cargo tests (one forbids phrases in the assembled DESIGN.md, one reads an item by name) and the
+# release/test-*.sh shell tests (not this script's own test). REHEARSE_CARGO overrides cargo; REHEARSE_TARGET_DIR the cargo target
+# directory (default: the real tree's proto/target, so nothing is rebuilt from scratch). The copy is
 # removed on exit, also on failure. Exit status is non-zero when any step failed (the stat is still printed).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
+check_tests=0
+if [ "${1:-}" = "--check-tests" ]; then check_tests=1; shift; fi
 root="${1:-$(cd "$here/.." && pwd)}"
 [ -d "$root" ] || { echo "rehearse-assemble: no such directory: $root" >&2; exit 2; }
 root="$(cd "$root" && pwd)"
@@ -50,6 +57,34 @@ changelog_out="$copy/.rehearse-changelog.txt"
 step "changelog-fragments.sh collect" bash -c '"$1/release/changelog-fragments.sh" collect "$1" > "$2"' _ "$copy" "$changelog_out"
 rm -f "$map"
 step "check-versions.sh" "$copy/release/check-versions.sh" "$copy"
+
+notices_version() {
+  local v
+  v="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$copy/proto/Cargo.toml" | head -1)"
+  [ -n "$v" ] || { echo "no workspace version in proto/Cargo.toml" >&2; return 1; }
+  grep -qE "^- klatch $v( |\$)" "$copy/proto/THIRD-PARTY-LICENSES.txt" 2> /dev/null || {
+    echo "proto/THIRD-PARTY-LICENSES.txt does not carry klatch $v (run: proto/check-notices.sh --write)" >&2; return 1; }
+}
+shell_tests() {
+  local t rc=0
+  for t in "$copy"/release/test-*.sh; do
+    [ -e "$t" ] || continue
+    [ "$(basename "$t")" != "test-rehearse-assemble.sh" ] || continue
+    echo "-- $(basename "$t")"
+    (cd "$copy" && bash "$t") || { echo "failed: $(basename "$t")" >&2; rc=1; }
+  done
+  return "$rc"
+}
+if [ "$check_tests" -eq 1 ]; then
+  cargo_bin="${REHEARSE_CARGO:-cargo}"
+  export CARGO_TARGET_DIR="${REHEARSE_TARGET_DIR:-$root/proto/target}"
+  step "notices carry the workspace version" notices_version
+  # shellcheck disable=SC2016
+  step "cargo test release_scope_docs" bash -c 'cd "$1/proto" && "$2" test -p klatch --test release_scope_docs' _ "$copy" "$cargo_bin"
+  # shellcheck disable=SC2016
+  step "cargo test negotiate" bash -c 'cd "$1/proto" && "$2" test -p klatch --lib negotiate' _ "$copy" "$cargo_bin"
+  step "release shell tests" shell_tests
+fi
 
 entries=0
 if [ -f "$changelog_out" ]; then entries="$(grep -c '^- ' "$changelog_out" || true)"; fi

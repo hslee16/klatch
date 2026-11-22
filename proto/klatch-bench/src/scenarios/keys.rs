@@ -142,10 +142,10 @@ fn lost_key(w: &World) -> Res {
         "a new key was made over an existing store",
     )?;
     // a wrong code is refused and changes nothing; the right one restores the key
-    let wrong = w.admin(&["recover", "KLATCH-AAAA-AAAA"], "recover");
+    let wrong = w.admin_keyless(&["recover", "KLATCH-AAAA-AAAA"], "recover");
     check(!wrong.ok, "a wrong code was accepted")?;
     check(key_files(w).is_empty(), "a wrong code put a key in place")?;
-    let right = w.admin(&["recover", &code_line], "recover");
+    let right = w.admin_keyless(&["recover", &code_line], "recover");
     check(right.ok, format!("recover failed: {}", right.stderr))?;
     has(
         &w.ok("bob", &["read", "vault"])?,
