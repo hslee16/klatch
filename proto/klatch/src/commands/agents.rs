@@ -219,6 +219,10 @@ pub(super) fn board_within(board: &str, room: &str, left: usize) -> String {
     })
 }
 
+/// The one fixed line a session start carries when the member's declared scope names another repository than the one
+/// it runs in (#894). Claims and delivery follow the declared scope.
+pub(super) const SCOPE_MISMATCH_LINE: &str = "klatch: your declared scope differs from the repository you run in (claims and delivery follow your declared scope; `klatch who` marks this as scope!=repo)\n";
+
 /// The session-start part of a hook: housekeeping, the lobby, the open asks nobody has claimed, the convention and
 /// the boards. Returns the text for the model and the notice for the human.
 pub(super) fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Option<String>)> {
@@ -255,6 +259,22 @@ pub(super) fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Optio
     // leaves a floor for the boards, which are cut line by line (before messages are) with a count.
     use klatch::domain::{budget, printed_len};
     let (mut text, refused_len) = refused_text(&d);
+    // #894: once per session start, say when the declared scope names another repository than the one this member
+    // runs in. The declared scope still wins; the line is fixed text, no name and no path.
+    let own_scope_differs = !args.no_join
+        && t.who(DEFAULT_ROOM).ok().is_some_and(|ms| {
+            ms.iter()
+                .any(|m| m.name == ctx.me && m.place.as_ref().is_some_and(|p| p.scope_differs))
+        });
+    if own_scope_differs {
+        text.push_str(SCOPE_MISMATCH_LINE);
+    }
+    let refused_len = refused_len
+        + printed_len(if own_scope_differs {
+            SCOPE_MISMATCH_LINE
+        } else {
+            ""
+        });
     let floor = if boards.is_empty() {
         0
     } else {

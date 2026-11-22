@@ -221,6 +221,7 @@ mod tests {
         m.place = Some(crate::domain::MemberPlace {
             repository: Some(repo.into()),
             directory: None,
+            scope_differs: false,
         });
         m
     }
