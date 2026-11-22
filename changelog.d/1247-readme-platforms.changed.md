@@ -1,0 +1,1 @@
+- The README, SECURITY.md and release notes template now list Linux aarch64 and macOS x86_64 as "tested" (the manual Platform tests workflow ran the full `cargo test --workspace` there, run 44978689847), not "built and smoke tested"; per-PR CI still runs the suite only on Linux x86_64.

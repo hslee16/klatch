@@ -51,7 +51,7 @@ grep -q 'A thing that was broken' "$work/out" && bad "a fixed gap row is listed"
 grep -q 'Descriptive row' "$work/out" && bad "a skipped ticket's row is listed" || ok "a descriptive row (#181) is left out"
 if grep -q '{{' "$work/out"; then bad "a placeholder is left"; else ok "no placeholder is left"; fi
 if grep -q $'\xe2\x80\x94' "$work/out"; then bad "an em dash is in the notes"; else ok "no em dash"; fi
-for want in 'xattr -d com.apple.quarantine' 'cosign verify-blob' 'shasum -a 256 -c SHA256SUMS' 'gh attestation verify' 'brew install hslee16/klatch/klatch' 'pipx install klatch==0.2.0a1' 'cargo install klatch --version 0.2.0-alpha.1' 'sensitive data' 'Out of scope' 'klatch-server' 'macOS arm64' 'built and smoke tested' 'TLS and mutual TLS' 'Codex adapter' 'Windows'; do
+for want in 'xattr -d com.apple.quarantine' 'cosign verify-blob' 'shasum -a 256 -c SHA256SUMS' 'gh attestation verify' 'brew install hslee16/klatch/klatch' 'pipx install klatch==0.2.0a1' 'cargo install klatch --version 0.2.0-alpha.1' 'sensitive data' 'Out of scope' 'klatch-server' 'macOS arm64' 'Platform tests workflow' 'TLS and mutual TLS' 'Codex adapter' 'Windows'; do
   grep -qF "$want" "$work/out" && ok "contains: $want" || bad "missing: $want"
 done
 

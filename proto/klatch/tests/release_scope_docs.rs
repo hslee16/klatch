@@ -117,12 +117,13 @@ fn klatch_server_has_its_own_claim_and_the_klatch_claim_is_kept() {
 }
 
 #[test]
-fn the_platforms_are_split_into_tested_and_only_built() {
+fn the_platforms_are_all_tested_and_the_manual_workflow_is_named() {
     for doc in ["README.md", "SECURITY.md"] {
         let text = read(doc);
         assert!(
-            text.contains("built and smoke tested"),
-            "{doc} must say which platforms are only built and smoke tested"
+            text.contains("manual Platform tests workflow")
+                && !text.contains("built and smoke tested"),
+            "{doc} must say Linux aarch64 and macOS x86_64 are tested by the manual Platform tests workflow"
         );
     }
     let readme = read("README.md");
