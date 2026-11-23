@@ -1,0 +1,58 @@
+{
+  "id": "S3",
+  "title": "dependency chain and handoff, A blocks B, durable tasks (#1368)",
+  "spec": "SPEC.md section 3, scenario S3; fixture F3 chain (the spec calls it pipeline)",
+  "fixture": "chain",
+  "arms": ["B0", "B1", "K1", "K2"],
+  "n_per_arm": {"m0": 10, "quick": 3, "note": "SPEC section 6.1 (10 per arm at M0 for the scenarios with a count outcome); 3 for the quick subset after an epic, labelled exploratory."},
+  "caps": {
+    "per_run_usd": 2.4,
+    "suite_usd_m0_haiku": 40.0,
+    "wall_s": 1200,
+    "max_turns_per_agent": 50,
+    "basis": "SPEC section 8.1: S3 assumed at 0.80 USD a run on Haiku, so 3x per run (2.40) and 1.25x the 32 USD estimate for 4 arms x 10 runs (40). Proposals; the human changes them before M0 (#1380). wall_s and max_turns_per_agent are this scenario's own proposals (three agents in sequence, so longer than S2)."
+  },
+  "agents": {
+    "a": {"units": ["schema"]},
+    "b": {"units": ["loader"]},
+    "c": {"units": ["report"]}
+  },
+  "units": {
+    "schema": {"path": "chainkit/schema.json"},
+    "loader": {"path": "chainkit/loader.py"},
+    "report": {"path": "chainkit/report.py"}
+  },
+  "shared_files": {
+    "chainkit/bins.py": {"entry": "^(def parse_bin\\(|Bin = )", "expected_entries": 2}
+  },
+  "stream_metrics": "chain",
+  "handoff": {"from": "a", "to": "c"},
+  "blocked": {
+    "b": {"dependency": "chainkit/schema.json", "guarded": ["chainkit/loader.py"]},
+    "c": {"dependency": "chainkit/loader.py", "guarded": ["chainkit/report.py"]}
+  },
+  "metrics": {
+    "primary": "steps_correct",
+    "secondary": ["quirk_honoured", "lost_at_handoff", "idle_turns", "wasted_turns", "guess_build_turns", "time_to_completion_s", "handoff_claims", "order", "messages", "spend", "wall_s", "turns"],
+    "definitions": {
+      "steps_correct": "From the hidden checker: steps of the four (schema file, bin codes, loader, report) that pass on the final main (0 to 4), each tested on its own: the loader with the reference schema file in place, the report with the reference loader, normaliser and schema, so one agent's failure cannot hide behind another's. Also units_completed.",
+      "quirk_honoured": "From the checker (a boolean, yes or no): every legacy bin of the real data and of seeded cases is normalised by the rule only agent a was told (legacy prefix, the prefix it moves to, an arbitrary seeded offset, from gen.py seed 1368). True only when a's knowledge crossed the handoff to c, because the rule appears nowhere in the repository.",
+      "lost_at_handoff": "From the checker: a list of {piece, how} for a's published pieces (schema: the schema file; parse_bin: the function with its Bin(pfx, num) result) that met their contract in some commit and fail on the final main, with how = dropped (gone) or redone-differently. A piece that never met its contract is a failed step, not lost work. Empty list is none lost.",
+      "idle_turns": "Of a blocked agent (b: waiting for chainkit/schema.json; c: waiting for chainkit/loader.py), from its stream (chain.py). A turn is one assistant message. The dependency is SEEN at the first turn whose tool result shows the file (a git pull diffstat, a listing, its content) without saying it is missing; a message that only names the file (klatch read, SendMessage) does not count. blocked_turns are the turns before that turn (all turns when it is never seen). idle_turns are blocked turns that wait or look and do nothing else: every tool call in the turn is a poll (sleep, klatch wait, klatch read or history or board or claims or asks, git fetch or pull or log or status, ls, test, cat or Read of TASKS.md, ListAgents, optionally piped through head, tail, grep, wc) or the turn has no tool call (text-only). A turn with any other call (reading the README, running tests, writing code) is blocked but not idle; sending a message is coordination, not idling.",
+      "blocked_turns": "Turns of the blocked agent before it first sees its dependency (see idle_turns for what counts as seeing it); all its turns when it never does. The wait the dependency cost the agent, in the agent's own turns; the turns that were not idle or guess builds are work it did meanwhile.",
+      "guess_build_turns": "Blocked turns that write the dependent step's file (b: chainkit/loader.py; c: chainkit/report.py) with a Write or Edit tool or a shell redirect, tee, cp, mv or sed -i: building against a guessed input before it exists.",
+      "wasted_turns": "idle_turns plus guess_build_turns, per blocked agent (the spec's idle or wasted turns of the blocked agent). Reported per agent and never summed across agents.",
+      "time_to_completion_s": "The harness's time_to_first_pass_s (start of the agents until the hidden checker first passes every unit, polled) and wall_s.",
+      "order": "From the checker: loader_after_schema (the first commit that added chainkit/loader.py had chainkit/schema.json in its tree) and report_after_loader (same for report.py and the loader). False is a step committed before its input existed (built on a guess), whatever the final tree.",
+      "handoff_claims": "Whether a claim moves with a handoff (#539), recorded, not graded. K arms only (null for B0 and B1). From the streams: the paths agent a claimed, released, released before its handoff message, still held when it stopped, what c claimed, what c's claim attempts were refused, and whether a posted a checkpoint and a handoff message. The scripts of the arms teach `handoff: NAME` and `checkpoint:` (arms/K2.md).",
+      "merge_state": "From the checker: clean, conflicts-left (conflict markers in a tracked file) or tests-broken (the visible tests fail on main).",
+      "correct": "From the checker: all four steps, the quirk honoured, nothing lost at the handoff, the integrated pipeline right on the final main, the order right and a clean merge state.",
+      "duplicate_work": "From the harness's git history metric: units (the schema file, the loader, the report) changed by a non-merge commit of more than one agent: a step redone by someone else. bins.py is shared by design (a then c) and is not a unit.",
+      "overwrites": "From the harness's git history metric: lines agent a added to chainkit/bins.py (the def parse_bin line, the Bin definition) that are absent from the final main: a's partial work dropped."
+    }
+  },
+  "not_computed": {
+    "transferred_by_klatch": "whether klatch moved or released a claim or an ask at the handoff needs the K arms' store (klatch admin stats claims history); run.py does not export the store yet (artifacts.store_export is null). handoff_claims.transferred_by_klatch is null in every record and the streams say what the agents did",
+    "claim_conflicts": "needs the K arms' store export; not exported by run.py yet"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "chain",
+  "description": "F3 (SPEC section 3, S3): a dependency chain with one handoff. Agent a makes the schema file and starts the bin codes, then is reassigned; b cannot do the loader until the schema file exists; c finishes the bin codes from a's handoff (an arbitrary legacy-bin rule only a was told) and does the report, which needs b's loader and c's own bin codes.",
+  "topology": "T-clone",
+  "scenario": "s3",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"},
+    {"name": "c", "task": "task-c.md"}
+  ],
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "chain",
+  "est_cost_usd_haiku": 0.8,
+  "fake": "fake.json"
+}
