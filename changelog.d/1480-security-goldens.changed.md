@@ -1,0 +1,1 @@
+- Added golden tests that pin the exact prompts, refusals, audit rows and consent hook text of the admin passphrase proof, the key custody acts and `klatch init` and `klatch consent`, so they can be refactored for code health without a byte changing (#1480). Tests only; no behaviour changed.

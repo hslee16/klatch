@@ -1,0 +1,53 @@
+### first passphrase: too short, three times
+klatch: made an encryption key for this store in the file; `klatch admin recovery` shows the code that restores it
+new admin passphrase: 
+the passphrase must be at least 10 characters; try again (2 of 3 attempts left)
+new admin passphrase: 
+the passphrase must be at least 10 characters; try again (1 of 3 attempts left)
+new admin passphrase: 
+Error: the passphrase must be at least 10 characters; nothing was changed
+(ended: refused)
+
+### first passphrase: the two entries differ, three times
+new admin passphrase: 
+new admin passphrase again: 
+the two passphrases differ; try again (2 of 3 attempts left)
+new admin passphrase: 
+new admin passphrase again: 
+the two passphrases differ; try again (1 of 3 attempts left)
+new admin passphrase: 
+new admin passphrase again: 
+Error: the two passphrases differ; nothing was changed
+(ended: refused)
+
+### an admin command while none is set
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### first passphrase: short, then differing, then a matching pair
+new admin passphrase: 
+the passphrase must be at least 10 characters; try again (2 of 3 attempts left)
+new admin passphrase: 
+new admin passphrase again: 
+the two passphrases differ; try again (1 of 3 attempts left)
+new admin passphrase: 
+new admin passphrase again: 
+the admin passphrase is set; every admin, worker, anchor, run and judge command now asks for it at the terminal
+(ended: ok)
+
+### first passphrase with no terminal
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### change: a wrong old passphrase
+admin passphrase to approve `change the admin passphrase`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### change: the right old passphrase and a new pair
+admin passphrase to approve `change the admin passphrase`: 
+new admin passphrase: 
+new admin passphrase again: 
+the admin passphrase was changed
+(ended: ok)
+

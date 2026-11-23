@@ -1,0 +1,6 @@
+### a session runs: klatch admin init-passphrase (no terminal)
+Error: the first admin passphrase is set by a person, not from inside a coding-agent session; run `klatch admin init-passphrase` in a terminal of your own
+
+### a session runs: klatch admin lease-cap 100 (no terminal)
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+

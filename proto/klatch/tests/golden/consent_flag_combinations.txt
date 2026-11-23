@@ -1,0 +1,756 @@
+### klatch init 
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init : the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd
+SessionStart: <KLATCH> --discover hook --event SessionStart
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init : klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: off
+  passive-claims: off
+  machine-status: off
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --passive-claims
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --passive-claims: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --passive-claims
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --passive-claims: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: off
+  passive-claims: on
+  machine-status: off
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --checkpoint
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --checkpoint: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --checkpoint
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --checkpoint
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --checkpoint
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --checkpoint: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: on
+  passive-claims: off
+  machine-status: off
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --passive-claims --checkpoint
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --passive-claims --checkpoint: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --passive-claims --checkpoint: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: on
+  passive-claims: on
+  machine-status: off
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --machine-status
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --machine-status: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --machine-status: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: off
+  passive-claims: off
+  machine-status: on
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --passive-claims --machine-status
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --passive-claims --machine-status: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --passive-claims --machine-status: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: off
+  passive-claims: on
+  machine-status: on
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --checkpoint --machine-status
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --checkpoint --machine-status: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --checkpoint --machine-status: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: on
+  passive-claims: off
+  machine-status: on
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### klatch init --passive-claims --checkpoint --machine-status
+(the diff and the notes)
+<PROJECT>/.claude/settings.local.json (project):
++ {
++   "hooks": {
++     "SessionStart": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "UserPromptSubmit": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event UserPromptSubmit",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "PostToolUse": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ],
++     "Stop": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
++     ]
++   }
++ }
+wrote <PROJECT>/.claude/settings.local.json
+klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
+Next: run `klatch doctor` to check the install; it only reads.
+(ended: ok)
+
+### klatch init --passive-claims --checkpoint --machine-status: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch init --passive-claims --checkpoint --machine-status: klatch consent
+project (<PROJECT>/.claude/settings.local.json):
+  board: off
+  join: on
+  session-end: on
+  enforce: off
+  wake: off
+  checkpoint: on
+  passive-claims: on
+  machine-status: on
+What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
+  board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
+  join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
+  session-end: a SessionEnd hook marks a finished session done in klatch's store
+  enforce: a PreToolUse hook blocks an edit of a path another member claimed
+  wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
+  machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+A change takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+

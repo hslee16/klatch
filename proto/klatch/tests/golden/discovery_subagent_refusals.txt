@@ -1,0 +1,12 @@
+### a subagent runs: klatch --discover post lobby hi
+Error: this process runs inside a subagent (a coding-agent process, pid <PID>, below the session "parent"), and --discover would make it that session's member, sharing one name and one cursor with the session and every other subagent. Set KLATCH_NAME to a name for this subagent (for example KLATCH_NAME=<task>-1) and run the command again
+
+### a subagent runs: klatch --discover read lobby
+Error: this process runs inside a subagent (a coding-agent process, pid <PID>, below the session "parent"), and --discover would make it that session's member, sharing one name and one cursor with the session and every other subagent. Set KLATCH_NAME to a name for this subagent (for example KLATCH_NAME=<task>-1) and run the command again
+
+### a subagent runs: klatch --discover join lobby
+Error: this process runs inside a subagent (a coding-agent process, pid <PID>, below the session "parent"), and --discover would make it that session's member, sharing one name and one cursor with the session and every other subagent. Set KLATCH_NAME to a name for this subagent (for example KLATCH_NAME=<task>-1) and run the command again
+
+### a subagent runs: klatch --discover who lobby
+Error: this process runs inside a subagent (a coding-agent process, pid <PID>, below the session "parent"), and --discover would make it that session's member, sharing one name and one cursor with the session and every other subagent. Set KLATCH_NAME to a name for this subagent (for example KLATCH_NAME=<task>-1) and run the command again
+

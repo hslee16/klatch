@@ -1,0 +1,25 @@
+### shell, wrong passphrase
+admin passphrase to approve `open an admin shell: an unlock window for ALL admin and launcher commands [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### shell, right passphrase, lines typed
+admin passphrase to approve `open an admin shell: an unlock window for ALL admin and launcher commands [store <HOME>/rooms.db]`: 
+klatch admin shell: admin, worker, anchor, run and judge commands; the passphrase is asked again when the unlock window ends; `exit` leaves
+klatch> admin lease-cap 100
+a busy holder with no progress keeps its claims for 100 seconds
+klatch> worker revoke w-1
+w-1 has no live credential
+klatch> post r hello
+only admin, worker, anchor, run and judge commands run in the shell
+klatch> admin shell
+already in the shell
+klatch> frobnicate
+<ESC>[1m<ESC>[31merror:<ESC>[0m unrecognized subcommand '<ESC>[33mfrobnicate<ESC>[0m'
+
+<ESC>[1m<ESC>[4mUsage:<ESC>[0m <ESC>[1mklatch<ESC>[0m [OPTIONS] <COMMAND>
+
+For more information, try '<ESC>[1m--help<ESC>[0m'.
+klatch> exit
+(ended: ok)
+

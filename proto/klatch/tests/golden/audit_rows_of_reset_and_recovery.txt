@@ -1,0 +1,10 @@
+### the audit, oldest first
+<AGE>s ago	passphrase-set		first passphrase
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	recovery-show		
+<AGE>s ago	passphrase-reset		by recovery code
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	restore		<HOME>/backup.db
+<AGE>s ago	recovery-attempts		2 attempts while the store could not be read (the last one was approved)
+<AGE>s ago	proof-ok		window 60s
+

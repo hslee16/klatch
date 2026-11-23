@@ -1,0 +1,14 @@
+### a piped line is not the confirmation: klatch admin close lobby
+admin passphrase to approve `admin close lobby [store <HOME>/rooms.db]`: 
+type lobby to confirm `admin close lobby`: nope
+Error: not confirmed; nothing was changed
+(ended: refused)
+
+### the shell does not read a pipe: klatch admin shell
+Error: the admin shell reads its commands from the terminal and shows its answers there; standard input and output are not your terminal (run `klatch admin shell` yourself in a terminal)
+(ended: refused)
+
+### a stored text act runs with a piped stdin: klatch admin refusals
+admin passphrase to approve `admin refusals [store <HOME>/rooms.db]`: 
+(ended: ok)
+

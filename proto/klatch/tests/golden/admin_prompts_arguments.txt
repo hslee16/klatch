@@ -1,0 +1,54 @@
+### escape, bidi override, zero width, CRLF and a fake prompt in an argument
+$ klatch admin close lobby\u{202e}live<ESC>[31m\u{200b}red
+admin passphrase: 
+admin passphrase to approve `admin close lobby?live?[31m?red??admin passphrase:  [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### non-ASCII letters
+$ klatch admin close caf\u{e9}-\u{65e5}\u{672c}
+admin passphrase to approve `admin close caf?-?? [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### a word of exactly 48 characters is shown whole
+$ klatch admin close abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv
+admin passphrase to approve `admin close abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### a word of 49 characters is cut
+$ klatch admin close abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw
+admin passphrase to approve `admin close abcdefghijklmnopqrst...(9 chars unseen)...defghijklmnopqrstuvw [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### a word of 300 characters is cut
+$ klatch admin close abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmn
+admin passphrase to approve `admin close abcdefghijklmnopqrst...(260 chars unseen)...uvwxyzabcdefghijklmn [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### a space inside a word is kept
+$ klatch admin close two words
+admin passphrase to approve `admin close two words [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### forty words are cut at a word
+$ klatch admin scrub-add w00-padding w01-padding w02-padding w03-padding w04-padding w05-padding w06-padding w07-padding w08-padding w09-padding w10-padding w11-padding w12-padding w13-padding w14-padding w15-padding w16-padding w17-padding w18-padding w19-padding w20-padding w21-padding w22-padding w23-padding w24-padding w25-padding w26-padding w27-padding w28-padding w29-padding w30-padding w31-padding w32-padding w33-padding w34-padding w35-padding w36-padding w37-padding w38-padding w39-padding
+admin passphrase to approve `admin scrub-add w00-padding w01-padding w02-padding w03-padding w04-padding w05-padding w06-padding w07-padding w08-padding w09-padding w10-padding w11-padding w12-padding w13-padding w14-padding ...(+25 more words) [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### text before the family word
+$ klatch admin --as-member bob close lobby
+admin passphrase to approve `admin --as-member bob close lobby [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### a launcher command with a long name
+admin passphrase to approve `worker revoke abcdefghijklmnopqrst...(80 chars unseen)...wxyzabcdefghijklmnop [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+

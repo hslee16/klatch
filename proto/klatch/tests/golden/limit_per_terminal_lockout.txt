@@ -1,0 +1,15 @@
+### four runs on one terminal: three wrong, then the right one
+admin passphrase to approve `admin pause [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+admin passphrase to approve `admin pause [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+admin passphrase to approve `admin pause [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+Error: too many wrong passphrases; try again in <N> seconds
+(ended: refused)
+
+### a terminal of its own is not locked by that
+admin passphrase to approve `admin resume [store <HOME>/rooms.db]`: 
+rooms resumed
+(ended: ok)
+

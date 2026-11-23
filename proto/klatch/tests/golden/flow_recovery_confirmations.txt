@@ -1,0 +1,38 @@
+### recovery: the confirmation is not typed
+admin passphrase to approve `admin recovery [store <HOME>/rooms.db]`: 
+type recovery to confirm `admin recovery`: nope
+Error: not confirmed; nothing was changed
+(ended: refused)
+
+### reset-passphrase: a wrong recovery code
+recovery code: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### reset-passphrase: no terminal
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### close: the confirmation says what is confirmed
+admin passphrase to approve `admin close lobby [store <HOME>/rooms.db]`: 
+type lobby to confirm `admin close lobby`: nope
+Error: not confirmed; nothing was changed
+(ended: refused)
+
+### recover: a wrong code
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+Error: that is not a klatch recovery code
+(ended: refused)
+
+### recover: the right code, the confirmation not typed
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+type recover to confirm `admin recover <code hidden>`: nope
+Error: not confirmed; nothing was changed
+(ended: refused)
+
+### recover: the right code and the typed confirmation
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+type recover to confirm `admin recover <code hidden>`: recover
+the key is back in place
+(ended: ok)
+
