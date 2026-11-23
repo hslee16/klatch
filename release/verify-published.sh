@@ -55,7 +55,7 @@ echo "verify-published: klatch $version (tag $tag, PyPI $pypi)"
 
 # PyPI: the version is in the index (pre-releases need --pre)
 if out="$(python3 -m pip index versions klatch --pre 2> /dev/null)"; then
-  if sed -n 's/^Available versions: *//p' <<< "$out" | tr ',' '\n' | tr -d ' ' | grep -qx "$pypi"; then pass pypi "klatch $pypi is on PyPI"; else fail pypi "klatch $pypi is not in 'pip index versions klatch'"; fi
+  if sed -n 's/^Available versions: *//p' <<< "$out" | tr ',' '\n' | tr -d ' ' | grep -x "$pypi" > /dev/null; then pass pypi "klatch $pypi is on PyPI"; else fail pypi "klatch $pypi is not in 'pip index versions klatch'"; fi
 else fail pypi "pip index versions klatch failed (pip too old, or no network)"; fi
 
 # npm: the version exists, is the latest, and carries provenance

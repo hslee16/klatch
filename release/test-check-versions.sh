@@ -34,7 +34,7 @@ expect_fail "the README names another version"   README.md                      
 retarget() {
   local t="$1" sv="$2" pep old_sv old_pep
   pep="$(semver_to_pep440 "$sv")"
-  old_sv="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$t/proto/Cargo.toml" | head -n 1)"
+  old_sv="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$t/proto/Cargo.toml" | sed -n 1p)"
   old_pep="$(semver_to_pep440 "$old_sv")"
   sed -i.bak "s/^version = \".*\"$/version = \"$sv\"/" "$t/proto/Cargo.toml"
   sed -i.bak "s/^version = \".*\"$/version = \"$pep\"/" "$t/clients/python/pyproject.toml"
@@ -50,7 +50,7 @@ for sv in 0.2.0-alpha.1 0.2.0-beta.2 0.2.0-rc.1 0.3.0-dev.4 0.2.0 1.0.0; do
   if "$here/check-versions.sh" "$work/t" >"$work/out" 2>&1; then echo "  ok  a whole tree at $sv agrees"; else echo "FAIL  a whole tree at $sv: $(cat "$work/out")" >&2; fails=1; fi
 done
 fresh; retarget "$work/t" 0.2.0-alpha.1
-if "$here/check-versions.sh" "$work/t" 2>&1 | grep -q "PyPI 0.2.0a1"; then echo "  ok  the success line names the PyPI spelling"; else echo "FAIL  success line lacks PyPI 0.2.0a1" >&2; fails=1; fi
+if "$here/check-versions.sh" "$work/t" 2>&1 | grep "PyPI 0.2.0a1" > /dev/null; then echo "  ok  the success line names the PyPI spelling"; else echo "FAIL  success line lacks PyPI 0.2.0a1" >&2; fails=1; fi
 fresh; retarget "$work/t" 0.2.0-alpha.1
 sed -i.bak 's/^version = ".*"$/version = "0.2.0-alpha.1"/' "$work/t/clients/python/pyproject.toml"; rm -f "$work/t/clients/python/pyproject.toml.bak"
 if "$here/check-versions.sh" "$work/t" >/dev/null 2>&1; then echo "FAIL  PyPI in the SemVer spelling accepted" >&2; fails=1; else echo "  ok  notices: PyPI in the SemVer spelling (0.2.0-alpha.1 for 0.2.0a1)"; fi
@@ -73,10 +73,10 @@ formula_fail "a URL with the wrong archive"  'formula.*url'       's/klatch-[0-9
 formula_fail "a URL for the wrong platform"  'formula.*aarch64-unknown-linux-gnu' 's/aarch64-unknown-linux-gnu/aarch64-unknown-linux-musl/'
 formula_fail "a missing URL"                 'formula.*url'       '/^ *url ".*x86_64-apple-darwin.tar.gz"$/,/^ *sha256 /d'
 formula_fail "a malformed SHA-256"           'formula.*sha256'    's/sha256 "[0-9a-f]*"/sha256 "abc123"/'
-cur0="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | head -n 1)"
+cur0="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | sed -n 1p)"
 sums0="$work/SHA256SUMS0"; : > "$sums0"
 for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
-  printf '%s  klatch-%s-%s.tar.gz\n' "$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | head -n 1)" "$cur0" "$t" >> "$sums0"
+  printf '%s  klatch-%s-%s.tar.gz\n' "$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | sed -n 1p)" "$cur0" "$t" >> "$sums0"
 done
 # --- a formula with and without the version line (#1297): the version then comes from the four URLs ------------------------
 # fixtures are built from the real staged copy: one with the line added, one with it removed
@@ -99,11 +99,11 @@ fresh
 if "$here/check-versions.sh" "$work/t" "$work/nope.rb" >/dev/null 2>&1; then echo "FAIL  a missing formula file passed" >&2; fails=1; else echo "  ok  a formula path that does not exist fails"; fi
 # a SHA256SUMS file: every sha256 line must match its archive's line
 sums="$work/SHA256SUMS"
-cur="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | head -n 1)"
-linux_sum="$(awk '/url ".*-x86_64-unknown-linux-gnu\.tar\.gz"/ { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | head -n 1)"
+cur="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/proto/Cargo.toml" | sed -n 1p)"
+linux_sum="$(awk '/url ".*-x86_64-unknown-linux-gnu\.tar\.gz"/ { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$ROOT/release/homebrew/klatch.rb" | sed -n 1p)"
 : > "$sums"
 for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
-  sum="$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$work/t/release/homebrew/klatch.rb" | head -n 1)"
+  sum="$(awk -v t="$t" '$0 ~ ("url \".*-" t "\\.tar\\.gz\"") { getline; gsub(/[^0-9a-f]/, "", $2); print $2 }' "$work/t/release/homebrew/klatch.rb" | sed -n 1p)"
   printf '%s  klatch-%s-%s.tar.gz\n' "$sum" "$cur" "$t" >> "$sums"
 done
 if "$here/check-versions.sh" "$work/t" "$work/t/release/homebrew/klatch.rb" "$sums" >"$work/out" 2>&1; then echo "  ok  the formula's SHA-256 values match SHA256SUMS"; else echo "FAIL  good SHA256SUMS: $(cat "$work/out")" >&2; fails=1; fi

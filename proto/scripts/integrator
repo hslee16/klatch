@@ -606,7 +606,7 @@ process_pr() {
     git checkout -q -B "integrator/$n" "refs/pr-integrator/$n" > /dev/null 2>&1 || { post_dropped "$n" error; cur=""; return; }
     if ! git merge -q --no-edit origin/main > /dev/null 2>&1; then
       if [ -z "$(git diff --name-only --diff-filter=U)" ]; then git merge --abort > /dev/null 2>&1; post_dropped "$n" error; cur=""; return; fi
-      if git diff --name-only --diff-filter=U | grep -qvE "$docs_re"; then git merge --abort > /dev/null 2>&1; post_dropped "$n" conflict; cur=""; return; fi
+      if git diff --name-only --diff-filter=U | grep -vE "$docs_re" > /dev/null; then git merge --abort > /dev/null 2>&1; post_dropped "$n" conflict; cur=""; return; fi
       # shellcheck disable=SC2046
       bash "$here/pr-sweep" --resolve-docs $(git diff --name-only --diff-filter=U)
       if git diff --name-only --diff-filter=U | xargs grep -l '^<<<<<<<' > /dev/null 2>&1; then git merge --abort > /dev/null 2>&1; post_dropped "$n" conflict; cur=""; return; fi
@@ -812,7 +812,7 @@ dry_setup() {
     push | none) chk_bad "gh permission" no-admin "the gh login has no admin on $slug (gh webhook forward creates a temporary webhook); log in as an account with repo admin" ;;
     *) chk_bad "gh permission" unreadable "the repository permission of $slug could not be read; check gh auth status and the repository name (INTEGRATOR_GH_REPO)" ;;
   esac
-  if gh extension list 2> /dev/null | grep -q 'cli/gh-webhook'; then chk_ok "webhook extension"
+  if gh extension list 2> /dev/null | grep 'cli/gh-webhook' > /dev/null; then chk_ok "webhook extension"
   else chk_bad "webhook extension" no-webhook-extension "run: gh extension install cli/gh-webhook"; fi
   g=0
   if [ -n "$(git status --porcelain 2> /dev/null)" ]; then chk_bad clone dirty-clone "the clone has uncommitted or untracked files; use a dedicated clean clone"; g=1; fi
@@ -825,7 +825,7 @@ dry_setup() {
     else chk_bad gate no-gate "the INTEGRATOR_GATE command was not found; fix the setting or unset it"; fi
   elif [ -x proto/scripts/gate ]; then chk_ok gate "proto/scripts/gate is present"
   else chk_bad gate no-gate "proto/scripts/gate is missing or not executable in the clone; update it to a current main"; fi
-  holder="$(printf '%s\n' "$b" | sed -nE 's/^queue \(merge:main held by ([A-Za-z0-9._-]{1,40})\):.*/\1/p' | head -1)"
+  holder="$(printf '%s\n' "$b" | sed -nE 's/^queue \(merge:main held by ([A-Za-z0-9._-]{1,40})\):.*/\1/p' | sed -n 1p)"
   if [ -n "$holder" ]; then chk_ok "merge:main" "held by $holder right now; a real run waits until it is free"
   else chk_ok "merge:main" "free, or no queue on the board"; fi
 }

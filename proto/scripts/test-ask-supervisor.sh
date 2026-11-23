@@ -213,7 +213,7 @@ kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
 newworld; rm -f "$fake/launch-quick"; ask 5 alice; yes_for 5 helper1
 ASKSUP_HELPER_SECS=2 run_bg
 waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
-hp="$(pgrep -f "$bin/launch" | head -1)"
+hp="$(pgrep -f "$bin/launch" | sed -n 1p)"
 gone=0; for _ in $(seq 1 100); do if [ -n "$hp" ] && ! kill -0 "$hp" 2> /dev/null; then gone=1; break; fi; /bin/sleep 0.2; done
 if [ "$s" -eq 1 ] && [ "$gone" -eq 1 ] && waitfor "$fake/out" 'time limit' 5; then ok "a helper that runs past ASKSUP_HELPER_SECS is killed (kill -9) and the supervisor says so"; else bad "time limit s=$s gone=$gone hp=$hp out=$(tail -3 "$fake/out")"; fi
 kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
@@ -222,7 +222,7 @@ kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
 newworld; rm -f "$fake/launch-quick"; ask 5 alice; yes_for 5 helper1
 run_bg
 waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
-hp="$(pgrep -f "$bin/launch" | head -1)"
+hp="$(pgrep -f "$bin/launch" | sed -n 1p)"
 t0=$SECONDS
 kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
 took=$((SECONDS - t0))
@@ -241,14 +241,14 @@ took=$((SECONDS - t0))
 if [ "$s" -eq 1 ] && [ "$rc" -eq 0 ] && [ "$took" -le 5 ]; then ok "a signal during a 30 s pause between polls stops it at once ($took s)"; else bad "signal in pause s=$s rc=$rc took=$took"; fi
 newworld; ASKSUP_POLL_SECS=30 run_bg
 waitfor "$fake/calls.log" 'klatch asks' 60 && s=1 || s=0
-wpid="$(pgrep -P "$ipid" | head -1)"
+wpid="$(pgrep -P "$ipid" | sed -n 1p)"
 kill -9 "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
 gone=0; for _ in $(seq 1 100); do if [ -n "$wpid" ] && ! kill -0 "$wpid" 2> /dev/null; then gone=1; break; fi; /bin/sleep 0.2; done
 [ "$gone" -eq 0 ] && [ -n "$wpid" ] && kill -9 "$wpid" 2> /dev/null
 if [ "$s" -eq 1 ] && [ "$gone" -eq 1 ]; then ok "when the supervisor is killed (kill -9) the worker notices and stops by itself"; else bad "orphan worker s=$s wpid=$wpid gone=$gone"; fi
 
 # ---- nothing is left behind (#1101): no long sleep from this test's processes ----
-if pgrep -f "/bin/sleep 3600" > /dev/null 2>&1 && pgrep -fl "/bin/sleep 3600" | grep -q "$work"; then bad "a /bin/sleep 3600 outlived the run"; else ok "no /bin/sleep 3600 was started by these runs (#1101)"; fi
+if pgrep -f "/bin/sleep 3600" > /dev/null 2>&1 && pgrep -fl "/bin/sleep 3600" | grep "$work" > /dev/null; then bad "a /bin/sleep 3600 outlived the run"; else ok "no /bin/sleep 3600 was started by these runs (#1101)"; fi
 /bin/sleep 1
 leftover="$(pgrep -f "$work/bin/launch" 2> /dev/null | wc -l | tr -d ' ')"
 if [ "$leftover" -eq 0 ]; then ok "no helper process is left running after the runs"; else bad "leftover helpers: $leftover"; fi

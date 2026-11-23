@@ -56,7 +56,7 @@ steps=$(grep -c "^" "$work/log")
 order_ok=1
 prev=0
 for pat in "fmt" "clippy" "test --workspace" "deny" "test-clock" "--test properties"; do
-  n=$(grep -n -- "$pat" "$work/log" | head -1 | cut -d: -f1)
+  n=$(grep -n -- "$pat" "$work/log" | sed -n 1p | cut -d: -f1)
   if [ -z "${n:-}" ] || [ "$n" -le "$prev" ]; then order_ok=0; echo "    step '$pat' out of order or missing (line ${n:-none}, after $prev)"; fi
   prev=${n:-$prev}
 done
@@ -214,7 +214,7 @@ expect_stage '{"merged":true,"ticket_state":"open"}' merged-open-ticket "merged 
 expect_stage '{"merged":true,"ticket_state":"closed"}' 'done' "merged and ticket closed is done"
 expect_stage '{"merged":true,"ticket_state":"none"}' 'done' "merged with no linked ticket is done"
 expect_stage '{"closed":true,"merged":false}' abandoned "closed without merging is abandoned"
-if printf '{"idle_hours":9,"checks":[{"name":"m","conclusion":null}]}' | python3 -I "$ledger" --classify | cut -f2 | grep -q stuck; then ok "pr-ledger: a long-running check says it may be stuck"; else bad "pr-ledger: stuck hint missing"; fi
+if printf '{"idle_hours":9,"checks":[{"name":"m","conclusion":null}]}' | python3 -I "$ledger" --classify | cut -f2 | grep stuck > /dev/null; then ok "pr-ledger: a long-running check says it may be stuck"; else bad "pr-ledger: stuck hint missing"; fi
 
 named=$(python3 -I -c "
 import importlib.machinery, importlib.util, sys
@@ -229,7 +229,7 @@ expect_stage '{"merged":true,"ticket_state":"closed","benched":false}' merged-no
 expect_stage '{"merged":true,"ticket_state":"closed","benched":true}' 'done' "merged and benched is done"
 expect_stage '{"merged":true,"ticket_state":"open","benched":true}' merged-open-ticket "benched but the ticket is open still needs the close"
 expect_stage '{"merged":true,"ticket_state":"none","benched":false}' merged-not-benched "no ticket and not benched still needs the bench"
-if printf '{"merged":true,"benched":false}' | python3 -I "$ledger" --classify | cut -f2 | grep -q "run the bench"; then ok "pr-ledger: merged-not-benched says to run the bench"; else bad "pr-ledger: bench next action"; fi
+if printf '{"merged":true,"benched":false}' | python3 -I "$ledger" --classify | cut -f2 | grep "run the bench" > /dev/null; then ok "pr-ledger: merged-not-benched says to run the bench"; else bad "pr-ledger: bench next action"; fi
 
 # the pure helpers: first error line, the post text, change detection, the bench ledger file
 plpy() { python3 -I -c "

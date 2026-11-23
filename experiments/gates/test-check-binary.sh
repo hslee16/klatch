@@ -42,11 +42,11 @@ if "$check" "$work/gone" > "$work/o" 2>&1; then bad "a binary with no expression
 
 fake morecauses "$auth" "$fn" 'cause:B(["explicit-setting","new-cause","no-mode-asserted"])' "$dialog"
 out="$("$check" "$work/morecauses" 2>&1)"; code=$?
-if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q "causes differ"; then ok "changed causes are reported but do not fail the check"; else bad "causes: $code $out"; fi
+if [ "$code" -eq 0 ] && grep -q "causes differ" <<< "$out"; then ok "changed causes are reported but do not fail the check"; else bad "causes: $code $out"; fi
 
 fake newdialog "$auth" "$fn" "$causes" 'dialogExpiry:()=>B(["60s"]).describe(`Defaults to 10m to match`)'
 out="$("$check" "$work/newdialog" 2>&1)"; code=$?
-if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q "dialog default differs"; then ok "a changed dialog default is reported but does not fail"; else bad "dialog: $code $out"; fi
+if [ "$code" -eq 0 ] && grep -q "dialog default differs" <<< "$out"; then ok "a changed dialog default is reported but does not fail"; else bad "dialog: $code $out"; fi
 
 if "$check" > "$work/o" 2>&1; then bad "no argument exited 0"; elif [ "$?" -eq 2 ] && grep -qi "usage" "$work/o"; then ok "no argument prints usage and exits 2"; else bad "usage: $(cat "$work/o")"; fi
 if "$check" "$work/missing-file" > "$work/o" 2>&1; then bad "a missing file exited 0"; else ok "a missing file exits non-zero"; fi

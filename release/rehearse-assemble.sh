@@ -61,7 +61,7 @@ step "check-versions.sh" "$copy/release/check-versions.sh" "$copy"
 
 notices_version() {
   local v
-  v="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$copy/proto/Cargo.toml" | head -1)"
+  v="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$copy/proto/Cargo.toml" | sed -n 1p)"
   [ -n "$v" ] || { echo "no workspace version in proto/Cargo.toml" >&2; return 1; }
   grep -qE "^- klatch $v( |\$)" "$copy/proto/THIRD-PARTY-LICENSES.txt" 2> /dev/null || {
     echo "proto/THIRD-PARTY-LICENSES.txt does not carry klatch $v (run: proto/check-notices.sh --write)" >&2; return 1; }

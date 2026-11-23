@@ -180,7 +180,7 @@ TEAM_PERMISSION_MODE=bypassPermissions run_team start "$tasks" > "$work/out" 2>&
 if grep -qx "bypassPermissions" <<< "$(grep -A1 -x -- "--permission-mode" "$fake/claude-alpha/args")"; then ok "TEAM_PERMISSION_MODE=bypassPermissions restores bypassPermissions when asked"; else bad "bypass override: $(cat "$work/out")"; fi
 newenv
 TEAM_ALLOWED_TOOLS="Read,Bash(echo:*)" run_team start "$tasks" > "$work/out" 2>&1; waitfor "$td/run/alpha.exit"
-if [ "$(grep -A1 -x -- "--allowedTools" "$fake/claude-alpha/args" | sed -n 2p)" = "Read,Bash(echo:*)" ] && grep -A1 -x -- "--permission-mode" "$fake/claude-alpha/args" | grep -qx "dontAsk"; then ok "TEAM_ALLOWED_TOOLS replaces the allowlist and the mode stays dontAsk"; else bad "allow override: $(cat "$fake/claude-alpha/args" | grep -A1 allowed)"; fi
+if [ "$(grep -A1 -x -- "--allowedTools" "$fake/claude-alpha/args" | sed -n 2p)" = "Read,Bash(echo:*)" ] && grep -A1 -x -- "--permission-mode" "$fake/claude-alpha/args" | grep -x "dontAsk" > /dev/null; then ok "TEAM_ALLOWED_TOOLS replaces the allowlist and the mode stays dontAsk"; else bad "allow override: $(cat "$fake/claude-alpha/args" | grep -A1 allowed)"; fi
 newenv
 TEAM_PERMISSION_MODE='bad mode' run_team start "$tasks" > "$work/out" 2>&1; rc=$?
 if [ "$rc" -eq 2 ] && [ ! -s "$fake/klatch.log" ]; then ok "an unknown TEAM_PERMISSION_MODE is refused with exit 2 before anything is issued"; else bad "bad mode rc=$rc"; fi

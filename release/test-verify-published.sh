@@ -101,7 +101,7 @@ PY
   : > "$web/has_server"
 }
 run() { env PATH="$bin:$PATH" FAKE_WEB="$web" FAKE_LOG="$work/log" REAL_PY="$REAL_PY" TMPDIR="$work/tmp" "$here/verify-published.sh" "$@" > "$work/out" 2> "$work/err"; }
-status() { grep -E "^(PASS|FAIL|SKIP) +$1" "$work/out" | head -1 | cut -d' ' -f1; }
+status() { grep -E "^(PASS|FAIL|SKIP) +$1" "$work/out" | sed -n 1p | cut -d' ' -f1; }
 
 fresh
 if run $v; then ok "exits 0 when everything is in place"; else bad "good case failed: $(cat "$work/out" "$work/err")"; fi

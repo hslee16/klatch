@@ -291,9 +291,9 @@ tl="$work/tmp$n/pr-sweep-timing.log"
 if [ -f "$tl" ] && grep -q ' gate alee/integ-16 [0-9]*s rc=0' "$tl" && grep -q ' wait-green #16 [0-9]*s rc=0' "$tl" && grep -q ' bench main [0-9]*s rc=0' "$tl"; then ok "gate, CI wait and bench each log how long they took"; else bad "timing log: $(cat "$tl" 2>/dev/null)"; fi
 printf '2026-11-18T10:00:00Z gate alee/integ-1 120s rc=0\n2026-11-18T10:05:00Z gate alee/integ-2 300s rc=0\n2026-11-18T10:09:00Z bench main 90s rc=0\n' > "$tl"
 out=$(env TMPDIR="$work/tmp$n" "$sweep" --timing 2>&1)
-if printf '%s\n' "$out" | grep -qE '^gate +2 +420 +210 +300$' && printf '%s\n' "$out" | grep -qE '^bench +1 +90 +90 +90$'; then ok "--timing sums runs, total, average and slowest per step"; else bad "timing summary: $out"; fi
+if grep -qE '^gate +2 +420 +210 +300$' <<< "$out" && grep -qE '^bench +1 +90 +90 +90$' <<< "$out"; then ok "--timing sums runs, total, average and slowest per step"; else bad "timing summary: $out"; fi
 out=$(env TMPDIR="$work/empty-timing" "$sweep" --timing 2>&1)
-if printf '%s\n' "$out" | grep -q "no timing log yet"; then ok "--timing says so when there is no log"; else bad "empty timing: $out"; fi
+if grep -q "no timing log yet" <<< "$out"; then ok "--timing says so when there is no log"; else bad "empty timing: $out"; fi
 
 # --- never on main: git merge only ever runs on the throwaway branch, even if the checkout fails
 newenv
@@ -404,7 +404,7 @@ cr=$(line_of '^gh pr create'); gt=$(line_of '^gate'); ps=$(line_of '^git push');
 if [ -n "$cr" ] && [ "$gt" -lt "$ps" ] && [ "$ps" -lt "$cr" ] && [ "$cr" -lt "$mg" ] && [ "$mg" -lt "$bn" ] && [ "$bn" -lt "$rc11" ]; then ok "order: gate, push, open the PR, merge, bench, record"; else bad "batch order gt=$gt ps=$ps cr=$cr mg=$mg bn=$bn rc=$rc11"; fi
 if [ "$(calls '^ledger --record-bench')" -eq 3 ] && [ "$(calls '^klatch post lobby merged: #')" -eq 3 ] && grep -q '^klatch post lobby merged: #14' "$log"; then ok "every included PR is recorded as benched and announced \"merged: #N\""; else bad "record/announce: $(cat "$log")"; fi
 if grep -q "issues/711 -f state=closed" "$log" && grep -q "issues/714 -f state=closed" "$log" && ! grep -q "issues/713 -f state=closed" "$log"; then ok "the tickets the PRs close are closed; a Refs ticket is not"; else bad "tickets: $(cat "$log")"; fi
-if grep -q '^Closes #711$' "$fake/batch-body" && grep -q '^Refs #713$' "$fake/batch-body" && grep -q '^Closes #714$' "$fake/batch-body" && tail -1 "$fake/batch-body" | grep -q 'Generated with \[Claude Code\](https://claude.com/claude-code)'; then ok "the batch PR body copies each PR's Closes/Refs lines and ends with the Generated-with line"; else bad "batch body: $(cat "$fake/batch-body")"; fi
+if grep -q '^Closes #711$' "$fake/batch-body" && grep -q '^Refs #713$' "$fake/batch-body" && grep -q '^Closes #714$' "$fake/batch-body" && tail -1 "$fake/batch-body" | grep 'Generated with \[Claude Code\](https://claude.com/claude-code)' > /dev/null; then ok "the batch PR body copies each PR's Closes/Refs lines and ends with the Generated-with line"; else bad "batch body: $(cat "$fake/batch-body")"; fi
 if grep -q '^klatch post lobby batch: #900' "$log"; then ok "a lobby summary names the batch PR"; else bad "no summary: $(cat "$log")"; fi
 
 # --- a PR that would conflict in code is dropped BEFORE any merge, reported, posted; never merged

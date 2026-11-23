@@ -41,7 +41,7 @@ printf 'mod ssh_key;\nmod shared;\nmod ssh;\n' > "$r/proto/klatch/src/gateway/mo
 git -C "$r" commit -q -am merged
 if run && [ -z "$(git -C "$r" status --porcelain)" ] && [ "$(git -C "$r" log --oneline | wc -l)" -eq 3 ] \
   && [ "$(head -1 "$r/proto/klatch/src/gateway/mod.rs")" = "mod shared;" ]; then ok "unsorted mod lines are formatted and committed"; else bad "unsorted case"; cat "$work/out"; fi
-if git -C "$r" log -1 --format=%B | grep -q "Co-Authored-By: Claude Sonnet 5.5"; then ok "the commit carries the trailer"; else bad "trailer"; fi
+if git -C "$r" log -1 --format=%B | grep "Co-Authored-By: Claude Sonnet 5.5" > /dev/null; then ok "the commit carries the trailer"; else bad "trailer"; fi
 
 # 2. already formatted: no commit
 newrepo sorted; : > "$work/log"

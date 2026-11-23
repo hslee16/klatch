@@ -45,9 +45,9 @@ PY
       exit 1
     fi
     for want in package/README.md package/LICENSE package/package.json; do
-      printf '%s\n' "$listing" | grep -qx "$want" || { echo "check-package-contents: $file does not contain $want" >&2; exit 1; }
+      grep -qx "$want" <<< "$listing" || { echo "check-package-contents: $file does not contain $want" >&2; exit 1; }
     done
-    printf '%s\n' "$listing" | grep -q '^package/dist/.' || { echo "check-package-contents: $file has an empty or missing dist/" >&2; exit 1; }
+    grep -q '^package/dist/.' <<< "$listing" || { echo "check-package-contents: $file has an empty or missing dist/" >&2; exit 1; }
     echo "npm contents ok: $(basename "$file")"
     ;;
   *)

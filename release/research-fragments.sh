@@ -29,7 +29,7 @@ check() {
       echo "BAD TITLE $f: line 1 must be the section title text (not blank, not a heading)" >&2; fail=1
     fi
     if [ -z "$(tail -n +2 "$f" | tr -d '[:space:]')" ]; then echo "NO BODY   $f: the section needs text after its title line" >&2; fail=1; fi
-    if tail -n +2 "$f" | grep -q '^## '; then echo "H2 IN BODY $f: use ### headings inside a note; the title line is the ## heading" >&2; fail=1; fi
+    if tail -n +2 "$f" | grep '^## ' > /dev/null; then echo "H2 IN BODY $f: use ### headings inside a note; the title line is the ## heading" >&2; fail=1; fi
     if grep -q $'\xe2\x80\x94' "$f"; then echo "EM DASH   $f" >&2; fail=1; fi
   done < <(fragments)
   return "$fail"

@@ -260,7 +260,7 @@ settle_cost() { # id: replace the fixed charge made at the start with the cost t
   val="$(head -c 32 "$f" 2> /dev/null | tr -d '\r')"
   # the whole file is one number (a trailing newline is fine); a second line with anything on it means it is not trusted
   [ "$(printf '%s\n' "$val" | grep -c '[^[:space:]]')" -le 1 ] || val=junk
-  val="$(printf '%s\n' "$val" | head -n 1)"
+  val="$(printf '%s\n' "$val" | sed -n 1p)"
   [[ $val =~ $dec_re ]] || { say "helper for ask #${id%-*}: no usable cost in ASKSUP_COST_FILE; the fixed charge of $start_usd USD stays"; return 0; }
   [ "${#val}" -le 24 ] || { say "helper for ask #${id%-*}: cost value too long to trust; the fixed charge stays"; return 0; }
   spent="$(awk -v s="$(spent_now)" -v c="$start_usd" -v v="$val" -v m="$max_total" \
@@ -315,7 +315,7 @@ pass() {
       if ! verdict="$("$klatch" could-answer "$room" "$ask" "$cand" 2> /dev/null)"; then
         say "ask #$ask: could-answer for $cand failed (are you the human? a plain member is refused); not starting $cand"; continue
       fi
-      if [ "$(printf '%s\n' "$verdict" | head -1)" = yes ]; then
+      if [ "$(printf '%s\n' "$verdict" | sed -n 1p)" = yes ]; then
         if [ "$dry" -eq 1 ]; then
           say "would start $cand for ask #$ask (could-answer: yes)"
         else

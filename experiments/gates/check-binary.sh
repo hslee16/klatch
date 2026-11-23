@@ -29,7 +29,7 @@ echo "binary: $bin"
 
 # 1. authRequired. A minifier renames the variable and the function, so the expression is read through the
 # function it calls and written back in plain words.
-expr_line="$(grep -oE 'authRequired=[A-Za-z0-9_$]+\.requireAuth\?\?[^,;]+' "$work/s" | head -1)"
+expr_line="$(grep -oE 'authRequired=[A-Za-z0-9_$]+\.requireAuth\?\?[^,;]+' "$work/s" | sed -n 1p)"
 if [ -z "$expr_line" ]; then
   echo "authRequired: not found (the socket server may have changed shape; read the binary by hand)"
   exit 2
@@ -40,9 +40,9 @@ case "$fallback" in
   *'()')
     fn="${fallback%()}"
     esc="$(printf '%s' "$fn" | sed 's/[$]/[$]/g')"
-    body="$(grep -oE "function ${esc}\(\)\{[^}]*\}" "$work/s" | head -1)"
+    body="$(grep -oE "function ${esc}\(\)\{[^}]*\}" "$work/s" | sed -n 1p)"
     # `return <call>()==="windows"` is the platform test the notes recorded
-    if printf '%s' "$body" | grep -qE '^function [A-Za-z0-9_$]+\(\)\{return [A-Za-z0-9_$.]+\(\)==="windows"\}$'; then
+    if grep -qE '^function [A-Za-z0-9_$]+\(\)\{return [A-Za-z0-9_$.]+\(\)==="windows"\}$' <<< "$body"; then
       actual='requireAuth ?? (platform === "windows")'
     else
       actual="requireAuth ?? ${body:-$fallback}"
@@ -54,14 +54,14 @@ echo "authRequired: $actual"
 echo "recorded:     $RECORDED_EXPR"
 
 # 2. the causes of a held message
-cause_text="$(grep -oE 'cause:[A-Za-z0-9_$]+\(\[[^]]*"explicit-setting"[^]]*\]\)' "$work/s" | head -1)"
+cause_text="$(grep -oE 'cause:[A-Za-z0-9_$]+\(\[[^]]*"explicit-setting"[^]]*\]\)' "$work/s" | sed -n 1p)"
 causes="$(printf '%s' "$cause_text" | grep -oE '"[a-z-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')"
 echo "crossSessionInbound causes: ${causes:-not found}"
 [ "$causes" = "$RECORDED_CAUSES" ] || echo "note: causes differ from the recorded list ($RECORDED_CAUSES)"
 
 # 3. the dialog deadline default, from the text that describes the dialogExpiry setting
-dialog="$(grep -oE 'Defaults to [0-9]+[a-z]+ to match' "$work/s" | head -1 | awk '{print $3}')"
-choices="$(grep -oE 'dialogExpiry:\(\)=>[A-Za-z0-9_$]+\(\[[^]]*\]\)' "$work/s" | head -1 | grep -oE '"[0-9a-z]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')"
+dialog="$(grep -oE 'Defaults to [0-9]+[a-z]+ to match' "$work/s" | sed -n 1p | awk '{print $3}')"
+choices="$(grep -oE 'dialogExpiry:\(\)=>[A-Za-z0-9_$]+\(\[[^]]*\]\)' "$work/s" | sed -n 1p | grep -oE '"[0-9a-z]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')"
 env_override="no"
 grep -q 'CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS' "$work/s" && env_override="yes (CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS)"
 echo "dialog default: ${dialog:-not found} (dialogExpiry choices: ${choices:-not found}; environment override: $env_override)"
