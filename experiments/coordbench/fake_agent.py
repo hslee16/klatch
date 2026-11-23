@@ -27,7 +27,8 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   sync {message, resolve?}       git add -A, commit, pull --no-rebase, push to origin main (retries a lost race).
                                  resolve: "union" (keep both sides of every conflicted file) or "ours" (keep this
                                  agent's side, dropping the other's lines) resolves a conflicted pull and goes on; without
-                                 it the agent stops on a conflict as before
+                                 it the agent stops on a conflict as before; retries (default 8) is how many times a lost push
+                                 race is retried (a team of 16 racing on one file needs more)
   klatch {args}                  run the klatch binary given by --klatch-bin ({{ROOM}} and {{NAME}} are filled in)
   say {text}                     an assistant text message
   read {path}                    a Read tool call on a file (its text is the result)
@@ -154,7 +155,7 @@ class Agent:
             self.bash(["git", "add", "-A"], allow)
             self.bash(["git", "commit", "-q", "-m", msg], True)
             resolve = st.get("resolve")
-            for _ in range(8):
+            for _ in range(int(st.get("retries", 8))):
                 rc, _ = self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], allow or bool(resolve))
                 if rc != 0:
                     if not resolve:

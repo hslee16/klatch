@@ -42,6 +42,7 @@ import fixture as fixture_mod
 import asks as asks_mod
 import chain
 import history as history_mod
+import scale as scale_mod
 import scenario as scenario_mod
 import schema
 import streams
@@ -476,6 +477,8 @@ class Suite:
             return
         try:
             scn = scenario_mod.load(name, self.args.scenarios_dir)
+            if self.fx.generated:  # a generated fixture (S7): the unit, agent and shared-file map of this size
+                scn = dict(scn, **self.fx.scenario_map())
             gm = scenario_mod.git_metrics(scn, origin, clone_dirs, henv)
         except (scenario_mod.ScenarioError, RuntimeError, KeyError, OSError) as e:
             notes.append("scenario metrics failed: %s" % e)
@@ -485,6 +488,9 @@ class Suite:
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
         if scn.get("slots") and states is not None:
             self.ask_metrics(rec, scn, states, notes)
+        if scn.get("scale_metrics") and states is not None:
+            # S7: per-member coordination cost from the streams (scale.py); the store's hook bytes are added by derive()
+            rec["scenario_metrics"]["scale"] = scale_mod.stream_parts(states, len(self.fx.agents), rec["metrics"]["messages"])
 
         if scn.get("stream_metrics") == "chain" and log_dir:
             # S3: the blocked agents' idle and wasted turns and the handoff claim record, from the streams (chain.py)
