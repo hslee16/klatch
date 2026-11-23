@@ -155,6 +155,41 @@ class TestMeasureWithAStub(unittest.TestCase):
         self.assertRegex(rec["date"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
 
+class TestRecordedMeasurements(unittest.TestCase):
+    """The committed records under results-docs/ are consistent: rates follow from counts, intervals from stats.wilson, no model
+    was called, and each names a commit and a 64-hex corpus checksum."""
+    def records(self):
+        d = os.path.join(BENCH, "results-docs")
+        names = sorted(n for n in os.listdir(d) if n.startswith("s10-judge-") and n.endswith(".json"))
+        self.assertIn("s10-judge-rules.json", names)
+        for n in names:
+            with open(os.path.join(d, n)) as f:
+                yield n, json.load(f)
+
+    def test_each_record_is_internally_consistent(self):
+        for n, r in self.records():
+            self.assertEqual(r["judge"], "rules", n)
+            self.assertEqual((r["model_calls"], r["cost_usd"]), (0, 0.0), n)
+            self.assertRegex(r["klatch_commit"], r"^[0-9a-f]{40}$", n)
+            self.assertRegex(r["corpus"]["sha256"], r"^[0-9a-f]{64}$", n)
+            self.assertEqual(sorted(r["splits"]), ["dev", "test"], n)
+            for split, m in r["splits"].items():
+                self.assertAlmostEqual(m["miss_rate"], m["misses"] / m["should_not_cross"], msg=n + split)
+                self.assertAlmostEqual(m["false_positive_rate"], m["false_positives"] / m["clean"], msg=n + split)
+                lo, hi = stats.wilson(m["misses"], m["should_not_cross"])
+                self.assertEqual(m["miss_rate_ci95"], [round(lo, 4), round(hi, 4)], n + split)
+                self.assertFalse(m["incomplete"], n + split)
+
+    def test_the_corpus_checksum_names_the_corpus_file_it_says(self):
+        for n, r in self.records():
+            p = os.path.join(os.path.dirname(os.path.dirname(BENCH)), r["corpus"]["path"])
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    same = hashlib.sha256(f.read()).hexdigest() == r["corpus"]["sha256"]
+                if not same:
+                    self.skipTest("%s: the corpus changed since the measurement; re-run judge_measure.py (README)" % n)
+
+
 @NEEDS_BENCH
 class TestRealRulesJudgeOnATinyCorpus(unittest.TestCase):
     def test_the_rules_judge_misses_the_business_secrets_catches_the_credential_and_blocks_the_scrub_term(self):
