@@ -83,6 +83,21 @@ fn issue_credential(dir: &Dir, member: &str) -> String {
     token.to_text().to_string()
 }
 
+/// The address the readiness line names. Trust the line only once it is complete (its newline is there), never half an
+/// address (#1173, #1207).
+fn logged_addr(log: &str) -> Option<SocketAddr> {
+    let rest = log.split("http listening on ").nth(1)?;
+    if !rest.contains('\n') {
+        return None;
+    }
+    Some(
+        rest.split_whitespace()
+            .next()?
+            .parse()
+            .expect("the logged address"),
+    )
+}
+
 struct Server {
     child: Child,
     addr: SocketAddr,
@@ -124,12 +139,8 @@ impl Server {
         let until = Instant::now() + Duration::from_secs(60);
         while Instant::now() < until {
             let text = std::fs::read_to_string(&server.log).unwrap_or_default();
-            // Trust the line only once it is complete (its newline is there), never half an address (#1173, #1207).
-            if let Some(rest) = text.split("http listening on ").nth(1)
-                && rest.contains('\n')
-                && let Some(addr) = rest.split_whitespace().next()
-            {
-                server.addr = addr.parse().expect("the logged address");
+            if let Some(addr) = logged_addr(&text) {
+                server.addr = addr;
                 return server;
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -189,8 +200,7 @@ impl Reply {
 
 fn send_request(
     addr: SocketAddr,
-    method: &str,
-    path: &str,
+    (method, path): (&str, &str),
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> TcpStream {
@@ -234,12 +244,11 @@ fn read_head(r: &mut BufReader<TcpStream>) -> (u16, Vec<(String, String)>) {
 
 fn exchange(
     addr: SocketAddr,
-    method: &str,
-    path: &str,
+    target: (&str, &str),
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Reply {
-    let s = send_request(addr, method, path, headers, body);
+    let s = send_request(addr, target, headers, body);
     let mut r = BufReader::new(s);
     let (status, headers) = read_head(&mut r);
     let mut body = String::new();
@@ -254,7 +263,7 @@ fn exchange(
 /// Only the status of an exchange: the connection is dropped after the head. For a request whose answer may be an event
 /// stream, which never ends (heartbeats keep resetting a read timeout, so reading it to the end would wait forever).
 fn status_of(addr: SocketAddr, path: &str, headers: &[(&str, &str)]) -> u16 {
-    let s = send_request(addr, "GET", path, headers, b"");
+    let s = send_request(addr, ("GET", path), headers, b"");
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     read_head(&mut BufReader::new(s)).0
 }
@@ -262,6 +271,46 @@ fn status_of(addr: SocketAddr, path: &str, headers: &[(&str, &str)]) -> u16 {
 fn auth<'a>(member: &'a str, token: &'a str, bearer: &'a str) -> [(&'a str, &'a str); 2] {
     let _ = (member, token);
     [("X-Klatch-Member", member), ("Authorization", bearer)]
+}
+
+/// Whether a read error just means the stream is over.
+fn ended_stream(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::ConnectionReset
+    )
+}
+
+/// An event being read, line by line.
+#[derive(Default)]
+struct Event {
+    id: Option<String>,
+    data: Option<Value>,
+}
+
+impl Event {
+    /// Take one line of the stream; the finished event when the line is the blank one that ends it.
+    fn take_line(&mut self, line: &str) -> Option<(Option<String>, Value)> {
+        if line.is_empty() {
+            let data = self.data.take()?;
+            return Some((self.id.take(), data));
+        }
+        if line.starts_with(':') || line.starts_with("event: ") {
+            // a comment, or the event name (the frame's type): checked where a test cares
+            return None;
+        }
+        if let Some(v) = line.strip_prefix("id: ") {
+            self.id = Some(v.to_string());
+        } else if let Some(v) = line.strip_prefix("data: ") {
+            assert!(self.data.is_none(), "one data line per event");
+            self.data = Some(serde_json::from_str(v).unwrap_or_else(|e| panic!("{v:?}: {e}")));
+        } else {
+            panic!("unexpected line in the stream: {line:?}");
+        }
+        None
+    }
 }
 
 /// One server-sent-events session of a member.
@@ -281,8 +330,7 @@ impl Sse {
         let bearer = format!("Bearer {token}");
         let s = send_request(
             addr,
-            "GET",
-            "/v1/stream",
+            ("GET", "/v1/stream"),
             &auth(member, token, &bearer),
             b"",
         );
@@ -311,46 +359,24 @@ impl Sse {
         }
     }
 
+    /// The next line of the stream, `None` when the stream ended (closed, reset or timed out).
+    fn read_line(&mut self) -> Option<String> {
+        let mut line = String::new();
+        match self.r.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(line.trim_end_matches(['\r', '\n']).to_string()),
+            Err(e) if ended_stream(e.kind()) => None,
+            Err(e) => panic!("read: {e}"),
+        }
+    }
+
     /// The next event: its `id:` line (when it has one) and the frame in its `data:` line. Comment lines are skipped.
     fn recv(&mut self) -> Option<(Option<String>, Value)> {
-        let mut id = None;
-        let mut data: Option<Value> = None;
+        let mut event = Event::default();
         loop {
-            let mut line = String::new();
-            match self.r.read_line(&mut line) {
-                Ok(0) => return None,
-                Ok(_) => {}
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::TimedOut
-                            | std::io::ErrorKind::ConnectionReset
-                    ) =>
-                {
-                    return None;
-                }
-                Err(e) => panic!("read: {e}"),
-            }
-            let line = line.trim_end_matches(['\r', '\n']);
-            if line.is_empty() {
-                if let Some(d) = data {
-                    return Some((id, d));
-                }
-                continue;
-            }
-            if line.starts_with(':') {
-                continue;
-            }
-            if let Some(v) = line.strip_prefix("id: ") {
-                id = Some(v.to_string());
-            } else if let Some(v) = line.strip_prefix("data: ") {
-                assert!(data.is_none(), "one data line per event");
-                data = Some(serde_json::from_str(v).unwrap_or_else(|e| panic!("{v:?}: {e}")));
-            } else if line.starts_with("event: ") {
-                // the event name is the frame's type: checked where a test cares
-            } else {
-                panic!("unexpected line in the stream: {line:?}");
+            let line = self.read_line()?;
+            if let Some(done) = event.take_line(&line) {
+                return Some(done);
             }
         }
     }
@@ -365,7 +391,7 @@ impl Sse {
         body.push(b'\n');
         let mut h = auth(&self.member, "", &self.bearer).to_vec();
         h.push(("X-Klatch-Session", &self.session));
-        exchange(self.addr, "POST", "/v1/frames", &h, &body).status
+        exchange(self.addr, ("POST", "/v1/frames"), &h, &body).status
     }
 
     fn request(&mut self, method: &str, params: Value) -> Value {
@@ -396,18 +422,15 @@ impl Sse {
 
 const MCP: &str = "/mcp";
 
+/// Who a request is for: the server's address, the member, and the token.
+type Who<'a> = (SocketAddr, &'a str, &'a str);
+
 fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
 
 /// One JSON-RPC POST to `/mcp` as `member` with `token`, and the whole reply (a JSON answer is a short body that ends).
-fn mcp_post(
-    addr: SocketAddr,
-    member: &str,
-    token: &str,
-    extra: &[(&str, &str)],
-    body: &[u8],
-) -> Reply {
+fn mcp_post((addr, member, token): Who, extra: &[(&str, &str)], body: &[u8]) -> Reply {
     let b = bearer(token);
     let mut h = vec![
         ("X-Klatch-Member", member),
@@ -416,12 +439,12 @@ fn mcp_post(
         ("Accept", "application/json, text/event-stream"),
     ];
     h.extend_from_slice(extra);
-    exchange(addr, "POST", MCP, &h, body)
+    exchange(addr, ("POST", MCP), &h, body)
 }
 
-fn rpc(addr: SocketAddr, member: &str, token: &str, id: u64, method: &str, params: Value) -> Value {
+fn rpc(who: Who, id: u64, method: &str, params: Value) -> Value {
     let body = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
-    let r = mcp_post(addr, member, token, &[], body.as_bytes());
+    let r = mcp_post(who, &[], body.as_bytes());
     assert_eq!(r.status, 200, "{method}: {}", r.body);
     assert!(
         r.header("content-type")
@@ -432,11 +455,9 @@ fn rpc(addr: SocketAddr, member: &str, token: &str, id: u64, method: &str, param
     serde_json::from_str(&r.body).unwrap_or_else(|e| panic!("{:?}: {e}", r.body))
 }
 
-fn call(addr: SocketAddr, member: &str, token: &str, tool: &str, args: Value) -> Value {
+fn call(who: Who, tool: &str, args: Value) -> Value {
     rpc(
-        addr,
-        member,
-        token,
+        who,
         7,
         "tools/call",
         json!({"name": tool, "arguments": args}),
@@ -469,12 +490,12 @@ fn every_mcp_request_needs_a_live_credential_for_the_member_named() {
         vec![("X-Klatch-Member", "alice")],
     ];
     for headers in &cases {
-        let r = exchange(s.addr, "POST", MCP, headers, PING);
+        let r = exchange(s.addr, ("POST", MCP), headers, PING);
         assert_eq!(r.status, 401, "{headers:?}");
         assert_eq!(r.body, "unauthorized");
         assert!(!r.body.contains(&token) && !r.headers.iter().any(|(_, v)| v.contains(&token)));
     }
-    let r = rpc(s.addr, "w-1", &token, 1, "ping", json!({}));
+    let r = rpc((s.addr, "w-1", &token), 1, "ping", json!({}));
     assert_eq!(r["result"], json!({}));
     s.signal(libc::SIGTERM);
     let (_status, log) = s.finish();
@@ -488,7 +509,7 @@ fn a_revoked_credential_is_refused_on_the_next_request() {
     let token = issue_credential(&dir, "w-1");
     let s = Server::started(&dir, &[]);
     assert_eq!(
-        rpc(s.addr, "w-1", &token, 1, "ping", json!({}))["result"],
+        rpc((s.addr, "w-1", &token), 1, "ping", json!({}))["result"],
         json!({})
     );
     let store = klatch::member::custody::open_store(&klatch::member::db_path().unwrap()).unwrap();
@@ -498,7 +519,7 @@ fn a_revoked_credential_is_refused_on_the_next_request() {
         .admin_revoke_credential(&klatch::domain::Principal::unattributed("launcher"), "w-1")
         .unwrap();
     drop(gateway);
-    let r = mcp_post(s.addr, "w-1", &token, &[], PING);
+    let r = mcp_post((s.addr, "w-1", &token), &[], PING);
     assert_eq!(r.status, 401);
 }
 
@@ -509,9 +530,7 @@ fn initialize_offers_the_tools_and_never_the_channel_capability() {
     let token = issue_credential(&dir, "w-1");
     let s = Server::started(&dir, &[]);
     let r = rpc(
-        s.addr,
-        "w-1",
-        &token,
+        (s.addr, "w-1", &token),
         1,
         "initialize",
         json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}),
@@ -529,7 +548,7 @@ fn initialize_offers_the_tools_and_never_the_channel_capability() {
     assert_eq!(result["serverInfo"]["name"], "klatch");
     let instr = result["instructions"].as_str().unwrap();
     assert!(instr.contains("w-1"), "{instr}");
-    let list = rpc(s.addr, "w-1", &token, 2, "tools/list", json!({}));
+    let list = rpc((s.addr, "w-1", &token), 2, "tools/list", json!({}));
     let mut names: Vec<&str> = list["result"]["tools"]
         .as_array()
         .unwrap()
@@ -561,19 +580,21 @@ fn tools_act_as_the_member_of_the_credential_and_share_one_gateway() {
     let t2 = issue_credential(&dir, "w-2");
     let s = Server::started(&dir, &[]);
     for (m, t) in [("w-1", &t1), ("w-2", &t2)] {
-        let r = call(s.addr, m, t, "klatch_join", json!({"room": "lobby"}));
+        let r = call((s.addr, m, t), "klatch_join", json!({"room": "lobby"}));
         assert_eq!(r["isError"], false, "{r}");
     }
     // `member` and `sender` arguments are not who is calling
     let r = call(
-        s.addr,
-        "w-1",
-        &t1,
+        (s.addr, "w-1", &t1),
         "klatch_post",
         json!({"room": "lobby", "body": "hello over mcp", "member": "w-2", "sender": "w-2"}),
     );
     assert_eq!(r["isError"], false, "{r}");
-    let read = call(s.addr, "w-2", &t2, "klatch_read", json!({"room": "lobby"}));
+    let read = call(
+        (s.addr, "w-2", &t2),
+        "klatch_read",
+        json!({"room": "lobby"}),
+    );
     assert_eq!(read["isError"], false, "{read}");
     let text = read["structuredContent"].to_string();
     assert!(
@@ -586,9 +607,7 @@ fn tools_act_as_the_member_of_the_credential_and_share_one_gateway() {
     assert_eq!(sse.frame()["type"], "hello");
     let seq = sse.post("lobby", "hello over sse");
     let again = call(
-        s.addr,
-        "w-1",
-        &t1,
+        (s.addr, "w-1", &t1),
         "klatch_post",
         json!({"room":"lobby","body":"third"}),
     );
@@ -606,7 +625,7 @@ fn a_notification_or_a_response_from_the_client_is_accepted_with_no_body() {
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         r#"{"jsonrpc":"2.0","id":9,"result":{}}"#,
     ] {
-        let r = mcp_post(s.addr, "w-1", &token, &[], body.as_bytes());
+        let r = mcp_post((s.addr, "w-1", &token), &[], body.as_bytes());
         assert_eq!(r.status, 202, "{body}");
         assert_eq!(r.body, "");
     }
@@ -618,30 +637,28 @@ fn bad_json_a_batch_and_an_unknown_method_get_json_rpc_errors() {
     let dir = Dir::new();
     let token = issue_credential(&dir, "w-1");
     let s = Server::started(&dir, &[]);
-    let r = mcp_post(s.addr, "w-1", &token, &[], b"{not json");
+    let r = mcp_post((s.addr, "w-1", &token), &[], b"{not json");
     assert_eq!(r.status, 400);
     let v: Value = serde_json::from_str(&r.body).unwrap();
     assert_eq!(v["error"]["code"], -32700, "{v}");
     assert_eq!(v["id"], Value::Null);
     // batches are gone from the 2025-06-18 revision
     let r = mcp_post(
-        s.addr,
-        "w-1",
-        &token,
+        (s.addr, "w-1", &token),
         &[],
         br#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#,
     );
     assert_eq!(r.status, 400);
     let v: Value = serde_json::from_str(&r.body).unwrap();
     assert_eq!(v["error"]["code"], -32600, "{v}");
-    let r = mcp_post(s.addr, "w-1", &token, &[], b"");
+    let r = mcp_post((s.addr, "w-1", &token), &[], b"");
     assert_eq!(r.status, 400);
     // an unknown method is a JSON-RPC error in a 200, as on stdio
-    let v = rpc(s.addr, "w-1", &token, 3, "no/such", json!({}));
+    let v = rpc((s.addr, "w-1", &token), 3, "no/such", json!({}));
     assert_eq!(v["error"]["code"], -32601, "{v}");
     // pretty-printed JSON (newlines inside the body) is one message
     let pretty = "{\n \"jsonrpc\": \"2.0\",\n \"id\": 4,\n \"method\": \"ping\"\n}\n";
-    let r = mcp_post(s.addr, "w-1", &token, &[], pretty.as_bytes());
+    let r = mcp_post((s.addr, "w-1", &token), &[], pretty.as_bytes());
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(serde_json::from_str::<Value>(&r.body).unwrap()["id"], 4);
 }
@@ -659,7 +676,7 @@ fn the_origin_accept_and_protocol_version_headers_are_checked() {
         "null",
         "https://localhost.evil.example",
     ] {
-        let r = mcp_post(s.addr, "w-1", &token, &[("Origin", origin)], PING);
+        let r = mcp_post((s.addr, "w-1", &token), &[("Origin", origin)], PING);
         assert_eq!(r.status, 403, "{origin}");
     }
     for origin in [
@@ -668,31 +685,25 @@ fn the_origin_accept_and_protocol_version_headers_are_checked() {
         "http://[::1]:1",
         "https://localhost",
     ] {
-        let r = mcp_post(s.addr, "w-1", &token, &[("Origin", origin)], PING);
+        let r = mcp_post((s.addr, "w-1", &token), &[("Origin", origin)], PING);
         assert_eq!(r.status, 200, "{origin}: {}", r.body);
     }
     // the credential is checked first: a bad one is 401 whatever the origin
     let r = mcp_post(
-        s.addr,
-        "w-1",
-        "nope",
+        (s.addr, "w-1", "nope"),
         &[("Origin", "http://evil.example")],
         PING,
     );
     assert_eq!(r.status, 401);
     // the protocol version header, when sent, must be one this server speaks
     let r = mcp_post(
-        s.addr,
-        "w-1",
-        &token,
+        (s.addr, "w-1", &token),
         &[("MCP-Protocol-Version", "2025-06-18")],
         PING,
     );
     assert_eq!(r.status, 200);
     let r = mcp_post(
-        s.addr,
-        "w-1",
-        &token,
+        (s.addr, "w-1", &token),
         &[("MCP-Protocol-Version", "1999-01-01")],
         PING,
     );
@@ -701,8 +712,7 @@ fn the_origin_accept_and_protocol_version_headers_are_checked() {
     let b = bearer(&token);
     let r = exchange(
         s.addr,
-        "POST",
-        MCP,
+        ("POST", MCP),
         &[
             ("X-Klatch-Member", "w-1"),
             ("Authorization", b.as_str()),
@@ -721,14 +731,14 @@ fn only_post_is_served_on_the_mcp_path_and_sizes_are_limited() {
     let s = Server::started(&dir, &[]);
     // no standalone event stream and no session to delete: both say so
     for method in ["GET", "DELETE", "PUT"] {
-        let r = exchange(s.addr, method, MCP, &[], b"");
+        let r = exchange(s.addr, (method, MCP), &[], b"");
         assert_eq!(r.status, 405, "{method}");
         assert_eq!(r.header("allow"), Some("POST"));
     }
     let big = vec![b'x'; 1024 * 1024 + 1];
-    let r = mcp_post(s.addr, "w-1", &token, &[], &big);
+    let r = mcp_post((s.addr, "w-1", &token), &[], &big);
     assert_eq!(r.status, 413);
-    let r = exchange(s.addr, "POST", "/mcp/extra", &[], b"{}");
+    let r = exchange(s.addr, ("POST", "/mcp/extra"), &[], b"{}");
     assert_eq!(r.status, 404);
     // the wire routes are still there beside it
     let mut sse = Sse::open(s.addr, "w-1", &token);
@@ -745,12 +755,12 @@ fn mcp_requests_count_against_the_connection_cap_of_the_listener() {
     let mut b = Sse::open(s.addr, "w-1", &t);
     a.frame();
     b.frame();
-    let r = mcp_post(s.addr, "w-1", &t, &[], PING);
+    let r = mcp_post((s.addr, "w-1", &t), &[], PING);
     assert_eq!(r.status, 503);
     drop(a);
     let until = Instant::now() + Duration::from_secs(20);
     loop {
-        let r = mcp_post(s.addr, "w-1", &t, &[], PING);
+        let r = mcp_post((s.addr, "w-1", &t), &[], PING);
         if r.status != 503 || Instant::now() > until {
             assert_eq!(r.status, 200, "the slot of the closed connection is freed");
             break;
@@ -767,18 +777,14 @@ fn a_wait_asked_for_too_long_is_a_json_rpc_error_and_a_short_one_times_out() {
     let t = issue_credential(&dir, "w-1");
     let s = Server::started(&dir, &[]);
     let v = rpc(
-        s.addr,
-        "w-1",
-        &t,
+        (s.addr, "w-1", &t),
         1,
         "tools/call",
         json!({"name":"klatch_wait","arguments":{"rooms":["lobby"],"timeout":9999}}),
     );
     assert_eq!(v["error"]["code"], -32602, "{v}");
     let r = call(
-        s.addr,
-        "w-1",
-        &t,
+        (s.addr, "w-1", &t),
         "klatch_wait",
         json!({"rooms":["lobby"],"timeout":1}),
     );
@@ -794,8 +800,7 @@ fn start_long_wait(addr: SocketAddr, member: &str, token: &str) -> TcpStream {
     .to_string();
     let s = send_request(
         addr,
-        "POST",
-        MCP,
+        ("POST", MCP),
         &[
             ("X-Klatch-Member", member),
             ("Authorization", b.as_str()),
@@ -816,11 +821,11 @@ fn a_client_that_leaves_mid_wait_frees_its_connection_slot_promptly() {
     let s = Server::started(&dir, &["--max-connections", "1"]);
     let wait = start_long_wait(s.addr, "w-1", &t);
     // the only slot is held by the wait
-    assert_eq!(mcp_post(s.addr, "w-1", &t, &[], PING).status, 503);
+    assert_eq!(mcp_post((s.addr, "w-1", &t), &[], PING).status, 503);
     drop(wait);
     let until = Instant::now() + Duration::from_secs(5);
     loop {
-        let r = mcp_post(s.addr, "w-1", &t, &[], PING);
+        let r = mcp_post((s.addr, "w-1", &t), &[], PING);
         if r.status == 200 {
             break;
         }

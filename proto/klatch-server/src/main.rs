@@ -14,8 +14,14 @@ mod loopback_tests;
 mod mcp_http;
 mod webhook;
 #[cfg(test)]
+mod webhook_intake_tests;
+#[cfg(test)]
 mod webhook_tests;
+mod webhook_translate;
+#[cfg(test)]
+mod webhook_translate_tests;
 mod wire_http;
+mod wire_sse;
 
 use anyhow::{Result, bail};
 use channel::{Live, Selector, SharedOut, Tap, watch};

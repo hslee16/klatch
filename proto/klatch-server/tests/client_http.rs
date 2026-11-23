@@ -34,6 +34,21 @@ static N: AtomicU32 = AtomicU32::new(0);
 /// Issuing a credential reads the environment of this process: one test at a time may set it.
 static ENV: Mutex<()> = Mutex::new(());
 
+/// The address the readiness line names. Trust the line only once it is complete (its newline is there), never half an
+/// address (#1173, #1207).
+fn logged_addr(log: &str) -> Option<SocketAddr> {
+    let rest = log.split("http listening on ").nth(1)?;
+    if !rest.contains('\n') {
+        return None;
+    }
+    Some(
+        rest.split_whitespace()
+            .next()?
+            .parse()
+            .expect("the logged address"),
+    )
+}
+
 /// A throwaway store with its own `klatch-server http`, started on first use.
 pub struct Home {
     dir: PathBuf,
@@ -83,12 +98,8 @@ impl Home {
             let until = Instant::now() + Duration::from_secs(60);
             let addr = loop {
                 let text = std::fs::read_to_string(self.log()).unwrap_or_default();
-                // Trust the line only once it is complete (its newline is there), never half an address (#1173, #1207).
-                if let Some(rest) = text.split("http listening on ").nth(1)
-                    && rest.contains('\n')
-                    && let Some(a) = rest.split_whitespace().next()
-                {
-                    break a.parse().expect("the logged address");
+                if let Some(a) = logged_addr(&text) {
+                    break a;
                 }
                 assert!(
                     Instant::now() < until,
@@ -382,6 +393,95 @@ struct Stub {
     done: Arc<AtomicBool>,
 }
 
+/// What the stub does with the connections it accepts: what it saw, the open event stream, the statuses still to give.
+struct Answers {
+    seen: Arc<Mutex<Seen>>,
+    stream: Option<TcpStream>,
+    statuses: std::vec::IntoIter<u16>,
+}
+
+/// The request line's method and the headers (names lower-cased) of a request, `None` when nothing was sent.
+fn read_head(r: &mut BufReader<TcpStream>) -> Option<(String, HashMap<String, String>)> {
+    let mut line = String::new();
+    if r.read_line(&mut line).unwrap_or(0) == 0 {
+        return None;
+    }
+    let method = line.split(' ').next().unwrap_or("").to_string();
+    let mut headers = HashMap::new();
+    loop {
+        let mut h = String::new();
+        r.read_line(&mut h).unwrap();
+        let h = h.trim_end();
+        if h.is_empty() {
+            return Some((method, headers));
+        }
+        let (n, v) = h.split_once(':').unwrap();
+        headers.insert(n.to_ascii_lowercase(), v.trim().to_string());
+    }
+}
+
+impl Answers {
+    /// `GET`: the event stream, with a hello and a comment, kept open for the responses to come.
+    fn get(&mut self, mut conn: TcpStream, headers: HashMap<String, String>) {
+        self.seen.lock().unwrap().gets.push(headers);
+        conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\nX-Klatch-Session: S1\r\n\r\n").unwrap();
+        conn.write_all(b"event: hello\ndata: {\"v\":1,\"type\":\"hello\",\"member\":\"w-1\",\"attribution\":\"verified\",\"clearance\":\"public\"}\n\n: a comment\n\n").unwrap();
+        self.stream = Some(conn);
+    }
+
+    /// `POST`: record it, answer with the next status, and on a 202 write the response on the stream.
+    fn post(
+        &mut self,
+        mut conn: TcpStream,
+        r: &mut BufReader<TcpStream>,
+        headers: HashMap<String, String>,
+    ) {
+        let n: usize = headers
+            .get("content-length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let mut body = vec![0u8; n];
+        r.read_exact(&mut body).unwrap();
+        let body = String::from_utf8(body).unwrap();
+        self.seen
+            .lock()
+            .unwrap()
+            .posts
+            .push((headers, body.clone()));
+        let status = self.statuses.next().unwrap_or(202);
+        let phrase = if status == 202 { "Accepted" } else { "No" };
+        let _ = conn.write_all(
+            format!("HTTP/1.1 {status} {phrase}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        );
+        if status == 202
+            && let Some(s) = self.stream.as_mut()
+        {
+            let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let _ = s.write_all(
+                format!("event: response\nid: x\ndata: {{\"v\":1,\"type\":\"response\",\"id\":\"{id}\",\"ok\":true,\"result\":{{\"seq\":7,\"id\":\"m7\"}}}}\n\n").as_bytes(),
+            );
+        }
+    }
+
+    fn serve(&mut self, conn: TcpStream) {
+        conn.set_nonblocking(false).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut r = BufReader::new(conn.try_clone().unwrap());
+        let Some((method, headers)) = read_head(&mut r) else {
+            return;
+        };
+        if method == "GET" {
+            self.get(conn, headers);
+        } else {
+            self.post(conn, &mut r, headers);
+        }
+    }
+}
+
 impl Stub {
     fn start(statuses: Vec<u16>) -> Stub {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -389,66 +489,18 @@ impl Stub {
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Seen::default()));
         let done = Arc::new(AtomicBool::new(false));
-        let stream: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
-        let (s2, d2) = (seen.clone(), done.clone());
+        let mut answers = Answers {
+            seen: seen.clone(),
+            stream: None,
+            statuses: statuses.into_iter(),
+        };
+        let d2 = done.clone();
         std::thread::spawn(move || {
-            let mut statuses = statuses.into_iter();
             let until = Instant::now() + Duration::from_secs(60);
             while !d2.load(Ordering::SeqCst) && Instant::now() < until {
-                let Ok((conn, _)) = listener.accept() else {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                };
-                conn.set_nonblocking(false).unwrap();
-                conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                let mut r = BufReader::new(conn.try_clone().unwrap());
-                let mut line = String::new();
-                if r.read_line(&mut line).unwrap_or(0) == 0 {
-                    continue;
-                }
-                let method = line.split(' ').next().unwrap_or("").to_string();
-                let mut headers = HashMap::new();
-                loop {
-                    let mut h = String::new();
-                    r.read_line(&mut h).unwrap();
-                    let h = h.trim_end();
-                    if h.is_empty() {
-                        break;
-                    }
-                    let (n, v) = h.split_once(':').unwrap();
-                    headers.insert(n.to_ascii_lowercase(), v.trim().to_string());
-                }
-                let mut conn = conn;
-                if method == "GET" {
-                    s2.lock().unwrap().gets.push(headers);
-                    conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\nX-Klatch-Session: S1\r\n\r\n").unwrap();
-                    conn.write_all(b"event: hello\ndata: {\"v\":1,\"type\":\"hello\",\"member\":\"w-1\",\"attribution\":\"verified\",\"clearance\":\"public\"}\n\n: a comment\n\n").unwrap();
-                    *stream.lock().unwrap() = Some(conn);
-                } else {
-                    let n: usize = headers
-                        .get("content-length")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0);
-                    let mut body = vec![0u8; n];
-                    r.read_exact(&mut body).unwrap();
-                    let body = String::from_utf8(body).unwrap();
-                    s2.lock().unwrap().posts.push((headers, body.clone()));
-                    let status = statuses.next().unwrap_or(202);
-                    let phrase = if status == 202 { "Accepted" } else { "No" };
-                    let _ = conn.write_all(
-                        format!("HTTP/1.1 {status} {phrase}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes(),
-                    );
-                    if status == 202
-                        && let Some(s) = stream.lock().unwrap().as_mut()
-                    {
-                        let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
-                            .as_str()
-                            .unwrap()
-                            .to_string();
-                        let _ = s.write_all(
-                            format!("event: response\nid: x\ndata: {{\"v\":1,\"type\":\"response\",\"id\":\"{id}\",\"ok\":true,\"result\":{{\"seq\":7,\"id\":\"m7\"}}}}\n\n").as_bytes(),
-                        );
-                    }
+                match listener.accept() {
+                    Ok((conn, _)) => answers.serve(conn),
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             }
         });

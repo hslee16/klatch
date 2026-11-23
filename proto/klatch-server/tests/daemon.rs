@@ -294,13 +294,34 @@ fn two_concurrent_connections_share_one_gateway_with_dense_sequence_numbers() {
     assert_eq!(got, (1..=20).collect::<Vec<i64>>());
 }
 
+/// A `hello` (or `identify` result) names this member with this attribution.
+fn assert_who(frame: &Value, member: &str, attribution: &str) {
+    assert_eq!(frame["member"], member, "{frame}");
+    assert_eq!(frame["attribution"], attribution, "{frame}");
+}
+
+/// The daemon refused to start: it exited 1 and its stderr has every needle; `what` says which case.
+fn assert_start_refused(status: std::process::ExitStatus, err: &str, needles: &[&str], what: &str) {
+    assert_eq!(status.code(), Some(1), "{what}: {err}");
+    for needle in needles {
+        assert!(err.contains(needle), "{what}: {needle:?} is not in {err}");
+    }
+}
+
+/// A frame that says a request or connection was refused: a `refusal`, or a failed `response`.
+fn assert_error_frame(f: &Value) {
+    assert!(
+        f["type"] == "refusal" || (f["type"] == "response" && f["ok"] == false),
+        "{f}"
+    );
+}
+
 #[test]
 fn a_connection_that_does_not_identify_is_unmapped_process_and_unattributed() {
     let dir = Dir::new();
     let d = Daemon::started(&dir, &[]);
     let (mut c, hello) = Conn::hello(&d.sock);
-    assert_eq!(hello["member"], "unmapped-process");
-    assert_eq!(hello["attribution"], "unattributed");
+    assert_who(&hello, "unmapped-process", "unattributed");
     assert_eq!(c.request("join", json!({"room": "r"}))["ok"], true);
     assert_eq!(c.post("r", "hi"), 1);
     let r = c.request("history", json!({"room": "r", "last": 5}));
@@ -513,9 +534,12 @@ fn a_socket_directory_others_can_write_to_is_refused_by_name() {
         let sdir = dir.0.join("s");
         std::fs::set_permissions(&sdir, std::fs::Permissions::from_mode(mode)).unwrap();
         let (status, err) = Daemon::start(&dir, &[]).finish();
-        assert_eq!(status.code(), Some(1), "{mode:o}: {err}");
-        assert!(err.contains("not safe"), "{mode:o}: {err}");
-        assert!(err.contains("writable"), "{mode:o}: {err}");
+        assert_start_refused(
+            status,
+            &err,
+            &["not safe", "writable"],
+            &format!("{mode:o}"),
+        );
         assert!(!dir.sock().exists());
     }
 }
@@ -540,10 +564,7 @@ fn a_path_over_the_socket_limit_is_refused_naming_the_limit() {
     let dir = Dir::new();
     let long = dir.0.join("s").join("a".repeat(150));
     let (status, err) = Daemon::start_at(&dir, &long, &[]).finish();
-    assert_eq!(status.code(), Some(1), "{err}");
-    assert!(err.contains("too long"), "{err}");
-    assert!(err.contains("bytes"), "{err}");
-    assert!(err.contains("limit"), "{err}");
+    assert_start_refused(status, &err, &["too long", "bytes", "limit"], "long path");
 }
 
 #[test]
@@ -577,10 +598,7 @@ fn a_frame_over_the_cap_is_refused_and_other_connections_are_not_affected() {
         "{{\"v\":1,\"type\":\"request\",\"id\":\"big\",\"method\":\"post\",\"params\":{{\"room\":\"r\",\"body\":\"{huge}\"}}}}"
     ));
     let f = bad.recv().expect("a frame saying why");
-    assert!(
-        f["type"] == "refusal" || (f["type"] == "response" && f["ok"] == false),
-        "{f}"
-    );
+    assert_error_frame(&f);
     assert!(
         !f.to_string().contains("xxxxxxxx"),
         "the refusal never echoes the frame"
@@ -614,41 +632,46 @@ fn a_connection_the_peer_closed_at_once_still_opens_and_reads_the_end() {
     assert!(c.recv().is_none(), "end of file, not a panic");
 }
 
+/// Take a slot: try until the hello comes (the readiness probe may still hold one for a moment).
+fn take_slot(sock: &Path) -> Conn {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut c = Conn::open(sock);
+        if c.recv().is_some_and(|f| f["type"] == "hello") {
+            return c;
+        }
+        assert!(Instant::now() < until, "no slot");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Try until a connection is greeted: the slot frees when the daemon sees a close.
+fn wait_for_freed_slot(sock: &Path) {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut c = Conn::open(sock);
+        let f = c.recv().expect("a frame");
+        if f["type"] == "hello" {
+            return;
+        }
+        assert!(Instant::now() < until, "the slot never freed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn the_connection_cap_refuses_the_excess_with_a_frame_and_frees_a_slot_when_one_closes() {
     let dir = Dir::new();
     let d = Daemon::started(&dir, &["--max-connections", "2"]);
-    // the readiness probe may still hold a slot for a moment: take a slot by trying until the hello comes
-    let slot = |sock: &Path| -> Conn {
-        let until = Instant::now() + Duration::from_secs(10);
-        loop {
-            let mut c = Conn::open(sock);
-            if c.recv().is_some_and(|f| f["type"] == "hello") {
-                return c;
-            }
-            assert!(Instant::now() < until, "no slot");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    let a = slot(&d.sock);
-    let b = slot(&d.sock);
+    let a = take_slot(&d.sock);
+    let b = take_slot(&d.sock);
     let mut third = Conn::open(&d.sock);
     let f = third.recv().expect("a refusal frame");
     assert_eq!(f["type"], "refusal", "{f}");
     assert_eq!(f["rule"], "daemon.connections");
     assert!(third.rest().is_empty(), "then the connection closes");
     drop(a);
-    // the slot frees when the daemon sees the close; try until it does
-    let until = Instant::now() + Duration::from_secs(10);
-    loop {
-        let mut c = Conn::open(&d.sock);
-        let f = c.recv().expect("a frame");
-        if f["type"] == "hello" {
-            break;
-        }
-        assert!(Instant::now() < until, "the slot never freed");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_freed_slot(&d.sock);
     drop(b);
 }
 
@@ -674,10 +697,7 @@ fn garbage_on_one_connection_gets_an_error_frame_and_does_not_affect_others() {
     let (mut bad, _) = Conn::hello(&d.sock);
     bad.send_line("this is not json {{{");
     let f = bad.recv().expect("an error frame");
-    assert!(
-        f["type"] == "refusal" || (f["type"] == "response" && f["ok"] == false),
-        "{f}"
-    );
+    assert_error_frame(&f);
     assert!(!f.to_string().contains("this is not json"), "{f}");
     assert_eq!(good.request("join", json!({"room": "r"}))["ok"], true);
     assert_eq!(good.post("r", "ok"), 1);
@@ -812,6 +832,31 @@ fn daemon_run(dir: &Dir) -> (Vec<Value>, Vec<Value>) {
     (runs.remove(0), runs.remove(0))
 }
 
+/// The responses (in order) and the rest of the frames (sorted, as their text) of a run.
+fn split_frames(frames: &[Value]) -> (Vec<Value>, Vec<String>) {
+    let responses = frames
+        .iter()
+        .filter(|f| f["type"] == "response")
+        .cloned()
+        .collect();
+    let mut rest: Vec<String> = frames
+        .iter()
+        .filter(|f| f["type"] != "response")
+        .map(|f| f.to_string())
+        .collect();
+    rest.sort();
+    (responses, rest)
+}
+
+/// The sequence numbers the `post` responses of a run carry.
+fn post_seqs(frames: &[Value]) -> Vec<i64> {
+    frames
+        .iter()
+        .filter(|f| f["type"] == "response" && f["id"].as_str().is_some_and(|i| i.starts_with('p')))
+        .map(|f| f["result"]["seq"].as_i64().unwrap())
+        .collect()
+}
+
 #[test]
 fn the_same_scenario_through_the_daemon_and_through_the_session_loop_gives_the_same_frames() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -821,41 +866,18 @@ fn the_same_scenario_through_the_daemon_and_through_the_session_loop_gives_the_s
     // Responses come in request order in both. A stream's messages and caught_up arrive between them at moments that
     // depend on timing (a socket delivers a request at a time; the in-process script is read at once), so those are
     // compared as a sorted set, not by position.
-    let split = |frames: &Vec<Value>| -> (Vec<Value>, Vec<String>) {
-        let responses = frames
-            .iter()
-            .filter(|f| f["type"] == "response")
-            .cloned()
-            .collect();
-        let mut rest: Vec<String> = frames
-            .iter()
-            .filter(|f| f["type"] != "response")
-            .map(|f| f.to_string())
-            .collect();
-        rest.sort();
-        (responses, rest)
-    };
     for (name, a, b) in [
         ("alice", &direct.0, &over_daemon.0),
         ("bob", &direct.1, &over_daemon.1),
     ] {
-        let (ra, sa) = split(a);
-        let (rb, sb) = split(b);
+        let (ra, sa) = split_frames(a);
+        let (rb, sb) = split_frames(b);
         assert!(ra.len() >= 10, "{name}: {ra:?}");
         assert_eq!(ra, rb, "{name}: responses");
         assert!(!sa.is_empty(), "{name}: a stream was seen");
         assert_eq!(sa, sb, "{name}: stream frames");
     }
     // bob's posts follow alice's: the sequence numbers go on from 5, in both
-    let seqs = |frames: &Vec<Value>| -> Vec<i64> {
-        frames
-            .iter()
-            .filter(|f| {
-                f["type"] == "response" && f["id"].as_str().is_some_and(|i| i.starts_with('p'))
-            })
-            .map(|f| f["result"]["seq"].as_i64().unwrap())
-            .collect()
-    };
-    assert_eq!(seqs(&over_daemon.0), [1, 2, 3, 4]);
-    assert_eq!(seqs(&over_daemon.1), [5, 6, 7, 8]);
+    assert_eq!(post_seqs(&over_daemon.0), [1, 2, 3, 4]);
+    assert_eq!(post_seqs(&over_daemon.1), [5, 6, 7, 8]);
 }

@@ -70,91 +70,113 @@ fn code_of(line: &str) -> &str {
     line.split("//").next().unwrap_or("")
 }
 
-#[test]
-fn the_source_opens_no_socket_outside_the_loopback_module_and_starts_no_program() {
-    // Socket types and the network module: only the loopback module (and, for a client, its tests) may name them.
-    const SOCKETS: &[&str] = &["TcpStream", "TcpListener", "std::net", "SocketAddr"];
-    // Never anywhere, not even in the loopback module: datagram and unix sockets, name resolution, an HTTP client, an
-    // all-interfaces address.
-    const NEVER: &[&str] = &[
-        "UdpSocket",
-        "UnixDatagram",
-        "ToSocketAddrs",
-        "ureq",
-        "reqwest",
-        "hyper",
-        "UNSPECIFIED",
-    ];
-    // Programs this crate may start by literal name: none. (The `klatch` library starts git, ps and the keystores for
-    // the member setup; that is the library's own audit.)
-    const PROGRAMS: &[&str] = &[];
+/// Socket types and the network module: only the loopback module (and, for a client, its tests) may name them.
+const SOCKETS: &[&str] = &["TcpStream", "TcpListener", "std::net", "SocketAddr"];
+
+/// Never anywhere, not even in the loopback module: datagram and unix sockets, name resolution, an HTTP client, an
+/// all-interfaces address.
+const NEVER: &[&str] = &[
+    "UdpSocket",
+    "UnixDatagram",
+    "ToSocketAddrs",
+    "ureq",
+    "reqwest",
+    "hyper",
+    "UNSPECIFIED",
+];
+
+/// Programs this crate may start by literal name: none. (The `klatch` library starts git, ps and the keystores for the
+/// member setup; that is the library's own audit.)
+const PROGRAMS: &[&str] = &[];
+
+/// The names of `set` that `code` contains.
+fn found<'a>(code: &'a str, set: &'a [&'a str]) -> impl Iterator<Item = &'a str> + 'a {
+    set.iter().copied().filter(move |name| code.contains(name))
+}
+
+fn is_in(rel: &str, files: &[&str]) -> bool {
+    files.contains(&rel)
+}
+
+/// Socket types and `std::net` outside the loopback module and its tests.
+fn socket_problems(rel: &str, code: &str, at: &str) -> Vec<String> {
+    if is_in(rel, LOOPBACK_ONLY) || is_in(rel, TEST_CLIENT) {
+        return Vec::new();
+    }
+    // `std::net::Shutdown` is what `UnixStream::shutdown` takes: not a network type
+    let net_code = code.replace("std::net::Shutdown", "");
+    found(&net_code, SOCKETS)
+        .map(|s| format!("{at}: uses {s}"))
+        .collect()
+}
+
+/// The Unix socket names and peer-credential calls outside the daemon module, and the names never allowed anywhere.
+fn name_problems(rel: &str, code: &str, at: &str) -> Vec<String> {
+    let outside_daemon = if is_in(rel, DAEMON_ONLY) {
+        Vec::new()
+    } else {
+        found(code, DAEMON_NAMES)
+            .map(|s| format!("{at}: uses {s} outside the daemon module"))
+            .collect()
+    };
+    let never = found(code, NEVER).map(|s| format!("{at}: uses {s}"));
+    outside_daemon.into_iter().chain(never).collect()
+}
+
+/// Whether a line opens an outbound connection: a connect is allowed only in the loopback listener's own tests.
+fn connects_outward(rel: &str, code: &str) -> bool {
+    let unix_connect = code.contains("UnixStream::connect(") && !is_in(rel, DAEMON_ONLY);
+    let connects =
+        code.contains("TcpStream::connect") || code.contains("connect_timeout(") || unix_connect;
+    connects && !is_in(rel, TEST_CLIENT)
+}
+
+/// A program started: none, by literal name or chosen at run time, and the process `Command` type is not named.
+fn program_problems(code: &str, at: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    let sources = rust_sources();
-    assert!(!sources.is_empty());
-    for (rel, text) in &sources {
-        for (n, line) in text.lines().enumerate() {
-            let code = code_of(line);
-            let at = format!("{rel}:{}", n + 1);
-            let may_name_sockets =
-                LOOPBACK_ONLY.contains(&rel.as_str()) || TEST_CLIENT.contains(&rel.as_str());
-            // `std::net::Shutdown` is what `UnixStream::shutdown` takes: not a network type
-            let net_code = code.replace("std::net::Shutdown", "");
-            if !may_name_sockets {
-                problems.extend(
-                    SOCKETS
-                        .iter()
-                        .filter(|s| net_code.contains(*s))
-                        .map(|s| format!("{at}: uses {s}")),
-                );
-            } else if DAEMON_ONLY.contains(&rel.as_str()) {
-                problems.extend(
-                    SOCKETS
-                        .iter()
-                        .filter(|s| net_code.contains(*s))
-                        .map(|s| format!("{at}: the daemon module names the network type {s}")),
-                );
-            }
-            if !DAEMON_ONLY.contains(&rel.as_str()) {
-                problems.extend(
-                    DAEMON_NAMES
-                        .iter()
-                        .filter(|s| code.contains(*s))
-                        .map(|s| format!("{at}: uses {s} outside the daemon module")),
-                );
-            }
-            problems.extend(
-                NEVER
-                    .iter()
-                    .filter(|s| code.contains(*s))
-                    .map(|s| format!("{at}: uses {s}")),
-            );
-            // No outbound connection: a connect is allowed only in the loopback listener's own tests.
-            if (code.contains("TcpStream::connect")
-                || code.contains("connect_timeout(")
-                || (code.contains("UnixStream::connect(") && !DAEMON_ONLY.contains(&rel.as_str())))
-                && !TEST_CLIENT.contains(&rel.as_str())
-            {
-                problems.push(format!("{at}: opens an outbound connection"));
-            }
-            // No listener but the one in `bind_loopback`.
-            if code.contains("TcpListener::bind") && !LOOPBACK_ONLY.contains(&rel.as_str()) {
-                problems.push(format!(
-                    "{at}: binds a listener outside the loopback module"
-                ));
-            }
-            if let Some(i) = code.find("Command::new(") {
-                let arg = &code[i + "Command::new(".len()..];
-                match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
-                    Some(p) if PROGRAMS.contains(&p) => {}
-                    Some(p) => problems.push(format!("{at}: runs {p}")),
-                    None => problems.push(format!("{at}: runs a program chosen at run time")),
-                }
-            }
-            if code.contains("process::Command") || code.contains("std::process::Command") {
-                problems.push(format!("{at}: names the process Command type"));
-            }
+    if let Some(i) = code.find("Command::new(") {
+        let arg = &code[i + "Command::new(".len()..];
+        match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
+            Some(p) if PROGRAMS.contains(&p) => {}
+            Some(p) => problems.push(format!("{at}: runs {p}")),
+            None => problems.push(format!("{at}: runs a program chosen at run time")),
         }
     }
+    if code.contains("process::Command") || code.contains("std::process::Command") {
+        problems.push(format!("{at}: names the process Command type"));
+    }
+    problems
+}
+
+/// Everything one line of source may not do.
+fn line_problems(rel: &str, code: &str, at: &str) -> Vec<String> {
+    let mut problems = socket_problems(rel, code, at);
+    problems.extend(name_problems(rel, code, at));
+    if connects_outward(rel, code) {
+        problems.push(format!("{at}: opens an outbound connection"));
+    }
+    // No listener but the one in `bind_loopback`.
+    if code.contains("TcpListener::bind") && !is_in(rel, LOOPBACK_ONLY) {
+        problems.push(format!(
+            "{at}: binds a listener outside the loopback module"
+        ));
+    }
+    problems.extend(program_problems(code, at));
+    problems
+}
+
+#[test]
+fn the_source_opens_no_socket_outside_the_loopback_module_and_starts_no_program() {
+    let sources = rust_sources();
+    assert!(!sources.is_empty());
+    let problems: Vec<String> = sources
+        .iter()
+        .flat_map(|(rel, text)| {
+            text.lines().enumerate().flat_map(move |(n, line)| {
+                line_problems(rel, code_of(line), &format!("{rel}:{}", n + 1))
+            })
+        })
+        .collect();
     assert!(
         problems.is_empty(),
         "outbound capability in the source:\n{}",
@@ -227,16 +249,22 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     ] {
         assert_eq!(count(forbidden), 0, "{forbidden}");
     }
-    // the order in the accept loop: who the peer is, the uid check, and only then a thread for the connection
+    // the order of admitting a connection (`admit`): who the peer is, then the uid check; and in the accept loop
+    // (`run`) a connection is admitted before any thread is spawned for it, so nothing is served before the uid check
+    let admit = &text[text.find("fn admit(").expect("admit")..];
+    let (cred, uid) = (
+        admit.find("peer_cred(&stream)").expect("peer credentials"),
+        admit.find("local_evidence(peer").expect("the uid check"),
+    );
+    assert!(cred < uid, "who the peer is comes before the uid check");
     let accept = text.find("fn run(").expect("run");
     let body = &text[accept..];
-    let (cred, uid, spawn) = (
-        body.find("peer_cred(&stream)").expect("peer credentials"),
-        body.find("local_evidence(peer").expect("the uid check"),
+    let (admitted, spawn) = (
+        body.find("admit(").expect("a connection is admitted"),
         body.find("scope.spawn(").expect("the connection thread"),
     );
     assert!(
-        cred < uid && uid < spawn,
+        admitted < spawn,
         "the uid check comes before anything is served"
     );
     // the socket is born 0600 (umask) and made 0600, and the directory is checked before the path is cleared
@@ -246,8 +274,8 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     assert!(dir_check < clear);
 }
 
-#[test]
-fn no_http_or_networking_crate_is_in_the_dependency_tree() {
+/// The names of the crates in klatch-server's dependency tree over the given kinds of edge (`cargo tree`, offline).
+fn dependency_names(edges: &str) -> Vec<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(cargo)
         .args([
@@ -255,7 +283,7 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
             "-p",
             "klatch-server",
             "--edges",
-            "normal",
+            edges,
             "--prefix",
             "none",
             "--offline",
@@ -268,11 +296,17 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let tree = String::from_utf8(out.stdout).unwrap();
-    let deps: Vec<&str> = tree
+    String::from_utf8(out.stdout)
+        .unwrap()
         .lines()
         .filter_map(|l| l.split_whitespace().next())
-        .collect();
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn no_http_or_networking_crate_is_in_the_dependency_tree() {
+    let deps = dependency_names("normal");
     const NETWORK: &[&str] = &[
         "reqwest",
         "hyper",
@@ -305,7 +339,7 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
     ];
     for n in NETWORK {
         assert!(
-            !deps.contains(n),
+            !deps.iter().any(|d| d == n),
             "a networking crate is in klatch-server's dependencies: {n}"
         );
     }
@@ -331,34 +365,10 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     // `jev-http` (ureq, rustls, ring, webpki-roots) is an optional feature of the klatch library that no shipped binary
     // may link (#871). klatch-server depends on the library with its default features, so none of them may appear in
     // its build, with every kind of edge counted.
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let out = Command::new(cargo)
-        .args([
-            "tree",
-            "-p",
-            "klatch-server",
-            "--edges",
-            "normal,build",
-            "--prefix",
-            "none",
-            "--offline",
-        ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run cargo tree");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let tree = String::from_utf8(out.stdout).unwrap();
-    let deps: Vec<&str> = tree
-        .lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .collect();
+    let deps = dependency_names("normal,build");
     for n in ["ureq", "rustls", "ring", "webpki-roots", "rustls-webpki"] {
         assert!(
-            !deps.contains(&n),
+            !deps.iter().any(|d| d == n),
             "{n} (the jev-http transport) is linked into klatch-server"
         );
     }

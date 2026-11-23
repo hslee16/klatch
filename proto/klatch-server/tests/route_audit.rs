@@ -48,32 +48,40 @@ fn path_literal(line: &str) -> Option<String> {
     Some(rest.split('"').next()?.to_string())
 }
 
+/// Whether a trimmed line declares a route path: `pub const ...PATH: &str = "/x"`.
+fn is_route_const(t: &str) -> bool {
+    t.starts_with("pub const ") && t.contains("PATH: &str = \"/")
+}
+
+/// Whether a trimmed line is a `("METHOD", "/x")` match arm.
+fn is_route_arm(t: &str) -> bool {
+    const ARMS: &[&str] = &[
+        "(\"GET\", \"/",
+        "(\"POST\", \"/",
+        "(\"PUT\", \"/",
+        "(\"DELETE\", \"/",
+    ];
+    ARMS.iter().any(|a| t.contains(a))
+}
+
+/// The route paths a source file declares outside its tests.
+fn routes_in(text: &str) -> Vec<String> {
+    non_test(text)
+        .lines()
+        .map(str::trim)
+        .filter(|t| is_route_const(t) || is_route_arm(t))
+        .filter_map(path_literal)
+        .collect()
+}
+
 /// Every route path of the crate: the value of each `pub const ...PATH: &str = "/x"` and the literal path of each
 /// `("METHOD", "/x")` match arm.
 fn routes() -> Vec<(String, String)> {
-    let mut found = Vec::new();
-    for (file, text) in sources() {
-        if file.ends_with("_tests.rs") {
-            continue;
-        }
-        for line in non_test(&text).lines() {
-            let t = line.trim();
-            let is_const = t.starts_with("pub const ") && t.contains("PATH: &str = \"/");
-            let is_arm = [
-                "(\"GET\", \"/",
-                "(\"POST\", \"/",
-                "(\"PUT\", \"/",
-                "(\"DELETE\", \"/",
-            ]
-            .iter()
-            .any(|a| t.contains(a));
-            if (is_const || is_arm)
-                && let Some(p) = path_literal(t)
-            {
-                found.push((file.clone(), p));
-            }
-        }
-    }
+    let mut found: Vec<(String, String)> = sources()
+        .into_iter()
+        .filter(|(file, _)| !file.ends_with("_tests.rs"))
+        .flat_map(|(file, text)| routes_in(&text).into_iter().map(move |p| (file.clone(), p)))
+        .collect();
     found.sort();
     found.dedup();
     found
@@ -137,16 +145,17 @@ fn no_source_reads_a_forwarded_header_or_trusts_a_peer_address() {
         "peer_addr",
         "connectinfo",
     ];
-    let mut problems = Vec::new();
-    for (file, text) in sources() {
-        for (n, line) in text.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("").to_ascii_lowercase();
-            for f in FORBIDDEN {
-                if code.contains(f) {
-                    problems.push(format!("{file}:{}: names {f}", n + 1));
-                }
-            }
-        }
-    }
+    let problems: Vec<String> = sources()
+        .iter()
+        .flat_map(|(file, text)| {
+            text.lines().enumerate().flat_map(move |(n, line)| {
+                let code = line.split("//").next().unwrap_or("").to_ascii_lowercase();
+                FORBIDDEN
+                    .iter()
+                    .filter(move |f| code.contains(*f))
+                    .map(move |f| format!("{file}:{}: names {f}", n + 1))
+            })
+        })
+        .collect();
     assert!(problems.is_empty(), "{problems:?}");
 }

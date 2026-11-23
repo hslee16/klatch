@@ -355,6 +355,51 @@ struct Shared {
 
 type Open = Arc<Mutex<HashMap<u64, UnixStream>>>;
 
+/// The next waiting connection, or `None` when there is none (or the accept failed: it is tried again after the wait).
+fn next_connection(listener: &UnixListener) -> Option<UnixStream> {
+    listener.accept().ok().map(|(stream, _)| stream)
+}
+
+/// Decide what an accepted connection is: its slot, who it is, and the socket to serve. `None` closes it (a peer the
+/// kernel cannot name, another user's, or one over the cap, which is told so first).
+fn admit(
+    stream: UnixStream,
+    uid: u32,
+    (open, max_connections): (&Open, usize),
+    next_id: &mut u64,
+) -> Option<(u64, PeerEvidence, UnixStream)> {
+    // an accepted socket may inherit the listener's non-blocking mode
+    stream.set_nonblocking(false).ok()?;
+    // who first: another user's connection is closed before a byte moves in either direction
+    let peer = match peer_cred(&stream) {
+        Ok(p) => p,
+        Err(e) => {
+            // never serve a peer the kernel cannot name; say so (no peer data is involved)
+            eprintln!(
+                "klatch-server: closed a connection whose peer credentials could not be read: {e}"
+            );
+            return None;
+        }
+    };
+    let evidence = local_evidence(peer, uid).ok()?;
+    let handle = stream.try_clone().ok()?;
+    let slot = {
+        let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
+        if open.len() >= max_connections {
+            None
+        } else {
+            *next_id += 1;
+            open.insert(*next_id, handle);
+            Some(*next_id)
+        }
+    };
+    let Some(id) = slot else {
+        refuse_excess(stream);
+        return None;
+    };
+    Some((id, evidence, stream))
+}
+
 /// Run the daemon until SIGTERM or SIGINT. Order matters: the options and the socket directory are checked, then the
 /// store is opened (a store that cannot be opened ends the daemon before a socket is touched), then the socket path is
 /// cleared and bound.
@@ -382,46 +427,10 @@ pub fn run(opts: &Options) -> Result<()> {
         let mut next_id = 0u64;
         while !STOP.load(Ordering::SeqCst) {
             wait_readable(bound.listener.as_raw_fd(), 200);
-            loop {
-                let stream = match bound.listener.accept() {
-                    Ok((s, _)) => s,
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => break,
-                    Err(_) => break,
-                };
-                // an accepted socket may inherit the listener's non-blocking mode
-                if stream.set_nonblocking(false).is_err() {
-                    continue;
-                }
-                // who first: another user's connection is closed before a byte moves in either direction
-                let peer = match peer_cred(&stream) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        // never serve a peer the kernel cannot name; say so (no peer data is involved)
-                        eprintln!(
-                            "klatch-server: closed a connection whose peer credentials could not be read: {e}"
-                        );
-                        continue;
-                    }
-                };
-                let Ok(evidence) = local_evidence(peer, uid) else {
-                    continue;
-                };
-                let Ok(handle) = stream.try_clone() else {
-                    continue;
-                };
-                let slot = {
-                    let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
-                    if open.len() >= opts.max_connections {
-                        None
-                    } else {
-                        next_id += 1;
-                        open.insert(next_id, handle);
-                        Some(next_id)
-                    }
-                };
-                let Some(id) = slot else {
-                    refuse_excess(stream);
+            while let Some(stream) = next_connection(&bound.listener) {
+                let Some((id, evidence, stream)) =
+                    admit(stream, uid, (&open, opts.max_connections), &mut next_id)
+                else {
                     continue;
                 };
                 let (shared, open) = (&shared, &open);
@@ -507,16 +516,14 @@ fn classify(line: &[u8]) -> First {
     let Ok(v) = serde_json::from_slice::<Value>(line) else {
         return First::Other;
     };
-    if v["type"] == "request"
-        && v["method"] == "identify"
-        && let Some(id) = v["id"].as_str()
-    {
-        return First::Identify {
+    let is_identify = v["type"] == "request" && v["method"] == "identify";
+    match v["id"].as_str() {
+        Some(id) if is_identify => First::Identify {
             id: id.to_string(),
             params: v["params"].clone(),
-        };
+        },
+        _ => First::Other,
     }
-    First::Other
 }
 
 /// The principal an `identify` names, or the reason it is refused (never the name or the token).
@@ -572,6 +579,76 @@ fn serve_one(stream: UnixStream, evidence: PeerEvidence, shared: &Shared) {
     let _ = serve_inner(stream, &evidence, shared);
 }
 
+/// The first line of a connection, or `None` when the connection is over before one came: closed, too large (told so),
+/// or silent for `first_frame`.
+fn read_first(
+    out: &mut UnixStream,
+    reader: &mut BufReader<UnixStream>,
+) -> io::Result<Option<Vec<u8>>> {
+    match first_line(reader, MAX_LINE_BYTES) {
+        Ok(line) => Ok(line),
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            let big = "a frame is over the size limit; the connection is closed";
+            write_frame(out, &refusal("frame.too_large", big))?;
+            Ok(None)
+        }
+        // nothing arrived in time, or the peer is gone
+        Err(e) if timed_out(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// The `response` to an `identify` request: who the connection is now, or why it is refused.
+fn identify_answer(id: String, outcome: Result<&Principal, String>) -> ServerFrame {
+    match outcome {
+        Ok(who) => ServerFrame::Response {
+            v: PROTOCOL_VERSION,
+            id,
+            ok: true,
+            result: Some(json!({
+                "member": who.member,
+                "attribution": match who.attribution {
+                    klatch::domain::Attribution::Verified => "verified",
+                    klatch::domain::Attribution::Unattributed => "unattributed",
+                },
+            })),
+            error: None,
+        },
+        Err(message) => ServerFrame::Response {
+            v: PROTOCOL_VERSION,
+            id,
+            ok: false,
+            result: None,
+            error: Some(ErrorBody {
+                code: "identity.refused".into(),
+                message,
+            }),
+        },
+    }
+}
+
+/// A connection whose first request is `identify`: answer it, then run the session as who it named (or end it).
+fn serve_identified(
+    (id, params): (String, Value),
+    shared: &Shared,
+    (stream, mut out, reader): (UnixStream, UnixStream, BufReader<UnixStream>),
+    closer: klatch::session::Closer,
+) -> io::Result<()> {
+    let who = match identify(&params, &shared.backend) {
+        Ok(who) => who,
+        Err(message) => {
+            let answer = identify_answer(id, Err(message));
+            out.write_all(encode_line(&answer).as_bytes())?;
+            let _ = stream.shutdown(Shutdown::Both);
+            return Ok(());
+        }
+    };
+    // written before the session starts: the answer is the first thing after the hello
+    out.write_all(encode_line(&identify_answer(id, Ok(&who))).as_bytes())?;
+    let session = Session::over(&shared.backend, &who, &shared.config).without_hello();
+    session.serve_guarded(reader, out, Some(closer))
+}
+
 fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> io::Result<()> {
     let mut out = stream.try_clone()?;
     let started = unidentified(evidence);
@@ -579,22 +656,8 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
     write_frame(&mut out, &hello_frame(&started))?;
     stream.set_read_timeout(Some(shared.first_frame))?;
     let mut reader = BufReader::new(stream.try_clone()?);
-    let first = match first_line(&mut reader, MAX_LINE_BYTES) {
-        Ok(Some(line)) => line,
-        Ok(None) => return Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-            write_frame(
-                &mut out,
-                &refusal(
-                    "frame.too_large",
-                    "a frame is over the size limit; the connection is closed",
-                ),
-            )?;
-            return Ok(());
-        }
-        // nothing arrived in time, or the peer is gone
-        Err(e) if timed_out(&e) => return Ok(()),
-        Err(e) => return Err(e),
+    let Some(first) = read_first(&mut out, &mut reader)? else {
+        return Ok(());
     };
     stream.set_read_timeout(None)?;
     stream.set_write_timeout(None)?;
@@ -611,42 +674,9 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
             let session = Session::over(&backend, &started, &shared.config).without_hello();
             session.serve_guarded(input, out, Some(closer))
         }
-        First::Identify { id, params } => match identify(&params, &shared.backend) {
-            Ok(who) => {
-                let answer = ServerFrame::Response {
-                    v: PROTOCOL_VERSION,
-                    id,
-                    ok: true,
-                    result: Some(json!({
-                        "member": who.member,
-                        "attribution": match who.attribution {
-                            klatch::domain::Attribution::Verified => "verified",
-                            klatch::domain::Attribution::Unattributed => "unattributed",
-                        },
-                    })),
-                    error: None,
-                };
-                // written before the session starts: the answer is the first thing after the hello
-                out.write_all(encode_line(&answer).as_bytes())?;
-                let session = Session::over(&shared.backend, &who, &shared.config).without_hello();
-                session.serve_guarded(reader, out, Some(closer))
-            }
-            Err(message) => {
-                let answer = ServerFrame::Response {
-                    v: PROTOCOL_VERSION,
-                    id,
-                    ok: false,
-                    result: None,
-                    error: Some(ErrorBody {
-                        code: "identity.refused".into(),
-                        message,
-                    }),
-                };
-                out.write_all(encode_line(&answer).as_bytes())?;
-                let _ = stream.shutdown(Shutdown::Both);
-                Ok(())
-            }
-        },
+        First::Identify { id, params } => {
+            serve_identified((id, params), shared, (stream, out, reader), closer)
+        }
     }
 }
 
