@@ -195,7 +195,8 @@ fn killed_poster(w: &World) -> Res {
     let _ = child.kill();
     let _ = child.wait();
     let _ = writer.join();
-    let read = w.ok("reader", &["read", "r", "--peek"])?;
+    // the notice line of a bounded read starts with a number too, so it is the rows of every call that are counted
+    let read = w.read_all("reader", "r")?;
     let seqs: Vec<i64> = read
         .lines()
         .filter_map(|l| l.strip_prefix('[')?.split(' ').next()?.parse().ok())
@@ -212,7 +213,7 @@ fn killed_poster(w: &World) -> Res {
         ),
     )?;
     w.ok("poster2", &["post", "r", "after the kill"])?;
-    let again = w.ok("reader", &["read", "r", "--peek"])?;
+    let again = w.ok("reader", &["read", "r"])?;
     has(&again, "after the kill", "a new post lands")?;
     Ok(vec![("messages_before_kill".into(), seqs.len() as f64)])
 }

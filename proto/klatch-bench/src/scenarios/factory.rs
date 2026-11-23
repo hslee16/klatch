@@ -79,9 +79,9 @@ fn one_worker(launcher: &WorkerLauncher, bundle: &Path, i: usize) -> (Vec<f64>, 
 
 /// No message lost or doubled, in a dense order, every one marked verified; each claim held once.
 fn check_store_after_the_rush(w: &World) -> Result<(), String> {
-    let read = w.ok("checker", &["read", "run", "--peek"])?;
-    let mut s = seqs(&read);
-    s.sort_unstable();
+    // read in as many calls as the cap needs (#1390); the order is checked as it comes, not after a sort
+    let read = w.read_all("checker", "run")?;
+    let s = seqs(&read);
     let want: Vec<u64> = (1..=(WORKERS * POSTS) as u64).collect();
     check(
         s == want,
