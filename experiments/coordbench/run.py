@@ -37,12 +37,14 @@ import tempfile
 import time
 
 import approval as approval_mod
+import asks as asks_mod
 import drivers
 import fixture as fixture_mod
 import chain
 import history as history_mod
 import scenario as scenario_mod
 import schema
+import storeexport
 import streams
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -447,6 +449,42 @@ class Suite:
         self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
+        self.store_metrics(rec, arm, khome, kkeys, log_dir, notes)
+
+    def store_metrics(self, rec, arm, khome, kkeys, log_dir, notes):
+        """The K arms' run store as counts (#1433): artifacts.store_export, the claim and ask metrics that were null, and the
+        ask counts cross-checked against the streams (scenario_metrics.store). A B arm has no store: null with a reason. A
+        missing tool or an unreadable store leaves null and a note; the run is never invalidated for it."""
+        store = rec.setdefault("scenario_metrics", {}).setdefault("store", {})
+        if not arm.startswith("K"):
+            store["reason"] = "no klatch store in a %s arm (the arm has no klatch)" % arm
+            return
+        tool = self.args.bench_bin or storeexport.find_tool(self.args.klatch_bin, os.environ)
+        report, why = storeexport.export(tool, khome, kkeys)
+        if report is None:
+            notes.append(why)
+            store["reason"] = why
+            return
+        rec["artifacts"]["store_export"] = report
+        m = storeexport.metrics(report)
+        rec["metrics"]["claim_conflicts"] = m["claim_conflicts"]
+        store.update(m)
+        try:
+            streams_by_key = {}
+            for n in sorted(os.listdir(log_dir)):
+                if n.endswith(".stream.jsonl"):
+                    with open(os.path.join(log_dir, n), errors="replace") as f:
+                        streams_by_key[n] = f.read().splitlines()
+            ours = asks_mod.from_streams(streams_by_key, self.args.klatch_bin)
+            theirs = {"created": m["asks_created"], "answered": m["asks_answered"]}
+            if None in theirs.values():
+                raise ValueError("the store report has no ask counts")
+            store["asks_cross_check"] = asks_mod.cross_check(ours, theirs)
+            if not store["asks_cross_check"]["match"]:
+                notes.append("ask counts differ between the streams and the store: %s" % "; ".join(store["asks_cross_check"]["differences"]))
+        except (OSError, ValueError) as e:
+            notes.append("ask cross-check failed: %s" % e)
+            store["asks_cross_check"] = None
 
     def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes, log_dir=None, arm=None):
         """Fill duplicate_work and overwrites from git history for a fixture that has a scenario file, and keep the
@@ -611,6 +649,8 @@ def parse_args(argv):
     p.add_argument("--arm-text-version", default="draft-1")
     p.add_argument("--klatch-bin", help="absolute path of the klatch binary (needed by K arms)")
     p.add_argument("--klatch-commit", help="the klatch commit (default: git HEAD of this repository)")
+    p.add_argument("--bench-bin", help="the klatch-bench tool that exports the K arms' run store as counts (default: "
+                   "$KLATCH_BENCH_BIN, else klatch-bench beside the klatch binary; without it the export is skipped with a note)")
     p.add_argument("--room", default="lobby")
     p.add_argument("--seed", type=int, default=1000)
     p.add_argument("--model", help="the agent model id (required with --driver claude)")

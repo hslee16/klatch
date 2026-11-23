@@ -43,6 +43,27 @@ CONT = {
     "idle_turns": (lambda r: r["metrics"].get("idle_turns"), False),
     "human_interventions": (lambda r: r["metrics"].get("human_interventions"), False),
 }
+
+
+def _store(name):
+    """A getter of one store metric (scenario_metrics.store, from the K arms' run store export, #1433); None for a B arm."""
+    return lambda r: ((r.get("scenario_metrics") or {}).get("store") or {}).get(name)
+
+
+# the store metrics show in the per-metric table for the arms that have them; never tested, never compared
+CONT.update({
+    "claim_conflicts": (lambda r: r["metrics"].get("claim_conflicts"), False),
+    "claims_granted": (_store("claims_granted"), None),
+    "claims_refused_by_rule": (_store("claims_refused_by_rule"), None),
+    "claims_released": (_store("claims_released"), None),
+    "claims_expired": (_store("claims_expired"), None),
+    "asks_created": (_store("asks_created"), None),
+    "asks_answered": (_store("asks_answered"), None),
+    "asks_closed": (_store("asks_closed"), None),
+    "time_to_first_answer_s": (_store("time_to_first_answer_s"), False),
+    "members_posted_never_read": (_store("members_posted_never_read"), False),
+    "hook_bytes_injected": (_store("hook_bytes_injected"), None),
+})
 TESTED = ("units_completed", "cost_usd", "turns", "wall_s", "tokens", "messages", "coordination_context_tokens")
 COMPARED = ("units_completed", "cost_usd", "turns", "wall_s")
 REQUIRED = ("run_id", "scenario", "arm", "metrics", "spend", "turns", "tokens")

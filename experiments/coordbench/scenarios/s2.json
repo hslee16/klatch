@@ -41,12 +41,29 @@
       "git_conflicts": "Bash results of an agent that show a merge conflict (from the stream, as for every scenario); never summed with overwrites.",
       "merge_state": "From the checker: clean, conflicts-left (conflict markers in a tracked file) or tests-broken (the visible tests fail on main).",
       "per_agent": "From the checker: commits and surviving lines of onefile/core.py (git blame on the final main) by git author; each agent commits under its own name.",
-      "claim_conflicts": "NOT COMPUTED here: null. Needs the K arms' store (klatch admin stats claims history) and run.py does not export the store yet (artifacts.store_export is null). A follow-up reads it per K run.",
+      "claim_conflicts": "K arms: claims refused and later granted to the same member, from the run store (scenario_metrics.store.claim_conflicts, see store_metrics; also metrics.claim_conflicts). B arms: null, they have no store.",
       "time_to_recover_s": "NOT COMPUTED here: null. SPEC S2 defines it from the first conflict or refusal until the last change is in the final file; the stream parser records conflict counts but no time of the first one. time_to_first_pass_s (start to the first final-file pass) is the nearest field that exists."
     }
   },
   "not_computed": {
-    "claim_conflicts": "needs the K arms' store export (klatch admin stats claims history); not exported by run.py yet",
     "time_to_recover_s": "needs a timestamp of the first conflict or refusal in the stream; the parser counts conflicts without times"
+  },
+  "store_metrics": {
+    "source": "artifacts.store_export, the counts-only report of the K arms' run store (klatch-bench store-stats, #1433), the same report as klatch admin stats --json; the metrics below are in scenario_metrics.store",
+    "arms": "K1, K2, K3. B0 and B1 have no klatch store: null, with scenario_metrics.store.reason saying so",
+    "fields": {
+      "claim_conflicts": "claims.history.conflicts_handled: a claim refused and later granted to the same member (also metrics.claim_conflicts)",
+      "claims_granted": "claims.history.granted, summed over claim classes",
+      "claims_refused_by_rule": "claims.history.refused, summed (every refusal carries a rule word)",
+      "claims_released": "claims.history.released, summed",
+      "claims_expired": "claims.history.expired, summed",
+      "asks_created": "asks.created",
+      "asks_answered": "asks.answered",
+      "asks_closed": "asks.closed",
+      "time_to_first_answer_s": "asks.first_answer_median_secs, null when no ask was answered by someone other than the asker",
+      "members_posted_never_read": "members.posted_never_read",
+      "hook_bytes_injected": "hook_bytes, summed over hook events",
+      "asks_cross_check": "asks created and answered from the streams (asks.py) next to the store's counts, with match and differences; a mismatch is flagged in the record's notes and is never resolved silently"
+    }
   }
 }

@@ -1,6 +1,9 @@
 //! `klatch-bench [--layer functional|scale|fault] [--json <file>] [--record] [name...]`: run the scripted scenarios against the
 //! real binary, print a table, write a JSON record, and exit non-zero when one fails.
 //!
+//! `klatch-bench store-stats --home DIR --key-dir DIR [--json] [--room R] [--since DAY] [--top N]` prints the counts-only
+//! usage report of a benchmark run store without the admin passphrase (#1433; see `store_stats.rs`).
+//!
 //! `klatch-bench judge-eval --judge ...` grades a judge against the labelled corpus instead (#914; see
 //! `judge-eval/README.md`). It is a manual command and never part of CI or the gate.
 
@@ -123,6 +126,10 @@ fn main() {
     if args.peek().map(String::as_str) == Some("judge-eval") {
         args.next();
         std::process::exit(klatch_bench::judge_eval::cli::main(args));
+    }
+    if args.peek().map(String::as_str) == Some("store-stats") {
+        args.next();
+        std::process::exit(klatch_bench::store_stats::main(args));
     }
     let options = Options::parse(args);
     if options.trend || options.rebaseline.is_some() {

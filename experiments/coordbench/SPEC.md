@@ -423,6 +423,18 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
 `outcome_checks` with their ids; `units_completed` is derived from them. Fields that do not apply are `null`, never
 omitted. A run in an arm that cannot take part is not recorded at all; the scenario list says which.
 
+`artifacts.store_export` (#1433) is the counts-only report of the K arms' run store, the object `klatch admin stats --json`
+prints for it, made by `klatch-bench store-stats --home DIR --key-dir DIR --json` after the agents stop (the tool is in the
+klatch-bench crate, not in the shipped binary, and refuses the live store and a key directory that is not mode 700). It has
+no message text, ask text, claim detail, label or payload. Under `scenario_metrics.store` the harness derives:
+`claim_conflicts` (a claim refused and later granted to the same member; also `metrics.claim_conflicts`), `claims_granted`,
+`claims_refused_by_rule`, `claims_released`, `claims_expired`, `asks_created`, `asks_answered`, `asks_closed`,
+`time_to_first_answer_s` (median seconds to the first answer by someone other than the asker), `members_posted_never_read`,
+`hook_bytes_injected`, and `asks_cross_check`: the asks created and answered counted from the streams (`asks.py`) beside the
+store's counts, with `match` and `differences`; a mismatch is a note on the record and is never resolved silently. B arms
+have no store: `store_export` and these metrics are null and `scenario_metrics.store.reason` says so. When the tool is
+missing or the store cannot be read, the same fields stay null, `notes` says why, and the run is not invalid.
+
 ### 7.2 Ledger layout
 
 ```
