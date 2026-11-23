@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "a": [
+      {"op": "copy_from", "from": "reference/tallykit/slug.py", "path": "tallykit/slug.py"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.slug import slugify, unique_slug\n"},
+      {"op": "append", "path": "CHANGELOG.md", "content": "\n- ticket A: slug\n"},
+      {"op": "sync", "message": "ticket A: slug"},
+      {"op": "final", "text": "DONE a"}
+    ]
+  }
+}

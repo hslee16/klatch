@@ -1,0 +1,194 @@
+{
+ "schema": 1,
+ "kind": "judge-measurement",
+ "scenario": "S10 part 2",
+ "judge": "rules",
+ "date": "2026-11-23T14:12:20Z",
+ "klatch_commit": "33bff7e8bc328ad0af33997de281dde83587461b",
+ "klatch_tree_dirty": false,
+ "bench_binary_sha256": "45c10f51cf9fbafa418fbc9594074ef3721e6505a7b5049bff6a0749b7d58a9b",
+ "model_calls": 0,
+ "cost_usd": 0.0,
+ "corpus": {
+  "path": "proto/klatch-bench/judge-eval/corpus-hard.jsonl",
+  "sha256": "888b185763f45fa02a09e83a6800d8a4ce2a7f6d62782e03f708837304d49ba1",
+  "items": 271
+ },
+ "splits": {
+  "dev": {
+   "n": 160,
+   "should_not_cross": 94,
+   "clean": 66,
+   "misses": 72,
+   "miss_rate": 0.7659574468085106,
+   "miss_rate_ci95": [
+    0.671,
+    0.8401
+   ],
+   "data_leaks": 72,
+   "false_positives": 0,
+   "false_positive_rate": 0.0,
+   "false_positive_rate_ci95": [
+    0.0,
+    0.055
+   ],
+   "defers": 0,
+   "errors": 0,
+   "incomplete": false,
+   "contested_excluded": 1,
+   "by_category": {
+    "business-private": {
+     "n": 14,
+     "misses": 8,
+     "false_positives": 0
+    },
+    "everyday-chat": {
+     "n": 9,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "injection-hidden": {
+     "n": 8,
+     "misses": 8,
+     "false_positives": 0
+    },
+    "injection-overt": {
+     "n": 6,
+     "misses": 6,
+     "false_positives": 0
+    },
+    "long": {
+     "n": 8,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "multilingual": {
+     "n": 13,
+     "misses": 10,
+     "false_positives": 0
+    },
+    "personal-data": {
+     "n": 29,
+     "misses": 27,
+     "false_positives": 0
+    },
+    "public-chatter": {
+     "n": 5,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "scrub-term": {
+     "n": 9,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "secret-credential": {
+     "n": 11,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "short": {
+     "n": 7,
+     "misses": 2,
+     "false_positives": 0
+    },
+    "injection (all)": {
+     "n": 22,
+     "misses": 14,
+     "false_positives": 0
+    }
+   }
+  },
+  "test": {
+   "n": 110,
+   "should_not_cross": 72,
+   "clean": 38,
+   "misses": 56,
+   "miss_rate": 0.7777777777777778,
+   "miss_rate_ci95": [
+    0.6691,
+    0.8583
+   ],
+   "data_leaks": 56,
+   "false_positives": 0,
+   "false_positive_rate": 0.0,
+   "false_positive_rate_ci95": [
+    0.0,
+    0.0918
+   ],
+   "defers": 0,
+   "errors": 0,
+   "incomplete": false,
+   "contested_excluded": 0,
+   "by_category": {
+    "business-private": {
+     "n": 10,
+     "misses": 9,
+     "false_positives": 0
+    },
+    "everyday-chat": {
+     "n": 6,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "harmless-name": {
+     "n": 3,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "injection-hidden": {
+     "n": 6,
+     "misses": 6,
+     "false_positives": 0
+    },
+    "injection-lookalike": {
+     "n": 6,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "injection-overt": {
+     "n": 4,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "long": {
+     "n": 5,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "multilingual": {
+     "n": 9,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "personal-data": {
+     "n": 20,
+     "misses": 18,
+     "false_positives": 0
+    },
+    "public-chatter": {
+     "n": 3,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "scrub-term": {
+     "n": 6,
+     "misses": 3,
+     "false_positives": 0
+    },
+    "short": {
+     "n": 5,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "injection (all)": {
+     "n": 16,
+     "misses": 11,
+     "false_positives": 0
+    }
+   }
+  }
+ },
+ "scrub_sha256": "602a61e907bc92c4fb65405b597af8ba5c09cfcd5417b31890f424d22821795d",
+ "command": "klatch-bench judge-eval --judge rules --split dev --corpus proto/klatch-bench/judge-eval/corpus-hard.jsonl --out <out> --scrub proto/klatch-bench/judge-eval/scrub.txt"
+}
