@@ -20,6 +20,8 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `streams.py`: parses the stream-json of an agent (turns, tokens, cost, tool calls, messages, conflicts).
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface (optional per-agent private files and a seeded history), the test fixture `trivial`, F1 `tallykit` (Scenario S1) and F4 `specialists` (Scenario S4).
+- `asks.py`: the S4 ask and answer metrics from the agents' message events.
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3) and F6 `recovery` (see Scenario S6).
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
 - `recovery.py`: scenario S6 (failure recovery): the `kill_agent` trigger the harness evaluates and the recovery metrics (see Scenario S6). F6 `recovery` is its fixture.
@@ -110,6 +112,32 @@ lost lines and who wrote them, edits to a module the agent does not own, merge s
 record's `scenario_metrics`. Not yet computed: `claim_conflicts` and `store_export` (the store, K arms). Fake scripts for
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
+
+## Scenario S4: ask and answer across specialists (`scenarios/s4.json`, fixture `specialists`)
+
+F4 `specialists` is a small package `linkkit` (framing, retry, routing, ledger) owned by three agents (`a`, `b`, `c`). Each
+agent's clone has one private specification file (`SPEC-FRAMING.md`, `SPEC-ROUTING.md`, `SPEC-LEDGER.md`, from
+`fixtures/specialists/private/<agent>/`); the harness copies it into that clone only, untracked and excluded from git, so it
+is not in origin and no other agent can read it. Every agent's functions need constants that only another agent's file
+defines (seven slots, one function each: the six needs of the spec plus a's second-phase need). The facts are arbitrary, drawn
+from a fixed seed by `fixtures/specialists/gen_facts.py` (`--check` verifies the committed files; a test does too), never a
+conventional default, each with a stale revision-2 value. The visible tests check only types, so a guess passes them.
+
+Two designed needs: MAX_PAYLOAD was answered before the run in a seeded exchange (`seed.json`: posted into the room for K arms
+before any agent starts, a line on `TASKS.md` for B1), so asking for it again is a repeat; LEDGER_MODULUS is needed by b early
+and by a late, after c has finished and stopped (a's second phase waits for b's published code), so the late ask is answered
+only from history (or from reading b's code, which the metric cannot tell apart). `fixtures/specialists/reference/` is the
+solution, never in a checkout. The hidden checker `checks/specialists/check.sh CHECKOUT` loads each module by file and prints
+per slot `correct`, `wrong` (with the conventional default it matches, or `other`), `stale`, `unanswered` or `broken`, plus
+`wrong_guesses`, `unanswered`, `plausible_default_guesses`, `merge_state` and `private_files_committed`.
+
+The ask metrics are in the record's `scenario_metrics.asks`, from the agents' streams (`asks.py`; K arms and B1 alike, since the
+store export is not wired in yet, so `klatch admin stats` counts are not used): asks made, answered and lost, time to first
+answer, duplicate answers, repeat asks, repeat asks avoided, late asks and their fate, stale answers, wrong guesses (and those
+made without an ask), unanswered dependencies and need-info events (observed, not a rate). Classification is by first word
+(`seeking`, `answer`, `need-info`) and by the fact key or value in the text; definitions are in `scenarios/s4.json`. Arms B1 K1
+K2 (B0 cannot ask). Fake scripts use the extra steps `send`, `copy_from` with `replace`, `dump_specs` and `dump_board`.
+Tests: `tests/test_specialists_checker.py`, `tests/test_asks.py`, `tests/test_s4_scenario.py` (the K-arm seeding test needs `KLATCH_BIN`).
 
 ## Scenario S2: three agents, one file (`scenarios/s2.json`, fixture `onefile`)
 

@@ -1,0 +1,17 @@
+{
+  "name": "specialists",
+  "description": "F4 (SPEC section 3, S4): a small Python package (linkkit) of four modules owned by three agents, each holding one private specification file that the others lack; every agent's functions need constants that only another agent's file defines, so a value that is not asked for is a guess. One need is a repeat of an earlier seeded exchange, one is a late need after the holder has finished.",
+  "topology": "T-clone",
+  "scenario": "s4",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"},
+    {"name": "c", "task": "task-c.md"}
+  ],
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "specialists",
+  "est_cost_usd_haiku": 0.6,
+  "fake": "fake.json",
+  "private": "private",
+  "seed_history": "seed.json"
+}
