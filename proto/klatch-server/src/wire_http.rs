@@ -134,6 +134,8 @@ pub(crate) struct Shared {
     pub(crate) backend: SharedBackend,
     pub(crate) config: SessionConfig,
     sessions: Sessions,
+    /// Forwarded identity headers seen and ignored (#110): names and counts only.
+    forwarded: crate::forwarded::Ignored,
 }
 
 /// 128 random bits as 32 lower-case hex digits: the name of a session. Not a secret that stands alone (every use also
@@ -252,6 +254,9 @@ fn serve_connection(mut stream: Stream, shared: &Shared) {
             return;
         }
     };
+    shared
+        .forwarded
+        .note(head.headers.iter().map(|(n, _)| n.as_str()));
     let Some(route) = Route::of(&head.path) else {
         return reply(&mut stream, &Response::new(404, "not found"));
     };
@@ -490,6 +495,7 @@ pub fn run(opts: &Options) -> Result<()> {
         backend: gateway.session_backend(),
         config: SessionConfig::default(),
         sessions: Arc::default(),
+        forwarded: Default::default(),
     };
     loopback::serve_concurrent(
         &listener,
@@ -500,6 +506,7 @@ pub fn run(opts: &Options) -> Result<()> {
             excess: &refuse_excess,
         },
     );
+    eprintln!("{}", shared.forwarded.summary());
     drop(shared);
     drop(gateway);
     eprintln!("klatch-server: http stopped");
