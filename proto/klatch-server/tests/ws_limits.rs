@@ -9,7 +9,6 @@ use serde_json::json;
 use std::time::{Duration, Instant};
 use tls_common::wire::*;
 use tls_common::ws::*;
-use tls_common::*;
 
 /// The limits the test server runs with (see the module text): the idle time and the close wait.
 const IDLE: Duration = Duration::from_secs(3);
@@ -210,32 +209,59 @@ impl Ws {
 // ---------------------------------------------------------------------------------------------------------------
 // how long the server waits
 
-#[test]
-fn a_client_that_says_nothing_and_answers_no_ping_is_closed_when_the_idle_time_is_up() {
-    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let rig = plain_server(&[]);
-    let mut c = open(&rig);
+/// Read what an idle client is sent (pings, then a close) and answer nothing: the close frame and when it came.
+fn idle_close(c: &mut Ws) -> (Frame, Duration) {
     let started = Instant::now();
     let mut pings = 0;
-    // read what the server sends (pings, then a close) and answer nothing
-    let frames = loop {
+    let close = loop {
         match c.got() {
             Got::Frame(Frame::Ping(_)) => pings += 1,
             Got::Frame(f @ Frame::Close(..)) => break f,
             other => panic!("{other:?}"),
         }
+        assert!(
+            started.elapsed() < IDLE + SLACK,
+            "no close after {:?}",
+            started.elapsed()
+        );
     };
     assert!(pings >= 1, "the server never pinged");
-    assert!(matches!(frames, Frame::Close(Some(1001), _)), "{frames:?}");
-    let took = started.elapsed();
-    assert!(
-        took >= IDLE - Duration::from_millis(500) && took < IDLE + SLACK,
-        "{took:?}"
-    );
+    (close, started.elapsed())
+}
+
+#[test]
+fn a_client_that_says_nothing_and_answers_no_ping_is_closed_when_the_idle_time_is_up() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let rig = plain_server(&[]);
+    let mut c = open(&rig);
+    let (close, took) = idle_close(&mut c);
+    assert!(matches!(close, Frame::Close(Some(1001), _)), "{close:?}");
+    assert!(took >= IDLE - Duration::from_millis(500), "{took:?}");
     // the client never answers the close: the server cuts the connection after its own bound, not at the client's pleasure
     let t = Instant::now();
     assert_eq!(c.got(), Got::Eof);
     assert!(t.elapsed() < CLOSE_WAIT + SLACK, "{:?}", t.elapsed());
+}
+
+#[test]
+fn after_its_own_close_the_server_waits_for_the_clients_reply_and_then_ends_the_connection() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let rig = plain_server(&[]);
+    let mut c = open(&rig);
+    idle_close(&mut c);
+    // the connection is still open a moment after the close frame (the server is waiting for the reply) ...
+    c.set_timeout(Duration::from_millis(300));
+    assert_eq!(
+        c.got(),
+        Got::Quiet,
+        "the server cut the connection without waiting for the reply"
+    );
+    // ... and the reply ends it at once
+    c.set_timeout(Duration::from_secs(15));
+    c.close(1001);
+    let t = Instant::now();
+    assert_eq!(c.got(), Got::Eof);
+    assert!(t.elapsed() < SLACK, "{:?}", t.elapsed());
 }
 
 #[test]
@@ -296,6 +322,26 @@ fn a_client_that_sends_half_a_frame_and_stops_is_closed_when_the_idle_time_is_up
     );
 }
 
+/// Read what is left of a connection whose reader has not been reading: whether it ended, and how many bytes of text came.
+fn read_until_end(c: &mut Ws, started: Instant) -> (bool, usize) {
+    let mut bytes = 0usize;
+    loop {
+        match c.got() {
+            Got::Frame(Frame::Text(t)) => bytes += t.len(),
+            Got::Frame(Frame::Ping(p)) => {
+                let _ = c.send_raw(&encode(true, PONG, &p, true));
+            }
+            Got::Frame(_) => {}
+            Got::Eof => return (true, bytes),
+            Got::Quiet => return (false, bytes),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "still sending after {bytes} bytes"
+        );
+    }
+}
+
 #[test]
 fn a_client_that_asks_for_a_lot_and_never_reads_is_cut_when_the_stall_time_is_up() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -321,26 +367,14 @@ fn a_client_that_asks_for_a_lot_and_never_reads_is_cut_when_the_stall_time_is_up
     }
     // the client reads nothing for longer than the stall time (3 seconds here, 30 as shipped), then reads what is there:
     // the server has shut the connection, so what is read ends, in a close or a cut, and does not go on for ever
-    std::thread::sleep(2 * IDLE);
-    c.set_timeout(Duration::from_secs(10));
-    let mut bytes = 0usize;
-    let ended = loop {
-        match c.got() {
-            Got::Frame(Frame::Text(t)) => bytes += t.len(),
-            Got::Frame(Frame::Ping(p)) => {
-                // answering pings is how a client that is alive but not reading would stay: it is not reading, so it
-                // does not answer them either way; the point is that the connection is over
-                let _ = c.send_raw(&encode(true, PONG, &p, true));
-            }
-            Got::Frame(_) => {}
-            Got::Eof => break true,
-            Got::Quiet => break false,
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(120),
-            "still sending after {bytes} bytes"
-        );
-    };
+    // it sends pongs the whole time without reading, so the idle time is not what ends the connection; only the stall can
+    for _ in 0..30 {
+        let _ = c.send_raw(&encode(true, PONG, b"", true));
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // (the connect timeout of 20 seconds bounds each read; the socket may refuse a new timeout once shut)
+
+    let (ended, bytes) = read_until_end(&mut c, started);
     assert!(ended, "the connection was still open after {bytes} bytes");
     assert!(
         bytes < 200 * 40 * 20_000,

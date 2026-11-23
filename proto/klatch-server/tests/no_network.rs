@@ -12,38 +12,10 @@
 //! one `UnixListener::bind` and one `UnixStream::connect` (the probe of its own socket path that tells a live daemon from
 //! a dead one's file); no UDP, datagram socket, name resolution or HTTP client anywhere; no `Command`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod scan_common;
 
-fn rust_sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-    let mut files = Vec::new();
-    walk(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    files.sort();
-    files
-        .into_iter()
-        .map(|p| {
-            let rel = p
-                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                .unwrap()
-                .display()
-                .to_string();
-            (rel, std::fs::read_to_string(&p).unwrap())
-        })
-        .collect()
-}
+use scan_common::*;
+use std::path::Path;
 
 /// The one source file that may name the socket types and open a listener (#1058): the loopback listener, which refuses
 /// every address but 127.0.0.1 and ::1, and (#108) the policy-checked bind of the mutual TLS listener. Phases 3 and 4 and
@@ -70,11 +42,6 @@ const DAEMON_NAMES: &[&str] = &[
 /// The one source file that may connect a client socket: the tests of the loopback listener, which connect to a listener
 /// they started themselves on a loopback port the system chose. Nothing else may connect, in any file.
 const TEST_CLIENT: &[&str] = &["src/loopback_tests.rs"];
-
-/// The code of a line: what is left of it before a `//` comment, and not the text of a string.
-fn code_of(line: &str) -> &str {
-    line.split("//").next().unwrap_or("")
-}
 
 /// Socket types and the network module: only the loopback module (and, for a client, its tests) may name them.
 const SOCKETS: &[&str] = &["TcpStream", "TcpListener", "std::net", "SocketAddr"];
@@ -312,34 +279,6 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     assert!(dir_check < clear);
 }
 
-/// The first words of the lines `cargo tree` prints for these arguments (offline, no prefix): crate names.
-fn tree(args: &[&str]) -> Vec<String> {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let out = Command::new(cargo)
-        .arg("tree")
-        .args(args)
-        .args(["--prefix", "none", "--offline"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run cargo tree");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .unwrap()
-        .lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .map(String::from)
-        .collect()
-}
-
-/// The names of the crates in klatch-server's dependency tree over the given kinds of edge (`cargo tree`, offline).
-fn dependency_names(edges: &str) -> Vec<String> {
-    tree(&["-p", "klatch-server", "--edges", edges])
-}
-
 #[test]
 fn no_http_or_networking_crate_is_in_the_dependency_tree() {
     let deps = dependency_names("normal");
@@ -379,55 +318,6 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         );
     }
     assert!(deps.len() > 10, "the tree looks empty: {deps:?}");
-}
-
-#[test]
-fn websocket_is_the_frame_layer_of_tungstenite_alone_with_no_handshake_no_runtime_and_one_user() {
-    // #112: `tungstenite` with `default-features = false` is the protocol's frame layer: masking, fragmentation, the size
-    // limits, ping and pong and the close handshake, over any `Read + Write`. It does no I/O of its own and brings no HTTP
-    // parser, no `sha1` (banned by deny.toml) and no runtime; the upgrade request is read by `loopback.rs`.
-    let deps = dependency_names("normal");
-    assert!(deps.iter().any(|d| d == "tungstenite"));
-    for n in [
-        "http",
-        "httparse",
-        "sha1",
-        "tokio-tungstenite",
-        "tokio",
-        "futures",
-        "futures-util",
-        "async-std",
-        "mio",
-        "socket2",
-        "hyper",
-    ] {
-        assert!(
-            !deps.iter().any(|d| d == n),
-            "{n} is in klatch-server's dependencies next to tungstenite"
-        );
-    }
-    // only the WebSocket module names it, and it never turns the handshake feature on
-    let problems: Vec<String> = rust_sources()
-        .iter()
-        .filter(|(rel, _)| rel != "src/wire_ws.rs")
-        .flat_map(|(rel, text)| {
-            text.lines()
-                .enumerate()
-                .filter(|(_, l)| code_of(l).contains("tungstenite"))
-                .map(move |(n, _)| format!("{rel}:{}: names tungstenite outside wire_ws.rs", n + 1))
-        })
-        .collect();
-    assert!(problems.is_empty(), "{}", problems.join("\n"));
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
-    let line = manifest
-        .lines()
-        .find(|l| l.starts_with("tungstenite"))
-        .expect("the dependency line");
-    assert!(
-        line.contains("default-features = false") && !line.contains("handshake"),
-        "{line}"
-    );
 }
 
 #[test]

@@ -3,7 +3,8 @@
 klatch is a **public local-only pre-release**: a scoped MVP, **not a 1.0**, with **no outside security review**
 (planned for the first unmarked release, #167). **Do not put sensitive data in it.** It runs on one machine for one
 person and their agents. Remote transports (TLS, mutual TLS, an HTTPS front end, a reverse proxy, WebSocket, gRPC,
-exposing `klatch-server` to other machines) are not part of this release; the README lists what is in and out of scope.
+exposing `klatch-server` to other machines) are not part of this release (an experimental mutual TLS listener and a WebSocket
+route on the listeners that exist are in the source, off unless you configure them, unreviewed and unsupported); the README lists what is in and out of scope.
 Supported versions: the newest release only, the current practice and not a policy (#460).
 
 ## What is protected
@@ -110,11 +111,21 @@ Supported versions: the newest release only, the current practice and not a poli
   klatch-server opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own
   certificates, starts no program and makes no outbound connection. A non-loopback bind of the plaintext listener
   (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
-  closes a peer of another user, and no HTTP client is in its dependency tree. The one network crate it links is rustls
-  (with ring), for `klatch-server https` (#108), which is experimental and unreviewed: mutual TLS is mandatory (a client
+  closes a peer of another user, and no HTTP client is in its dependency tree. The network crates it links are rustls
+  (with ring), for `klatch-server https` (#108), and the frame layer of tungstenite for the WebSocket route (below), which is experimental and unreviewed: mutual TLS is mandatory (a client
   without a certificate from your CA file is refused at the handshake), there is no plaintext mode and no way to skip a
   check, the key file must be mode 0600, the listener is loopback unless you pass `--allow-off-loopback`, and a certificate
   gates the port only (the caller is still the worker credential). klatch makes no certificates and runs no CA.
+  **WebSocket (#112, experimental, unreviewed):** `GET /v1/ws` on those same two listeners carries the same wire as text
+  messages. It adds no listener (so `ws://` exists only on the loopback listener and a WebSocket off loopback is always the
+  mutual TLS one) and no network stack: the frame layer of `tungstenite` (no handshake, no HTTP parser, no runtime) and
+  ring's SHA-1 for the upgrade answer, which RFC 6455 requires and which protects nothing. The caller is the worker
+  credential at the upgrade (the one `401` otherwise), then the gateway's live check on every request; a request with an
+  `Origin` header is refused (`403`) unless you named that exact origin with `--ws-allow-origin` (off by default), which is
+  what keeps a page on another site, or a DNS rebinding page, from opening a connection to a loopback port. Frames must be
+  masked, a message is at most 1 MiB, binary is refused, and every wait is bounded (a ping every 20 s, a close for 60 s
+  of silence, 2 s for a close). A client that answers pings can stay connected for ever; a peer that can reach the port can
+  hold connections up to the cap, as for the other routes.
   **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
   the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a

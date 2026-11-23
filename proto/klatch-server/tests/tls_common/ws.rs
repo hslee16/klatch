@@ -237,9 +237,10 @@ impl Ws {
         }
     }
 
-    /// Everything the server sends until the connection ends: the frames, in order (a quiet connection is a failure
-    /// of the test, not an end).
+    /// Everything the server sends until the connection ends: the frames, in order. A connection that is quiet, or that
+    /// goes on sending pings for a minute, is a failure of the test (the server did not end it), never a hang.
     pub fn until_end(&mut self) -> Vec<Frame> {
+        let until = std::time::Instant::now() + Duration::from_secs(60);
         let mut frames = Vec::new();
         loop {
             match self.got() {
@@ -247,6 +248,10 @@ impl Ws {
                 Got::Eof => return frames,
                 Got::Quiet => panic!("the server kept the connection open: {frames:?}"),
             }
+            assert!(
+                std::time::Instant::now() < until,
+                "the server kept the connection open for a minute: {frames:?}"
+            );
         }
     }
 

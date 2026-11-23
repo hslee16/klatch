@@ -117,9 +117,10 @@ loopback `--webhook` intake.
 
 **Out of scope** (not built, not supported, not promised):
 
-- Every remote transport as a supported feature: an experimental mutual TLS listener (`klatch-server https`, #108) is in the
-  source, off unless you configure it, unreviewed and unsupported; an HTTPS front end beyond loopback (#109), a reverse proxy or
-  stunnel (#110), WebSocket (#112), gRPC (#113), exposing `klatch-server` to other machines (#1061) and signed
+- Every remote transport as a supported feature: an experimental mutual TLS listener (`klatch-server https`, #108) and a
+  WebSocket route (`GET /v1/ws`, #112) on the listeners that exist are in the source, off unless you configure them,
+  unreviewed and unsupported; an HTTPS front end beyond loopback (#109), a reverse proxy or
+  stunnel (#110), gRPC (#113), exposing `klatch-server` to other machines (#1061) and signed
   attestation for remote wire joins (#1138). A non-loopback bind is refused. An ssh forced command (#107) is a documented
   recipe (`clients/recipes/ssh-transport.md`), not a supported transport.
 - The Codex adapter (compiled in, unverified: #883, #590, #783, #782, #884). The Jev adapter and the hosted judge

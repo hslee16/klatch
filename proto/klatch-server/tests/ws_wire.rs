@@ -125,6 +125,29 @@ fn the_upgrade_answer_is_a_101_with_the_accept_key_and_offers_no_extension_or_su
     );
 }
 
+#[test]
+fn sigterm_closes_open_websockets_and_stops_the_server() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let mut plain = plain_server(&[]);
+    let mut a = plain.net.ws_open("alice", &plain.tokens[0]);
+    a.recv().unwrap();
+    unsafe {
+        libc::kill(plain.server.child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let until = std::time::Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(s) = plain.server.child.try_wait().unwrap() {
+            break s;
+        }
+        assert!(std::time::Instant::now() < until, "the server did not stop");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "{}", plain.dir.log());
+    // the connection ended (a close frame or a cut), and the client was not left waiting
+    assert!(matches!(a.got(), Got::Eof | Got::Frame(Frame::Close(..))));
+    assert!(plain.dir.log().contains("http stopped"));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // who is calling
 
@@ -244,7 +267,7 @@ fn a_request_with_an_origin_is_refused_unless_the_operator_named_it() {
     let stranger = [("Origin".to_string(), "https://evil.example".to_string())];
     assert_eq!(status(&plain.net, &stranger), 401);
     // a client that sends no Origin (a worker, a script) is let in
-    assert_eq!(status(&plain.net, &creds.to_vec()), 101);
+    assert_eq!(status(&plain.net, creds.as_ref()), 101);
 }
 
 #[test]
