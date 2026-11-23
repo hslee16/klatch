@@ -105,68 +105,92 @@ class StreamState:
             return
         if not isinstance(e, dict):
             return
-        t = e.get("type")
-        if t == "system":
-            sub = e.get("subtype")
-            if sub == "init":
-                self._note_model(e.get("model"))
-            elif sub == "hook_response":
-                text = e.get("output") or e.get("stdout") or ""
-                if isinstance(text, str):
-                    self.coord_chars += len(text)
-                    self.hook_chars += len(text)
-            elif sub == "fake_cost":
-                self.fake_usd = float(e.get("usd", 0))
-        elif t == "assistant":
-            msg = e.get("message") or {}
-            mid = msg.get("id")
-            if not mid:
-                self._anon += 1
-                mid = "anon-%d" % self._anon
-            if mid not in self.msgs:
-                self.msgs[mid] = {"usage": {}, "model": None, "tools": [], "text": ""}
-                self.order.append(mid)
-            m = self.msgs[mid]
-            if isinstance(msg.get("usage"), dict):
-                m["usage"] = msg["usage"]
-            if msg.get("model"):
-                m["model"] = msg["model"]
-                self._note_model(msg["model"])
-            for b in msg.get("content") or []:
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "tool_use":
-                    name, inp = b.get("name", "?"), b.get("input") or {}
-                    coord = self._is_coord(name, inp)
-                    self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp)}
-                    m["tools"].append(self.tools[b.get("id")])
-                    self.tool_total += 1
-                    self.by_tool[name] = self.by_tool.get(name, 0) + 1
-                    if coord:
-                        self.coord_chars += len(json.dumps(inp))
-                    cmd = inp.get("command", "") if name == "Bash" else ""
-                    if name == "SendMessage" or (cmd and self.msg_re.search(cmd)):
-                        self.messages += 1
-                    for ev in asks.extract(name, inp, self.klatch_bin):
-                        self.msg_events.append(dict(ev, t=self._t))
-                elif b.get("type") == "text" and isinstance(b.get("text"), str):
-                    m["text"] = b["text"]
-                    self.last_text = b["text"]
-        elif t == "user":
-            for b in (e.get("message") or {}).get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    text = _text_of(b.get("content"))
-                    tu = self.tools.get(b.get("tool_use_id"))
-                    if tu and tu["coord"]:
-                        self.coord_chars += len(text)
-                        self.max_coord_result = max(self.max_coord_result, len(text))
-                        if tu["read"]:
-                            self.read_chars += len(text)
-                    if tu and tu["name"] == "Bash" and CONFLICT.search(text):
-                        self.git_conflicts += 1
-        elif t == "result":
-            self.result = e
-            self.done_t = self._t
+        handler = {"system": self._on_system, "assistant": self._on_assistant, "user": self._on_user,
+                   "result": self._on_result}.get(e.get("type"))
+        if handler is not None:
+            handler(e)
+
+    def _on_system(self, e):
+        sub = e.get("subtype")
+        if sub == "init":
+            self._note_model(e.get("model"))
+        elif sub == "hook_response":
+            text = e.get("output") or e.get("stdout") or ""
+            if isinstance(text, str):
+                self.coord_chars += len(text)
+                self.hook_chars += len(text)
+        elif sub == "fake_cost":
+            self.fake_usd = float(e.get("usd", 0))
+
+    def _message_slot(self, msg):
+        """The record of this assistant message (by id; an id-less one gets an anonymous id), created on first sight."""
+        mid = msg.get("id")
+        if not mid:
+            self._anon += 1
+            mid = "anon-%d" % self._anon
+        if mid not in self.msgs:
+            self.msgs[mid] = {"usage": {}, "model": None, "tools": [], "text": ""}
+            self.order.append(mid)
+        return self.msgs[mid]
+
+    def _on_assistant(self, e):
+        msg = e.get("message") or {}
+        m = self._message_slot(msg)
+        self._note_usage_and_model(m, msg)
+        for b in msg.get("content") or []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                self._on_tool_use(m, b)
+            elif b.get("type") == "text" and isinstance(b.get("text"), str):
+                m["text"] = b["text"]
+                self.last_text = b["text"]
+
+    def _note_usage_and_model(self, m, msg):
+        if isinstance(msg.get("usage"), dict):
+            m["usage"] = msg["usage"]
+        if msg.get("model"):
+            m["model"] = msg["model"]
+            self._note_model(msg["model"])
+
+    def _is_message(self, name, cmd):
+        return name == "SendMessage" or bool(cmd and self.msg_re.search(cmd))
+
+    def _on_tool_use(self, m, b):
+        name, inp = b.get("name", "?"), b.get("input") or {}
+        coord = self._is_coord(name, inp)
+        self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp)}
+        m["tools"].append(self.tools[b.get("id")])
+        self.tool_total += 1
+        self.by_tool[name] = self.by_tool.get(name, 0) + 1
+        if coord:
+            self.coord_chars += len(json.dumps(inp))
+        if self._is_message(name, inp.get("command", "") if name == "Bash" else ""):
+            self.messages += 1
+        for ev in asks.extract(name, inp, self.klatch_bin):
+            self.msg_events.append(dict(ev, t=self._t))
+
+    def _on_user(self, e):
+        for b in (e.get("message") or {}).get("content") or []:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                self._on_tool_result(b)
+
+    def _on_tool_result(self, b):
+        text = _text_of(b.get("content"))
+        tu = self.tools.get(b.get("tool_use_id"))
+        if tu is None:
+            return
+        if tu["coord"]:
+            self.coord_chars += len(text)
+            self.max_coord_result = max(self.max_coord_result, len(text))
+            if tu["read"]:
+                self.read_chars += len(text)
+        if tu["name"] == "Bash" and CONFLICT.search(text):
+            self.git_conflicts += 1
+
+    def _on_result(self, e):
+        self.result = e
+        self.done_t = self._t
 
     @property
     def estimated_usd(self):
@@ -184,26 +208,28 @@ class StreamState:
             return self.fake_usd
         return self.estimated_usd
 
+    def _tokens(self, r):
+        if isinstance(r.get("usage"), dict):
+            return {k: int(r["usage"].get(src, 0) or 0) for k, src in USAGE_KEYS}
+        return {k: sum(int(self.msgs[i]["usage"].get(src, 0) or 0) for i in self.order) for k, src in USAGE_KEYS}
+
+    def _idle_turns(self):
+        return sum(1 for i in self.order if self.msgs[i]["tools"] and all(
+            t["name"] == "Bash" and self.idle_re.search(t["input"].get("command", "")) for t in self.msgs[i]["tools"]))
+
     def summary(self):
         r = self.result or {}
-        if isinstance(r.get("usage"), dict):
-            tokens = {k: int(r["usage"].get(src, 0) or 0) for k, src in USAGE_KEYS}
-        else:
-            tokens = {k: sum(int(self.msgs[i]["usage"].get(src, 0) or 0) for i in self.order) for k, src in USAGE_KEYS}
-        has_cost = isinstance(r.get("total_cost_usd"), (int, float))
-        idle = sum(1 for i in self.order if self.msgs[i]["tools"] and all(
-            t["name"] == "Bash" and self.idle_re.search(t["input"].get("command", "")) for t in self.msgs[i]["tools"]))
         final = r.get("result") if isinstance(r.get("result"), str) else self.last_text
         return {
             "turns": r["num_turns"] if isinstance(r.get("num_turns"), int) else len(self.order),
-            "tokens": tokens,
+            "tokens": self._tokens(r),
             "cost_usd": self.cost_usd,
-            "cost_estimated": not has_cost,
+            "cost_estimated": not isinstance(r.get("total_cost_usd"), (int, float)),
             "tool_calls": {"total": self.tool_total, "by_tool": dict(self.by_tool)},
             "models": list(self.models),
             "messages": self.messages,
             "git_conflicts": self.git_conflicts,
-            "idle_turns": idle,
+            "idle_turns": self._idle_turns(),
             "human_mentions": 1 if HUMAN_WORDS.search(final or "") else 0,
             "coord_context_chars": self.coord_chars,
             "read_context_chars": self.read_chars,

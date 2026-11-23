@@ -153,11 +153,11 @@ KINDS = [
 KIND_BY_NAME = {k["name"]: k for k in KINDS}
 
 
-def build(modules, seed):
-    """The structure of the project: {"modules": [{"name", "fn", "kind", "params", "ticket", "owner"}], "agents": [{"name",
-    "ticket", "modules"}]}. modules must be even (two per agent), from 2 to 52 (26 agents)."""
-    if not isinstance(modules, int) or modules < 2 or modules % 2 or modules // 2 > MAX_AGENTS:
-        raise ValueError("modules must be an even number from 2 to %d, got %r" % (2 * MAX_AGENTS, modules))
+def _valid_size(modules):
+    return isinstance(modules, int) and modules >= 2 and modules % 2 == 0 and modules // 2 <= MAX_AGENTS
+
+
+def _draw_modules(modules, seed):
     order = list(range(len(KINDS)))
     random.Random("order:%d" % seed).shuffle(order)
     mods = []
@@ -167,16 +167,30 @@ def build(modules, seed):
         name = "%s_%d" % (kind["name"], n)
         params = kind["params"](random.Random("param:%d:%s" % (seed, name)))
         mods.append({"name": name, "fn": name, "kind": kind["name"], "params": params})
-    names = [m["name"] for m in mods]
-    if len(set(names)) != len(names):
-        raise AssertionError("module names are not unique: %r" % names)
+    return mods
+
+
+def _assign_agents(mods, modules):
+    """Two modules per agent, in order; each module gets its agent's ticket and name."""
     agents = []
     for i in range(modules // 2):
         a = {"name": chr(97 + i), "ticket": chr(65 + i), "modules": [mods[2 * i]["name"], mods[2 * i + 1]["name"]]}
         agents.append(a)
         for m in a["modules"]:
             next(x for x in mods if x["name"] == m).update(ticket=a["ticket"], owner=a["name"])
-    return {"modules": mods, "agents": agents}
+    return agents
+
+
+def build(modules, seed):
+    """The structure of the project: {"modules": [{"name", "fn", "kind", "params", "ticket", "owner"}], "agents": [{"name",
+    "ticket", "modules"}]}. modules must be even (two per agent), from 2 to 52 (26 agents)."""
+    if not _valid_size(modules):
+        raise ValueError("modules must be an even number from 2 to %d, got %r" % (2 * MAX_AGENTS, modules))
+    mods = _draw_modules(modules, seed)
+    names = [m["name"] for m in mods]
+    if len(set(names)) != len(names):
+        raise AssertionError("module names are not unique: %r" % names)
+    return {"modules": mods, "agents": _assign_agents(mods, modules)}
 
 
 def _kind(m):
@@ -334,6 +348,23 @@ def fake_script(modules, seed, reference_dir, chain=False):
                        "two modules, adds its registry and changelog lines and syncs.", "agents": agents}
 
 
+def _run(a, p):
+    """Run the sub-command; p.error exits with the usage message when an argument is missing."""
+    if a.command in ("write", "reference"):
+        if not a.dest:
+            p.error("%s needs DEST" % a.command)
+        os.makedirs(a.dest, exist_ok=True)
+        write_files(template_files(a.modules, a.seed) if a.command == "write" else reference_files(a.modules, a.seed), a.dest)
+    elif a.command == "tasks":
+        print(json.dumps(tasks(a.modules, a.seed), indent=1, sort_keys=True))
+    elif a.command == "map":
+        print(json.dumps(scenario_map(a.modules, a.seed), indent=1, sort_keys=True))
+    else:
+        if not a.reference:
+            p.error("fake needs --reference DIR")
+        print(json.dumps(fake_script(a.modules, a.seed, a.reference, a.chain), indent=1))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Generate fixture F7 scale (#1372).")
     p.add_argument("command", choices=("write", "reference", "tasks", "map", "fake"))
@@ -344,19 +375,7 @@ def main(argv=None):
     p.add_argument("--chain", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.command in ("write", "reference"):
-            if not a.dest:
-                p.error("%s needs DEST" % a.command)
-            os.makedirs(a.dest, exist_ok=True)
-            write_files(template_files(a.modules, a.seed) if a.command == "write" else reference_files(a.modules, a.seed), a.dest)
-        elif a.command == "tasks":
-            print(json.dumps(tasks(a.modules, a.seed), indent=1, sort_keys=True))
-        elif a.command == "map":
-            print(json.dumps(scenario_map(a.modules, a.seed), indent=1, sort_keys=True))
-        else:
-            if not a.reference:
-                p.error("fake needs --reference DIR")
-            print(json.dumps(fake_script(a.modules, a.seed, a.reference, a.chain), indent=1))
+        _run(a, p)
     except ValueError as e:
         print("gen.py: %s" % e, file=sys.stderr)
         return 2

@@ -11,9 +11,13 @@ import sys
 import report
 
 
+def _bad_usage(argv):
+    return len(argv) < 2 or any(a.startswith("-") for a in argv[:2])
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) < 2 or argv[0].startswith("-") or argv[1].startswith("-"):
+    if _bad_usage(argv):
         print("usage: compare.py NEW_RESULTS_DIR OLD_RESULTS_DIR [report.py options]", file=sys.stderr)
         return 2
     new, old, rest = argv[0], argv[1], argv[2:]

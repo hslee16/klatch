@@ -28,25 +28,36 @@ def find_tool(klatch_bin, env):
     return None
 
 
-def export(tool, home, key_dir, env=None, timeout=120):
-    """(report dict or None, note or None): the counts-only report of the run store at home, opened with the key in key_dir."""
-    if not tool or not os.path.exists(tool):
-        return None, "store export skipped: the klatch-bench tool was not found (%s; build it with cargo build -p klatch-bench)" % (
-            tool or "no path")
+def _run_tool(argv, env, timeout):
+    """(CompletedProcess, None), or (None, the note why the tool could not be run)."""
     try:
-        p = subprocess.run([tool, "store-stats", "--home", home, "--key-dir", key_dir, "--json"], stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, text=True, timeout=timeout, env=env)
+        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout, env=env)
     except (OSError, subprocess.SubprocessError) as e:
         return None, "store export failed: %s" % e
-    if p.returncode != 0:
-        return None, "store export failed: %s" % (p.stderr.strip()[-200:] or "exit %d" % p.returncode)
+    return p, None
+
+
+def _parse_report(stdout):
     try:
-        report = json.loads(p.stdout)
+        report = json.loads(stdout)
     except ValueError:
         return None, "store export failed: the tool did not print JSON"
     if not isinstance(report, dict):
         return None, "store export failed: the tool did not print an object"
     return report, None
+
+
+def export(tool, home, key_dir, env=None, timeout=120):
+    """(report dict or None, note or None): the counts-only report of the run store at home, opened with the key in key_dir."""
+    if not tool or not os.path.exists(tool):
+        return None, "store export skipped: the klatch-bench tool was not found (%s; build it with cargo build -p klatch-bench)" % (
+            tool or "no path")
+    p, note = _run_tool([tool, "store-stats", "--home", home, "--key-dir", key_dir, "--json"], env, timeout)
+    if p is None:
+        return None, note
+    if p.returncode != 0:
+        return None, "store export failed: %s" % (p.stderr.strip()[-200:] or "exit %d" % p.returncode)
+    return _parse_report(p.stdout)
 
 
 def _sum(pairs, names=None):

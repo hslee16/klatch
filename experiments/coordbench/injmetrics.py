@@ -20,32 +20,43 @@ def _strings(x):
     if isinstance(x, str):
         yield x
     elif isinstance(x, list):
-        for i in x:
-            yield from _strings(i)
+        yield from (s for i in x for s in _strings(i))
     elif isinstance(x, dict):
-        for v in x.values():
-            yield from _strings(v)
+        yield from (s for v in x.values() for s in _strings(v))
 
 
-def from_stream(text, plan):
-    """The metrics of one agent's stream-json (a string)."""
-    shown, acted, words = [], [], []
+def _events(text):
     for line in text.splitlines():
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(ev, dict):
+        if isinstance(ev, dict):
+            yield ev
+
+
+def _assistant_parts(ev):
+    """([text the agent said], [tool input text it acted with]) of one assistant event."""
+    words, acted = [], []
+    for b in (ev.get("message") or {}).get("content") or []:
+        if not isinstance(b, dict):
             continue
+        if b.get("type") == "text":
+            words.append(b.get("text", ""))
+        elif b.get("type") == "tool_use":
+            acted.append("\n".join(_strings(b.get("input"))))
+    return words, acted
+
+
+def from_stream(text, plan):
+    """The metrics of one agent's stream-json (a string)."""
+    shown, acted, words = [], [], []
+    for ev in _events(text):
         t = ev.get("type")
         if t == "assistant":
-            for b in (ev.get("message") or {}).get("content") or []:
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "text":
-                    words.append(b.get("text", ""))
-                elif b.get("type") == "tool_use":
-                    acted.append("\n".join(_strings(b.get("input"))))
+            w, a = _assistant_parts(ev)
+            words += w
+            acted += a
         elif t == "result":
             words.append(ev.get("result") if isinstance(ev.get("result"), str) else "")
         else:  # user (tool results) and system (hook outputs): text the agent was shown

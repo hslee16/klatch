@@ -52,9 +52,13 @@ def wilson(k, n, z=Z95):
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+def _empty(*ns):
+    return any(n <= 0 for n in ns)
+
+
 def newcombe_diff(k1, n1, k2, n2, z=Z95):
     """Newcombe's hybrid score interval (method 10) for the difference of two proportions p1 - p2."""
-    if n1 <= 0 or n2 <= 0:
+    if _empty(n1, n2):
         return (None, None, None)
     p1, p2 = k1 / n1, k2 / n2
     l1, u1 = wilson(k1, n1, z)
@@ -70,6 +74,11 @@ def risk_ratio(k1, n1, k2, n2):
     return (k1 / n1) / (k2 / n2)
 
 
+def _degenerate_table(row1, row2, col1, total):
+    """A table with an empty margin: no association to test, p is 1."""
+    return 0 in (total, row1, row2, col1) or col1 == total
+
+
 def fisher_exact(a, b, c, d, alternative="two-sided"):
     """Fisher's exact test on the table [[a, b], [c, d]] by enumerating the hypergeometric distribution.
 
@@ -80,7 +89,7 @@ def fisher_exact(a, b, c, d, alternative="two-sided"):
         raise ValueError("counts cannot be negative")
     row1, row2, col1 = a + b, c + d, a + c
     total = row1 + row2
-    if total == 0 or row1 == 0 or row2 == 0 or col1 == 0 or col1 == total:
+    if _degenerate_table(row1, row2, col1, total):
         return 1.0
     denom = math.comb(total, col1)
     lo, hi = max(0, col1 - row2), min(row1, col1)
@@ -88,6 +97,13 @@ def fisher_exact(a, b, c, d, alternative="two-sided"):
     def prob(x):
         return math.comb(row1, x) * math.comb(row2, col1 - x) / denom
 
+    return _tail_probability(alternative, prob, (a, lo, hi))
+
+
+def _tail_probability(alternative, prob, span):
+    """P(X >= a) for "greater", P(X <= a) for "less", else the sum of the tables no more likely than the observed one;
+    span is (a, lowest X, highest X)."""
+    a, lo, hi = span
     if alternative == "greater":
         return min(1.0, sum(prob(x) for x in range(a, hi + 1)))
     if alternative == "less":
@@ -116,6 +132,15 @@ def _midranks(values):
     return ranks, ties
 
 
+def _add_rank(ways, rank, n, max_s):
+    """Fold the rank into the table: ways[j][s] counts the ways to choose j of the ranks so far with rank sum s."""
+    for j in range(min(n, rank), 0, -1):
+        row, prev = ways[j], ways[j - 1]
+        for s in range(max_s, rank - 1, -1):
+            if prev[s - rank]:
+                row[s] += prev[s - rank]
+
+
 def _exact_u_counts(n, m):
     """counts[u] = the number of the C(n+m, n) assignments of ranks to the first group that give U = u."""
     big_n = n + m
@@ -124,13 +149,30 @@ def _exact_u_counts(n, m):
     ways = [[0] * (max_s + 1) for _ in range(n + 1)]
     ways[0][0] = 1
     for rank in range(1, big_n + 1):
-        for j in range(min(n, rank), 0, -1):
-            row, prev = ways[j], ways[j - 1]
-            for s in range(max_s, rank - 1, -1):
-                if prev[s - rank]:
-                    row[s] += prev[s - rank]
+        _add_rank(ways, rank, n, max_s)
     base = n * (n + 1) // 2
     return {s - base: c for s, c in enumerate(ways[n]) if c and s >= base}
+
+
+def _exact_p(n, m, u1):
+    counts = _exact_u_counts(n, m)
+    total = math.comb(n + m, n)
+    centre = n * m / 2
+    dev = abs(u1 - centre)
+    p = sum(c for u, c in counts.items() if abs(u - centre) >= dev - 1e-9) / total
+    return min(1.0, p)
+
+
+def _normal_tail(n, m, u1, ties):
+    """(p, z, method) by the normal approximation, with tie correction and a 0.5 continuity correction."""
+    big_n = n + m
+    tie_term = sum(t ** 3 - t for t in ties)
+    var = n * m / 12 * ((big_n + 1) - tie_term / (big_n * (big_n - 1)))
+    method = "normal-ties" if any(t > 1 for t in ties) else "normal"
+    if var <= 0:
+        return 1.0, 0.0, method
+    z = max(0.0, abs(u1 - n * m / 2) - 0.5) / math.sqrt(var)
+    return min(1.0, math.erfc(z / math.sqrt(2))), z, method
 
 
 def mann_whitney(x, y):
@@ -150,23 +192,12 @@ def mann_whitney(x, y):
     u2 = n * m - u1
     out = {"u1": u1, "u2": u2, "u": min(u1, u2), "z": None}
     has_ties = any(t > 1 for t in ties)
-    if not has_ties and n <= EXACT_MAX_GROUP and m <= EXACT_MAX_GROUP:
-        counts = _exact_u_counts(n, m)
-        total = math.comb(n + m, n)
-        centre = n * m / 2
-        dev = abs(u1 - centre)
-        p = sum(c for u, c in counts.items() if abs(u - centre) >= dev - 1e-9) / total
-        out.update(p=min(1.0, p), method="exact")
+    if not has_ties and max(n, m) <= EXACT_MAX_GROUP:
+        out.update(p=_exact_p(n, m, u1), method="exact")
         return out
-    big_n = n + m
-    tie_term = sum(t ** 3 - t for t in ties)
-    var = n * m / 12 * ((big_n + 1) - tie_term / (big_n * (big_n - 1)))
-    out["method"] = "normal-ties" if has_ties else "normal"
-    if var <= 0:
-        out.update(p=1.0, z=0.0)
-        return out
-    z = max(0.0, abs(u1 - n * m / 2) - 0.5) / math.sqrt(var)
-    out.update(p=min(1.0, math.erfc(z / math.sqrt(2))), z=z)
+    p, z, method = _normal_tail(n, m, u1, ties)
+    out.update(method=method)
+    out.update(p=p, z=z)
     return out
 
 

@@ -1,0 +1,1 @@
+- Code health K14 (#1455): the coordbench runner, report, scenario and fixture modules are cleaner (`run.py` split into the run phases of `runexec.py` and mixins for metrics and roles, one method per fake-agent op, the report built from small table functions); record formats, metrics, report text, prompts and fixtures are unchanged and a characterisation test pins the report.

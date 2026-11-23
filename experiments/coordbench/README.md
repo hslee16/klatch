@@ -14,6 +14,7 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
   no klatch words in B arms), `REVIEW.md` (the checklist for a reviewer who did not write them) and `PILOT.md` (the pilot
   plan). Proposed by #1365, unused until the human reviews them; the klatch arms must not get a better prompt than the baselines.
 - `run.py`: runs one scenario against one or more arms, N times each (see Usage).
+  The run itself is split over `runexec.py` (one run: origin, clones, agent processes, watch loop, record), `runmetrics.py` and `runroles.py` (its metrics and role support), `runprompt.py`, `runcli.py` and `runenv.py` (prompt, arguments and caps, guards and git); `run.py` keeps the CLI and the suite loop (#1455).
 - `report.py`, `compare.py`: generate REPORT.md from a results directory; compare two results directories.
 - `stats.py`: Fisher exact, Mann-Whitney U, Hodges-Lehmann, seeded bootstrap interval, Wilson, Newcombe and Holm, standard
   library only, tested against values from the literature.
