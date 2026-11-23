@@ -1,0 +1,53 @@
+{
+  "comment": "Scripted agents for the harness tests (#1366): each copies the reference solution of its two modules, adds its registry and changelog lines, and syncs, resolving a conflicted pull by keeping both sides. They run at once, so a conflict on the shared files is likely but not certain. The reference is read from reference/, which is never in a checkout.",
+  "agents": {
+    "a": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: ticket A (units, tokenizer)"], "arms": ["K1", "K2"]},
+      {"op": "copy_from", "from": "reference/tallykit/units.py", "path": "tallykit/units.py"},
+      {"op": "copy_from", "from": "reference/tallykit/tokenizer.py", "path": "tallykit/tokenizer.py"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.units import convert_length, convert_temperature\n"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.tokenizer import tokenize, token_kinds\n"},
+      {"op": "append", "path": "CHANGELOG.md", "content": "- ticket A: units, tokenizer\n"},
+      {"op": "sync", "message": "ticket A: units, tokenizer", "resolve": "union"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: ticket A"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "ticket A is published to main. DONE a"}
+    ],
+    "b": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: ticket B (dates, checksum)"], "arms": ["K1", "K2"]},
+      {"op": "copy_from", "from": "reference/tallykit/dates.py", "path": "tallykit/dates.py"},
+      {"op": "copy_from", "from": "reference/tallykit/checksum.py", "path": "tallykit/checksum.py"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.dates import is_leap_year, days_in_month, days_between\n"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.checksum import adler32, luhn_valid\n"},
+      {"op": "append", "path": "CHANGELOG.md", "content": "- ticket B: dates, checksum\n"},
+      {"op": "sync", "message": "ticket B: dates, checksum", "resolve": "union"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: ticket B"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "ticket B is published to main. DONE b"}
+    ],
+    "c": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: ticket C (slug, roman)"], "arms": ["K1", "K2"]},
+      {"op": "copy_from", "from": "reference/tallykit/slug.py", "path": "tallykit/slug.py"},
+      {"op": "copy_from", "from": "reference/tallykit/roman.py", "path": "tallykit/roman.py"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.slug import slugify, unique_slug\n"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.roman import to_roman, from_roman\n"},
+      {"op": "append", "path": "CHANGELOG.md", "content": "- ticket C: slug, roman\n"},
+      {"op": "sync", "message": "ticket C: slug, roman", "resolve": "union"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: ticket C"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "ticket C is published to main. DONE c"}
+    ],
+    "d": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: ticket D (rle, matrix)"], "arms": ["K1", "K2"]},
+      {"op": "copy_from", "from": "reference/tallykit/rle.py", "path": "tallykit/rle.py"},
+      {"op": "copy_from", "from": "reference/tallykit/matrix.py", "path": "tallykit/matrix.py"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.rle import rle_encode, rle_decode\n"},
+      {"op": "append", "path": "tallykit/__init__.py", "content": "from tallykit.matrix import transpose, multiply, identity\n"},
+      {"op": "append", "path": "CHANGELOG.md", "content": "- ticket D: rle, matrix\n"},
+      {"op": "sync", "message": "ticket D: rle, matrix", "resolve": "union"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: ticket D"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "ticket D is published to main. DONE d"}
+    ]
+  }
+}
