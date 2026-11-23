@@ -1,0 +1,1 @@
+- CI now runs two parallel jobs, `test` (Rust build, clippy, nextest, feature builds, crates.io dry run) and `test-clients` (Python and TypeScript suites, recipes, installer, release checks, actionlint, shellcheck, notices, cargo-deny), so a pull request waits for the longer of the two (#1349).
