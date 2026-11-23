@@ -1,5 +1,6 @@
 //! Whole-room deletion, member pruning and member removal.
 
+use super::releases::Ended;
 use super::*;
 
 impl SqliteStore {
@@ -158,7 +159,7 @@ impl SqliteStore {
             )?;
             let released = held.iter().filter(|(_, expires, _)| *expires > now).count();
             for (path, expires, since) in &held {
-                self.record_ended(room, path, (*since, *expires, Some(now)), "removed");
+                self.record_ended(Ended::at(room, path, (*since, *expires), now), "removed");
             }
             for sql in [
                 "DELETE FROM claims WHERE room=?1 AND owner=?2",

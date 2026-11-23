@@ -6,6 +6,23 @@ use crate::domain::{MachineCheckpoint, Result, Trail};
 use crate::store::Seat;
 use rusqlite::params;
 
+/// A machine checkpoint to store: whose, in which room, its text and whether it is the last of the run.
+#[derive(Clone, Copy)]
+pub(super) struct CheckpointWrite<'a> {
+    pub(super) room: &'a str,
+    pub(super) member: &'a str,
+    pub(super) body: &'a str,
+    pub(super) last: bool,
+}
+
+/// A machine status to write: the text, its class word, and the texts the machine owns (only those may be replaced).
+#[derive(Clone, Copy)]
+pub(super) struct StatusWrite<'a> {
+    pub(super) text: &'a str,
+    pub(super) class: &'a str,
+    pub(super) owned: &'a [&'a str],
+}
+
 /// Counts rows older than this are deleted as events are written: 30 days, like the claim events.
 const EVENT_MAX_AGE_SECS: i64 = 30 * 86_400;
 /// The event table keeps at most this many rows, the newest.
@@ -45,11 +62,15 @@ impl SqliteStore {
     /// Replace the member's checkpoint in the room; whether there was one to replace.
     pub(super) fn do_put_machine_checkpoint(
         &self,
-        (room, member): (&str, &str),
-        body: &str,
-        last: bool,
+        cp: &CheckpointWrite<'_>,
         now: i64,
     ) -> Result<bool> {
+        let CheckpointWrite {
+            room,
+            member,
+            body,
+            last,
+        } = *cp;
         self.immediate(|| {
             let replaced = self.exec(
                 "DELETE FROM machine_checkpoints WHERE room=?1 AND member=?2",
@@ -80,10 +101,10 @@ impl SqliteStore {
     pub(super) fn do_put_machine_status(
         &self,
         at: Seat,
-        (text, class): (&str, &str),
-        owned: &[&str],
+        status: &StatusWrite<'_>,
         (now, window): (i64, i64),
     ) -> Result<bool> {
+        let StatusWrite { text, class, owned } = *status;
         self.immediate(|| {
             let row: Option<(Option<String>, i64)> = self.optional(
                 "SELECT status,status_ts FROM members WHERE room=?1 AND name=?2",

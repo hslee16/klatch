@@ -1,0 +1,1 @@
+- Code health K04 (#1445): internal store methods take small value structs instead of long argument lists (claim key, ended claim, archive job, checkpoint and status writes, shown view); no public API, schema or stored-byte change.

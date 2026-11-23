@@ -58,9 +58,13 @@ fn many_connections_opening_a_fresh_database_at_once_all_succeed() {
     }
 }
 
-#[test]
-fn concurrent_claims_on_one_path_have_exactly_one_winner() {
-    let path = temp_db("claimrace");
+/// Eight threads each claim a path (`path_of(t)` for thread `t`) in one store file at the same moment; the store file's
+/// path and each thread's result.
+fn race_claims(
+    tag: &str,
+    path_of: fn(usize) -> String,
+) -> (TempDb, Vec<crate::domain::Result<()>>) {
+    let path = temp_db(tag);
     SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     let handles: Vec<_> = (0..8)
         .map(|t| {
@@ -68,13 +72,19 @@ fn concurrent_claims_on_one_path_have_exactly_one_winner() {
             std::thread::spawn(move || {
                 let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
                 s.claim(
-                    &ClaimRequest::new(("r", &format!("w{t}")), "src", 100, ""),
+                    &ClaimRequest::new(("r", &format!("w{t}")), &path_of(t), 100, ""),
                     0,
                 )
             })
         })
         .collect();
-    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let results = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    (path, results)
+}
+
+#[test]
+fn concurrent_claims_on_one_path_have_exactly_one_winner() {
+    let (path, results) = race_claims("claimrace", |_| "src".into());
     assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
     assert!(
         results
@@ -87,22 +97,9 @@ fn concurrent_claims_on_one_path_have_exactly_one_winner() {
 
 #[test]
 fn concurrent_claims_on_disjoint_paths_all_succeed() {
-    let path = temp_db("claimdisjoint");
-    SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    let handles: Vec<_> = (0..8)
-        .map(|t| {
-            let path = path.to_path_buf();
-            std::thread::spawn(move || {
-                let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-                s.claim(
-                    &ClaimRequest::new(("r", &format!("w{t}")), &format!("src/f{t}"), 100, ""),
-                    0,
-                )
-            })
-        })
-        .collect();
-    for h in handles {
-        h.join().unwrap().unwrap();
+    let (path, results) = race_claims("claimdisjoint", |t| format!("src/f{t}"));
+    for r in results {
+        r.unwrap();
     }
     assert_eq!(
         SqliteStore::open(&path, &crate::store::insecure_test_key())

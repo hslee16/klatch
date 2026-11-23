@@ -1,7 +1,7 @@
 //! Taking a claim: the conflict check, the record of who is waiting for whom (so a conflict that closes a cycle is
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
-use super::claim_events::ClaimEvent;
+use super::claim_events::{ClaimEvent, ClaimKey};
 use super::{SqliteStore, WAIT_WINDOW_SECS};
 use crate::domain::{
     AgedClaim, Error, PASSIVE_REASON, PassiveTaken, Result, SHARED_SCOPE, YIELD_WINDOW_SECS,
@@ -156,13 +156,8 @@ impl SqliteStore {
 
     /// Before `owner` releases `path` (#909): when it has a live claim there and was a party to a deadlock inside the
     /// window, remember the release so a take of the path by someone else is flagged.
-    pub(super) fn do_note_yield_release(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        now: i64,
-    ) -> Result<()> {
+    pub(super) fn do_note_yield_release(&self, key: ClaimKey<'_>, now: i64) -> Result<()> {
+        let ClaimKey { room, owner, path } = key;
         self.immediate(|| {
             let live = self
                 .optional(
@@ -270,7 +265,7 @@ impl SqliteStore {
                 waited: None,
             },
         );
-        self.open_claim_conflict(req.room, req.owner, req.path, req.now);
+        self.open_claim_conflict(ClaimKey::new(req.room, req.owner, req.path), req.now);
         Ok(Error::Conflict {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
@@ -377,7 +372,8 @@ impl SqliteStore {
     /// A new hold was granted (#1386): the grant, with the wait it ended, and a takeover when the claim it overlapped
     /// had just lapsed under another member.
     fn record_grant(&self, req: &Attempt, lapsed: &[Lapsed]) {
-        let waited = self.close_claim_conflicts(req.room, req.owner, req.path, req.now);
+        let waited =
+            self.close_claim_conflicts(ClaimKey::new(req.room, req.owner, req.path), req.now);
         let event = |event, held, waited| ClaimEvent {
             room: req.room,
             path: req.path,

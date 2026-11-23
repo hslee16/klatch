@@ -76,6 +76,18 @@ impl Faulty {
         }
     }
 
+    /// Show the machine status kept for `m` under `room_key`, if there is one.
+    fn overlay_status(&self, room_key: &str, m: &mut MemberInfo) {
+        if let Some((text, at)) = self
+            .statuses
+            .borrow()
+            .get(&(room_key.to_string(), m.name.clone()))
+        {
+            m.status = Some(text.clone());
+            m.status_ts = *at;
+        }
+    }
+
     /// Sets every claim of `owner` live after `now` to what `expires` makes of it.
     fn reset_claims(&self, owner: &str, now: i64, expires: impl Fn(i64) -> i64) {
         for r in self.inner.rooms.borrow_mut().values_mut() {
@@ -122,14 +134,7 @@ impl MemberStore for Faulty {
         }
         let room_key = self.status_room(room);
         for m in &mut out {
-            if let Some((text, at)) = self
-                .statuses
-                .borrow()
-                .get(&(room_key.to_string(), m.name.clone()))
-            {
-                m.status = Some(text.clone());
-                m.status_ts = *at;
-            }
+            self.overlay_status(room_key, m);
             m.parent = self.parents.borrow().get(&m.name).cloned();
         }
         Ok(out)
@@ -351,14 +356,10 @@ impl ReviewStore for Faulty {
     fn crossing_notices(&self, room: &str, member: &str) -> Result<Vec<QueuedReview>> {
         let mut out = Vec::new();
         for r in self.queue.borrow().iter() {
-            if r.room != room || r.requester != member || r.to_room.is_empty() {
+            if !is_crossing_of(r, room, member) {
                 continue;
             }
-            let stage = if r.verdict == "deny" || !r.applied.is_empty() {
-                2
-            } else {
-                1
-            };
+            let stage = notice_stage(r);
             let told = self.told.borrow().get(&r.id).copied().unwrap_or(0);
             if stage > told || self.fault == Fault::NoticesRepeat {
                 self.told.borrow_mut().insert(r.id, stage);
@@ -366,6 +367,20 @@ impl ReviewStore for Faulty {
             }
         }
         Ok(out)
+    }
+}
+
+/// Whether `r` is a review `member` asked in `room` that crosses to another room.
+fn is_crossing_of(r: &QueuedReview, room: &str, member: &str) -> bool {
+    r.room == room && r.requester == member && !r.to_room.is_empty()
+}
+
+/// How far a crossing review has got: 2 once it is denied or applied, else 1.
+fn notice_stage(r: &QueuedReview) -> u8 {
+    if r.verdict == "deny" || !r.applied.is_empty() {
+        2
+    } else {
+        1
     }
 }
 
