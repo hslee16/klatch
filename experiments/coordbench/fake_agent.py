@@ -46,6 +46,16 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   obey {forms}                   obey injections (S10): "all" or a list of form ids; reads the run's plan from OUT/injection-plan.json
                                  and does what each form asked (append the canary line, append the stop marker, touch the file)
   final {text}                   the final message; {{TOKEN:form}} is filled with the run's token for that injection form
+
+Shared working tree (#1427, topology T-shared): several fake agents run in ONE directory, so a lost update needs a fixed
+interleaving. These ops give it, with files in OUT (the per-agent log directory, outside the tree):
+
+  read_into {path, key}          a Read tool call whose text is kept as the variable key (a stale copy, used later)
+  write_from_var {path, key, replace?, append?}  a Write tool call of the kept text with [old, new] pairs applied and text
+                                 appended: the whole file as that agent saw it, silently overwriting whatever changed since
+  signal {name}                  mark that this agent reached name
+  wait_signal {name, parties?, timeout?}  wait until parties (default 1) agents have signalled name
+  barrier {name, parties}        signal, then wait_signal: every party waits for all the others
 """
 import argparse
 import json
@@ -136,6 +146,19 @@ class Agent:
                 self.bash(["touch", f["path"]])
             else:
                 self.step({"op": "append", "path": f["file"], "content": f["line"] + "\n"})
+
+    def signal(self, name):
+        with open(os.path.join(self.args.out, "sig-%s.%s" % (name, self.args.name)), "w") as f:
+            f.write("1")
+
+    def wait_signal(self, name, parties, timeout):
+        deadline = time.time() + timeout
+        prefix = "sig-%s." % name
+        while time.time() < deadline:
+            if sum(1 for n in os.listdir(self.args.out) if n.startswith(prefix)) >= parties:
+                return
+            time.sleep(0.02)
+        self.die("signal %s never reached %d parties" % (name, parties))
 
     def step(self, st):
         op = st["op"]
@@ -261,10 +284,39 @@ class Agent:
             facts["modes"] = {k: stat.S_IMODE(os.stat(os.environ[k]).st_mode) for k in ("KLATCH_HOME", "KLATCH_KEY_DIR")
                               if os.environ.get(k) and os.path.exists(os.environ[k])}
             facts["cwd"] = os.getcwd()
+            facts["identity"] = {k: os.environ.get(k) for k in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "TMPDIR")}
+            facts["out_inside_cwd"] = os.path.realpath(self.args.out).startswith(os.path.realpath(os.getcwd()) + os.sep)
+            tree = []
+            for d, dirs, names in os.walk("."):
+                dirs[:] = [x for x in dirs if x != ".git"]
+                tree += [os.path.relpath(os.path.join(d, n)) for n in names]
+            facts["tree_files"] = sorted(tree)
             facts["has_anthropic_key"] = "ANTHROPIC_API_KEY" in os.environ
             facts["settings_local_exists"] = os.path.exists(os.path.join(".claude", "settings.local.json"))
             with open(os.path.join(self.args.out, st["path"]), "w") as f:
                 json.dump(facts, f)
+        elif op == "read_into":
+            with open(st["path"]) as f:
+                text = f.read()
+            self.vars[st["key"]] = text
+            self.tool("Read", {"file_path": st["path"]}, text)
+        elif op == "write_from_var":
+            text = self.vars[st["key"]]
+            for old, new in st.get("replace", []):
+                if text.count(old) != 1:
+                    self.die("write_from_var: the text to replace occurs %d times in the kept copy" % text.count(old))
+                text = text.replace(old, new)
+            text += st.get("append", "")
+            with open(st["path"], "w") as f:
+                f.write(text)
+            self.tool("Write", {"file_path": st["path"], "content": text}, "ok")
+        elif op == "signal":
+            self.signal(st["name"])
+        elif op == "wait_signal":
+            self.wait_signal(st["name"], int(st.get("parties", 1)), float(st.get("timeout", 30)))
+        elif op == "barrier":
+            self.signal(st["name"])
+            self.wait_signal(st["name"], int(st["parties"]), float(st.get("timeout", 30)))
         elif op == "obey":
             self.obey(st.get("forms", "all"))
         elif op == "final":

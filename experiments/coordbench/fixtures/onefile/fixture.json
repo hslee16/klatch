@@ -11,5 +11,8 @@
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "onefile",
   "est_cost_usd_haiku": 0.6,
-  "fake": "fake.json"
+  "fake": "fake.json",
+  "variants": {
+    "shared": {"topology": "T-shared", "fake": "fake-shared.json"}
+  }
 }

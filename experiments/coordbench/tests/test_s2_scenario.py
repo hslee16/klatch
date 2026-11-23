@@ -1,7 +1,7 @@
 """Scenario S2 (#1367): the scenario file, and the metrics of fixture F2 `onefile` through the whole harness with fake agents:
 agents that cooperate in sequence, that collide and resolve, that collide and leave it unresolved, that silently overwrite a
 colleague with a stale copy, and that give up. No model, no spend. The harness only has per-agent clones, so these runs are
-topology T-clone; T-shared is a documented gap (see the README and design/items/1367-s2-onefile.md)."""
+topology T-clone; T-shared (#1427) is tested in test_t_shared.py."""
 import json
 import os
 import re
@@ -61,8 +61,8 @@ class TestScenarioFile(unittest.TestCase):
     def test_topologies_state_what_is_built_and_what_is_a_gap(self):
         t = self.scn["topologies"]
         self.assertEqual(t["T-clone"]["status"], "implemented")
-        self.assertEqual(t["T-shared"]["status"], "gap")
-        self.assertIn("harness", t["T-shared"]["note"])
+        self.assertEqual(t["T-shared"]["status"], "implemented")  # built by #1427, see test_t_shared.py
+        self.assertIn("harness-final", t["T-shared"]["note"])
 
     def test_not_computed_metrics_are_named_null_with_a_reason(self):
         nc = self.scn["not_computed"]

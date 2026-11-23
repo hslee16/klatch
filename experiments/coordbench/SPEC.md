@@ -42,7 +42,13 @@ within one scenario: model, task text, fixture, launch topology, team size, test
 - Repository topology (the default, T-clone): a bare repository per run acts as `origin`; each agent has its own clone and
   integrates by `git pull --no-rebase origin main` then `git push origin HEAD:main` (fast-forward only, no force). This is
   what a team without a shared working directory does, and it is identical in every arm. Scenario S2 also has T-shared, one
-  working directory used by all agents at once, because that is where claims matter most (see S2).
+  working directory used by all agents at once, because that is where claims matter most (see S2). In T-shared (#1427) the run
+  makes one working tree (a clone of the bare origin) and every agent starts in it; each agent keeps its own member name, git
+  author and committer name, `KLATCH_NAME`, HOME and TMPDIR, and its stream, prompt and logs live outside the tree. The prompts
+  are the `-shared` variants (same parity rule). The final state is the tree, committed by the harness under a neutral author
+  if anything is uncommitted, and lost edits are measured from snapshots of the shared file (every 5 s and at each agent exit)
+  and the agents' edit events, with the resolution limit stated in every record. T-shared results are the scenario
+  `onefile-shared`, never pooled with T-clone.
 - The agents get the common prompt (`arms/common.md`) with the scenario's task text and one coordination section per arm.
 - The harness never speaks to an agent during a run (no nudges, no steering); see human interventions in section 5.
 
