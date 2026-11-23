@@ -51,14 +51,15 @@ within one scenario: model, task text, fixture, launch topology, team size, test
 | Arm | Name | Exact coordination tools | Notes |
 |---|---|---|---|
 | B0 | No coordination tools | None. The shared bare repository (`git fetch`, `git log`, pushes) is the only thing agents share. | The floor. Agents may create files in the repository; the prompt does not suggest it. |
-| B1 | Native alternative | Claude Code cross-session messaging between named agents (`SendMessage`, `ListAgents`) where the pinned version offers it to a `-p` session; a task board file `TASKS.md` in the repository; the same clone-and-push topology. | The fair baseline a user could really assemble without klatch. Its exact definition is the B1 ticket's job (#1365, open question 4 in section 12). If native messaging is unavailable under `-p` at the pinned version, B1 is defined with the board file plus a shared append-only message file and the limitation is recorded in every B1 result. A second variant, B1-teams (an interactive lead with agent-team teammates), is considered only if it can be driven without a human. |
+| B1 | Native alternative | Claude Code cross-session messaging between named agents (`SendMessage`, `ListAgents`) where the pinned version offers it to a `-p` session; a task board file `TASKS.md` in the repository; the same clone-and-push topology. | The fair baseline a user could really assemble without klatch. Definition (#1365; **proposed, pending human approval**): each agent is a separate `claude -p` session in its own clone, started with `--name NAME` and `--settings '{"crossSessionInbound":"accept"}'`, with `SendMessage`, `ListAgents` and `Bash(sleep:*)` allowed beyond the tools every arm has; native cross-session messaging needs Claude Code 2.1.248 or later and nothing to enable (documented: cross-session-messaging.md, sections Non-interactive sessions and Availability). The board is `TASKS.md`, seeded by the harness, one line per piece of work, `- NAME | STATUS | FILES | TITLE`, STATUS one of `working`, `done`, `blocked`, `handoff`. Every other arm has `SendMessage` and `ListAgents` denied and inbound messages refused. The prompt is `arms/B1.md`; the research, the mechanics and the pilot are in `arms/PILOT.md` and the design item for #1365. B1-teams (agent teams) is **not** built: agent-team teammates are not spawned under `-p` (documented: agent-teams.md), so it cannot be driven without a human; the fallback of this row (board file plus append-only message file) is not needed because messaging is documented to work under `-p`, but it applies if the pilot shows otherwise. |
 | K1 | klatch, convention text only | The `klatch` binary reachable by absolute path, in a per-run store (CLI via Bash). No hooks, no digest, no nudges, no wake. The convention words are taught only by the arm prompt text. | Measures whether the primitives help when the agent must pull. |
 | K2 | klatch as shipped | K1 plus the hooks `klatch init` writes: SessionStart text and board, the digest and nudges on tool use, `wait` and wake. | The product as a user gets it. The text the hooks inject is part of the product and counts as coordination context (section 5). |
 | K3 | klatch with roles | K2 plus an integrator member (merges `ready:` branches one at a time, runs tests, posts `merged:` or `dropped:`) and a supervisor member (watches liveness, reassigns or restarts). | Adds two agents. Their cost is reported separately and in the team total; throughput is also reported per agent. Workers do not push to `main` in K3. |
 
 A B-arm variant that adds the same two roles without klatch (B1 plus integrator and supervisor sessions that talk through
-messages and the board) is listed as B1-roles. It is run alongside K3 whenever K3 is, so that "roles help" is not credited
-to klatch; it is a cost, so the human approves it in the budget (open question).
+messages and the board) is B1-roles (`arms/B1-roles.md`, mirroring `K3.md` section by section). Proposed, pending human
+approval: it runs alongside K3 whenever K3 is, so that "roles help" is not credited to klatch; it is a cost, so the human
+approves it in the budget. The harness has no launcher for role members yet, for K3 or B1-roles.
 
 Per-scenario arm lists (the same lists the scenario tickets give):
 
@@ -89,7 +90,7 @@ The rules:
    harness test fails the suite when it is not. Files are in `experiments/coordbench/arms/`.
 4. Authorship and review: no arm's section is accepted until a reviewer who did not write it has read all of them side by
    side and signed that none gives its agents better instructions than another. The reviewer's name and the date go in the
-   header of `arms/README` (to be created by #1365). A review finding that an arm is advantaged is fixed and the affected
+   header of `arms/REVIEW.md` (created by #1365, with the checklist). A review finding that an arm is advantaged is fixed and the affected
    results are discarded or rerun.
 5. K2 gets no extra prompt text beyond K1. What the hooks inject is the product, and is measured as coordination context
    (section 5, "coordination context tokens"), so a reader can see what the product adds and what it costs.
@@ -571,8 +572,9 @@ Thresholds: none yet.
    cap (section 8.1), and whether a measured pilot of one run per arm and scenario is approved first.
 2. N per arm: 10 for M0 (20 for the cheap binary scenarios), 3 for the quick subset, 6 for S7, 3 for S8.
 3. Models: Haiku only for M0, or Haiku and Sonnet; Opus only for the adoption suite (#1376). Which dated ids.
-4. The B1 definition: which native messaging counts as B1 under `claude -p` at the pinned version, whether an interactive
-   agent-teams variant is wanted, and whether B1-roles runs next to K3.
+4. The B1 definition: proposed in section 3 and `arms/` by #1365 (cross-session messaging between named `-p` sessions plus
+   `TASKS.md`; no agent-teams variant because it cannot run under `-p`; B1-roles next to K3). Pending the human's approval,
+   the review in `arms/REVIEW.md` and the pilot in `arms/PILOT.md`.
 5. S2 topologies: T-shared as primary and T-clone as the secondary, or the reverse.
 6. Whether a pre-detection build exists to run K2-nodetect for S5, or that comparison is dropped.
 7. Where large stream logs live if the repository should not hold them.

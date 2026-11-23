@@ -7,11 +7,12 @@ conditions, thresholds (empty until the M0 baseline), milestones and threats to 
 Status: the harness, the results ledger and the report generator exist (#1364) and run with fake agents. The real-agent
 driver is built and its command and stream parser are unit tested, but no real run has been made: that needs the human's
 written budget approval (SPEC section 8). Scenario fixtures other than the trivial test fixture are the scenario tickets'
-work (#1366 to #1380), and the arm prompts stay DRAFT until #1365 reviews them.
+work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused until the human has reviewed them (`arms/REVIEW.md`) and run the pilot (`arms/PILOT.md`).
 
 - `SPEC.md`: the specification.
-- `arms/`: the agent prompts for each arm. DRAFT until the B1 ticket (#1365) has them reviewed by someone who did not
-  write them; the klatch arms must not get a better prompt than the baselines.
+- `arms/`: the agent prompts for each arm (B0, B1, B1-roles, K1, K2, K3), `check_parity.py` (lengths, outline, shared prompt,
+  no klatch words in B arms), `REVIEW.md` (the checklist for a reviewer who did not write them) and `PILOT.md` (the pilot
+  plan). Proposed by #1365, unused until the human reviews them; the klatch arms must not get a better prompt than the baselines.
 - `run.py`: runs one scenario against one or more arms, N times each (see Usage).
 - `report.py`, `compare.py`: generate REPORT.md from a results directory; compare two results directories.
 - `stats.py`: Fisher exact, Mann-Whitney U, Hodges-Lehmann, seeded bootstrap interval, Wilson, Newcombe and Holm, standard
@@ -19,7 +20,9 @@ work (#1366 to #1380), and the arm prompts stay DRAFT until #1365 reviews them.
 - `streams.py`: parses the stream-json of an agent (turns, tokens, cost, tool calls, messages, conflicts).
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
-- `fixture.py`, `fixtures/`, `checks/`: the fixture interface and the one test fixture `trivial`.
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial` and F1 `tallykit` (see Scenario S1).
+- `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
+  history metrics that need the map.
 - `prices.json`, `cost_model.json`: the price table (cost estimates while a run is live) and the SPEC 8.1 planning figures
   (dry-run estimates). Both are planning data to verify before a real run.
 - `results/`: the ledger and the run records (ignored by git, see its README).
@@ -71,6 +74,32 @@ task texts. The hidden checker is `checks/<checker>/check.sh CHECKOUT`: it lives
 it, prints `{"checks": [{"id": ..., "pass": true, "unit": false}]}` and exits 0 when it could run. A check counts as a unit of
 work (tasks completed) unless it says `"unit": false` (a structural check, reported under correctness). The fixture's sha256
 goes into every record. `trivial` has two independent files and exists only to test the harness.
+
+## Scenario S1: four agents, four tickets (`scenarios/s1.json`, fixture `tallykit`)
+
+F1 `tallykit` is a standard library Python package of eight independent modules (units, tokenizer, dates, checksum, slug,
+roman, rle, matrix), each a stub raising `NotImplementedError` with a docstring contract and a weak visible test. Four
+tickets (agents `a` to `d`) implement two modules each, and every ticket also adds its lines at the end of the shared
+registry `tallykit/__init__.py` and `CHANGELOG.md`, the only collisions, so a real merge conflict is possible. The spec
+names a 10-module package with a `registry.py`; this fixture uses eight modules and `__init__.py` as the registry, as the
+ticket asks (the spec sentence is a description, not a contract). `fixtures/tallykit/template/` is what `setup.sh` copies into a
+checkout; `reference/` (the solution) is read only by tests and fake agents and is never copied.
+
+The hidden checker `checks/tallykit/check.sh CHECKOUT` loads each module by file and runs seeded property tests against
+independent oracles, then prints `{"checks": [...], "units_completed", "units_total", "merge_state", "correct", "per_agent"}`:
+eight unit checks (the modules) and structural checks `registry` (one import line per module, every function exported),
+`changelog` (exactly the four ticket lines), `no-conflict-markers` and `visible-tests`; `merge_state` is `clean`,
+`conflicts-left` or `tests-broken`; `per_agent` is commits and modules touched by git author (each agent commits under its
+own name; the harness sets that). `scenarios/s1.json` holds arms B0 B1 K1 K2 K3 (K3 not at M0), N 10 per arm at M0 and 3 for
+the quick subset, caps (6 USD a run, 100 USD for the M0 suite on Haiku, from SPEC 8.1) and the metric definitions.
+
+For a fixture with a scenario the harness now fills two fields it used to leave null. `duplicate_work` is the number of
+modules changed by a non-merge commit of more than one agent; `overwrites` is the number of registry or changelog lines
+added by some commit in the origin or any agent clone that are absent from the final main. The detail (which modules, which
+lost lines and who wrote them, edits to a module the agent does not own, merge state, per-agent contribution) is in the
+record's `scenario_metrics`. Not yet computed: `claim_conflicts` and `store_export` (the store, K arms). Fake scripts for
+S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
+(the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
 
 ## Fake agents
 

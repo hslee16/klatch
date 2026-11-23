@@ -1,0 +1,1 @@
+- The coordination bench has its B0 and B1 baseline arms defined from the documentation (native cross-session messaging under `claude -p` plus a `TASKS.md` board), with a parity checker, a review checklist and a pilot plan; the real driver now names each session, accepts inbound messages in B1 only and denies the messaging tools elsewhere (#1365).

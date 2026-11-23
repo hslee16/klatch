@@ -1,0 +1,1 @@
+- Coordination bench scenario S1 (four agents, four tickets): fixture F1 `tallykit` with a hidden checker and a reference solution, `scenarios/s1.json` with the unit-to-path map, and git-history `duplicate_work` and `overwrites` in the harness, tested with fake agents that solve, collide, overwrite and duplicate (#1366).

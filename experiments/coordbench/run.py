@@ -37,12 +37,14 @@ import time
 
 import drivers
 import fixture as fixture_mod
+import scenario as scenario_mod
 import schema
 import streams
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ARMS = "B0,B1,K1,K2"
-TASK_BOARD = "# Task board\n\nOne line per piece of work: `- [ ] WHO: TITLE (status)`. Edit it, commit it, push it.\n"
+TASK_BOARD = ("# Task board\n\nOne line per piece of work: `- WHO | STATUS | FILES | TITLE`. STATUS is `working`, `done`, "
+              "`blocked` or `handoff`. Add your line at the end, commit it and push it.\n")
 
 
 class GuardError(Exception):
@@ -292,7 +294,11 @@ class Suite:
                 f.write(prompt)
             argv, extra = self.driver.command(name, arm, prompt, clones[name], log_dir)
             env = self.driver.agent_env(os.environ, scratch)
-            env.update(henv)  # HOME and git identity are the run's own
+            env.update(henv)  # HOME is the run's own
+            # each agent commits under its own name, so git authorship says who did what (duplicate work, per-agent
+            # contribution); the setup commits keep the harness name
+            env.update(GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=name + "@bench.invalid", GIT_COMMITTER_NAME=name,
+                       GIT_COMMITTER_EMAIL=name + "@bench.invalid")
             env.update(kenv)
             env.update(extra)
             env["KLATCH_NAME"] = name
@@ -399,8 +405,25 @@ class Suite:
         if any(s["is_error"] for s in sums.values()):
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
+        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
+
+    def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes):
+        """Fill duplicate_work and overwrites from git history for a fixture that has a scenario file, and keep the
+        checker's extra fields under scenario_metrics. A fixture without a scenario leaves them null."""
+        name = self.fx.spec.get("scenario")
+        if not name:
+            return
+        try:
+            scn = scenario_mod.load(name, self.args.scenarios_dir)
+            gm = scenario_mod.git_metrics(scn, origin, clone_dirs, henv)
+        except (scenario_mod.ScenarioError, RuntimeError, KeyError, OSError) as e:
+            notes.append("scenario metrics failed: %s" % e)
+            return
+        rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
+        rec["metrics"]["overwrites"] = gm["overwrites"]
+        rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
 
     # the suite ---------------------------------------------------------------------------------------------
 
@@ -496,6 +519,7 @@ def parse_args(argv):
     p.add_argument("--tmp-root", default=tempfile.gettempdir())
     p.add_argument("--fixtures-dir", default=os.path.join(HERE, "fixtures"))
     p.add_argument("--checks-dir", default=os.path.join(HERE, "checks"))
+    p.add_argument("--scenarios-dir", default=os.path.join(HERE, "scenarios"))
     p.add_argument("--arms-dir", default=os.path.join(HERE, "arms"))
     p.add_argument("--arm-text-version", default="draft-1")
     p.add_argument("--klatch-bin", help="absolute path of the klatch binary (needed by K arms)")
