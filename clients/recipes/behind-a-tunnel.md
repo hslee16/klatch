@@ -13,12 +13,12 @@
 and refuses any other address, naming the zero-trust prerequisites #157 and #161. This page is the safe way to reach it
 from another machine today **without changing that**: klatch keeps listening on `127.0.0.1` or `[::1]`, and something else
 carries the remote caller to that loopback address over an encrypted, authenticated channel. It is the deployment guide of
-#110 (the guide half; the forwarded-identity half is not built and is not needed for these patterns, see section 5).
+#110. klatch never trusts a proxy's word about identity (the owner's decision of 2026-11-23), so there is no forwarded-identity half to build; see section 1.
 
 **What is tested and what is not.** The klatch half is tested: `proto/klatch-server/tests/http_wire.rs` shows that
 forwarded-identity headers give no identity and change none (every route is still `401` without a credential, and a
 credential for one member with headers naming another is the first member), `proto/klatch-server/tests/route_audit.rs`
-shows no source file reads such a header or a peer address, and the loopback refusal is tested in `http_wire.rs` and
+shows no source file reads such a header or a peer address, `tests/forwarded_audit.rs` shows the count by header name and that no header value reaches the log, and the loopback refusal is tested in `http_wire.rs` and
 `loopback_tests.rs`. The ssh and stunnel lines below were **not run** by the people who wrote this guide: ssh not run,
 stunnel not run. Treat every ssh, sshd and stunnel option as documentation to verify against your own version's manual
 before you rely on it.
@@ -30,10 +30,16 @@ before you rely on it.
   it at its next request). The tunnel or terminator authenticates a *machine or person to the tunnel*; it never names a
   klatch member. A client certificate that a terminator verified is a gate in front of the port, not an identity inside
   klatch.
-- **Forwarded headers are ignored.** `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `X-Forwarded-User`, `X-Remote-User` and
-  client-certificate headers are never read by `klatch-server`. A proxy cannot assert a member, and a request from the
-  proxy's loopback address gets no more trust than one from anywhere else: with no credential it is `401`. If a proxy
-  adds such headers, they are ignored, not trusted and not an error.
+- **Forwarded headers are ignored, and counted.** Identity always comes from the worker credential, never from a proxy.
+  `klatch-server` never reads the value of `Forwarded`, `X-Forwarded-For`, `X-Forwarded-User`, `X-Forwarded-Email`,
+  `X-Forwarded-Client-Cert`, `X-Real-IP`, `X-Remote-User`, `X-Client-Cert`, `X-Client-Verify`, `X-Amzn-OIDC-Identity`, or any
+  `X-SSL-Client-*` header. A proxy cannot assert a member, and a request from the proxy's loopback address gets no more
+  trust than one from anywhere else: with no credential it is `401`. Such headers are not an error. A request that carries
+  one or more of them is counted once, and each name it carried is counted once, so an operator can see a proxy adding
+  them or a client forging them. The count holds names and numbers only, never an address, a user or a certificate text.
+  It is in memory for the life of the process and appears as one line on stderr when the server stops, for example
+  `klatch-server: forwarded identity headers ignored: requests=3 x-forwarded-for=3`. It is not durable and not yet
+  readable while the server runs (#1490).
 - **The token is a secret on the wire.** The Bearer token is in every request, so it must only ever cross a link that is
   encrypted end to end between the two machines. That is what the tunnel is for.
 - **Plaintext only on the same host.** A hop that is plaintext (the terminator talking to klatch) is acceptable only on the
@@ -98,9 +104,8 @@ your CA's job; klatch has no part in them.
 
 ## 5. What is not built
 
-- **Forwarded identity from configured proxy addresses** (the second half of #110): an allow-list of proxy addresses whose
-  forwarded headers klatch would trust, with the others ignored and audited. Today klatch ignores all of them, which is the
-  safe default, and these patterns do not need more. Building it would turn a header into an identity, so it needs a
-  threat-model decision first (see the comment on #110).
+- **Forwarded identity from configured proxy addresses**: not built and not going to be. The owner decided on 2026-11-23
+  that klatch never trusts a proxy's word. The headers are ignored and counted (section 1); a live read of the count and
+  durable storage of it are #1490.
 - **A certificate as an identity inside klatch**: not built, by decision (#157). Native mutual TLS exists (#108, experimental) and only gates the port. Certificate revocation lists, OCSP, and replacing the server certificate without a restart are not built.
 - **A run across two machines**: needs a human and real hosts.

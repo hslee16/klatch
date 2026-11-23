@@ -147,6 +147,7 @@ fn no_source_reads_a_forwarded_header_or_trusts_a_peer_address() {
     ];
     let problems: Vec<String> = sources()
         .iter()
+        .filter(|(file, _)| !file.ends_with("forwarded.rs"))
         .flat_map(|(file, text)| {
             text.lines().enumerate().flat_map(move |(n, line)| {
                 let code = line.split("//").next().unwrap_or("").to_ascii_lowercase();
@@ -158,4 +159,29 @@ fn no_source_reads_a_forwarded_header_or_trusts_a_peer_address() {
         })
         .collect();
     assert!(problems.is_empty(), "{problems:?}");
+}
+
+/// The one file that may spell the forwarded names counts them (#110): it is handed header names only, so it cannot read,
+/// store or log a value. Its non-test text names no header type, no value accessor and no output.
+#[test]
+fn the_forwarded_header_counter_is_handed_names_and_never_a_value() {
+    let (_, text) = sources()
+        .into_iter()
+        .find(|(f, _)| f.ends_with("src/forwarded.rs"))
+        .expect("src/forwarded.rs");
+    for banned in [
+        "Head", ".header(", ".headers", "println", "write!", "Request",
+    ] {
+        assert!(
+            !non_test(&text).contains(banned),
+            "src/forwarded.rs must stay name-only, but names {banned}"
+        );
+    }
+    // and its caller passes names, not pairs
+    let (_, http) = sources()
+        .into_iter()
+        .find(|(f, _)| f.ends_with("src/wire_http.rs"))
+        .unwrap();
+    let squeezed: String = http.split_whitespace().collect();
+    assert!(squeezed.contains("forwarded.note(head.headers.iter().map(|(n,_)|n.as_str()))"));
 }

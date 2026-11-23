@@ -8,6 +8,7 @@
 
 mod channel;
 mod daemon;
+mod forwarded;
 mod loopback;
 #[cfg(test)]
 mod loopback_tests;
