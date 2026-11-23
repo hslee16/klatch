@@ -21,7 +21,16 @@ pub(super) fn build_refs(
     labels: &[String],
     files: &[String],
 ) -> Result<Vec<klatch::domain::AskRef>> {
-    if refs.is_empty() && !(labels.is_empty() && files.is_empty()) {
+    check_counts(refs, labels, files)?;
+    refs.iter()
+        .enumerate()
+        .map(|(i, raw)| one_ref(i, raw, labels, files))
+        .collect()
+}
+
+/// Labels and snippet files go with refs: none without a ref, and never more of them than refs.
+fn check_counts(refs: &[String], labels: &[String], files: &[String]) -> Result<()> {
+    if refs.is_empty() && given(refs, labels, files) {
         bail!("--ref-label and --ref-snippet-file go with --ref KIND:VALUE; give a --ref first");
     }
     if labels.len() > refs.len() || files.len() > refs.len() {
@@ -29,28 +38,34 @@ pub(super) fn build_refs(
             "there are more --ref-label or --ref-snippet-file than --ref: they go with the --refs in order, and an empty '' leaves one without"
         );
     }
-    let mut out = Vec::new();
-    for (i, raw) in refs.iter().enumerate() {
-        let n = i + 1;
-        let Some((kind, value)) = raw.split_once(':') else {
-            bail!("--ref {n} is not KIND:VALUE (for example `pr:owner/repo#12`)");
-        };
-        if !klatch::domain::valid_ref_kind(kind) {
-            bail!("--ref {n}: bad kind: 1 to 32 characters of a-z 0-9 _ . - before the first `:`");
-        }
-        let label = labels.get(i).filter(|l| !l.is_empty()).cloned();
-        let snippet = match files.get(i).filter(|f| !f.is_empty()) {
-            Some(path) => Some(read_snippet(path)?),
-            None => None,
-        };
-        out.push(klatch::domain::AskRef {
-            kind: kind.to_string(),
-            value: value.to_string(),
-            label,
-            snippet,
-        });
+    Ok(())
+}
+
+/// The `i`th ref (counted from 0) with its label and snippet file, if any.
+fn one_ref(
+    i: usize,
+    raw: &str,
+    labels: &[String],
+    files: &[String],
+) -> Result<klatch::domain::AskRef> {
+    let n = i + 1;
+    let Some((kind, value)) = raw.split_once(':') else {
+        bail!("--ref {n} is not KIND:VALUE (for example `pr:owner/repo#12`)");
+    };
+    if !klatch::domain::valid_ref_kind(kind) {
+        bail!("--ref {n}: bad kind: 1 to 32 characters of a-z 0-9 _ . - before the first `:`");
     }
-    Ok(out)
+    let label = labels.get(i).filter(|l| !l.is_empty()).cloned();
+    let snippet = match files.get(i).filter(|f| !f.is_empty()) {
+        Some(path) => Some(read_snippet(path)?),
+        None => None,
+    };
+    Ok(klatch::domain::AskRef {
+        kind: kind.to_string(),
+        value: value.to_string(),
+        label,
+        snippet,
+    })
 }
 
 /// The text of a snippet file, refused whole when it is over the cap or is not UTF-8 text.

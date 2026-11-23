@@ -10,7 +10,7 @@
 use super::image::Image;
 use super::transport::{FilePart, MULTIPART_OVERHEAD};
 use crate::domain::{LabelChain, label_below_ceiling};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -524,238 +524,42 @@ pub fn check_sizes(
     Ok(())
 }
 
-struct Render<'a> {
-    gate: &'a Gate,
-    limits: &'a Limits,
-    assets: Vec<Image>,
-    uses: usize,
-    use_bytes: usize,
-    chars: usize,
-    text_bytes: usize,
+/// The asset table of a request: the inline JSON, the multipart JSON (parts by name) and the file parts.
+fn asset_tables(assets: &[Image]) -> (Map<String, Value>, Map<String, Value>, Vec<FilePart>) {
+    let mut inline = Map::new();
+    let mut parts = Map::new();
+    let mut files = vec![];
+    for (i, img) in assets.iter().enumerate() {
+        let reference = format!("{REFERENCE_MARK}{i:04}-end");
+        let mut o = Map::new();
+        o.insert("type".into(), "image".into());
+        o.insert("format".into(), img.format().name().into());
+        let mut p = o.clone();
+        o.insert("data_base64".into(), img.to_base64().into());
+        inline.insert(reference.clone(), Value::Object(o));
+        let part = format!("image-{i:04}");
+        p.insert("part".into(), part.clone().into());
+        parts.insert(reference, Value::Object(p));
+        files.push(FilePart::new(
+            part,
+            img.content_type(),
+            img.bytes().to_vec(),
+        ));
+    }
+    (inline, parts, files)
 }
 
-impl Render<'_> {
-    fn label(&self, label: &str) -> Result<(), RequestError> {
-        if self.gate.allows(label) {
-            Ok(())
-        } else {
-            Err(RequestError::Gated)
+fn check_question_ids(questions: &[Question]) -> Result<(), RequestError> {
+    let mut ids = BTreeSet::new();
+    for q in questions {
+        if q.id.trim().is_empty() {
+            return Err(RequestError::BadQuestion("a question id is empty"));
+        }
+        if !ids.insert(q.id) {
+            return Err(RequestError::DuplicateQuestion);
         }
     }
-
-    /// Count a string that will be in the body, and refuse one that could be taken for an image reference.
-    fn count(&mut self, s: &str) -> Result<(), RequestError> {
-        if s.contains(REFERENCE_MARK) {
-            return Err(RequestError::ReferenceCollision);
-        }
-        self.chars = self.chars.saturating_add(s.chars().count());
-        self.text_bytes = self.text_bytes.saturating_add(s.len());
-        if self.chars > self.limits.max_text_chars {
-            return Err(RequestError::TooManyChars);
-        }
-        Ok(())
-    }
-
-    fn reference(&mut self, image: &Image) -> Result<String, RequestError> {
-        let at = match self.assets.iter().position(|a| a == image) {
-            Some(i) => i,
-            None => {
-                if self.assets.len() >= self.limits.max_images {
-                    return Err(RequestError::TooManyImages);
-                }
-                self.assets.push(image.clone());
-                self.assets.len() - 1
-            }
-        };
-        self.uses += 1;
-        self.use_bytes = self.use_bytes.saturating_add(image.len());
-        if self.uses > self.limits.max_image_uses {
-            return Err(RequestError::TooManyImages);
-        }
-        Ok(format!("{REFERENCE_MARK}{at:04}-end"))
-    }
-
-    fn key(&mut self, k: &Key) -> Result<String, RequestError> {
-        let name = match k {
-            Key::Fixed(n) => (*n).to_string(),
-            Key::Data { label, name } => {
-                self.label(label)?;
-                name.clone()
-            }
-        };
-        self.count(&name)?;
-        Ok(name)
-    }
-
-    /// `depth` is how many containers enclose this entry within its own root (state, instructions or criteria).
-    fn entry(&mut self, e: &Entry, depth: usize) -> Result<Value, RequestError> {
-        Ok(match e {
-            Entry::Null => Value::Null,
-            Entry::Fixed(s) => {
-                self.count(s)?;
-                Value::String((*s).into())
-            }
-            Entry::Text { label, text } => {
-                self.label(label)?;
-                self.count(text)?;
-                Value::String(text.clone())
-            }
-            Entry::Cleared(text) => {
-                self.count(text)?;
-                Value::String(text.clone())
-            }
-            Entry::Number { label, value } => {
-                self.label(label)?;
-                Value::Number(
-                    Number::from_f64(*value)
-                        .filter(|_| value.is_finite())
-                        .ok_or(RequestError::NotFinite)?,
-                )
-            }
-            Entry::Integer { label, value } => {
-                self.label(label)?;
-                Value::Number((*value).into())
-            }
-            Entry::Flag { label, value } => {
-                self.label(label)?;
-                Value::Bool(*value)
-            }
-            Entry::Image { label, image } => {
-                self.label(label)?;
-                Value::String(self.reference(image)?)
-            }
-            Entry::Sentence(parts) => {
-                let mut out = String::new();
-                for p in parts {
-                    match p {
-                        Entry::Fixed(_)
-                        | Entry::Text { .. }
-                        | Entry::Cleared(_)
-                        | Entry::Image { .. } => match self.entry(p, depth)? {
-                            Value::String(s) => out.push_str(&s),
-                            _ => {
-                                return Err(RequestError::BadStructure(
-                                    "a sentence part is not text",
-                                ));
-                            }
-                        },
-                        _ => {
-                            return Err(RequestError::BadStructure(
-                                "a sentence holds only text and images",
-                            ));
-                        }
-                    }
-                }
-                Value::String(out)
-            }
-            Entry::List(items) => {
-                if depth >= MAX_DEPTH {
-                    return Err(RequestError::TooDeep);
-                }
-                Value::Array(
-                    items
-                        .iter()
-                        .map(|x| self.entry(x, depth + 1))
-                        .collect::<Result<_, _>>()?,
-                )
-            }
-            Entry::Object(fields) => {
-                if depth >= MAX_DEPTH {
-                    return Err(RequestError::TooDeep);
-                }
-                let mut m = Map::new();
-                for (k, v) in fields {
-                    let name = self.key(k)?;
-                    let v = self.entry(v, depth + 1)?;
-                    if m.insert(name, v).is_some() {
-                        return Err(RequestError::BadStructure("an object key repeats"));
-                    }
-                }
-                Value::Object(m)
-            }
-        })
-    }
-
-    fn instructions(
-        &mut self,
-        i: &Option<Entry>,
-        m: &mut Map<String, Value>,
-    ) -> Result<(), RequestError> {
-        if let Some(e) = i {
-            let v = self.entry(e, 0)?;
-            m.insert("instructions".into(), v);
-        }
-        Ok(())
-    }
-
-    fn question(&mut self, q: &Question) -> Result<Value, RequestError> {
-        self.count(q.id)?;
-        let mut m = Map::new();
-        match &q.kind {
-            QuestionKind::Choice {
-                instructions,
-                criteria,
-            } => {
-                m.insert("type".into(), "choice".into());
-                self.instructions(instructions, &mut m)?;
-                if criteria.is_empty() || criteria.len() > MAX_CHOICES {
-                    return Err(RequestError::BadQuestion("a choice takes 1 to 255 options"));
-                }
-                let mut seen = BTreeSet::new();
-                let mut c = Map::new();
-                for (k, v) in criteria {
-                    let name = self.key(k)?;
-                    if name.trim().is_empty() {
-                        return Err(RequestError::BadQuestion("an option name is empty"));
-                    }
-                    if !seen.insert(name.clone()) {
-                        return Err(RequestError::BadQuestion("an option name repeats"));
-                    }
-                    c.insert(name, self.entry(v, 1)?);
-                }
-                m.insert("criteria".into(), Value::Object(c));
-            }
-            QuestionKind::Score {
-                instructions,
-                criteria,
-            } => {
-                m.insert("type".into(), "score".into());
-                self.instructions(instructions, &mut m)?;
-                if !(MIN_LEVELS..=MAX_LEVELS).contains(&criteria.len()) {
-                    return Err(RequestError::BadQuestion("a score takes 2 to 10 levels"));
-                }
-                let levels: Vec<Value> = criteria
-                    .iter()
-                    .map(|l| self.entry(l, 1))
-                    .collect::<Result<_, _>>()?;
-                m.insert("criteria".into(), Value::Array(levels));
-            }
-            QuestionKind::Noul {
-                instructions,
-                criteria,
-            } => {
-                m.insert("type".into(), "noul".into());
-                self.instructions(instructions, &mut m)?;
-                if let Some(c) = criteria {
-                    let mut o = Map::new();
-                    if let Some(t) = &c.when_true {
-                        o.insert("true".into(), self.entry(t, 1)?);
-                    }
-                    if let Some(f) = &c.when_false {
-                        o.insert("false".into(), self.entry(f, 1)?);
-                    }
-                    if !o.is_empty() {
-                        m.insert("criteria".into(), Value::Object(o));
-                    }
-                }
-            }
-            QuestionKind::Box { instructions } => {
-                m.insert("type".into(), "box".into());
-                self.instructions(instructions, &mut m)?;
-            }
-        }
-        Ok(Value::Object(m))
-    }
+    Ok(())
 }
 
 /// Build the body of a `POST /v1/systemone` request, or refuse it (see the module text). Nothing is sent by this.
@@ -772,15 +576,7 @@ pub fn build_request(
     if questions.is_empty() {
         return Err(RequestError::NoQuestions);
     }
-    let mut ids = BTreeSet::new();
-    for q in questions {
-        if q.id.trim().is_empty() {
-            return Err(RequestError::BadQuestion("a question id is empty"));
-        }
-        if !ids.insert(q.id) {
-            return Err(RequestError::DuplicateQuestion);
-        }
-    }
+    check_question_ids(questions)?;
     let mut r = Render {
         gate,
         limits,
@@ -807,42 +603,15 @@ pub fn build_request(
     root.insert("questions".into(), Value::Object(qs));
     let mut multipart = None;
     if !r.assets.is_empty() {
-        let mut a = Map::new();
-        let mut pa = Map::new();
-        let mut files = vec![];
-        for (i, img) in r.assets.iter().enumerate() {
-            let reference = format!("{REFERENCE_MARK}{i:04}-end");
-            let mut o = Map::new();
-            o.insert("type".into(), "image".into());
-            o.insert("format".into(), img.format().name().into());
-            let mut p = o.clone();
-            o.insert("data_base64".into(), img.to_base64().into());
-            a.insert(reference.clone(), Value::Object(o));
-            let part = format!("image-{i:04}");
-            p.insert("part".into(), part.clone().into());
-            pa.insert(reference, Value::Object(p));
-            files.push(FilePart::new(
-                part,
-                img.content_type(),
-                img.bytes().to_vec(),
-            ));
-        }
+        let (inline, parts, files) = asset_tables(&r.assets);
         let mut proot = root.clone();
-        root.insert("assets".into(), Value::Object(a));
-        proot.insert("assets".into(), Value::Object(pa));
+        root.insert("assets".into(), Value::Object(inline));
+        proot.insert("assets".into(), Value::Object(parts));
         multipart = Some((Value::Object(proot).to_string(), files));
     }
     let body = Value::Object(root).to_string();
     debug_assert!(!body.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF]));
-    // what is sent is the multipart form when there are images, so that is what the limit applies to
-    let sent_len = match &multipart {
-        Some((json, files)) => multipart_len(
-            json.len(),
-            &files.iter().map(|f| f.bytes().len()).collect::<Vec<_>>(),
-        ),
-        None => body.len(),
-    };
-    check_sizes(r.text_bytes, r.use_bytes, sent_len)?;
+    check_sizes(r.text_bytes, r.use_bytes, sent_len(&body, &multipart))?;
     Ok(Prepared {
         body,
         images: !r.assets.is_empty(),
@@ -850,5 +619,19 @@ pub fn build_request(
     })
 }
 
+/// What is sent is the multipart form when there are images, so that is what the size limit applies to.
+fn sent_len(body: &str, multipart: &Option<(String, Vec<FilePart>)>) -> usize {
+    match multipart {
+        Some((json, files)) => multipart_len(
+            json.len(),
+            &files.iter().map(|f| f.bytes().len()).collect::<Vec<_>>(),
+        ),
+        None => body.len(),
+    }
+}
+
+mod render;
 #[cfg(test)]
 mod tests;
+
+use render::Render;

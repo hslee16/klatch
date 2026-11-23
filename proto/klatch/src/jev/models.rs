@@ -40,11 +40,11 @@ pub enum ModelStatus {
 
 fn date_ok(s: &str) -> bool {
     let b = s.as_bytes();
-    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+    if b.len() != 10 || ![4, 7].iter().all(|&i| b[i] == b'-') {
         return false;
     }
     let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
-    if !(digits(0..4) && digits(5..7) && digits(8..10)) {
+    if ![0..4, 5..7, 8..10].into_iter().all(digits) {
         return false;
     }
     let month: u32 = s[5..7].parse().unwrap_or(0);

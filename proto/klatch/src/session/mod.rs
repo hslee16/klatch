@@ -239,15 +239,7 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
             // an output that has gone away ends the session even when it has nothing to send (#146)
             out.healthy()?;
             if let Some(lost) = self.binding_lost() {
-                for item in items {
-                    if let Ok(ClientFrame::Request { id, .. }) = item {
-                        out.send_all(&failure(id, &lost))?;
-                    }
-                }
-                if let Some(frame) = stream_refusal(&lost) {
-                    out.send(&frame)?;
-                }
-                return Ok(());
+                return refuse_lost(items, &lost, out);
             }
             for item in items {
                 self.dispatch(item, &mut subs, out)?;
@@ -326,15 +318,8 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
         loop {
             // taken before the poll, so a commit after it ends the pause below at once (#148)
             let seen = self.gateway.change_token();
-            self.pump(&mut subs, &mut out)?;
-            if subs.is_empty() {
-                return Err(io::Error::other("the stream ended after a refusal"));
-            }
-            if !request.follow && subs[0].is_caught_up() {
+            if self.stream_step(request, &mut subs, &mut out)? {
                 return Ok(());
-            }
-            if request.follow && out.last.elapsed() >= self.config.heartbeat {
-                self.heartbeat(&mut out)?;
             }
             crate::gateway::pause_for_change(
                 &|| self.gateway.change_token(),
@@ -343,6 +328,26 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
                 crate::gateway::WAKE_TICK.min(self.config.poll),
             );
         }
+    }
+
+    /// One poll of a stream; true when the stream is finished (caught up without `follow`).
+    fn stream_step<W: Write>(
+        &self,
+        request: &StreamRequest,
+        subs: &mut Vec<Subscription>,
+        out: &mut Out<W>,
+    ) -> io::Result<bool> {
+        self.pump(subs, out)?;
+        if subs.is_empty() {
+            return Err(io::Error::other("the stream ended after a refusal"));
+        }
+        if !request.follow && subs[0].is_caught_up() {
+            return Ok(true);
+        }
+        if request.follow && out.last.elapsed() >= self.config.heartbeat {
+            self.heartbeat(out)?;
+        }
+        Ok(false)
     }
 
     /// Handle an acknowledgement: move the subscription's window and the member's read cursor.
@@ -557,3 +562,20 @@ mod role_tests;
 mod run_act_tests;
 #[cfg(test)]
 mod tests;
+
+/// A session whose binding is lost answers every request still waiting with the refusal, then ends with the stream's own.
+fn refuse_lost<W: Write>(
+    items: Vec<Item>,
+    lost: &crate::domain::Error,
+    out: &mut Out<W>,
+) -> io::Result<()> {
+    for item in items {
+        if let Ok(ClientFrame::Request { id, .. }) = item {
+            out.send_all(&failure(id, lost))?;
+        }
+    }
+    if let Some(frame) = stream_refusal(lost) {
+        out.send(&frame)?;
+    }
+    Ok(())
+}
