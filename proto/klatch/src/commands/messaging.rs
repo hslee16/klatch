@@ -370,50 +370,6 @@ pub(super) fn unread_count(t: &dyn Transport, room: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(
-    t: &dyn Transport,
-    (me, now): (&str, i64),
-    room: &str,
-    peek: bool,
-) -> Result<()> {
-    let messages = t.read(room, !peek)?;
-    if messages.is_empty() {
-        eprintln!("{EMPTY_READ_NOTE}");
-    } else {
-        eprintln!("{DATA_RULE}");
-    }
-    for m in &messages {
-        println!("{}", message_row(m));
-        for line in klatch::domain::ref_lines(&m.refs, true) {
-            println!("{line}");
-        }
-    }
-    // a peek leaves the messages unread, so the hook digest still shows them and carries the help itself
-    if !peek {
-        for line in super::wait::dm_help_lines(t, me, room, &messages) {
-            println!("{line}");
-        }
-        for line in super::wait::asks_note_lines(t, (me, now), room, !messages.is_empty(), true) {
-            println!("{line}");
-        }
-    }
-    Ok(())
-}
-
-/// One message as `read` and `history` print it: marked, one line, handoff folded in.
-pub(super) fn message_row(m: &klatch::domain::Message) -> String {
-    format!(
-        "[{} {} {}] {}{}{}{}",
-        m.seq,
-        m.ts,
-        m.sender_label(),
-        flat(&m.body),
-        m.scope_mark(),
-        m.refs_mark(),
-        handoff_suffix(m)
-    )
-}
-
 /// `klatch history`: look back without moving a cursor (#518). The output is whole messages up to
 /// `HISTORY_MAX_BYTES` (the first is always shown); what is left is counted and the line says where to resume.
 /// `klatch history`: one room, or with none every joined room. A `--since` seq belongs to one room, so it needs one.

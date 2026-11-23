@@ -5,11 +5,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
 mod ask_refs;
+mod capped;
 mod messaging;
 mod wait;
 mod work;
 
 use agents::*;
+use capped::*;
 use messaging::*;
 use wait::*;
 use work::*;

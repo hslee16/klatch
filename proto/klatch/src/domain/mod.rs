@@ -141,5 +141,5 @@ pub use toolguard::{
     patch_targets,
 };
 pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
-pub use wake_cap::{Capped, cap_wake};
+pub use wake_cap::{cut_to, fit_prefix, mentioning};
 pub use wake_path::{PROMPTING_MODES, WakePath, wake_path};

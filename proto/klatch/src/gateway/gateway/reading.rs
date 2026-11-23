@@ -31,6 +31,26 @@ impl<S: Store> Gateway<S> {
         self.mark_advisory(room, seen)
     }
 
+    /// Read the unread messages with `seq` up to `through` and move the read cursor to the last of them, never past it
+    /// (#1390): what a bounded `read` or `wait` marks read is exactly what it showed. The admission is the one of a
+    /// read that advances. A librarian's peek writes nothing, as in `read`.
+    pub fn read_through(&self, who: &Principal, room: &str, through: i64) -> Result<Vec<Message>> {
+        self.admit(who, room, Operation::read(room, true))?;
+        let at = Seat::new(room, &who.member);
+        let now = self.now();
+        let unread: Vec<Message> = self
+            .store
+            .read(at, false, now)?
+            .into_iter()
+            .filter(|m| m.seq <= through)
+            .collect();
+        // the cursor follows the last row taken, a canary included, as an advancing read does
+        if let Some(last) = unread.last() {
+            self.store.advance_cursor(at, Seq(last.seq), now)?;
+        }
+        self.mark_advisory(room, Self::without_canary(unread))
+    }
+
     /// What a librarian's peek returns without touching presence, membership or any position (#499, #750).
     fn peek_quietly(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         let seen = Self::without_canary(self.store.look(Seat::new(room, &who.member), self.now())?);

@@ -14,6 +14,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("post_ask", |g, w| refused(g.post_ask(w, ("r", "seeking: x", None), None, &[]))),
     ("dm", |g, w| refused(g.dm(w, "bob", "x", None))),
     ("read", |g, w| refused(g.read(w, "r", true))),
+    ("read_through", |g, w| refused(g.read_through(w, "r", 1))),
     ("tail", |g, w| refused(g.tail(w, "r", (0, 10)))),
     ("admin_tail_scan", |g, w| refused(g.admin_tail_scan(w, "r", (0, 10)))),
     ("history", |g, w| refused(g.history(w, "r", crate::gateway::HistoryRange::default()))),

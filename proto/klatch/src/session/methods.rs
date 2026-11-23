@@ -1,7 +1,7 @@
 //! The plain request methods: each reads its parameters, calls the gateway as the session's principal and shapes
 //! the answer.
 
-use crate::domain::{Claim, Error, MemberInfo, MemberKind, Message, Posted, Principal};
+use crate::domain::{Claim, Error, MemberInfo, MemberKind, Posted, Principal};
 use crate::gateway::{ClaimSpec, Gateway};
 use crate::protocol::ServerFrame;
 use crate::session::frames::{fail_with, failure, message_json, ok};
@@ -72,6 +72,13 @@ struct ReadParams {
     room: String,
     #[serde(default)]
     peek: bool,
+    /// Optional (#1390): show at most this many messages; the rest stay unread and are counted in `omitted`.
+    #[serde(default)]
+    max_messages: Option<usize>,
+    /// Optional (#1390): show at most this many bytes of messages as JSON (never less than 1000); a first message
+    /// that alone is larger has its body cut with a marker and carries `"truncated": true`.
+    #[serde(default)]
+    max_bytes: Option<usize>,
 }
 #[derive(Deserialize)]
 struct HistoryParams {
@@ -170,6 +177,59 @@ impl Call {
             Ok(v) => vec![ok(self.id, shape(v))],
             Err(e) => failure(self.id, &e),
         }
+    }
+}
+
+/// The most a bounded read cuts a byte limit down to: below it the cut marker would not fit.
+const MIN_READ_BYTES: usize = 1000;
+
+/// `read`, bounded when the caller gave `max_messages` or `max_bytes` (#1390): whole messages from the oldest unread,
+/// and the cursor moves over only those shown (a peek moves nothing), so the next read continues in order. The second
+/// value is how many were left unread, `None` when the read was not bounded.
+fn read_bounded<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    p: &ReadParams,
+) -> Result<(Vec<Value>, Option<usize>), Error> {
+    if p.max_messages.is_none() && p.max_bytes.is_none() {
+        let all = g.read(who, &p.room, !p.peek)?;
+        return Ok((all.iter().map(message_json).collect(), None));
+    }
+    let all = g.read(who, &p.room, false)?;
+    let max_bytes = p.max_bytes.unwrap_or(usize::MAX).max(MIN_READ_BYTES);
+    let mut rows: Vec<Value> = all.iter().map(message_json).collect();
+    let sizes: Vec<usize> = rows.iter().map(|v| v.to_string().len()).collect();
+    let shown = crate::domain::fit_prefix(&sizes, p.max_messages.unwrap_or(usize::MAX), max_bytes);
+    rows.truncate(shown);
+    if let (Some(first), Some(&size)) = (rows.first_mut(), sizes.first())
+        && size + 1 > max_bytes
+    {
+        cut_body(first, size, max_bytes - 1);
+    }
+    if !p.peek
+        && let Some(last) = all[..shown].last()
+    {
+        g.read_through(who, &p.room, last.seq)?;
+    }
+    Ok((rows, Some(all.len() - shown)))
+}
+
+/// Cut the body of one message row so its JSON is at most `max` bytes, with a marker, and flag it `truncated`.
+fn cut_body(row: &mut Value, size: usize, max: usize) {
+    let body = row["body"].as_str().unwrap_or("").to_string();
+    let since = row["seq"].as_i64().unwrap_or(1) - 1;
+    let marker =
+        |n: usize| format!(" [truncated, {n} more bytes; history since {since} returns all of it]");
+    // the JSON escapes some bytes, so the room for the body is found by cutting until the whole row fits
+    let mut allowed = body.len().saturating_sub(size - max);
+    loop {
+        row["body"] = json!(crate::domain::cut_to(&body, allowed, marker));
+        row["truncated"] = json!(true);
+        let now = row.to_string().len();
+        if now <= max || allowed == 0 {
+            return;
+        }
+        allowed = allowed.saturating_sub(now - max);
     }
 }
 
@@ -397,8 +457,15 @@ pub(crate) fn handle<S: Store>(
             |(room, x): (String, Posted)| json!({ "room": room, "seq": x.seq, "id": x.id }),
         ),
         "read" => call.run(
-            |p: ReadParams| g.read(who, &p.room, !p.peek),
-            |ms: Vec<Message>| json!({ "messages": ms.iter().map(message_json).collect::<Vec<_>>() }),
+            |p: ReadParams| read_bounded(g, who, &p),
+            |(ms, omitted): (Vec<Value>, Option<usize>)| {
+                let mut v = json!({ "messages": ms });
+                // the key is there only when the caller asked for a bound, so an unbounded read looks as it always did
+                if let Some(n) = omitted {
+                    v["omitted"] = json!(n);
+                }
+                v
+            },
         ),
         "history" => call.run(
             |p: HistoryParams| {

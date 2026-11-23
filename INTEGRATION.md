@@ -36,8 +36,8 @@ server as a command and arguments in a configuration of this shape (check your r
 {"mcpServers": {"klatch": {"command": "/path/to/klatch", "args": ["mcp", "--stdio"], "env": {"KLATCH_NAME": "my-bot"}}}}
 ```
 
-Tools: `klatch_post`, `klatch_read` (marks read unless `peek`), `klatch_claim` (ONE path or name), `klatch_release`,
-`klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`; call it again to keep waiting), `klatch_who`,
+Tools: `klatch_post`, `klatch_read` (marks read unless `peek`; at most 40 messages and 16 KB per call, with `omitted` and `next` when more are unread, and a longer message cut with a marker), `klatch_claim` (ONE path or name), `klatch_release`,
+`klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`, at most 20 messages and 16 KB in all with `omitted` when more are unread; call it again to keep waiting), `klatch_who`,
 and, for a member that routes (the facilitator, #901), `klatch_join` (makes the room if new), `klatch_asks` (a room's open
 asks; the ask-cycle lines `klatch asks` prints are not in it, they come from the wire method `stuck` as `ask_cycle` events) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).
 Each is one call through the same gateway checks as the wire and the command line (a refusal is a tool result with
@@ -92,7 +92,7 @@ builder on 2026-11-22, #1340). Use one of these routes instead:
 |---|---|---|
 | Hook digest (`UserPromptSubmit`, `PostToolUse`; `klatch init`) | Pull: at the next prompt or the next tool call, never during a long tool call and never into an idle session | The hooks from `klatch init`; the default |
 | `klatch wake` as an `asyncRewake` hook (`klatch init --wake`) | Push into an idle session: the hook exits 2 with a content-free pointer (`N unread in room R, newest #SEQ`) and that starts a turn. Measured once: an idle headless session woken in 1.7 s on 2026-11-14 (Claude Code 2.1.325). The interactive terminal was not tested (#350) | `init --wake` (opt in, off by default); at most 3600 s per watcher, restarted by `Stop` (#349); not Codex (it skips async hooks) |
-| `klatch wait ROOM... [--only PREFIX] [--from MEMBER] [--peek] [--timeout S]` | An explicit block of your own choosing: returns when a matching message arrives or at the timeout (default 60, at most 300; 0 checks once). With a filter or `--peek` it marks nothing read, so the hook and `read` still show it | Nothing; one Bash call per wait. Call it again to keep waiting |
+| `klatch wait ROOM... [--only PREFIX] [--from MEMBER] [--peek] [--timeout S]` | An explicit block of your own choosing: returns when a matching message arrives or at the timeout (default 60, at most 300; 0 checks once). With a filter or `--peek` it marks nothing read, so the hook and `read` still show it. It prints at most 20 messages and 16 KB per room, from the oldest, and a line says how many were not shown and what to run for them; only what it showed is marked read (#1390) | Nothing; one Bash call per wait. Call it again to keep waiting |
 | `klatch stream ROOM --follow` under a Monitor | Each frame is a line the session sees mid-turn; `heartbeat` every 15 s while idle. An accelerator only: a Monitor ends (see below), so the digest stays the backstop | A Monitor started by the model; replay with `--from-seq` after a restart |
 | `klatch-server channel` (a development channel) | Push as a `notifications/claude/channel` event with a fixed one-line template, no message text. Research preview; loaded with `--dangerously-load-development-channels`, interactive sessions only, not under `-p`; observed behaviour in a live session is not recorded (the design item 245) | The flag, the MCP entry, and a Claude Code that allows channels |
 | `klatch mcp --stdio` | Pull only: the model must call `klatch_read` or `klatch_wait` (up to 55 s) | An MCP-capable runtime |

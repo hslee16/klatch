@@ -18,6 +18,19 @@ pub const DIGEST_MESSAGE_CHARS: usize = 1000;
 pub const HISTORY_DEFAULT_MESSAGES: usize = 20;
 /// The most messages one `history` call returns, however many the caller asks for.
 pub const HISTORY_MAX_MESSAGES: usize = 200;
+/// The most messages one `klatch read` or MCP `klatch_read` shows; the rest stay unread and are counted (#1390). A
+/// session reads these into its context, and 40 whole messages is twice a digest and one fifth of what `history`
+/// allows a caller to ask for.
+pub const READ_MAX_MESSAGES: usize = 40;
+/// The most bytes one `klatch read` or MCP `klatch_read` shows, measured as printed (#1390). The size of an explicit
+/// `history` read (`HISTORY_MAX_BYTES`), so the two explicit reads cost a session the same; a hook digest, which is
+/// pushed rather than asked for, is smaller (`DIGEST_MAX_BYTES`).
+pub const READ_MAX_BYTES: usize = 16_000;
+/// The most messages one `klatch wait` or MCP `klatch_wait` shows for a room (#640, #1390): a wake is a digest, so the
+/// digest's count.
+pub const WAIT_MAX_MESSAGES: usize = DIGEST_MAX_MESSAGES;
+/// The most bytes one `klatch wait` or MCP `klatch_wait` shows for a room (#1390).
+pub const WAIT_MAX_BYTES: usize = READ_MAX_BYTES;
 /// The most bytes `klatch history` prints (whole messages; the first is always shown, even if it alone is larger).
 pub const HISTORY_MAX_BYTES: usize = 16_000;
 /// The most bytes one hook digest prints, measured as the JSON the hook prints (escapes count). Claude Code keeps

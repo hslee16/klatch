@@ -67,25 +67,6 @@ pub(crate) fn effective_timeout(requested: u64) -> (u64, bool) {
     }
 }
 
-/// Without a filter or `--peek` a wait consumes what it returns, like a blocking read. With either, it leaves
-/// messages unread (a later read or the hook still shows them) and remembers what it has looked at so it does
-/// not wake for the same message twice.
-pub(super) fn look(
-    t: &dyn Transport,
-    room: &str,
-    filter: &klatch::domain::WaitFilter,
-    peek: bool,
-) -> Result<Vec<klatch::domain::Message>> {
-    if filter.is_open() && !peek {
-        return Ok(t.read(room, true)?);
-    }
-    let seen = t.wait_poll(room)?;
-    if let Some(last) = seen.iter().map(|m| m.seq).max() {
-        t.wait_seen(room, last)?;
-    }
-    Ok(seen.into_iter().filter(|m| filter.accepts(m)).collect())
-}
-
 /// What one `wait` call was asked: the rooms (each with its wake filter), the timeout, whether it only peeks, and
 /// who is waiting and when it started (the caller's own asks are named when it times out, #200).
 pub(super) struct WaitArgs<'a> {
@@ -105,56 +86,6 @@ pub(super) fn timeout_notes(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Vec
         .filter_map(|(room, _)| t.open_asks(room).ok())
         .flat_map(|asks| klatch::domain::give_up_notes(&asks, me, now))
         .collect()
-}
-
-/// Print the messages that woke a wait; true when there were any.
-pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Result<bool> {
-    for (room, filter) in a.rooms {
-        let found = look(t, room, filter, a.peek)?;
-        let capped = klatch::domain::cap_wake(
-            &found,
-            a.caller.0,
-            klatch::domain::budget::DIGEST_MAX_MESSAGES,
-        );
-        for m in &capped.shown {
-            println!(
-                "[{room} {} {} {}] {}{}{}{}",
-                m.seq,
-                m.ts,
-                m.sender_label(),
-                flat(&m.body),
-                m.scope_mark(),
-                m.refs_mark(),
-                handoff_suffix(m)
-            );
-            for line in klatch::domain::ref_lines(&m.refs, true) {
-                println!("{line}");
-            }
-        }
-        if capped.omitted > 0 {
-            println!(
-                "[{room}: {} more messages not shown, the ones addressed to you first; run `klatch history {room}` for them]",
-                capped.omitted
-            );
-        }
-        // a wait that consumed what it returned hands the dm help over itself; a peek or a filter leaves the messages
-        // unread, so the hook digest carries it (#1209)
-        if filter.is_open() && !a.peek {
-            for line in dm_help_lines(t, a.caller.0, room, &found) {
-                println!("{line}");
-            }
-            // the cycle was said before the wait began (#273); the rest is derived from the room now (#789)
-            let now = a.caller.1 + waited as i64;
-            for line in asks_note_lines(t, (a.caller.0, now), room, !found.is_empty(), false) {
-                println!("{line}");
-            }
-        }
-        if !found.is_empty() {
-            eprintln!("{DATA_RULE}");
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The stop-waiting notes derived from `room` now (#789), as trailing lines for messages `wait` or `read` just handed
