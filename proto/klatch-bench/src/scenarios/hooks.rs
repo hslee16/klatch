@@ -268,7 +268,7 @@ fn convention_brief(w: &World) -> Res {
     let t = w.ok("parent", &["convention", "--name", "kid"])?;
     has(&t, "KLATCH_NAME=kid", "the child's name is on its commands")?;
     has(&t, "--discover join lobby", "the brief says how to join")?;
-    has(&t, "[klatch convention v1]", "the convention is included")?;
+    has(&t, "[klatch convention v2]", "the convention is included")?;
     Ok(vec![])
 }
 

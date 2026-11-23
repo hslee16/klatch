@@ -94,18 +94,18 @@ fn a_session_start_that_joins_shows_the_convention_once_with_the_binary_path() {
     let h = Home::new();
     let start = h.ok("fresh", &["hook", "--event", "SessionStart"]);
     assert!(
-        start.contains("[klatch convention v1]"),
+        start.contains("[klatch convention v2]"),
         "no convention: {start}"
     );
     assert!(
         start.contains(env!("CARGO_BIN_EXE_klatch")),
         "no binary path: {start}"
     );
-    assert_eq!(start.matches("[klatch convention v1]").count(), 1);
+    assert_eq!(start.matches("[klatch convention v2]").count(), 1);
     assert!(start.contains("seeking:") && start.contains("offering:"));
     let again = h.ok("fresh", &["hook", "--event", "SessionStart"]);
     assert!(
-        again.contains("[klatch convention v1]"),
+        again.contains("[klatch convention v2]"),
         "a restarted session needs it too: {again}"
     );
 }

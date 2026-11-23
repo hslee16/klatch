@@ -42,7 +42,7 @@ Supported versions: the newest release only, the current practice and not a poli
   lobby`; the shell says it opens an unlock window for ALL admin and launcher commands): read it, and type the
   passphrase only for a command you asked for.
   Commands that print a secret or stored text (`admin recovery`, `export`, `run-archive`, `rotate-key`,
-  `rotate-label-key`, `audit`, `refusals`, `review-queue`, `scrub-list`, `archives`) refuse before any prompt unless
+  `rotate-label-key`, `audit`, `refusals`, `review-queue`, `scrub-list`, `archives`, `stats`) refuse before any prompt unless
   three things hold: standard output is this process's controlling terminal; it is the SAME terminal device (compared
   with `fstat`: device, inode, terminal) as the one the passphrase and the confirmation are read from and written to;
   and standard error is that terminal or `/dev/null`. `klatch admin shell` needs standard input and output to be one

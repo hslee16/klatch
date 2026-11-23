@@ -47,6 +47,7 @@ mod text;
 mod toolguard;
 #[cfg(test)]
 mod toolguard_tests;
+mod usage_stats;
 mod wait_filter;
 mod wake_cap;
 mod wake_path;
@@ -139,6 +140,10 @@ pub(crate) use toolguard::clean_bytes;
 pub use toolguard::{
     Asker, EDIT_TOOLS, Held, ToolCall, ToolVerdict, clean_path, command_words, judge_tool,
     patch_targets,
+};
+pub use usage_stats::{
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MemberCounts, RoomClass, RoomCount, StatsOptions,
+    UsageStats, claim_class, day_of, median_and_p90, start_of_day, vocab,
 };
 pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{cut_to, fit_prefix, mentioning};

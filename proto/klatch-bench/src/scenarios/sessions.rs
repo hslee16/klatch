@@ -169,7 +169,7 @@ fn new_session_joins(w: &World) -> Res {
     has(&start, "seeking: a rare thing", "with the open ask")?;
     has(
         &start,
-        "[klatch convention v1]",
+        "[klatch convention v2]",
         "and is taught the convention",
     )?;
     has(

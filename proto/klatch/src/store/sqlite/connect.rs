@@ -204,6 +204,7 @@ impl SqliteStore {
         Ok(Self {
             conn,
             labels: std::cell::RefCell::default(),
+            claim_record_errors: std::cell::Cell::default(),
         })
     }
 }

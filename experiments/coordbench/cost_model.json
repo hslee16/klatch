@@ -1,0 +1,8 @@
+{
+  "comment": "SPEC section 8.1 planning figures, to be replaced by a measured pilot. USD per run on Haiku, by scenario. The model ratio scales them (Sonnet is assumed to cost about 3 times Haiku; the Opus ratio is an extra assumption of this file). The estimate printed by a dry run is the figure times the range factors. The per-run cap proposal is 3 times the assumed cost and the suite cap proposal is 1.25 times the approved estimate.",
+  "per_run_haiku_usd": {"s1": 2.0, "s2": 0.6, "s3": 0.8, "s4": 0.6, "s5": 0.6, "s6": 0.8, "trivial": 0.05},
+  "model_ratio": {"haiku": 1.0, "sonnet": 3.0, "opus": 15.0},
+  "range_factors": [0.75, 1.25],
+  "per_run_cap_factor": 3.0,
+  "suite_cap_factor": 1.25
+}

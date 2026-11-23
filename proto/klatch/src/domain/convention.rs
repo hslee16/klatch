@@ -3,7 +3,7 @@
 //! what klatch parses.
 
 /// The version marker at the start of the text; change it when a word the text teaches changes.
-pub const CONVENTION_MARKER: &str = "[klatch convention v1]";
+pub const CONVENTION_MARKER: &str = "[klatch convention v2]";
 
 /// The convention for a member whose klatch binary is at `bin` (used in the one command it needs, `wait`).
 pub fn convention(bin: &str) -> String {
@@ -21,7 +21,7 @@ pub fn convention_in(bin: &str, room: &str) -> String {
       {bin} --discover release {room} ask:<N>\n\
       {bin} --discover wait {room} --timeout 60\n\
       {bin} --discover status {room} done\n\
-  - Ask: first {bin} --discover find {room} \"<need>\" for an earlier answer; else {bin} --discover ask {room} \"<need>\" (posts \"seeking:\"). Close it with \"closed #N ok\" or \"closed #N unresolved\"; if the answer failed, \"reopen #N: <why>\". After 5 minutes stop waiting, tell your user what you are blocked on; re-ask at most once.\n\
+  - Ask: first {bin} --discover find {room} \"<need>\" for an earlier answer; else {bin} --discover ask {room} \"<class>: <need>\" (posts \"seeking:\"). Class:\n    decision: (A or B?), review: (PR #12), overlap: (editing x.rs), interface: (what f returns). The human's decisions go to the coordinator as decision: asks.\n  - Close the ask with \"closed #N ok\" or \"closed #N unresolved\"; if the answer failed, \"reopen #N: <why>\". After 5 minutes stop waiting, carry on with what does not depend on it, tell your user what you are blocked on; re-ask at most once.\n\
   - Answer: {bin} --discover answer {room} N \"<answer>\" claims, posts and releases. To work longer, claim ask:<N> first, renew it every minute (a claim lasts 90 seconds), release it if you stop, then post \"answer to #N: <answer>\".\n\
   - Need more from the asker: post \"need-info #N: <question>\"; the asker answers \"info #N: <details>\". From the second round, or for anything private: {bin} --discover dm <member> \"<text>\" (private), post \"moved #N: dm with <member>\" in {room}, and wait with {bin} --discover wait dm:<member> --timeout 60.\n\
   - Cannot finish: \"partial #N: <what is done>\", \"declined #N busy: <why>\" (not now) or \"declined #N cannot: <why>\"; then release the claim. Never leave a claimed ask unanswered.\n\
@@ -82,7 +82,7 @@ mod tests {
         ] {
             assert!(t.contains(w), "missing {w}: {t}");
         }
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
     }
 
     #[test]
@@ -90,14 +90,14 @@ mod tests {
         let t = convention(BIN);
         assert!(t.contains("available"), "{t}");
         assert!(t.contains("clears done"), "{t}");
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
     }
 
     #[test]
     fn the_text_teaches_the_parked_word_and_stays_within_its_bound() {
         let t = convention(BIN);
         assert!(t.contains("parked: <why>, back by <time>"), "{t}");
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
     }
 
     #[test]
@@ -111,7 +111,7 @@ mod tests {
         ] {
             assert!(t.contains(w), "missing {w}: {t}");
         }
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
         let opened = crate::domain::open_prs(&[crate::domain::Message {
             id: "id1".into(),
             seq: 1,
@@ -149,13 +149,41 @@ mod tests {
             )),
             "the text and the bound must agree: {t}"
         );
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
+    }
+
+    #[test]
+    fn the_text_names_the_four_ask_classes_find_first_the_wait_and_the_closing_words() {
+        let t = convention(BIN);
+        for w in [
+            "decision: ",
+            "review: ",
+            "overlap: ",
+            "interface: ",
+            "--discover find lobby",
+            "After 5 minutes",
+            "closed #N ok",
+            "closed #N unresolved",
+            "go to the coordinator as decision: asks",
+        ] {
+            assert!(t.contains(w), "missing {w}: {t}");
+        }
+        let find = t.find("--discover find lobby").unwrap();
+        let ask = t.find("--discover ask lobby").unwrap();
+        assert!(find < ask, "find must come before ask: {t}");
+        assert!(t.len() < 3100, "{} bytes", t.len());
+    }
+
+    #[test]
+    fn the_marker_is_version_two() {
+        assert_eq!(CONVENTION_MARKER, "[klatch convention v2]");
+        assert!(!convention(BIN).contains("convention v1]"));
     }
 
     #[test]
     fn the_text_is_short_and_safe_to_put_in_a_hook() {
         let t = convention(BIN);
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
         assert!(!t.contains('\u{2014}'), "an em dash");
         assert!(
             !t.contains('$'),
@@ -276,7 +304,7 @@ mod tests {
         let t = convention(BIN);
         for w in [
             "/opt/klatch/klatch --discover dm <member> \"<text>\"",
-            "/opt/klatch/klatch --discover ask lobby \"<need>\"",
+            "/opt/klatch/klatch --discover ask lobby \"<class>: <need>\"",
             "/opt/klatch/klatch --discover answer lobby N \"<answer>\"",
             "/opt/klatch/klatch --discover find lobby \"<need>\"",
             "closed #N ok",
@@ -291,7 +319,7 @@ mod tests {
             !t.contains("ask-<N>"),
             "the old working-room sentence stays out: {t}"
         );
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
     }
 
     /// #1184 and #1193: the text names the fixed lobby word for a moved ask and the dm wait command, and says the
@@ -321,7 +349,7 @@ mod tests {
             Some((3, "alpha".to_string())),
             "the text teaches the form the code reads"
         );
-        assert!(t.len() < 2800, "{} bytes", t.len());
+        assert!(t.len() < 3100, "{} bytes", t.len());
     }
 
     /// Every convention word the text teaches by its form is one klatch reads (CONVENTION_WORDS, CONVENTIONS.md).

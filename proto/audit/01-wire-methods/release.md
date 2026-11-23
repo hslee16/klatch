@@ -1,1 +1,1 @@
-| `release` | `release`, `release_with_note` | `Release` | GUARDED `release`, `release_with_note` |
+| `release` | `release`, `release_with_note` | `Release` | GUARDED `release`, `release_with_note`; `release` goes through `ClaimStore::release_at` so the release row (by holder, with the seconds held) is recorded in `claim_events` the same way (#1386) |

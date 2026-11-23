@@ -89,7 +89,7 @@ impl<S: Store> Gateway<S> {
         self.authorize(who, &Operation::release(room, path))?;
         self.store
             .note_yield_release(room, &who.member, path, self.now())?;
-        self.store.release(room, &who.member, path)
+        self.store.release_at(room, &who.member, path, self.now())
     }
 
     /// `release` with a note on what the caller changed (#272): shown to members who saw the claim and returned to

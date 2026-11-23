@@ -76,6 +76,10 @@ fn admin_table(h: &Home) -> Vec<(&'static str, Vec<String>)> {
         ("restore-archive", vec!["restore-archive".into(), f("x.db")]),
         ("archives", s(&["archives"])),
         ("export", s(&["export", "r"])),
+        (
+            "stats",
+            s(&["stats", "--room", "lobby", "--since", "2026-01-01"]),
+        ),
         ("init-passphrase", s(&["init-passphrase"])),
         ("reset-passphrase", s(&["reset-passphrase"])),
         ("unlock-window", s(&["unlock-window", "60"])),
@@ -374,6 +378,23 @@ fn the_right_passphrase_does_the_act_and_the_audit_records_it_without_the_passph
     assert!(audit.text.contains("failures=1"), "{}", audit.text);
     assert!(!audit.text.contains(WRONG), "a wrong attempt was kept");
     assert!(!audit.text.contains(PASS));
+}
+
+#[test]
+fn stats_on_the_terminal_with_the_passphrase_prints_counts_and_is_audited() {
+    let h = Home::new();
+    let r = h.admin(&["stats"], &[]);
+    assert!(r.ok(), "{}", r.text);
+    assert!(r.text.contains("klatch stats (counts only"), "{}", r.text);
+    assert!(
+        r.text.contains("worker credentials: 0 issued"),
+        "{}",
+        r.text
+    );
+    let bad = h.admin(&["stats", "--since", "yesterday"], &[]);
+    assert!(!bad.ok() && bad.text.contains("YYYY-MM-DD"), "{}", bad.text);
+    let audit = h.admin(&["audit"], &[]);
+    assert!(audit.text.contains("stats"), "{}", audit.text);
 }
 
 /// Run `cmd` `times` times in a row inside ONE shell on ONE pty, so every run shares the terminal (a new pty is a
@@ -1013,6 +1034,8 @@ fn everything_that_prints_stored_text_is_refused_to_a_pipe() {
         vec!["refusals".into()],
         vec!["audit".into()],
         vec!["archives".into()],
+        vec!["stats".into()],
+        vec!["stats".into(), "--json".into()],
     ];
     for args in cases {
         let r = common::pty::run_on_pty_stdout_piped(klatch_in(&h, &args), &[PASS, "x"]);
