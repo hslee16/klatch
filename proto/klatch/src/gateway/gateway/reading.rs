@@ -31,6 +31,29 @@ impl<S: Store> Gateway<S> {
         self.mark_advisory(room, seen)
     }
 
+    /// The count of other members' messages the caller has not been shown, when the post it just made is its first
+    /// in `room` and nothing of the room was ever shown to it (#1411): no read, no hook digest, no wait or wake.
+    /// Zero in every other case, so the CLI prints its one-time notice exactly once and never to a member that has
+    /// read. Moves no cursor; it is the guarded peek the caller could make itself (`read --count`).
+    pub fn first_post_unread(&self, who: &Principal, room: &str) -> Result<usize> {
+        check_member(who)?;
+        check_room(room)?;
+        // The guarded peek comes first, so a refused caller reaches nothing and the guard is asked once.
+        let waiting = self.read(who, room, false)?.len();
+        if waiting == 0 {
+            return Ok(0);
+        }
+        let shown = self
+            .store
+            .member_cursors(room)?
+            .into_iter()
+            .any(|c| c.name == who.member && (c.read > 0 || c.hook > 0 || c.polled > 0));
+        if shown || self.store.own_post_count(room, &who.member)? != 1 {
+            return Ok(0);
+        }
+        Ok(waiting)
+    }
+
     /// What a librarian's peek returns without touching presence, membership or any position (#499, #750).
     fn peek_quietly(&self, who: &Principal, room: &str) -> Result<Vec<Message>> {
         let seen = Self::without_canary(self.store.look(Seat::new(room, &who.member), self.now())?);

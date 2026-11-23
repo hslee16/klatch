@@ -225,17 +225,28 @@ impl MemberStore for SqliteStore {
 
     fn member_cursors(&self, room: &str) -> Result<Vec<crate::domain::MemberCursor>> {
         self.rows(
-            "SELECT name,COALESCE(last_seq,0),hook_seq,muted FROM members WHERE room=?1 ORDER BY name",
+            "SELECT name,COALESCE(last_seq,0),hook_seq,MAX(wait_seq,wake_seq),muted FROM members WHERE room=?1 ORDER BY name",
             params![room],
             |r| {
                 Ok(crate::domain::MemberCursor {
                     name: r.get(0)?,
                     read: r.get(1)?,
                     hook: r.get(2)?,
-                    muted: r.get::<_, i64>(3)? != 0,
+                    polled: r.get(3)?,
+                    muted: r.get::<_, i64>(4)? != 0,
                 })
             },
         )
+    }
+
+    fn own_post_count(&self, room: &str, member: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE room=?1 AND sender=?2 AND COALESCE(kind,'')<>'archived'",
+                params![room, member],
+                |r| r.get(0),
+            )
+            .map_err(be)
     }
 
     fn is_muted(&self, at: Seat) -> Result<bool> {

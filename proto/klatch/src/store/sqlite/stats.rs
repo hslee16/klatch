@@ -305,7 +305,40 @@ fn members(conn: &Connection, o: &StatsOptions) -> Result<MemberCounts> {
     } else {
         0
     };
+    // One row per posting name: the furthest any of its rows read, was shown, and the day of its first post (#1411).
+    let posters = rows(
+        conn,
+        &format!(
+            "SELECT MAX(COALESCE(last_seq,0)), MAX(MAX(hook_seq,wait_seq,wake_seq)), \
+             (SELECT MIN(ts) FROM messages m WHERE m.sender=members.name AND m.kind IS NOT 'archived' AND (?1 IS NULL OR m.room=?1)) AS first \
+             FROM members WHERE {pop} GROUP BY name HAVING first IS NOT NULL"
+        ),
+        o,
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    let mut by_day: BTreeMap<String, i64> = BTreeMap::new();
+    for (read, _, first) in &posters {
+        if *read == 0 {
+            *by_day.entry(day_of(*first)).or_default() += 1;
+        }
+    }
     Ok(MemberCounts {
+        posted: i64::try_from(posters.len()).unwrap_or(i64::MAX),
+        never_read: by_day.values().sum(),
+        never_shown: i64::try_from(
+            posters
+                .iter()
+                .filter(|(read, shown, _)| *read == 0 && *shown == 0)
+                .count(),
+        )
+        .unwrap_or(i64::MAX),
+        never_read_days: by_day.into_iter().collect(),
         joined: one(
             conn,
             &format!("SELECT COUNT(DISTINCT name) FROM members WHERE {pop}"),
