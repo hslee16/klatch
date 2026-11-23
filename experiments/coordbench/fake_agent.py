@@ -12,7 +12,12 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
 
   write {path, content}          write a file in the working directory
   git {args}                     run git; a nonzero exit ends the agent with exit 1 unless allow_fail
-  copy_from {from, path}         copy a file ("from" is absolute or relative to the script's directory) to path
+  copy_from {from, path, replace?}  copy a file ("from" is absolute or relative to the script's directory) to path;
+                                 replace is a list of [old, new] text pairs applied to the copy (a fixed wrong value)
+  send {to, text}                a SendMessage tool call (no delivery: the fake agent knows its script)
+  dump_specs {path}              write the SPEC-* files in the working directory, the tracked ones and git status as JSON
+                                 to OUT/path
+  dump_board {path}              write TASKS.md as it is in the working directory to OUT/path
   append {path, content}         append text to a file (created when absent)
   sync {message, resolve?}       git add -A, commit, pull --no-rebase, push to origin main (retries a lost race).
                                  resolve: "union" (keep both sides of every conflicted file) or "ours" (keep this
@@ -114,6 +119,8 @@ class Agent:
             os.makedirs(os.path.dirname(os.path.abspath(st["path"])), exist_ok=True)
             with open(src, "rb") as f:
                 data = f.read()
+            for old, new in st.get("replace", []):
+                data = data.replace(old.encode(), new.encode())
             with open(st["path"], "wb") as f:
                 f.write(data)
             self.tool("Write", {"file_path": st["path"], "content": data.decode("utf-8", "replace")}, "ok")
@@ -146,6 +153,18 @@ class Agent:
             if not self.args.klatch_bin:
                 self.die("the script runs klatch but --klatch-bin was not given")
             self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
+        elif op == "send":
+            self.tool("SendMessage", {"to": st["to"], "message": st["text"]}, "sent")
+        elif op == "dump_specs":
+            _, tracked = self.run_cmd(["git", "ls-files", "SPEC-*"])
+            _, status = self.run_cmd(["git", "status", "--porcelain"])
+            facts = {"files": sorted(n for n in os.listdir(".") if n.startswith("SPEC-")),
+                     "tracked": tracked.split(), "status": status.splitlines()}
+            with open(os.path.join(self.args.out, st["path"]), "w") as f:
+                json.dump(facts, f)
+        elif op == "dump_board":
+            with open("TASKS.md") as src, open(os.path.join(self.args.out, st["path"]), "w") as f:
+                f.write(src.read())
         elif op == "say":
             self.assistant({"type": "text", "text": st["text"]})
         elif op == "cost":

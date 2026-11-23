@@ -5,6 +5,9 @@
   setup.sh       setup.sh DEST SEED writes the initial tree into the empty directory DEST. The harness does the git
                  init, the first commit and the push to the per-run bare origin.
   task-*.md      the text each agent gets as its job
+  private/<agent>/  optional ("private"): files only that agent's clone has (not in origin, excluded from git)
+  seed.json      optional ("seed_history"): an earlier exchange present from the start: "room" (messages posted into the
+                 room before any agent starts, K arms) and "board" (lines appended to TASKS.md, B1)
 
 The hidden checker is NOT in the fixture: checks/<checker>/check.sh CHECKOUT prints {"checks": [{"id", "pass",
 "unit"?}]} for a clone of the final origin. It is never copied into a checkout and never named in a prompt.
@@ -39,6 +42,27 @@ class Fixture:
         self.topology = self.spec.get("topology", "T-clone")
         self.checker = os.path.join(self.checks_dir, self.spec["checker"], "check.sh")
         self.fake_script = os.path.join(self.dir, self.spec["fake"]) if self.spec.get("fake") else None
+        self.private_dir = os.path.join(self.dir, self.spec["private"]) if self.spec.get("private") else None
+        self.seed_history = None
+        if self.spec.get("seed_history"):
+            try:
+                with open(os.path.join(self.dir, self.spec["seed_history"])) as f:
+                    self.seed_history = json.load(f)
+            except (OSError, ValueError) as e:
+                raise FixtureError("cannot load the seed history of fixture %s: %s" % (name, e))
+
+    def private_files(self, agent):
+        """[(path relative to the clone, absolute source)] of the files only this agent has (fixture key "private":
+        private/<agent>/...). The harness copies them into that agent's clone, untracked and excluded from git."""
+        if not self.private_dir:
+            return []
+        root = os.path.join(self.private_dir, agent)
+        out = []
+        for d, _, names in os.walk(root):
+            for n in sorted(names):
+                p = os.path.join(d, n)
+                out.append((os.path.relpath(p, root), p))
+        return sorted(out)
 
     @property
     def names(self):

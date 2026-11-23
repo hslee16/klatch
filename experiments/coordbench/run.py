@@ -39,6 +39,7 @@ import time
 import approval as approval_mod
 import drivers
 import fixture as fixture_mod
+import asks as asks_mod
 import scenario as scenario_mod
 import schema
 import streams
@@ -259,7 +260,7 @@ class Suite:
         fx.materialise(seedtree, seed, henv)
         if arm == "B1":
             with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
-                f.write(TASK_BOARD)
+                f.write(TASK_BOARD + "".join(l + "\n" for l in (fx.seed_history or {}).get("board", [])))
         origin = os.path.join(scratch, "origin.git")
         git(["init", "-q", "--bare", "-b", "main", origin], scratch, henv)
         git(["init", "-q", "-b", "main"], seedtree, henv)
@@ -275,8 +276,12 @@ class Suite:
         for ag in fx.agents:
             clone = os.path.join(scratch, "clones", ag["name"])
             git(["clone", "-q", origin, clone], scratch, henv)
+            private = fx.private_files(ag["name"])
             with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
-                f.write("\n.claude/\n")
+                f.write("\n.claude/\n" + "".join("/%s\n" % rel for rel, _ in private))
+            for rel, src in private:  # this agent's private knowledge: in its clone only, never committed
+                os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
+                shutil.copyfile(src, os.path.join(clone, rel))
             clones[ag["name"]] = clone
         kenv = {"KLATCH_HOME": khome, "KLATCH_KEY_DIR": kkeys, "KLATCH_BIN": a.klatch_bin or "", "KLATCH_RUN_DIR": scratch}
         if arm.startswith("K") and arm != "K1":
@@ -286,6 +291,8 @@ class Suite:
                                    cwd=clone, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 if p.returncode != 0:
                     raise RuntimeError("klatch init failed for %s: %s" % (name, p.stdout.strip()[-200:]))
+        if arm.startswith("K") and (fx.seed_history or {}).get("room"):
+            self.seed_room(fx.seed_history["room"], scratch, dict(henv, **kenv), notes)
         t0 = time.monotonic()
         first_pass = None
         last_poll = t0
@@ -320,6 +327,7 @@ class Suite:
         t0 = time.monotonic()
 
         def pump():
+            now = round(time.monotonic() - t0, 3)
             for name in procs:
                 with open(os.path.join(log_dir, "%s.stream.jsonl" % name), "rb") as f:
                     f.seek(offs[name])
@@ -328,7 +336,7 @@ class Suite:
                 data = partial[name] + chunk
                 *lines, partial[name] = data.split(b"\n")
                 for ln in lines:
-                    states[name].feed(ln.decode("utf-8", "replace"))
+                    states[name].feed(ln.decode("utf-8", "replace"), now)
 
         def checks_now(tag):
             dest = os.path.join(scratch, "check-" + tag)
@@ -409,11 +417,23 @@ class Suite:
         if any(s["is_error"] for s in sums.values()):
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
-        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes)
+        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes, states)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
 
-    def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes):
+    def seed_room(self, messages, scratch, env, notes):
+        """Post the fixture's seeded earlier exchange into the room, each message as its own member, before any agent starts."""
+        joined = set()
+        for m in messages:
+            e = dict(env, KLATCH_NAME=m["as"])
+            for argv in ([["join", self.args.room]] if m["as"] not in joined else []) + [["post", self.args.room, m["text"]]]:
+                p = subprocess.run([self.args.klatch_bin] + argv, cwd=scratch, env=e, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+                if p.returncode != 0:
+                    raise RuntimeError("seeding the room failed (%s): %s" % (" ".join(argv[:1]), p.stdout.strip()[-200:]))
+            joined.add(m["as"])
+
+    def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes, states=None):
         """Fill duplicate_work and overwrites from git history for a fixture that has a scenario file, and keep the
         checker's extra fields under scenario_metrics. A fixture without a scenario leaves them null."""
         name = self.fx.spec.get("scenario")
@@ -428,6 +448,29 @@ class Suite:
         rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
         rec["metrics"]["overwrites"] = gm["overwrites"]
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
+        if scn.get("slots") and states is not None:
+            self.ask_metrics(rec, scn, states, notes)
+
+    def ask_metrics(self, rec, scn, states, notes):
+        """The S4 ask and answer metrics from the agents' message events (asks.py); the checker's slot states give the
+        guesses and unanswered dependencies. Skipped, with a note, when the checker's slots are not there."""
+        slots = rec["scenario_metrics"].get("slots")
+        if not isinstance(slots, dict):
+            notes.append("ask metrics skipped: the checker printed no slots")
+            return
+        try:
+            with open(os.path.join(self.checks_dir_for(), self.fx.spec["checker"], "facts.json")) as f:
+                facts = json.load(f)["facts"]
+        except (OSError, ValueError, KeyError) as e:
+            notes.append("ask metrics skipped: no facts for the checker (%s)" % e)
+            return
+        events = sorted(([dict(e, agent=n) for n, s in states.items() for e in s.msg_events]),
+                        key=lambda e: (e["t"] if e["t"] is not None else 0))
+        done = {n: s.done_t for n, s in states.items() if s.done_t is not None}
+        rec["scenario_metrics"]["asks"] = asks_mod.compute(events, done, scn, facts, slots)
+
+    def checks_dir_for(self):
+        return self.fx.checks_dir
 
     # the suite ---------------------------------------------------------------------------------------------
 

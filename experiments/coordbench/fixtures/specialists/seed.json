@@ -1,0 +1,21 @@
+{
+  "board": [
+    "- seed-q | done | - | answered seed-p: MAX_PAYLOAD is 3282 bytes (framing spec revision 3, held by a)"
+  ],
+  "comment": "The seeded earlier exchange (SPEC S4): MAX_PAYLOAD was asked and answered before the run started, so agent c asking for it again is a repeat. K arms: posted into the room by two seed members before any agent starts. B1: one line appended to TASKS.md.",
+  "fact": "MAX_PAYLOAD",
+  "room": [
+    {
+      "as": "seed-p",
+      "text": "seeking: what is MAX_PAYLOAD in the framing spec, in bytes?"
+    },
+    {
+      "as": "seed-q",
+      "text": "answer to #1: MAX_PAYLOAD is 3282 bytes (framing spec revision 3, held by a)"
+    },
+    {
+      "as": "seed-p",
+      "text": "closed #1"
+    }
+  ]
+}
