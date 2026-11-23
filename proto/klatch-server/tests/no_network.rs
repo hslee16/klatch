@@ -382,38 +382,12 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     let webpki = dependents("rustls-webpki");
     assert!(webpki.iter().all(|d| d == "rustls"), "{webpki:?}");
     let ring = dependents("ring");
-    // `klatch-server` itself names ring in two places only: the provider handed to rustls (`tls.rs`), and the SHA-1 of the
-    // WebSocket upgrade answer (`wire_ws.rs`, #112: RFC 6455 mandates it; it is no security boundary)
+    // `klatch-server` itself depends on ring for the SHA-1 of the WebSocket upgrade answer (#112; `no_network_ws.rs` checks
+    // where it is named)
     assert!(
         ring.iter()
             .all(|d| d == "rustls" || d == "rustls-webpki" || d == "klatch-server"),
         "{ring:?}"
-    );
-    // the crate `ring`, not the end of another word (`string::`)
-    let names_ring = |line: &str| {
-        line.match_indices("ring::")
-            .any(|(i, _)| !line[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
-    };
-    let users: Vec<String> = rust_sources()
-        .iter()
-        .filter(|(rel, text)| {
-            !["src/tls.rs", "src/wire_ws.rs"].contains(&rel.as_str())
-                && text.lines().any(|l| names_ring(code_of(l)))
-        })
-        .map(|(rel, _)| rel.clone())
-        .collect();
-    assert!(
-        users.is_empty(),
-        "ring is named outside tls.rs and wire_ws.rs: {users:?}"
-    );
-    let (_, ws) = rust_sources()
-        .into_iter()
-        .find(|(rel, _)| rel == "src/wire_ws.rs")
-        .unwrap();
-    let digests: Vec<&str> = ws.lines().map(code_of).filter(|l| names_ring(l)).collect();
-    assert!(
-        digests.iter().all(|l| l.contains("digest")),
-        "wire_ws.rs uses ring for a digest only: {digests:?}"
     );
 }
 
