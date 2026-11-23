@@ -28,20 +28,22 @@ fn line(extra: &[(&str, serde_json::Value)]) -> String {
 
 #[test]
 fn each_transform_does_what_its_name_says() {
-    assert_eq!(transform("b64", "hello").unwrap(), "aGVsbG8=");
-    assert_eq!(transform("b64", "hi!?").unwrap(), "aGkhPw==");
-    assert_eq!(transform("hex", "hi").unwrap(), "6869");
-    assert_eq!(transform("pct", "a!_").unwrap(), "%61%21%5F");
-    assert_eq!(transform("rev", "abc").unwrap(), "cba");
-    assert_eq!(transform("sp4", "abcdefghij").unwrap(), "abcd efgh ij");
-    assert_eq!(transform("sp1", "abc").unwrap(), "a b c");
-    assert_eq!(
-        transform("zw", "abcdefg").unwrap(),
-        "abc\u{200b}def\u{200b}g"
-    );
-    assert_eq!(transform("cut:2:4", "abcdef").unwrap(), "cd");
-    assert_eq!(transform("cut:4:", "abcdef").unwrap(), "ef");
-    assert_eq!(transform("cut:0:99", "abc").unwrap(), "abc");
+    let cases = [
+        ("b64", "hello", "aGVsbG8="),
+        ("b64", "hi!?", "aGkhPw=="),
+        ("hex", "hi", "6869"),
+        ("pct", "a!_", "%61%21%5F"),
+        ("rev", "abc", "cba"),
+        ("sp4", "abcdefghij", "abcd efgh ij"),
+        ("sp1", "abc", "a b c"),
+        ("zw", "abcdefg", "abc\u{200b}def\u{200b}g"),
+        ("cut:2:4", "abcdef", "cd"),
+        ("cut:4:", "abcdef", "ef"),
+        ("cut:0:99", "abc", "abc"),
+    ];
+    for (name, input, want) in cases {
+        assert_eq!(transform(name, input).unwrap(), want, "{name}");
+    }
     for bad in ["rot13", "cut", "cut:a:b", "cut:4:2", ""] {
         assert!(transform(bad, "abcdef").is_err(), "{bad}");
     }
@@ -50,29 +52,34 @@ fn each_transform_does_what_its_name_says() {
 #[test]
 fn a_transformed_placeholder_is_the_same_secret_reshaped() {
     let plain = expand("k", "{{fake:github}}").unwrap();
-    assert_eq!(
-        expand("k", "{{fake:github|rev}}").unwrap(),
-        plain.chars().rev().collect::<String>()
-    );
-    assert_eq!(
-        expand("k", "{{fake:github|cut:0:10}}{{fake:github|cut:10:}}").unwrap(),
-        plain
-    );
-    assert_eq!(
-        expand("k", "{{fake:github|hex}}").unwrap(),
-        transform("hex", &plain).unwrap()
-    );
+    let expanded = |raw: &str| expand("k", raw).unwrap();
     // transforms chain left to right, and the index still selects the secret
-    assert_eq!(
-        expand("k", "{{fake:aws:2|rev|sp4}}").unwrap(),
-        transform(
-            "sp4",
-            &transform("rev", &expand("k", "{{fake:aws:2}}").unwrap()).unwrap()
-        )
-        .unwrap()
-    );
-    assert!(expand("k", "{{fake:github|nope}}").is_err());
-    assert!(expand("k", "{{fake:nokind|b64}}").is_err());
+    let chained = transform(
+        "sp4",
+        &transform("rev", &expanded("{{fake:aws:2}}")).unwrap(),
+    )
+    .unwrap();
+    let pairs = [
+        (
+            expanded("{{fake:github|rev}}"),
+            plain.chars().rev().collect::<String>(),
+        ),
+        (
+            expanded("{{fake:github|cut:0:10}}{{fake:github|cut:10:}}"),
+            plain.clone(),
+        ),
+        (
+            expanded("{{fake:github|hex}}"),
+            transform("hex", &plain).unwrap(),
+        ),
+        (expanded("{{fake:aws:2|rev|sp4}}"), chained),
+    ];
+    for (got, want) in pairs {
+        assert_eq!(got, want);
+    }
+    for bad in ["{{fake:github|nope}}", "{{fake:nokind|b64}}"] {
+        assert!(expand("k", bad).is_err(), "{bad}");
+    }
     // a span written with the same placeholder matches the expanded text
     let item = parse_line(&line(&[])).unwrap();
     assert!(item.text.contains(&item.spans[0]));
@@ -82,33 +89,32 @@ fn a_transformed_placeholder_is_the_same_secret_reshaped() {
 #[test]
 fn a_passphrase_is_words_and_digits_and_passes_the_stored_text_check() {
     let p = expand("k", "{{fake:passphrase}}").unwrap();
-    assert_eq!(p, expand("k", "{{fake:passphrase}}").unwrap());
-    assert_ne!(p, expand("k2", "{{fake:passphrase}}").unwrap());
+    let again = expand("k", "{{fake:passphrase}}").unwrap();
+    let other = expand("k2", "{{fake:passphrase}}").unwrap();
+    assert_eq!((p == again, p == other), (true, false));
     let parts: Vec<&str> = p.split('-').collect();
-    assert_eq!(parts.len(), 3, "{p}");
-    assert!(parts[0].chars().all(|c| c.is_ascii_alphabetic()), "{p}");
-    assert!(parts[2].chars().any(|c| c.is_ascii_digit()), "{p}");
-    assert!(KINDS.contains(&"passphrase"));
+    let shape = (
+        parts.len(),
+        parts[0].chars().all(|c| c.is_ascii_alphabetic()),
+        parts[2].chars().any(|c| c.is_ascii_digit()),
+        KINDS.contains(&"passphrase"),
+    );
+    assert_eq!(shape, (3, true, true, true), "{p}");
 }
 
 #[test]
 fn origin_is_optional_and_closed() {
     use serde_json::json;
-    assert_eq!(parse_line(&line(&[])).unwrap().origin, None);
+    let origin = |v: &str| parse_line(&line(&[("origin", json!(v))])).map(|i| i.origin);
     assert_eq!(
-        parse_line(&line(&[("origin", json!("design"))]))
-            .unwrap()
-            .origin,
-        Some(Origin::Design)
+        (
+            parse_line(&line(&[])).unwrap().origin,
+            origin("design"),
+            origin("search")
+        ),
+        (None, Ok(Some(Origin::Design)), Ok(Some(Origin::Search)))
     );
-    assert_eq!(
-        parse_line(&line(&[("origin", json!("search"))]))
-            .unwrap()
-            .origin,
-        Some(Origin::Search)
-    );
-    assert!(parse_line(&line(&[("origin", json!("found"))])).is_err());
-    assert!(parse_line(&line(&[("origin", json!(""))])).is_err());
+    assert!(origin("found").is_err() && origin("").is_err());
 }
 
 #[test]
@@ -177,32 +183,25 @@ fn the_committed_hard_corpus_is_valid() {
             Split::Dev => e.0 += 1,
             Split::Test => e.1 += 1,
         }
-        assert_eq!(
+        let stored = (
             looks_like_real_credential(&i.raw_text),
-            None,
-            "{} stores a credential-shaped string; use a placeholder",
-            i.id
+            looks_like_real_credential(&i.rationale),
+            i.spans.iter().all(|s| !s.trim().is_empty()),
         );
         assert_eq!(
-            looks_like_real_credential(&i.rationale),
-            None,
-            "{} rationale",
+            stored,
+            (None, None, true),
+            "{} stores a credential-shaped string (use a placeholder) or an empty span",
             i.id
         );
-        for s in &i.spans {
-            assert!(!s.trim().is_empty(), "{}", i.id);
-        }
     }
     for c in CATEGORIES {
         let (dev, test) = by_cat.get(c).copied().unwrap_or_default();
         assert!(dev > 0 && test > 0, "{c}: dev {dev}, test {test}");
     }
+    let origin_count = |o: Origin| by_origin.get(&o).copied().unwrap_or(0);
     assert!(
-        by_origin.get(&Origin::Search).copied().unwrap_or(0) >= 20,
-        "{by_origin:?}"
-    );
-    assert!(
-        by_origin.get(&Origin::Design).copied().unwrap_or(0) >= 180,
+        origin_count(Origin::Search) >= 20 && origin_count(Origin::Design) >= 180,
         "{by_origin:?}"
     );
     // a balanced mix, with enough allows that over-blocking is measured
@@ -234,13 +233,18 @@ fn a_name_with_the_last_four_of_a_card_is_redacted_and_tagged() {
     let get = |id: &str| items.iter().find(|i| i.id == id).unwrap();
     for id in ["hpii-008", "xpii-004", "xpii-064", "xpii-067", "xpii-069"] {
         let i = get(id);
-        assert_eq!(i.verdict, Truth::Redact, "{id}");
-        assert!(!i.name_spans.is_empty(), "{id} has a name span");
-        assert!(i.data_spans().count() >= 1, "{id} has a data span");
-        assert!(!i.contested, "{id}");
-        for s in &i.spans {
-            assert!(i.text.contains(s.as_str()), "{id}: {s:?} is in the text");
-        }
+        let facts = (
+            i.verdict,
+            !i.name_spans.is_empty(),
+            i.data_spans().count() >= 1,
+            i.contested,
+            i.spans.iter().all(|s| i.text.contains(s.as_str())),
+        );
+        assert_eq!(
+            facts,
+            (Truth::Redact, true, true, false, true),
+            "{id}: redact, a name span, a data span, not contested, every span in the text"
+        );
     }
     // the last four digits with no person attached stay allow
     assert_eq!(get("hpii-009").verdict, Truth::Allow);
