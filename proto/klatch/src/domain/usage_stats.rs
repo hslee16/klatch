@@ -111,6 +111,16 @@ pub struct MachineCheckpointCounts {
     pub bytes: i64,
 }
 
+/// The machine status updates written in the window (#1403), in all and by class. Counts only: the table behind it
+/// holds a time, a room and a class word, never a tool, a command or a member.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MachineStatusCounts {
+    pub updates: i64,
+    pub working: i64,
+    pub idle: i64,
+    pub parked: i64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemberCounts {
     /// Distinct member names that joined any room in scope.
@@ -146,6 +156,7 @@ pub struct UsageStats {
     pub asks: AskCounts,
     pub claims: ClaimCounts,
     pub machine_checkpoints: MachineCheckpointCounts,
+    pub machine_status: MachineStatusCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
@@ -402,6 +413,11 @@ impl UsageStats {
             "machine checkpoints: {} written ({} at session end), {} replaced an earlier one, {} bytes\n",
             mc.written, mc.last, mc.replaced, mc.bytes
         ));
+        let ms = &self.machine_status;
+        o.push_str(&format!(
+            "machine status: {} updates (working {}, idle {}, parked {})\n",
+            ms.updates, ms.working, ms.idle, ms.parked
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -527,6 +543,10 @@ impl UsageStats {
             "machine_checkpoints": {
                 "written": self.machine_checkpoints.written, "last": self.machine_checkpoints.last,
                 "replaced": self.machine_checkpoints.replaced, "bytes": self.machine_checkpoints.bytes,
+            },
+            "machine_status": {
+                "updates": self.machine_status.updates, "working": self.machine_status.working,
+                "idle": self.machine_status.idle, "parked": self.machine_status.parked,
             },
             "refusals": pairs(&self.refusals),
             "members": {

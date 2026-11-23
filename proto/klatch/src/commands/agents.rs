@@ -23,6 +23,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             board,
             no_join,
             checkpoint,
+            machine_status,
         } => hook(
             ctx,
             &HookArgs {
@@ -30,6 +31,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
                 board,
                 no_join,
                 checkpoint,
+                machine_status,
             },
         )?,
         AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
@@ -128,6 +130,8 @@ pub(super) struct HookArgs {
     pub(super) no_join: bool,
     /// The machine checkpoint consent (#1408): the hook command carries `--checkpoint`.
     pub(super) checkpoint: bool,
+    /// The machine status consent (#1403): the hook command carries `--machine-status`.
+    pub(super) machine_status: bool,
 }
 
 impl HookArgs {
@@ -148,7 +152,7 @@ pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>) -> Result<()> 
     let _ = t.release_all();
     let rooms = t.rooms()?;
     for room in &rooms {
-        let _ = t.set_status(room, "done session ended");
+        let _ = t.set_status(room, klatch::domain::SESSION_END_STATUS);
     }
     let _ = t.record_hook_run("SessionEnd", 0);
     // a worker that holds a credential loses it with its session (a launcher can issue another)
@@ -410,9 +414,11 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     // The end of a turn records what still runs in the background (a declared long wait) and prints nothing: the
     // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
     super::checkpoint::note_tool_call(t, ctx.stdin, args.checkpoint && args.is("PostToolUse"));
+    super::machine_status::on_tool_use(t, args.machine_status && args.is("PostToolUse"));
     if args.is("Stop") {
         let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
         let _ = t.record_stop(tasks, crons);
+        super::machine_status::on_stop(t, args.machine_status, tasks + crons > 0);
         super::checkpoint::stop_checkpoint(t, args.checkpoint);
         let _ = t.record_hook_run("Stop", 0);
         return Ok(());

@@ -9,6 +9,7 @@ mod briefing;
 mod capped;
 mod checkpoint;
 mod digest_cost;
+mod machine_status;
 mod messaging;
 mod never_read;
 mod wait;

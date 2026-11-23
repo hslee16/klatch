@@ -187,6 +187,20 @@ pub trait MemberStore {
         Ok(false)
     }
 
+    /// Set the member's machine status (#1403) in the room if it is due: the member has no status, or its status is
+    /// one of `owned` (a text the machine wrote), and, when it is the same text, the `window` has passed. A status the
+    /// member set itself stays. Counts the update by `class`. Returns whether it was written. The default writes
+    /// nothing.
+    fn put_machine_status(
+        &self,
+        _at: Seat,
+        _status: (&str, &str),
+        _owned: &[&str],
+        _when: (i64, i64),
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
     /// The machine checkpoints of a room, ordered by member.
     fn machine_checkpoints(&self, _room: &str) -> Result<Vec<MachineCheckpoint>> {
         Ok(Vec::new())

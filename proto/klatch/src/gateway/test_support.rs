@@ -233,6 +233,17 @@ impl MemberStore for SpyStore {
         self.inner.put_machine_checkpoint(at, body, last, now)
     }
 
+    fn put_machine_status(
+        &self,
+        at: Seat,
+        status: (&str, &str),
+        owned: &[&str],
+        when: (i64, i64),
+    ) -> Result<bool> {
+        self.gate()?;
+        self.inner.put_machine_status(at, status, owned, when)
+    }
+
     fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {
         self.gate()?;
         self.inner.machine_checkpoints(room)
