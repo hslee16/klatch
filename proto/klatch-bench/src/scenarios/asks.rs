@@ -282,8 +282,13 @@ fn partial_handoff(w: &World) -> Res {
     let start = w.ok("next", &["hook", "--event", "SessionStart"])?;
     has(
         &start,
-        "partial by helper: parsed the file; tests not written",
-        "the next helper is handed the partial work",
+        "partial by helper: ",
+        "the next helper is handed the partial work (in the briefing, #1409)",
+    )?;
+    has(
+        &start,
+        "parsed the file; tests not written",
+        "with what was done",
     )?;
     has(
         &w.ok("viewer", &["asks", "lobby"])?,

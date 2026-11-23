@@ -9,6 +9,17 @@
   seed.json      optional ("seed_history"): an earlier exchange present from the start: "room" (messages posted into the
                  room before any agent starts, K arms) and "board" (lines appended to TASKS.md, B1)
 
+Optional keys of fixture.json (#1374, scenario S9):
+  prebuilt_history  true when setup.sh builds a git repository itself (a scripted history): the harness then makes no first
+                    commit of its own and pushes DEST's main to the per-run origin as it is. setup.sh learns the arm from the
+                    environment variable COORDBENCH_ARM, so an arm can have extra files (a task board) inside that history.
+  room_history      a JSON file {"steps": [{"as", "argv", "key"?}]}: klatch commands run as earlier members into the run's
+                    temporary store before any agent starts (K arms only), see history.post_room
+  variants          {"name": {overrides}}: a variant replaces top-level keys of the spec. The variant "resume" carries
+                    {"resume": {"agent", "after_turns", "note": FILE}}: the agent's session is cut after that many turns and a
+                    second session with the same name and a short note starts (run.py). A variant other than "join" renames
+                    the fixture "<name>-<variant>" in records, so results of different variants are never pooled.
+
 The hidden checker is NOT in the fixture: checks/<checker>/check.sh CHECKOUT prints {"checks": [{"id", "pass",
 "unit"?}]} for a clone of the final origin. It is never copied into a checkout and never named in a prompt.
 """
@@ -25,8 +36,9 @@ class FixtureError(Exception):
 
 
 class Fixture:
-    def __init__(self, name, fixtures_dir=None, checks_dir=None):
+    def __init__(self, name, fixtures_dir=None, checks_dir=None, variant=None):
         self.name = name
+        self.variant = variant
         self.dir = os.path.join(fixtures_dir or os.path.join(HERE, "fixtures"), name)
         self.checks_dir = checks_dir or os.path.join(HERE, "checks")
         try:
@@ -34,6 +46,13 @@ class Fixture:
                 self.spec = json.load(f)
         except (OSError, ValueError) as e:
             raise FixtureError("cannot load fixture %s: %s" % (name, e))
+        if variant:
+            variants = self.spec.get("variants") or {}
+            if variant not in variants:
+                raise FixtureError("fixture %s has no variant %r (it has: %s)" % (name, variant, ", ".join(sorted(variants)) or "none"))
+            self.spec = dict(self.spec, **variants[variant])
+            if variant != "join":
+                self.name = "%s-%s" % (name, variant)
         self.agents = []
         for a in self.spec["agents"]:
             with open(os.path.join(self.dir, a["task"])) as f:
@@ -63,6 +82,22 @@ class Fixture:
                 p = os.path.join(d, n)
                 out.append((os.path.relpath(p, root), p))
         return sorted(out)
+        self.prebuilt_history = bool(self.spec.get("prebuilt_history"))
+        self.room_script = None
+        if self.spec.get("room_history"):
+            try:
+                with open(os.path.join(self.dir, self.spec["room_history"])) as f:
+                    self.room_script = json.load(f)["steps"]
+            except (OSError, ValueError, KeyError) as e:
+                raise FixtureError("cannot load the room history of fixture %s: %s" % (name, e))
+        self.resume = None
+        if self.spec.get("resume"):
+            self.resume = dict(self.spec["resume"])
+            try:
+                with open(os.path.join(self.dir, self.resume["note"])) as f:
+                    self.resume["note"] = f.read().strip()
+            except (OSError, KeyError) as e:
+                raise FixtureError("cannot load the resume note of fixture %s: %s" % (name, e))
 
     @property
     def names(self):
@@ -80,8 +115,10 @@ class Fixture:
                     h.update(f.read() + b"\0")
         return h.hexdigest()
 
-    def materialise(self, dest, seed, env):
+    def materialise(self, dest, seed, env, arm=None):
         os.makedirs(dest, exist_ok=True)
+        if arm:
+            env = dict(env, COORDBENCH_ARM=arm)
         p = subprocess.run(["bash", os.path.join(self.dir, "setup.sh"), dest, str(seed)], stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, text=True, env=env)
         if p.returncode != 0:

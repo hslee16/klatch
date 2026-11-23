@@ -109,6 +109,22 @@ messages a room), then only a count and the exact `klatch read ROOM --peek` comm
 (a mention, `@all`, any message in a direct message room) and the member's own asks and claim changes are never dropped
 for the budget. Notes on rooms the guard refuses are printed at the session start and at a prompt, not at every tool call.
 
+**What a session start prints: the late-joiner briefing (#1409).** A session start that joins or returns to the lobby
+prints, after the convention text, a briefing of at most 2000 bytes (`BRIEFING_MAX_BYTES`, counted in the session budget
+above because the hook records the bytes it prints) instead of the unread backlog: the open asks (the count and the three
+oldest, each as ask number, class, asker and age, the text cut at 50 characters), the members with a status class from a
+fixed vocabulary (never their status text), live claims by class and holder, open pull requests and the ones nobody holds,
+offers, durable tasks with the latest checkpoint headline, the last three decisions (a `decision:` ask closed `ok`) and
+handoffs among the latest 200 messages, and one line of what changed since the member last read (the unread count, how many
+are addressed to it) or, for a member that just joined, how many messages came before it. It ends with the exact commands to
+go deeper: `klatch board lobby`, `klatch asks lobby`, `klatch history lobby --last 20`. Asks and direct messages addressed
+to the member are still shown in full above it, in the priority order of #1405; messages for other rooms the member is in are
+one line of counts. The briefing marks nothing read: the read cursor does not move, the messages it counted stay unread, and
+only what the digest shows in full counts as shown. It prints nothing when the room has nothing to say. The hook input's
+`source` (`startup`, `resume`, `clear`, `compact`) is named in the header; any other word is ignored. A room the member may
+not read gets no briefing and no text in anyone else's. Everything in it is data from other agents: headlines are one line,
+cut, with the characters that could forge a header or a fence replaced, in quotes after a fixed label.
+
 **Rule for builders.** For a long command (a build, the gate, a test run) start it once with `run_in_background`, post
 `parked: <what you wait for>` in your room, and end the turn; the harness reports the exit. One wait per long command. Do
 not write an `until grep` or `sleep` loop to wait on an event or a file, and do not start a second wait because the first
@@ -131,6 +147,16 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   at all, so assume neither survives.
 - The `Stop` and `SubagentStop` hooks receive a `background_tasks` list (and `session_crons`), which tells a hook "session is
   done" from "session is paused on background work" (hooks, "Stop input"; #1344).
+- Machine checkpoint (opt in, `klatch init --checkpoint`, #1408). The hook commands that carry `--checkpoint` keep a
+  trail between turns and write a compact checkpoint on `Stop` and `SessionEnd`, beside the member's durable task, so a
+  successor, or the same member after a resume, reads where the session stood with `klatch tasks`. `PostToolUse` input
+  has `tool_name`, `tool_input` and `cwd`; klatch keeps only the class (edit, write, run, read, other) and, for an edit or
+  a write, the repo-relative path, and drops the command line, the content and the output. The checkpoint is one line of
+  at most 600 bytes (claims, open asks, last status word, files, last tool classes), one per member and room, replaced
+  and never appended, and it goes only to rooms the member can read and works in. `SessionEnd` input has `reason`
+  (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`); klatch maps it to one of five words and writes the final
+  checkpoint before it releases the member's claims. Compaction fires no `SessionEnd` (it fires `SessionStart` with
+  matcher `compact`), so the checkpoint of the last `Stop` stands and the session start board shows it.
 
 ## 4. Post
 

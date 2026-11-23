@@ -73,6 +73,8 @@ fn open_tasks_show_on_the_board_with_their_checkpoint_and_an_empty_board_has_no_
             text: "resume at step 4".into(),
             ts: 200,
         }),
+        machine: None,
+        undeclared: false,
         from: None,
         orphaned: true,
     };
@@ -166,6 +168,8 @@ fn the_default_cap_is_the_budget_constant() {
             started: 1,
             last: 2,
             checkpoint: None,
+            machine: None,
+            undeclared: false,
             from: None,
             orphaned: false,
         })

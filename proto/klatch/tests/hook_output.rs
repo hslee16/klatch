@@ -41,7 +41,7 @@ fn a_message_the_hook_showed_is_still_readable_once() {
 }
 
 #[test]
-fn the_session_start_hook_lists_the_backlog_but_other_events_do_not() {
+fn the_session_start_hook_briefs_on_the_open_asks_but_other_events_do_not() {
     let h = Home::new();
     h.ok("alice", &["join", "lobby"]);
     h.ok("alice", &["post", "lobby", "seeking: the api"]);
@@ -53,8 +53,7 @@ fn the_session_start_hook_lists_the_backlog_but_other_events_do_not() {
         "backlog outside session start: {other}"
     );
     let start = h.ok("helper", &["hook", "--event", "SessionStart"]);
-    assert!(
-        start.contains("open ask #1 from alice (no claim)"),
-        "got: {start}"
-    );
+    // the briefing lists the open asks (#1409), oldest first, instead of one digest line each
+    assert!(start.contains("open asks: 1"), "got: {start}");
+    assert!(start.contains("#1 ask alice"), "got: {start}");
 }

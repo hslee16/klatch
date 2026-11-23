@@ -69,6 +69,7 @@ pub use workers::{
 mod board;
 mod checks;
 mod claims;
+mod machine_checkpoint;
 mod presence;
 mod priority;
 mod reading;

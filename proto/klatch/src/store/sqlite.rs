@@ -18,6 +18,7 @@ mod housekeeping;
 mod integrity;
 mod label_keys;
 mod leases;
+mod machine_checkpoint;
 mod messaging;
 mod parking;
 mod releases;

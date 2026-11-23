@@ -5,7 +5,10 @@ It reads a JSON script and performs the steps for its name: file edits, git, kla
 goes it prints stream-json events in the shape `claude -p --output-format stream-json` prints (init, assistant tool_use,
 user tool_result, result), so the harness parses a fake run exactly as it parses a real one.
 
-    fake_agent.py --script FILE --name NAME --arm ARM --out DIR [--room ROOM] [--klatch-bin PATH]
+    fake_agent.py --script FILE --name NAME --arm ARM --out DIR [--room ROOM] [--klatch-bin PATH] [--session N]
+
+--session 2 is the restart of an agent after its context was cleared (S9 resume): it runs the steps under the key "NAME#2"
+(the default steps when there are none), a separate process that remembers nothing of session 1 except what is on disk.
 
 Script: {"agents": {"<name>": [step, ...]}, "default": [step, ...]}. A step may carry "arms": ["K1", ...] to run only in
 those arms, and "allow_fail": true to go on after a failing command. Steps (op):
@@ -19,15 +22,22 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
                                  to OUT/path
   dump_board {path}              write TASKS.md as it is in the working directory to OUT/path
   append {path, content}         append text to a file (created when absent)
+  replace {path, old, new}       replace the one occurrence of old in a file with new; the agent fails when old is absent
+                                 or occurs more than once (an edit of a file as it is now, not a copy of a stale one)
   sync {message, resolve?}       git add -A, commit, pull --no-rebase, push to origin main (retries a lost race).
                                  resolve: "union" (keep both sides of every conflicted file) or "ours" (keep this
                                  agent's side, dropping the other's lines) resolves a conflicted pull and goes on; without
                                  it the agent stops on a conflict as before
   klatch {args}                  run the klatch binary given by --klatch-bin ({{ROOM}} and {{NAME}} are filled in)
   say {text}                     an assistant text message
+  read {path}                    a Read tool call on a file (its text is the result)
+  run {argv}                     run any command (a Bash tool call); a nonzero exit ends the agent unless allow_fail
+  hook {text}                    a SessionStart style hook_response event with this output (what a hook injects)
   cost {usd}                     report cumulative spend so far (a fake_cost event)
   sleep {s}, hang                wait; hang waits until the harness kills it
   exit {code}                    stop at once with that exit code, with no result message (a crashed agent)
+  poll {n, command?}             n polling turns: n Bash calls of the command (default `sleep 5`) with empty output; no real
+                                 waiting (the scenario S3 tests use it for a blocked agent that polls many times)
   wait_origin_has {path, contains?, timeout}  fetch until origin/main has the file (and, when given, text in it)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
   final {text}                   the final message
@@ -129,6 +139,14 @@ class Agent:
             with open(st["path"], "a") as f:
                 f.write(st["content"])
             self.tool("Edit", {"file_path": st["path"], "append": st["content"]}, "ok")
+        elif op == "replace":
+            with open(st["path"]) as f:
+                text = f.read()
+            if text.count(st["old"]) != 1:
+                self.die("replace: the text to replace occurs %d times in %s" % (text.count(st["old"]), st["path"]))
+            with open(st["path"], "w") as f:
+                f.write(text.replace(st["old"], st["new"]))
+            self.tool("Edit", {"file_path": st["path"], "old_string": st["old"], "new_string": st["new"]}, "ok")
         elif op == "git":
             self.bash(["git"] + st["args"], allow)
         elif op == "sync":
@@ -165,6 +183,13 @@ class Agent:
         elif op == "dump_board":
             with open("TASKS.md") as src, open(os.path.join(self.args.out, st["path"]), "w") as f:
                 f.write(src.read())
+        elif op == "read":
+            with open(st["path"]) as f:
+                self.tool("Read", {"file_path": st["path"]}, f.read())
+        elif op == "run":
+            self.bash([self.fill(a) for a in st["argv"]], allow)
+        elif op == "hook":
+            emit({"type": "system", "subtype": "hook_response", "hook_event": "SessionStart", "output": self.fill(st["text"])})
         elif op == "say":
             self.assistant({"type": "text", "text": st["text"]})
         elif op == "cost":
@@ -176,6 +201,9 @@ class Agent:
             time.sleep(3600)
         elif op == "exit":
             sys.exit(int(st.get("code", 1)))
+        elif op == "poll":
+            for _ in range(int(st.get("n", 1))):
+                self.tool("Bash", {"command": st.get("command", "sleep 5")}, "")
         elif op == "wait_origin_has":
             deadline = time.time() + float(st.get("timeout", 30))
             while time.time() < deadline:
@@ -202,7 +230,8 @@ class Agent:
             self.die("unknown op %s" % op)
 
     def run(self, script):
-        steps = script.get("agents", {}).get(self.args.name, script.get("default", []))
+        key = self.args.name if self.args.session == 1 else "%s#%d" % (self.args.name, self.args.session)
+        steps = script.get("agents", {}).get(key, script.get("default", []))
         emit({"type": "system", "subtype": "init", "model": "claude-fake", "session_id": "fake-" + self.args.name})
         for st in steps:
             if st.get("arms") and self.args.arm not in st["arms"]:
@@ -223,6 +252,7 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--room", default="lobby")
     p.add_argument("--klatch-bin")
+    p.add_argument("--session", type=int, default=1)
     args = p.parse_args()
     with open(args.script) as f:
         script = json.load(f)

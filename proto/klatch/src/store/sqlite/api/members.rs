@@ -163,6 +163,32 @@ impl MemberStore for SqliteStore {
         )
     }
 
+    fn trail_of(&self, member: &str) -> Result<crate::domain::Trail> {
+        self.do_trail_of(member)
+    }
+
+    fn save_trail(&self, member: &str, trail: &crate::domain::Trail, now: i64) -> Result<()> {
+        self.do_save_trail(member, trail, now)
+    }
+
+    fn clear_trail(&self, member: &str) -> Result<()> {
+        self.do_clear_trail(member)
+    }
+
+    fn put_machine_checkpoint(
+        &self,
+        at: (&str, &str),
+        body: &str,
+        last: bool,
+        now: i64,
+    ) -> Result<bool> {
+        self.do_put_machine_checkpoint(at, body, last, now)
+    }
+
+    fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {
+        self.do_machine_checkpoints(room)
+    }
+
     fn members(&self, room: &str) -> Result<Vec<MemberInfo>> {
         self.rows(
             "SELECT m.name,m.last_seen,m.status,NULLIF(p.parent,''),k.why,k.back_by,m.joined,m.status_ts FROM members m

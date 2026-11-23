@@ -9,9 +9,9 @@ use super::SqliteStore;
 use super::connect::be;
 use super::schema::{WAIT_WINDOW_SECS, user_version};
 use crate::domain::{
-    AskCounts, ClaimCounts, ClaimHistory, Counts, MemberCounts, Result, RoomClass, RoomCount,
-    StatsOptions, UsageStats, answer_target, claim_class, closed_target, day_of, is_ask,
-    median_and_p90, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MemberCounts, Result,
+    RoomClass, RoomCount, StatsOptions, UsageStats, answer_target, claim_class, closed_target,
+    day_of, is_ask, median_and_p90, vocab,
 };
 use crate::keys::Key;
 use rusqlite::types::Value;
@@ -422,6 +422,34 @@ fn claim_history(conn: &Connection, o: &StatsOptions) -> Result<ClaimHistory> {
     Ok(h)
 }
 
+/// The machine checkpoint events (#1408) in the window: counts and bytes. Nothing in the table is text.
+fn machine_checkpoint_counts(
+    conn: &Connection,
+    o: &StatsOptions,
+) -> Result<MachineCheckpointCounts> {
+    if !has(conn, "machine_checkpoint_events")? {
+        return Ok(MachineCheckpointCounts::default());
+    }
+    let w = "(?1 IS NULL OR room=?1) AND ts>=?2";
+    let n = |extra: &str| {
+        one(
+            conn,
+            &format!("SELECT COUNT(*) FROM machine_checkpoint_events WHERE {w}{extra}"),
+            o,
+        )
+    };
+    Ok(MachineCheckpointCounts {
+        written: n("")?,
+        last: n(" AND last<>0")?,
+        replaced: n(" AND replaced<>0")?,
+        bytes: one(
+            conn,
+            &format!("SELECT COALESCE(SUM(bytes),0) FROM machine_checkpoint_events WHERE {w}"),
+            o,
+        )?,
+    })
+}
+
 fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     let sealed: HashSet<String> = if has(conn, "policy")? {
         rows(
@@ -546,6 +574,7 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
         },
         history: claim_history(conn, o)?,
     };
+    s.machine_checkpoints = machine_checkpoint_counts(conn, o)?;
     s.refusals = words(
         conn,
         "refusals",

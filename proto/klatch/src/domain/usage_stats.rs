@@ -101,6 +101,16 @@ pub struct ClaimHistory {
     pub holds: i64,
 }
 
+/// The machine checkpoints written in the window (#1408): how many, how many of those were a session's last, how many
+/// replaced an earlier one, and their total size in bytes. Counts only; the checkpoint itself is never read here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MachineCheckpointCounts {
+    pub written: i64,
+    pub last: i64,
+    pub replaced: i64,
+    pub bytes: i64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemberCounts {
     /// Distinct member names that joined any room in scope.
@@ -135,6 +145,7 @@ pub struct UsageStats {
     pub kinds: Counts,
     pub asks: AskCounts,
     pub claims: ClaimCounts,
+    pub machine_checkpoints: MachineCheckpointCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
@@ -386,6 +397,11 @@ impl UsageStats {
             opt(h.hold_median),
             h.holds
         ));
+        let mc = &self.machine_checkpoints;
+        o.push_str(&format!(
+            "machine checkpoints: {} written ({} at session end), {} replaced an earlier one, {} bytes\n",
+            mc.written, mc.last, mc.replaced, mc.bytes
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -507,6 +523,10 @@ impl UsageStats {
                     "hold_median_secs": self.claims.history.hold_median,
                     "holds": self.claims.history.holds,
                 },
+            },
+            "machine_checkpoints": {
+                "written": self.machine_checkpoints.written, "last": self.machine_checkpoints.last,
+                "replaced": self.machine_checkpoints.replaced, "bytes": self.machine_checkpoints.bytes,
             },
             "refusals": pairs(&self.refusals),
             "members": {

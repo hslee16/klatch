@@ -21,6 +21,7 @@ fn refuse_claude_only(options: &Options) -> anyhow::Result<()> {
         (options.no_session_end, "--no-session-end"),
         (options.enforce != init::Switch::Keep, "--enforce"),
         (options.wake != init::Switch::Keep, "--wake"),
+        (options.checkpoint != init::Switch::Keep, "--checkpoint"),
     ];
     if let Some((_, flag)) = claude_only.iter().find(|(set, _)| *set) {
         bail!(

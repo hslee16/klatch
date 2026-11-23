@@ -169,19 +169,27 @@ enum Cmd {
         /// Remove klatch's wake hook
         #[arg(long)]
         no_wake: bool,
+        /// Keep a machine checkpoint of each session (off by default): a Stop hook, and a flag on the PostToolUse and
+        /// SessionEnd hooks, record tool classes and edited paths (never a command, content or output) and write a
+        /// compact checkpoint beside the member's task for a successor or a resume
+        #[arg(long, conflicts_with = "no_checkpoint")]
+        checkpoint: bool,
+        /// Remove the machine checkpoint hook and the flag
+        #[arg(long)]
+        no_checkpoint: bool,
         /// Remove every hook klatch installed (and nothing else) from the settings of --scope; keeps your rooms
         /// and keys
         #[arg(
             long,
-            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake"]
+            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint"]
         )]
         uninstall: bool,
     },
-    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake), or switch one on or off
+    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint), or switch one on or off
     /// later; edits only klatch's own hook entries, after a diff and a yes
     #[command(display_order = 35)]
     Consent {
-        /// The consent to change: board, join, session-end, enforce or wake (none: show them all)
+        /// The consent to change: board, join, session-end, enforce, wake or checkpoint (none: show them all)
         name: Option<String>,
         /// on or off (for board: off or a room name)
         value: Option<String>,
@@ -417,6 +425,8 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_enforce,
             wake,
             no_wake,
+            checkpoint,
+            no_checkpoint,
             uninstall,
         } => run_init(&init::Options {
             scope,
@@ -426,6 +436,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_session_end,
             enforce: init::Switch::from_flags(enforce, no_enforce),
             wake: init::Switch::from_flags(wake, no_wake),
+            checkpoint: init::Switch::from_flags(checkpoint, no_checkpoint),
             uninstall,
             codex: cli.who.codex,
         }),

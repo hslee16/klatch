@@ -22,12 +22,14 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             event,
             board,
             no_join,
+            checkpoint,
         } => hook(
             ctx,
             &HookArgs {
                 event,
                 board,
                 no_join,
+                checkpoint,
             },
         )?,
         AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
@@ -124,6 +126,8 @@ pub(super) struct HookArgs {
     pub(super) event: Option<String>,
     pub(super) board: Option<String>,
     pub(super) no_join: bool,
+    /// The machine checkpoint consent (#1408): the hook command carries `--checkpoint`.
+    pub(super) checkpoint: bool,
 }
 
 impl HookArgs {
@@ -134,7 +138,9 @@ impl HookArgs {
 
 /// A session that ends is marked done in every room it joined, so it leaves the board at once instead of aging out
 /// (DESIGN section 25.13). It prints nothing: the session is over.
-pub(super) fn session_end(t: &dyn Transport) -> Result<()> {
+pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>) -> Result<()> {
+    // the final machine checkpoint (#1408) first: it names the claims the release below frees
+    super::checkpoint::end_checkpoint(t, ended);
     // Only the rooms are needed: a digest would mark unread messages as shown, and a resumed session would never
     // be shown them (#30).
     // a member that has ended cannot be working: free what it held (#277). First, so a credential that idled out
@@ -155,6 +161,8 @@ pub(super) struct Start {
     /// Claude Code shows `systemMessage` to the user; the board and the convention go to the model as context.
     pub(super) notice: Option<String>,
     pub(super) boards: Vec<String>,
+    /// The member was not in the default lobby before this start, so it begins at the end of the history (#1409).
+    pub(super) joined_new: bool,
 }
 
 /// A session start joins the default lobby, so nobody has to tell a new session to (installing the hooks is the
@@ -179,7 +187,11 @@ pub(super) fn join_lobby(ctx: &Ctx) -> Result<Start> {
         t.ack(DEFAULT_ROOM, i64::MAX)?;
         boards.push(DEFAULT_ROOM.to_string());
     }
-    Ok(Start { notice, boards })
+    Ok(Start {
+        notice,
+        boards,
+        joined_new: !was_member,
+    })
 }
 
 /// The notes on rooms the guard would not show, cut to a fixed budget with a count of the rest (#612), and their
@@ -225,16 +237,21 @@ pub(super) fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Optio
     // Housekeeping: a session start removes members not seen for a day (their messages stay). A failure here must
     // never stop the session.
     let _ = t.prune_members(klatch::domain::MEMBER_RETENTION_SECS);
-    let Start { notice, mut boards } = if args.no_join {
+    let Start {
+        notice,
+        mut boards,
+        joined_new,
+    } = if args.no_join {
         Start {
             notice: None,
             boards: Vec::new(),
+            joined_new: false,
         }
     } else {
         join_lobby(ctx)?
     };
     // A session start also lists open asks nobody has claimed, so a new or restarted helper picks up what it missed.
-    let d = t.digest_with(true)?;
+    let mut d = t.digest_with(true)?;
     // Consent to read a room before joining it is the hook command carrying --board; it reads without joining, so
     // a visitor never becomes a member.
     if let Some(room) = args
@@ -250,9 +267,56 @@ pub(super) fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Optio
     } else {
         String::new()
     };
-    // The digest, the convention and the boards share one hook budget (#557). The convention is whole; the digest
-    // leaves a floor for the boards, which are cut line by line (before messages are) with a count.
-    use klatch::domain::{budget, printed_len};
+    // The convention, the briefing and the digest share one hook budget (#557, #1409). The convention is whole; the
+    // briefing is bounded by its own budget; the digest keeps the rest, and addressed messages first.
+    use klatch::domain::{BRIEFING_MAX_BYTES, budget, printed_len};
+    // The briefing replaces the unread backlog (#1409): the rooms it covers are the lobby (the member joined it or was
+    // already in it) and every room the hook was told to show (`--board`). Only a session that is taught the lobby gets
+    // it; a hook that does not join keeps the digest as it was.
+    let briefed_rooms: Vec<(String, Kind)> = if taught.is_empty() {
+        Vec::new()
+    } else {
+        let in_digest = |room: &str| d.rooms.iter().any(|r| r.room == room);
+        let mut rooms: Vec<(String, Kind)> = Vec::new();
+        if joined_new || in_digest(DEFAULT_ROOM) {
+            let kind = if joined_new {
+                Kind::New
+            } else {
+                Kind::Returning
+            };
+            rooms.push((DEFAULT_ROOM.to_string(), kind));
+        }
+        for room in &boards {
+            if !rooms.iter().any(|(r, _)| r == room) {
+                let kind = if in_digest(room) {
+                    Kind::Returning
+                } else {
+                    Kind::Visitor
+                };
+                rooms.push((room.clone(), kind));
+            }
+        }
+        rooms
+    };
+    let briefing = if taught.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<String> = briefed_rooms.iter().map(|(r, _)| r.clone()).collect();
+        let others =
+            klatch::domain::other_rooms_line(&cut_digest(&mut d, &names), BRIEFING_MAX_BYTES / 4);
+        let source = start_source(ctx.stdin);
+        let mut left = BRIEFING_MAX_BYTES.saturating_sub(printed_len(&others));
+        let mut out = String::new();
+        for (room, kind) in &briefed_rooms {
+            let standing = standing_of(t, room, *kind);
+            if let Some(text) = room_briefing(ctx, room, standing, source, left) {
+                left = left.saturating_sub(printed_len(&text));
+                out.push_str(&text);
+            }
+        }
+        out.push_str(&others);
+        out
+    };
     let (mut text, refused_len) = refused_text(&d);
     // #894: once per session start, say when the declared scope names another repository than the one this member
     // runs in. The declared scope still wins; the line is fixed text, no name and no path.
@@ -270,22 +334,23 @@ pub(super) fn session_start(ctx: &Ctx, args: &HookArgs) -> Result<(String, Optio
         } else {
             ""
         });
-    let floor = if boards.is_empty() {
-        0
-    } else {
-        budget::BOARD_FLOOR_BYTES
-    };
-    let digest_budget = budget::DIGEST_MAX_BYTES
-        .min(budget::HOOK_MAX_BYTES.saturating_sub(printed_len(&taught) + floor + refused_len));
+    let digest_budget = budget::DIGEST_MAX_BYTES.min(
+        budget::HOOK_MAX_BYTES
+            .saturating_sub(printed_len(&taught) + printed_len(&briefing) + refused_len),
+    );
     text.push_str(&klatch::domain::render_hook_within(
         &d.rooms,
         d.now,
         digest_budget,
     ));
     text.push_str(&taught);
-    for room in &boards {
-        let left = budget::HOOK_MAX_BYTES.saturating_sub(printed_len(&text));
-        text.push_str(&board_within(&board_text(t, room, d.now)?, room, left));
+    text.push_str(&briefing);
+    // A room named by `--board` that is not briefed (taught is empty: the hook does not join) keeps its board.
+    if taught.is_empty() {
+        for room in &boards {
+            let left = budget::HOOK_MAX_BYTES.saturating_sub(printed_len(&text));
+            text.push_str(&board_within(&board_text(t, room, d.now)?, room, left));
+        }
     }
     Ok((text, notice))
 }
@@ -325,7 +390,7 @@ pub(super) fn note_permission_mode(ctx: &Ctx) {
 pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
-        return session_end(t);
+        return session_end(t, super::checkpoint::end_reason(ctx.stdin, args.checkpoint));
     }
     note_permission_mode(ctx);
     if args.is("PreToolUse") {
@@ -344,9 +409,11 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     }
     // The end of a turn records what still runs in the background (a declared long wait) and prints nothing: the
     // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
+    super::checkpoint::note_tool_call(t, ctx.stdin, args.checkpoint && args.is("PostToolUse"));
     if args.is("Stop") {
         let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
         let _ = t.record_stop(tasks, crons);
+        super::checkpoint::stop_checkpoint(t, args.checkpoint);
         let _ = t.record_hook_run("Stop", 0);
         return Ok(());
     }

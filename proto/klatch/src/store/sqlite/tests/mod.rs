@@ -21,6 +21,7 @@ mod cycle_notice;
 mod encryption;
 mod label_keys;
 mod long_tasks;
+mod machine_checkpoint;
 mod members;
 mod messages;
 mod migration_property;

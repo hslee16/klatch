@@ -704,7 +704,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 41);
+    assert_eq!(SCHEMA_VERSION, 42);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -764,7 +764,7 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 41);
+    assert_eq!(SCHEMA_VERSION, 42);
     let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
     assert_eq!(unread.len(), 1, "the cursor survives");
     s.mark_shown(
@@ -779,5 +779,48 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
             .unwrap()
             .is_empty()
     );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data() {
+    let path = temp_db("migrate-v41-machine-checkpoint");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "working: x", 2).unwrap();
+        s.conn
+            .execute_batch(
+                "DROP TABLE member_trail; DROP TABLE machine_checkpoints; DROP TABLE machine_checkpoint_events; PRAGMA user_version = 41;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 42);
+    for table in [
+        "member_trail",
+        "machine_checkpoints",
+        "machine_checkpoint_events",
+    ] {
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "{table}");
+    }
+    assert!(
+        s.machine_checkpoints("r").unwrap().is_empty(),
+        "starts empty"
+    );
+    assert!(
+        !s.put_machine_checkpoint(("r", "alice"), "turn ended", false, 3)
+            .unwrap()
+    );
+    assert_eq!(s.machine_checkpoints("r").unwrap().len(), 1);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
