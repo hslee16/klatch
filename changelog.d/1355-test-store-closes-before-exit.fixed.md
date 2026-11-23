@@ -1,0 +1,1 @@
+- A rare SIGSEGV after a passing test (`a_consumer_that_reads_slowly_but_keeps_reading_is_not_refused`, nextest in CI) is fixed: the test helper closed its SQLCipher connection on a detached thread after reporting, racing the process exit; it now closes the store first. Tests only, no product change (#1355).

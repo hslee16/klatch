@@ -97,6 +97,10 @@ fn start(
         let gateway = gateway_on(&path);
         let who = alice();
         let ended = Session::new(&gateway, &who, &config).serve_guarded(input, output, closer);
+        // Close the store BEFORE reporting (#1355). The test returns the moment it hears the result, and the process
+        // may then exit and run the bundled SQLCipher's atexit shutdown, which frees global state; a connection
+        // still being closed on this detached thread would be using it (SIGSEGV in sqlite3FreeCodecArg).
+        drop(gateway);
         let _ = done.send(ended);
     });
     result

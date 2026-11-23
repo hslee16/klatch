@@ -1,0 +1,4 @@
+A test thread closes its store before it reports, so process exit never races a SQLCipher close (#1355; no schema change; 2026-11-22).
+The `session::tests::guarded` helper ran a session on a detached thread that dropped its gateway (and with it the SQLCipher connection) after sending its result. The test returned on the result, the harness exited, and the bundled SQLCipher's atexit shutdown freed its global state while the thread was inside `sqlite3_close`, a rare SIGSEGV after a passing test (macOS crash reports show the main thread in `sqlcipher_atexit` while the thread is in `sqlite3FreeCodecArg`). The helper now drops the gateway before it sends.
+
+No product code path is affected: the real session closes its store on the serving thread before the process exits. Any future test that runs a store on a detached thread must close the store before it reports, or join the thread.
