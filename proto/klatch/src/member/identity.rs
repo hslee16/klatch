@@ -374,16 +374,30 @@ pub(crate) fn runs_claude_code(evidence: &PeerEvidence, codex: bool) -> bool {
     !codex && matches!(evidence, PeerEvidence::Session { .. })
 }
 
+/// The name the caller typed, else the environment's `KLATCH_NAME`.
+fn declared_name(who: &Who) -> Option<String> {
+    who.as_member
+        .clone()
+        .or_else(|| std::env::var("KLATCH_NAME").ok())
+}
+
+/// Whether discovery of the session was asked for, by flag or by `KLATCH_DISCOVER=1`.
+fn discover_asked(who: &Who) -> bool {
+    who.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1")
+}
+
+/// Whether `who` carries a name or discovery of its own, which an ssh key forbids.
+fn names_itself(who: &Who) -> bool {
+    who.as_member.is_some() || who.discover || who.codex
+}
+
 /// Who is calling: the typed name if there is one, else the coding-agent session found above this process, kept to
 /// one stable member name. `None` for a SessionEnd hook that cannot tell which session it ends: that does nothing,
 /// quietly, because it must never fail a session's exit and never act as anyone else.
 pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Option<Caller>> {
     // The only thing the CLI knows about its caller is a typed name, which proves nothing.
-    let declared = who
-        .as_member
-        .clone()
-        .or_else(|| std::env::var("KLATCH_NAME").ok());
-    let discover = who.discover || std::env::var("KLATCH_DISCOVER").is_ok_and(|v| v == "1");
+    let declared = declared_name(who);
+    let discover = discover_asked(who);
     // A worker holding a key bundle is who the bundle says, proven by its credential, and never anyone else.
     if let Some(path) = std::env::var_os("KLATCH_IDENTITY_FILE") {
         return identify_by_credential(
@@ -484,7 +498,7 @@ fn identify_by_credential(
 /// the remote sends is looked at (no typed name, no environment variable, no `SSH_ORIGINAL_COMMAND`), so `who` must
 /// carry no name of its own. An unmapped label is refused with the rule and the next step, and the refusal is kept.
 pub(crate) fn identify_by_ssh_key(who: &Who, label: &str, store: &SqliteStore) -> Result<Caller> {
-    if who.as_member.is_some() || who.discover || who.codex {
+    if names_itself(who) {
         bail!(
             "the member of this session is fixed by the ssh key {label}; --as-member, --discover and --codex are refused with --ssh-key"
         );
