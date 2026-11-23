@@ -32,23 +32,7 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
             let id = t.request_crossing(&room, seq, &to)?;
             println!("crossing {id} queued: {room}#{seq} to {to}, waiting for a verdict");
         }
-        WorkCmd::Crossings { limit } => {
-            let list = t.my_crossings(limit)?;
-            if list.is_empty() {
-                println!("no crossings asked for by {}", ctx.me);
-            }
-            for c in list {
-                println!(
-                    "{}\t{}#{} to {}\t{}\t{}",
-                    c.id,
-                    flat(&c.room),
-                    c.seq,
-                    flat(&c.to_room),
-                    c.state,
-                    c.why
-                );
-            }
-        }
+        WorkCmd::Crossings { limit } => crossings(ctx, limit)?,
         WorkCmd::Board { room } => for_rooms(t, room, |room| {
             print!("{}", render_board(&t.board(room)?, ctx.now));
             Ok(())
@@ -62,19 +46,7 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
             Ok(())
         })?,
         WorkCmd::CouldAnswer { room, ask, member } => {
-            let c = t.could_answer(&room, member.as_deref().unwrap_or(ctx.me), ask)?;
-            if c.could() {
-                println!("yes");
-            } else {
-                println!("no");
-                for b in &c.blockers {
-                    println!("{}: {}", b.rule, flat(&b.reason));
-                }
-            }
-            // what the ask points at (#1318); no verdict depends on it
-            for line in klatch::domain::ref_lines(&c.refs, false) {
-                println!("{line}");
-            }
+            could_answer(ctx, &room, ask, member.as_deref())?
         }
         WorkCmd::Tasks { room } => {
             for task in t.board(&room)?.tasks {
@@ -83,6 +55,44 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
         }
         WorkCmd::Claims { room } => for_rooms(t, room, |room| claims(ctx, room))?,
         WorkCmd::Refusals { limit } => my_refusals(ctx, limit)?,
+    }
+    Ok(())
+}
+
+/// The caller's own crossings, one line each.
+fn crossings(ctx: &Ctx, limit: usize) -> Result<()> {
+    let list = ctx.t.my_crossings(limit)?;
+    if list.is_empty() {
+        println!("no crossings asked for by {}", ctx.me);
+    }
+    for c in list {
+        println!(
+            "{}\t{}#{} to {}\t{}\t{}",
+            c.id,
+            flat(&c.room),
+            c.seq,
+            flat(&c.to_room),
+            c.state,
+            c.why
+        );
+    }
+    Ok(())
+}
+
+/// Whether a member could answer an ask: yes, or no with what blocks it.
+fn could_answer(ctx: &Ctx, room: &str, ask: i64, member: Option<&str>) -> Result<()> {
+    let c = ctx.t.could_answer(room, member.unwrap_or(ctx.me), ask)?;
+    if c.could() {
+        println!("yes");
+    } else {
+        println!("no");
+        for b in &c.blockers {
+            println!("{}: {}", b.rule, flat(&b.reason));
+        }
+    }
+    // what the ask points at (#1318); no verdict depends on it
+    for line in klatch::domain::ref_lines(&c.refs, false) {
+        println!("{line}");
     }
     Ok(())
 }

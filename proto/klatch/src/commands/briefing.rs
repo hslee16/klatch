@@ -20,8 +20,7 @@ pub(super) fn start_source(input: Option<&serde_json::Value>) -> Option<StartSou
 pub(super) fn room_briefing(
     ctx: &Ctx,
     room: &str,
-    standing: Standing,
-    source: Option<StartSource>,
+    (standing, source): (Standing, Option<StartSource>),
     cap: usize,
 ) -> Option<String> {
     let t = ctx.t;

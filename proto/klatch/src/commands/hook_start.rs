@@ -208,7 +208,7 @@ fn briefing_text(
     let mut out = String::new();
     for (room, kind) in briefed_rooms {
         let standing = standing_of(ctx.t, room, *kind);
-        if let Some(text) = room_briefing(ctx, room, standing, source, left) {
+        if let Some(text) = room_briefing(ctx, room, (standing, source), left) {
             left = left.saturating_sub(printed_len(&text));
             out.push_str(&text);
         }
