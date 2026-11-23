@@ -1,5 +1,9 @@
 //! `klatch-server` starts no program and makes no outbound connection. Since phase 2 (#1058) it may listen on TCP, but
-//! only in `src/loopback.rs`, which refuses every address but 127.0.0.1 and ::1. Since #102 it may also listen on a Unix
+//! only in `src/loopback.rs`, which refuses every address but 127.0.0.1 and ::1, with one narrow exception (#108): the
+//! mutual TLS listener (`klatch-server https`) may bind another address when the operator allows it, through
+//! `bind_mutual_tls`, which asks `klatch::session::policy::check_mutual_tls_bind` first (a client CA is required and an
+//! address off loopback needs `--allow-off-loopback`). TLS is rustls (with ring), named only in `src/tls.rs` and `src/tls_bridge.rs`, and no
+//! call that skips a check is named anywhere. Since #102 it may also listen on a Unix
 //! domain socket and ask the kernel who is on the other end, but only in `src/daemon.rs`. This is an audit by inspection, like the one for
 //! the `klatch` binary (klatch/tests/no_telemetry.rs): it checks what the crate could do (its dependencies and its
 //! source), not what one run did. The rules: socket types and `std::net` only in the loopback module (and its tests, for
@@ -42,7 +46,9 @@ fn rust_sources() -> Vec<(String, String)> {
 }
 
 /// The one source file that may name the socket types and open a listener (#1058): the loopback listener, which refuses
-/// every address but 127.0.0.1 and ::1. Phases 3 and 4 reuse it; no other file gets this allowance.
+/// every address but 127.0.0.1 and ::1, and (#108) the policy-checked bind of the mutual TLS listener. Phases 3 and 4 and
+/// the TLS listener reuse it; no other file gets this allowance. `tls.rs` and `wire_https.rs` name only the `Stream` and
+/// `Listener` aliases and `loopback::connected_pair`, never a socket type.
 const LOOPBACK_ONLY: &[&str] = &["src/loopback.rs"];
 
 /// The one source file that may name the Unix socket types and the kernel's peer-credential calls (#102): the daemon,
@@ -184,8 +190,16 @@ fn the_source_opens_no_socket_outside_the_loopback_module_and_starts_no_program(
     );
 }
 
+/// The text of the function that starts at `signature` in `text`, up to the next top-level closing brace.
+fn function<'a>(text: &'a str, signature: &str) -> &'a str {
+    let start = text
+        .find(signature)
+        .unwrap_or_else(|| panic!("{signature}"));
+    text[start..].split("\n}\n").next().unwrap()
+}
+
 #[test]
-fn there_is_exactly_one_bind_and_the_loopback_check_runs_before_it() {
+fn there_is_exactly_one_bind_and_each_way_to_it_checks_the_address_first() {
     let sources = rust_sources();
     let binds: Vec<&str> = sources
         .iter()
@@ -204,16 +218,40 @@ fn there_is_exactly_one_bind_and_the_loopback_check_runs_before_it() {
         .iter()
         .find(|(rel, _)| rel == "src/loopback.rs")
         .unwrap();
-    let start = text.find("pub fn bind_loopback").expect("bind_loopback");
-    let body = &text[start..];
-    let check = body
-        .find("check_loopback(")
-        .expect("the address is checked");
-    let bind = body.find("TcpListener::bind").unwrap();
+    // the loopback way: the check, then the one bind
+    let body = function(text, "pub fn bind_loopback");
+    let (check, bind) = (
+        body.find("check_loopback(")
+            .expect("the address is checked"),
+        body.find("bind_checked(").expect("the one bind"),
+    );
     assert!(check < bind, "the loopback check comes before the bind");
-    // the only addresses the module accepts are spelled out in one function, and it does not use `is_loopback`
-    let allowed = text.split("fn is_allowed_ip").nth(1).unwrap();
-    let allowed = allowed.split("\n}\n").next().unwrap();
+    // the TLS way (#108): the policy check, then the one bind; nothing else binds
+    let body = function(text, "pub fn bind_mutual_tls");
+    let (check, bind) = (
+        body.find("check_mutual_tls_addr(")
+            .expect("the policy check"),
+        body.find("bind_checked(").expect("the one bind"),
+    );
+    assert!(check < bind, "the policy check comes before the bind");
+    let check = function(text, "pub fn check_mutual_tls_addr");
+    assert!(
+        check.contains("check_mutual_tls_bind("),
+        "the policy module decides"
+    );
+    let callers = |name: &str| -> Vec<&str> {
+        sources
+            .iter()
+            .filter(|(rel, t)| {
+                rel != "src/loopback.rs" && t.lines().map(code_of).any(|l| l.contains(name))
+            })
+            .map(|(rel, _)| rel.as_str())
+            .collect()
+    };
+    assert_eq!(callers("bind_checked("), Vec::<&str>::new());
+    assert_eq!(callers("bind_mutual_tls("), ["src/wire_https.rs"]);
+    // the only addresses the plaintext listener accepts are spelled out in one function, and it does not use `is_loopback`
+    let allowed = function(text, "fn is_allowed_ip");
     assert!(allowed.contains("Ipv4Addr::LOCALHOST") && allowed.contains("Ipv6Addr::LOCALHOST"));
     assert!(
         !allowed.contains("is_loopback"),
@@ -330,7 +368,6 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         "smol",
         "mio",
         "socket2",
-        "rustls",
         "native-tls",
         "openssl",
         "quinn",
@@ -366,7 +403,7 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     // may link (#871). klatch-server depends on the library with its default features, so none of them may appear in
     // its build, with every kind of edge counted.
     let deps = dependency_names("normal,build");
-    for n in ["ureq", "rustls", "ring", "webpki-roots", "rustls-webpki"] {
+    for n in ["ureq", "webpki-roots"] {
         assert!(
             !deps.iter().any(|d| d == n),
             "{n} (the jev-http transport) is linked into klatch-server"
@@ -375,11 +412,116 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
 }
 
 #[test]
+fn the_only_tls_library_is_rustls_with_ring_and_no_other_crypto_or_tls_crate_is_linked() {
+    // #108 (decision of #157): rustls, which was already in the tree for the optional `jev-http` feature of the library.
+    // OpenSSL is not linked for TLS (SQLCipher's vendored copy is the store's, behind `openssl-src`), and no second TLS
+    // stack or a certificate generator is in the build: certificates are the operator's.
+    let deps = dependency_names("normal,build");
+    assert!(deps.iter().any(|d| d == "rustls") && deps.iter().any(|d| d == "ring"));
+    for n in [
+        "native-tls",
+        "openssl",
+        "aws-lc-rs",
+        "aws-lc-sys",
+        "boring",
+        "rcgen",
+        "x509-parser",
+        "rustls-native-certs",
+        "webpki-roots",
+    ] {
+        assert!(
+            !deps.iter().any(|d| d == n),
+            "{n} is linked into klatch-server"
+        );
+    }
+    // the certificate generator the tests use is a dev-dependency only
+    let normal = dependency_names("normal");
+    assert!(
+        !normal.iter().any(|d| d == "rcgen"),
+        "rcgen is a dev-dependency only"
+    );
+}
+
+/// The only files that may name rustls: the handshake and configuration, and the pump of an established connection.
+const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs"];
+
+/// Names that skip or weaken a check: none may appear in the source, in any file. (A test file may build a client that
+/// trusts its own throwaway CA; that is `tests/`, not `src/`.)
+const SKIPS: &[&str] = &[
+    "dangerous()",
+    "danger::",
+    "with_no_client_auth",
+    "allow_unauthenticated",
+    "NoClientAuth",
+    "ServerCertVerifier",
+    "ClientCertVerifier",
+    "AllowAnyAnonymousClient",
+    "with_cert_resolver",
+    "verify_hostname",
+    "SKIP_VERIFY",
+];
+
+#[test]
+fn rustls_is_named_only_in_the_tls_module_and_nothing_names_a_way_to_skip_a_check() {
+    let sources = rust_sources();
+    let mut problems = Vec::new();
+    for (rel, text) in &sources {
+        // what the tests of a module name is not what the server could do
+        let text = text
+            .split("#[cfg(test)]\nmod tests {")
+            .next()
+            .unwrap_or(text);
+        for (n, line) in text.lines().enumerate() {
+            let code = code_of(line);
+            let at = format!("{rel}:{}", n + 1);
+            if code.contains("rustls") && !TLS_MODULES.contains(&rel.as_str()) {
+                problems.push(format!("{at}: names rustls outside the TLS modules"));
+            }
+            for skip in SKIPS {
+                // the usage text and the help may say there is no such option; code may not name one
+                if code.contains(skip) && !rel.ends_with("_tests.rs") {
+                    problems.push(format!("{at}: names {skip}"));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    // the one verifier is rustls's own, built on the operator's CA file, and client authentication is its default (a
+    // required certificate); the module never builds one that makes it optional
+    let (_, tls) = sources.iter().find(|(rel, _)| rel == "src/tls.rs").unwrap();
+    assert!(tls.contains("WebPkiClientVerifier::builder_with_provider("));
+    assert!(tls.contains("with_client_cert_verifier("));
+    assert!(tls.contains("check_peer(Security::MutualTls"));
+}
+
+#[test]
+fn the_key_file_checks_are_in_the_module_that_reads_the_key() {
+    let sources = rust_sources();
+    let (_, tls) = sources.iter().find(|(rel, _)| rel == "src/tls.rs").unwrap();
+    let read_key = function(tls, "fn read_key");
+    // opened without following a link, checked on the open file, mode and owner, and only then read
+    let (open, mode, owner, read) = (
+        read_key.find("O_NOFOLLOW").expect("no symbolic link"),
+        read_key.find("mode & 0o077").expect("the mode check"),
+        read_key.find("geteuid").expect("the owner check"),
+        read_key.find("read_to_end").expect("the read"),
+    );
+    assert!(
+        open < mode && owner < read && mode < read,
+        "checks come before the read"
+    );
+    assert!(
+        !read_key.contains("{bytes") && !read_key.contains("println"),
+        "no key bytes in a message"
+    );
+}
+
+#[test]
 fn the_documents_state_the_servers_own_claim() {
     // The claim for `klatch-server` is the one this audit backs; the shorter claim for `klatch` ("no telemetry, no
     // outbound calls") is not reused for it (#1236).
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let claim = "klatch-server opens loopback listeners only, starts no program and makes no outbound connection";
+    let claim = "klatch-server opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own certificates, starts no program and makes no outbound connection";
     for doc in ["SECURITY.md", "README.md"] {
         // the documents wrap their lines: compare with the whitespace folded
         let text = std::fs::read_to_string(root.join(doc)).unwrap();

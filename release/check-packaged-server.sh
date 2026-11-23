@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The checks a release runs on the klatch-server binary it ships (#1236). The claim being kept is the one in SECURITY.md:
-# klatch-server opens loopback listeners only, starts no program and makes no outbound connection. This checks the
+# klatch-server opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own certificates,
+# starts no program and makes no outbound connection. This checks the
 # packaged binary's side of it: it names its version, it prints help, it REFUSES a non-loopback bind, and a daemon starts
 # on a Unix socket in a throwaway home and stops on SIGTERM, removing the socket. It never touches a real store or key.
 #

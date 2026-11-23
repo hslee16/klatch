@@ -117,7 +117,8 @@ loopback `--webhook` intake.
 
 **Out of scope** (not built, not supported, not promised):
 
-- Every remote transport: TLS and mutual TLS (#108), an HTTPS front end beyond loopback (#109), a reverse proxy or
+- Every remote transport as a supported feature: an experimental mutual TLS listener (`klatch-server https`, #108) is in the
+  source, off unless you configure it, unreviewed and unsupported; an HTTPS front end beyond loopback (#109), a reverse proxy or
   stunnel (#110), WebSocket (#112), gRPC (#113), exposing `klatch-server` to other machines (#1061) and signed
   attestation for remote wire joins (#1138). A non-loopback bind is refused. An ssh forced command (#107) is a documented
   recipe (`clients/recipes/ssh-transport.md`), not a supported transport.
@@ -145,7 +146,8 @@ A worker can be given a short-lived credential bundle so its messages are marked
 worker. There has been no outside review. [SECURITY.md](SECURITY.md) lists what is and is not protected.
 
 The release also ships a second binary, `klatch-server`, next to `klatch`. Its claim is a different one: klatch-server
-opens loopback listeners only, starts no program and makes no outbound connection. It refuses a non-loopback bind. The shorter
+opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own certificates, starts no program and makes no
+outbound connection. It refuses a non-loopback bind unless that listener is told, in words, to allow one. The shorter
 claims about `klatch` do not cover it.
 
 **Second binding maxim: all data is encrypted, at rest and on the wire, and zero trust is inherent in everything

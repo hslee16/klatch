@@ -107,9 +107,14 @@ Supported versions: the newest release only, the current practice and not a poli
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
 - **`klatch-server` is a second binary with a second, different claim.** It ships next to `klatch` in every archive,
   wheel and Homebrew install, and it does open sockets, so the claim above does not cover it. Its claim is:
-  klatch-server opens loopback listeners only, starts no program and makes no outbound connection. A non-loopback bind
+  klatch-server opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own
+  certificates, starts no program and makes no outbound connection. A non-loopback bind of the plaintext listener
   (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
-  closes a peer of another user, and no networking crate or HTTP client is in its dependency tree.
+  closes a peer of another user, and no HTTP client is in its dependency tree. The one network crate it links is rustls
+  (with ring), for `klatch-server https` (#108), which is experimental and unreviewed: mutual TLS is mandatory (a client
+  without a certificate from your CA file is refused at the handshake), there is no plaintext mode and no way to skip a
+  check, the key file must be mode 0600, the listener is loopback unless you pass `--allow-off-loopback`, and a certificate
+  gates the port only (the caller is still the worker credential). klatch makes no certificates and runs no CA.
   `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
   the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
   packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is

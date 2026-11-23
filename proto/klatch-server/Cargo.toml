@@ -25,8 +25,11 @@ libc = "0.2"
 sha2 = "0.10"
 subtle = "2"
 hmac = "0.12"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
 
 [dev-dependencies]
 # the Rust client's socket connect (#1095) and HTTP connect (#1122) are features the server's own binary never links: only
 # these tests ask for them
 klatch = { path = "../klatch", features = ["client-socket", "client-http"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }

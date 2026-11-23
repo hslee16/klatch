@@ -1,5 +1,14 @@
 # Reaching a loopback-only klatch-server through a tunnel or a TLS terminator
 
+> **Native mutual TLS now exists (#108, experimental).** `klatch-server https --listen IP:PORT --tls-cert PEM --tls-key PEM
+> --tls-client-ca PEM` serves the same wire behind a mutual TLS listener, so a same-host terminator (pattern C below) is no
+> longer the only way to give remote callers an encrypted, certificate-gated port. You supply the server certificate, its
+> key (the file must be mode 0600) and a CA file for client certificates; klatch makes no certificates and runs no CA. A
+> client without a certificate from that CA is refused at the handshake, and a certificate is still only a key to the port:
+> the caller is the worker credential, exactly as in section 1. The listener is loopback unless `--allow-off-loopback` is
+> given. Revocation is yours (short-lived certificates, or a new CA file and a restart). Details and limits:
+> `design/items/108-tls-listener.md`. The tunnel and terminator patterns below remain valid and need none of this.
+
 `klatch-server http` (the wire protocol over HTTP and server-sent events, and MCP at `POST /mcp`) listens on loopback only
 and refuses any other address, naming the zero-trust prerequisites #157 and #161. This page is the safe way to reach it
 from another machine today **without changing that**: klatch keeps listening on `127.0.0.1` or `[::1]`, and something else
@@ -78,13 +87,14 @@ Invariants to check, whatever the spelling: the terminator requires and verifies
 (a verification level that skips the check is the failure to avoid); it presents a server certificate the clients verify
 against a name or a pin, not "accept anything"; it connects onward only to loopback on this host; and the port it accepts
 on is the only one exposed. The terminator listening off loopback is the terminator's act, not klatch's; klatch is still
-on loopback and refuses anything else. A client uses a matching stunnel (or any mutual-TLS client) to reach it and then
+on loopback and refuses anything else (with `klatch-server https` klatch terminates TLS itself and no terminator is needed). A client uses a matching stunnel (or any mutual-TLS client) to reach it and then
 sends its Bearer token as above.
 
-**What klatch cannot do here.** It cannot see the client certificate or the peer's address, so it cannot tie a certificate
-to a member. The certificate decides who may reach the port; the credential decides who they are. Two people sharing one
-client certificate are still two credentials. Certificate enrollment, rotation and revocation are your CA's job; klatch has
-no part in them until #108.
+**What klatch cannot do here.** Behind a terminator it cannot see the client certificate or the peer's address, so it cannot
+tie a certificate to a member; with the native listener it can see the certificate and still does not tie it to a member
+(the decision of #157). Either way the certificate decides who may reach the port and the credential decides who they are.
+Two people sharing one client certificate are still two credentials. Certificate enrollment, rotation and revocation are
+your CA's job; klatch has no part in them.
 
 ## 5. What is not built
 
@@ -92,5 +102,5 @@ no part in them until #108.
   forwarded headers klatch would trust, with the others ignored and audited. Today klatch ignores all of them, which is the
   safe default, and these patterns do not need more. Building it would turn a header into an identity, so it needs a
   threat-model decision first (see the comment on #110).
-- **Native TLS and client certificates in klatch** (#108, #109, #157): not built; a listener off loopback stays refused.
+- **A certificate as an identity inside klatch**: not built, by decision (#157). Native mutual TLS exists (#108, experimental) and only gates the port. Certificate revocation lists, OCSP, and replacing the server certificate without a restart are not built.
 - **A run across two machines**: needs a human and real hosts.

@@ -23,6 +23,10 @@ pub enum Refusal {
     PlaintextOffLoopback(SocketAddr),
     /// A plaintext listener on loopback that asks for no token.
     PlaintextWithoutToken,
+    /// A mutual TLS listener with no CA file for client certificates: it would have nobody to check a client against.
+    MutualTlsWithoutClientCa,
+    /// A mutual TLS listener off loopback that the operator did not ask, in words, to run there.
+    OffLoopbackNotAllowed(SocketAddr),
 }
 
 impl std::fmt::Display for Refusal {
@@ -34,6 +38,13 @@ impl std::fmt::Display for Refusal {
             ),
             Self::PlaintextWithoutToken => f.write_str(
                 "refusing a plaintext listener that does not require a token: any local user could connect to it",
+            ),
+            Self::MutualTlsWithoutClientCa => f.write_str(
+                "refusing a TLS listener without a client CA: mutual TLS needs a CA file whose certificates may connect (--tls-client-ca)",
+            ),
+            Self::OffLoopbackNotAllowed(a) => write!(
+                f,
+                "refusing to listen on {a}: a mutual TLS listener is loopback only unless --allow-off-loopback is given"
             ),
         }
     }
@@ -66,6 +77,28 @@ pub fn check_bind(
         Security::Plaintext if !requires_token => Err(Refusal::PlaintextWithoutToken),
         Security::Plaintext => Ok(()),
     }
+}
+
+/// What the operator set up for a mutual TLS listener (#108).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TlsBind {
+    /// A CA file for client certificates is configured. Without one the listener does not start.
+    pub client_ca_configured: bool,
+    /// The operator asked, explicitly, for an address that is not loopback. Off by default.
+    pub allow_off_loopback: bool,
+}
+
+/// Whether a mutual TLS listener may bind `addr` (#108). It needs a client CA wherever it listens, and it listens off
+/// loopback only when the operator said so. This is the only way a klatch listener may leave loopback: `check_bind`
+/// with `Security::Plaintext` still refuses every address that is not loopback, and nothing here changes that.
+pub fn check_mutual_tls_bind(addr: &SocketAddr, tls: TlsBind) -> Result<(), Refusal> {
+    if !tls.client_ca_configured {
+        return Err(Refusal::MutualTlsWithoutClientCa);
+    }
+    if !is_loopback(&addr.ip()) && !tls.allow_off_loopback {
+        return Err(Refusal::OffLoopbackNotAllowed(*addr));
+    }
+    Ok(())
 }
 
 /// What a connecting peer proved.
@@ -181,6 +214,86 @@ mod tests {
             for s in [Security::MutualTls, Security::Ssh] {
                 assert_eq!(check_bind(&addr(a), s, false), Ok(()), "{a} {s:?}");
             }
+        }
+    }
+
+    fn tls(client_ca_configured: bool, allow_off_loopback: bool) -> TlsBind {
+        TlsBind {
+            client_ca_configured,
+            allow_off_loopback,
+        }
+    }
+
+    #[test]
+    fn a_mutual_tls_listener_needs_a_client_ca_wherever_it_listens() {
+        for a in [
+            "127.0.0.1:7000",
+            "[::1]:7000",
+            "0.0.0.0:7000",
+            "10.0.0.1:7000",
+        ] {
+            for allow in [false, true] {
+                assert_eq!(
+                    check_mutual_tls_bind(&addr(a), tls(false, allow)),
+                    Err(Refusal::MutualTlsWithoutClientCa),
+                    "{a} allow={allow}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_mutual_tls_listener_is_loopback_unless_the_operator_allowed_more() {
+        for a in ["127.0.0.1:7000", "[::1]:7000", "[::ffff:127.0.0.1]:7000"] {
+            assert_eq!(
+                check_mutual_tls_bind(&addr(a), tls(true, false)),
+                Ok(()),
+                "{a}"
+            );
+        }
+        for a in [
+            "0.0.0.0:7000",
+            "[::]:7000",
+            "192.168.1.5:7000",
+            "[fe80::1]:7000",
+        ] {
+            assert_eq!(
+                check_mutual_tls_bind(&addr(a), tls(true, false)),
+                Err(Refusal::OffLoopbackNotAllowed(addr(a))),
+                "{a}"
+            );
+            assert_eq!(
+                check_mutual_tls_bind(&addr(a), tls(true, true)),
+                Ok(()),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_allowance_is_off_by_default_and_the_off_loopback_refusal_says_how_to_ask() {
+        assert_eq!(TlsBind::default(), tls(false, false));
+        let e = check_mutual_tls_bind(&addr("0.0.0.0:1"), tls(true, false))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("0.0.0.0:1") && e.contains("--allow-off-loopback"),
+            "{e}"
+        );
+        let e = check_mutual_tls_bind(&addr("127.0.0.1:1"), tls(false, false))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("client") && e.contains("CA"), "{e}");
+    }
+
+    #[test]
+    fn plaintext_off_loopback_stays_refused_whatever_the_tls_allowance_is() {
+        // the allowance is a property of the mutual TLS listener only: check_bind knows nothing of it
+        for a in ["0.0.0.0:7000", "192.168.1.5:7000"] {
+            assert_eq!(
+                check_bind(&addr(a), Security::Plaintext, true),
+                Err(Refusal::PlaintextOffLoopback(addr(a)))
+            );
         }
     }
 
