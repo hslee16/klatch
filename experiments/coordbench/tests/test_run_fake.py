@@ -357,7 +357,7 @@ class CloneOfOrigin(Base):
 
         def git_with_a_stray_object_file(args, cwd, env):
             if args and args[0] == "clone" and args[-2].endswith("origin.git"):
-                d = os.path.join(args[-2], "objects", "ab")
+                d = os.path.join(args[-2], "objects", "zz")  # not a hex name: a real object directory "ab" can exist, which made the plant skip (flake, #1500)
                 if not os.path.exists(d):
                     os.makedirs(d)
                     os.chmod(d, 0)  # a directory a local clone must open to copy or link; upload-pack never lists it

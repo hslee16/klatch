@@ -51,6 +51,7 @@ import roles as roles_mod
 import scale as scale_mod
 import scenario as scenario_mod
 import schema
+import shared as shared_mod
 import storeexport
 import streams
 
@@ -111,19 +112,23 @@ def plan_runs(arms, runs, seed):
 
 
 def build_prompt(arms_dir, arm, name, team, task, workdir, test_command, klatch_bin, room, max_turns, max_minutes,
-                 restart_command=""):
-    """The common prompt with the arm's coordination section, every placeholder filled, draft comments removed."""
+                 restart_command="", topology="T-clone"):
+    """The common prompt with the arm's coordination section, every placeholder filled, draft comments removed. For topology
+    T-shared (#1427) the files common-shared.md and <arm>-shared.md are used: agents share one working directory."""
+    sfx = "-shared" if topology == "T-shared" else ""
     def load(fn):
         with open(os.path.join(arms_dir, fn)) as f:
             text = re.sub(r"<!--.*?-->", "", f.read(), flags=re.S)
         return text.strip() + "\n"
-    common = re.sub(r"^# Common part[^\n]*\n", "", load("common.md")).lstrip()
+    common = re.sub(r"^# Common part[^\n]*\n", "", load("common%s.md" % sfx)).lstrip()
     if roles_mod.is_role_arm(arm):
+        if sfx:
+            raise ValueError("the role arm %s has no shared-tree (T-shared) variant" % arm)
         # K3 and B1-roles: the base arm's text, then the worker section of the role file; the integrator and supervisor
         # prompts go to the role members only (roles.role_prompt)
         section = load(roles_mod.base_arm(arm) + ".md").strip() + "\n\n" + roles_mod.worker_text(arms_dir, arm)
     else:
-        section = load(arm + ".md").strip()
+        section = load("%s%s.md" % (arm, sfx)).strip()
     text = common.replace("{{COORDINATION_SECTION}}", section)
     values = {"NAME": name, "TEAM_SIZE": str(len(team)), "TEAM_NAMES": ", ".join(n for n in team if n != name),
               "WORKDIR": workdir, "TASK": task, "TEST_COMMAND": test_command, "KLATCH": klatch_bin or "",
@@ -324,16 +329,29 @@ class Suite:
                                    % (", ".join(clash), ", ".join(roles_mod.ROLES)))
         role_names = rcfg["members"] if rcfg else []
         clones = {}
-        for ag in fx.agents:
-            clone = os.path.join(scratch, "clones", ag["name"])
-            git(["clone", "-q", "--no-local", origin, clone], scratch, henv)  # #1435: see checks_now
-            private = fx.private_files(ag["name"])
-            with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
-                f.write("\n.claude/\n" + "".join("/%s\n" % rel for rel, _ in private))
-            for rel, src in private:  # this agent's private knowledge: in its clone only, never committed
-                os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
-                shutil.copyfile(src, os.path.join(clone, rel))
-            clones[ag["name"]] = clone
+        is_shared = fx.topology == "T-shared"
+        shared_tree = os.path.join(scratch, "shared")
+        if is_shared:
+            # T-shared (#1427): ONE working tree, a clone of the bare origin; every agent starts in it. Nothing of the harness
+            # goes into it: streams, prompts and logs are in log_dir, each agent's HOME and TMPDIR under scratch/agents/<name>.
+            git(["clone", "-q", "--no-local", origin, shared_tree], scratch, henv)
+            with open(os.path.join(shared_tree, ".git", "info", "exclude"), "a") as f:
+                f.write("\n.claude/\n")
+            for ag in fx.agents:
+                clones[ag["name"]] = shared_tree
+                for sub in ("home", "tmp"):
+                    os.makedirs(os.path.join(scratch, "agents", ag["name"], sub), mode=0o700)
+        else:
+            for ag in fx.agents:
+                clone = os.path.join(scratch, "clones", ag["name"])
+                git(["clone", "-q", "--no-local", origin, clone], scratch, henv)  # #1435: see checks_now
+                private = fx.private_files(ag["name"])
+                with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
+                    f.write("\n.claude/\n" + "".join("/%s\n" % rel for rel, _ in private))
+                for rel, src in private:  # this agent's private knowledge: in its clone only, never committed
+                    os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
+                    shutil.copyfile(src, os.path.join(clone, rel))
+                clones[ag["name"]] = clone
         for r in role_names:  # a role member has a clone of its own, like a worker, and no private files
             clone = os.path.join(scratch, "clones", r)
             git(["clone", "-q", "--no-local", origin, clone], scratch, henv)  # #1435: see checks_now
@@ -342,7 +360,9 @@ class Suite:
             clones[r] = clone
         kenv = {"KLATCH_HOME": khome, "KLATCH_KEY_DIR": kkeys, "KLATCH_BIN": a.klatch_bin or "", "KLATCH_RUN_DIR": scratch}
         if arm.startswith("K") and arm != "K1":
-            for name, clone in clones.items():
+            # one init per working directory: in a shared tree the hooks it writes are the same for everyone, and each
+            # agent's process names itself with KLATCH_NAME (set below)
+            for name, clone in (list(clones.items())[:1] if is_shared else clones.items()):
                 e = dict(henv, **kenv, KLATCH_NAME=name)
                 p = subprocess.run([a.klatch_bin, "init", "--scope", "project", "--yes", "--as-member", name],
                                    cwd=clone, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -386,14 +406,15 @@ class Suite:
                 kw = {"role": role, "model": rcfg["model"], "max_usd": rcfg["per_role_usd"]}
             else:
                 prompt = build_prompt(a.arms_dir, arm, name, team, task, clones[name], fx.test_command,
-                                      a.klatch_bin, a.room, a.max_turns, minutes)
+                                      a.klatch_bin, a.room, a.max_turns, minutes, topology=fx.topology)
                 if rcfg:  # the run cap is spread over every member, the roles included
                     kw = {"max_usd": rcfg["per_role_usd"] if replacement else a.max_run_usd / float(len(team) + len(role_names))}
             with open(os.path.join(log_dir, "%s.prompt.md" % key), "w") as f:
                 f.write(prompt)
             argv, extra = self.driver.command(name, arm, prompt, clones[name], log_dir, session=session_no,
                                               max_turns=max_turns, **kw)
-            env = self.driver.agent_env(os.environ, scratch)
+            agent_dir = os.path.join(scratch, "agents", name) if is_shared else scratch
+            env = self.driver.agent_env(os.environ, agent_dir)
             env.update(henv)  # HOME is the run's own
             # each agent commits under its own name, so git authorship says who did what (duplicate work, per-agent
             # contribution); the setup commits keep the harness name
@@ -403,6 +424,9 @@ class Suite:
             env.update(extra)
             env["KLATCH_NAME"] = name
             env["TMPDIR"] = scratch
+            if is_shared:  # file-level isolation of the harness state: each agent's home and tmp are its own, outside the tree
+                env["HOME"] = os.path.join(agent_dir, "home")
+                env["TMPDIR"] = os.path.join(agent_dir, "tmp")
             if role:
                 env["COORDBENCH_RESTART_DIR"] = restart_dir
             logf = open(os.path.join(log_dir, "%s.stream.jsonl" % key), "wb")
@@ -438,6 +462,13 @@ class Suite:
         for r in role_names:  # the role members start beside the workers, each its own process
             start(r, r, 1, None, role=r)
         t0 = time.monotonic()
+        snaps, watcher = None, None
+        if is_shared and scn and scn.get("shared_check"):
+            # light watcher thread: the shared file as it is on disk, every --snapshot-s seconds and when an agent exits
+            snaps = shared_mod.Snapshots()
+            watcher = shared_mod.Watcher(os.path.join(shared_tree, scn["shared_check"]["path"]), a.snapshot_s,
+                                         lambda: dict(procs), t0, snaps)
+            watcher.start()
         if kill_spec:
             # scenario S6: the victim is killed when the scenario's conditions hold on its stream and the git history
             victim_name = kill_spec["agent"]
@@ -460,9 +491,18 @@ class Suite:
         def checks_now(tag):
             dest = os.path.join(scratch, "check-" + tag)
             shutil.rmtree(dest, ignore_errors=True)
-            # --no-local: a clone by path walks and links objects/ file by file, and while an agent's push is in flight
-            # that directory holds quarantine files that vanish mid-walk (#1435); upload-pack reads a consistent snapshot
-            git(["clone", "-q", "--no-local", "-b", "main", origin, dest], scratch, henv)
+            if is_shared and tag == "poll":
+                # the tree as it is on disk now, uncommitted work included (agents are still running)
+                try:
+                    shutil.copytree(shared_tree, dest, symlinks=True)
+                except (shutil.Error, OSError) as e:
+                    return [], "", "could not copy the shared tree: %s" % e
+            elif is_shared:
+                git(["clone", "-q", "--no-local", shared_tree, dest], scratch, henv)  # HEAD of the tree, after the final commit
+            else:
+                # --no-local: a clone by path walks and links objects/ file by file, and while an agent's push is in flight
+                # that directory holds quarantine files that vanish mid-walk (#1435); upload-pack reads a consistent snapshot
+                git(["clone", "-q", "--no-local", "-b", "main", origin, dest], scratch, henv)
             return fx.run_checker(dest, dict(henv, COORDBENCH_INJECTION_PLAN=inj_plan_path) if inj_plan_path else henv)
 
         def all_pass(checks):
@@ -589,6 +629,11 @@ class Suite:
                 p.wait()
         stopped_t = time.monotonic()
         pump()
+        final_commit = None
+        if is_shared:
+            if watcher:
+                watcher.finish()
+            final_commit = shared_mod.finalise(shared_tree, henv)  # the tree, committed, is the final state
         wall = time.monotonic() - t0
         rcs = {n: p.returncode for n, p in procs.items()}
         killed = victim_name if kill_rec and kill_rec.get("fired") else None
@@ -652,8 +697,10 @@ class Suite:
         if any(s["is_error"] for s in sums.values()):
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
-        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes, log_dir, arm,
-                              {k: v for k, v in states.items() if k in sums})
+        if is_shared:
+            self.run_shared = {"tree": shared_tree, "snaps": snaps, "final_commit": final_commit}
+        self.scenario_metrics(rec, raw, shared_tree if is_shared else origin, [] if is_shared else list(clones.values()), henv,
+                              notes, log_dir, arm, {k: v for k, v in states.items() if k in sums})
         self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
@@ -787,6 +834,9 @@ class Suite:
             rec["scenario_metrics"].update(chain.compute(log_dir, scn, arm, self.args.klatch_bin))
         if scn.get("stream_metrics") == "recovery" and log_dir:
             self.recovery_metrics(rec, scn, arm, log_dir, origin, clone_dirs, henv, notes)
+        if scn.get("history_check") and self.fx.topology == "T-shared":
+            self.shared_metrics(rec, scn, origin, log_dir, henv, notes)
+            return
         if scn.get("history_check"):
             # a scenario whose units share one file: overwrites are lost behaviours, found by testing every commit
             try:
@@ -800,6 +850,51 @@ class Suite:
             sm.update(scenario_mod.overwrite_split(hist["overwritten"], rec["metrics"]["git_conflicts"], sm))
             for k in scn.get("not_computed", {}):
                 sm.setdefault(k, None)  # named null, never omitted (the reason is in the scenario file)
+
+    def shared_metrics(self, rec, scn, tree, log_dir, henv, notes):
+        """overwrites for the shared working tree (#1427, shared.py): tickets whose behaviour was present in some snapshot of
+        the shared file, or lost by an agent's own file-tool edit (stream events), and absent from the final tree. Entries
+        say which measure found them. The resolution limit is in scenario_metrics.snapshots.limit."""
+        sm = rec["scenario_metrics"]
+        info = getattr(self, "run_shared", None) or {}
+        sm["final_commit"] = info.get("final_commit")
+        hc = scn["shared_check"]
+        check_py = os.path.join(self.args.checks_dir, hc["checker"], "check.py")
+        try:
+            final_text = shared_mod.read_text(os.path.join(tree, hc["path"])) or ""
+            final = scenario_mod._ticket_pass(check_py, final_text, henv)
+            ever = {}
+            snaps = info.get("snaps")
+            for text in (snaps.texts() if snaps else []):
+                for t, ok in sorted(scenario_mod._ticket_pass(check_py, text, henv).items()):
+                    if ok:
+                        ever.setdefault(t, "snapshot")
+            rc, roots = shared_mod.git_out(tree, ["rev-list", "--max-parents=0", "HEAD"], henv)
+            base = ""
+            if rc == 0 and roots.split():
+                rc, base = shared_mod.git_out(tree, ["show", "%s:%s" % (roots.split()[0], hc["path"])], henv)
+            lines = {}
+            for n in sorted(os.listdir(log_dir)):
+                if n.endswith(".stream.jsonl"):
+                    with open(os.path.join(log_dir, n), errors="replace") as f:
+                        lines[n[: -len(".stream.jsonl")]] = f.read().splitlines()
+            events = shared_mod.lost_edit_events(lines, hc["path"], base, final_text)
+            owner = {v["ticket"]: k for k, v in scn["agents"].items()}
+            for e in events:
+                t = scn["agents"].get(e["agent"], {}).get("ticket")
+                if t and not final.get(t):
+                    ever.setdefault(t, "stream")
+            overwritten = [{"ticket": t, "author": owner.get(t), "source": ever[t]} for t in sorted(ever) if not final.get(t)]
+        except (RuntimeError, KeyError, OSError, subprocess.SubprocessError) as e:
+            notes.append("shared overwrites failed: %s" % e)
+            return
+        rec["metrics"]["overwrites"] = len(overwritten)
+        sm["overwritten"] = overwritten
+        sm["lost_edit_events"] = events
+        sm["snapshots"] = (snaps or shared_mod.Snapshots()).summary(self.args.snapshot_s)
+        sm.update(scenario_mod.overwrite_split(overwritten, rec["metrics"]["git_conflicts"], sm))
+        for k in scn.get("not_computed", {}):
+            sm.setdefault(k, None)
 
     def recovery_metrics(self, rec, scn, arm, log_dir, origin, clone_dirs, henv, notes):
         """The S6 metrics (recovery.py): from the streams, the timeline and the kill record of this run, and from git. A
@@ -1006,6 +1101,8 @@ def parse_args(argv):
     p.add_argument("--wall-s", type=float, default=1800)
     p.add_argument("--max-turns", type=int, default=60, help="turn cap per agent")
     p.add_argument("--poll-s", type=float, default=60.0, help="how often the hidden checker is polled while agents run")
+    p.add_argument("--snapshot-s", type=float, default=5.0, help="T-shared only (#1427): how often the watcher reads the shared "
+                   "file (it also reads it whenever an agent exits); the resolution of the lost-edit measure")
     p.add_argument("--stagger-s", type=float, default=0.0, help="launch stagger of agents, drawn from the seed")
     p.add_argument("--budget-approved-in", metavar="FILE", help="the budget approval file (JSON, outside the repository; "
                    "see approval.py and README.md); required with --driver claude")

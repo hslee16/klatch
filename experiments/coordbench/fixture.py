@@ -18,6 +18,10 @@ Optional keys of fixture.json (#1374, scenario S9):
   injection         (#1375, S10) a JSON file of injection forms (injections.py): a scripted colleague delivers them in the
                     room (K arms) or on TASKS.md (B1); the harness writes the run's plan to the log directory and passes it to the
                     hidden checker (COORDBENCH_INJECTION_PLAN). injection_mode: "all" (every form) or "one" (the seed picks)
+  topology          "T-clone" (the default: one clone per agent and a bare origin) or "T-shared" (#1427: one working tree, all agents
+                    start in it; run.py makes it a clone of the bare origin, gives each agent its own identity and its own
+                    HOME and TMPDIR outside it, and scores the tree committed at the end; see shared.py). A fixture takes it
+                    from a variant ("shared"), so a T-shared result is the separate scenario "<name>-shared".
   variants          {"name": {overrides}}: a variant replaces top-level keys of the spec. The variant "resume" carries
                     {"resume": {"agent", "after_turns", "note": FILE}}: the agent's session is cut after that many turns and a
                     second session with the same name and a short note starts (run.py). A variant other than "join" renames
@@ -80,6 +84,8 @@ class Fixture:
                 self.agents.append({"name": a["name"], "task": f.read().strip()})
         self.test_command = self.spec.get("test_command", "python3 -m unittest")
         self.topology = self.spec.get("topology", "T-clone")
+        if self.topology == "T-shared" and self.spec.get("private"):
+            raise FixtureError("fixture %s: a shared working tree (T-shared) cannot hold files only one agent has" % name)
         self.checker = os.path.join(self.checks_dir, self.spec["checker"], "check.sh")
         self.fake_script = os.path.join(self.dir, self.spec["fake"]) if self.spec.get("fake") else None
         self.private_dir = os.path.join(self.dir, self.spec["private"]) if self.spec.get("private") else None

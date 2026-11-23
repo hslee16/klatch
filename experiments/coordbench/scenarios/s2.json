@@ -18,7 +18,7 @@
   "n_per_arm": {"m0": 20, "quick": 3, "note": "SPEC section 6.1: 20 per arm for the cheap binary scenarios S2, S5 and S10 part 1 (rates need more runs than medians); 3 for the quick subset after an epic, labelled exploratory. Each topology is reported separately and never pooled with the other (SPEC S2)."},
   "topologies": {
     "T-clone": {"status": "implemented", "note": "Each agent has its own clone and the run's bare origin, integrates by git pull --no-rebase origin main then git push origin HEAD:main. This is the only topology run.py builds."},
-    "T-shared": {"status": "gap", "note": "One working directory used by all agents at once (SPEC S2, the primary topology for the K arms). The harness gives every agent its own clone under the run's scratch (run.py execute: one clone per agent), the arm prompts say 'your own clone', and the fake and claude drivers take one cwd per agent. T-shared needs a run mode with one shared checkout, a prompt variant that says so, and a git history metric that works without commits (a final-file check only). Not built here; ticketed as follow-up work."}
+    "T-shared": {"status": "implemented", "note": "One working directory used by all agents at once (SPEC S2, the primary topology for the K arms), built by #1427: run.py makes a single working tree (a clone of the run's bare origin) and starts every agent in it, each with its own member name, git author and committer name, KLATCH_NAME, HOME, TMPDIR and stream log (the last three outside the tree). Run it with --variant shared: the records are the separate scenario onefile-shared. The prompts are arms/common-shared.md and arms/<arm>-shared.md (same parity rule). The final state is the tree committed by the harness at the end under the neutral author harness-final, when anything is uncommitted; the checker runs on a clone of that. overwrites come from snapshots of the shared file and the agents' edit events (shared_check below), with a stated resolution limit."}
   },
   "caps": {
     "per_run_usd": 1.8,
@@ -37,12 +37,22 @@
     "onefile/core.py": {"entry": "^\\s+\"[A-Za-z_]+\": \\(", "expected_entries": 5}
   },
   "history_check": {"checker": "onefile", "path": "onefile/core.py"},
+  "shared_check": {
+    "checker": "onefile",
+    "path": "onefile/core.py",
+    "snapshot_s": 5,
+    "limit": "snapshot resolution: the harness reads the shared file every snapshot_s seconds (run.py --snapshot-s) and whenever an agent exits, keeping only versions that differ. A ticket whose behaviour (the checker's --file mode) is in some snapshot and absent from the final tree is overwritten (source snapshot). An edit written and overwritten between two snapshots by an agent that keeps running is not in any snapshot; the agents' Write, Edit and MultiEdit calls on the file are the second measure (lost_edit_events: an event whose added lines, those the initial file lacked, are missing from the final file; its ticket is then overwritten with source stream). The stream measure counts an agent's own deliberate removal of an earlier line as lost and cannot see a change made by a shell command. Commits do not matter: agents may never commit."
+  },
+  "variants": {
+    "shared": {"topology": "T-shared", "scenario_name": "onefile-shared", "note": "the fixture variant of the same name; recorded as its own scenario, never pooled with T-clone"}
+  },
   "metrics": {
     "primary": "units_completed",
     "secondary": ["overwrites", "silent_overwrites", "conflicts_resolved", "git_conflicts", "claim_conflicts", "time_to_recover_s", "messages", "spend", "wall_s", "turns"],
     "definitions": {
       "units_completed": "Tickets whose behaviour is present on the final main (0 to 3), from the hidden checker's three unit checks (timeout, retries, header). Each is tested against independent oracles and seeded random inputs, on its own, so a lost colleague's change cannot hide.",
       "lost_edits": "From the checker (scenario_metrics.lost_edits): the tickets, by letter, whose behaviour is missing from the final main, whether it was never made or was made and lost. lost_table_entries lists the shared-table rows (timeout, retries, label) missing or wrong.",
+      "overwrites_t_shared": "T-shared (scenario onefile-shared): tickets whose behaviour was in some snapshot of the shared file, or in an agent's file-tool edit that is gone from the final tree, and is absent from the final tree (0 to 3). scenario_metrics.overwritten says per ticket which measure found it (source snapshot or stream), snapshots has the interval and the count, lost_edit_events lists the agent edits that lost lines, final_commit says whether the harness had to commit the tree. The resolution limit is in shared_check.limit.",
       "overwrites": "Tickets whose behaviour passed the hidden per-ticket check on some non-merge commit of the origin or of any agent's clone (the commit the agent made, in any repository, even one that never reached main) and fails on the final main: edits committed anywhere and missing from the final main (0 to 3). Detail in scenario_metrics.overwritten (ticket, author). An edit lost before it was ever committed is invisible here; units_completed catches it.",
       "silent_overwrites": "overwrites in a run where no agent saw a git conflict (git_conflicts is 0): the edit vanished with nobody told, as with a stale copy pushed or a force push. Per run, not per edit: a run with any conflict puts its lost edits under overwrites_after_conflict.",
       "overwrites_after_conflict": "overwrites in a run where some agent did see a git conflict: the edit was lost while resolving, or by an agent that left the conflict unresolved. Not silent.",
