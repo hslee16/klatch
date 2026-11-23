@@ -1,0 +1,19 @@
+{
+  "name": "history",
+  "description": "F9 (SPEC section 3, S9): a small Python project (parcelkit) at the middle of a job. The repository is prebuilt with 25 commits by three earlier agents; the K arms also get a prebuilt room history (about 60 messages by the same three members); B1 gets TASKS.md and DECISIONS.md. One late joiner (dana) takes ticket 7, whose correct implementation depends on three decisions that are in the record and not in the code (a file name tag, rows per page, a tare), two of them revised later in the record. Variant resume: the same agent restarted after its context was cleared.",
+  "topology": "T-clone",
+  "scenario": "s9",
+  "prebuilt_history": true,
+  "room_history": "room.json",
+  "agents": [
+    {"name": "dana", "task": "task-join.md"}
+  ],
+  "variants": {
+    "join": {},
+    "resume": {"resume": {"agent": "dana", "after_turns": 12, "note": "resume-note.md"}}
+  },
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "history",
+  "est_cost_usd_haiku": 0.3,
+  "fake": "fake.json"
+}

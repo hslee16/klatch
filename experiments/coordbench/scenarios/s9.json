@@ -1,0 +1,54 @@
+{
+  "id": "S9",
+  "title": "late joiner and resume, durable record versus reading the git log (#1374)",
+  "spec": "SPEC.md section 3, scenario S9; fixture F9 history",
+  "fixture": "history",
+  "variants": {
+    "join": "One new agent (dana) joins at the middle of an eight-ticket build and takes ticket 7. fixture 'history', no --variant.",
+    "resume": "The same agent, restarted after its context was cleared: session 1 is cut after 12 turns and a second session with the same name starts in the same clone with the job text and a short note (run.py, fixture variant 'resume'). Records go under scenario 'history-resume', never pooled with join."
+  },
+  "arms": ["B0", "B1", "K1", "K2"],
+  "arms_at_m0": ["B0", "B1", "K1", "K2"],
+  "arm_notes": {
+    "B0": "git log only: the three decisions are in the commit messages of the prebuilt history; there is no board and no decision file.",
+    "B1": "the same commit messages, plus TASKS.md (the harness's board format) and DECISIONS.md, committed in the prebuilt history by the three earlier agents.",
+    "K1": "the same commit messages, plus the prebuilt room history (about 60 messages by the three earlier members, in a temporary store); no hooks, so nothing is shown to the agent unless it reads the room.",
+    "K2": "K1 plus the hooks klatch init writes: the session-start text and, once ticket #1409 is merged, the bounded briefing."
+  },
+  "n_per_arm": {"m0": 10, "quick": 3, "note": "SPEC section 6.1: 10 per arm for a median-based scenario at M0, 3 for the quick subset after an epic, labelled exploratory. Per variant: the join and the resume runs are reported separately and never pooled, so the full S9 is 4 arms x 10 x 2 variants = 80 runs. S9 is not in the spec's M0 cost table (section 8.1); this is this ticket's proposal for the human to change."},
+  "caps": {
+    "per_run_usd": 0.9,
+    "suite_usd_m0_haiku": 30.0,
+    "wall_s": 900,
+    "max_turns_per_agent": 40,
+    "basis": "A single agent reading a 25 commit log, optionally a 60 message room, and writing one small module: assumed 0.30 USD a run on Haiku (the cheapest scenarios of section 8.1 are 0.60 USD for three agents), so 3x per run (0.90) and 1.25x the 24 USD estimate for 80 runs (30). Proposals; the human changes them before M0 (#1380). The resume variant's two sessions share the per-run cap."
+  },
+  "agents": {
+    "dana": {"ticket": "7", "units": []}
+  },
+  "units": {},
+  "shared_files": {},
+  "history_metrics": {"agent": "dana"},
+  "metrics": {
+    "primary": "correct",
+    "secondary": ["first_correct.turn", "first_correct.tokens", "history_reads", "history_reads_by_kind", "errors.stale_understanding", "room_history_used_unprompted", "turns", "spend", "wall_s"],
+    "definitions": {
+      "correct": "The hidden checker's verdict on the final main (scenario_metrics.correct): the ticket works and the three decided facts are honoured (the file name tag, the rows per page, the tare), nothing is rewritten or duplicated, the visible tests pass and there are no conflict markers. units_completed is the number of the four unit checks passing: ticket-7-works, fact-file-name, fact-page-size, fact-tare.",
+      "facts": "scenario_metrics.facts: per fact ok, stale (the earlier, superseded value: a contradicted decision), guess (a conventional default, or no tare at all), wrong (anything else) or missing (no manifest module or it does not import). The values are drawn from a fixed seed (fixtures/history/gen_facts.py) and are in no code, only in the record; the tag and the page size were decided, then revised.",
+      "errors": "scenario_metrics.errors from stale understanding: contradicted_decisions (facts holding the superseded value), wrong_values (facts holding a guess or any other wrong value), duplicated_work (new functions that have the name or the behaviour of a finished helper, plus finished modules rewritten), and stale_understanding, their sum.",
+      "first_correct": "scenario_metrics.history.first_correct: the first commit of the agent whose tree has the ticket working and all three facts ok, found by replaying every non-merge commit of the agent (its clone and the origin, in order) against the checker's --tree mode. Its turn is the number of assistant turns up to and including the turn that ran the git commit (across sessions in the resume variant), found by the commit id git printed in the tool result, else by the position among the agent's git commit calls (located_by). tokens is the cumulative input, output, cache read and cache creation tokens of those turns, and their total. null when no commit is correct.",
+      "history_reads": "scenario_metrics.history: the tool calls that read the record, by kind: git_log (git log, show, blame, shortlog, reflog), board_file (TASKS.md or DECISIONS.md by the Read tool or a shell command), klatch_history, klatch_read, klatch_board, klatch_find, klatch_asks, klatch_tasks, klatch_claims, klatch_card. history_reads_by_kind, history_reads_by_session, history_read_chars (the size of what the calls returned) and first_correct.history_reads_before are the what-it-read figures. Counted from the stream, never from what the agent says.",
+      "briefing_seen": "scenario_metrics.history.briefing_seen: a session-start hook output with a bounded briefing (a line starting '[briefing ROOM') was in the stream (K2 once #1409 is merged). It is shown to the agent, not read by it, so it is not a history read; briefing_chars is its size.",
+      "history_read_before_first_edit": "True when a history read (or a briefing) came before the agent's first Write, Edit or git add, commit, apply, merge or push.",
+      "room_history_used_unprompted": "K arms only (null in B arms): a klatch read of the room (history, read, board, find, asks, tasks, claims, card) or a briefing before the first edit. The K arm text (K1.md, K2.md) itself tells agents to read the room, so 'unprompted' means not asked by the task text; briefing_seen separates what the product showed without any agent action."
+    }
+  },
+  "gaps": {
+    "briefing_header_after_compact": "A restarted claude -p session is a fresh session: Claude Code names its start 'startup', not 'compact' or 'resume', so the briefing of #1409 does not take its 'after compact' header in this harness; the resume variant measures recovery from the record, not that header.",
+    "compaction_summary": "Real compaction leaves a model-written summary in the context; the resume variant clears everything (the nearest repeatable model of a session that has lost its context) and gives the job text again with a short note. A variant that keeps a summary needs a model-written step and is not built.",
+    "time_to_first_correct_s": "Not computed: the stream carries no timestamps; turns and tokens are the cost measures."
+  },
+  "not_computed": {
+    "time_to_first_correct_s": "the stream has no timestamps"
+  }
+}

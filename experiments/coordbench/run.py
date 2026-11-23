@@ -39,6 +39,7 @@ import time
 import approval as approval_mod
 import drivers
 import fixture as fixture_mod
+import history as history_mod
 import scenario as scenario_mod
 import schema
 import streams
@@ -256,16 +257,20 @@ class Suite:
         henv = minimal_env(os.environ, home)
         # the repository: initial tree from the fixture, a bare origin made for this run
         seedtree = os.path.join(scratch, "seed")
-        fx.materialise(seedtree, seed, henv)
-        if arm == "B1":
-            with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
-                f.write(TASK_BOARD)
+        fx.materialise(seedtree, seed, henv, arm=arm)
         origin = os.path.join(scratch, "origin.git")
         git(["init", "-q", "--bare", "-b", "main", origin], scratch, henv)
-        git(["init", "-q", "-b", "main"], seedtree, henv)
-        git(["add", "-A"], seedtree, henv)
-        git(["commit", "-q", "-m", "initial"], seedtree, henv)
-        git(["push", "-q", origin, "HEAD:main"], seedtree, henv)
+        if fx.prebuilt_history:
+            # setup.sh built a repository with a scripted history (it knows the arm, and in B1 put the board files into it)
+            git(["push", "-q", origin, "HEAD:main"], seedtree, henv)
+        else:
+            if arm == "B1":
+                with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
+                    f.write(TASK_BOARD)
+            git(["init", "-q", "-b", "main"], seedtree, henv)
+            git(["add", "-A"], seedtree, henv)
+            git(["commit", "-q", "-m", "initial"], seedtree, henv)
+            git(["push", "-q", origin, "HEAD:main"], seedtree, henv)
         shutil.rmtree(seedtree)
         # agents
         procs, states, logs, offs, partial = {}, {}, {}, {}, {}
@@ -290,13 +295,19 @@ class Suite:
         first_pass = None
         last_poll = t0
         outcome = None
-        for ag in fx.agents:
-            name = ag["name"]
-            prompt = build_prompt(a.arms_dir, arm, name, team, ag["task"], clones[name], fx.test_command,
+        if arm.startswith("K") and fx.room_script:
+            # the earlier members' room history, posted through the binary into this run's temporary store
+            history_mod.post_room(a.klatch_bin, a.room, fx.room_script, dict(henv, **kenv), scratch)
+        agent_of = {}  # session key -> agent name; a restarted agent has a second session, key "<name>.r2"
+
+        def start(key, name, session_no, task, max_turns=None):
+            """Start one session of an agent: its prompt, its process, its stream log and parser."""
+            prompt = build_prompt(a.arms_dir, arm, name, team, task, clones[name], fx.test_command,
                                   a.klatch_bin, a.room, a.max_turns, max(1, int(a.wall_s // 60)))
-            with open(os.path.join(log_dir, "%s.prompt.md" % name), "w") as f:
+            with open(os.path.join(log_dir, "%s.prompt.md" % key), "w") as f:
                 f.write(prompt)
-            argv, extra = self.driver.command(name, arm, prompt, clones[name], log_dir)
+            argv, extra = self.driver.command(name, arm, prompt, clones[name], log_dir, session=session_no,
+                                              max_turns=max_turns)
             env = self.driver.agent_env(os.environ, scratch)
             env.update(henv)  # HOME is the run's own
             # each agent commits under its own name, so git authorship says who did what (duplicate work, per-agent
@@ -307,16 +318,30 @@ class Suite:
             env.update(extra)
             env["KLATCH_NAME"] = name
             env["TMPDIR"] = scratch
-            logf = open(os.path.join(log_dir, "%s.stream.jsonl" % name), "wb")
-            errf = open(os.path.join(log_dir, "%s.err" % name), "wb")
-            if a.stagger_s:
+            logf = open(os.path.join(log_dir, "%s.stream.jsonl" % key), "wb")
+            errf = open(os.path.join(log_dir, "%s.err" % key), "wb")
+            if a.stagger_s and session_no == 1:
                 time.sleep(rng.uniform(0, a.stagger_s))
-            procs[name] = subprocess.Popen(argv, cwd=clones[name], env=env, stdin=subprocess.DEVNULL, stdout=logf,
-                                           stderr=errf, start_new_session=True)
+            procs[key] = subprocess.Popen(argv, cwd=clones[name], env=env, stdin=subprocess.DEVNULL, stdout=logf,
+                                          stderr=errf, start_new_session=True)
             logf.close()
             errf.close()
-            states[name] = streams.StreamState(klatch_bin=a.klatch_bin)
-            offs[name], partial[name] = 0, b""
+            states[key] = streams.StreamState(klatch_bin=a.klatch_bin)
+            offs[key], partial[key] = 0, b""
+            agent_of[key] = name
+
+        # a resume variant (fixture "resume"): the agent's first session is cut after after_turns turns and, once it has
+        # exited, a second session with the same name starts in the same clone with the job text and a short note that its
+        # context was cleared. Nothing else of the first session is carried over.
+        resume = fx.resume
+        pending, cut = {}, set()
+        for ag in fx.agents:
+            name = ag["name"]
+            is_cut = bool(resume) and resume["agent"] == name
+            start(name, name, 1, ag["task"], resume["after_turns"] if is_cut else None)
+            if is_cut:
+                cut.add(name)
+                pending[name + ".r2"] = (name, name, ag["task"] + "\n\n" + resume["note"])
         t0 = time.monotonic()
 
         def pump():
@@ -351,7 +376,12 @@ class Suite:
                 if elapsed >= a.wall_s:
                     outcome = "timeout"
                     break
-                if all(p.poll() is not None for p in procs.values()):
+                for key, (after, name, task) in list(pending.items()):
+                    if procs[after].poll() is not None:
+                        pump()
+                        del pending[key]
+                        start(key, name, 2, task)
+                if not pending and all(p.poll() is not None for p in procs.values()):
                     break
                 if first_pass is None and time.monotonic() - last_poll >= a.poll_s:
                     last_poll = time.monotonic()
@@ -367,7 +397,7 @@ class Suite:
         wall = time.monotonic() - t0
         rcs = {n: p.returncode for n, p in procs.items()}
         if outcome is None:
-            outcome = "crash" if any(rc != 0 for rc in rcs.values()) else "ok"
+            outcome = "crash" if any(rc != 0 for k, rc in rcs.items() if k not in cut) else "ok"
         if outcome == "crash":
             notes.append("agent exit codes %s" % json.dumps(rcs, sort_keys=True))
         # the final hidden check on a clone of the final origin
@@ -390,7 +420,10 @@ class Suite:
         rec["time_to_first_pass_s"] = None if first_pass is None else round(first_pass, 3)
         rec["outcome"] = outcome
         rec["spend"] = {"usd": round(sum(s["cost_usd"] for s in sums.values()), 6), "estimated": any_est}
-        rec["turns"] = {"total": sum(s["turns"] for s in sums.values()), "per_agent": {n: s["turns"] for n, s in sums.items()}}
+        per_agent = {}
+        for k, s in sums.items():
+            per_agent[agent_of[k]] = per_agent.get(agent_of[k], 0) + s["turns"]
+        rec["turns"] = {"total": sum(s["turns"] for s in sums.values()), "per_agent": per_agent}
         rec["tokens"] = {k: sum(s["tokens"][k] for s in sums.values()) for k in ("input", "output", "cache_read", "cache_creation")}
         by_tool = {}
         for s in sums.values():
@@ -410,6 +443,7 @@ class Suite:
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
         self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes)
+        self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
 
@@ -441,6 +475,34 @@ class Suite:
             sm.update(scenario_mod.overwrite_split(hist["overwritten"], rec["metrics"]["git_conflicts"], sm))
             for k in scn.get("not_computed", {}):
                 sm.setdefault(k, None)  # named null, never omitted (the reason is in the scenario file)
+
+    def history_metrics(self, rec, origin, clones, agent_of, log_dir, henv, notes):
+        """The S9 metrics (history.py) for a scenario whose file has history_metrics: what the late joiner read and when, and
+        the first correct contribution found by replaying its commits against the hidden checker. Kept under
+        scenario_metrics.history. A failure is a note, never a lost run."""
+        name = self.fx.spec.get("scenario")
+        if not name:
+            return
+        try:
+            scn = scenario_mod.load(name, self.args.scenarios_dir)
+        except scenario_mod.ScenarioError:
+            return
+        hm = scn.get("history_metrics")
+        if not hm:
+            return
+        agent = hm["agent"]
+        try:
+            sessions = []
+            for key in sorted(k for k, n in agent_of.items() if n == agent):  # "dana" before "dana.r2"
+                with open(os.path.join(log_dir, "%s.stream.jsonl" % key), errors="replace") as f:
+                    sessions.append(f.read().splitlines())
+            replayed = history_mod.replay([clones[agent], origin], agent, self.fx.checker, henv)
+            rec.setdefault("scenario_metrics", {})["history"] = history_mod.analyze(sessions, self.args.klatch_bin, rec["arm"],
+                                                                                 replayed)
+            rec["scenario_metrics"]["history"]["replayed"] = [
+                {"sha": r["sha"], "correct": r["correct"], "facts": r.get("facts")} for r in replayed]
+        except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError) as e:
+            notes.append("history metrics failed: %s" % e)
 
     # the suite ---------------------------------------------------------------------------------------------
 
@@ -528,6 +590,8 @@ def commit_of(path):
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Run a coordination bench scenario against arms, N times each (#1364).")
     p.add_argument("--fixture", required=True)
+    p.add_argument("--variant", help="a variant of the fixture (S9 history: join, the default, or resume); a variant other than "
+                   "join is a separate scenario name in the records")
     p.add_argument("--arm", default=DEFAULT_ARMS, help="comma-separated arms (default %s)" % DEFAULT_ARMS)
     p.add_argument("--runs", type=int, default=3, help="runs per arm (blocks)")
     p.add_argument("--driver", choices=("fake", "claude"), default="fake")
@@ -593,7 +657,7 @@ def main(argv=None):
     if a.klatch_bin and not os.path.isabs(a.klatch_bin):
         a.klatch_bin = os.path.abspath(a.klatch_bin)
     try:
-        fx = fixture_mod.Fixture(a.fixture, a.fixtures_dir, a.checks_dir)
+        fx = fixture_mod.Fixture(a.fixture, a.fixtures_dir, a.checks_dir, variant=a.variant)
     except (fixture_mod.FixtureError, KeyError) as e:
         print("run.py: %s" % e, file=sys.stderr)
         return 2
