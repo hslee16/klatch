@@ -142,8 +142,8 @@ pub use toolguard::{
     patch_targets,
 };
 pub use usage_stats::{
-    AskCounts, ClaimCounts, Counts, MemberCounts, RoomClass, RoomCount, StatsOptions, UsageStats,
-    claim_class, day_of, median_and_p90, start_of_day, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MemberCounts, RoomClass, RoomCount, StatsOptions,
+    UsageStats, claim_class, day_of, median_and_p90, start_of_day, vocab,
 };
 pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{Capped, cap_wake};

@@ -73,6 +73,32 @@ pub struct ClaimCounts {
     /// Members waiting on a held claim now: the only conflict record the store keeps.
     pub waiting: Counts,
     pub yields: i64,
+    /// What the claim event record (#1386) holds: counts by class and word, never a name.
+    pub history: ClaimHistory,
+}
+
+/// The claim event record in the window (#1386): grants, refusals by rule word, releases and expiries by class, how
+/// conflicts ended and how long claims were held. A renewal is not an event. Empty for a store that predates the
+/// record or has no events yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClaimHistory {
+    pub granted: Counts,
+    pub refused: Counts,
+    pub released: Counts,
+    /// Releases by who released: `holder`, `session` (the session ended), `anchor` (the work item was reported done),
+    /// `removed` (the member was removed).
+    pub released_by: Counts,
+    /// Leases that lapsed, by class (a holder's lease ran out).
+    pub expired: Counts,
+    /// Grants made over a claim whose lease had just lapsed under another member.
+    pub takeovers: i64,
+    /// Conflicts handled: a member refused and later granted a claim overlapping the one it was refused.
+    pub handled: i64,
+    /// Median seconds from the first refusal to the grant, over the handled conflicts.
+    pub handled_wait_median: Option<i64>,
+    /// Median seconds a claim was held until it was released or its lease lapsed, and how many holds that covers.
+    pub hold_median: Option<i64>,
+    pub holds: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -308,6 +334,45 @@ impl UsageStats {
             &self.claims.waiting,
         );
         o.push_str(&format!("claim yields on record: {}\n", self.claims.yields));
+        let h = &self.claims.history;
+        table(
+            &mut o,
+            "claim grants by class (new holds; renewals are not counted)",
+            ["class", "grants"],
+            &h.granted,
+        );
+        table(
+            &mut o,
+            "claim refusals by rule",
+            ["rule", "refusals"],
+            &h.refused,
+        );
+        table(
+            &mut o,
+            "claim releases by class",
+            ["class", "releases"],
+            &h.released,
+        );
+        table(
+            &mut o,
+            "claim releases by who released",
+            ["by", "releases"],
+            &h.released_by,
+        );
+        table(
+            &mut o,
+            "claim expiries by class (the holder's lease lapsed)",
+            ["class", "expiries"],
+            &h.expired,
+        );
+        o.push_str(&format!(
+            "claims taken over after expiry: {}\nclaim conflicts handled (refused, then granted): {}, median wait {}\nclaim hold time: median {} over {} holds\n",
+            h.takeovers,
+            h.handled,
+            opt(h.handled_wait_median),
+            opt(h.hold_median),
+            h.holds
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -377,6 +442,18 @@ impl UsageStats {
             "claims": {
                 "live": pairs(&self.claims.live), "notes": pairs(&self.claims.notes),
                 "waiting": pairs(&self.claims.waiting), "yields": self.claims.yields,
+                "history": {
+                    "granted": pairs(&self.claims.history.granted),
+                    "refused": pairs(&self.claims.history.refused),
+                    "released": pairs(&self.claims.history.released),
+                    "released_by": pairs(&self.claims.history.released_by),
+                    "expired": pairs(&self.claims.history.expired),
+                    "takeovers": self.claims.history.takeovers,
+                    "conflicts_handled": self.claims.history.handled,
+                    "conflict_wait_median_secs": self.claims.history.handled_wait_median,
+                    "hold_median_secs": self.claims.history.hold_median,
+                    "holds": self.claims.history.holds,
+                },
             },
             "refusals": pairs(&self.refusals),
             "members": {

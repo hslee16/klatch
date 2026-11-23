@@ -44,7 +44,10 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE INDEX member_attrs_repository ON member_attrs(repository);
  CREATE TABLE claim_yields(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, taker TEXT NOT NULL DEFAULT '', PRIMARY KEY(room,member,path));
  CREATE TABLE ask_scopes(room TEXT NOT NULL, seq INTEGER NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(room,seq));
- CREATE TABLE ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));";
+ CREATE TABLE ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));
+ CREATE TABLE claim_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, event TEXT NOT NULL, class TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', held INTEGER NOT NULL DEFAULT 0, waited INTEGER);
+ CREATE INDEX claim_events_ts ON claim_events(ts);
+ CREATE TABLE claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -495,6 +498,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v35,
     migrate_v36,
     migrate_v37,
+    migrate_v38,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -503,6 +507,22 @@ pub(super) const MIGRATIONS: &[Step] = &[
 pub(super) fn migrate_v37(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));",
+    )
+    .map_err(be)
+}
+
+/// Version 38 to 39: the record of claim events (#1386), so conflicts, releases, expiries and hold times are countable.
+/// `claim_events` holds one small row per event: the moment, the room, the event word, the claim class (`file`,
+/// `ticket`, `ask`, `other`), a reason word from a fixed vocabulary, the seconds the claim was held and, for a grant
+/// that ended a refusal, the seconds waited. It never holds a claim name, a member, a reason or a note.
+/// `claim_conflicts_open` is the working state that lets a later grant be matched to the refusal it ends (a refused
+/// member's wait window is only two minutes, a handled conflict can take hours); it holds the claim name like the
+/// claims table does and is never read by the report. Existing stores start with no history.
+pub(super) fn migrate_v38(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS claim_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, event TEXT NOT NULL, class TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', held INTEGER NOT NULL DEFAULT 0, waited INTEGER);
+         CREATE INDEX IF NOT EXISTS claim_events_ts ON claim_events(ts);
+         CREATE TABLE IF NOT EXISTS claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));",
     )
     .map_err(be)
 }

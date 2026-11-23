@@ -11,6 +11,7 @@ mod archive_files;
 mod archive_rekey;
 mod change_token;
 mod claim_age;
+mod claim_events;
 mod claim_graph;
 mod claims;
 mod concurrency;

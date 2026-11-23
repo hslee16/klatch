@@ -663,3 +663,47 @@ fn ask_refs_keep_their_order_per_room_and_ask_and_a_second_set_replaces_the_firs
     s.set_ask_refs("r", a, &[]).unwrap();
     assert!(s.ask_refs("r").unwrap().is_empty());
 }
+
+#[test]
+fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history() {
+    let path = temp_db("migrate-v38-claim-events");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.claim(&ClaimRequest::new(("r", "bob"), "old.rs", 600, ""), 0)
+            .unwrap();
+        s.conn
+            .execute_batch(
+                "DROP TABLE claim_events; DROP TABLE claim_conflicts_open; PRAGMA user_version = 38;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    for table in ["claim_events", "claim_conflicts_open"] {
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "{table}");
+    }
+    let n: i64 = s
+        .conn
+        .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0, "history starts empty");
+    // the old claim still works and the new record starts
+    assert_eq!(s.claims("r", 1).unwrap()[0].path, "old.rs");
+    s.claim(&ClaimRequest::new(("r", "bob"), "new.rs", 600, ""), 2)
+        .unwrap();
+    let n: i64 = s
+        .conn
+        .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(SCHEMA_VERSION, 39);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}

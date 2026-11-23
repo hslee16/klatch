@@ -9,6 +9,7 @@ mod archive;
 mod archive_keys;
 mod asks;
 mod backup;
+mod claim_events;
 mod claims;
 mod connect;
 mod credentials;
@@ -46,6 +47,8 @@ pub struct SqliteStore {
     conn: Connection,
     /// The label keys this principal holds (DESIGN section 32 item 8). A label it has no key for stays sealed.
     labels: std::cell::RefCell<crate::keys::LabelKeys>,
+    /// Claim events (#1386) that could not be recorded: the failure is swallowed so a claim never fails for it.
+    claim_record_errors: std::cell::Cell<u64>,
 }
 
 fn credential_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::store::CredentialRecord> {

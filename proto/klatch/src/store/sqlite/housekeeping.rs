@@ -148,14 +148,15 @@ impl SqliteStore {
 
     pub(super) fn do_remove_member(&self, room: &str, member: &str, now: i64) -> Result<usize> {
         self.immediate(|| {
-            let released: usize = self
-                .conn
-                .query_row(
-                    "SELECT COUNT(*) FROM claims WHERE room=?1 AND owner=?2 AND expires>?3",
-                    params![room, member, now],
-                    |r| r.get::<_, i64>(0),
-                )
-                .map_err(be)? as usize;
+            let held: Vec<(String, i64, i64)> = self.rows(
+                "SELECT path,expires,since FROM claims WHERE room=?1 AND owner=?2",
+                params![room, member],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            let released = held.iter().filter(|(_, expires, _)| *expires > now).count();
+            for (path, expires, since) in &held {
+                self.record_ended(room, path, (*since, *expires, Some(now)), "removed");
+            }
             for sql in [
                 "DELETE FROM claims WHERE room=?1 AND owner=?2",
                 "DELETE FROM members WHERE room=?1 AND name=?2",
