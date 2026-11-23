@@ -21,6 +21,31 @@ NESTED = {
 }
 
 
+ROLE_MEMBER_KEYS = ("turns", "tokens", "cost_usd", "wall_s", "exit", "state")
+ROLE_STATES = ("ok", "failed", "stopped-by-harness", "killed-by-cap")
+
+
+def validate_roles(roles):
+    """Problems with the optional `roles` object (#1421): null for an arm without roles, else per member the numbers a role
+    must report (turns, tokens, cost, wall time, exit and state). The roles' cost is also in spend.usd (the team total)."""
+    if roles is None:
+        return []
+    if not isinstance(roles, dict) or not isinstance(roles.get("members"), dict):
+        return ["roles is not null or an object with members"]
+    errs = []
+    groups = [("members", roles["members"])]
+    if isinstance(roles.get("replacements"), dict):
+        groups.append(("replacements", roles["replacements"]))
+    for group, members in groups:
+        for name, m in members.items():
+            for k in ROLE_MEMBER_KEYS:
+                if not isinstance(m, dict) or k not in m:
+                    errs.append("missing key roles.%s.%s.%s" % (group, name, k))
+            if isinstance(m, dict) and m.get("state") not in ROLE_STATES and "state" in m:
+                errs.append("roles.%s.%s.state %r is not one of %s" % (group, name, m.get("state"), ", ".join(ROLE_STATES)))
+    return errs
+
+
 def count_units(checks):
     """(units_total, units_completed) from outcome_checks. A check counts as a unit unless it says "unit": false
     (structural checks such as "no conflict markers" are reported under correctness, not as units)."""
@@ -48,6 +73,7 @@ def validate_record(rec):
         errs.append("schema must be %d" % SCHEMA_VERSION)
     if rec.get("outcome") not in OUTCOMES:
         errs.append("outcome %r is not one of %s" % (rec.get("outcome"), ", ".join(OUTCOMES)))
+    errs += validate_roles(rec.get("roles"))
     checks = rec.get("outcome_checks")
     if "outcome_checks" in rec and not isinstance(checks, list):
         errs.append("outcome_checks is not a list")

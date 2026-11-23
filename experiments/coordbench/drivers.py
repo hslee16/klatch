@@ -20,6 +20,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TERM")
 GIT_TOOLS = ["Bash(git:*)", "Bash(python3:*)"]
 FILE_TOOLS = ["Read", "Edit", "Write", "Glob", "Grep"]
+READ_TOOLS = ["Read", "Glob", "Grep"]
+MESSAGING_ARMS = ("B1", "B1-roles")
 
 
 def parse_claude_version(text):
@@ -45,9 +47,11 @@ class Driver:
     def extra_env_for(self, scratch):
         return {}
 
-    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None, role=None, model=None, max_usd=None):
         """session is 1, or 2 for the restart of an agent whose context was cleared (S9 resume); max_turns overrides the
-        driver's turn cap for this one session (the first session of a resume run is cut by it)."""
+        driver's turn cap for this one session (the first session of a resume run is cut by it). role is "integrator" or
+        "supervisor" for a role member of K3 or B1-roles (#1421); model and max_usd override the driver's model and its
+        per-agent budget for this one session (a role has its own)."""
         raise NotImplementedError
 
     def version(self):
@@ -62,9 +66,11 @@ class FakeDriver(Driver):
         self.klatch_bin = klatch_bin
         self.room = room
 
-    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None, role=None, model=None, max_usd=None):
         argv = [sys.executable, os.path.join(HERE, "fake_agent.py"), "--script", self.script_path, "--name", name,
                 "--arm", arm, "--out", out_dir, "--room", self.room, "--session", str(session)]
+        if role:
+            argv += ["--role", role]
         if self.klatch_bin:
             argv += ["--klatch-bin", self.klatch_bin]
         return argv, {}
@@ -88,14 +94,15 @@ class ClaudeDriver(Driver):
         # the agent's tool state (its config directory) is per run, never the user's ~/.claude
         return {"CLAUDE_CONFIG_DIR": os.path.join(scratch, "claude-config")}
 
-    def allowed_tools(self, arm):
-        tools = FILE_TOOLS + GIT_TOOLS
+    def allowed_tools(self, arm, role=None):
+        # a role member never edits the code (its prompt says so, and here it cannot): reading and the shell only
+        tools = (READ_TOOLS if role else FILE_TOOLS) + GIT_TOOLS
         if arm.startswith("K") and self.klatch_bin:
             tools.append("Bash(%s:*)" % self.klatch_bin)
         if arm.startswith("B"):
             # waiting is a Bash call in a B arm (the K arms wait with `klatch wait`); no other shell is opened up
             tools.append("Bash(sleep:*)")
-        if arm == "B1":
+        if arm in MESSAGING_ARMS:
             tools += ["SendMessage", "ListAgents"]
         return tools
 
@@ -103,15 +110,15 @@ class ClaudeDriver(Driver):
         """The --settings JSON that decides native cross-session messaging (docs: cross-session-messaging.md). Only B1
         takes part: it accepts inbound messages unattended (a -p session cannot answer an approval dialog). Every other
         arm refuses inbound messages and has the two messaging tools removed, so nothing leaks between arms."""
-        if arm == "B1":
+        if arm in MESSAGING_ARMS:
             return {"crossSessionInbound": "accept"}
         return {"permissions": {"deny": ["SendMessage", "ListAgents"]}, "crossSessionInbound": "refuse"}
 
-    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
-        argv = [self.claude_bin, "-p", prompt, "--model", self.model, "--setting-sources", "local",
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None, role=None, model=None, max_usd=None):
+        argv = [self.claude_bin, "-p", prompt, "--model", model or self.model, "--setting-sources", "local",
                 "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
-                "--permission-mode", "acceptEdits", "--allowedTools"] + self.allowed_tools(arm) + [
-                "--max-budget-usd", "%.2f" % self.per_agent_usd, "--max-turns", str(max_turns or self.max_turns),
+                "--permission-mode", "acceptEdits", "--allowedTools"] + self.allowed_tools(arm, role) + [
+                "--max-budget-usd", "%.2f" % (self.per_agent_usd if max_usd is None else max_usd), "--max-turns", str(max_turns or self.max_turns),
                 "--output-format", "stream-json", "--verbose", "--include-hook-events",
                 "--name", name, "--settings", json.dumps(self.settings_for(arm), sort_keys=True)]
         return argv, {}

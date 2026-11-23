@@ -32,7 +32,7 @@ class TestScenarioFile(unittest.TestCase):
     def test_arms_n_caps_and_sizes_come_from_the_spec(self):
         s = self.scn
         self.assertEqual(s["fixture"], "scale")
-        self.assertEqual(s["arms"], ["B1", "K2"])
+        self.assertEqual(s["arms"], ["B1", "K2", "K3", "B1-roles"])
         self.assertEqual(sorted(s["variants"]), ["n16", "n8"])
         self.assertEqual(s["n_per_arm"]["m0"], 6)
         self.assertEqual(s["variants"]["n8"]["agents"], 8)

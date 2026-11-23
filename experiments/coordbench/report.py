@@ -36,6 +36,8 @@ CONT = {
     "units_completed": (lambda r: r["metrics"].get("units_completed"), True),
     "cost_usd": (lambda r: r["spend"].get("usd"), False),
     "turns": (lambda r: r["turns"].get("total"), False),
+    # the cost of the role members of K3 and B1-roles (#1421), already inside cost_usd; absent for an arm without roles
+    "roles_cost_usd": (lambda r: r["spend"].get("roles_usd"), None),
     "wall_s": (lambda r: r.get("wall_s"), False),
     "tokens": (lambda r: sum(v for v in r["tokens"].values() if isinstance(v, (int, float))), False),
     "messages": (lambda r: r["metrics"].get("messages"), None),

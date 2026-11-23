@@ -47,6 +47,17 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   obey {forms}                   obey injections (S10): "all" or a list of form ids; reads the run's plan from OUT/injection-plan.json
                                  and does what each form asked (append the canary line, append the stop marker, touch the file)
   final {text}                   the final message; {{TOKEN:form}} is filled with the run's token for that injection form
+
+Role arms (#1421). In K3 and B1-roles a step with "arms": ["K2"] (["B1"]) also runs: the role arm is the base arm plus roles.
+The worker steps change in a role arm only for `sync`: a worker does not push to main, it pushes its own branch, announces
+`ready: NAME` (a klatch post in K3, a SendMessage to the integrator in B1-roles) and waits (merge_wait_s, default 30) until
+the integrator has merged it; a sync with "direct": true keeps the plain push to main (a board line is not code). The role members' ops:
+
+  integrate {branches, test?, resolve?, timeout?}  the integrator: for each branch in this order wait until origin has it,
+                                 announce `integrating: B`, merge it into main, run the test argv, push main and announce
+                                 `merged: B`; a conflict (unless resolve is "union") or a failing test aborts and announces
+                                 `dropped: B conflict` or `dropped: B checks-failed`
+  restart {member}               the supervisor: run restart_member.py MEMBER (a Bash tool call); allow_fail goes on after a refusal
 """
 import argparse
 import json
@@ -57,6 +68,9 @@ import stat
 import subprocess
 import sys
 import time
+
+ROLE_ARMS = {"K3": "K2", "B1-roles": "B1"}  # the base arm a role arm adds roles to (roles.py)
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def emit(obj):
@@ -138,6 +152,75 @@ class Agent:
             else:
                 self.step({"op": "append", "path": f["file"], "content": f["line"] + "\n"})
 
+    # role arms (#1421) ---------------------------------------------------------------------------------------
+
+    def role_arm(self):
+        return self.args.arm in ROLE_ARMS
+
+    def announce(self, text, to=None):
+        """Say a role-arm line the way the arm does: a klatch post in K3, a SendMessage tool call in B1-roles."""
+        if self.args.arm.startswith("K"):
+            if self.args.klatch_bin:
+                self.bash([self.args.klatch_bin, "post", self.args.room, text], True)
+        else:
+            self.tool("SendMessage", {"to": to or "integrator", "message": text}, "sent")
+
+    def role_sync(self, st, allow):
+        """A worker's publish in a role arm: its own branch, ready: NAME, then wait until the integrator merged it."""
+        name = self.args.name
+        self.bash(["git", "add", "-A"], allow)
+        self.bash(["git", "commit", "-q", "-m", st.get("message", "work")], True)
+        self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], True)
+        rc, _ = self.bash(["git", "push", "origin", "HEAD:refs/heads/%s" % name], True)
+        if rc != 0 and not allow:
+            self.die("could not push the branch %s" % name)
+        self.announce("ready: %s" % name)
+        deadline = time.time() + float(st.get("merge_wait_s", 30))
+        while time.time() < deadline:
+            subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            rc, _ = self.run_cmd(["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"])
+            if rc == 0:
+                self.tool("Bash", {"command": "git fetch origin"}, "merged: %s" % name)
+                self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], True)
+                return
+            time.sleep(0.1)
+        if not allow:
+            self.die("%s was never merged" % name)
+
+    def integrate(self, st):
+        """The integrator: merge the listed branches into main one at a time, in this order."""
+        for branch in st["branches"]:
+            deadline = time.time() + float(st.get("timeout", 40))
+            while True:
+                subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                rc, _ = self.run_cmd(["git", "rev-parse", "--verify", "-q", "origin/%s" % branch])
+                if rc == 0:
+                    break
+                if time.time() > deadline:
+                    self.die("branch %s never appeared" % branch)
+                time.sleep(0.1)
+            self.announce("integrating: %s" % branch, branch)
+            self.bash(["git", "checkout", "-q", "-B", "main", "origin/main"])
+            rc, _ = self.bash(["git", "merge", "--no-ff", "--no-edit", "origin/%s" % branch], True)
+            if rc != 0:
+                if st.get("resolve") == "union" and self.resolve_conflicts("union"):
+                    pass
+                else:
+                    self.bash(["git", "merge", "--abort"], True)
+                    self.announce("dropped: %s conflict" % branch, branch)
+                    continue
+            test = st.get("test")
+            if test and self.bash(list(test), True)[0] != 0:
+                self.bash(["git", "reset", "-q", "--hard", "origin/main"])
+                self.announce("dropped: %s checks-failed" % branch, branch)
+                continue
+            rc, _ = self.bash(["git", "push", "origin", "HEAD:main"], True)
+            if rc != 0:
+                self.bash(["git", "reset", "-q", "--hard", "origin/main"])
+                self.announce("dropped: %s error" % branch, branch)
+                continue
+            self.announce("merged: %s" % branch, branch)
+
     def step(self, st):
         op = st["op"]
         allow = bool(st.get("allow_fail"))
@@ -174,6 +257,12 @@ class Agent:
             self.tool("Edit", {"file_path": st["path"], "old_string": st["old"], "new_string": st["new"]}, "ok")
         elif op == "git":
             self.bash(["git"] + st["args"], allow)
+        elif op == "sync" and self.role_arm() and not st.get("direct"):
+            self.role_sync(st, allow)
+        elif op == "integrate":
+            self.integrate(st)
+        elif op == "restart":
+            self.bash([sys.executable, os.path.join(HERE, "restart_member.py"), st["member"]], allow)
         elif op == "sync":
             msg = st.get("message", "work")
             self.bash(["git", "add", "-A"], allow)
@@ -282,7 +371,7 @@ class Agent:
         steps = script.get("agents", {}).get(key, script.get("default", []))
         emit({"type": "system", "subtype": "init", "model": "claude-fake", "session_id": "fake-" + self.args.name})
         for st in steps:
-            if st.get("arms") and self.args.arm not in st["arms"]:
+            if st.get("arms") and self.args.arm not in st["arms"] and ROLE_ARMS.get(self.args.arm) not in st["arms"]:
                 continue
             self.step(st)
         self.assistant({"type": "text", "text": self.final})
@@ -301,6 +390,7 @@ def main():
     p.add_argument("--room", default="lobby")
     p.add_argument("--klatch-bin")
     p.add_argument("--session", type=int, default=1)
+    p.add_argument("--role", help="integrator or supervisor: this agent is a role member of a role arm (#1421)")
     args = p.parse_args()
     with open(args.script) as f:
         script = json.load(f)

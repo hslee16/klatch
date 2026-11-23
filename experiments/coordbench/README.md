@@ -106,7 +106,7 @@ independent oracles, then prints `{"checks": [...], "units_completed", "units_to
 eight unit checks (the modules) and structural checks `registry` (one import line per module, every function exported),
 `changelog` (exactly the four ticket lines), `no-conflict-markers` and `visible-tests`; `merge_state` is `clean`,
 `conflicts-left` or `tests-broken`; `per_agent` is commits and modules touched by git author (each agent commits under its
-own name; the harness sets that). `scenarios/s1.json` holds arms B0 B1 K1 K2 K3 (K3 not at M0), N 10 per arm at M0 and 3 for
+own name; the harness sets that). `scenarios/s1.json` holds arms B0 B1 K1 K2 K3 B1-roles (K3 and B1-roles not at M0), N 10 per arm at M0 and 3 for
 the quick subset, caps (6 USD a run, 100 USD for the M0 suite on Haiku, from SPEC 8.1) and the metric definitions.
 
 For a fixture with a scenario the harness now fills two fields it used to leave null. `duplicate_work` is the number of
@@ -468,8 +468,39 @@ ask is open again`) and `claim_taken_after_lapse` (a survivor's claim of the vic
 refused claim (`is claimed by V in room R (Ns left)`) and the board line `- V | working` are sightings, not notices.
 `how_noticed` is the first marker before or at the first action, or `no-marker`.
 
-**Gaps.** K3 (a supervisor restarts the dead agent) needs the role launcher of #1421 and is listed, not run. The store's claim
+**Gaps.** K3 and B1-roles (a supervisor restarts the dead agent) have a role launcher now (#1421, see Role members below) and are listed, not run at M0. The store's claim
 events (#1386) and stuck events are not exported yet, so the streams carry only what a survivor was shown. SessionEnd cleanup
 (#1314) does not run for a SIGKILLed process, which is the case built here. A headless `claude -p` session may have no
 registry record, so a K run may notice by the lease alone. No real run exists: M0 (#1380) needs the human's budget approval.
 Tests: `tests/test_recovery_checker.py`, `test_recovery_unit.py`, `test_s6_scenario.py`.
+
+## Role members: K3 and B1-roles (#1421)
+
+`--arm K3` and `--arm B1-roles` start, besides the workers, an integrator and a supervisor, each its own agent process
+(`claude -p` in the real driver, a scripted fake in tests) with a clone of its own, its own spend cap, model and cost line.
+
+    run.py --fixture trivial --arm B1-roles --driver fake --suite-id try --fake-script my-fake.json
+    run.py --fixture trivial --arm K3 --driver fake --suite-id try --klatch-bin PATH --bench-bin PATH --fake-script my-fake.json
+
+- Settings: the scenario file's `roles` object (`arms`, `members`, `model`, `per_role_usd`, `grace_s`, `max_restarts`,
+  `clearance`), over which `--roles` (comma list), `--roles-model`, `--role-usd` and `--roles-grace-s` win. `s1`, `s2` and
+  `s6` allow both arms (s5 does not exist in this tree yet; add the same `roles` object and the arm names when it does).
+  Neither arm is in `arms_at_m0`: the human approves them and their budget first.
+- Prompts: a worker gets the base arm text (K2, B1) plus the worker section of `arms/K3.md` or `arms/B1-roles.md`; a role
+  member gets a short frame (the same words in both arms) plus its own section. A role member has no `Edit` or `Write` tool.
+- Roles in the run store (K3): klatch grants roles only to the human at a terminal. The harness uses the path the klatch
+  bench uses: a pseudo-terminal that types a random throwaway admin passphrase, set for the run's own temporary store only
+  (kept in memory, never written or printed), to run `klatch admin integrator integrator`. It needs a POSIX host with
+  `pty`; it never touches the live store, the human's passphrase or the Keychain. A failed grant is a note and
+  `roles.members.integrator.granted: false`; the run goes on. klatch has no supervisor role, so the supervisor is an ordinary
+  member. A role arm needs no test build of klatch.
+- Costs: `roles` in the run record holds each member's turns, tokens, cost, wall time, exit and state; `spend.usd` is the
+  team total including them (the per-run and suite caps and the ledger use it), `spend.workers_usd` and `spend.roles_usd`
+  split it, and the report shows `roles_cost_usd` beside `cost_usd`. A failing role member never invalidates a run. When every
+  worker has ended the roles have `grace_s` seconds to finish, then are stopped (`stopped-by-harness`).
+- Restarts: the supervisor's restart command (`restart_member.py NAME`) asks the harness, which starts a replacement
+  (`NAME-2`) for a worker that has ended, with a fresh clone and the worker's job text, at most `max_restarts` times per
+  worker. The replacement's cost is the roles'. The S6 git metrics see its recovery; the stream metrics do not.
+- Fake agents: in a role arm a step for K2 (B1) also runs; `sync` becomes a branch push, `ready: NAME` and a wait for the
+  merge; `integrate` (the integrator merges listed branches in order, testing each) and `restart` are the role steps.
+  Tests: `tests/test_roles.py` (the K3 tests need `KLATCH_BIN` and `KLATCH_BENCH_BIN`).

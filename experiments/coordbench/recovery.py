@@ -204,7 +204,8 @@ class Killer:
         self.git_every_s, self._last_git, self._git_ok = git_every_s, 0.0, {}
 
     def _applies(self, cond):
-        return not cond.get("arms") or self.arm in cond["arms"]
+        # a role arm is its base arm plus roles (B1-roles: B1), so a condition for B1 applies to it too (#1421)
+        return not cond.get("arms") or self.arm in cond["arms"] or {"B1-roles": "B1"}.get(self.arm) in cond["arms"]
 
     def conditions(self, st):
         """{kind: bool} for the conditions that apply to this arm, from the stream state and (throttled) git."""

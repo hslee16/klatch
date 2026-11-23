@@ -77,6 +77,10 @@ def derive(rec):
     wall = rec.get("wall_s")
     store = (sm.get("store") or {}).get("hook_bytes_injected")
     hook_bytes = store if store is not None else sc.get("hook_bytes_injected")
+    # K3 and B1-roles (#1421): the store counted every member's hooks, the role members and replacements too, so its figure is
+    # divided by all the members the store saw; every other per-member figure counts the workers only (their streams)
+    roles = rec.get("roles") or {}
+    store_members = n + len(roles.get("members") or {}) + len(roles.get("replacements") or {}) if store is not None else n
     tickets = sm.get("tickets_completed")
     return {
         "agents": n,
@@ -84,7 +88,7 @@ def derive(rec):
         "read_context_tokens_per_member": _div(sc.get("read_context_chars"), 4 * n),
         "coordination_context_tokens_per_member": _div(m.get("coordination_context_tokens"), n),
         "hook_chars_per_member": _div(sc.get("hook_context_chars"), n),
-        "hook_digest_bytes_per_member": _div(hook_bytes, n),
+        "hook_digest_bytes_per_member": _div(hook_bytes, store_members),
         "max_coord_result_chars": sc.get("max_coord_result_chars"),
         "units_completed": units,
         "units_per_agent": _div(units, n),
@@ -183,6 +187,10 @@ def render(sc):
             u = entry["units_per_usd"]
             L.append("Units per dollar, %d to %d agents: ratio %s. %s." % (sizes[-2], sizes[-1], _f(u["ratio"]), u["verdict"]))
             L.append("")
+    L.append("Role arms (K3, B1-roles, #1421): cost, and so units per dollar, is the team total including the integrator and "
+             "supervisor (and any replacement); turns, messages and the per-member context figures count the workers only; the "
+             "store's hook bytes are divided by every member the store saw, the role members included.")
+    L.append("")
     L.append("Metric definitions: scenarios/s7.json. hook_digest_bytes_per_member is n/a for a B arm (no klatch store) and for a "
              "K arm whose run had no store export.")
     L.append("")
