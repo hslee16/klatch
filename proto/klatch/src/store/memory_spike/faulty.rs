@@ -134,7 +134,7 @@ impl MemberStore for Faulty {
         }
         let room_key = self.status_room(room);
         for m in &mut out {
-            self.overlay_status(&room_key, m);
+            self.overlay_status(room_key, m);
             m.parent = self.parents.borrow().get(&m.name).cloned();
         }
         Ok(out)

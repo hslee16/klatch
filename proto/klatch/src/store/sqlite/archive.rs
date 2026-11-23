@@ -385,7 +385,7 @@ impl SqliteStore {
 
     /// Seal the plain texts (`body`, `payload`) of a restored message of a sealed label under the label key, or refuse
     /// when the key is not held.
-    fn seal_restored(
+    fn protect_restored(
         &self,
         mid: &str,
         label: &str,
@@ -441,7 +441,7 @@ impl SqliteStore {
                 sealed_labels.insert(label.clone(), is_sealed);
             }
             let [body, payload] = if sealed_labels[&label] {
-                self.seal_restored(&mid, &label, texts)?
+                self.protect_restored(&mid, &label, texts)?
             } else {
                 texts
             };
