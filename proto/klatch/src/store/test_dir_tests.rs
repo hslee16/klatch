@@ -66,40 +66,56 @@ fn the_guard_fires_when_the_directory_passes_the_cap_and_not_before() {
     panic!("the guard did not fire on a directory over the cap");
 }
 
+/// Lines that mention `temp_dir()` and are fine: each entry is a fragment of such a line.
+const ALLOWED_TEMP_DIR_LINES: &[&str] = &[
+    // a TMPDIR passed on to a child process and the live jev report file are not scratch directories
+    "\"TMPDIR\"",
+    "klatch-jev-live.txt",
+    // the hosted judge's own private working directory, removed on drop (#960)
+    "klatch-judge-run-",
+    // the one shared stand-in script of the keyring tests, made once and never a scratch directory
+    "klatch-fake-tool-",
+    // places that read where the temp directory is, to scrub it from a message or to check a path is under it (the
+    // bench), and make nothing
+    "let tmp = std::env::temp_dir().to_string_lossy()",
+    "starts_with(std::env::temp_dir())",
+];
+
+/// Whether `line` makes a temp directory by hand.
+fn makes_temp_dir_by_hand(line: &str) -> bool {
+    line.contains("temp_dir()") && !ALLOWED_TEMP_DIR_LINES.iter().any(|ok| line.contains(ok))
+}
+
+/// Record `file:line` of every line in the Rust file `p` that makes a temp directory by hand.
+fn scan_file(p: &Path, hits: &mut Vec<String>) {
+    let text = std::fs::read_to_string(p).unwrap();
+    for (i, line) in text.lines().enumerate() {
+        if makes_temp_dir_by_hand(line) {
+            hits.push(format!("{}:{}", p.display(), i + 1));
+        }
+    }
+}
+
+/// Scan every Rust file under `dir`, except the `TestDir` helper and its own tests.
+fn walk(dir: &Path, hits: &mut Vec<String>) {
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk(&p, hits);
+            continue;
+        }
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        let own = name == "test_dir.rs" || name == "test_dir_tests.rs";
+        if p.extension().is_some_and(|x| x == "rs") && !own {
+            scan_file(&p, hits);
+        }
+    }
+}
+
 /// #812, #995: a test that makes its own directory under the temp directory cleans it on the happy path only and has no
 /// size cap. The unit tests, the integration tests and the bench use `TestDir`; this scan keeps a new helper from going back to the by-hand form.
 #[test]
 fn no_unit_test_makes_a_temp_directory_by_hand() {
-    fn walk(dir: &Path, hits: &mut Vec<String>) {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, hits);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                let name = p.file_name().unwrap().to_string_lossy().into_owned();
-                if name == "test_dir.rs" || name == "test_dir_tests.rs" {
-                    continue;
-                }
-                let text = std::fs::read_to_string(&p).unwrap();
-                for (i, line) in text.lines().enumerate() {
-                    // a TMPDIR passed on to a child process and the live jev report file are not scratch directories
-                    let allowed = line.contains("\"TMPDIR\"")
-                            || line.contains("klatch-jev-live.txt")
-                            // the hosted judge's own private working directory, removed on drop (#960)
-                            || line.contains("klatch-judge-run-")
-                            // the one shared stand-in script of the keyring tests, made once and never a scratch directory
-                            || line.contains("klatch-fake-tool-")
-                            // places that read where the temp directory is, to scrub it from a message or to check a
-                            // path is under it (the bench), and make nothing
-                            || line.contains("let tmp = std::env::temp_dir().to_string_lossy()")
-                            || line.contains("starts_with(std::env::temp_dir())");
-                    if line.contains("temp_dir()") && !allowed {
-                        hits.push(format!("{}:{}", p.display(), i + 1));
-                    }
-                }
-            }
-        }
-    }
     let klatch = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut hits = Vec::new();
     // the integration tests and the bench crate reach TestDir through a path attribute too (#995)

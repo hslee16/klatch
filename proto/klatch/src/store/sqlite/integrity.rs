@@ -162,7 +162,7 @@ mod tests {
         c
     }
 
-    fn put(c: &Connection, room: &str, seq: i64, mid: &str, kind: Option<&str>) {
+    fn put(c: &Connection, (room, seq): (&str, i64), mid: &str, kind: Option<&str>) {
         c.execute(
             "INSERT INTO messages VALUES(?1,?2,?3,?4)",
             rusqlite::params![room, seq, mid, kind],
@@ -174,17 +174,17 @@ mod tests {
     fn a_dense_store_has_no_seq_problem() {
         let c = store();
         for s in 1..=3 {
-            put(&c, "a", s, &format!("a{s}"), None);
+            put(&c, ("a", s), &format!("a{s}"), None);
         }
-        put(&c, "b", 1, "b1", None);
+        put(&c, ("b", 1), "b1", None);
         assert_eq!(seq_density(&c).unwrap(), Vec::<String>::new());
     }
 
     #[test]
     fn a_gap_in_a_rooms_seq_is_reported_with_the_room() {
         let c = store();
-        put(&c, "a", 1, "a1", None);
-        put(&c, "a", 3, "a3", None);
+        put(&c, ("a", 1), "a1", None);
+        put(&c, ("a", 3), "a3", None);
         let p = seq_density(&c).unwrap();
         assert_eq!(p.len(), 1, "{p:?}");
         assert!(p[0].contains("room a"), "{p:?}");
@@ -193,15 +193,15 @@ mod tests {
     #[test]
     fn a_room_that_does_not_start_at_one_is_reported() {
         let c = store();
-        put(&c, "a", 2, "a2", None);
+        put(&c, ("a", 2), "a2", None);
         assert_eq!(seq_density(&c).unwrap().len(), 1);
     }
 
     #[test]
     fn a_tombstone_with_its_archived_message_is_consistent() {
         let c = store();
-        put(&c, "a", 1, "m1", Some("archived"));
-        put(&c, "a", 2, "m2", None);
+        put(&c, ("a", 1), "m1", Some("archived"));
+        put(&c, ("a", 2), "m2", None);
         let ar = archive(&[("a", 1, "m1")]);
         assert_eq!(tombstones(&c, &[ar]).unwrap(), Vec::<String>::new());
     }
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn a_tombstone_whose_message_is_in_no_archive_is_reported() {
         let c = store();
-        put(&c, "a", 1, "m1", Some("archived"));
+        put(&c, ("a", 1), "m1", Some("archived"));
         let other = archive(&[("a", 1, "different-mid")]);
         let p = tombstones(&c, &[other]).unwrap();
         assert_eq!(p.len(), 1, "{p:?}");

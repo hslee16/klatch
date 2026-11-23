@@ -187,13 +187,9 @@ fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
-#[test]
-fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
-    let path = temp_db("real-v0");
-    std::fs::write(&path, PROTOTYPE_V0).unwrap();
-    crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
-    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), SCHEMA_VERSION);
+/// What the real prototype database held in `messages`: per-room seq backfilled in the original order, ids assigned and
+/// distinct, every row unattributed and public.
+fn check_prototype_messages(s: &SqliteStore) {
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(
@@ -216,6 +212,10 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
             .chain(side.iter())
             .all(|m| m.attribution == Attribution::Unattributed && m.label == "public")
     );
+}
+
+/// What it held besides messages: the read cursor, the members, and the claim with its expiry.
+fn check_prototype_members_and_claims(s: &SqliteStore) {
     // alice had read through beta in the prototype, so only gamma is unread
     let unread = s.read(Seat::new("core", "alice"), false, 1).unwrap();
     assert_eq!(
@@ -245,6 +245,10 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
         ),
         ("bob", "src/a.rs", "prototype claim")
     );
+}
+
+/// The migrated prototype database keeps working: a new post continues the seq and carries the tenant.
+fn check_migrated_prototype_keeps_working(s: &SqliteStore) {
     // the migrated database keeps working
     assert_eq!(
         s.post(Seat::new("core", "dave"), "after the migration", 5)
@@ -261,6 +265,18 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
         )
         .unwrap();
     assert_eq!(tenants, 5);
+}
+
+#[test]
+fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
+    let path = temp_db("real-v0");
+    std::fs::write(&path, PROTOTYPE_V0).unwrap();
+    crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    check_prototype_messages(&s);
+    check_prototype_members_and_claims(&s);
+    check_migrated_prototype_keeps_working(&s);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 

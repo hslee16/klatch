@@ -15,6 +15,20 @@ use super::SqliteStore;
 use crate::domain::{CLAIM_MAX_SECS, Result, claim_class};
 use rusqlite::params;
 
+/// The key of one claim: where it is, who holds it, and the path.
+#[derive(Clone, Copy)]
+pub(super) struct ClaimKey<'a> {
+    pub(super) room: &'a str,
+    pub(super) owner: &'a str,
+    pub(super) path: &'a str,
+}
+
+impl<'a> ClaimKey<'a> {
+    pub(super) fn new(room: &'a str, owner: &'a str, path: &'a str) -> Self {
+        Self { room, owner, path }
+    }
+}
+
 /// Rows older than this are deleted as events are written: 30 days.
 pub const CLAIM_EVENT_MAX_AGE_SECS: i64 = 30 * 86_400;
 
@@ -78,7 +92,12 @@ impl SqliteStore {
 
     /// Remember that `member` was refused `path` (the first refusal keeps its time), so the grant that ends the
     /// conflict can say how long it took.
-    pub(super) fn open_claim_conflict(&self, room: &str, member: &str, path: &str, now: i64) {
+    pub(super) fn open_claim_conflict(&self, key: ClaimKey<'_>, now: i64) {
+        let ClaimKey {
+            room,
+            owner: member,
+            path,
+        } = key;
         let r = self
             .exec(
                 "INSERT INTO claim_conflicts_open(room,member,path,first_ts) VALUES(?1,?2,?3,?4)
@@ -99,13 +118,12 @@ impl SqliteStore {
 
     /// The seconds since the first refusal of `member` for a claim overlapping `path`, if any; the refusals are
     /// closed.
-    pub(super) fn close_claim_conflicts(
-        &self,
-        room: &str,
-        member: &str,
-        path: &str,
-        now: i64,
-    ) -> Option<i64> {
+    pub(super) fn close_claim_conflicts(&self, key: ClaimKey<'_>, now: i64) -> Option<i64> {
+        let ClaimKey {
+            room,
+            owner: member,
+            path,
+        } = key;
         let r = (|| -> Result<Option<i64>> {
             let open: Vec<(String, i64)> = self.rows(
                 "SELECT path,first_ts FROM claim_conflicts_open WHERE room=?1 AND member=?2",

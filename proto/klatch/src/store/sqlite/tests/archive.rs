@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::domain::Attribution;
-use crate::store::sqlite::archive::TOMBSTONE;
+use crate::store::sqlite::archive::{ArchiveJob, TOMBSTONE};
 
 fn old_and_new(s: &SqliteStore) {
     s.join("r", "alice", 1).unwrap();
@@ -18,6 +18,25 @@ fn old_and_new(s: &SqliteStore) {
     s.post(Seat::new("r", "bob"), "old three", 30).unwrap();
     s.post(Seat::new("r", "alice"), "new one", 1000).unwrap();
     s.post(Seat::new("r", "bob"), "new two", 1001).unwrap();
+}
+
+fn job<'a>(room: &'a str, out: &'a std::path::Path, key: &'a crate::keys::Key) -> ArchiveJob<'a> {
+    ArchiveJob {
+        room,
+        cutoff: 500,
+        out,
+        key,
+    }
+}
+
+/// A store with the old messages already archived once into the returned file.
+fn archived_once(tag: &str) -> (SqliteStore, TempDb, crate::keys::Key) {
+    let s = store();
+    old_and_new(&s);
+    let out = archive_path(tag);
+    let key = crate::store::insecure_test_key();
+    s.archive_before("r", 500, &out, &key).unwrap();
+    (s, out, key)
 }
 
 fn archive_path(tag: &str) -> TempDb {
@@ -108,12 +127,8 @@ fn a_restore_brings_the_messages_back_exactly() {
 
 #[test]
 fn archiving_twice_does_not_archive_a_tombstone() {
-    let s = store();
-    old_and_new(&s);
-    let a = archive_path("twice-a");
+    let (s, a, key) = archived_once("twice-a");
     let b = archive_path("twice-b");
-    let key = crate::store::insecure_test_key();
-    s.archive_before("r", 500, &a, &key).unwrap();
     assert_eq!(s.archive_before("r", 500, &b, &key).unwrap(), 0);
     let _ = std::fs::remove_file(a);
 }
@@ -171,11 +186,7 @@ fn no_unread_path_shows_a_tombstone_as_new_mail() {
 
 #[test]
 fn nothing_due_is_not_an_error_even_if_the_archive_name_is_taken() {
-    let s = store();
-    old_and_new(&s);
-    let out = archive_path("taken");
-    let key = crate::store::insecure_test_key();
-    s.archive_before("r", 500, &out, &key).unwrap();
+    let (s, out, key) = archived_once("taken");
     assert_eq!(s.archive_before("r", 500, &out, &key).unwrap(), 0);
     let _ = std::fs::remove_file(out);
 }
@@ -191,7 +202,7 @@ fn a_message_landing_after_the_copy_is_not_tombstoned_without_being_archived() {
     s.post(Seat::new("r", "alice"), "old one", 10).unwrap();
     let out = archive_path("tomb-window");
     let n = s
-        .archive_before_hooked("r", 500, &out, &key, &|| {
+        .archive_before_hooked(&job("r", &out, &key), &|| {
             let other = SqliteStore::open(&path, &key).unwrap();
             other
                 .post(Seat::new("r", "alice"), "landed late", 20)
@@ -218,7 +229,7 @@ fn the_copied_set_is_indexed_so_the_tombstone_update_is_not_quadratic() {
     s.post(Seat::new("r", "alice"), "old one", 10).unwrap();
     let out = archive_path("tomb-index");
     let plan = std::cell::RefCell::new(String::new());
-    s.archive_before_hooked("r", 500, &out, &key, &|| {
+    s.archive_before_hooked(&job("r", &out, &key), &|| {
         let mut st = s
             .conn
             .prepare(
@@ -240,4 +251,26 @@ fn the_copied_set_is_indexed_so_the_tombstone_update_is_not_quadratic() {
         "copied rows must be looked up by their own key, plan was:\n{plan}"
     );
     let _ = std::fs::remove_file(out);
+}
+
+#[test]
+fn a_failed_archive_changes_no_row_and_leaves_the_store_able_to_archive_again() {
+    // characterisation (#1445): the copy fails (the target directory is missing), nothing is tombstoned, and the
+    // attached archive and the temp table of copied rows are gone, so the next archive works.
+    let s = store();
+    old_and_new(&s);
+    let key = crate::store::insecure_test_key();
+    let bad = archive_path("failed")
+        .with_file_name("no-such-dir")
+        .join("a.db");
+    assert!(s.archive_before("r", 500, &bad, &key).is_err());
+    assert!(
+        s.tail("r", 0, 100)
+            .unwrap()
+            .iter()
+            .all(|m| m.body != TOMBSTONE)
+    );
+    let good = archive_path("failed-then-ok");
+    assert_eq!(s.archive_before("r", 500, &good, &key).unwrap(), 3);
+    let _ = std::fs::remove_file(good);
 }

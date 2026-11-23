@@ -1,6 +1,7 @@
 //! The SQLite side of the `ClaimStore` area.
 
 use super::super::SqliteStore;
+use super::super::claim_events::ClaimKey;
 use crate::domain::{Claim, ClaimChanges, PassiveTaken, ReleaseNote, Result};
 use crate::store::ClaimStore;
 use crate::store::{ClaimRequest, Release};
@@ -46,11 +47,11 @@ impl ClaimStore for SqliteStore {
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
-        self.do_release(room, owner, path, None)
+        self.do_release(ClaimKey { room, owner, path }, None)
     }
 
     fn release_at(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
-        self.do_release(room, owner, path, Some(now))
+        self.do_release(ClaimKey { room, owner, path }, Some(now))
     }
 
     fn release_with(&self, release: &Release, now: i64) -> Result<()> {
@@ -109,7 +110,7 @@ impl ClaimStore for SqliteStore {
     }
 
     fn note_yield_release(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
-        self.do_note_yield_release(room, owner, path, now)
+        self.do_note_yield_release(ClaimKey { room, owner, path }, now)
     }
 
     fn claim_overwrites(&self, room: &str, now: i64) -> Result<Vec<(String, String, String)>> {
