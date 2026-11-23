@@ -5,7 +5,10 @@ It reads a JSON script and performs the steps for its name: file edits, git, kla
 goes it prints stream-json events in the shape `claude -p --output-format stream-json` prints (init, assistant tool_use,
 user tool_result, result), so the harness parses a fake run exactly as it parses a real one.
 
-    fake_agent.py --script FILE --name NAME --arm ARM --out DIR [--room ROOM] [--klatch-bin PATH]
+    fake_agent.py --script FILE --name NAME --arm ARM --out DIR [--room ROOM] [--klatch-bin PATH] [--session N]
+
+--session 2 is the restart of an agent after its context was cleared (S9 resume): it runs the steps under the key "NAME#2"
+(the default steps when there are none), a separate process that remembers nothing of session 1 except what is on disk.
 
 Script: {"agents": {"<name>": [step, ...]}, "default": [step, ...]}. A step may carry "arms": ["K1", ...] to run only in
 those arms, and "allow_fail": true to go on after a failing command. Steps (op):
@@ -22,6 +25,9 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
                                  it the agent stops on a conflict as before
   klatch {args}                  run the klatch binary given by --klatch-bin ({{ROOM}} and {{NAME}} are filled in)
   say {text}                     an assistant text message
+  read {path}                    a Read tool call on a file (its text is the result)
+  run {argv}                     run any command (a Bash tool call); a nonzero exit ends the agent unless allow_fail
+  hook {text}                    a SessionStart style hook_response event with this output (what a hook injects)
   cost {usd}                     report cumulative spend so far (a fake_cost event)
   sleep {s}, hang                wait; hang waits until the harness kills it
   exit {code}                    stop at once with that exit code, with no result message (a crashed agent)
@@ -158,6 +164,13 @@ class Agent:
             if not self.args.klatch_bin:
                 self.die("the script runs klatch but --klatch-bin was not given")
             self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
+        elif op == "read":
+            with open(st["path"]) as f:
+                self.tool("Read", {"file_path": st["path"]}, f.read())
+        elif op == "run":
+            self.bash([self.fill(a) for a in st["argv"]], allow)
+        elif op == "hook":
+            emit({"type": "system", "subtype": "hook_response", "hook_event": "SessionStart", "output": self.fill(st["text"])})
         elif op == "say":
             self.assistant({"type": "text", "text": st["text"]})
         elif op == "cost":
@@ -198,7 +211,8 @@ class Agent:
             self.die("unknown op %s" % op)
 
     def run(self, script):
-        steps = script.get("agents", {}).get(self.args.name, script.get("default", []))
+        key = self.args.name if self.args.session == 1 else "%s#%d" % (self.args.name, self.args.session)
+        steps = script.get("agents", {}).get(key, script.get("default", []))
         emit({"type": "system", "subtype": "init", "model": "claude-fake", "session_id": "fake-" + self.args.name})
         for st in steps:
             if st.get("arms") and self.args.arm not in st["arms"]:
@@ -219,6 +233,7 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--room", default="lobby")
     p.add_argument("--klatch-bin")
+    p.add_argument("--session", type=int, default=1)
     args = p.parse_args()
     with open(args.script) as f:
         script = json.load(f)

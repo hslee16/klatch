@@ -45,7 +45,9 @@ class Driver:
     def extra_env_for(self, scratch):
         return {}
 
-    def command(self, name, arm, prompt, cwd, out_dir):
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
+        """session is 1, or 2 for the restart of an agent whose context was cleared (S9 resume); max_turns overrides the
+        driver's turn cap for this one session (the first session of a resume run is cut by it)."""
         raise NotImplementedError
 
     def version(self):
@@ -60,9 +62,9 @@ class FakeDriver(Driver):
         self.klatch_bin = klatch_bin
         self.room = room
 
-    def command(self, name, arm, prompt, cwd, out_dir):
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
         argv = [sys.executable, os.path.join(HERE, "fake_agent.py"), "--script", self.script_path, "--name", name,
-                "--arm", arm, "--out", out_dir, "--room", self.room]
+                "--arm", arm, "--out", out_dir, "--room", self.room, "--session", str(session)]
         if self.klatch_bin:
             argv += ["--klatch-bin", self.klatch_bin]
         return argv, {}
@@ -105,11 +107,11 @@ class ClaudeDriver(Driver):
             return {"crossSessionInbound": "accept"}
         return {"permissions": {"deny": ["SendMessage", "ListAgents"]}, "crossSessionInbound": "refuse"}
 
-    def command(self, name, arm, prompt, cwd, out_dir):
+    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None):
         argv = [self.claude_bin, "-p", prompt, "--model", self.model, "--setting-sources", "local",
                 "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
                 "--permission-mode", "acceptEdits", "--allowedTools"] + self.allowed_tools(arm) + [
-                "--max-budget-usd", "%.2f" % self.per_agent_usd, "--max-turns", str(self.max_turns),
+                "--max-budget-usd", "%.2f" % self.per_agent_usd, "--max-turns", str(max_turns or self.max_turns),
                 "--output-format", "stream-json", "--verbose", "--include-hook-events",
                 "--name", name, "--settings", json.dumps(self.settings_for(arm), sort_keys=True)]
         return argv, {}

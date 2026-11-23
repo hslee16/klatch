@@ -150,12 +150,73 @@ now, failing when the text is absent) next to `copy_from`, `append`, `sync` and 
 metrics through the harness with fake agents that cooperate, collide and resolve, collide and leave it, push a stale copy,
 resolve destructively and give up).
 
+## Scenario S9: late joiner and resume (`scenarios/s9.json`, fixture `history`)
+
+One agent (`dana`) joins at the middle of an eight-ticket build, `parcelkit` (shipping manifests), and takes ticket 7,
+`parcelkit/manifest.py`. Its job text (`task-join.md`, the same in every arm) says the team made decisions earlier and that a
+later decision replaces an earlier one; it does not repeat them. The ticket is only correct if it follows three of them, which
+are in the record and in no code: the file name tag (`TAG-YYYYMMDD-SEQ.mf`), the rows per page (`PAGE_ROWS`) and the tare
+(`TARE_G`, subtracted from the scanner weight, floor 0). The tag and the page size were decided and later superseded, so an
+agent that reads only the early part of the record holds a stale value. The values come from a fixed seed
+(`fixtures/history/gen_facts.py`, committed output, `--check` in a test) and are never a conventional default or a number
+written in the code.
+
+What is where (parity: the same information is recoverable in every arm, only the medium differs):
+
+| Arm | Medium |
+|---|---|
+| B0 | the 25 commit messages only (git log); no TASKS.md, no DECISIONS.md |
+| B1 | the same commit messages, plus TASKS.md (the harness's board format) and DECISIONS.md, committed along by the earlier agents |
+| K1 | the same commit messages, plus the prebuilt room history in the run's own temporary store: about 60 messages by `ada`, `bo` and `cy` (claims, asks and answers, five `decision:` asks closed `ok` with two revisions that say which they supersede, checkpoints, a handoff), posted through the binary before the agent starts; no hooks |
+| K2 | K1 plus the hooks `klatch init` writes (the session-start text and, once #1409 is merged, the bounded briefing) |
+
+The repository is prebuilt: `setup.sh` (which learns the arm from `COORDBENCH_ARM`) runs `build_history.py`, which makes 25
+commits by `ada`, `bo` and `cy` with fixed authors, dates and messages from `history.json`, so the commit ids are the same in
+every run (B0, K1 and K2 share them; B1 differs only by the two board files). The fixture says `"prebuilt_history": true`, so the
+harness pushes that repository to the per-run origin instead of making its own first commit. The room history is
+`room.json`, run by `history.post_room` as each member through the klatch binary into the run's temporary `KLATCH_HOME` and
+`KLATCH_KEY_DIR` (never `~/.klatch`). The earlier members are not in the run's team: only `dana` runs.
+
+Resume variant (`--variant resume`, records under scenario `history-resume`, never pooled with the join runs). The same agent
+is restarted after its context was cleared: the first session is cut after `after_turns` (12) turns by the driver's turn cap, and
+once it has exited the harness starts a second session with the same name, in the same clone (committed and uncommitted work
+stay), with the job text again and a short note (`resume-note.md`: the context was cleared, you were in the middle of ticket 7,
+continue). Nothing else of session 1 is carried over (no `--resume`, no summary). The fake driver models this as a second
+process (`fake_agent.py --session 2`, steps under the key `dana#2`). A cut session that exits nonzero is not a crash.
+
+The hidden checker (`checks/history/check.sh`, never in a checkout) tests the ticket and each fact on its own against an
+oracle, and classifies each fact: `ok`, `stale` (the superseded value, a contradicted decision), `guess` (a conventional default
+or no tare), `wrong`, `missing`. It also finds work that duplicates what the history shows done (a new function with the name or
+the behaviour of a finished helper, a finished module rewritten), conflict markers and the visible tests. Four units
+(`ticket-7-works`, `fact-file-name`, `fact-page-size`, `fact-tare`); `correct` also needs no duplicated work, no markers and passing
+tests. `check.sh --tree DIR` prints just `{task, facts, correct}` for one version of the tree. The reference solution
+(`fixtures/history/reference`) and the failing variants (`variants/`: wrong value, superseded decision, duplicated work, rewritten
+finished module) are never in a checkout.
+
+Metrics (`scenario_metrics` of the record; definitions in `scenarios/s9.json`): `correct`, `facts`, `errors`
+(contradicted decisions, wrong values, duplicated work and their sum, the errors from stale understanding), and `history`
+from `history.py`: `turns`, `tokens`, `history_reads` by kind (`git_log`, `board_file`, `klatch_history`, `klatch_read`,
+`klatch_board`, `klatch_find`, `klatch_asks`, `klatch_tasks`, `klatch_claims`, `klatch_card`), by session and the size of what
+they returned, `briefing_seen`, `history_read_before_first_edit`, `room_history_used_unprompted` (K arms) and `first_correct`.
+The first correct contribution is the first commit of the agent whose tree passes the checker's `--tree` mode (ticket working and
+all three facts ok): every non-merge commit of the agent in its clone and in the origin is replayed in order, tied to the stream
+by the id git printed in the `git commit` tool result (else by the position among its `git commit` calls), and the turns and
+cumulative tokens up to that call are reported, across both sessions in the resume variant.
+
+Gaps, stated: a restarted `claude -p` session is a fresh session, so the briefing's `after compact` header does not appear and
+real compaction (a model-written summary left in context) is not modelled; the stream has no timestamps, so there is no
+time-to-first-correct; the real driver's cut of session 1 depends on the model not finishing the ticket within `after_turns`
+turns (the record keeps what happened); the common prompt says the other agents are running now, which is false for the
+earlier members (the job text says they have finished; the common prompt is not edited here). Tests:
+`tests/test_history_fixture.py`, `test_history_checker.py`, `test_history_metrics.py`, `test_s9_scenario.py`.
+
 ## Fake agents
 
 `fake_agent.py` reads a JSON script (the fixture's `fake.json`, or `--fake-script`) and performs file edits, git and klatch
 commands from it, printing the same stream-json a real session prints. A step can be limited to some arms, can fail
 (`exit`, a failing command), `hang` until the wall cap kills it, or report spend (`cost`). See the file's docstring for the
-steps.
+steps; `read`, `run` and `hook` (a session-start style hook output) were added for S9, and `--session 2` runs the steps of
+`NAME#2` (the restarted agent).
 
 ## Not computed yet
 

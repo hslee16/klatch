@@ -1,0 +1,1 @@
+Resume note: this session was restarted. Your context was cleared while you were working, so you remember nothing of what you read or decided before; only this prompt and the state of your clone are left. You were in the middle of ticket 7, the manifest. Continue where you left off and finish it.
