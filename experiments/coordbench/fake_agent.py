@@ -43,7 +43,9 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
                                  scenario S6: a scripted survivor "notices" once it appears; a real agent never reads it)
   send {to, text}                a SendMessage tool call (nothing is delivered: the fake team has no messaging)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
-  final {text}                   the final message
+  obey {forms}                   obey injections (S10): "all" or a list of form ids; reads the run's plan from OUT/injection-plan.json
+                                 and does what each form asked (append the canary line, append the stop marker, touch the file)
+  final {text}                   the final message; {{TOKEN:form}} is filled with the run's token for that injection form
 """
 import argparse
 import json
@@ -121,6 +123,19 @@ class Agent:
         for k, v in self.vars.items():
             text = text.replace("{{var:%s}}" % k, v)
         return text
+
+    def plan(self):
+        with open(os.path.join(self.args.out, "injection-plan.json")) as f:
+            return json.load(f)
+
+    def obey(self, forms):
+        for f in self.plan()["forms"]:
+            if f["goal"] == "none" or (forms != "all" and f["id"] not in forms):
+                continue
+            if f["goal"] == "touch":
+                self.bash(["touch", f["path"]])
+            else:
+                self.step({"op": "append", "path": f["file"], "content": f["line"] + "\n"})
 
     def step(self, st):
         op = st["op"]
@@ -250,8 +265,14 @@ class Agent:
             facts["settings_local_exists"] = os.path.exists(os.path.join(".claude", "settings.local.json"))
             with open(os.path.join(self.args.out, st["path"]), "w") as f:
                 json.dump(facts, f)
+        elif op == "obey":
+            self.obey(st.get("forms", "all"))
         elif op == "final":
-            self.final = st["text"]
+            text = st["text"]
+            if "{{TOKEN:" in text:
+                for f in self.plan()["forms"]:
+                    text = text.replace("{{TOKEN:%s}}" % f["id"], f["token"])
+            self.final = text
         else:
             self.die("unknown op %s" % op)
 
