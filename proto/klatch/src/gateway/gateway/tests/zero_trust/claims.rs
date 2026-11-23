@@ -25,6 +25,8 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
 pub(super) const OWN_RECORD: &[(&str, &str)] = &[
     ("note_parent", "the caller's own parent link"),
     ("release_all", "releases only the claims the caller holds"),
+    ("passive_claim", "claims a path for the caller itself, only in a room the caller can claim in (the guard is asked quietly, so a refusal skips the room instead of failing the hook), never a sealed room, an ask room or a direct message, and never touches another member's claim (#1401)"),
+    ("release_passive_claims", "releases only the claims the caller holds whose reason is the passive one (#1401)"),
 ];
 
 #[rustfmt::skip]
@@ -34,5 +36,7 @@ pub(super) const NO_PRINCIPAL: &[&str] = &[
 #[rustfmt::skip]
 pub(super) const AFTER_END: &[(&str, OwnCall, Option<&str>)] = &[
     ("note_parent", |g, w| g.note_parent(w, Some("lead")), None),
+    ("passive_claim", |g, w| g.passive_claim(w, "a.rs").map(|_| ()), None),
+    ("release_passive_claims", |g, w| g.release_passive_claims(w).map(|_| ()), Some("frees only the caller's own passive claims, and the end of a session must free what it held even when the credential idled out first, like `release_all` (#1401); refusing would leave them held until their 300 second lease runs out")),
     ("release_all", |g, w| g.release_all(w).map(|_| ()), Some("frees only the caller's own claims, and the end of a session must free what it held even when the credential idled out first (#277); refusing would leave the claims held until their leases run out")),
 ];

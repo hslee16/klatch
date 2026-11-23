@@ -16,10 +16,12 @@ import drivers
 import report
 import roles
 import run
+import scale
 import schema
 from test_run_fake import Base, KLATCH_BIN, NEEDS_BIN, read_json, files_under
 from test_s1_scenario import steps as s1_steps, TICKETS
 from test_s6_scenario import FIXTURE as S6_FIXTURE
+from test_s7_scenario import S7Base, fx as s7_fixture, GEN as S7_GEN
 
 ARMS = os.path.join(BENCH, "arms")
 # the visible tests of the fixture need both modules, so a half-merged main would fail them: the integrator checks it imports
@@ -421,6 +423,101 @@ class TestSchema(unittest.TestCase):
                                                                 "wall_s": 1.0, "exit": 0, "state": "ok"}},
                       "replacements": {}, "restarts": []}
         self.assertEqual(schema.validate_record(r), [])
+
+
+def s7_roles_tweak(script, k3):
+    """Add the role members to a generated S7 script: the integrator merges every ticket's branch in order, resolving the
+    shared registry by keeping both sides; a merge may take a while at 16 workers, so the workers wait longer."""
+    workers = sorted(script["agents"])
+    for steps in script["agents"].values():
+        for st in steps:
+            if st.get("op") == "sync":
+                st["merge_wait_s"] = 120
+    script["agents"]["integrator"] = ([JOIN, {"op": "klatch", "args": ["claim", "{{ROOM}}", "merge:main"]}] if k3 else []) + [
+        {"op": "integrate", "branches": workers, "resolve": "union", "timeout": 120, "test": ["python3", "-c", "import scalekit"]},
+        {"op": "final", "text": "DONE integrator"}]
+    script["agents"]["supervisor"] = ([JOIN] if k3 else []) + [{"op": "final", "text": "DONE supervisor"}]
+
+
+class TestRolesAtScale(S7Base):
+    """The roles beside S7's generated workers (#1372 with #1421): the role cost is in the totals, not in the per-member figures."""
+
+    def argv(self, arms="K3", runs=1, variant="n8", **kw):
+        return super().argv(arms, runs, variant, roles_grace_s=30, wall_s=170, **kw)
+
+    def check_scale(self, r, n):
+        self.assertEqual(r["outcome"], "ok", r["notes"])
+        self.assertEqual(r["metrics"]["units_completed"], 2 * n)
+        self.assertEqual(sorted(r["turns"]["per_agent"]), [chr(97 + i) for i in range(n)], "roles are not workers")
+        self.assertEqual(sorted(r["roles"]["members"]), ["integrator", "supervisor"])
+        sc = r["scenario_metrics"]["scale"]
+        self.assertEqual(sc["agents"], n, "the per-member figures divide by the workers only")
+        d = scale.derive(r)
+        self.assertEqual(d["agents"], n)
+        return d
+
+    @NEEDS_BIN
+    def test_k3_at_eight_workers_with_fakes(self):
+        r = self.one("n8", arms="K3", tweak=lambda s: s7_roles_tweak(s, True))
+        d = self.check_scale(r, 8)
+        self.assertTrue(r["roles"]["members"]["integrator"]["granted"], r["notes"])
+        self.assertEqual(r["scenario"], "scale-n8")
+        self.assertAlmostEqual(d["messages_per_agent"], r["metrics"]["messages"] / 8.0)
+
+    def test_b1_roles_at_eight_workers_with_fakes(self):
+        r = self.one("n8", arms="B1-roles", tweak=lambda s: s7_roles_tweak(s, False))
+        d = self.check_scale(r, 8)
+        self.assertIsNone(r["roles"]["members"]["integrator"].get("granted"))
+        with open(os.path.join(self.logs, r["run_id"], "integrator.stream.jsonl")) as f:
+            self.assertIn("merged: h", f.read())
+
+    def test_units_per_dollar_uses_the_total_cost_including_the_roles(self):
+        def tweak(script):
+            s7_roles_tweak(script, False)
+            script["agents"]["a"].insert(0, {"op": "cost", "usd": 0.1})
+            script["agents"]["integrator"].insert(0, {"op": "cost", "usd": 0.3})
+            script["agents"]["supervisor"].insert(0, {"op": "cost", "usd": 0.1})
+        r = self.one("n8", arms="B1-roles", tweak=tweak)
+        self.assertAlmostEqual(r["spend"]["usd"], 0.5)
+        self.assertAlmostEqual(r["spend"]["roles_usd"], 0.4)
+        d = scale.derive(r)
+        self.assertAlmostEqual(d["units_per_usd"], 16 / 0.5, msg="units over the team total, roles included")
+        self.assertAlmostEqual(d["cost_usd"], 0.5)
+        self.assertAlmostEqual(d["units_per_agent"], 2.0)
+        self.assertEqual(d["agents"], 8)
+
+    def test_the_scaling_report_says_what_the_totals_include(self):
+        text = "\n".join(scale.render({"sizes": [8, 16], "arms": {}}))
+        self.assertIn("including the integrator and supervisor", text)
+        self.assertIn("count the workers only", text)
+
+    def test_the_store_hook_bytes_are_divided_by_every_member_the_store_saw(self):
+        from helpers import make_record
+        r = make_record("scale-n8", "K3", "r01", units=(16, 16))
+        r["scenario_metrics"] = {"scale": {"agents": 8}, "store": {"hook_bytes_injected": 1000}}
+        self.assertAlmostEqual(scale.derive(r)["hook_digest_bytes_per_member"], 125.0)
+        r["roles"] = {"members": {"integrator": {}, "supervisor": {}}, "replacements": {}}
+        self.assertAlmostEqual(scale.derive(r)["hook_digest_bytes_per_member"], 100.0)
+
+    def test_the_spend_caps_include_the_roles_at_sixteen_workers(self):
+        def tweak(script):
+            s7_roles_tweak(script, False)
+            script["agents"]["supervisor"] = [{"op": "cost", "usd": 5.0}, {"op": "hang"}]
+        r = self.one("n16", arms="B1-roles", tweak=tweak, max_run_usd=2.0)
+        self.assertEqual(r["outcome"], "spend-cap")
+        self.assertGreaterEqual(r["spend"]["roles_usd"], 5.0)
+        self.assertEqual(r["roles"]["members"]["supervisor"]["state"], "killed-by-cap")
+        self.assertEqual(sorted(r["roles"]["members"]), ["integrator", "supervisor"])
+
+    def test_the_run_cap_is_spread_over_sixteen_workers_and_two_roles(self):
+        import roles as roles_mod
+
+        class A:
+            roles = roles_model = role_usd = roles_grace_s = None
+            model = None
+            max_run_usd = 45.6
+        cfg = roles_mod.resolve(A(), None, "K3", n_workers=16)
+        self.assertAlmostEqual(cfg["per_role_usd"], 45.6 / 18)
 
 
 @NEEDS_BIN

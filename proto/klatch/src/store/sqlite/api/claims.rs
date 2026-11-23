@@ -1,7 +1,7 @@
 //! The SQLite side of the `ClaimStore` area.
 
 use super::super::SqliteStore;
-use crate::domain::{Claim, ClaimChanges, ReleaseNote, Result};
+use crate::domain::{Claim, ClaimChanges, PassiveTaken, ReleaseNote, Result};
 use crate::store::ClaimStore;
 use crate::store::{ClaimRequest, Release};
 use rusqlite::params;
@@ -21,6 +21,28 @@ impl ClaimStore for SqliteStore {
 
     fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
         self.take_claim(request, now)
+    }
+
+    fn take_passive_claim(&self, request: &ClaimRequest, now: i64) -> Result<PassiveTaken> {
+        self.do_passive_claim(request, now)
+    }
+
+    fn release_passive_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.do_release_passive(member, now)
+    }
+
+    fn note_passive_failure(&self, now: i64) {
+        self.record_claim_event(
+            now,
+            &super::super::claim_events::ClaimEvent {
+                room: "",
+                path: "",
+                event: "passive_error",
+                reason: "",
+                held: 0,
+                waited: None,
+            },
+        );
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
