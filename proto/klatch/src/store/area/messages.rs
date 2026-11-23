@@ -3,6 +3,14 @@
 use crate::domain::{Attribution, Message, Posted, Result};
 use crate::store::{NewMessage, Seat, Seq};
 
+/// Which position of a member a set of shown seqs belongs to (#1405): the read cursor, or the wait position of a peeking
+/// or filtered wait (a wait looks past what the member read, and remembers what it looked at).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shown {
+    Read,
+    Wait,
+}
+
 pub trait MessageStore {
     /// Join a room (idempotent). Unread starts at the beginning of history.
     fn join(&self, room: &str, member: &str, now: i64) -> Result<()>;
@@ -109,4 +117,28 @@ pub trait MessageStore {
 
     /// Move a member's read cursor forward to `seq`, never backward and never past the room's head.
     fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()>;
+
+    /// Record that a view showed these messages (#1405), which need not be a prefix of what is unread: a capped view puts
+    /// what matters first. The position of `channel` moves over the longest run of messages from others, starting at
+    /// its current value, that were all shown (this call or an earlier one); the seqs shown beyond that run are
+    /// remembered, so no later read, wait or hook repeats them, and are forgotten as soon as the position passes them.
+    /// Nothing that was not named here is ever marked. A seq that is not an unread message of another member is
+    /// ignored. The default knows only the prefix case: it moves the read cursor over a shown prefix and refuses a set
+    /// that has a gap, because it could not remember it.
+    fn mark_shown(&self, at: Seat, channel: Shown, seqs: &[Seq], now: i64) -> Result<()> {
+        let unread: Vec<i64> = self.look(at, now)?.iter().map(|m| m.seq).collect();
+        let shown: std::collections::BTreeSet<i64> = seqs.iter().map(|s| s.0).collect();
+        let prefix = unread.iter().take_while(|s| shown.contains(s)).count();
+        if shown
+            .iter()
+            .any(|s| unread.contains(s) && !unread[..prefix].contains(s))
+        {
+            return super::unsupported("messages shown out of order");
+        }
+        match (channel, unread[..prefix].last()) {
+            (Shown::Read, Some(last)) => self.advance_cursor(at, Seq(*last), now),
+            (Shown::Wait, Some(last)) => self.wait_seen(at, Seq(*last), now),
+            _ => Ok(()),
+        }
+    }
 }

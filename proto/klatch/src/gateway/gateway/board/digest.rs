@@ -104,6 +104,8 @@ impl<S: Store> Gateway<S> {
             }
             let (messages, outside_view) = self.digest_messages(who, &room, now)?;
             let addressed = self.addressed_seqs(who, &room, &messages)?;
+            // asks for the member, direct messages and the like come before chatter when the digest is full (#1405)
+            let ranks = self.importances(who, &room, &messages)?;
             let dm_peer = self.dm_peer(who, &room)?;
             let move_to_dm = if dm_peer.is_none() {
                 self.long_exchange(who, &room, &messages)?
@@ -142,6 +144,7 @@ impl<S: Store> Gateway<S> {
                 messages,
                 outside_view,
                 addressed,
+                ranks,
                 claims: changes.added,
                 released: changes.released,
                 stale,

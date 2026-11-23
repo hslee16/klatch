@@ -28,6 +28,7 @@ mod migrations;
 mod plaintext;
 mod review;
 mod runs;
+mod shown;
 mod stats;
 mod wait_cycles;
 

@@ -52,8 +52,107 @@ impl SqliteStore {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let rows = self.others_after(room, last, member)?;
+        let mut rows = self.others_after(room, last, member)?;
+        // what a capped read showed out of order is read, though it lies past the cursor (#1405)
+        let shown = self.shown_past(room, member, &["read"], last)?;
+        rows.retain(|m| !shown.contains(&m.seq));
         Ok((rows, last))
+    }
+
+    /// The seqs past `after` that a view showed out of order, on the given channels (`read`, `wait`).
+    fn shown_past(
+        &self,
+        room: &str,
+        member: &str,
+        channels: &[&str],
+        after: i64,
+    ) -> Result<std::collections::HashSet<i64>> {
+        let mut out = std::collections::HashSet::new();
+        for channel in channels {
+            let rows: Vec<i64> = self.rows(
+                "SELECT seq FROM read_shown WHERE room=?1 AND member=?2 AND channel=?3 AND seq>?4",
+                params![room, member, channel, after],
+                |r| r.get(0),
+            )?;
+            out.extend(rows);
+        }
+        Ok(out)
+    }
+
+    /// Record seqs a view showed (#1405), then move the position of `channel` over the contiguous run that is now all
+    /// shown, and forget the remembered seqs the positions have passed. One transaction.
+    pub(super) fn do_mark_shown(
+        &self,
+        at: Seat,
+        channel: Shown,
+        seqs: &[Seq],
+        now: i64,
+    ) -> Result<()> {
+        let Seat { room, member } = at;
+        self.immediate(|| {
+            self.touch(room, member, now)?;
+            let (read, wait): (i64, i64) = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(last_seq,0), wait_seq FROM members WHERE room=?1 AND name=?2",
+                    params![room, member],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or((0, 0));
+            let (word, start) = match channel {
+                Shown::Read => ("read", read),
+                Shown::Wait => ("wait", read.max(wait)),
+            };
+            // the messages this position has still to pass, in order: only those can be shown
+            let pending: Vec<i64> = self.rows(
+                "SELECT seq FROM messages WHERE room=?1 AND seq>?2 AND sender<>?3 AND COALESCE(kind,'')<>'archived' ORDER BY seq",
+                params![room, start, member],
+                |r| r.get(0),
+            )?;
+            let pending_set: std::collections::HashSet<i64> = pending.iter().copied().collect();
+            for s in seqs.iter().filter(|s| pending_set.contains(&s.0)) {
+                self.exec(
+                    "INSERT OR IGNORE INTO read_shown(room,member,channel,seq) VALUES(?1,?2,?3,?4)",
+                    params![room, member, word, s.0],
+                )?;
+            }
+            // a wait looks past the read position, so what a read showed counts for it too
+            let channels: &[&str] = match channel {
+                Shown::Read => &["read"],
+                Shown::Wait => &["read", "wait"],
+            };
+            let shown = self.shown_past(room, member, channels, start)?;
+            let mut to = start;
+            for s in &pending {
+                if shown.contains(s) {
+                    to = *s;
+                } else {
+                    break;
+                }
+            }
+            if to > start {
+                let column = match channel {
+                    Shown::Read => "last_seq",
+                    Shown::Wait => "wait_seq",
+                };
+                self.exec(
+                    &format!("UPDATE members SET {column}=MAX({column},?3), last_seen=?4 WHERE room=?1 AND name=?2"),
+                    params![room, member, to, now],
+                )?;
+            }
+            self.forget_passed_shown(room, member)
+        })
+    }
+
+    /// Forget the remembered shown seqs that the read cursor and the wait position have passed.
+    fn forget_passed_shown(&self, room: &str, member: &str) -> Result<()> {
+        self.exec(
+            "DELETE FROM read_shown WHERE room=?1 AND member=?2 AND seq <= (
+                 SELECT CASE channel WHEN 'read' THEN COALESCE(last_seq,0) ELSE MAX(COALESCE(last_seq,0),wait_seq) END
+                 FROM members WHERE room=?1 AND name=?2)",
+            params![room, member],
+        )
+        .map(|_| ())
     }
 
     pub(super) fn do_read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
@@ -64,11 +163,18 @@ impl SqliteStore {
             // Advance to the last message actually returned, never to the room's current maximum:
             // a message posted between the select above and this update would otherwise be skipped
             // for good. Own messages after the last returned one are simply filtered again next time.
-            let cursor = rows.last().map_or(last, |m| m.seq.max(last));
+            // what a capped read showed out of order counts as taken too (#1405)
+            let beyond = self
+                .shown_past(room, member, &["read"], last)?
+                .into_iter()
+                .max()
+                .unwrap_or(0);
+            let cursor = rows.last().map_or(last, |m| m.seq.max(last)).max(beyond);
             self.exec(
                 "UPDATE members SET last_seq=?3, last_seen=?4 WHERE room=?1 AND name=?2",
                 params![room, member, cursor, now],
             )?;
+            self.forget_passed_shown(room, member)?;
         }
         Ok(rows)
     }
@@ -100,7 +206,16 @@ impl SqliteStore {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((0, 0));
-        self.others_after(room, read.max(seen), member)
+        let mut rows = self.others_after(room, read.max(seen), member)?;
+        // what a capped read or wait showed out of order is not new (#1405)
+        let channels: &[&str] = if column == "wait_seq" {
+            &["read", "wait"]
+        } else {
+            &["read"]
+        };
+        let shown = self.shown_past(room, member, channels, read.max(seen))?;
+        rows.retain(|m| !shown.contains(&m.seq));
+        Ok(rows)
     }
 
     /// True when a hook for the member would show nothing and write nothing: it was already seen this second, no claim
@@ -140,11 +255,15 @@ impl SqliteStore {
                 )
                 .map_err(be)?;
             let from = read.max(shown);
-            let rows = self.others_after(room, from, member)?;
-            if let Some(last) = rows.last() {
+            let mut rows = self.others_after(room, from, member)?;
+            // the hook does not repeat what a capped read showed out of order (#1405); hook_seq still moves over it
+            let taken = self.shown_past(room, member, &["read"], from)?;
+            let newest = rows.last().map(|m| m.seq);
+            rows.retain(|m| !taken.contains(&m.seq));
+            if let Some(last) = newest {
                 self.exec(
                     "UPDATE members SET hook_seq=?3 WHERE room=?1 AND name=?2",
-                    params![room, member, last.seq],
+                    params![room, member, last],
                 )?;
             }
             Ok(rows)

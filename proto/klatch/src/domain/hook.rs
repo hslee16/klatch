@@ -11,6 +11,11 @@ pub struct RoomDigest {
     /// The `seq`s of `messages` that are addressed to the member (a mention, `@all`, or any message of a direct
     /// message room): when not all messages fit, these are kept before newer ones (#185).
     pub addressed: Vec<i64>,
+    /// The class of the messages that are not plain chatter, as `(seq, class)` (#1405): asks for the member, direct
+    /// messages, messages to it and what the coordinating roles posted. A busy digest keeps these in that order before
+    /// newer chatter. Empty (a digest built by hand) means the old rule: `addressed` first, then the rest. Never read
+    /// from message text; see `domain::priority`.
+    pub ranks: Vec<(i64, crate::domain::Importance)>,
     /// Claims held by other members that this member has not been shown yet (or that were renewed).
     pub claims: Vec<Claim>,
     /// Claims this member was shown before that are no longer held.
@@ -123,6 +128,28 @@ impl RoomName<'_> {
 }
 
 impl RoomDigest {
+    /// How important the message with this `seq` is to the member (#1405).
+    pub fn importance_of(&self, seq: i64) -> crate::domain::Importance {
+        use crate::domain::Importance;
+        if let Some((_, c)) = self.ranks.iter().find(|(s, _)| *s == seq) {
+            return *c;
+        }
+        if self.addressed.contains(&seq) {
+            Importance::Addressed
+        } else {
+            Importance::Rest
+        }
+    }
+
+    /// The most important class among the room's messages, `Rest` when it has none (what orders rooms, #1405).
+    fn best_importance(&self) -> crate::domain::Importance {
+        self.messages
+            .iter()
+            .map(|m| self.importance_of(m.seq))
+            .min()
+            .unwrap_or(crate::domain::Importance::Rest)
+    }
+
     /// Whether there is nothing to say about this room.
     fn is_quiet(&self) -> bool {
         self.has_no_traffic()
@@ -173,19 +200,14 @@ fn message_line(room: RoomName, m: &Message, chars: usize) -> String {
 /// level the rest is left out altogether and only counted (#1406).
 fn message_priority(d: &RoomDigest, level: BudgetLevel) -> Vec<usize> {
     let is_addressed = |i: &usize| d.addressed.contains(&d.messages[*i].seq);
-    let newest_first: Vec<usize> = (0..d.messages.len()).rev().collect();
-    let (addressed, others): (Vec<usize>, Vec<usize>) =
-        newest_first.into_iter().partition(is_addressed);
-    let others = if level.count_only() {
-        Vec::new()
-    } else {
-        others
-    };
-    addressed
-        .into_iter()
-        .chain(others)
-        .take(level.max_messages())
-        .collect()
+    // by class (asks for the member, direct messages, messages to it, the rest), newest first inside a class (#1405)
+    let mut order: Vec<usize> = (0..d.messages.len()).rev().collect();
+    order.sort_by_key(|i| d.importance_of(d.messages[*i].seq));
+    if level.count_only() {
+        // only what is addressed to the member, as before (#1406)
+        order.retain(is_addressed);
+    }
+    order.into_iter().take(level.max_messages()).collect()
 }
 
 /// The message lines of a room that fit `left`, oldest first as they are read. Which ones is decided by
@@ -484,7 +506,14 @@ fn plan_rooms(
 ) -> (Vec<RoomPlan<'_>>, usize) {
     let mut active: Vec<&RoomDigest> = digests.iter().filter(|d| !d.is_quiet()).collect();
     // the member's own asks and claims first, then the newest activity; the sort is stable, so ties keep their order
-    active.sort_by_key(|d| (!has_own_items(d), std::cmp::Reverse(newest_ts(d))));
+    // then the room that holds the most important message, a direct message before chatter (#1405)
+    active.sort_by_key(|d| {
+        (
+            !has_own_items(d),
+            d.best_importance(),
+            std::cmp::Reverse(newest_ts(d)),
+        )
+    });
     // every room's header and "more" lines are paid for first: otherwise the first room's claims use the whole budget
     // and the rooms after it print their headers on top of it
     let cost = |d: &RoomDigest| {
@@ -1204,6 +1233,7 @@ mod tests {
             }],
             outside_view: None,
             addressed: Vec::new(),
+            ranks: Vec::new(),
             claims: vec![Claim {
                 path: evil.into(),
                 owner: "eve".into(),
@@ -1404,6 +1434,95 @@ mod tests {
         let out = render_hook(&[d], 0);
         assert!(out.contains("@me please look at the first one"), "{out}");
         assert!(out.contains("#20 from bob"), "{out}");
+    }
+
+    #[test]
+    fn an_ask_for_the_member_is_kept_over_newer_addressed_messages_when_few_fit() {
+        use crate::domain::Importance;
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            // #1 is an open ask the member could answer: not addressed to it, but the most important class (#1405)
+            addressed: vec![25, 26, 27, 28],
+            ranks: vec![
+                (1, Importance::Ask),
+                (25, Importance::Addressed),
+                (26, Importance::Addressed),
+                (27, Importance::Addressed),
+                (28, Importance::Addressed),
+            ],
+            ..Default::default()
+        };
+        let out = render_hook_at(&[d], 0, BudgetLevel::Few);
+        shows!(out, "#1 from bob");
+        shows!(out, "#28 from bob");
+        shows!(out, "#27 from bob");
+        assert!(!out.contains("#26 from bob"), "{out}");
+        assert!(!out.contains("#30 from bob"), "{out}");
+    }
+
+    #[test]
+    fn an_older_direct_message_ranks_above_newer_addressed_messages_when_few_fit() {
+        use crate::domain::Importance;
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            addressed: vec![2, 3, 4, 20],
+            ranks: vec![
+                (2, Importance::Dm),
+                (3, Importance::Addressed),
+                (4, Importance::Addressed),
+                (20, Importance::Addressed),
+            ],
+            ..Default::default()
+        };
+        let out = render_hook_at(&[d], 0, BudgetLevel::Few);
+        shows!(out, "#2 from bob");
+        shows!(out, "#20 from bob");
+        shows!(out, "#4 from bob");
+        assert!(!out.contains("#3 from bob"), "{out}");
+    }
+
+    #[test]
+    fn the_room_with_a_direct_message_prints_before_a_room_with_newer_chatter() {
+        use crate::domain::Importance;
+        let lobby = RoomDigest {
+            room: "lobby".into(),
+            messages: vec![Message {
+                ts: 500,
+                ..msg(1, "chatter")
+            }],
+            ..Default::default()
+        };
+        let dm = RoomDigest {
+            room: "dm.a.b".into(),
+            messages: vec![Message {
+                ts: 5,
+                ..msg(1, "hello")
+            }],
+            addressed: vec![1],
+            ranks: vec![(1, Importance::Dm)],
+            ..Default::default()
+        };
+        let out = render_hook(&[lobby, dm], 1000);
+        let (a, b) = (out.find("[room dm.a.b]"), out.find("[room lobby]"));
+        assert!(a.unwrap() < b.unwrap(), "{out}");
+    }
+
+    #[test]
+    fn at_the_count_only_level_a_rank_alone_is_not_enough_to_print_a_message() {
+        // never-drop stays what #1419 decided: addressed messages; an open ask that is not addressed is counted
+        use crate::domain::Importance;
+        let d = RoomDigest {
+            room: "lobby".into(),
+            messages: thirty(),
+            addressed: vec![9],
+            ranks: vec![(1, Importance::Ask), (9, Importance::Addressed)],
+            ..Default::default()
+        };
+        let out = render_hook_at(&[d], 0, BudgetLevel::CountOnly);
+        shows!(out, "#9 from bob");
+        assert!(!out.contains("#1 from bob"), "{out}");
     }
 
     fn many(n: i64, len: usize) -> Vec<Message> {

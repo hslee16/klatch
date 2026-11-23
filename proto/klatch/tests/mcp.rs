@@ -562,3 +562,49 @@ fn one_huge_message_in_a_read_result_is_cut_with_a_marker() {
         "after"
     );
 }
+
+#[test]
+fn a_read_and_a_wait_over_mcp_show_the_ask_for_the_reader_first_and_lose_nothing() {
+    let h = Home::new();
+    let (mut a, mut b) = (started(&h, "alice"), started(&h, "bob"));
+    b.call("klatch_join", json!({"room": "lobby"}));
+    for i in 0..90 {
+        let body = format!("flood {i:03} {}", "z".repeat(390));
+        let r = a.call("klatch_post", json!({"room": "lobby", "body": body}));
+        assert!(!is_error(&r), "{r}");
+    }
+    a.call(
+        "klatch_post",
+        json!({"room": "lobby", "body": "seeking: @bob which branch is the release?"}),
+    );
+    let r = b.call("klatch_read", json!({"room": "lobby"}));
+    let first = flood_seqs(&r);
+    assert_eq!(first[0], 91, "the ask for bob is first: {first:?}");
+    assert_eq!(first[1], 1, "then the rest from the oldest: {first:?}");
+    let s = &r["result"]["structuredContent"];
+    assert_eq!(s["by_importance"], json!(true), "{s}");
+    assert_eq!(s["omitted"], json!(91 - first.len()), "{s}");
+    // a wait continues with the rest in order, never showing the ask again
+    let w = b.call("klatch_wait", json!({"rooms": ["lobby"], "timeout": 5}));
+    let second = flood_seqs(&w);
+    assert!(!second.contains(&91), "{second:?}");
+    assert_eq!(second[0], first[first.len() - 1] + 1, "{second:?}");
+    // a peek shows what a read would, and consumes nothing
+    let peek = flood_seqs(&b.call("klatch_read", json!({"room": "lobby", "peek": true})));
+    let again = flood_seqs(&b.call("klatch_read", json!({"room": "lobby", "peek": true})));
+    assert_eq!(peek, again);
+    let mut shown: Vec<u64> = first;
+    shown.extend(second);
+    loop {
+        let page = flood_seqs(&b.call("klatch_read", json!({"room": "lobby"})));
+        if page.is_empty() {
+            break;
+        }
+        for s in &page {
+            assert!(!shown.contains(s), "seq {s} shown twice");
+        }
+        shown.extend(page);
+    }
+    shown.sort_unstable();
+    assert_eq!(shown, (1..=91).collect::<Vec<_>>(), "none lost, none twice");
+}

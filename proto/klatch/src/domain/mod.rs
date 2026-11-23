@@ -27,6 +27,7 @@ mod kind;
 mod labels;
 mod mediator;
 mod merge_claim;
+mod priority;
 mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
 mod merge_queue;
@@ -116,6 +117,7 @@ pub use model::{
     Attribution, AuditRecord, Claim, ClaimChanges, CrossingStatus, HookRun, MemberInfo,
     MemberPlace, Message, Posted, Principal, RefusalRecord, ReleaseNote, ReleasedClaim,
 };
+pub use priority::{Importance, REORDERED_NOTE, is_reordered, order_by_importance};
 pub use receipt::{
     MemberCursor, Receipt, Receipts, Taken, receipt_of, receipts_of, render_receipts, taken_of,
 };

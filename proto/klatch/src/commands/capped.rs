@@ -10,8 +10,10 @@ pub(super) fn read(
     peek: bool,
 ) -> Result<()> {
     use klatch::domain::budget::{READ_MAX_BYTES, READ_MAX_MESSAGES};
-    // Always looked at first: what is marked read is only what was shown, and a bounded call shows a part (#1390).
-    let messages = t.read(room, false)?;
+    // Always looked at first: what is marked read is only what was shown, and a bounded call shows a part (#1390). The
+    // part is the most important one: asks for the reader, direct messages, messages to it, then the rest (#1405).
+    let messages: Vec<klatch::domain::Message> =
+        t.read_ranked(room)?.into_iter().map(|(_, m)| m).collect();
     if messages.is_empty() {
         eprintln!("{EMPTY_READ_NOTE}");
     } else {
@@ -31,8 +33,14 @@ pub(super) fn read(
             String::new()
         };
         let next = if peek {
-            // a peek moves nothing, so the same command would show the same messages again
-            format!("klatch history {room} --since {}", messages[shown - 1].seq)
+            // a peek moves nothing, so the same command would show the same messages again. A page in sequence order
+            // continues after its last row; a page by importance is not a prefix, so history starts at the oldest unread.
+            let since = if klatch::domain::is_reordered(&messages[..shown]) {
+                messages.iter().map(|m| m.seq).min().unwrap_or(1) - 1
+            } else {
+                messages[shown - 1].seq
+            };
+            format!("klatch history {room} --since {since}")
         } else {
             format!("klatch read {room}")
         };
@@ -41,9 +49,12 @@ pub(super) fn read(
             omitted.len()
         );
     }
-    // a peek leaves the messages unread; otherwise only what was shown is marked read, after it was printed
-    if !peek && let Some(last) = messages[..shown].last() {
-        t.read_through(room, last.seq)?;
+    // a peek leaves the messages unread; otherwise only what was shown is marked read, after it was printed. What was
+    // shown is not always a prefix of the unread messages (#1405): the cursor moves over the contiguous shown run and
+    // the shown seqs beyond it are remembered, so none is shown again and none is lost.
+    if !peek && shown > 0 {
+        let seqs: Vec<i64> = messages[..shown].iter().map(|m| m.seq).collect();
+        t.mark_shown(room, klatch::store::Shown::Read, &seqs)?;
     }
     // a peek leaves the messages unread, so the hook digest still shows them and carries the help itself
     if !peek {
@@ -100,6 +111,9 @@ pub(super) fn print_capped(
         .collect();
     let sizes: Vec<usize> = items.iter().map(String::len).collect();
     let shown = klatch::domain::fit_prefix(&sizes, max_messages, max_bytes);
+    if klatch::domain::is_reordered(&messages[..shown]) {
+        println!("{}", klatch::domain::REORDERED_NOTE);
+    }
     for (i, item) in items[..shown].iter().enumerate() {
         if i == 0 && item.len() + 1 > max_bytes {
             let since = messages[0].seq - 1;
@@ -121,6 +135,9 @@ pub(super) struct Looked {
     pub(super) found: Vec<klatch::domain::Message>,
     /// The newest seq it looked at, matching or not; what a peeking or filtered wait remembers when it shows all.
     pub(super) seen_to: Option<i64>,
+    /// Every seq it looked at, matching or not, in order (#1405): a wait that shows only part of what matched marks the
+    /// rest of these seen, and leaves the matches it did not show.
+    pub(super) seen: Vec<i64>,
 }
 
 /// Without a filter or `--peek` a wait consumes what it shows, like a blocking read. With either, it leaves
@@ -136,79 +153,100 @@ pub(super) fn look(
     if filter.is_open() && !peek {
         let found = t.read(room, false)?;
         let seen_to = found.last().map(|m| m.seq);
-        return Ok(Looked { found, seen_to });
+        let seen = found.iter().map(|m| m.seq).collect();
+        return Ok(Looked {
+            found,
+            seen_to,
+            seen,
+        });
     }
-    let seen = t.wait_poll(room)?;
-    let seen_to = seen.iter().map(|m| m.seq).max();
+    let polled = t.wait_poll(room)?;
+    let seen_to = polled.iter().map(|m| m.seq).max();
+    let seen = polled.iter().map(|m| m.seq).collect();
     Ok(Looked {
-        found: seen.into_iter().filter(|m| filter.accepts(m)).collect(),
+        found: polled.into_iter().filter(|m| filter.accepts(m)).collect(),
         seen_to,
+        seen,
     })
 }
 
-/// Print the messages that woke a wait; true when there were any. Whole messages from the oldest, at most
-/// `WAIT_MAX_MESSAGES` and `WAIT_MAX_BYTES` (#1390); the rest stay unread, are counted, and the next wait shows them.
+/// Print the messages that woke a wait; true when there were any. Whole messages in order of importance (asks for the
+/// caller, direct messages, messages to it, then the rest in sequence, #1405), at most `WAIT_MAX_MESSAGES` and
+/// `WAIT_MAX_BYTES` (#1390); the rest stay unread, are counted, and the next wait shows them. When several rooms have
+/// news, the one holding the most important message is shown (the first named on a tie): the others are untouched and
+/// the next wait shows them, so a direct message is not kept waiting behind a busier room named before it.
 pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Result<bool> {
     use klatch::domain::budget::{WAIT_MAX_BYTES, WAIT_MAX_MESSAGES};
+    let mut woken = Vec::new();
     for (room, filter) in a.rooms {
-        let Looked { found, seen_to } = look(t, room, filter, a.peek)?;
-        let consuming = filter.is_open() && !a.peek;
-        let shown = print_capped(room, &found, (true, (WAIT_MAX_MESSAGES, WAIT_MAX_BYTES)));
-        let omitted = &found[shown..];
-        if !omitted.is_empty() {
-            let continue_with = if consuming {
-                format!("klatch wait {room}")
-            } else {
-                "the same `klatch wait` again".to_string()
-            };
-            let for_you = klatch::domain::mentioning(omitted, a.caller.0);
-            let you = if for_you > 0 {
-                format!(", {for_you} of them mention you")
-            } else {
-                String::new()
-            };
-            let run = if continue_with.starts_with("klatch") {
-                format!("run `{continue_with}`")
-            } else {
-                format!("run {continue_with}")
-            };
-            println!(
-                "[{room}: {} more messages not shown{you}; {run} for the next ones]",
-                omitted.len()
-            );
-        }
-        // only what was shown is marked: a consuming wait moves the read cursor over it, a peeking or filtered one
-        // remembers it (all it looked at when it showed every match)
-        if let Some(last) = found[..shown].last().map(|m| m.seq) {
-            if consuming {
-                t.read_through(room, last)?;
-            } else {
-                let mark = if omitted.is_empty() {
-                    seen_to.unwrap_or(last).max(last)
-                } else {
-                    last
-                };
-                t.wait_seen(room, mark)?;
+        let looked = look(t, room, filter, a.peek)?;
+        if looked.found.is_empty() {
+            if let Some(last) = looked.seen_to {
+                t.wait_seen(room, last)?;
             }
-        } else if let Some(last) = seen_to {
-            t.wait_seen(room, last)?;
+            continue;
         }
-        // a wait that consumed what it returned hands the dm help over itself; a peek or a filter leaves the messages
-        // unread, so the hook digest carries it (#1209)
-        if filter.is_open() && !a.peek {
-            for line in dm_help_lines(t, a.caller.0, room, &found[..shown]) {
-                println!("{line}");
-            }
-            // the cycle was said before the wait began (#273); the rest is derived from the room now (#789)
-            let now = a.caller.1 + waited as i64;
-            for line in asks_note_lines(t, (a.caller.0, now), room, !found.is_empty(), false) {
-                println!("{line}");
-            }
+        let ranked = t.rank(room, looked.found.clone())?;
+        woken.push((room, filter, looked, ranked));
+    }
+    let Some(best) = (0..woken.len()).min_by_key(|i| (woken[*i].3[0].0, *i)) else {
+        return Ok(false);
+    };
+    let (room, filter, looked, ranked) = woken.swap_remove(best);
+    let Looked { seen, seen_to, .. } = looked;
+    let found: Vec<klatch::domain::Message> = ranked.into_iter().map(|(_, m)| m).collect();
+    let consuming = filter.is_open() && !a.peek;
+    let shown = print_capped(room, &found, (true, (WAIT_MAX_MESSAGES, WAIT_MAX_BYTES)));
+    let omitted = &found[shown..];
+    if !omitted.is_empty() {
+        let continue_with = if consuming {
+            format!("klatch wait {room}")
+        } else {
+            "the same `klatch wait` again".to_string()
+        };
+        let for_you = klatch::domain::mentioning(omitted, a.caller.0);
+        let you = if for_you > 0 {
+            format!(", {for_you} of them mention you")
+        } else {
+            String::new()
+        };
+        let run = if continue_with.starts_with("klatch") {
+            format!("run `{continue_with}`")
+        } else {
+            format!("run {continue_with}")
+        };
+        println!(
+            "[{room}: {} more messages not shown{you}; {run} for the next ones]",
+            omitted.len()
+        );
+    }
+    // only what was shown is marked: a consuming wait marks it read, a peeking or filtered one remembers it (all it looked
+    // at when it showed every match). What was shown need not be a prefix (#1405): the position moves over the contiguous
+    // run and the seqs beyond it are remembered, so the next wait shows the rest once, in order of importance.
+    let shown_seqs: Vec<i64> = found[..shown].iter().map(|m| m.seq).collect();
+    if consuming {
+        t.mark_shown(room, klatch::store::Shown::Read, &shown_seqs)?;
+    } else if omitted.is_empty() {
+        let last = shown_seqs.iter().copied().max().unwrap_or(0);
+        t.wait_seen(room, seen_to.unwrap_or(last).max(last))?;
+    } else {
+        // everything looked at except the matches that were not shown counts as seen
+        let held: std::collections::HashSet<i64> = omitted.iter().map(|m| m.seq).collect();
+        let seen_now: Vec<i64> = seen.into_iter().filter(|s| !held.contains(s)).collect();
+        t.mark_shown(room, klatch::store::Shown::Wait, &seen_now)?;
+    }
+    // a wait that consumed what it returned hands the dm help over itself; a peek or a filter leaves the messages
+    // unread, so the hook digest carries it (#1209)
+    if filter.is_open() && !a.peek {
+        for line in dm_help_lines(t, a.caller.0, room, &found[..shown]) {
+            println!("{line}");
         }
-        if !found.is_empty() {
-            eprintln!("{DATA_RULE}");
-            return Ok(true);
+        // the cycle was said before the wait began (#273); the rest is derived from the room now (#789)
+        let now = a.caller.1 + waited as i64;
+        for line in asks_note_lines(t, (a.caller.0, now), room, true, false) {
+            println!("{line}");
         }
     }
-    Ok(false)
+    eprintln!("{DATA_RULE}");
+    Ok(true)
 }

@@ -1,7 +1,7 @@
 //! The plain request methods: each reads its parameters, calls the gateway as the session's principal and shapes
 //! the answer.
 
-use crate::domain::{Claim, Error, MemberInfo, MemberKind, Posted, Principal};
+use crate::domain::{Claim, Error, MemberInfo, MemberKind, Message, Posted, Principal};
 use crate::gateway::{ClaimSpec, Gateway};
 use crate::protocol::ServerFrame;
 use crate::session::frames::{fail_with, failure, message_json, ok};
@@ -183,19 +183,25 @@ impl Call {
 /// The most a bounded read cuts a byte limit down to: below it the cut marker would not fit.
 const MIN_READ_BYTES: usize = 1000;
 
-/// `read`, bounded when the caller gave `max_messages` or `max_bytes` (#1390): whole messages from the oldest unread,
-/// and the cursor moves over only those shown (a peek moves nothing), so the next read continues in order. The second
-/// value is how many were left unread, `None` when the read was not bounded.
+/// `read`, bounded when the caller gave `max_messages` or `max_bytes` (#1390): whole messages, the most important
+/// first (#1405), and the cursor moves over only those shown (a peek moves nothing), so the next read continues with
+/// the rest and shows none twice. The second
+/// value is how many were left unread, `None` when the read was not bounded; the third whether the page is in order of importance rather than in sequence (#1405).
 fn read_bounded<S: Store>(
     g: &Gateway<S>,
     who: &Principal,
     p: &ReadParams,
-) -> Result<(Vec<Value>, Option<usize>), Error> {
+) -> Result<(Vec<Value>, Option<usize>, bool), Error> {
     if p.max_messages.is_none() && p.max_bytes.is_none() {
         let all = g.read(who, &p.room, !p.peek)?;
-        return Ok((all.iter().map(message_json).collect(), None));
+        return Ok((all.iter().map(message_json).collect(), None, false));
     }
-    let all = g.read(who, &p.room, false)?;
+    // the most important messages first (#1405): asks for the caller, direct messages, messages to it, then the rest
+    let all: Vec<Message> = g
+        .read_ranked(who, &p.room)?
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
     let max_bytes = p.max_bytes.unwrap_or(usize::MAX).max(MIN_READ_BYTES);
     let mut rows: Vec<Value> = all.iter().map(message_json).collect();
     let sizes: Vec<usize> = rows.iter().map(|v| v.to_string().len()).collect();
@@ -206,12 +212,14 @@ fn read_bounded<S: Store>(
     {
         cut_body(first, size, max_bytes - 1);
     }
-    if !p.peek
-        && let Some(last) = all[..shown].last()
-    {
-        g.read_through(who, &p.room, last.seq)?;
+    if !p.peek && shown > 0 {
+        // not always a prefix of the unread messages: the cursor moves over the contiguous run and the shown seqs
+        // beyond it are remembered (#1405)
+        let seqs: Vec<i64> = all[..shown].iter().map(|m| m.seq).collect();
+        g.mark_shown(who, &p.room, crate::store::Shown::Read, &seqs)?;
     }
-    Ok((rows, Some(all.len() - shown)))
+    let reordered = crate::domain::is_reordered(&all[..shown]);
+    Ok((rows, Some(all.len() - shown), reordered))
 }
 
 /// Cut the body of one message row so its JSON is at most `max` bytes, with a marker, and flag it `truncated`.
@@ -458,11 +466,16 @@ pub(crate) fn handle<S: Store>(
         ),
         "read" => call.run(
             |p: ReadParams| read_bounded(g, who, &p),
-            |(ms, omitted): (Vec<Value>, Option<usize>)| {
+            |(ms, omitted, by_importance): (Vec<Value>, Option<usize>, bool)| {
                 let mut v = json!({ "messages": ms });
                 // the key is there only when the caller asked for a bound, so an unbounded read looks as it always did
                 if let Some(n) = omitted {
                     v["omitted"] = json!(n);
+                }
+                // a bounded read puts what is for the caller first (#1405); the key is there only when that changed the
+                // order, so a client that reads rows in sequence knows this page is not
+                if by_importance {
+                    v["by_importance"] = json!(true);
                 }
                 v
             },
