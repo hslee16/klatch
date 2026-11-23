@@ -344,6 +344,36 @@ class Planning(Base):
         self.assertEqual(common("B1"), common("K1"))
 
 
+class CloneOfOrigin(Base):
+    """#1435: a clone of the bare origin by path is a local clone that copies or links objects/ file by file. While an
+    agent's push is in flight, objects/ holds quarantine and temporary files that vanish mid-walk, so the clone failed
+    now and then ("failed to copy file ...: No such file or directory") and the run ended as a setup error. The harness
+    clones with --no-local, which goes through upload-pack and reads a consistent snapshot of refs and objects."""
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads a mode 000 file")
+    def test_a_clone_of_the_origin_does_not_walk_objects_files_it_cannot_copy(self):
+        real_git = run.git
+        planted = []
+
+        def git_with_a_stray_object_file(args, cwd, env):
+            if args and args[0] == "clone" and args[-2].endswith("origin.git"):
+                d = os.path.join(args[-2], "objects", "ab")
+                if not os.path.exists(d):
+                    os.makedirs(d)
+                    os.chmod(d, 0)  # a directory a local clone must open to copy or link; upload-pack never lists it
+                    planted.append(d)
+                    self.addCleanup(lambda d=d: os.path.exists(d) and os.chmod(d, 0o700))
+            return real_git(args, cwd, env)
+
+        with mock.patch.object(run, "git", git_with_a_stray_object_file):
+            code, out, err = self.go(self.argv("B0", runs=1))
+        self.assertTrue(planted)
+        self.assertEqual(code, 0, out + err)
+        (r,) = self.records()
+        self.assertEqual(r["outcome"], "ok", r["notes"])
+        self.assertNotIn("setup failed", r["notes"])
+
+
 @NEEDS_BIN
 class KArms(Base):
     def test_k1_and_k2_run_end_to_end_with_a_real_klatch_in_a_private_store(self):
