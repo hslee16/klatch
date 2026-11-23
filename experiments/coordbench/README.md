@@ -20,7 +20,8 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `streams.py`: parses the stream-json of an agent (turns, tokens, cost, tool calls, messages, conflicts).
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
-- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2).
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3).
+- `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
 - `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
   history metrics that need the map.
 - `prices.json`, `cost_model.json`: the price table (cost estimates while a run is live) and the SPEC 8.1 planning figures
@@ -230,3 +231,51 @@ Tests: `python3 -m unittest discover -s experiments/coordbench/tests`. The K-arm
 
 Related: `experiments/variance/repeat.py` (the repeat harness this builds on), `proto/klatch-bench` (the scripted bench),
 `experiments/dm-adoption` (the adoption runs).
+
+## Scenario S3: a dependency chain and one handoff (`scenarios/s3.json`, fixture `chain`)
+
+F3 `chain` (the spec calls it `pipeline`) is a standard library inventory reader. Three agents work one after another on four
+steps: 1 the schema file (`chainkit/schema.json`, generated from `data/ruler.txt` by `tools/make_schema.py`), 2 the bin codes
+(`chainkit/bins.py`), 3 the loader (`chainkit/loader.py`), 4 the report (`chainkit/report.py`). Agent `a` does step 1 and
+writes `parse_bin` (returns `Bin(pfx, num)`), leaves `canonical_bin` unfinished, and is then reassigned and told to hand over
+to `c`. Agent `b` cannot do step 3 until a's schema file is on main (its task text does not give the format). Agent `c`
+finishes `canonical_bin` and does step 4, which needs b's loader and c's own bin codes. The one handoff carries a quirk: `a`'s
+task text (and no other file an agent sees) says that bins with one legacy prefix were relocated, so their canonical code has
+another prefix and the number plus an arbitrary offset. The prefixes and the offset come from a fixed seed (1368) in
+`fixtures/chain/gen.py` and cannot be guessed; if a's knowledge does not cross the handoff, c's `canonical_bin` is right for
+every bin but the legacy ones. `gen.py` makes the data, the ruler, a's task text, the fake script, the reference and the
+checker's `expected.json` (`gen.py --check` says when a committed file is out of date; a test runs it).
+
+The hidden checker `checks/chain/check.sh CHECKOUT` tests each step alone (the loader with the reference schema file in place,
+the report with the reference loader, normaliser and schema, so one failure cannot hide behind another) and prints
+`{"checks", "units_completed", "units_total", "steps_correct", "quirk_honoured", "lost_at_handoff", "order", "merge_state",
+"correct"}`: four unit checks (`schema`, `bins`, `loader`, `report`; the loader must also work on a different column layout,
+so it cannot have the columns written in) and structural checks `quirk` (every legacy record of the real data and seeded
+cases), `handoff-state`, `integrated` (the whole pipeline on the final main, nothing substituted), `order-loader-after-schema`
+and `order-report-after-loader` (the first commit of a step had its input in its tree), `no-conflict-markers`,
+`visible-tests`. `lost_at_handoff` lists a's published pieces (the schema file, `parse_bin` with its `Bin(pfx, num)` result)
+that met their contract in some commit and fail on the final main, as dropped or redone-differently; a piece that never met
+its contract is a failed step, not lost work. The reference solution is `fixtures/chain/reference/` (never in a checkout);
+`tests/test_chain_checker.py` runs the checker on it and on variants that must fail: the quirk ignored, a guessed offset, a
+wrong prefix, `parse_bin` dropped or redone, the schema replaced or deleted, a report or loader committed before its input,
+a loader with the columns written in, a loader returning tuples, a renamed report function, a miscounting report, conflict
+markers and a failing visible test.
+
+Metrics (definitions in the scenario file). Primary `steps_correct` (0 to 4); `quirk_honoured` (yes or no) and
+`lost_at_handoff` are from the checker. The blocked agent's metrics are computed from its stream by `chain.py` (a turn is one
+assistant message). The dependency is SEEN at the first turn whose tool result shows the file (a `git pull` diffstat, a
+listing, its content) without saying it is missing; a message that only names the file does not count. `blocked_turns` are the
+turns before that; `idle_turns` are blocked turns that only wait or look, meaning every tool call is a poll (`sleep`,
+`klatch wait`, `klatch read` or `history` or `board` or `claims` or `asks`, `git fetch` or `pull` or `log` or `status`, `ls`,
+`test`, a read of `TASKS.md`, `ListAgents`, optionally piped through `head`, `tail`, `grep`, `wc`) or the turn has no tool call;
+`guess_build_turns` are blocked turns that write the dependent step's file (a loader built before the schema exists);
+`wasted_turns` is their sum. They are reported for `b` (waiting for the schema file) and `c` (waiting for the loader), per
+agent, never summed. The harness also fills `overwrites` (a's `def parse_bin` and `Bin` lines absent from the final main) and
+`duplicate_work` (a step changed by more than one agent) from git history. Time to completion is `time_to_first_pass_s` and
+`wall_s`. Whether a claim moves with a handoff (#539) is recorded for the K arms as `handoff_claims`, not graded: from the
+streams, the paths `a` claimed, released, released before its handoff message and still held when it stopped, what `c`
+claimed and was refused, and whether `a` posted `checkpoint:` and `handoff:` messages. Whether klatch itself moved or freed a
+claim or an ask needs the store, which `run.py` does not export yet, so `transferred_by_klatch` is null with a note (the same
+gap as `claim_conflicts`). B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
+8.1's (2.40 USD a run, 40 USD for the M0 suite on Haiku), proposals the human changes before M0. The fake agent gained a `poll`
+step (n polling turns without waiting) for the blocked-agent tests. No real run has been made.

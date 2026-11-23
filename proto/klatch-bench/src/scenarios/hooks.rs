@@ -314,11 +314,11 @@ fn session_start_budget(w: &World) -> Res {
         out.len() < 9_700,
         format!("the hook printed {} bytes", out.len()),
     )?;
-    has(&out, "[board lobby]", "the board header is missing")?;
+    has(&out, "[briefing lobby]", "the briefing header is missing")?;
     has(
         &out,
-        "more board lines not shown; run `klatch board lobby`",
-        "the cut board lines are not counted",
+        "klatch board lobby | klatch asks lobby",
+        "the way to read the rest of the board is missing",
     )?;
     Ok(vec![(
         "session_start_hook_ms".into(),

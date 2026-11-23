@@ -9,6 +9,7 @@ mod asker_gone;
 mod asks;
 mod asks_notes;
 mod board;
+mod briefing;
 mod card;
 mod cascade_judge;
 mod claim_age;
@@ -76,6 +77,10 @@ pub use board::{
     MemberStatus, OFFER_PREFIX, OFFER_TTL_SECS, Offer, STATUS_PREFIX, WITHDRAW_PREFIX,
     ask_reach_note, current_offers, is_offer, nudge_skipped_note, render_board, render_who,
     short_dir_name, statuses,
+};
+pub use briefing::{
+    BRIEFING_MAX_BYTES, BRIEFING_RECENT_MESSAGES, BriefingInput, Standing, StartSource, headline,
+    other_rooms_line, render_briefing,
 };
 pub use card::{Card, card_of, render_card};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};

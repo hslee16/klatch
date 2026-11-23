@@ -39,6 +39,7 @@ import time
 import approval as approval_mod
 import drivers
 import fixture as fixture_mod
+import chain
 import history as history_mod
 import scenario as scenario_mod
 import schema
@@ -442,12 +443,12 @@ class Suite:
         if any(s["is_error"] for s in sums.values()):
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
-        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes)
+        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes, log_dir, arm)
         self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
 
-    def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes):
+    def scenario_metrics(self, rec, raw, origin, clone_dirs, henv, notes, log_dir=None, arm=None):
         """Fill duplicate_work and overwrites from git history for a fixture that has a scenario file, and keep the
         checker's extra fields under scenario_metrics. A fixture without a scenario leaves them null."""
         name = self.fx.spec.get("scenario")
@@ -462,6 +463,9 @@ class Suite:
         rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
         rec["metrics"]["overwrites"] = gm["overwrites"]
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
+        if scn.get("stream_metrics") == "chain" and log_dir:
+            # S3: the blocked agents' idle and wasted turns and the handoff claim record, from the streams (chain.py)
+            rec["scenario_metrics"].update(chain.compute(log_dir, scn, arm, self.args.klatch_bin))
         if scn.get("history_check"):
             # a scenario whose units share one file: overwrites are lost behaviours, found by testing every commit
             try:

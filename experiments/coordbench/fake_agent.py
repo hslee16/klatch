@@ -31,6 +31,8 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   cost {usd}                     report cumulative spend so far (a fake_cost event)
   sleep {s}, hang                wait; hang waits until the harness kills it
   exit {code}                    stop at once with that exit code, with no result message (a crashed agent)
+  poll {n, command?}             n polling turns: n Bash calls of the command (default `sleep 5`) with empty output; no real
+                                 waiting (the scenario S3 tests use it for a blocked agent that polls many times)
   wait_origin_has {path, contains?, timeout}  fetch until origin/main has the file (and, when given, text in it)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
   final {text}                   the final message
@@ -180,6 +182,9 @@ class Agent:
             time.sleep(3600)
         elif op == "exit":
             sys.exit(int(st.get("code", 1)))
+        elif op == "poll":
+            for _ in range(int(st.get("n", 1))):
+                self.tool("Bash", {"command": st.get("command", "sleep 5")}, "")
         elif op == "wait_origin_has":
             deadline = time.time() + float(st.get("timeout", 30))
             while time.time() < deadline:

@@ -23,7 +23,7 @@ fn session_start_tells_the_human_which_room_and_who_the_session_is() {
         v["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap()
-            .contains("[board lobby]")
+            .contains("[briefing lobby]")
     );
 }
 
