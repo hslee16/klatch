@@ -52,6 +52,8 @@ class StreamState:
         binre = re.escape(klatch_bin) if klatch_bin else r"klatch"
         self.msg_re = re.compile(binre + r"\s+(?:-\S+\s+)*(?:post|dm|ask|answer)\b")
         self.cmd_re = re.compile(binre + r"\s+(?:-\S+\s+)*[a-z]")
+        # the verbs that read the room back to the agent (S7: the cost of reading the room per member, #1372)
+        self.read_re = re.compile(binre + r"\s+(?:-\S+\s+)*(?:read|wait|digest|board|history)\b")
         self.idle_re = re.compile(binre + r"\s+(?:-\S+\s+)*(?:wait|read|history|board|who|claims|asks|stuck|hooks)\b"
                                   r"|^\s*git\s+(?:fetch|log)\b|^\s*sleep\b", re.M)
         self.models = []
@@ -62,6 +64,9 @@ class StreamState:
         self.fake_usd = None
         self.git_conflicts = 0
         self.coord_chars = 0
+        self.read_chars = 0        # results of tool calls that read the room (klatch read, wait, digest, board, history; TASKS.md)
+        self.hook_chars = 0        # what hooks injected (hook_response output): the digest, nudges and wake text
+        self.max_coord_result = 0  # the largest single coordination tool result, in characters
         self.tool_total = 0
         self.by_tool = {}
         self.messages = 0
@@ -84,6 +89,11 @@ class StreamState:
             return bool(self.cmd_re.search(inp.get("command", ""))) or "TASKS.md" in blob
         return "TASKS.md" in blob
 
+    def _is_read(self, name, inp):
+        if name == "Bash":
+            return bool(self.read_re.search(inp.get("command", ""))) or "TASKS.md" in inp.get("command", "")
+        return "TASKS.md" in json.dumps(inp)
+
     def feed(self, line, t=None):
         self._t = t
         line = line.strip()
@@ -104,6 +114,7 @@ class StreamState:
                 text = e.get("output") or e.get("stdout") or ""
                 if isinstance(text, str):
                     self.coord_chars += len(text)
+                    self.hook_chars += len(text)
             elif sub == "fake_cost":
                 self.fake_usd = float(e.get("usd", 0))
         elif t == "assistant":
@@ -127,7 +138,7 @@ class StreamState:
                 if b.get("type") == "tool_use":
                     name, inp = b.get("name", "?"), b.get("input") or {}
                     coord = self._is_coord(name, inp)
-                    self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord}
+                    self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp)}
                     m["tools"].append(self.tools[b.get("id")])
                     self.tool_total += 1
                     self.by_tool[name] = self.by_tool.get(name, 0) + 1
@@ -148,6 +159,9 @@ class StreamState:
                     tu = self.tools.get(b.get("tool_use_id"))
                     if tu and tu["coord"]:
                         self.coord_chars += len(text)
+                        self.max_coord_result = max(self.max_coord_result, len(text))
+                        if tu["read"]:
+                            self.read_chars += len(text)
                     if tu and tu["name"] == "Bash" and CONFLICT.search(text):
                         self.git_conflicts += 1
         elif t == "result":
@@ -192,6 +206,9 @@ class StreamState:
             "idle_turns": idle,
             "human_mentions": 1 if HUMAN_WORDS.search(final or "") else 0,
             "coord_context_chars": self.coord_chars,
+            "read_context_chars": self.read_chars,
+            "hook_context_chars": self.hook_chars,
+            "max_coord_result_chars": self.max_coord_result,
             "final_text": final or "",
             "is_error": bool(r.get("is_error")),
             "result_seen": self.result is not None,

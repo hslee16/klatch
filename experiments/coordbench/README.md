@@ -24,9 +24,9 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `injections.py`, `injmetrics.py`, `judge_measure.py`, `results-docs/`: scenario S10 (see below): the injection forms and the run's plan, what the stream shows about them, the free judge measurement and its committed records.
 - `asks.py`: the S4 ask and answer metrics from the agents' message events, and the ask counts of the streams for the store cross-check (#1433).
 - `storeexport.py`: the K arms' run store as counts, from `klatch-bench store-stats` (#1433).
-- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3).
-- `asks.py`: the S4 ask and answer metrics from the agents' message events.
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3) and F6 `recovery` (see Scenario S6).
+- `scale.py`, `fixtures/scale/gen.py`, `checks/scale/`: Scenario S7 (see below): the per-member scale metrics, the scaling table,
+  the generator of fixture F7 and its hidden checker and oracles.
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
 - `recovery.py`: scenario S6 (failure recovery): the `kill_agent` trigger the harness evaluates and the recovery metrics (see Scenario S6). F6 `recovery` is its fixture.
 - `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
@@ -380,6 +380,49 @@ claim or an ask needs a per-claim record, which the counts-only store export doe
 `transferred_by_klatch` stays null with a note. B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
 8.1's (2.40 USD a run, 40 USD for the M0 suite on Haiku), proposals the human changes before M0. The fake agent gained a `poll`
 step (n polling turns without waiting) for the blocked-agent tests. No real run has been made.
+
+## Scenario S7: scale, 8 and 16 agents (`scenarios/s7.json`, fixture `scale`)
+
+The S1 job with 8 and then 16 agents: a generated project of M = 2 x agents independent modules (16 and 32), two per ticket,
+one ticket per agent, and the same two shared files as S1 (the registry `scalekit/__init__.py` and `CHANGELOG.md`, which every
+ticket appends to, so conflicts grow with N). Arms B1 and K2; 6 runs per arm per size (SPEC 6.1). No real run has been made.
+
+Fixture F7 is generated, not stored. `fixtures/scale/gen.py` (standard library, deterministic from a seed: every random choice
+comes from a string-seeded `random.Random`) draws each module from a table of 18 small pure functions with seeded parameters
+(affine map, clamp, digit sum, bit count under a mask, Caesar shift, pad or truncate, rotate, sliding maximum, running sum
+modulo m, count of multiples, string hash, labelling, polynomial, longest run, capped Collatz, bucketing, gcd, reverse and add);
+a module is `<kind>_<n>`, so names are unique, and the stub's docstring states the parameters, so an agent can implement it from
+the text. It writes the template (stubs, one visible test per module with a few fixed examples, registry, changelog, README), the
+tasks, the reference solution (never in a checkout) and the unit-to-path map; `gen.py fake` writes a fake-agent script.
+`fixture.json` says `"generated": {"module", "modules", "seed"}` and `"require_variant": true`: the variants `n8` and `n16` (and
+`n2`, a smoke size that is not part of S7) set the size, are recorded as the scenarios `scale-n8` and `scale-n16`, and are never
+pooled. The seed belongs to the fixture, so every run of a size gets the same repository (the run seed is not used). The harness
+gives `setup.sh` and the checker `COORDBENCH_GEN_MODULES` and `COORDBENCH_GEN_SEED`.
+
+The hidden checker `checks/scale` tests each module by file against independent oracles (`oracles.py`, a different formulation of
+each contract, on seeded inputs; a module that raises, hangs for 10 s or changes its argument fails), then registry (one line per
+module, imports), changelog (one line per ticket), conflict markers and the visible tests. It prints `units_completed` (0 to M),
+`tickets_completed`, `merge_state` (clean, conflicts-left, tests-broken), `correct` and the contribution per agent. Tests:
+`test_scale_gen.py` (determinism across two processes, unique names at every size and for 30 seeds, structure, nothing of the
+reference or the oracles in the checkout), `test_scale_checker.py` (the reference at full marks for N = 2, 8 and 16; missing
+modules, a conflicted merge, a lost or doubled registry entry, a lost changelog line, a wrong module, a module that only passes
+the visible examples, a hang, a syntax error, a foreign edit).
+
+Metrics (definitions in the scenario file; `scale.derive` computes them from a record, `scenario_metrics.scale` holds the
+stream-derived part): `messages_per_agent`; `read_context_tokens_per_member` (tool results of `klatch read`, `wait`, `digest`,
+`board`, `history` and of reads of `TASKS.md`, characters over 4, per member); `hook_chars_per_member` and, for K arms,
+`hook_digest_bytes_per_member` from the store export (`scenario_metrics.store.hook_bytes_injected`, #1433; null without it);
+`max_coord_result_chars` (the largest single coordination tool result, the 88 KB `wait` case); `units_per_agent_turn`,
+`units_per_usd` and `tickets_per_agent_minute`; `git_conflicts`, `overwrites` and `duplicate_work` as in S1; `wall_s`. The
+report adds a "Scaling curve" section (`scale.scaling`): per arm a table of every metric against N with the ratio of 16 to 8 and
+the runs per size, and the units-per-dollar ratio with its reading (below 1: adding agents stopped helping). It is the median of
+valid runs per size; sizes are never pooled in the per-scenario tables.
+
+Cost (dry run, Haiku, the model in `scenarios/s7.json`): 5.20 USD a run at 8 agents and 15.20 at 16 (S1's 0.50 per agent, with
+the coordination share growing with the team), so `--runs 6` over B1 and K2 is 12 runs: 46.80 to 78.00 USD at 8 agents and
+136.80 to 228.00 at 16; Sonnet is three times that. Proposed caps (the human changes them before M0): per run 15.60 and 45.60
+USD, suite 78 and 228 USD, wall 1800 s and 2400 s. `run.py` takes the agent count from the fixture variant; 16 agents are 16
+processes and 16 clones, and the K arms run `klatch init` and join the one room for each member.
 
 ## Scenario S6: failure recovery, a helper dies while holding a claim or an ask (`scenarios/s6.json`, fixture `recovery`)
 
