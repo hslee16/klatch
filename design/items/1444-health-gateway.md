@@ -1,7 +1,7 @@
 Code health K03: gateway production modules (#1444, part of epic #1441; no schema change; 2026-11-23).
 Behaviour-preserving cleanup of the gateway modules named by the CodeScene inventory. No SQL, schema, stored byte, wire format, CLI output, error text, audit row or `pub` signature changed; the golden tests of #1480 are unchanged (never regenerated) and pass before and after every step. The guard order of every check is kept: authorization, then validation, then effect, and each early return is where it was. Where a split would have merged or reordered a short-circuit that reads the store (`?` inside an `||` chain), it was written as sequential early returns in the same order.
 
-Tests: one characterisation test file was added first, `gateway/gateway/tests/role_order.rs` (5 tests), for `check_role` (Complex Method, security critical). It pins the order of the checks (reserved name, reviewer, facilitator bound, need-info state, merge claim, member admin rule, room capability, role limit) by tripping two at once. It was green on the old code; a pure refactor has no red test. The rest of the changed functions are pinned by the existing gateway tests and the goldens. Test count: 3410 before, 3415 after (the five new tests); the goldens and `tests/authz_audit.rs` pass.
+Tests: one characterisation test file was added first, `gateway/gateway/tests/role_order.rs` (6 tests), for `check_role` (Complex Method, security critical). It pins these orders by tripping two checks at once: reserved name before reviewer; reviewer before the merge claim; the facilitator bound before the merge claim and before the need-info state rule; the merge claim before the librarian's read-only limit; the member admin rule before the admin agent's list; the room capability before the role limit (added after review, which swapped the two and found nothing red; the new test fails on that swap, checked in a scratch copy and reverted). It was green on the old code; a pure refactor has no red test. The rest of the changed functions are pinned by the existing gateway tests and the goldens. Test count: 3410 before, 3416 after (the six new tests); the goldens and `tests/authz_audit.rs` pass.
 
 Functions changed:
 - `priority`: `Gateway.importances` (cc 20, bumps 3, 74 lines) split into `answerable_asks`, `own_asks_pointed_at` (`is_ask_of`), `coordinators_among` and a private `Reach` with `class_of`, `is_ask_for_me`, `answers_own_ask`. The store reads happen in the original order.
@@ -18,6 +18,11 @@ Functions changed:
 - `tripwire`: `plant_on_label` takes its three-part condition from `plants_on_label` as sequential checks.
 - `board/tasks`: `attach_machine_checkpoints` split (`attach_checkpoint`, `stand_in_task`).
 - `shared`: `SharedGateway.start` split into `build_gateway` and `serve` (the owner thread body; same panic handling, same key load and unload around each request).
+
+Not pinned by any test (found by an independent review with mutations; no code added here):
+- The key reset after a keyed request: `serve` in `shared.rs` calls `use_label_keys(LabelKeys::new())` after a keyed job.
+- The `ask.sender == me` test in `priority.rs` `is_ask_of`: a message that is not the caller's own ask does not count as one.
+- Two pure read orders (a swap changes no result): in `plants_on_label`, `is_admin_agent` is read before `canary_keys_of`; in `exchange_event`, `dm_pair` is read after the length and membership checks.
 
 Left alone, and why:
 - Public signatures with 5 arguments (`mark_shown`, `post_ask`, `dm`, `grant_room_clearance`, `admin_set_room_grantor`, `admin_set_room_clearance`, `invite`, `request_crossing`, `admin_set_ssh_key`, `could_answer`) and the `Messages`, `Access`, `Board` and `Claims` trait methods of `transport/*.rs`: the arguments are the public API (used by `tests/`, the server and the bench), so the counts stay.

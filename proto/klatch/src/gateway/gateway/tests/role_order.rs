@@ -1,6 +1,8 @@
 //! #1444: the order of the checks in `check_role`, pinned before it was split into steps. A caller that trips two of
-//! them gets the refusal of the earlier one: reserved name, reviewer, facilitator bound, need-info state, the merge
-//! claim, the member admin rule, the room capability, then the role's own limit. These are characterisation tests of
+//! them gets the refusal of the earlier one. Pinned here: reserved name before reviewer; reviewer before the merge
+//! claim; the facilitator bound before the merge claim and before the need-info state rule; the merge claim before
+//! the librarian's read-only limit; the member admin rule before the admin agent's list; the room capability before
+//! the role's own limit. Not pinned: see the design note. These are characterisation tests of
 //! a pure refactor: they passed on the code before the split and pass after it.
 
 use super::*;
@@ -141,4 +143,31 @@ fn the_member_admin_rule_comes_before_the_admin_agents_own_list() {
         rule(&o, "ada", &Operation::admin("no-such-act", "")),
         "admin-scope"
     );
+}
+
+#[test]
+fn the_room_capability_comes_before_the_librarians_read_only_limit() {
+    // rooms are granted only and the librarian was not granted the capability: creating a room trips both the
+    // capability and the read-only limit, and the capability is refused first
+    let g = members(|g| {
+        g.admin_set_librarian(&admin(), "lia", true).unwrap();
+        g.admin_set_room_creation_granted(&admin(), true).unwrap();
+    });
+    let create = Operation::CreateRoom {
+        room: "fresh".into(),
+    };
+    assert_eq!(rule(&g, "lia", &create), "room-capability");
+    let invite = Operation::Invite {
+        member: "bob".into(),
+        room: "fresh".into(),
+    };
+    assert_eq!(rule(&g, "lia", &invite), "room-capability");
+    // with the capability the read-only limit is what refuses
+    let g = members(|g| {
+        g.admin_set_librarian(&admin(), "lia", true).unwrap();
+        g.admin_set_room_creation_granted(&admin(), true).unwrap();
+        g.admin_grant_room_capability(&admin(), "lia", true)
+            .unwrap();
+    });
+    assert_eq!(rule(&g, "lia", &create), "read-only");
 }
