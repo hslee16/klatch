@@ -285,49 +285,58 @@ mod tests {
         assert_eq!(unhex(&"zz".repeat(KEY_LEN)), None);
     }
 
-    /// A stand-in `secret-tool`: a shell script with the given body, in a directory of its own.
-    fn fake(body: &str) -> (std::ffi::OsString, crate::store::test_dir::TestDir) {
-        let dir = crate::store::test_dir::TestDir::new("fake");
-        let path = dir.join("secret-tool");
-        // The probe line lets the helper run the script once and return at once: see below.
-        std::fs::write(
-            &path,
-            format!("#!/bin/sh\n[ -n \"$KLATCH_FAKE_PROBE\" ] && exit 0\n{body}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    /// What every stand-in tool runs: it reads the body of the test that made it from the file beside the link it was
+    /// started through (`$0` is that link), so one script serves every fake in every test.
+    const TRAMPOLINE: &str = "#!/bin/sh\n[ -n \"$KLATCH_FAKE_PROBE\" ] && exit 0\n. \"$0.body\"\n";
+
+    /// The one shared script the stand-in tools are links to, made once per machine and never changed afterwards. Why
+    /// shared: a freshly written executable costs about 150 ms the first time it is started on macOS, and under load
+    /// those starts queue for seconds, which made every test that wrote its own script take 3 to 8 s (#1353). It is
+    /// found again by its content, and only trusted when it is ours and nobody else can write it; otherwise this
+    /// process makes a private copy.
+    fn trampoline(private: &std::path::Path) -> std::path::PathBuf {
+        use std::hash::{Hash, Hasher};
+        use std::os::unix::fs::MetadataExt;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        TRAMPOLINE.hash(&mut h);
+        let shared = std::env::temp_dir().join(format!("klatch-fake-tool-{:016x}", h.finish()));
+        let make = |to: &std::path::Path| {
+            std::fs::write(to, TRAMPOLINE).unwrap();
+            std::fs::set_permissions(to, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        // The file is made under a private name and linked into place, so a half written script is never seen and the
+        // first maker wins; `hard_link` fails when the name is taken, which is fine.
+        let tmp = private.join("trampoline.tmp");
+        make(&tmp);
+        let mine = std::fs::metadata(&tmp).unwrap().uid();
+        let _ = std::fs::hard_link(&tmp, &shared);
+        let trusted = std::fs::metadata(&shared).is_ok_and(|m| {
+            m.uid() == mine
+                && m.mode() & 0o022 == 0
+                && std::fs::read_to_string(&shared).is_ok_and(|c| c == TRAMPOLINE)
+        });
+        if trusted {
+            let _ = std::fs::remove_file(&tmp);
+            shared
+        } else {
+            tmp
+        }
+    }
+
+    /// A stand-in tool `name` in `dir` that runs `body`: a link to the shared script, with the body in a file beside it.
+    fn install_tool(dir: &std::path::Path, name: &str, body: &str) {
+        let link = dir.join(name);
+        std::fs::write(dir.join(format!("{name}.body")), format!("{body}\n")).unwrap();
+        // a test may install the same tool again with another body, as writing the file again once did
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(trampoline(dir), &link).unwrap();
         // Another test thread may fork while the file is open for writing, and a child briefly holds that handle:
         // executing the script then fails with "Text file busy". Wait until it can be executed (CI flake, #570).
         // (sh execs the script and reports exit code 126 for "Text file busy".)
         for _ in 0..200 {
             let status = std::process::Command::new("sh")
                 .args(["-c", "exec \"$0\""])
-                .arg(&path)
-                .env("KLATCH_FAKE_PROBE", "1")
-                .stderr(std::process::Stdio::null())
-                .status();
-            match status {
-                Ok(s) if s.code() == Some(126) => std::thread::sleep(Duration::from_millis(10)),
-                _ => break,
-            }
-        }
-        (format!("{}:/usr/bin:/bin", dir.display()).into(), dir)
-    }
-
-    /// A stand-in `busctl` in `dir`, with the given body: what the collection's `Locked` property reads as (#561).
-    fn install_busctl(dir: &std::path::Path, body: &str) {
-        let path = dir.join("busctl");
-        std::fs::write(
-            &path,
-            format!("#!/bin/sh\n[ -n \"$KLATCH_FAKE_PROBE\" ] && exit 0\n{body}\n"),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // the same "Text file busy" wait as `fake` (#570)
-        for _ in 0..200 {
-            let status = std::process::Command::new("sh")
-                .args(["-c", "exec \"$0\""])
-                .arg(&path)
+                .arg(&link)
                 .env("KLATCH_FAKE_PROBE", "1")
                 .stderr(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -337,6 +346,18 @@ mod tests {
                 _ => break,
             }
         }
+    }
+
+    /// A stand-in `secret-tool`: a shell script with the given body, in a directory of its own.
+    fn fake(body: &str) -> (std::ffi::OsString, crate::store::test_dir::TestDir) {
+        let dir = crate::store::test_dir::TestDir::new("fake");
+        install_tool(&dir, "secret-tool", body);
+        (format!("{}:/usr/bin:/bin", dir.display()).into(), dir)
+    }
+
+    /// A stand-in `busctl` in `dir`, with the given body: what the collection's `Locked` property reads as (#561).
+    fn install_busctl(dir: &std::path::Path, body: &str) {
+        install_tool(dir, "busctl", body);
     }
 
     /// A silent miss from `secret-tool` and a `busctl` that says `bus_body`.
@@ -528,5 +549,33 @@ mod tests {
         let (svc, _dir) = with_fake("exit 1", CALL_LIMIT);
         assert!(svc.get("store-a").unwrap().is_none());
         svc.delete("store-a").unwrap();
+    }
+
+    #[test]
+    fn the_stand_in_tools_of_two_tests_are_one_executable_so_a_new_script_is_not_started_for_each()
+    {
+        // On macOS the first start of each new executable file costs about 150 ms, and under load those starts queue
+        // for seconds, so every test that wrote its own script took 3 to 8 s (#1353). The stand-ins are links to one
+        // shared script that reads its body from a file beside the link, so only that one script is ever new.
+        let (_p1, d1) = fake("exit 1");
+        install_busctl(&d1, "echo 'b false'");
+        let (_p2, d2) = fake("exit 2");
+        install_busctl(&d2, "echo 'b true'");
+        let id = |p: std::path::PathBuf| std::fs::canonicalize(p).unwrap();
+        assert_eq!(id(d1.join("secret-tool")), id(d2.join("secret-tool")));
+        assert_eq!(id(d1.join("busctl")), id(d2.join("busctl")));
+        assert_eq!(id(d1.join("busctl")), id(d1.join("secret-tool")));
+        // each one still does what its own test said
+        let run = |d: &std::path::Path, tool: &str| {
+            let o = std::process::Command::new(d.join(tool)).output().unwrap();
+            (
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+            )
+        };
+        assert_eq!(run(&d1, "secret-tool"), (Some(1), String::new()));
+        assert_eq!(run(&d2, "secret-tool"), (Some(2), String::new()));
+        assert_eq!(run(&d1, "busctl"), (Some(0), "b false\n".into()));
+        assert_eq!(run(&d2, "busctl"), (Some(0), "b true\n".into()));
     }
 }

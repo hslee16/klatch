@@ -109,10 +109,23 @@ impl Home {
     /// Run as a launcher would, at a terminal where the person types the admin passphrase when asked (and `typed`
     /// after that, for a confirmation). The output is what the terminal showed.
     pub fn launcher_typing(&self, args: &[&str], typed: &[&str]) -> PtyRun {
+        self.launcher_typing_env(args, typed, &[])
+    }
+    /// `launcher_typing` with extra environment (a test-clock build reads `KLATCH_NOW_FILE`).
+    pub fn launcher_typing_env(
+        &self,
+        args: &[&str],
+        typed: &[&str],
+        env: &[(&str, &std::path::Path)],
+    ) -> PtyRun {
         self.set_passphrase();
         let mut lines = vec![PASS];
         lines.extend_from_slice(typed);
-        let mut run = pty::run_on_pty(self.launcher_command(args), &lines);
+        let mut command = self.launcher_command(args);
+        for (k, v) in env {
+            command.env(k, v);
+        }
+        let mut run = pty::run_on_pty(command, &lines);
         // the prompt is the terminal's, not the command's output
         run.text = without_prompts(&run.text);
         run
@@ -129,18 +142,30 @@ impl Home {
     }
     /// Run as a worker holding a key bundle: only the path is given, and no key directory or name.
     pub fn worker(&self, bundle: &std::path::Path, args: &[&str]) -> Output {
+        self.worker_with_env(bundle, args, &[])
+    }
+    /// `worker` with extra environment (a test-clock build reads `KLATCH_NOW_FILE`, so a test can move time without
+    /// sleeping).
+    pub fn worker_with_env(
+        &self,
+        bundle: &std::path::Path,
+        args: &[&str],
+        env: &[(&str, &std::path::Path)],
+    ) -> Output {
         let fake = self.0.join("fake-home");
         std::fs::create_dir_all(&fake).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_klatch"))
-            .detached()
+        let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+        c.detached()
             .env_remove("KLATCH_NAME")
             .env_remove("KLATCH_KEY_DIR")
             .env("HOME", &fake)
             .env("KLATCH_HOME", &self.0)
             .env("KLATCH_IDENTITY_FILE", bundle)
-            .args(args)
-            .output()
-            .unwrap()
+            .args(args);
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.output().unwrap()
     }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))

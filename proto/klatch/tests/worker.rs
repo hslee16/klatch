@@ -133,24 +133,53 @@ fn a_credential_expires_on_its_own() {
     );
 }
 
+/// A used credential outlives its idle timeout and stops at its cap, end to end. It runs on the test clock
+/// (`KLATCH_NOW_FILE` moves the time of every command, so nothing sleeps): the credential is issued at second 0 with an
+/// idle timeout of 3 s and a cap of 8 s, posts at 2, 4 and 6 s all work although the 3 s idle timeout counted from issue
+/// ended at 3 s (only renewal on use explains that), a post at 7 s still works, and the first
+/// request at 8 s is refused although the 7 s post had renewed the idle timeout to 10 s (only the cap explains that).
+/// The default build has no clock seam, so this runs in the CI step that builds with `--features test-clock`; it used
+/// to spend 9 s in real sleeps (#1353). The renewal and cap rules themselves are also tested on a fake clock in
+/// `gateway/tests/credential_renewal.rs`.
+#[cfg(feature = "test-clock")]
 #[test]
 fn a_credential_that_is_used_outlives_its_idle_timeout_up_to_its_cap() {
     let h = Home::new();
-    // Idle timeout 3 s, cap 8 s: two posts 2 s apart keep it alive past the first 3 s, and it stops at the cap
-    // whatever is done. Margins are wide because a loaded runner is slow.
-    let b = issue(&h, "w-1", "internal", &["--ttl", "3", "--max-life", "8"]);
-    let mut worked = 0;
-    for i in 0..3 {
-        let o = h.worker(&b, &["post", "r", &format!("alive number {i}")]);
-        if o.status.success() {
-            worked += 1;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+    let clock = h.0.join("clock");
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let env = [("KLATCH_NOW_FILE", clock.as_path())];
+    std::fs::write(&clock, start.to_string()).unwrap();
+    let bundle = h.0.join("w-1.bundle");
+    let out = h.launcher_typing_env(
+        &[
+            "worker",
+            "issue",
+            "w-1",
+            "--clearance",
+            "internal",
+            "--out",
+            bundle.to_str().unwrap(),
+            "--ttl",
+            "3",
+            "--max-life",
+            "8",
+        ],
+        &[],
+        &env,
+    );
+    assert!(out.ok(), "issue failed: {}", out.text);
+    let post = |t: i64| {
+        std::fs::write(&clock, (start + t).to_string()).unwrap();
+        h.worker_with_env(&bundle, &["post", "r", &format!("at {t}")], &env)
+    };
+    for t in [2, 4, 6, 7] {
+        let o = post(t);
+        assert!(o.status.success(), "the post at {t} s failed: {}", text(&o));
     }
-    // 4.5 s have passed, beyond the 3 s idle timeout, so use renewed it (only a timeout of 3 s would have lapsed)
-    assert_eq!(worked, 3, "only {worked} posts worked");
-    std::thread::sleep(std::time::Duration::from_millis(4500));
-    let o = h.worker(&b, &["post", "r", "past the cap"]);
+    let o = post(8);
     assert!(
         !o.status.success() && text(&o).contains("expired"),
         "{}",
