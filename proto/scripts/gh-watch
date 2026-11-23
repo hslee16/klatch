@@ -4,20 +4,24 @@
 #   gh-watch selftest                   run the fixture tests (nothing leaves this machine)
 #   gh-watch forward-command [opts]     PRINT the commands the human runs; it runs none of them
 #   gh-watch status [opts]              is the receiver up, is a forwarder for this repo running, how old is the last note;
-#                                       last line gh-watch: ok (exit 0), receiver down (3) or forwarder down (4)
+#                                       last line gh-watch: ok (exit 0), receiver down (3), forwarder down (4) or
+#                                       forwarder down: stale webhook (5; run clean-hooks, #1350)
+#   gh-watch clean-hooks                READ-ONLY `gh api repos/OWNER/REPO/hooks`, run only when you ask: lists a stale
+#                                       development webhook and PRINTS the delete command; it deletes nothing (#1350)
 #   gh-watch install-launchd [opts]     PRINT two LaunchAgent plists (receiver, forwarder wrapper) and the launchctl commands;
 #                                       --systemd prints systemd user units instead. Writes nothing, runs nothing (#1343)
 #   gh-watch ensure [opts]              start ONLY the receiver, detached, if it is down (never the forwarder, never gh); then status
 # serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
 #                --post-min INFO|ALERT --max-body BYTES   (--bind is accepted but only loopback is allowed)
-# The watcher is read-only: it never calls gh or GitHub. This launcher never runs gh either (status uses ps and, when present, a read-only launchctl print).
+# The watcher is read-only: it never calls gh or GitHub. This launcher runs gh only in clean-hooks (one read-only GET); status
+# uses ps and, when present, a read-only launchctl print.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 receiver="$here/gh-watch-receiver.py"
 repo_slug="hslee16/klatch"
 events="pull_request,check_run,workflow_run,push,issues,issue_comment"
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "gh-watch: $*" >&2; exit 2; }
 
 default_out="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"
@@ -249,11 +253,44 @@ print_status() {
   launchd_lines
   log_age_line
   if [ "$rec" = down ]; then echo "gh-watch: receiver down"; return 3; fi
+  if [ "$fwd" = down ] && [ -s "$out_dir/forwarder.stale" ]; then
+    head -n 1 "$out_dir/forwarder.stale"
+    echo "gh-watch: forwarder down: stale webhook"; return 5
+  fi
   if [ "$fwd" = down ]; then echo "gh-watch: forwarder down"; return 4; fi
   echo "gh-watch: ok"
 }
 
 cmd_status() { scan_args "$@"; print_status; }
+
+# --- clean-hooks (#1350): one read-only GET, only when the human runs it. It never deletes; it prints the command. --------
+# gh webhook forward creates a hook named cli whose config.url is the GitHub forwarding service; only such hooks are listed.
+cmd_clean_hooks() {
+  scan_args "$@"
+  [ ${#rest[@]} -eq 0 ] || die "clean-hooks: unknown option ${rest[0]} (it never deletes; there is no delete flag)"
+  local json
+  json="$(gh api "repos/$repo_slug/hooks" 2>&1)" || {
+    echo "gh-watch: cannot list the hooks of $repo_slug (needs gh auth refresh -s admin:repo_hook): $json" >&2
+    exit 1
+  }
+  # shellcheck disable=SC2016  # the $(id -u) in the printed hint is for the human, not expanded here
+  python3 -I -c '
+import json, sys
+repo, text = sys.argv[1], sys.stdin.read()
+try:
+    hooks = json.loads(text)
+except ValueError:
+    print("gh-watch: the hooks answer was not JSON", file=sys.stderr); raise SystemExit(1)
+stale = [h for h in hooks if isinstance(h, dict) and h.get("name") == "cli"
+         and str((h.get("config") or {}).get("url", "")).split("/")[2:3] in (["webhook-forwarder.github.com"], ["web.github.com"])]
+if not stale:
+    print("no stale development webhook on %s" % repo); raise SystemExit(0)
+print("# Stale development webhook(s) on %s (name cli, GitHub forwarding URL)." % repo)
+print("# Stop the forwarder first (launchctl bootout gui/$(id -u)/dev.klatch.gh-watch-forwarder), then run yourself:")
+for h in stale:
+    print("gh api -X DELETE repos/%s/hooks/%d" % (repo, int(h["id"])))
+' "$repo_slug" <<< "$json"
+}
 
 # Starts only the receiver. Never the forwarder, never gh: the forwarder needs the human's admin:repo_hook token.
 cmd_ensure() {
@@ -283,6 +320,7 @@ case "${1:-}" in
   selftest) cmd_selftest ;;
   install-launchd) shift; cmd_install_launchd "$@" ;;
   forward-command) shift; cmd_forward_command "$@" ;;
+  clean-hooks) shift; cmd_clean_hooks "$@" ;;
   -h | --help | help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

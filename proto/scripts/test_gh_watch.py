@@ -338,6 +338,28 @@ class LauncherStateTests(unittest.TestCase):
             self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: forwarder down")
         self.assertFalse(os.path.exists(self.gh_rec))
 
+    def test_status_forwarder_down_stale_webhook_is_exit_5(self):
+        self.start_serve()
+        with open(os.path.join(self.state, "forwarder.stale"), "w") as f:
+            f.write("stale webhook on the repository: run gh-watch clean-hooks\n")
+        self.set_ps([])
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 5, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "gh-watch: forwarder down: stale webhook")
+        self.assertIn("gh-watch clean-hooks", r.stdout)
+        # a running forwarder wins over a leftover marker
+        self.set_ps([self.FORWARDER % self.port])
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.gh_rec), "status ran gh")
+
+    def test_status_receiver_down_beats_stale_marker(self):
+        os.makedirs(self.state, mode=0o700)
+        with open(os.path.join(self.state, "forwarder.stale"), "w") as f:
+            f.write("x\n")
+        r = self.run_cmd("status")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
     def test_status_reports_log_age(self):
         self.start_serve()
         r = self.run_cmd("status")
@@ -808,8 +830,184 @@ class LaunchdTests(unittest.TestCase):
         with open(self.FORWARD, encoding="utf-8") as f:
             src = f.read()
         self.assertNotIn("auth status", src)
-        self.assertEqual(src.count("exec gh "), 1)
-        self.assertEqual([l for l in src.splitlines() if l.strip().startswith("gh ")], [])
+        # since #1350 the wrapper runs gh as a supervised child (it reads its stderr); still exactly one gh call
+        self.assertNotIn("exec gh ", src)
+        gh_lines = [l for l in src.splitlines() if l.strip().startswith("gh ")]
+        self.assertEqual(len(gh_lines), 1, gh_lines)
+        self.assertTrue(gh_lines[0].strip().startswith("gh webhook forward "), gh_lines)
+
+
+class StaleHookTests(unittest.TestCase):
+    """#1350: a killed forwarder leaves its development webhook; `gh webhook forward` then fails 422 on every restart.
+    The wrapper exits 75 with one clear line; `gh-watch clean-hooks` reads the hook list and PRINTS the delete command."""
+
+    FORWARD = os.path.join(HERE, "gh-watch-forward")
+    SECRET_TEXT = "STALESECRETVALUE"
+    HOOK_URL = "https://webhook-forwarder.github.com/hook"
+    LINE = "stale webhook on the repository: run gh-watch clean-hooks"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = self.tmp.name
+        self.bin = os.path.join(self.t, "bin")
+        os.mkdir(self.bin)
+        self.rec = os.path.join(self.t, "ran")
+        self.fwd_err = os.path.join(self.t, "fwd.err")
+        self.fwd_rc = os.path.join(self.t, "fwd.rc")
+        self.hooks = os.path.join(self.t, "hooks.json")
+        self.state = os.path.join(self.t, "state")
+        os.makedirs(self.state, mode=0o700)
+        with open(os.path.join(self.bin, "gh"), "w") as f:
+            f.write('''#!/bin/sh
+echo "gh $@" >> "%s"
+case "$1" in
+  webhook) cat "%s" >&2; exit "$(cat "%s")" ;;
+  api) case "$*" in *DELETE*) echo deleted; exit 0 ;; *) cat "%s"; exit 0 ;; esac ;;
+esac
+exit 0
+''' % (self.rec, self.fwd_err, self.fwd_rc, self.hooks))
+        os.chmod(os.path.join(self.bin, "gh"), 0o755)
+        self.set_forward(1, "Error: error creating webhook: HTTP 422: Validation Failed: Hook already exists on this repository\n")
+        self.set_hooks([])
+        self.env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t}
+        path = os.path.join(self.state, "secret")
+        with open(path, "w") as f:
+            f.write(self.SECRET_TEXT + "\n")
+        os.chmod(path, 0o600)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def set_forward(self, rc, err):
+        with open(self.fwd_rc, "w") as f:
+            f.write("%d\n" % rc)
+        with open(self.fwd_err, "w") as f:
+            f.write(err)
+
+    def set_hooks(self, hooks):
+        with open(self.hooks, "w") as f:
+            json.dump(hooks, f)
+
+    def calls(self):
+        try:
+            with open(self.rec) as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    def forward(self):
+        return subprocess.run([self.FORWARD, "--out-dir", self.state], env=self.env, capture_output=True, text=True,
+                              timeout=30)
+
+    def launcher(self, *args):
+        return subprocess.run([LAUNCHER, *args, "--out-dir", self.state], env=self.env, capture_output=True,
+                              text=True, timeout=30)
+
+    def hook(self, hid, name="cli", url=None):
+        return {"id": hid, "name": name, "active": True, "config": {"url": url or self.HOOK_URL, "content_type": "json"}}
+
+    # --- the wrapper ---
+    def test_wrapper_422_hook_exists_exits_75_with_one_line(self):
+        r = self.forward()
+        self.assertEqual(r.returncode, 75, r.stdout + r.stderr)
+        self.assertEqual(r.stderr.count(self.LINE), 1, r.stderr)
+        self.assertNotIn(self.SECRET_TEXT, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(os.path.join(self.state, "forwarder.stale")))
+        self.assertEqual(len(self.calls()), 1, self.calls())
+        self.assertTrue(self.calls()[0].startswith("gh webhook forward "))
+
+    def test_wrapper_other_failure_keeps_its_status_and_clears_the_marker(self):
+        with open(os.path.join(self.state, "forwarder.stale"), "w") as f:
+            f.write("old\n")
+        self.set_forward(1, "Error: something else broke\n")
+        r = self.forward()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("something else broke", r.stderr)
+        self.assertNotIn(self.LINE, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "forwarder.stale")))
+
+    def test_wrapper_other_status_with_hook_text_is_not_stale(self):
+        self.set_forward(2, "Hook already exists\n")
+        r = self.forward()
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn(self.LINE, r.stderr)
+
+    def test_wrapper_success_clears_marker_and_never_echoes_secret(self):
+        with open(os.path.join(self.state, "forwarder.stale"), "w") as f:
+            f.write("old\n")
+        self.set_forward(0, "")
+        r = self.forward()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "forwarder.stale")))
+
+    def test_wrapper_stderr_secret_is_redacted(self):
+        self.set_forward(1, "Error: bad flag --secret %s\n" % self.SECRET_TEXT)
+        r = self.forward()
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn(self.SECRET_TEXT, r.stdout + r.stderr)
+
+    def test_wrapper_sigterm_reaches_gh_and_exits(self):
+        with open(os.path.join(self.bin, "gh"), "w") as f:
+            f.write('#!/bin/sh\ntrap \'echo term > "%s"; exit 0\' TERM\necho up > "%s"\nwhile :; do sleep 1; done\n'
+                    % (os.path.join(self.t, "got-term"), os.path.join(self.t, "up")))
+        p = subprocess.Popen([self.FORWARD, "--out-dir", self.state], env=self.env, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.time() + 20
+            while not os.path.exists(os.path.join(self.t, "up")) and time.time() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(os.path.exists(os.path.join(self.t, "up")), "fake gh did not start")
+            p.send_signal(signal.SIGTERM)
+            p.wait(timeout=20)
+            self.assertTrue(os.path.exists(os.path.join(self.t, "got-term")), "SIGTERM did not reach gh")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+
+    # --- clean-hooks ---
+    def test_clean_hooks_lists_stale_cli_hook_and_prints_the_delete_command(self):
+        self.set_hooks([self.hook(111, name="web", url="https://example.com/x"), self.hook(222)])
+        r = self.launcher("clean-hooks")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("gh api -X DELETE repos/hslee16/klatch/hooks/222", r.stdout)
+        self.assertNotIn("hooks/111", r.stdout)
+        self.assertEqual(self.calls(), ["gh api repos/hslee16/klatch/hooks"])
+
+    def test_clean_hooks_ignores_a_cli_hook_with_another_url_and_a_web_hook_with_the_forwarding_url(self):
+        self.set_hooks([self.hook(5, name="cli", url="https://example.com/hook"), self.hook(6, name="web")])
+        r = self.launcher("clean-hooks")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("DELETE", r.stdout)
+        self.assertIn("no stale", r.stdout)
+
+    def test_clean_hooks_none_says_so(self):
+        r = self.launcher("clean-hooks")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("no stale", r.stdout)
+        self.assertNotIn("DELETE", r.stdout)
+
+    def test_clean_hooks_runs_no_delete_and_has_no_delete_flag(self):
+        self.set_hooks([self.hook(222)])
+        r = self.launcher("clean-hooks")
+        self.assertEqual(r.returncode, 0)
+        self.assertFalse(any("DELETE" in c for c in self.calls()), self.calls())
+        r = self.launcher("clean-hooks", "--delete-stale")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(any("DELETE" in c for c in self.calls()), self.calls())
+
+    def test_clean_hooks_gh_failure_is_reported(self):
+        with open(os.path.join(self.bin, "gh"), "w") as f:
+            f.write('#!/bin/sh\necho "HTTP 403" >&2\nexit 1\n')
+        r = self.launcher("clean-hooks")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("admin:repo_hook", r.stdout + r.stderr)
+
+    def test_other_subcommands_still_run_no_gh(self):
+        for cmd in ("status", "install-launchd", "forward-command"):
+            subprocess.run([LAUNCHER, cmd, "--out-dir", self.state, "--port", "1"] if cmd == "status" else [LAUNCHER, cmd, "--out-dir", self.state],
+                           env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(self.calls(), [])
 
 
 if __name__ == "__main__":
