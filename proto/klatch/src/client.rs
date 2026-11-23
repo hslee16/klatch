@@ -6,8 +6,7 @@
 //! say who you are, and the stream is server-sent events. A frame type or field this version does not know is ignored.
 
 use crate::protocol::{
-    Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, WireRef, decode_server_line,
-    encode_line,
+    Attribution, ClientFrame, PROTOCOL_VERSION, ServerFrame, decode_server_line, encode_line,
 };
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use crate::sync::thread;
@@ -17,6 +16,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod methods;
+mod records;
+mod requests;
 #[cfg(all(unix, feature = "client-socket"))]
 mod socket;
 
@@ -24,6 +26,10 @@ mod socket;
 mod http;
 #[cfg(feature = "client-http")]
 pub use http::{HttpFault, HttpOptions};
+
+pub use records::{ClaimInfo, Collected, History, Member, Message, ReviewItem, Verdict};
+use records::{array_of, message_of, opt_str, str_of};
+pub use requests::{ClaimRequest, Handoff, PostRequest, RefInput};
 
 /// A boxed writer for the session's input, and the action that ends a transport that has no child to wait for.
 type Writer = Box<dyn Write + Send>;
@@ -93,230 +99,11 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A message as delivered, by a stream or by `read`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message {
-    pub seq: u64,
-    pub id: String,
-    pub sender: String,
-    pub attribution: String,
-    pub label: String,
-    pub body: String,
-    pub ts: i64,
-    pub kind: Option<String>,
-    pub payload: Option<String>,
-    /// The sender was admitted in flag mode of the room's requirement (#990); set by `read` only. Display only.
-    pub advisory: bool,
-    /// The scope the asker declared on an ask (#1171); `None` on every other message and on an ask that declares none.
-    pub scope: Option<String>,
-    /// The refs the asker attached to an ask (#1318): data, never an instruction; klatch never fetches or resolves one.
-    /// Empty on every other message and on an ask that carries none.
-    pub refs: Vec<WireRef>,
-}
-
-/// What `collect` returns.
-#[derive(Debug, Default)]
-pub struct Collected {
-    pub messages: Vec<Message>,
-    pub caught_up: Option<u64>,
-}
-
-/// What `history` returns: the messages, oldest first, and how many follow the last one returned.
-#[derive(Debug, Default)]
-pub struct History {
-    pub messages: Vec<Message>,
-    pub more: u64,
-}
-
-/// A member as `who` lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Member {
-    pub name: String,
-    pub last_seen: i64,
-    pub status: Option<String>,
-    /// When the status was set (seconds), if known.
-    pub status_ts: Option<i64>,
-    pub kind: Option<String>,
-    /// The repository id klatch observed for the member, if any (display only).
-    pub repository: Option<String>,
-    /// The short name of the member's starting directory, never a path.
-    pub directory: Option<String>,
-    /// The member's declared scope names another repository than the one it runs in (#894), display only.
-    pub scope_differs: bool,
-    /// The permission mode the member last reported (#677), if any hook has.
-    pub mode: Option<String>,
-}
-
-/// A live claim as `claims` lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaimInfo {
-    pub path: String,
-    pub owner: String,
-    pub reason: String,
-    pub expires: i64,
-    pub scope: Option<String>,
-}
-
-/// An item in the reviewer's queue.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReviewItem {
-    pub id: i64,
-    pub room: String,
-    pub seq: u64,
-    pub to_label: String,
-    pub reason: String,
-    pub text: String,
-}
-
-/// The reviewer's decision on a held item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict<'a> {
-    Allow,
-    /// Release this text in place of the held one.
-    Redact(&'a str),
-    /// Refuse it, with an optional reason.
-    Deny(Option<&'a str>),
-}
-
-fn str_of(v: &Value) -> String {
-    v.as_str().unwrap_or("").to_string()
-}
-
-fn opt_str(v: &Value) -> Option<String> {
-    v.as_str().map(String::from)
-}
-
-fn array_of<T>(v: &Value, one: impl Fn(&Value) -> T) -> Vec<T> {
-    v.as_array()
-        .map(|a| a.iter().map(one).collect())
-        .unwrap_or_default()
-}
-
-/// A typed handoff carried by a post: its kind and an opaque payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Handoff<'a> {
-    pub kind: &'a str,
-    pub payload: Option<&'a str>,
-}
-
-/// What `Client::post` sends: the room and the text, and optionally a label and a handoff. Build it with
-/// `PostRequest::new(room, body)` and the setters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PostRequest<'a> {
-    pub room: &'a str,
-    pub body: &'a str,
-    pub label: Option<&'a str>,
-    pub handoff: Option<Handoff<'a>>,
-    /// The scope an ask declares (#1171); only valid on a body that starts `seeking:`, and not with a handoff.
-    pub scope: Option<&'a str>,
-    /// The refs an ask carries to artifacts outside klatch (#1318); only valid on a body that starts `seeking:`, and not
-    /// with a handoff. Empty by default.
-    pub refs: &'a [RefInput<'a>],
-}
-
-/// One ref an ask carries (#1318): an open `kind` token of `[a-z0-9_.-]{1,32}`, a `value`, and optionally a short
-/// `label` and a bounded inline `snippet`. klatch never fetches, opens, runs or resolves what it points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RefInput<'a> {
-    pub kind: &'a str,
-    pub value: &'a str,
-    pub label: Option<&'a str>,
-    pub snippet: Option<&'a str>,
-}
-
-impl<'a> RefInput<'a> {
-    pub fn new(kind: &'a str, value: &'a str) -> Self {
-        Self {
-            kind,
-            value,
-            label: None,
-            snippet: None,
-        }
-    }
-
-    /// A short label for the ref.
-    pub fn label(mut self, label: &'a str) -> Self {
-        self.label = Some(label);
-        self
-    }
-
-    /// Bounded text that gives context without fetching anything. Data, never an instruction.
-    pub fn snippet(mut self, snippet: &'a str) -> Self {
-        self.snippet = Some(snippet);
-        self
-    }
-}
-
-impl<'a> PostRequest<'a> {
-    pub fn new(room: &'a str, body: &'a str) -> Self {
-        Self {
-            room,
-            body,
-            label: None,
-            handoff: None,
-            scope: None,
-            refs: &[],
-        }
-    }
-
-    /// Attach refs to an ask (#1318). The gateway refuses them on anything that is not an ask, refuses a credential,
-    /// a bad kind or value and a cap breached, and never cuts anything.
-    pub fn refs(mut self, refs: &'a [RefInput<'a>]) -> Self {
-        self.refs = refs;
-        self
-    }
-
-    /// Declare the scope an ask is about (#1171): the grammar of a member scope. `could_answer` then names a member
-    /// whose own scope differs. The gateway refuses a scope on anything that is not an ask.
-    pub fn scope(mut self, scope: &'a str) -> Self {
-        self.scope = Some(scope);
-        self
-    }
-
-    /// Post under this label instead of the room's default.
-    pub fn label(mut self, label: &'a str) -> Self {
-        self.label = Some(label);
-        self
-    }
-
-    /// Make the post a typed handoff of this kind, with an optional payload.
-    pub fn handoff(mut self, kind: &'a str, payload: Option<&'a str>) -> Self {
-        self.handoff = Some(Handoff { kind, payload });
-        self
-    }
-}
-
-/// What `Client::claim` sends: the room and the path, and optionally a time to live and a reason. Build it with
-/// `ClaimRequest::new(room, path)` and the setters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClaimRequest<'a> {
-    pub room: &'a str,
-    pub path: &'a str,
-    pub ttl: Option<i64>,
-    pub reason: Option<&'a str>,
-}
-
-impl<'a> ClaimRequest<'a> {
-    pub fn new(room: &'a str, path: &'a str) -> Self {
-        Self {
-            room,
-            path,
-            ttl: None,
-            reason: None,
-        }
-    }
-
-    /// Hold the claim for this many seconds.
-    pub fn ttl(mut self, secs: i64) -> Self {
-        self.ttl = Some(secs);
-        self
-    }
-
-    /// Say why the path is claimed.
-    pub fn reason(mut self, reason: &'a str) -> Self {
-        self.reason = Some(reason);
-        self
-    }
+/// The ways a session's input ends: its writer, the child to wait for, and the action that ends a transport with no child.
+struct Link {
+    writer: Option<Writer>,
+    child: Option<Child>,
+    shutdown: Option<Shutdown>,
 }
 
 /// One session with the gateway. Not shared between threads: use one client per thread.
@@ -380,7 +167,12 @@ impl Client {
             .take()
             .ok_or_else(|| Error::Session("no output".into()))?;
         let stdin = child.stdin.take().map(|s| Box::new(s) as Writer);
-        Self::start(stdout, stdin, Some(child), None, &Identity::none())
+        let link = Link {
+            writer: stdin,
+            child: Some(child),
+            shutdown: None,
+        };
+        Self::start(stdout, link, &Identity::none())
     }
 
     /// A session over a transport the caller opened: `reader` carries the gateway's frames, `writer` the requests,
@@ -392,22 +184,20 @@ impl Client {
         R: Read + Send + 'static,
         W: Write + Send + 'static,
     {
-        Self::start(
-            reader,
-            Some(Box::new(writer)),
-            None,
-            Some(shutdown),
-            identity,
-        )
+        let link = Link {
+            writer: Some(Box::new(writer)),
+            child: None,
+            shutdown: Some(shutdown),
+        };
+        Self::start(reader, link, identity)
     }
 
-    fn start<R: Read + Send + 'static>(
-        reader: R,
-        writer: Option<Writer>,
-        child: Option<Child>,
-        shutdown: Option<Shutdown>,
-        identity: &Identity,
-    ) -> Result<Self> {
+    fn start<R: Read + Send + 'static>(reader: R, link: Link, identity: &Identity) -> Result<Self> {
+        let Link {
+            writer,
+            child,
+            shutdown,
+        } = link;
         let (tx, frames) = channel();
         thread::spawn(move || pump_frames(reader, tx));
         let mut c = Self {
@@ -559,349 +349,6 @@ impl Client {
         }))
     }
 
-    /// Post a message; returns its `seq` and id.
-    pub fn post(&mut self, request: PostRequest) -> Result<(u64, String)> {
-        let mut p = Map::new();
-        p.insert("room".into(), json!(request.room));
-        p.insert("body".into(), json!(request.body));
-        if let Some(l) = request.label {
-            p.insert("label".into(), json!(l));
-        }
-        if let Some(Handoff { kind, payload }) = request.handoff {
-            p.insert("kind".into(), json!(kind));
-            if let Some(payload) = payload {
-                p.insert("payload".into(), json!(payload));
-            }
-        }
-        if let Some(scope) = request.scope {
-            p.insert("scope".into(), json!(scope));
-        }
-        if !request.refs.is_empty() {
-            let refs: Vec<Value> = request
-                .refs
-                .iter()
-                .map(|r| {
-                    let mut v = json!({"kind": r.kind, "value": r.value});
-                    if let Some(l) = r.label {
-                        v["label"] = json!(l);
-                    }
-                    if let Some(s) = r.snippet {
-                        v["snippet"] = json!(s);
-                    }
-                    v
-                })
-                .collect();
-            p.insert("refs".into(), Value::Array(refs));
-        }
-        let r = self.request("post", Value::Object(p))?;
-        Ok((
-            r["seq"].as_u64().unwrap_or(0),
-            r["id"].as_str().unwrap_or("").to_string(),
-        ))
-    }
-
-    /// Send a direct message to one other member. Returns the two-member room made on first use (which both
-    /// members can read, `history` and `subscribe` to), the `seq` and the `id`. The label may go below the
-    /// room's ceiling (the lower of the two clearances), never above.
-    pub fn dm(
-        &mut self,
-        to: &str,
-        body: &str,
-        label: Option<&str>,
-    ) -> Result<(String, u64, String)> {
-        let mut p = json!({"to": to, "body": body});
-        if let Some(l) = label {
-            p["label"] = json!(l);
-        }
-        let r = self.request("dm", p)?;
-        Ok((
-            r["room"].as_str().unwrap_or("").to_string(),
-            r["seq"].as_u64().unwrap_or(0),
-            r["id"].as_str().unwrap_or("").to_string(),
-        ))
-    }
-
-    pub fn read(&mut self, room: &str, peek: bool) -> Result<Vec<Message>> {
-        let r = self.request("read", json!({"room": room, "peek": peek}))?;
-        Ok(r["messages"]
-            .as_array()
-            .map(|a| a.iter().map(message_of).collect())
-            .unwrap_or_default())
-    }
-
-    /// Look back in a room without moving any cursor. No `last` and no `since`: the newest 20. `last`
-    /// alone: the newest `last` (1 to 200). `since` alone: the next 20 after that `seq`. Both: the newest
-    /// `last` after `since`. Page a long room by passing the last `seq` returned as the next `since`.
-    pub fn history(
-        &mut self,
-        room: &str,
-        last: Option<u32>,
-        since: Option<u64>,
-    ) -> Result<History> {
-        let mut p = json!({"room": room});
-        if let Some(n) = last {
-            p["last"] = json!(n);
-        }
-        if let Some(s) = since {
-            p["since"] = json!(s);
-        }
-        let r = self.request("history", p)?;
-        Ok(History {
-            messages: r["messages"]
-                .as_array()
-                .map(|a| a.iter().map(message_of).collect())
-                .unwrap_or_default(),
-            more: r["more"].as_u64().unwrap_or(0),
-        })
-    }
-
-    /// Claim a path in a room.
-    pub fn claim(&mut self, request: ClaimRequest) -> Result<()> {
-        let mut p = json!({"room": request.room, "path": request.path});
-        if let Some(t) = request.ttl {
-            p["ttl"] = json!(t);
-        }
-        if let Some(r) = request.reason {
-            p["reason"] = json!(r);
-        }
-        self.request("claim", p).map(|_| ())
-    }
-
-    pub fn release(&mut self, room: &str, path: &str, note: Option<&str>) -> Result<()> {
-        let mut p = json!({"room": room, "path": path});
-        if let Some(n) = note {
-            p["note"] = json!(n);
-        }
-        self.request("release", p).map(|_| ())
-    }
-
-    /// The owners of the live claims in a room, in path order.
-    pub fn claim_owners(&mut self, room: &str) -> Result<Vec<String>> {
-        let r = self.request("claims", json!({"room": room}))?;
-        Ok(r["claims"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|c| c["owner"].as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    /// The members of a room: liveness, and the status and kind a member declared.
-    pub fn who(&mut self, room: &str) -> Result<Vec<Member>> {
-        let r = self.request("who", json!({"room": room}))?;
-        Ok(array_of(&r["members"], |m| Member {
-            name: str_of(&m["name"]),
-            last_seen: m["last_seen"].as_i64().unwrap_or(0),
-            status: opt_str(&m["status"]),
-            status_ts: m["status_ts"].as_i64(),
-            kind: opt_str(&m["kind"]),
-            repository: opt_str(&m["repository"]),
-            directory: opt_str(&m["directory"]),
-            scope_differs: m["scope_differs"].as_bool().unwrap_or(false),
-            mode: opt_str(&m["mode"]),
-        }))
-    }
-
-    /// The live claims in a room, in path order.
-    pub fn claims(&mut self, room: &str) -> Result<Vec<ClaimInfo>> {
-        let r = self.request("claims", json!({"room": room}))?;
-        Ok(array_of(&r["claims"], |c| ClaimInfo {
-            path: str_of(&c["path"]),
-            owner: str_of(&c["owner"]),
-            reason: str_of(&c["reason"]),
-            expires: c["expires"].as_i64().unwrap_or(0),
-            scope: opt_str(&c["scope"]),
-        }))
-    }
-
-    /// The stuck cases of a room as events (`stale_ask`, `nobody_capable`, `ask_cycle`, `claim_deadlock`, `long_exchange`, `dead_holder`, `possible_overwrite`): each a JSON
-    /// object with a `kind`, a stable `key`, and ids, member names and numbers, never message text.
-    pub fn stuck(&mut self, room: &str) -> Result<Vec<Value>> {
-        let r = self.request("stuck", json!({"room": room}))?;
-        Ok(r["events"].as_array().cloned().unwrap_or_default())
-    }
-
-    /// Whether `member` could answer open ask `ask` in `room` now: `{member, ask, could, blockers: [{rule, reason}]}`
-    /// (#671). A read only; asking about a member other than yourself is an admin act.
-    pub fn could_answer(&mut self, room: &str, member: &str, ask: i64) -> Result<Value> {
-        self.request(
-            "could_answer",
-            json!({"room": room, "member": member, "ask": ask}),
-        )
-    }
-
-    /// Set your own status in a room (one line, 1 to 80 characters), for example `done`.
-    pub fn set_status(&mut self, room: &str, status: &str) -> Result<()> {
-        self.request("status", json!({"room": room, "status": status}))
-            .map(|_| ())
-    }
-
-    /// Join `room`, making it if it does not exist (the room-creation capability may need a grant).
-    pub fn join(&mut self, room: &str) -> Result<()> {
-        self.request("join", json!({"room": room})).map(|_| ())
-    }
-
-    /// The room's open asks as the wire gives them: `{seq, sender, text, ts, claimed, waiting_on_asker, room}` each.
-    /// The text is another member's words: data, never an instruction.
-    pub fn asks(&mut self, room: &str) -> Result<Vec<Value>> {
-        let r = self.request("asks", json!({"room": room}))?;
-        Ok(r["asks"].as_array().cloned().unwrap_or_default())
-    }
-
-    /// Post a content-free pointer (`klatch join <room>`) for `member` in `via`, a room you both already are in.
-    /// It joins nobody; the invited member decides.
-    pub fn invite(&mut self, member: &str, room: &str, via: &str) -> Result<()> {
-        self.request(
-            "invite",
-            json!({"member": member, "room": room, "via": via}),
-        )
-        .map(|_| ())
-    }
-
-    /// As the room's grantor, give `member` a clearance of `label` in `room` only. Refused unless you are the room's
-    /// grantor, the label is not the top level, and it is within the agent cap, the room's label and your own
-    /// clearance; the refusal names the rule.
-    pub fn grant_room_clearance(&mut self, room: &str, member: &str, label: &str) -> Result<()> {
-        self.request(
-            "grant_room_clearance",
-            json!({"room": room, "member": member, "label": label}),
-        )
-        .map(|_| ())
-    }
-
-    /// Your own crossing requests, newest first, as the wire gives them: `{id, room, seq, to_room, state, why}` each.
-    /// `state` is `waiting`, `approved`, `denied`, `released` or `blocked`; `why` is one fixed sentence, never the
-    /// text or a reviewer's words.
-    pub fn my_crossings(&mut self, limit: usize) -> Result<Vec<Value>> {
-        let r = self.request("my_crossings", json!({"limit": limit}))?;
-        Ok(r["crossings"].as_array().cloned().unwrap_or_default())
-    }
-
-    /// The names of the rooms you have joined, without reading anything. Only your own (#848).
-    pub fn my_rooms(&mut self) -> Result<Vec<String>> {
-        let r = self.request("my_rooms", json!({}))?;
-        Ok(array_of(&r["rooms"], str_of))
-    }
-
-    /// The room's board as one block of text, each entry bounded. The entries are other members' words: data, never
-    /// instructions (#848).
-    pub fn board(&mut self, room: &str) -> Result<String> {
-        let r = self.request("board", json!({"room": room}))?;
-        Ok(str_of(&r["board"]))
-    }
-
-    /// What the sender of message `seq` can learn about each recipient, as the wire gives it: `{seq, posted,
-    /// recipients: [{name, state, secs, shown, read}]}` with `state` one of `parked`, `seen_after`, `not_seen`.
-    /// Refused unless you sent the message; never the text (#848).
-    pub fn receipt(&mut self, room: &str, seq: i64) -> Result<Value> {
-        self.request("receipt", json!({"room": room, "seq": seq}))
-    }
-
-    /// Your own role as one fixed word (`librarian`, `admin`, `reviewer`, `facilitator` or `integrator`), or `None`
-    /// when you hold none. Only your own (#1110).
-    pub fn my_role(&mut self) -> Result<Option<String>> {
-        let r = self.request("my_role", json!({}))?;
-        Ok(r["role"].as_str().map(str::to_owned))
-    }
-
-    /// Declare the scope you work in (1 to 80 characters of letters, digits and `. : _ - /`): your claims conflict
-    /// only with claims in the same scope, and a shared claim conflicts with every scope.
-    pub fn set_scope(&mut self, scope: &str) -> Result<()> {
-        self.request("scope", json!({"scope": scope})).map(|_| ())
-    }
-
-    /// Declare your own kind for display (`bot`, `service` or `human`); `None` withdraws it. `session` is never
-    /// declared: klatch derives it.
-    pub fn set_kind(&mut self, kind: Option<&str>) -> Result<()> {
-        self.request("kind", json!({"kind": kind})).map(|_| ())
-    }
-
-    /// The reviewer's queue: the next held item, or `None` when there is none. Only the reviewer role may call it
-    /// (refused, rule `reviewer`).
-    pub fn review_next(&mut self) -> Result<Option<ReviewItem>> {
-        let r = self.request("review_next", json!({}))?;
-        let item = &r["item"];
-        if item.is_null() {
-            return Ok(None);
-        }
-        Ok(Some(ReviewItem {
-            id: item["id"].as_i64().unwrap_or(0),
-            room: str_of(&item["room"]),
-            seq: item["seq"].as_u64().unwrap_or(0),
-            to_label: str_of(&item["to_label"]),
-            reason: str_of(&item["reason"]),
-            text: str_of(&item["text"]),
-        }))
-    }
-
-    /// The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`).
-    /// Only the reviewer role may call it.
-    pub fn review_verdict(&mut self, id: i64, verdict: Verdict) -> Result<()> {
-        let mut p = json!({"id": id});
-        match verdict {
-            Verdict::Allow => p["verdict"] = json!("allow"),
-            Verdict::Redact(text) => {
-                p["verdict"] = json!("redact");
-                p["text"] = json!(text);
-            }
-            Verdict::Deny(reason) => {
-                p["verdict"] = json!("deny");
-                if let Some(r) = reason {
-                    p["reason"] = json!(r);
-                }
-            }
-        }
-        self.request("review_verdict", p).map(|_| ())
-    }
-
-    /// An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
-    /// `run-create`, `run-end`, `anchor-done`) with the parameters it needs (`room`, `member`, `label`, `limit`,
-    /// `run`, `anchor`). A member without the role is refused. Returns the result object.
-    pub fn role_act(
-        &mut self,
-        act: &str,
-        mut params: serde_json::Value,
-    ) -> Result<serde_json::Value> {
-        params["act"] = json!(act);
-        self.request("role_act", params)
-    }
-
-    /// Housekeeping every member may run: remove the members not seen for the fixed retention. Returns how many.
-    pub fn prune(&mut self) -> Result<u64> {
-        let r = self.request("prune", json!({}))?;
-        Ok(r["removed"].as_u64().unwrap_or(0))
-    }
-
-    /// Mute (or, with `muted` false, unmute) a room for yourself: your digest then shows only messages that
-    /// mention you. `read` and the stream still carry everything.
-    pub fn mute(&mut self, room: &str, muted: bool) -> Result<()> {
-        self.request("mute", json!({"room": room, "muted": muted}))
-            .map(|_| ())
-    }
-
-    /// Start (or resume) a stream; returns the room's head.
-    pub fn subscribe(&mut self, room: &str, from_seq: u64) -> Result<u64> {
-        self.caught_up = None;
-        let r = self.request("subscribe", json!({"room": room, "from_seq": from_seq}))?;
-        Ok(r["head"].as_u64().unwrap_or(0))
-    }
-
-    /// Stop the stream for a room; harmless if there is none.
-    pub fn unsubscribe(&mut self, room: &str) -> Result<()> {
-        self.request("unsubscribe", json!({"room": room}))
-            .map(|_| ())
-    }
-
-    pub fn ack(&mut self, room: &str, seq: u64) -> Result<()> {
-        self.send(&ClientFrame::Ack {
-            v: PROTOCOL_VERSION,
-            room: room.into(),
-            seq,
-        })
-    }
-
     /// The messages received so far; with `until_caught_up`, wait for the replay to finish first.
     pub fn collect(&mut self, until_caught_up: bool, timeout: Duration) -> Result<Collected> {
         let end = Instant::now() + timeout;
@@ -976,35 +423,5 @@ impl Drop for Client {
         if let Some(child) = self.child.as_mut() {
             let _ = child.wait();
         }
-    }
-}
-
-fn message_of(m: &Value) -> Message {
-    let text = |k: &str| m[k].as_str().unwrap_or("").to_string();
-    Message {
-        seq: m["seq"].as_u64().unwrap_or(0),
-        id: text("id"),
-        sender: text("sender"),
-        attribution: text("attribution"),
-        label: text("label"),
-        body: text("body"),
-        ts: m["ts"].as_i64().unwrap_or(0),
-        kind: m["kind"].as_str().map(String::from),
-        payload: m["payload"].as_str().map(String::from),
-        advisory: m["advisory"].as_bool().unwrap_or(false),
-        scope: m["scope"].as_str().map(String::from),
-        refs: m["refs"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|r| WireRef {
-                        kind: r["kind"].as_str().unwrap_or("").to_string(),
-                        value: r["value"].as_str().unwrap_or("").to_string(),
-                        label: r["label"].as_str().map(String::from),
-                        snippet: r["snippet"].as_str().map(String::from),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
     }
 }
