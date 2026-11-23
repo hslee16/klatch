@@ -42,7 +42,7 @@ impl<S: Store> Gateway<S> {
             .open_asks(room, now)?
             .into_iter()
             .find(|a| a.seq == ask);
-        self.could_answer_of(room, member, (ask, open.as_ref()), now)
+        self.could_answer_of((room, member), (ask, open.as_ref()), now)
     }
 
     /// `could_answer` without the guard on who asks, for the gateway's own routing (#1407): the verdict for `member`
@@ -50,8 +50,7 @@ impl<S: Store> Gateway<S> {
     /// gateway calls it, and what it learns never leaves as more than the names of members that could.
     pub(in crate::gateway) fn could_answer_of(
         &self,
-        room: &str,
-        member: &str,
+        (room, member): (&str, &str),
         (ask, open): (i64, Option<&crate::domain::OpenAsk>),
         now: i64,
     ) -> Result<CouldAnswer> {
@@ -84,7 +83,7 @@ impl<S: Store> Gateway<S> {
             })
             .collect();
         self.scope_blocker(&mut out, open.scope.as_deref())?;
-        self.claim_blockers(&mut out, room, ask, now)?;
+        self.claim_blockers(&mut out, (room, ask), now)?;
         self.credential_blocker(&mut out)?;
         self.standing_blockers(&mut out, room, ask)?;
         Ok(out)
@@ -112,7 +111,12 @@ impl<S: Store> Gateway<S> {
     }
 
     /// The ask is held, or the member is busy with a claim of its own anywhere.
-    fn claim_blockers(&self, out: &mut CouldAnswer, room: &str, ask: i64, now: i64) -> Result<()> {
+    fn claim_blockers(
+        &self,
+        out: &mut CouldAnswer,
+        (room, ask): (&str, i64),
+        now: i64,
+    ) -> Result<()> {
         let member = out.member.clone();
         let path = format!("ask:{ask}");
         if let Some(c) = self
@@ -184,7 +188,7 @@ impl<S: Store> Gateway<S> {
             match e {
                 Ok(()) => {}
                 Err(Error::Refused { rule, reason }) => {
-                    let reason = self.third_person(&member, room, &rule, reason)?;
+                    let reason = self.third_person((&member, room), (&rule, reason))?;
                     out.blockers.push(blocker(&rule, reason));
                 }
                 Err(other) => return Err(other),
@@ -194,7 +198,11 @@ impl<S: Store> Gateway<S> {
     }
 
     /// The reason a refusal gave, worded about the member and not to it.
-    fn third_person(&self, member: &str, room: &str, rule: &str, reason: String) -> Result<String> {
+    fn third_person(
+        &self,
+        (member, room): (&str, &str),
+        (rule, reason): (&str, String),
+    ) -> Result<String> {
         Ok(match rule {
             "breaker" => format!("{member} is stopped by the breaker: {reason}"),
             "admin-block" => format!("{member} was removed from room {room} by the admin"),
