@@ -38,8 +38,10 @@ fn the_shell_runs_only_the_five_families_and_refuses_a_wrong_passphrase_at_the_s
     );
     assert_has(
         &r.text,
-        &["only admin, worker, anchor, run and judge@@
-    @@H|r|already in the shell"],
+        &[
+            "only admin, worker, anchor, run and judge",
+            "already in the shell",
+        ],
     );
     let bad = run_on_pty(
         admin_cmd(&h, &["shell"]),
@@ -222,11 +224,8 @@ fn recovery_asks_for_a_typed_confirmation_before_it_shows_the_code() {
     h.set_passphrase();
     let no = run_on_pty(admin_cmd(&h, &["recovery"]), &[PASS, "nope"]);
     assert!(!no.ok(), "{}", no.text);
-    assert_has(
-        &no.text,
-        &["not confirmed@@
-    @@L|no|KLATCH-"],
-    );
+    assert_has(&no.text, &["not confirmed"]);
+    assert_lacks(&no.text, &["KLATCH-"]);
 }
 
 #[test]
@@ -308,8 +307,7 @@ fn the_confirmation_says_what_is_being_confirmed() {
     let r = run_on_pty(admin_cmd(&h, &["close", "lobby"]), &[PASS, "nope"]);
     assert_has(
         &r.text,
-        &["to confirm@@
-    @@H|r|type lobby to confirm `admin close lobby"],
+        &["to confirm", "type lobby to confirm `admin close lobby"],
     );
 }
 

@@ -175,12 +175,7 @@ fn the_right_passphrase_does_the_act_and_the_audit_records_it_without_the_passph
     assert!(r.ok(), "{}", r.text);
     let audit = h.admin(&["audit"], &[]);
     assert!(audit.ok(), "{}", audit.text);
-    assert_has(
-        &audit.text,
-        &["lease-cap@@
-    @@H|audit|proof-ok@@
-    @@H|audit|passphrase-set"],
-    );
+    assert_has(&audit.text, &["lease-cap", "proof-ok", "passphrase-set"]);
     assert!(
         !audit.text.contains(PASS),
         "the passphrase reached the audit"
@@ -189,11 +184,7 @@ fn the_right_passphrase_does_the_act_and_the_audit_records_it_without_the_passph
     let bad = run_on_pty(admin_cmd(&h, &["resume"]), &[WRONG]);
     assert!(!bad.ok());
     let audit = h.admin(&["audit"], &[]);
-    assert_has(
-        &audit.text,
-        &["proof-failed@@
-    @@H|audit|failures=1"],
-    );
+    assert_has(&audit.text, &["proof-failed", "failures=1"]);
     assert!(!audit.text.contains(WRONG), "a wrong attempt was kept");
     assert!(!audit.text.contains(PASS));
 }
@@ -205,8 +196,7 @@ fn stats_on_the_terminal_with_the_passphrase_prints_counts_and_is_audited() {
     assert!(r.ok(), "{}", r.text);
     assert_has(
         &r.text,
-        &["klatch stats (counts only@@
-    @@H|r|worker credentials: 0 issued"],
+        &["klatch stats (counts only", "worker credentials: 0 issued"],
     );
     let bad = h.admin(&["stats", "--since", "yesterday"], &[]);
     assert!(!bad.ok() && bad.text.contains("YYYY-MM-DD"), "{}", bad.text);
