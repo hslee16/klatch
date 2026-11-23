@@ -148,8 +148,8 @@ fn grant(w: &World) -> Res {
     Ok(vec![])
 }
 
-fn member_limit(w: &World) -> Res {
-    w.set_clock(T0);
+/// Set a global limit and two member limits (one lower, one higher); the listing shows them in order.
+fn set_and_list_limits(w: &World) -> Result<(), String> {
     for who in ["noisy", "trusted", "plain"] {
         w.ok(who, &["join", "r"])?;
     }
@@ -189,7 +189,12 @@ fn member_limit(w: &World) -> Res {
         lines[2],
         "member trusted\t9 posts in 60 seconds",
         "the higher member limit",
-    )?;
+    )
+}
+
+/// Each member is held to its own limit: the noisy one to its lower one, trusted to its higher one, plain to the
+/// global one.
+fn limits_hold_per_member(w: &World) -> Result<(), String> {
     for i in 0..2 {
         w.advance(1);
         w.ok("noisy", &["post", "r", &format!("n{i}")])?;
@@ -215,8 +220,11 @@ fn member_limit(w: &World) -> Res {
         &w.refused("plain", &["post", "r", "p5"])?,
         "rate-limit",
         "the global limit",
-    )?;
-    // lifting a member limit removes it from the listing
+    )
+}
+
+/// Lifting a member limit removes it from the listing.
+fn lifting_a_limit(w: &World) -> Result<(), String> {
     check(
         w.admin(&["rate-limit", "--member", "noisy", "--off"], "")
             .ok,
@@ -226,6 +234,13 @@ fn member_limit(w: &World) -> Res {
         &w.admin(&["rate-limit", "--list"], "").stdout,
         "noisy",
         "a lifted limit is still listed",
-    )?;
+    )
+}
+
+fn member_limit(w: &World) -> Res {
+    w.set_clock(T0);
+    set_and_list_limits(w)?;
+    limits_hold_per_member(w)?;
+    lifting_a_limit(w)?;
     Ok(vec![])
 }

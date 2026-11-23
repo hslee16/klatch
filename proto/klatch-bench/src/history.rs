@@ -103,14 +103,15 @@ pub fn current_sha() -> String {
     if dirty { format!("{sha}+dirty") } else { sha }
 }
 
+/// When, at which commit and on what machine a run was made.
+pub struct RunStamp {
+    pub time: String,
+    pub sha: String,
+    pub machine: Machine,
+}
+
 /// The timings of a set of outcomes as a run record for the history.
-pub fn record_of(
-    outcomes: &[crate::Outcome],
-    partial: bool,
-    time: String,
-    sha: String,
-    machine: Machine,
-) -> RunRecord {
+pub fn record_of(outcomes: &[crate::Outcome], partial: bool, stamp: RunStamp) -> RunRecord {
     let mut timings = BTreeMap::new();
     for o in outcomes.iter().filter(|o| o.passed) {
         for (k, v) in o.metrics.iter().filter(|(k, _)| is_timing(k)) {
@@ -118,12 +119,12 @@ pub fn record_of(
         }
     }
     RunRecord {
-        time,
-        sha,
+        time: stamp.time,
+        sha: stamp.sha,
         passed: outcomes.iter().filter(|o| o.passed).count(),
         total: outcomes.len(),
         partial,
-        machine,
+        machine: stamp.machine,
         timings,
     }
 }
@@ -415,9 +416,12 @@ mod tests {
             run("3", &[("s/a_ms", 150.0), ("s/b_ms", 12.0), ("t/c_ms", 5.0)]),
         ];
         let (b, noisy) = baseline_from_runs(&runs);
-        assert_eq!(b["s"]["a_ms"], 500.0);
-        assert_eq!(b["s"]["b_ms"], 11.0);
-        assert_eq!(b["t"]["c_ms"], 5.0);
+        let medians = [
+            b["s"]["a_ms"].clone(),
+            b["s"]["b_ms"].clone(),
+            b["t"]["c_ms"].clone(),
+        ];
+        assert_eq!(medians, [json!(500.0), json!(11.0), json!(5.0)]);
         assert_eq!(noisy, vec!["s/a_ms".to_string()]);
     }
 
@@ -435,11 +439,22 @@ mod tests {
     fn the_sidecar_names_the_machine_the_sha_the_runs_and_the_rule() {
         let runs = [run("1", &[]), run("2", &[]), run("3", &[])];
         let m = baseline_meta(&runs, &["s/a_ms".to_string()]);
-        assert_eq!(m["sha"], "abc1234");
+        let named = [
+            m["sha"].clone(),
+            m["runs"][0]["machine"]["os"].clone(),
+            m["runs"][0]["machine"]["load1"].clone(),
+            m["noisy"][0].clone(),
+        ];
+        assert_eq!(
+            named,
+            [
+                json!("abc1234"),
+                json!("Darwin 23.3.0"),
+                json!(1.5),
+                json!("s/a_ms")
+            ]
+        );
         assert_eq!(m["runs"].as_array().unwrap().len(), 3);
-        assert_eq!(m["runs"][0]["machine"]["os"], "Darwin 23.3.0");
-        assert_eq!(m["runs"][0]["machine"]["load1"], 1.5);
-        assert_eq!(m["noisy"][0], "s/a_ms");
         assert!(m["rule"].as_str().unwrap().contains("median"));
     }
 
@@ -467,19 +482,25 @@ mod tests {
             }
         };
         let p = |pairs: &'static [(&'static str, &'static str)]| default_history_path(&env(pairs));
-        assert_eq!(
-            p(&[("KLATCH_BENCH_HISTORY", "/x/h.jsonl"), ("HOME", "/h")]),
-            Some("/x/h.jsonl".into())
-        );
-        assert_eq!(
-            p(&[("XDG_STATE_HOME", "/s"), ("HOME", "/h")]),
-            Some("/s/klatch-bench/history.jsonl".into())
-        );
-        assert_eq!(
-            p(&[("HOME", "/h")]),
-            Some("/h/.local/state/klatch-bench/history.jsonl".into())
-        );
-        assert_eq!(p(&[]), None);
+        type Env = &'static [(&'static str, &'static str)];
+        let cases: [(Env, Option<&str>); 4] = [
+            (
+                &[("KLATCH_BENCH_HISTORY", "/x/h.jsonl"), ("HOME", "/h")],
+                Some("/x/h.jsonl"),
+            ),
+            (
+                &[("XDG_STATE_HOME", "/s"), ("HOME", "/h")],
+                Some("/s/klatch-bench/history.jsonl"),
+            ),
+            (
+                &[("HOME", "/h")],
+                Some("/h/.local/state/klatch-bench/history.jsonl"),
+            ),
+            (&[], None),
+        ];
+        for (pairs, expected) in cases {
+            assert_eq!(p(pairs), expected.map(Into::into), "{pairs:?}");
+        }
     }
 
     #[test]
@@ -503,9 +524,11 @@ mod tests {
                 out("b", false, &[("y_ms", 7.0)]),
             ],
             true,
-            "T".into(),
-            "sha".into(),
-            machine(),
+            RunStamp {
+                time: "T".into(),
+                sha: "sha".into(),
+                machine: machine(),
+            },
         );
         assert_eq!((r.passed, r.total, r.partial), (1, 2, true));
         assert_eq!(r.timings.len(), 1, "{:?}", r.timings);
@@ -530,8 +553,8 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].crept, "{rows:?}");
-        assert_eq!(rows[0].last, vec![160.0, 170.0, 180.0, 160.0, 175.0]);
-        assert_eq!(rows[0].drift, Some(1.7));
+        let seen = (rows[0].last.clone(), rows[0].drift);
+        assert_eq!(seen, (vec![160.0, 170.0, 180.0, 160.0, 175.0], Some(1.7)));
     }
 
     #[test]
@@ -601,9 +624,9 @@ mod tests {
         let creep = text.find("s/b_ms").expect("b listed");
         let steady = text.find("s/a_ms").expect("a listed");
         assert!(creep < steady, "the crept metric comes first:\n{text}");
-        assert!(text.contains("CREEP"), "{text}");
-        assert!(text.contains("1 crept"), "{text}");
-        assert!(text.contains("2.00x"), "{text}");
+        for needle in ["CREEP", "1 crept", "2.00x"] {
+            assert!(text.contains(needle), "{needle} missing:\n{text}");
+        }
     }
 
     #[test]

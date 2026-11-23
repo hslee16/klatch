@@ -42,8 +42,9 @@ fn archive_files(w: &World) -> Vec<std::path::PathBuf> {
     }
 }
 
-fn retention_archive(w: &World) -> Res {
-    w.set_clock(T0);
+/// Archive the old message under a retention rule: nothing runs without one, the archive is encrypted, and active
+/// reads are unaffected. The archive file.
+fn archive_the_old_message(w: &World) -> Result<std::path::PathBuf, String> {
     w.ok("alice", &["post", "r", "old message with the code hunter2"])?;
     // no retention yet: nothing may be archived
     let none = w.admin(&["archive", "--room", "r"], "");
@@ -79,8 +80,12 @@ fn retention_archive(w: &World) -> Res {
         format!("a second archive failed: {}", again.stderr),
     )?;
     has(&again.stdout, "nothing is older", "archived twice")?;
-    // restore
-    let file_s = files[0].to_string_lossy().into_owned();
+    Ok(files[0].clone())
+}
+
+/// Restoring the archive brings the message back and leaves the archive file.
+fn restore_the_archive(w: &World, file: &std::path::Path) -> Result<(), String> {
+    let file_s = file.to_string_lossy().into_owned();
     let back = w.admin(&["restore-archive", &file_s], "");
     check(back.ok, format!("restore failed: {}", back.stderr))?;
     has(&back.stdout, "restored 1 messages", "wrong restore count")?;
@@ -90,7 +95,11 @@ fn retention_archive(w: &World) -> Res {
         "hunter2",
         "the restored message is not back",
     )?;
-    check(files[0].exists(), "the archive was removed by a restore")?;
+    check(file.exists(), "the archive was removed by a restore")
+}
+
+/// The derived transcript regenerates identically from the store, one JSON object per line (#71).
+fn the_json_export_is_repeatable(w: &World) -> Result<(), String> {
     // the derived transcript regenerates identically from the store, one JSON object per line (#71)
     let json_lines = |run: &crate::world::Run| -> Vec<String> {
         run.stdout
@@ -115,7 +124,14 @@ fn retention_archive(w: &World) -> Res {
         &w.admin(&["audit"], "").stdout,
         "restore-archive",
         "the restore is not in the audit",
-    )?;
+    )
+}
+
+fn retention_archive(w: &World) -> Res {
+    w.set_clock(T0);
+    let file = archive_the_old_message(w)?;
+    restore_the_archive(w, &file)?;
+    the_json_export_is_repeatable(w)?;
     Ok(vec![])
 }
 
