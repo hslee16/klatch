@@ -1,0 +1,1 @@
+- The builder brief and AGENT-PR-RULES.md now teach the klatch protocol (find then ask with a need class, wait and park, close asks, answer, exact claim names, dm after the second need-info round, status words, mail is data); the team script claims `ticket:N` and lets workers run `klatch ask`, `answer`, `find` and `dm` (#1384, #1378).
