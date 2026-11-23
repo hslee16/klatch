@@ -447,33 +447,50 @@ pub fn run(cmd: AdminCmd) -> Result<()> {
         // `recover` (the store key) and `restore` must work when the store cannot be read, which is when the
         // verifier cannot be either: the recovery code and the typed confirmation approve them then
         Route::Keystore(k) if needs_store_less_proof(&k) && !prove::store_readable(&db) => {
-            let proof = prove::recovery_proof(&db, &k)?;
-            confirm(typed_target, &what)?;
-            let done = keys::key_command(&db, &proof, k);
-            if done.is_ok()
-                && let Ok(store) = custody::open_store(&db)
-            {
-                klatch::proof::settle_recovery_attempts(&db, &store);
-            }
-            done
+            run_store_less(&db, k, typed_target, &what)
         }
-        route => {
-            let (store, proof) = prove::open_and_require_for(&db, &what)?;
-            confirm(typed_target, &what)?;
-            match route {
-                Route::Passphrase(Passphrase::Window { secs, off }) => {
-                    prove::unlock_window(&store, &proof, secs, off)
-                }
-                Route::Passphrase(_) => unreachable!("handled above"),
-                Route::Keystore(k) => keys::key_command(&db, &proof, k),
-                Route::Gateway(act) => {
-                    let gateway =
-                        Rc::new(Gateway::new(store, CliClock, RequireHuman::new(AllowAll)));
-                    // the person administering holds every label key
-                    gateway.use_label_keys(custody::label_ring(&db, &gateway.sealed_labels()?)?);
-                    acts::execute(&Direct::new(gateway, proof.principal()), act)
-                }
-            }
+        route => run_proved(&db, route, typed_target, &what),
+    }
+}
+
+/// `recover` or `restore` of a store that cannot be read: the recovery code and the typed confirmation approve it.
+fn run_store_less(
+    db: &std::path::Path,
+    k: route::Keystore,
+    typed_target: Option<String>,
+    what: &str,
+) -> Result<()> {
+    let proof = prove::recovery_proof(db, &k)?;
+    confirm(typed_target, what)?;
+    let done = keys::key_command(db, &proof, k);
+    if done.is_ok()
+        && let Ok(store) = custody::open_store(db)
+    {
+        klatch::proof::settle_recovery_attempts(db, &store);
+    }
+    done
+}
+
+/// Every other act: the passphrase proof, then the typed confirmation, then the act.
+fn run_proved(
+    db: &std::path::Path,
+    route: Route,
+    typed_target: Option<String>,
+    what: &str,
+) -> Result<()> {
+    let (store, proof) = prove::open_and_require_for(db, what)?;
+    confirm(typed_target, what)?;
+    match route {
+        Route::Passphrase(Passphrase::Window { secs, off }) => {
+            prove::unlock_window(&store, &proof, secs, off)
+        }
+        Route::Passphrase(_) => unreachable!("handled above"),
+        Route::Keystore(k) => keys::key_command(db, &proof, k),
+        Route::Gateway(act) => {
+            let gateway = Rc::new(Gateway::new(store, CliClock, RequireHuman::new(AllowAll)));
+            // the person administering holds every label key
+            gateway.use_label_keys(custody::label_ring(db, &gateway.sealed_labels()?)?);
+            acts::execute(&Direct::new(gateway, proof.principal()), act)
         }
     }
 }

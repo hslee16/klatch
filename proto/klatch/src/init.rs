@@ -751,8 +751,7 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
         .and_then(Value::as_array)
         .map_or((false, false, false), |l| carried_flags(l));
     let list = event_list(hooks, EVENT)?;
-    let own = carried_flags(list);
-    cmd = with_flags(&cmd, (own.0 || post.0, own.1 || post.1, own.2 || post.2));
+    cmd = with_flags(&cmd, either(carried_flags(list), post));
     if !sync_entries(list, &cmd, on) && on {
         list.push(new_entry(&cmd));
     }
@@ -761,6 +760,16 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
         hooks.remove(EVENT);
     }
     Ok(())
+}
+
+/// The consents either of two flag sets carries.
+fn either(a: Flags, b: Flags) -> Flags {
+    (a.0 || b.0, a.1 || b.1, a.2 || b.2)
+}
+
+/// Whether any consent is on.
+fn any_on(f: Flags) -> bool {
+    f.0 || f.1 || f.2
 }
 
 /// The flag that is the machine checkpoint consent (#1408): a hook command carries it, or records nothing.
@@ -837,12 +846,8 @@ fn is_flag_stop(hook: &Value) -> bool {
 /// Make the Stop entry match the consents the PostToolUse hook carries: one entry that carries them, or none when
 /// neither is on. Everything else under Stop (the wake watcher, other tools' hooks) is left as it was.
 fn sync_stop(settings: &mut Value, bin: &str) -> Result<(), String> {
-    let flags = if event_absent(settings, "PostToolUse") {
-        (false, false, false)
-    } else {
-        carried_flags(event_list(hooks_of(settings)?, "PostToolUse")?)
-    };
-    let on = flags.0 || flags.1 || flags.2;
+    let flags = post_tool_use_flags(settings)?;
+    let on = any_on(flags);
     if !on && event_absent(settings, "Stop") {
         return Ok(());
     }
@@ -859,6 +864,17 @@ fn sync_stop(settings: &mut Value, bin: &str) -> Result<(), String> {
         hooks.remove("Stop");
     }
     Ok(())
+}
+
+/// The consents the PostToolUse hook carries, none when it has no entry.
+fn post_tool_use_flags(settings: &mut Value) -> Result<Flags, String> {
+    if event_absent(settings, "PostToolUse") {
+        return Ok((false, false, false));
+    }
+    Ok(carried_flags(event_list(
+        hooks_of(settings)?,
+        "PostToolUse",
+    )?))
 }
 
 /// Put one consent flag on, or take it off, every klatch command of `event` in the settings.
@@ -1000,17 +1016,22 @@ fn set_optional(
     }
     let hooks = hooks_of(settings)?;
     let list = event_list(hooks, spec.event)?;
-    if !sync_owned(list, &cmd, how != Switch::Off, spec.owns) && how == Switch::On {
+    sync_optional(list, spec, (entry, &cmd), how);
+    if list.is_empty() {
+        hooks.remove(spec.event);
+    }
+    Ok(())
+}
+
+/// Bring the entries of an optional hook in line with `how`: add, refresh or drop them.
+fn sync_optional(list: &mut Vec<Value>, spec: &Optional, (entry, cmd): (Value, &str), how: Switch) {
+    if !sync_owned(list, cmd, how != Switch::Off, spec.owns) && how == Switch::On {
         list.push(entry);
     } else if how != Switch::Off && spec.refresh {
         refresh_owned(list, spec.owns, &entry["hooks"][0]);
     } else if how != Switch::Off && spec.event == "PreToolUse" {
         ensure_timeout(list, is_ours);
     }
-    if list.is_empty() {
-        hooks.remove(spec.event);
-    }
-    Ok(())
 }
 
 /// Whether a settings object has no entry for the event (a settings value that is not an object counts as present).
