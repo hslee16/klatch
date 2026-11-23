@@ -1,0 +1,1 @@
+- Internal cleanup of klatch's admin policy acts, admin prompt wording, admin run flow, init consent hook helpers and member identification (code health, #1452); no behaviour change, the golden tests of #1480 unchanged.
