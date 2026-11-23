@@ -10,3 +10,8 @@ experiments/hegel-bench/target/
 experiments/turso-spike/target/
 
 .DS_Store
+
+# Coordination bench results are a local ledger; only the README and the placeholder are tracked (#1364)
+experiments/coordbench/results/*
+!experiments/coordbench/results/README.md
+!experiments/coordbench/results/.gitkeep

@@ -1,0 +1,21 @@
+{
+  "comment": "Scripted agents for the harness tests. A step with an arms list runs only in those arms.",
+  "agents": {
+    "a": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: alpha"], "arms": ["K1", "K2"]},
+      {"op": "write", "path": "alpha.py", "content": "def alpha():\n    return 'alpha-done'\n"},
+      {"op": "sync", "message": "alpha: implement alpha()"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: alpha"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "alpha is published. DONE a"}
+    ],
+    "b": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "working: beta"], "arms": ["K1", "K2"]},
+      {"op": "write", "path": "beta.py", "content": "def beta():\n    return 'beta-done'\n"},
+      {"op": "sync", "message": "beta: implement beta()"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "finished: beta"], "arms": ["K1", "K2"]},
+      {"op": "final", "text": "beta is published. DONE b"}
+    ]
+  }
+}
