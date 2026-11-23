@@ -306,7 +306,7 @@ class Suite:
         clones = {}
         for ag in fx.agents:
             clone = os.path.join(scratch, "clones", ag["name"])
-            git(["clone", "-q", origin, clone], scratch, henv)
+            git(["clone", "-q", "--no-local", origin, clone], scratch, henv)  # #1435: see checks_now
             private = fx.private_files(ag["name"])
             with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
                 f.write("\n.claude/\n" + "".join("/%s\n" % rel for rel, _ in private))
@@ -402,8 +402,8 @@ class Suite:
         def checks_now(tag):
             dest = os.path.join(scratch, "check-" + tag)
             shutil.rmtree(dest, ignore_errors=True)
-            # --no-local: a local clone copies the object files and races with a push in progress (sixteen agents pushing
-            # at once made it fail with "failed to copy file ... No such file or directory", #1372); the transport does not
+            # --no-local: a clone by path walks and links objects/ file by file, and while an agent's push is in flight
+            # that directory holds quarantine files that vanish mid-walk (#1435); upload-pack reads a consistent snapshot
             git(["clone", "-q", "--no-local", "-b", "main", origin, dest], scratch, henv)
             return fx.run_checker(dest, dict(henv, COORDBENCH_INJECTION_PLAN=inj_plan_path) if inj_plan_path else henv)
 
