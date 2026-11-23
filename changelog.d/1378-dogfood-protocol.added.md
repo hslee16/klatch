@@ -1,0 +1,1 @@
+- DOGFOOD.md proposes (no decisions, no code) the minimum protocol for using ask, answer, claims, DMs and status in the klatch build itself, how the coordinator takes part, what stays outside klatch, and how use is measured with `klatch stats` (#1378).
