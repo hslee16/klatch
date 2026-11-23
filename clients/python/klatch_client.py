@@ -13,6 +13,8 @@ Over the daemon's socket the operating system reports the peer, and the first re
 a typed name (unattributed), or a member and its credential token (verified), or nothing (`unmapped-process`). A
 frame this version does not know, and a field it does not know, are ignored, as the protocol requires.
 """
+import contextlib
+import dataclasses
 import http.client
 import json
 import queue
@@ -37,27 +39,62 @@ class ApiError(Exception):
         self.code, self.message, self.refusals = code, message, refusals or []
 
 
-def decode_server_frame(line):
-    """One line from the gateway as a dict, or None for a blank line. An unknown type or field is not an error; a
-    line that is not a JSON object with `"v":1` and a `type` is."""
-    if not line.strip():
-        return None
+def _parse_frame_object(line):
+    """The JSON object a line holds, or ProtocolError."""
     try:
         frame = json.loads(line)
     except ValueError as e:
         raise ProtocolError(f"not JSON: {e}") from None
     if not isinstance(frame, dict):
         raise ProtocolError("a frame is a JSON object")
+    return frame
+
+
+def _is_protocol_version(v):
+    """True for the integer 1 and nothing else (not True, not 1.0)."""
+    return type(v) is int and v == PROTOCOL_VERSION
+
+
+def decode_server_frame(line):
+    """One line from the gateway as a dict, or None for a blank line. An unknown type or field is not an error; a
+    line that is not a JSON object with `"v":1` and a `type` is."""
+    if not line.strip():
+        return None
+    frame = _parse_frame_object(line)
     v = frame.get("v")
-    if isinstance(v, bool) or not isinstance(v, int) or v != PROTOCOL_VERSION:
+    if not _is_protocol_version(v):
         raise ProtocolError(f"protocol version {v!r} is not supported; this client speaks {PROTOCOL_VERSION}")
     if not isinstance(frame.get("type"), str):
         raise ProtocolError("a frame has a type")
     return frame
 
 
+def _given(*pairs):
+    """The (name, value) pairs whose value is not None, as a dict in the order given."""
+    return {k: v for k, v in pairs if v is not None}
+
+
 def encode_line(frame):
     return json.dumps({"v": PROTOCOL_VERSION, **frame}, separators=(",", ":")) + "\n"
+
+
+@dataclasses.dataclass(frozen=True)
+class _HttpTarget:
+    """Where an HTTP session goes and who it is."""
+
+    host: str
+    port: int
+    member: str
+    token: str
+
+
+@dataclasses.dataclass(frozen=True)
+class _HttpPatience:
+    """How long an HTTP session waits to connect and how hard it tries to reopen a stream."""
+
+    connect_timeout: float
+    reconnect_attempts: int
+    reconnect_delay: float
 
 
 class _HttpTransport:
@@ -68,10 +105,10 @@ class _HttpTransport:
     reset), the reader opens a new one, drops the `hello` of the new session and resubscribes every room that was
     subscribed from the last `seq` seen in it, so the caller sees no gap and no repeat."""
 
-    def __init__(self, host, port, member, token, connect_timeout, reconnect_attempts, reconnect_delay):
-        self.host, self.port, self.member, self.token = host, port, member, token
-        self.connect_timeout = connect_timeout
-        self.reconnect_attempts, self.reconnect_delay = reconnect_attempts, reconnect_delay
+    def __init__(self, target, patience):
+        self.host, self.port, self.member, self.token = target.host, target.port, target.member, target.token
+        self.connect_timeout = patience.connect_timeout
+        self.reconnect_attempts, self.reconnect_delay = patience.reconnect_attempts, patience.reconnect_delay
         self.closed = False
         self.session = None
         self._conn = None
@@ -87,6 +124,18 @@ class _HttpTransport:
     def _headers(self):
         return {"Authorization": f"Bearer {self.token}", "X-Klatch-Member": self.member}
 
+    @staticmethod
+    def _session_of(resp):
+        """The session a stream response opens, or the error its status or headers call for."""
+        if resp.status == 401:
+            raise ApiError("identity.refused", "the server refused the credential")
+        if resp.status != 200:
+            raise OSError(f"the server answered {resp.status} to the stream")
+        session = resp.getheader("X-Klatch-Session")
+        if not session:
+            raise ProtocolError("the stream has no X-Klatch-Session header")
+        return session
+
     def open_stream(self):
         """Open a session. Raises ApiError (`identity.refused`) for a 401, OSError when nothing listens."""
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
@@ -94,13 +143,7 @@ class _HttpTransport:
             conn.request("GET", "/v1/stream", headers={**self._headers(), "Accept": "text/event-stream"})
             sock = conn.sock  # the response closes the connection's reference to it; close() needs the socket itself
             resp = conn.getresponse()
-            if resp.status == 401:
-                raise ApiError("identity.refused", "the server refused the credential")
-            if resp.status != 200:
-                raise OSError(f"the server answered {resp.status} to the stream")
-            session = resp.getheader("X-Klatch-Session")
-            if not session:
-                raise ProtocolError("the stream has no X-Klatch-Session header")
+            session = self._session_of(resp)
             sock.settimeout(None)  # heartbeats keep a healthy stream busy; close() unblocks the read
         except BaseException:
             conn.close()
@@ -118,47 +161,65 @@ class _HttpTransport:
         stream = self._stream
         return stream.readline() if stream is not None else b""
 
+    def _post_once(self, body):
+        """One POST of `body` to `/v1/frames`; the status the server answered."""
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
+        try:
+            conn.request(
+                "POST",
+                "/v1/frames",
+                body=body,
+                headers={**self._headers(), "X-Klatch-Session": self.session or "", "Content-Type": "application/x-ndjson"},
+            )
+            resp = conn.getresponse()
+            resp.read()
+            return resp.status
+        finally:
+            conn.close()
+
+    def _inbox_full_and_worth_a_retry(self, status, attempt):
+        return status == 429 and attempt < 39 and not self.closed
+
     def post(self, text):
         body = text.encode("utf-8")
         for attempt in range(40):
-            conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
-            try:
-                conn.request(
-                    "POST",
-                    "/v1/frames",
-                    body=body,
-                    headers={**self._headers(), "X-Klatch-Session": self.session or "", "Content-Type": "application/x-ndjson"},
-                )
-                resp = conn.getresponse()
-                resp.read()
-                status = resp.status
-            finally:
-                conn.close()
+            status = self._post_once(body)
             if status == 202:
                 return
-            if status == 429 and attempt < 39 and not self.closed:
-                time.sleep(0.05)  # the session's inbox is full: it drains, so try again
-                continue
-            raise OSError(f"the server answered {status} to a post")
+            if not self._inbox_full_and_worth_a_retry(status, attempt):
+                raise OSError(f"the server answered {status} to a post")
+            time.sleep(0.05)  # the session's inbox is full: it drains, so try again
 
-    def note_sent(self, line):
-        """Remember what the session subscribes to, to resubscribe after a reconnect."""
+    @staticmethod
+    def _request_frame(line):
+        """The request frame a sent line holds, or None when it is not one."""
         try:
             frame = json.loads(line)
         except ValueError:
-            return
-        if not isinstance(frame, dict) or frame.get("type") != "request":
+            return None
+        if isinstance(frame, dict) and frame.get("type") == "request":
+            return frame
+        return None
+
+    def note_sent(self, line):
+        """Remember what the session subscribes to, to resubscribe after a reconnect."""
+        frame = self._request_frame(line)
+        if frame is None:
             return
         params = frame.get("params") or {}
         room = params.get("room")
-        if frame.get("method") == "subscribe" and isinstance(room, str):
+        method = frame.get("method")
+        if method == "subscribe" and isinstance(room, str):
             self._subs[room] = params.get("from_seq", 0)
-        elif frame.get("method") == "unsubscribe":
+        elif method == "unsubscribe":
             self._subs.pop(room, None)
 
     def note_seen(self, frame):
-        if frame.get("type") == "message" and frame.get("room") in self._subs and isinstance(frame.get("seq"), int):
-            self._subs[frame["room"]] = frame["seq"]
+        if frame.get("type") != "message":
+            return
+        room, seq = frame.get("room"), frame.get("seq")
+        if room in self._subs and isinstance(seq, int):
+            self._subs[room] = seq
 
     def reconnect(self):
         """A new session in place of one that ended; True when it is open and its rooms are resubscribed."""
@@ -189,10 +250,8 @@ class _HttpTransport:
             conn, self._conn, self._stream = self._conn, None, None
         if conn is not None:
             conn, sock = conn
-            try:
+            with contextlib.suppress(OSError):
                 sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
             conn.close()
 
     def shut(self):
@@ -215,6 +274,33 @@ class _HttpWriter:
         pass
 
 
+class _EventAssembler:
+    """Builds the frame lines of a server-sent-events stream from its lines: the `data:` lines of an event, ended by a
+    blank line, are one frame line. The first frame of a session is its hello."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.data = []
+        self.first = True
+
+    def feed(self, line):
+        """Take one line of the stream. When it ends an event, the pair (frame line, is it the hello of a session);
+        otherwise None."""
+        if line == "":
+            return self._finish() if self.data else None
+        if line.startswith("data:"):
+            self.data.append(line[6:] if line[5:6] == " " else line[5:])
+        return None
+
+    def _finish(self):
+        frame_line, self.data = "\n".join(self.data), []
+        hello = self.first and _HttpReader._is_hello(frame_line)
+        self.first = False
+        return frame_line, hello
+
+
 class _HttpReader:
     """Iterates the frame lines of the stream across reconnects."""
 
@@ -223,33 +309,43 @@ class _HttpReader:
 
     def __iter__(self):
         t = self._t
-        data = []
-        first = True  # the first frame of a session is its hello; only the first session's is wanted
+        events = _EventAssembler()
         while not t.closed:
-            try:
-                raw = t.readline()
-            except (OSError, ValueError, http.client.HTTPException):
-                raw = b""
+            raw = self._readline()
             if raw:
-                line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                if line == "":
-                    if data:
-                        frame_line, data = "\n".join(data), []
-                        hello = first and self._is_hello(frame_line)
-                        first = False
-                        if hello and not t.hello_wanted:
-                            continue  # a reconnect: the caller has its hello
-                        self._note(frame_line)
-                        yield frame_line
-                elif line.startswith("data:"):
-                    data.append(line[6:] if line[5:6] == " " else line[5:])
-                continue
-            # the stream ended
-            if t.closed or not t.reconnect():
+                frame_line = self._accept(events.feed(raw.decode("utf-8", "replace").rstrip("\r\n")))
+                if frame_line is not None:
+                    yield frame_line
+            elif self._resume():
+                events.reset()
+            else:
                 return
-            data, first = [], True
-            t.hello_wanted = False
-            t.resubscribe()
+
+    def _readline(self):
+        try:
+            return self._t.readline()
+        except (OSError, ValueError, http.client.HTTPException):
+            return b""
+
+    def _accept(self, event):
+        """The frame line of a finished event worth passing on, or None (no event yet, or the hello of a reconnect, which
+        the caller already has)."""
+        if event is None:
+            return None
+        frame_line, hello = event
+        if hello and not self._t.hello_wanted:
+            return None
+        self._note(frame_line)
+        return frame_line
+
+    def _resume(self):
+        """The stream ended: open a new session and resubscribe. False when the client is closed or none could be opened."""
+        t = self._t
+        if t.closed or not t.reconnect():
+            return False
+        t.hello_wanted = False
+        t.resubscribe()
+        return True
 
     @staticmethod
     def _is_hello(line):
@@ -268,6 +364,47 @@ class _HttpReader:
 
     def close(self):
         pass
+
+
+def _check_identity(name, member, token):
+    """A name, or a member with its token, or neither; never a mix."""
+    credential_given = member is not None or token is not None
+    if name is not None and credential_given:
+        raise ValueError("give a name, or a member and a token, not both")
+    if (member is None) != (token is None):
+        raise ValueError("a credential is a member and a token")
+
+
+def _identify_params(name, member, token):
+    """What the `identify` request carries: the name, else the member and its token, else nothing."""
+    if name is not None:
+        return {"name": name}
+    if member is not None:
+        return {"member": member, "token": token}
+    return {}
+
+
+def _connect_unix(path):
+    """A connected Unix stream socket; the OSError of a path nobody listens on, with nothing left open."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(path)
+    except OSError:
+        sock.close()
+        raise
+    return sock
+
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+
+def _loopback_endpoint(url):
+    """The (host, port) of a plain `http` url to a loopback address, or ValueError."""
+    parts = urllib.parse.urlsplit(url)
+    plain_loopback = (parts.scheme == "http", parts.hostname in _LOOPBACK_HOSTS, parts.port is not None)
+    if not all(plain_loopback):
+        raise ValueError("the url is http://127.0.0.1:PORT (plain http, loopback only)")
+    return parts.hostname, parts.port
 
 
 class Client:
@@ -292,35 +429,27 @@ class Client:
         never the key bundle file), or neither (`unmapped-process`). A refused identity raises `ApiError` with code
         `identity.refused` (its message never repeats the name or the token); a path nobody listens on raises
         `OSError`. `close()` shuts the socket and waits for the daemon to end the session; it returns 0."""
-        if name is not None and (member is not None or token is not None):
-            raise ValueError("give a name, or a member and a token, not both")
-        if (member is None) != (token is None):
-            raise ValueError("a credential is a member and a token")
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.connect(path)
-        except OSError:
-            sock.close()
-            raise
+        _check_identity(name, member, token)
+        sock = _connect_unix(path)
         self = cls.__new__(cls)
         self._sock = sock
         reader = sock.makefile("r", encoding="utf-8", newline="\n")
         writer = sock.makefile("w", encoding="utf-8", newline="\n")
         self._start(reader, writer, proc=None)
         try:
-            params = {}
-            if name is not None:
-                params["name"] = name
-            elif member is not None:
-                params.update(member=member, token=token)
-            if params:
-                answer = self.request("identify", **params)
-                self.member = answer.get("member", self.member)
-                self.attribution = answer.get("attribution", self.attribution)
+            self._identify(_identify_params(name, member, token))
         except BaseException:
             self.close()
             raise
         return self
+
+    def _identify(self, params):
+        """Say who you are with the daemon's `identify` request; nothing is sent when there is nothing to say."""
+        if not params:
+            return
+        answer = self.request("identify", **params)
+        self.member = answer.get("member", self.member)
+        self.attribution = answer.get("attribution", self.attribution)
 
     @classmethod
     def connect_http(cls, url, member=None, token=None, connect_timeout=10, reconnect_attempts=5, reconnect_delay=0.2):
@@ -334,10 +463,10 @@ class Client:
         the session and returns 0."""
         if member is None or token is None:
             raise ValueError("a credential is a member and a token")
-        parts = urllib.parse.urlsplit(url)
-        if parts.scheme != "http" or parts.hostname not in ("127.0.0.1", "::1", "localhost") or parts.port is None:
-            raise ValueError("the url is http://127.0.0.1:PORT (plain http, loopback only)")
-        transport = _HttpTransport(parts.hostname, parts.port, member, token, connect_timeout, reconnect_attempts, reconnect_delay)
+        host, port = _loopback_endpoint(url)
+        transport = _HttpTransport(
+            _HttpTarget(host, port, member, token), _HttpPatience(connect_timeout, reconnect_attempts, reconnect_delay)
+        )
         transport.open_stream()
         self = cls.__new__(cls)
         self._sock = None
@@ -410,16 +539,22 @@ class Client:
         rid = f"c{self._next_id}"
         self.refusals = []
         self._send({"type": "request", "id": rid, "method": method, "params": params})
+        return self._await_response(rid)
+
+    def _await_response(self, rid):
         while True:
             frame = self._frame(timeout=30)
             if frame is None:
                 raise ProtocolError("the gateway closed the session or did not answer")
             if frame.get("type") == "response" and frame.get("id") == rid:
-                if frame.get("ok"):
-                    return frame.get("result") or {}
-                err = frame.get("error") or {}
-                raise ApiError(err.get("code", "backend"), err.get("message", ""), list(self.refusals))
+                return self._result_of(frame)
             self._note(frame)
+
+    def _result_of(self, response):
+        if response.get("ok"):
+            return response.get("result") or {}
+        err = response.get("error") or {}
+        raise ApiError(err.get("code", "backend"), err.get("message", ""), list(self.refusals))
 
     def _send(self, frame):
         try:
@@ -437,20 +572,14 @@ class Client:
         kind such as `pr`, `ticket`, `commit`, `path` or `url` has its value checked, any other is kept as text), at most
         32 refs, each over a cap is refused and never cut. Same rule as `scope`: only on an ask, not with `kind` or
         `payload`. klatch never fetches, opens or resolves a ref, and refuses a credential in one."""
-        params = {"room": room, "body": body}
-        for k, v in (("label", label), ("kind", kind), ("payload", payload), ("scope", scope), ("refs", refs)):
-            if v is not None:
-                params[k] = v
-        return self.request("post", **params)
+        optional = _given(("label", label), ("kind", kind), ("payload", payload), ("scope", scope), ("refs", refs))
+        return self.request("post", room=room, body=body, **optional)
 
     def dm(self, to, body, label=None):
         """Send a direct message to one other member. Returns {"room", "seq", "id"}: the two-member room made on first
         use, which both members can read, `history` and `subscribe` to. The label may go below the room's ceiling (the
         lower of the two clearances), never above."""
-        params = {"to": to, "body": body}
-        if label is not None:
-            params["label"] = label
-        return self.request("dm", **params)
+        return self.request("dm", to=to, body=body, **_given(("label", label)))
 
     def read(self, room, peek=False):
         return self.request("read", room=room, peek=peek)["messages"]
@@ -459,25 +588,14 @@ class Client:
         """Look back without moving any cursor. Returns {"messages": [...], "more": n}. No `last` and no `since`: the
         newest 20; `last` alone: the newest `last` (1 to 200); `since` alone: the next 20 after that `seq`; both: the
         newest `last` after `since`. Page a long room by passing the last `seq` returned as the next `since`."""
-        params = {"room": room}
-        for k, v in (("last", last), ("since", since)):
-            if v is not None:
-                params[k] = v
-        r = self.request("history", **params)
+        r = self.request("history", room=room, **_given(("last", last), ("since", since)))
         return {"messages": r["messages"], "more": r.get("more", 0)}
 
     def claim(self, room, path, ttl=None, reason=None, shared=None):
-        params = {"room": room, "path": path}
-        for k, v in (("ttl", ttl), ("reason", reason), ("shared", shared)):
-            if v is not None:
-                params[k] = v
-        self.request("claim", **params)
+        self.request("claim", room=room, path=path, **_given(("ttl", ttl), ("reason", reason), ("shared", shared)))
 
     def release(self, room, path, note=None):
-        params = {"room": room, "path": path}
-        if note is not None:
-            params["note"] = note
-        self.request("release", **params)
+        self.request("release", room=room, path=path, **_given(("note", note)))
 
     def claims(self, room):
         return self.request("claims", room=room)["claims"]
@@ -565,11 +683,7 @@ class Client:
     def review_verdict(self, item_id, verdict, text=None, reason=None):
         """The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`).
         Only the reviewer role may call it."""
-        params = {"id": item_id, "verdict": verdict}
-        for k, v in (("text", text), ("reason", reason)):
-            if v is not None:
-                params[k] = v
-        self.request("review_verdict", **params)
+        self.request("review_verdict", id=item_id, verdict=verdict, **_given(("text", text), ("reason", reason)))
 
     def role_act(self, act, **params):
         """An act of the admin agent (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`,
@@ -602,10 +716,8 @@ class Client:
 
     def collect(self, until_caught_up=False, timeout=10):
         """Messages received so far; with `until_caught_up`, wait for the replay to finish first."""
-        import time
-
         end = time.monotonic() + timeout
-        while until_caught_up and not self._caught_up and time.monotonic() < end:
+        while self._still_waiting_for_caught_up(until_caught_up, end):
             frame = self._frame(timeout=max(0.0, end - time.monotonic()))
             if frame is None:
                 break
@@ -614,10 +726,11 @@ class Client:
         caught_up = next(iter(self._caught_up.values()), None)
         return {"messages": messages, "caught_up": caught_up}
 
+    def _still_waiting_for_caught_up(self, until_caught_up, end):
+        return until_caught_up and not self._caught_up and time.monotonic() < end
+
     def next_message(self, timeout=10):
         """The next message of a subscription, waiting for it; None on timeout."""
-        import time
-
         end = time.monotonic() + timeout
         while True:
             if self._pending_messages:
@@ -633,22 +746,27 @@ class Client:
             return self._close_http()
         if self._proc is None:
             return self._close_socket()
-        if self._proc.poll() is None:
-            try:
-                self._proc.stdin.close()
-            except OSError:
-                pass
-            try:
-                self._proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-                self._proc.wait()
-        for stream in (self._proc.stdin, self._proc.stdout):
-            try:
+        return self._close_process()
+
+    def _close_process(self):
+        """Close the child's input and wait (up to 10 seconds, then kill it) for it to exit; its exit code."""
+        proc = self._proc
+        if proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.stdin.close()
+            self._wait_or_kill(proc)
+        for stream in (proc.stdin, proc.stdout):
+            with contextlib.suppress(OSError):
                 stream.close()
-            except OSError:
-                pass
-        return self._proc.returncode
+        return proc.returncode
+
+    @staticmethod
+    def _wait_or_kill(proc):
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
     def _close_http(self):
         """End the stream, which ends the session on the server, and let the reader thread see it."""
@@ -659,19 +777,14 @@ class Client:
     def _close_socket(self):
         """Shut the socket's write side, wait (up to 10 seconds) for the daemon to end its side, then release it."""
         sock, self._sock = self._sock, None
-        if sock is not None:
-            try:
-                self._writer.close()
-            except OSError:
-                pass
-            try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-            self._pumper.join(timeout=10)
-            for stream in (self._reader, sock):
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+        if sock is None:
+            return 0
+        with contextlib.suppress(OSError):
+            self._writer.close()
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_WR)
+        self._pumper.join(timeout=10)
+        for stream in (self._reader, sock):
+            with contextlib.suppress(OSError):
+                stream.close()
         return 0
