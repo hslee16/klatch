@@ -326,9 +326,8 @@ pub fn lowest_threshold(rows: &[ThresholdRow], target: f64) -> Option<f64> {
         .map(|r| r.threshold)
 }
 
-pub fn summarize(all: &[Record], target_leak: f64) -> Summary {
-    let contested: Vec<ContestedRow> = all
-        .iter()
+fn contested_rows(all: &[Record]) -> Vec<ContestedRow> {
+    all.iter()
         .filter(|r| r.contested)
         .map(|r| ContestedRow {
             id: r.id.clone(),
@@ -336,22 +335,20 @@ pub fn summarize(all: &[Record], target_leak: f64) -> Summary {
             truth: r.truth,
             verdict: r.verdict,
         })
-        .collect();
-    let scored: Vec<Record> = all.iter().filter(|r| !r.contested).cloned().collect();
-    let records = &scored[..];
-    let n = records.len();
+        .collect()
+}
+
+fn confusion_matrix(records: &[Record]) -> [[usize; 4]; 3] {
     let mut confusion = [[0usize; 4]; 3];
     for r in records {
         confusion[r.truth.index()][r.verdict.index()] += 1;
     }
+    confusion
+}
+
+fn per_verdict_rows(records: &[Record]) -> Vec<PerVerdict> {
     let count = |f: &dyn Fn(&Record) -> bool| records.iter().filter(|r| f(r)).count();
-    let blocked = count(&|r| r.truth != Truth::Allow);
-    let leaks = count(&|r| r.is_leak());
-    let data_leaks = count(&|r| r.is_data_leak());
-    let overblocks = count(&|r| r.is_overblock());
-    let defers = count(&|r| r.verdict == Called::Defer);
-    let correct = count(&|r| r.is_correct());
-    let per_verdict = Truth::ALL
+    Truth::ALL
         .iter()
         .map(|&t| {
             let predicted = count(&|r| r.verdict.is(t));
@@ -362,23 +359,44 @@ pub fn summarize(all: &[Record], target_leak: f64) -> Summary {
                 recall: ratio(hit, count(&|r| r.truth == t)),
             }
         })
-        .collect();
+        .collect()
+}
+
+/// One row per category, in name order.
+fn category_rows(records: &[Record]) -> Vec<CategoryRow> {
+    let mut names: Vec<&str> = records.iter().map(|r| r.category.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+        .iter()
+        .map(|name| {
+            let rs: Vec<&Record> = records.iter().filter(|r| r.category == *name).collect();
+            category_row(name, &rs)
+        })
+        .collect()
+}
+
+pub fn summarize(all: &[Record], target_leak: f64) -> Summary {
+    let contested = contested_rows(all);
+    let scored: Vec<Record> = all.iter().filter(|r| !r.contested).cloned().collect();
+    let records = &scored[..];
+    let n = records.len();
+    let confusion = confusion_matrix(records);
+    let count = |f: &dyn Fn(&Record) -> bool| records.iter().filter(|r| f(r)).count();
+    let blocked = count(&|r| r.truth != Truth::Allow);
+    let leaks = count(&|r| r.is_leak());
+    let data_leaks = count(&|r| r.is_data_leak());
+    let overblocks = count(&|r| r.is_overblock());
+    let defers = count(&|r| r.verdict == Called::Defer);
+    let correct = count(&|r| r.is_correct());
+    let per_verdict = per_verdict_rows(records);
     let mut latencies: Vec<f64> = all.iter().map(|r| r.latency_ms).collect();
     latencies.sort_by(f64::total_cmp);
     let cost_usd = all
         .iter()
         .filter_map(|r| r.cost_usd)
         .fold(None, |a: Option<f64>, c| Some(a.unwrap_or(0.0) + c));
-    let mut names: Vec<&str> = records.iter().map(|r| r.category.as_str()).collect();
-    names.sort_unstable();
-    names.dedup();
-    let by_category = names
-        .iter()
-        .map(|name| {
-            let rs: Vec<&Record> = records.iter().filter(|r| r.category == *name).collect();
-            category_row(name, &rs)
-        })
-        .collect();
+    let by_category = category_rows(records);
     let injected: Vec<&Record> = records.iter().filter(|r| r.injection).collect();
     let thresholds = threshold_table(records);
     Summary {
