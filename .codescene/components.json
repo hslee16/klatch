@@ -1,0 +1,133 @@
+[
+  {
+    "name": "gateway",
+    "patterns": [
+      "proto/klatch/src/gateway/**"
+    ]
+  },
+  {
+    "name": "store",
+    "patterns": [
+      "proto/klatch/src/store/**"
+    ]
+  },
+  {
+    "name": "domain",
+    "patterns": [
+      "proto/klatch/src/domain/**"
+    ]
+  },
+  {
+    "name": "session-harness",
+    "patterns": [
+      "proto/klatch/src/session/**",
+      "proto/klatch/src/harness/**"
+    ]
+  },
+  {
+    "name": "commands-args",
+    "patterns": [
+      "proto/klatch/src/commands/**",
+      "proto/klatch/src/args/**"
+    ]
+  },
+  {
+    "name": "security",
+    "patterns": [
+      "proto/klatch/src/proof/**",
+      "proto/klatch/src/keys/**",
+      "proto/klatch/src/admin/**",
+      "proto/klatch/src/member/**"
+    ]
+  },
+  {
+    "name": "jev",
+    "patterns": [
+      "proto/klatch/src/jev.rs",
+      "proto/klatch/src/jev/**"
+    ]
+  },
+  {
+    "name": "klatch-core",
+    "patterns": [
+      "proto/klatch/src/anchor.rs",
+      "proto/klatch/src/client.rs",
+      "proto/klatch/src/codex.rs",
+      "proto/klatch/src/consent.rs",
+      "proto/klatch/src/init.rs",
+      "proto/klatch/src/init_codex.rs",
+      "proto/klatch/src/judge.rs",
+      "proto/klatch/src/lib.rs",
+      "proto/klatch/src/main.rs",
+      "proto/klatch/src/mediator.rs",
+      "proto/klatch/src/roles.rs",
+      "proto/klatch/src/router.rs",
+      "proto/klatch/src/run.rs",
+      "proto/klatch/src/shuttle_tests.rs",
+      "proto/klatch/src/sync.rs",
+      "proto/klatch/src/worker.rs",
+      "proto/klatch/src/client/**",
+      "proto/klatch/src/codex/**",
+      "proto/klatch/src/doctor/**",
+      "proto/klatch/src/kani_proofs/**",
+      "proto/klatch/src/protocol/**",
+      "proto/klatch/src/roles/**",
+      "proto/klatch/src/shuttle_tests/**",
+      "proto/klatch/fuzz/**"
+    ]
+  },
+  {
+    "name": "klatch-integration-tests",
+    "patterns": [
+      "proto/klatch/tests/**"
+    ]
+  },
+  {
+    "name": "klatch-server",
+    "patterns": [
+      "proto/klatch-server/**"
+    ]
+  },
+  {
+    "name": "klatch-bench",
+    "patterns": [
+      "proto/klatch-bench/**"
+    ]
+  },
+  {
+    "name": "clients",
+    "patterns": [
+      "clients/**"
+    ]
+  },
+  {
+    "name": "coordbench",
+    "patterns": [
+      "experiments/coordbench/**"
+    ]
+  },
+  {
+    "name": "experiments-other",
+    "patterns": [
+      "experiments/crypto-spike/**",
+      "experiments/dm-adoption/**",
+      "experiments/gates/**",
+      "experiments/headless/**",
+      "experiments/hegel-bench/**",
+      "experiments/identity/**",
+      "experiments/turso-spike/**",
+      "experiments/variance/**"
+    ]
+  },
+  {
+    "name": "release-and-scripts",
+    "patterns": [
+      "release/**",
+      "proto/scripts/**",
+      "install/**",
+      "proto/linux-keys/**",
+      "proto/linux-discovery/**",
+      "proto/check-notices.sh"
+    ]
+  }
+]

@@ -1,0 +1,1 @@
+- `proto/scripts/codescene-components` and `.codescene/components.json` define the CodeScene architectural components as an exact partition of the source files, with `csv`, `json`, `check` and `apply` subcommands (#1457).
