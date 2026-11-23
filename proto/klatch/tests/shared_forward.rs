@@ -33,20 +33,48 @@ fn fn_names(text: &str, indent: usize) -> Vec<String> {
         .collect()
 }
 
+/// The name in a `forward! { ... }` entry line (`name(args) -> ret;` at eight spaces), if the line is one.
+fn forward_entry(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("        ")?;
+    let entry = rest.ends_with(';') && !rest.starts_with(' ');
+    rest.find('(').filter(|_| entry).map(|p| &rest[..p])
+}
+
 /// Names the handle's impl block of one area trait carries: hand-written methods and `forward! { ... }` entries
 /// (`name(args) -> ret;` at eight spaces).
 fn forwarded(imp: &str) -> Vec<String> {
     let mut named = fn_names(imp, 4);
     for l in imp.lines() {
-        if let Some(rest) = l.strip_prefix("        ")
-            && rest.ends_with(';')
-            && !rest.starts_with(' ')
-            && let Some(p) = rest.find('(')
-        {
-            named.push(rest[..p].to_string());
+        if let Some(name) = forward_entry(l) {
+            named.push(name.to_string());
         }
     }
     named
+}
+
+/// The names of the area traits a source file declares.
+fn trait_names(src: &str) -> Vec<String> {
+    src.lines()
+        .filter_map(|l| l.strip_prefix("pub trait "))
+        .filter_map(|l| l.strip_suffix(" {"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The methods of trait `name` in `src` (declared in `file`) that `SharedTransport` neither forwards nor defaults on
+/// purpose, and how many methods the trait has.
+fn unforwarded(file: &std::path::Path, src: &str, name: &str) -> (Vec<String>, usize) {
+    let methods = fn_names(block(src, &format!("pub trait {name} {{")).unwrap(), 4);
+    let imp = block(src, &format!("impl {name} for SharedTransport {{"))
+        .unwrap_or_else(|| panic!("{}: no `impl {name} for SharedTransport`", file.display()));
+    let named = forwarded(imp);
+    let total = methods.len();
+    let missing = methods
+        .into_iter()
+        .filter(|m| !named.contains(m) && !DEFAULTED_ON_PURPOSE.contains(&m.as_str()))
+        .map(|m| format!("{name}::{m}"))
+        .collect();
+    (missing, total)
 }
 
 #[test]
@@ -61,26 +89,11 @@ fn shared_transport_forwards_every_transport_method() {
     let (mut traits, mut total, mut missing) = (0, 0, Vec::new());
     for file in &files {
         let src = fs::read_to_string(file).unwrap();
-        let names: Vec<String> = src
-            .lines()
-            .filter_map(|l| l.strip_prefix("pub trait "))
-            .filter_map(|l| l.strip_suffix(" {"))
-            .map(str::to_string)
-            .collect();
-        for name in names {
+        for name in trait_names(&src) {
+            let (lacking, count) = unforwarded(file, &src, &name);
             traits += 1;
-            let methods = fn_names(block(&src, &format!("pub trait {name} {{")).unwrap(), 4);
-            let imp =
-                block(&src, &format!("impl {name} for SharedTransport {{")).unwrap_or_else(|| {
-                    panic!("{}: no `impl {name} for SharedTransport`", file.display())
-                });
-            let named = forwarded(imp);
-            total += methods.len();
-            for m in methods {
-                if !named.contains(&m) && !DEFAULTED_ON_PURPOSE.contains(&m.as_str()) {
-                    missing.push(format!("{name}::{m}"));
-                }
-            }
+            total += count;
+            missing.extend(lacking);
         }
     }
     assert!(

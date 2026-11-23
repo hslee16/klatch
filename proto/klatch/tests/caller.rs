@@ -4,7 +4,7 @@ mod common;
 use common::*;
 use klatch::protocol::{ServerFrame, decode_server_line};
 use std::io::Write as _;
-use std::process::Command;
+use std::process::{Child, Command};
 
 #[test]
 fn posting_nothing_or_only_whitespace_is_refused() {
@@ -25,27 +25,7 @@ fn message_ids_are_distinct_across_many_processes_posting_at_once() {
     // Ids combine a timestamp, per-process random bits and a counter. Uniqueness inside one process is
     // unit tested; this checks it across processes that all start and post at the same moment.
     let h = Home::new();
-    let mut kids = Vec::new();
-    for i in 0..16 {
-        let mut child = h.spawn(&format!("w{i}"), &["serve", "--stdio"]);
-        {
-            let stdin = child.stdin.as_mut().unwrap();
-            for j in 0..10 {
-                writeln!(
-                    stdin,
-                    "{}",
-                    request(
-                        &format!("p{j}"),
-                        "post",
-                        &format!(r#"{{"room":"r","body":"x{j}"}}"#)
-                    )
-                )
-                .unwrap();
-            }
-        }
-        drop(child.stdin.take());
-        kids.push(child);
-    }
+    let kids: Vec<Child> = (0..16).map(|i| start_poster(&h, i)).collect();
     let mut ids = std::collections::HashSet::new();
     for k in kids {
         let out = k.wait_with_output().unwrap();
@@ -54,20 +34,39 @@ fn message_ids_are_distinct_across_many_processes_posting_at_once() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        for line in String::from_utf8(out.stdout).unwrap().lines() {
-            if let ServerFrame::Response {
-                ok: true,
-                result: Some(r),
-                ..
-            } = decode_server_line(line).unwrap()
-            {
-                let id = r["id"].as_str().unwrap().to_string();
-                assert_eq!(id.len(), 26);
-                assert!(ids.insert(id.clone()), "duplicate id {id}");
-            }
+        for id in posted_ids(&String::from_utf8(out.stdout).unwrap()) {
+            assert_eq!(id.len(), 26);
+            assert!(ids.insert(id.clone()), "duplicate id {id}");
         }
     }
     assert_eq!(ids.len(), 160);
+}
+
+/// A `serve --stdio` session for member `w{i}` that has been sent ten posts and whose input is closed.
+fn start_poster(h: &Home, i: usize) -> Child {
+    let mut child = h.spawn(&format!("w{i}"), &["serve", "--stdio"]);
+    let stdin = child.stdin.as_mut().unwrap();
+    for j in 0..10 {
+        let body = format!(r#"{{"room":"r","body":"x{j}"}}"#);
+        writeln!(stdin, "{}", request(&format!("p{j}"), "post", &body)).unwrap();
+    }
+    drop(child.stdin.take());
+    child
+}
+
+/// The ids of the messages the successful post responses in this output name.
+fn posted_ids(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter_map(|line| match decode_server_line(line).unwrap() {
+            ServerFrame::Response {
+                ok: true,
+                result: Some(r),
+                ..
+            } => Some(r["id"].as_str().unwrap().to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -162,21 +161,23 @@ fn a_typed_name_beats_discovery() {
     assert!(home.ok("alice", &["who", "r"]).contains("alice"));
 }
 
-#[test]
-fn what_read_prints_marks_a_sender_that_was_not_proven() {
+/// What `args` prints to alice when bob has posted "typed name only" in the lobby, without a proven identity.
+fn alice_sees_unproven_post(args: &[&str]) -> String {
     let h = Home::new();
     h.ok("alice", &["join", "lobby"]);
     h.ok("bob", &["post", "lobby", "typed name only"]);
-    let read = h.ok("alice", &["read", "lobby", "--peek"]);
+    h.ok("alice", args)
+}
+
+#[test]
+fn what_read_prints_marks_a_sender_that_was_not_proven() {
+    let read = alice_sees_unproven_post(&["read", "lobby", "--peek"]);
     assert!(read.contains("bob (unverified)] typed name only"), "{read}");
 }
 
 #[test]
 fn what_a_hook_prints_marks_a_sender_that_was_not_proven() {
-    let h = Home::new();
-    h.ok("alice", &["join", "lobby"]);
-    h.ok("bob", &["post", "lobby", "typed name only"]);
-    let hook = h.ok("alice", &["hook"]);
+    let hook = alice_sees_unproven_post(&["hook"]);
     assert!(
         hook.contains("from bob (unverified): typed name only"),
         "{hook}"

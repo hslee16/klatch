@@ -39,27 +39,30 @@ fn the_top_level_help_points_to_help_dm() {
     assert!(out.contains("klatch help dm"), "got: {out}");
 }
 
-/// Split a help example into words: whitespace separates, double quotes group.
+/// End the word being built, if there is one (an empty pair of quotes is one).
+fn end_word(out: &mut Vec<String>, cur: &mut String, any: &mut bool) {
+    if *any || !cur.is_empty() {
+        out.push(std::mem::take(cur));
+        *any = false;
+    }
+}
+
+/// Split a help example into words: whitespace separates, double quotes group (an empty pair of quotes is a word).
 fn words(line: &str) -> Vec<String> {
-    let (mut out, mut cur, mut quoted, mut any) = (Vec::new(), String::new(), false, false);
+    let mut out = Vec::new();
+    let (mut cur, mut quoted, mut any) = (String::new(), false, false);
     for c in line.chars() {
-        match c {
-            '"' => {
-                quoted = !quoted;
-                any = true;
-            }
-            c if c.is_whitespace() && !quoted => {
-                if any || !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                    any = false;
-                }
-            }
-            c => cur.push(c),
+        let separator = c.is_whitespace() && !quoted;
+        if c == '"' {
+            quoted = !quoted;
+            any = true;
+        } else if !separator {
+            cur.push(c);
+        } else {
+            end_word(&mut out, &mut cur, &mut any);
         }
     }
-    if any || !cur.is_empty() {
-        out.push(cur);
-    }
+    end_word(&mut out, &mut cur, &mut any);
     out
 }
 
