@@ -12,7 +12,8 @@ pub fn fit_prefix(sizes: &[usize], max_messages: usize, max_bytes: usize) -> usi
     let mut used = 0;
     let mut shown = 0;
     for size in sizes {
-        if shown >= max_messages.max(1) || (shown > 0 && used + size + 1 > max_bytes) {
+        let over_bytes = shown > 0 && used + size + 1 > max_bytes;
+        if shown >= max_messages.max(1) || over_bytes {
             break;
         }
         used += size + 1;

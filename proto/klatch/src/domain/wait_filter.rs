@@ -12,32 +12,34 @@ const DM_FORM: &str =
 /// NAME, `dm.<a>.<b>` (#1186). `dm:only=...` and `dm:from=...` stay a room named `dm` with a filter. The error
 /// names only the argument and a fixed form, never message text.
 pub fn resolve_dm_targets(args: &[String], me: &str) -> Result<Vec<String>, String> {
-    let mut out = Vec::with_capacity(args.len());
-    for arg in args {
-        let rest = match arg.strip_prefix("dm:") {
-            Some(rest) if !rest.starts_with("only=") && !rest.starts_with("from=") => rest,
-            _ => {
-                out.push(arg.clone());
-                continue;
-            }
-        };
-        let (name, spec) = match rest.split_once(':') {
-            Some((name, spec)) => (name, Some(spec)),
-            None => (rest, None),
-        };
-        if !valid_name(name) {
-            return Err(format!("`{arg}` is not a member name; {DM_FORM}"));
-        }
-        if name == me {
-            return Err(format!("`{arg}` is yourself; {DM_FORM}"));
-        }
-        let room = super::dm_room(me, name);
-        out.push(match spec {
-            Some(spec) => format!("{room}:{spec}"),
-            None => room,
-        });
+    args.iter()
+        .map(|arg| Ok(dm_room_target(arg, me)?.unwrap_or_else(|| arg.clone())))
+        .collect()
+}
+
+/// The room argument for one `dm:NAME[:spec]` argument, `None` for any other argument.
+fn dm_room_target(arg: &str, me: &str) -> Result<Option<String>, String> {
+    let Some(rest) = arg.strip_prefix("dm:") else {
+        return Ok(None);
+    };
+    if rest.starts_with("only=") || rest.starts_with("from=") {
+        return Ok(None);
     }
-    Ok(out)
+    let (name, spec) = match rest.split_once(':') {
+        Some((name, spec)) => (name, Some(spec)),
+        None => (rest, None),
+    };
+    if !valid_name(name) {
+        return Err(format!("`{arg}` is not a member name; {DM_FORM}"));
+    }
+    if name == me {
+        return Err(format!("`{arg}` is yourself; {DM_FORM}"));
+    }
+    let room = super::dm_room(me, name);
+    Ok(Some(match spec {
+        Some(spec) => format!("{room}:{spec}"),
+        None => room,
+    }))
 }
 
 /// What one room's wait accepts. An empty list accepts everything; a non-empty one accepts any of its entries.

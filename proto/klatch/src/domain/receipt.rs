@@ -35,10 +35,15 @@ impl Receipt {
     }
 }
 
+/// Whether the member joined (a known time) after the message was posted.
+fn joined_after(member: &MemberInfo, message: &Message) -> bool {
+    member.joined > 0 && member.joined > message.ts
+}
+
 /// The recipient's state, or `None` for a member who is not a recipient: the sender, and anyone who joined after the
 /// post (a late joiner can read history, but the message was not sent to them). A joined time of 0 is unknown.
 pub fn receipt_of(member: &MemberInfo, message: &Message, now: i64) -> Option<Receipt> {
-    if member.name == message.sender || (member.joined > 0 && member.joined > message.ts) {
+    if member.name == message.sender || joined_after(member, message) {
         return None;
     }
     if let Some(p) = member.parked.as_ref().filter(|p| p.holds(now)) {
