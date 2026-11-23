@@ -178,6 +178,76 @@ fn parsed(body: &str) -> Option<(&'static str, u64, &str)> {
     })
 }
 
+/// A `ready:` word: enqueue the PR, or enqueue it again when it was dropped; ignored while it is in the queue.
+fn apply_ready(entries: &mut Vec<QueueEntry>, number: u64, m: &Message) {
+    match entries.iter().position(|e| e.number == number) {
+        None => entries.push(enqueued(number, m)),
+        Some(i) if matches!(entries[i].state, QueueState::Dropped(_)) => {
+            entries.remove(i);
+            entries.push(enqueued(number, m));
+        }
+        Some(_) => {}
+    }
+}
+
+/// A state word as posted: the word, the text after the PR number, and whether the sender is trusted.
+struct StateWord<'a> {
+    word: &'a str,
+    rest: &'a str,
+    vouched: bool,
+}
+
+/// The state a state word moves entry `e` to, when it does.
+fn next_state(w: &StateWord, e: &QueueEntry) -> Option<QueueState> {
+    match w.word {
+        MERGED_PREFIX => (!matches!(e.state, QueueState::Merged | QueueState::Reverted))
+            .then_some(QueueState::Merged),
+        REVERTED_PREFIX => {
+            (w.vouched && e.state == QueueState::Merged).then_some(QueueState::Reverted)
+        }
+        _ if w.vouched && e.state.is_active() => active_move(w),
+        _ => None,
+    }
+}
+
+/// The state a trusted word moves an active entry to.
+fn active_move(w: &StateWord) -> Option<QueueState> {
+    match w.word {
+        INTEGRATING_PREFIX => Some(QueueState::Integrating),
+        CHECKING_PREFIX => Some(QueueState::Checking),
+        DROPPED_PREFIX => Some(QueueState::Dropped(DropReason::parse(w.rest))),
+        _ => None,
+    }
+}
+
+/// One state word of message `m` about entry `i`.
+fn apply_state(entries: &mut Vec<QueueEntry>, i: usize, w: &StateWord, m: &Message) {
+    if w.word == MERGED_PREFIX && !w.vouched {
+        // item 84: anyone may say a PR is over, which takes it out of the queue without a claim of success
+        entries.remove(i);
+        return;
+    }
+    let e = &mut entries[i];
+    if let Some(s) = next_state(w, e).filter(|s| *s != e.state) {
+        e.state = s;
+        e.changed = m.ts;
+    }
+}
+
+/// Active entries first with their positions, then the last `QUEUE_ENDED_SHOWN` ended ones, newest first.
+fn arranged(entries: Vec<QueueEntry>) -> Vec<QueueEntry> {
+    let (mut active, mut ended): (Vec<_>, Vec<_>) =
+        entries.into_iter().partition(|e| e.state.is_active());
+    active.sort_by_key(|e| e.seq);
+    for (i, e) in active.iter_mut().enumerate() {
+        e.position = Some(i + 1);
+    }
+    ended.sort_by_key(|e| std::cmp::Reverse((e.changed, e.seq)));
+    ended.truncate(QUEUE_ENDED_SHOWN);
+    active.extend(ended);
+    active
+}
+
 /// The queue in `messages`: active entries in the order they were enqueued with their positions, then the last
 /// `QUEUE_ENDED_SHOWN` ended ones, newest first. `trusted` says which senders may post the state words (the integrator
 /// role and the human). The owner is left unset.
@@ -189,55 +259,23 @@ pub fn merge_queue(messages: &[Message], trusted: &dyn Fn(&str) -> bool) -> Vec<
         let Some((word, number, rest)) = parsed(&m.body) else {
             continue;
         };
-        let at = entries.iter().position(|e| e.number == number);
         if word == READY_PREFIX {
-            match at {
-                None => entries.push(enqueued(number, m)),
-                Some(i) if matches!(entries[i].state, QueueState::Dropped(_)) => {
-                    entries.remove(i);
-                    entries.push(enqueued(number, m));
-                }
-                Some(_) => {}
-            }
-            continue;
-        }
-        let Some(i) = at else { continue };
-        let vouched = trusted(&m.sender);
-        if word == MERGED_PREFIX && !vouched {
-            // item 84: anyone may say a PR is over, which takes it out of the queue without a claim of success
-            entries.remove(i);
-            continue;
-        }
-        let e = &mut entries[i];
-        let next = match word {
-            INTEGRATING_PREFIX if vouched && e.state.is_active() => Some(QueueState::Integrating),
-            CHECKING_PREFIX if vouched && e.state.is_active() => Some(QueueState::Checking),
-            DROPPED_PREFIX if vouched && e.state.is_active() => {
-                Some(QueueState::Dropped(DropReason::parse(rest)))
-            }
-            MERGED_PREFIX if !matches!(e.state, QueueState::Merged | QueueState::Reverted) => {
-                Some(QueueState::Merged)
-            }
-            REVERTED_PREFIX if vouched && e.state == QueueState::Merged => {
-                Some(QueueState::Reverted)
-            }
-            _ => None,
-        };
-        if let Some(s) = next.filter(|s| *s != e.state) {
-            e.state = s;
-            e.changed = m.ts;
+            apply_ready(&mut entries, number, m);
+        } else if let Some(i) = entries.iter().position(|e| e.number == number) {
+            let vouched = trusted(&m.sender);
+            apply_state(
+                &mut entries,
+                i,
+                &StateWord {
+                    word,
+                    rest,
+                    vouched,
+                },
+                m,
+            );
         }
     }
-    let (mut active, mut ended): (Vec<_>, Vec<_>) =
-        entries.into_iter().partition(|e| e.state.is_active());
-    active.sort_by_key(|e| e.seq);
-    for (i, e) in active.iter_mut().enumerate() {
-        e.position = Some(i + 1);
-    }
-    ended.sort_by_key(|e| std::cmp::Reverse((e.changed, e.seq)));
-    ended.truncate(QUEUE_ENDED_SHOWN);
-    active.extend(ended);
-    active
+    arranged(entries)
 }
 
 /// Why the integrator stopped.
