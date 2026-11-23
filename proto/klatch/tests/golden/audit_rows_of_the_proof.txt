@@ -1,0 +1,11 @@
+### the audit, oldest first
+<AGE>s ago	passphrase-set		first passphrase
+<AGE>s ago	proof-failed		failures=1 terminal=<TTY>
+<AGE>s ago	proof-failed		failures=2 terminal=<TTY>
+<AGE>s ago	proof-failed		failures=3 terminal=<TTY>
+<AGE>s ago	proof-locked		wait <N>s terminal=<TTY>
+<AGE>s ago	proof-refused	no-terminal	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	passphrase-changed		
+<AGE>s ago	proof-ok		window 60s
+

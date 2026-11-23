@@ -1,0 +1,20 @@
+### $ klatch admin recover <code>
+admin passphrase to approve `admin recover <code hidden> [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin --as-member bob recover <code>
+admin passphrase to approve `admin recover <code hidden> [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin recover --label private -- <code>
+admin passphrase to approve `admin recover <code hidden> [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin close recover
+admin passphrase to approve `admin close recover [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+

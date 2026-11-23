@@ -1,0 +1,240 @@
+### $ klatch admin pause
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin resume
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin close r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin reopen r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin remove m --room r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin allow m --room r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin label r private
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin clear m internal
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin grantor r m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin ssh-key laptop m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin room-clear r m internal
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin librarian m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin reviewer m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin facilitator m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin integrator m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin admin-agent m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin room-creation granted
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin grant-rooms m
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin rate-limit 30 60
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin lease-cap 100
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin lease-grace 60
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin room-stale r 120
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin room-ask-lease r 100
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin room-require r --off
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin cap internal
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin chain a,b
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin canary r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin canary-retire r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin scrub-add n quokka
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin scrub-remove n
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin scrub-list
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin recovery
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin recover KLATCH-AAAA
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin seal-label private
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin rotate-key
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin rotate-label-key private
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin backup backup.db
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin restore backup.db
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin run-archive a.jsonl --run r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin retention r 30
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin archive --all-rooms
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin restore-archive x.db
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin archives
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin export r
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin stats --room lobby --since 2026-01-01
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin unlock-window 60
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin shell
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin refusals
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin review-queue
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch admin audit
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch worker issue w-1 --clearance internal --out w.bundle
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch worker revoke w-1
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch worker list
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch anchor done a
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch anchor reap --dir /nonexistent-klatch-dir
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch anchor github --file /dev/null
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch run create r1
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch run end r1
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch run list
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
+### $ klatch judge run --once
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+

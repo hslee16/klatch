@@ -1,0 +1,50 @@
+### $ klatch worker issue w-1 --clearance internal --out w.bundle
+admin passphrase to approve `worker issue w-1 --clearance internal --out w.bundle [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch worker revoke w-1
+admin passphrase to approve `worker revoke w-1 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch worker list
+admin passphrase to approve `worker list [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch anchor done a
+admin passphrase to approve `anchor done a [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch anchor reap --dir /nonexistent-klatch-dir
+admin passphrase to approve `anchor reap --dir /nonexistent-klatch-dir [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch anchor github --file /dev/null
+admin passphrase to approve `anchor github --file /dev/null [events from file /dev/null: 0 bytes, unreadable as JSON] [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch run create r1
+admin passphrase to approve `run create r1 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch run end r1
+admin passphrase to approve `run end r1 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch run list
+admin passphrase to approve `run list [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch judge run --once
+admin passphrase to approve `judge run --once [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+

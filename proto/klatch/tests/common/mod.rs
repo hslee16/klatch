@@ -14,6 +14,7 @@ pub mod test_dir;
 use test_dir::TestDir;
 
 pub mod admin;
+pub mod golden;
 pub mod pty;
 
 /// The terminal text without the passphrase prompt lines (they are the terminal's, not the command's output).
