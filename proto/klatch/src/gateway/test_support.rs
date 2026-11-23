@@ -461,6 +461,65 @@ impl AskStore for SpyStore {
         self.inner.rooms_with_prefix(prefix)
     }
 
+    fn route_ask(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<bool> {
+        self.gate()?;
+        self.inner.route_ask(room, seq, to, now)
+    }
+
+    fn add_ask_routes(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<()> {
+        self.gate()?;
+        self.inner.add_ask_routes(room, seq, to, now)
+    }
+
+    fn ask_routes(&self, room: &str) -> Result<Vec<crate::domain::AskRoute>> {
+        self.gate()?;
+        self.inner.ask_routes(room)
+    }
+
+    fn note_route_outcome(
+        &self,
+        room: &str,
+        seq: i64,
+        outcome: &str,
+        n: i64,
+        now: i64,
+    ) -> Result<bool> {
+        self.gate()?;
+        self.inner.note_route_outcome(room, seq, outcome, n, now)
+    }
+
+    fn untold_routes(&self, room: &str, member: &str, bit: i64) -> Result<Vec<i64>> {
+        self.gate()?;
+        self.inner.untold_routes(room, member, bit)
+    }
+
+    fn mark_told(&self, room: &str, member: &str, seqs: &[i64], bit: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.mark_told(room, member, seqs, bit)
+    }
+
+    fn route_events(&self, room: &str) -> Result<Vec<(i64, String, i64)>> {
+        self.gate()?;
+        self.inner.route_events(room)
+    }
+
+    fn route_outcomes(&self, room: &str, seq: i64) -> Result<Vec<String>> {
+        self.gate()?;
+        self.inner.route_outcomes(room, seq)
+    }
+
     fn set_ask_scope(&self, room: &str, seq: i64, scope: &str) -> Result<()> {
         self.gate()?;
         self.inner.set_ask_scope(room, seq, scope)

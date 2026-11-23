@@ -127,4 +127,75 @@ impl AskStore for SqliteStore {
             self.report_once("asks_escalated", (room, member), escalated)
         })
     }
+
+    fn route_ask(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<bool> {
+        self.do_route_ask(room, seq, to, now)
+    }
+
+    fn add_ask_routes(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<()> {
+        self.immediate(|| self.insert_routes(room, seq, to, now))
+    }
+
+    fn ask_routes(&self, room: &str) -> Result<Vec<crate::domain::AskRoute>> {
+        self.do_ask_routes(room)
+    }
+
+    fn note_route_outcome(
+        &self,
+        room: &str,
+        seq: i64,
+        outcome: &str,
+        n: i64,
+        now: i64,
+    ) -> Result<bool> {
+        self.do_note_route_outcome(room, seq, outcome, n, now)
+    }
+
+    fn route_outcomes(&self, room: &str, seq: i64) -> Result<Vec<String>> {
+        self.rows(
+            "SELECT outcome FROM ask_route_events WHERE room=?1 AND seq=?2 ORDER BY ts, outcome",
+            params![room, seq],
+            |r| r.get(0),
+        )
+    }
+
+    fn untold_routes(&self, room: &str, member: &str, bit: i64) -> Result<Vec<i64>> {
+        self.rows(
+            "SELECT seq FROM ask_routes WHERE room=?1 AND member=?2 AND kind='coordinator' AND (told & ?3)=0 ORDER BY seq",
+            params![room, member, bit],
+            |r| r.get(0),
+        )
+    }
+
+    fn mark_told(&self, room: &str, member: &str, seqs: &[i64], bit: i64) -> Result<()> {
+        self.immediate(|| {
+            for seq in seqs {
+                self.exec(
+                    "UPDATE ask_routes SET told = told | ?4 WHERE room=?1 AND member=?2 AND seq=?3",
+                    params![room, member, seq, bit],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    fn route_events(&self, room: &str) -> Result<Vec<(i64, String, i64)>> {
+        self.rows(
+            "SELECT seq,outcome,ts FROM ask_route_events WHERE room=?1 ORDER BY seq,ts,outcome",
+            params![room],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+    }
 }

@@ -10,6 +10,48 @@ use super::*;
 use crate::{Cli, Cmd};
 use clap::Parser;
 
+/// The body of a single-quoted word: everything up to the closing quote.
+fn read_single(chars: &mut std::str::Chars, cur: &mut String) -> std::result::Result<(), String> {
+    loop {
+        match chars.next() {
+            Some('\'') => return Ok(()),
+            Some(ch) => cur.push(ch),
+            None => return Err("a ' was never closed".into()),
+        }
+    }
+}
+
+/// The body of a double-quoted word: everything up to the closing quote, where only `\"` and `\\` are escapes.
+fn read_double(chars: &mut std::str::Chars, cur: &mut String) -> std::result::Result<(), String> {
+    const NEVER_CLOSED: &str = "a \" was never closed";
+    loop {
+        match chars.next() {
+            Some('"') => return Ok(()),
+            Some('\\') => match chars.next() {
+                Some(e @ ('"' | '\\')) => cur.push(e),
+                Some(e) => {
+                    cur.push('\\');
+                    cur.push(e);
+                }
+                None => return Err(NEVER_CLOSED.into()),
+            },
+            Some(ch) => cur.push(ch),
+            None => return Err(NEVER_CLOSED.into()),
+        }
+    }
+}
+
+/// An unquoted backslash: it escapes the one character after it.
+fn read_escape(chars: &mut std::str::Chars, cur: &mut String) -> std::result::Result<(), String> {
+    match chars.next() {
+        Some(e) => {
+            cur.push(e);
+            Ok(())
+        }
+        None => Err("a line cannot end in a backslash".into()),
+    }
+}
+
 /// Split a line into words: spaces separate, single quotes keep everything, double quotes keep everything but `\"`
 /// and `\\`, and a backslash outside quotes escapes one character. An unterminated quote is an error.
 pub(super) fn split_words(line: &str) -> std::result::Result<Vec<String>, String> {
@@ -18,52 +60,19 @@ pub(super) fn split_words(line: &str) -> std::result::Result<Vec<String>, String
     let mut started = false;
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            if started {
+                words.push(std::mem::take(&mut cur));
+                started = false;
+            }
+            continue;
+        }
+        started = true;
         match c {
-            c if c.is_whitespace() => {
-                if started {
-                    words.push(std::mem::take(&mut cur));
-                    started = false;
-                }
-            }
-            '\'' => {
-                started = true;
-                loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(ch) => cur.push(ch),
-                        None => return Err("a ' was never closed".into()),
-                    }
-                }
-            }
-            '"' => {
-                started = true;
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some(e @ ('"' | '\\')) => cur.push(e),
-                            Some(e) => {
-                                cur.push('\\');
-                                cur.push(e);
-                            }
-                            None => return Err("a \" was never closed".into()),
-                        },
-                        Some(ch) => cur.push(ch),
-                        None => return Err("a \" was never closed".into()),
-                    }
-                }
-            }
-            '\\' => {
-                started = true;
-                match chars.next() {
-                    Some(e) => cur.push(e),
-                    None => return Err("a line cannot end in a backslash".into()),
-                }
-            }
-            c => {
-                started = true;
-                cur.push(c);
-            }
+            '\'' => read_single(&mut chars, &mut cur)?,
+            '"' => read_double(&mut chars, &mut cur)?,
+            '\\' => read_escape(&mut chars, &mut cur)?,
+            c => cur.push(c),
         }
     }
     if started {
