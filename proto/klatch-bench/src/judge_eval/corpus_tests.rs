@@ -43,16 +43,24 @@ fn without(field: &str) -> String {
 #[test]
 fn a_full_item_parses_and_its_placeholders_expand_in_text_and_spans_alike() {
     let item = parse_line(&line(&good())).unwrap();
-    assert_eq!(item.id, "t001");
-    assert_eq!(item.split, Split::Dev);
-    assert_eq!(item.verdict, Truth::Deny);
-    assert_eq!(item.label, "private");
-    assert_eq!(item.to, "public");
+    assert_eq!(
+        (
+            item.id.as_str(),
+            item.split,
+            item.verdict,
+            item.label.as_str(),
+            item.to.as_str()
+        ),
+        ("t001", Split::Dev, Truth::Deny, "private", "public")
+    );
     assert!(item.raw_text.contains("{{fake:github}}"));
     assert!(!item.text.contains("{{"), "{}", item.text);
-    assert_eq!(item.spans.len(), 1);
-    assert!(item.text.contains(&item.spans[0]));
-    assert!(item.spans[0].starts_with("ghp_"));
+    let span_shape = (
+        item.spans.len(),
+        item.text.contains(&item.spans[0]),
+        item.spans[0].starts_with("ghp_"),
+    );
+    assert_eq!(span_shape, (1, true, true));
 }
 
 #[test]
@@ -202,10 +210,22 @@ fn look_014_carries_the_literal_base64_of_a_valid_one_pixel_png() {
         .expect("the PNG base64")
         .trim_end_matches(';');
     let bytes = b64_decode(blob);
-    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
-    assert_eq!(&bytes[12..16], b"IHDR");
-    assert_eq!(&bytes[16..24], [0, 0, 0, 1, 0, 0, 0, 1], "1x1 pixels");
-    assert_eq!(&bytes[bytes.len() - 8..bytes.len() - 4], b"IEND");
+    let end = bytes.len();
+    // signature, IHDR, 1x1 pixels, IEND
+    assert_eq!(
+        (
+            &bytes[..8],
+            &bytes[12..16],
+            &bytes[16..24],
+            &bytes[end - 8..end - 4]
+        ),
+        (
+            &b"\x89PNG\r\n\x1a\n"[..],
+            &b"IHDR"[..],
+            &[0u8, 0, 0, 1, 0, 0, 0, 1][..],
+            &b"IEND"[..]
+        )
+    );
     // the literal is exempt from the credential scan only because it is exactly this public fixture
     assert_eq!(looks_like_real_credential(&i.raw_text), None);
     assert!(looks_like_real_credential("aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fG3hJ5kL7n").is_some());
@@ -214,16 +234,24 @@ fn look_014_carries_the_literal_base64_of_a_valid_one_pixel_png() {
 #[test]
 fn the_vocabularies_are_closed() {
     use serde_json::json;
-    assert!(parse_line(&with("verdict", json!("block"))).is_err());
-    assert!(parse_line(&with("verdict", json!("defer"))).is_err());
-    assert!(parse_line(&with("split", json!("train"))).is_err());
-    assert!(parse_line(&with("label", json!("secret"))).is_err());
-    assert!(parse_line(&with("label", json!("Private"))).is_err());
-    assert!(parse_line(&with("to", json!("nowhere"))).is_err());
-    assert!(parse_line(&with("category", json!("misc"))).is_err());
-    assert!(parse_line(&with("id", json!(""))).is_err());
-    assert!(parse_line(&with("rationale", json!(" "))).is_err());
-    assert!(parse_line(&with("text", json!(""))).is_err());
+    let refused = [
+        ("verdict", "block"),
+        ("verdict", "defer"),
+        ("split", "train"),
+        ("label", "secret"),
+        ("label", "Private"),
+        ("to", "nowhere"),
+        ("category", "misc"),
+        ("id", ""),
+        ("rationale", " "),
+        ("text", ""),
+    ];
+    for (name, value) in refused {
+        assert!(
+            parse_line(&with(name, json!(value))).is_err(),
+            "{name}: {value:?}"
+        );
+    }
 }
 
 #[test]
@@ -287,16 +315,18 @@ fn an_unknown_or_unclosed_placeholder_is_refused() {
 
 #[test]
 fn expansion_is_deterministic_and_distinct_per_item_and_index() {
-    let a = expand("x1", "{{fake:aws}} {{fake:aws:2}}").unwrap();
-    assert_eq!(a, expand("x1", "{{fake:aws}} {{fake:aws:2}}").unwrap());
+    let ex = |id: &str, raw: &str| expand(id, raw).unwrap();
+    let two = "{{fake:aws}} {{fake:aws:2}}";
+    let a = ex("x1", two);
     let parts: Vec<&str> = a.split(' ').collect();
     assert_ne!(parts[0], parts[1]);
-    assert_ne!(a, expand("x2", "{{fake:aws}} {{fake:aws:2}}").unwrap());
     assert_eq!(
-        expand("x1", "{{fake:aws}}").unwrap(),
-        expand("x1", "{{fake:aws:1}}").unwrap()
+        (a == ex("x1", two), a == ex("x2", two)),
+        (true, false),
+        "same item same text, another item another text"
     );
-    assert_eq!(expand("x", "no placeholders").unwrap(), "no placeholders");
+    assert_eq!(ex("x1", "{{fake:aws}}"), ex("x1", "{{fake:aws:1}}"));
+    assert_eq!(ex("x", "no placeholders"), "no placeholders");
 }
 
 #[test]
@@ -363,14 +393,21 @@ fn select_filters_by_split_and_limits_in_file_order() {
     b.split = Split::Test;
     c.id = "c".into();
     let items = vec![a, b, c];
-    let dev: Vec<&str> = select(&items, Some(Split::Dev), None)
-        .iter()
-        .map(|i| i.id.as_str())
-        .collect();
-    assert_eq!(dev, ["a", "c"]);
-    assert_eq!(select(&items, None, None).len(), 3);
-    assert_eq!(select(&items, Some(Split::Dev), Some(1)).len(), 1);
-    assert_eq!(select(&items, Some(Split::Test), None)[0].id, "b");
+    let ids = |split: Option<Split>, limit: Option<usize>| -> Vec<String> {
+        select(&items, split, limit)
+            .iter()
+            .map(|i| i.id.clone())
+            .collect()
+    };
+    assert_eq!(
+        [
+            ids(Some(Split::Dev), None),
+            ids(None, None),
+            ids(Some(Split::Dev), Some(1)),
+            ids(Some(Split::Test), None)
+        ],
+        [vec!["a", "c"], vec!["a", "b", "c"], vec!["a"], vec!["b"]]
+    );
 }
 
 #[test]
