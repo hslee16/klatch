@@ -428,6 +428,19 @@ class Suite:
         rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
         rec["metrics"]["overwrites"] = gm["overwrites"]
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
+        if scn.get("history_check"):
+            # a scenario whose units share one file: overwrites are lost behaviours, found by testing every commit
+            try:
+                hist = scenario_mod.history_overwrites(scn, origin, clone_dirs, henv)
+            except (RuntimeError, KeyError, OSError) as e:
+                notes.append("history overwrites failed: %s" % e)
+                return
+            sm = rec["scenario_metrics"]
+            rec["metrics"]["overwrites"] = len(hist["overwritten"])
+            sm["overwritten"] = hist["overwritten"]
+            sm.update(scenario_mod.overwrite_split(hist["overwritten"], rec["metrics"]["git_conflicts"], sm))
+            for k in scn.get("not_computed", {}):
+                sm.setdefault(k, None)  # named null, never omitted (the reason is in the scenario file)
 
     # the suite ---------------------------------------------------------------------------------------------
 

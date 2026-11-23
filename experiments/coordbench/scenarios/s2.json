@@ -1,0 +1,52 @@
+{
+  "id": "S2",
+  "title": "same-file contention race with three agents (#1367)",
+  "spec": "SPEC.md section 3, scenario S2; fixture F2 onefile",
+  "fixture": "onefile",
+  "arms": ["B0", "B1", "K1", "K2", "K3"],
+  "arms_at_m0": ["B0", "B1", "K1", "K2"],
+  "arm_notes": {"K3": "K3 is not run at M0 (SPEC section 2.2); it joins when the arms review (#1365) has accepted its text"},
+  "n_per_arm": {"m0": 20, "quick": 3, "note": "SPEC section 6.1: 20 per arm for the cheap binary scenarios S2, S5 and S10 part 1 (rates need more runs than medians); 3 for the quick subset after an epic, labelled exploratory. Each topology is reported separately and never pooled with the other (SPEC S2)."},
+  "topologies": {
+    "T-clone": {"status": "implemented", "note": "Each agent has its own clone and the run's bare origin, integrates by git pull --no-rebase origin main then git push origin HEAD:main. This is the only topology run.py builds."},
+    "T-shared": {"status": "gap", "note": "One working directory used by all agents at once (SPEC S2, the primary topology for the K arms). The harness gives every agent its own clone under the run's scratch (run.py execute: one clone per agent), the arm prompts say 'your own clone', and the fake and claude drivers take one cwd per agent. T-shared needs a run mode with one shared checkout, a prompt variant that says so, and a git history metric that works without commits (a final-file check only). Not built here; ticketed as follow-up work."}
+  },
+  "caps": {
+    "per_run_usd": 1.8,
+    "suite_usd_m0_haiku": 60.0,
+    "wall_s": 900,
+    "max_turns_per_agent": 40,
+    "basis": "SPEC section 8.1: S2 assumed at 0.60 USD a run on Haiku, so 3x per run (1.80) and 1.25x the 48 USD estimate for 4 arms x 20 runs (60) for one topology. Proposals; the human changes them before M0 (#1380). wall_s and max_turns_per_agent are this scenario's own proposals (a small file, three small tickets)."
+  },
+  "agents": {
+    "a": {"ticket": "A", "units": []},
+    "b": {"ticket": "B", "units": []},
+    "c": {"ticket": "C", "units": []}
+  },
+  "units": {},
+  "shared_files": {
+    "onefile/core.py": {"entry": "^\\s+\"[A-Za-z_]+\": \\(", "expected_entries": 5}
+  },
+  "history_check": {"checker": "onefile", "path": "onefile/core.py"},
+  "metrics": {
+    "primary": "units_completed",
+    "secondary": ["overwrites", "silent_overwrites", "conflicts_resolved", "git_conflicts", "claim_conflicts", "time_to_recover_s", "messages", "spend", "wall_s", "turns"],
+    "definitions": {
+      "units_completed": "Tickets whose behaviour is present on the final main (0 to 3), from the hidden checker's three unit checks (timeout, retries, header). Each is tested against independent oracles and seeded random inputs, on its own, so a lost colleague's change cannot hide.",
+      "lost_edits": "From the checker (scenario_metrics.lost_edits): the tickets, by letter, whose behaviour is missing from the final main, whether it was never made or was made and lost. lost_table_entries lists the shared-table rows (timeout, retries, label) missing or wrong.",
+      "overwrites": "Tickets whose behaviour passed the hidden per-ticket check on some non-merge commit of the origin or of any agent's clone (the commit the agent made, in any repository, even one that never reached main) and fails on the final main: edits committed anywhere and missing from the final main (0 to 3). Detail in scenario_metrics.overwritten (ticket, author). An edit lost before it was ever committed is invisible here; units_completed catches it.",
+      "silent_overwrites": "overwrites in a run where no agent saw a git conflict (git_conflicts is 0): the edit vanished with nobody told, as with a stale copy pushed or a force push. Per run, not per edit: a run with any conflict puts its lost edits under overwrites_after_conflict.",
+      "overwrites_after_conflict": "overwrites in a run where some agent did see a git conflict: the edit was lost while resolving, or by an agent that left the conflict unresolved. Not silent.",
+      "conflicts_resolved": "git_conflicts of a run whose final main is correct with no overwrite (every conflict someone saw ended with all three changes in main); 0 for any other run.",
+      "git_conflicts": "Bash results of an agent that show a merge conflict (from the stream, as for every scenario); never summed with overwrites.",
+      "merge_state": "From the checker: clean, conflicts-left (conflict markers in a tracked file) or tests-broken (the visible tests fail on main).",
+      "per_agent": "From the checker: commits and surviving lines of onefile/core.py (git blame on the final main) by git author; each agent commits under its own name.",
+      "claim_conflicts": "NOT COMPUTED here: null. Needs the K arms' store (klatch admin stats claims history) and run.py does not export the store yet (artifacts.store_export is null). A follow-up reads it per K run.",
+      "time_to_recover_s": "NOT COMPUTED here: null. SPEC S2 defines it from the first conflict or refusal until the last change is in the final file; the stream parser records conflict counts but no time of the first one. time_to_first_pass_s (start to the first final-file pass) is the nearest field that exists."
+    }
+  },
+  "not_computed": {
+    "claim_conflicts": "needs the K arms' store export (klatch admin stats claims history); not exported by run.py yet",
+    "time_to_recover_s": "needs a timestamp of the first conflict or refusal in the stream; the parser counts conflicts without times"
+  }
+}

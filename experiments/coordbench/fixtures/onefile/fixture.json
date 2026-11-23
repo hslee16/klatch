@@ -1,0 +1,15 @@
+{
+  "name": "onefile",
+  "description": "F2 (SPEC section 3, S2): a settings renderer whose whole logic is one file (onefile/core.py). Three tickets change it at once with no ordering: each adds a row to the shared option table, two adjust the shared format_value helper, and each adds or changes a different function, so concurrent edits genuinely collide.",
+  "topology": "T-clone",
+  "scenario": "s2",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"},
+    {"name": "c", "task": "task-c.md"}
+  ],
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "onefile",
+  "est_cost_usd_haiku": 0.6,
+  "fake": "fake.json"
+}
