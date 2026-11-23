@@ -92,9 +92,9 @@ class S1Base(Base):
     def records(self, arm=None):
         out = []
         for d, _, names in os.walk(os.path.join(self.results, "t1", "tallykit")):
-            for n in names:
-                if n.endswith(".json") and (arm is None or os.path.basename(d) == arm):
-                    out.append(read_json(os.path.join(d, n)))
+            if arm is not None and os.path.basename(d) != arm:
+                continue
+            out += [read_json(os.path.join(d, n)) for n in names if n.endswith(".json")]
         return sorted(out, key=lambda r: r["run_id"])
 
     def script_for(self, agents):

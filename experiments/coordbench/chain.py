@@ -37,36 +37,56 @@ def _text_of(content):
     return ""
 
 
+def _load_event(line):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        return None
+    return e if isinstance(e, dict) else None
+
+
+def _add_block(b, turn, tools):
+    if not isinstance(b, dict):
+        return
+    if b.get("type") == "tool_use" and b.get("id") not in tools:
+        t = {"name": b.get("name", "?"), "input": b.get("input") or {}, "result": ""}
+        tools[b.get("id")] = t
+        turn["tools"].append(t)
+    elif b.get("type") == "text" and isinstance(b.get("text"), str):
+        turn["text"] = b["text"]
+
+
+def _add_assistant(e, turns, by_id, tools):
+    msg = e.get("message") or {}
+    mid = msg.get("id") or "anon-%d" % len(turns)
+    if mid not in by_id:
+        by_id[mid] = {"i": len(turns) + 1, "text": "", "tools": []}
+        turns.append(by_id[mid])
+    for b in msg.get("content") or []:
+        _add_block(b, by_id[mid], tools)
+
+
+def _is_known_result(b, tools):
+    return isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in tools
+
+
+def _add_results(e, tools):
+    for b in (e.get("message") or {}).get("content") or []:
+        if _is_known_result(b, tools):
+            tools[b["tool_use_id"]]["result"] = _text_of(b.get("content"))
+
+
 def parse_stream(lines):
     """Turns of one agent: [{"i": 1.., "text", "tools": [{"name", "input", "result"}]}], in the order the messages came."""
     turns, by_id, tools = [], {}, {}
     for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
+        e = _load_event(line)
+        if e is None:
             continue
         if e.get("type") == "assistant":
-            msg = e.get("message") or {}
-            mid = msg.get("id") or "anon-%d" % len(turns)
-            if mid not in by_id:
-                by_id[mid] = {"i": len(turns) + 1, "text": "", "tools": []}
-                turns.append(by_id[mid])
-            turn = by_id[mid]
-            for b in msg.get("content") or []:
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "tool_use" and b.get("id") not in tools:
-                    t = {"name": b.get("name", "?"), "input": b.get("input") or {}, "result": ""}
-                    tools[b.get("id")] = t
-                    turn["tools"].append(t)
-                elif b.get("type") == "text" and isinstance(b.get("text"), str):
-                    turn["text"] = b["text"]
+            _add_assistant(e, turns, by_id, tools)
         elif e.get("type") == "user":
-            for b in (e.get("message") or {}).get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in tools:
-                    tools[b["tool_use_id"]]["result"] = _text_of(b.get("content"))
+            _add_results(e, tools)
     return turns
 
 
@@ -79,22 +99,23 @@ def _is_klatch_read(tool):
     return bool(re.search(r"(?:^|[\s;&|])(?:\S*/)?klatch\s", _command(tool))) or tool["name"] in ("SendMessage", "ListAgents")
 
 
+def _poll_pipeline(cmd):
+    """A poll, then only filters of its output."""
+    first, *rest = [p for p in re.split(r"(?<!\|)\|(?!\|)", cmd)]
+    return bool(POLL.match(first)) and all(FILTER.match(p) for p in rest)
+
+
 def is_poll(tool):
     """True when one tool call only waits or looks. A Bash command is a poll when every simple command in it is (a
     `sleep 3; python3 -m unittest` is not); a Read of the shared task board and a ListAgents call are polls."""
     if tool["name"] == "ListAgents":
         return True
     if tool["name"] in ("Read", "Glob", "Grep"):
-        blob = json.dumps(tool["input"])
-        return "TASKS.md" in blob
+        return "TASKS.md" in json.dumps(tool["input"])
     if tool["name"] != "Bash":
         return False
     cmds = [c for c in SEPARATORS.split(_command(tool)) if c.strip()]
-
-    def poll_pipeline(cmd):  # a poll, then only filters of its output
-        first, *rest = [p for p in re.split(r"(?<!\|)\|(?!\|)", cmd)]
-        return bool(POLL.match(first)) and all(FILTER.match(p) for p in rest)
-    return bool(cmds) and all(poll_pipeline(c) for c in cmds)
+    return bool(cmds) and all(_poll_pipeline(c) for c in cmds)
 
 
 def _shows(tool, dependency):
@@ -105,17 +126,36 @@ def _shows(tool, dependency):
     return not NEGATIVE.search(res)
 
 
+FILE_TOOLS = ("Write", "Edit", "NotebookEdit", "MultiEdit")
+
+
+def _writes_one(tool, inp, blob, g):
+    name = tool["name"]
+    if name in FILE_TOOLS:
+        return str(inp.get("file_path", "")).endswith(g)
+    if name == "Bash":
+        return g in _command(tool) and bool(WRITES.search(_command(tool)))
+    return g in blob and "content" in inp
+
+
 def _writes_guarded(tool, guarded):
     inp = tool["input"] if isinstance(tool["input"], dict) else {}
     blob = json.dumps(inp)
-    for g in guarded:
-        if tool["name"] in ("Write", "Edit", "NotebookEdit", "MultiEdit") and str(inp.get("file_path", "")).endswith(g):
-            return True
-        if tool["name"] == "Bash" and g in _command(tool) and WRITES.search(_command(tool)):
-            return True
-        if tool["name"] not in ("Bash", "Write", "Edit", "NotebookEdit", "MultiEdit") and g in blob and "content" in inp:
-            return True
-    return False
+    return any(_writes_one(tool, inp, blob, g) for g in guarded)
+
+
+def _first_seen_turn(turns, dependency):
+    for t in turns:
+        if any(_shows(tool, dependency) for tool in t["tools"]):
+            return t["i"]
+    return None
+
+
+def _turn_classes(blocked, guarded):
+    """(guess-build turns, idle turns) among the blocked turns."""
+    guess = [t for t in blocked if any(_writes_guarded(x, guarded) for x in t["tools"])]
+    idle = [t for t in blocked if t not in guess and (not t["tools"] or all(is_poll(x) for x in t["tools"]))]
+    return guess, idle
 
 
 def blocked_report(turns, dependency, guarded):
@@ -125,33 +165,25 @@ def blocked_report(turns, dependency, guarded):
     wait or look (every tool call a poll, or no tool call at all). guess_build_turns: blocked turns that write a file in
     `guarded` (the dependent step, built before its input exists). wasted_turns: idle plus guess builds. A blocked turn that
     does anything else (reads the README, runs the tests, works on another part) is none of these."""
-    seen = None
-    for t in turns:
-        if any(_shows(tool, dependency) for tool in t["tools"]):
-            seen = t["i"]
-            break
+    seen = _first_seen_turn(turns, dependency)
     blocked = [t for t in turns if seen is None or t["i"] < seen]
-    guess = [t for t in blocked if any(_writes_guarded(x, guarded) for x in t["tools"])]
-    idle = [t for t in blocked if t not in guess and (not t["tools"] or all(is_poll(x) for x in t["tools"]))]
+    guess, idle = _turn_classes(blocked, guarded)
     return {"turns": len(turns), "dependency": dependency, "dependency_seen": seen is not None,
             "dependency_seen_turn": seen, "blocked_turns": len(blocked), "idle_turns": len(idle),
             "guess_build_turns": len(guess), "wasted_turns": len(idle) + len(guess)}
+
+
+def _tool_events(tool, pat, turn):
+    refused = bool(re.search(r"refus|held by|denied|conflict", tool["result"] or "", re.I))
+    return [{"verb": m.group(1), "args": _args(m.group(2)), "refused": refused, "turn": turn}
+            for line in _command(tool).split("\n") for m in pat.finditer(line)]
 
 
 def _klatch_events(turns, klatch_bin):
     """[{"verb", "args", "refused", "turn"}] for the klatch claim, release, post, dm, ask, answer commands an agent ran, in order."""
     binre = re.escape(klatch_bin) if klatch_bin else r"(?:\S*/)?klatch"
     pat = re.compile(binre + r"\s+(?:-\S+\s+)*(" + "|".join(CLAIM_VERBS) + r")\b(.*)", re.S)
-    out = []
-    for t in turns:
-        for tool in t["tools"]:
-            for line in _command(tool).split("\n"):
-                for m in pat.finditer(line):
-                    args = _args(m.group(2))
-                    res = tool["result"] or ""
-                    refused = bool(re.search(r"refus|held by|denied|conflict", res, re.I))
-                    out.append({"verb": m.group(1), "args": args, "refused": refused, "turn": t["i"]})
-    return out
+    return [e for t in turns for tool in t["tools"] for e in _tool_events(tool, pat, t["i"])]
 
 
 def _args(rest):
@@ -170,6 +202,32 @@ def _args(rest):
     return [w for w in words if not w.startswith("-")]
 
 
+def _claim_path(e):
+    """claim ROOM PATH: the path is the argument after the room."""
+    return e["args"][1] if len(e["args"]) >= 2 else (e["args"][0] if e["args"] else None)
+
+
+def _collect(events, verb, refused=None):
+    paths = (_claim_path(e) for e in events if e["verb"] == verb and refused in (None, e["refused"]))
+    out = []
+    for p in paths:
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def _is_message_with(e, word):
+    return e["verb"] in ("post", "dm", "handoff") and bool(e["args"]) and (
+        e["verb"] == "handoff" or e["args"][-1].strip().lower().startswith(word))
+
+
+def _first_message(events, word):
+    for k, e in enumerate(events):
+        if _is_message_with(e, word):
+            return k
+    return None
+
+
 def handoff_claims(streams, arm, giver, taker, klatch_bin):
     """What the streams show about claims at the handoff (#539), or None for an arm without claims (B0, B1).
 
@@ -179,50 +237,35 @@ def handoff_claims(streams, arm, giver, taker, klatch_bin):
         return None
     ga = _klatch_events(streams.get(giver, []), klatch_bin)
     tc = _klatch_events(streams.get(taker, []), klatch_bin)
-
-    def claim_path(e):  # claim ROOM PATH: the path is the argument after the room
-        return e["args"][1] if len(e["args"]) >= 2 else (e["args"][0] if e["args"] else None)
-
-    def collect(events, verb, refused=None):
-        out = []
-        for e in events:
-            if e["verb"] == verb and (refused is None or e["refused"] == refused):
-                p = claim_path(e)
-                if p and p not in out:
-                    out.append(p)
-        return out
-
-    def first_message(events, word):
-        for k, e in enumerate(events):
-            if e["verb"] in ("post", "dm", "handoff") and e["args"] and (
-                    e["verb"] == "handoff" or e["args"][-1].strip().lower().startswith(word)):
-                return k
-        return None
-
-    hand_k = first_message(ga, "handoff")
+    hand_k = _first_message(ga, "handoff")
     before = []
     if hand_k is not None:
-        before = [claim_path(e) for e in ga[:hand_k] if e["verb"] == "release" and claim_path(e)]
-    released = collect(ga, "release")
-    claimed = collect(ga, "claim", False)
+        before = [_claim_path(e) for e in ga[:hand_k] if e["verb"] == "release" and _claim_path(e)]
+    released = _collect(ga, "release")
+    claimed = _collect(ga, "claim", False)
     return {"a_claimed": claimed, "a_released": released,
             "a_released_before_handoff": [p for p in before if p in claimed],
             "a_still_holding": [p for p in claimed if p not in released],
-            "c_claimed": collect(tc, "claim", False), "c_claim_refused": collect(tc, "claim", True),
-            "handoff_message": hand_k is not None, "checkpoint_message": first_message(ga, "checkpoint") is not None,
+            "c_claimed": _collect(tc, "claim", False), "c_claim_refused": _collect(tc, "claim", True),
+            "handoff_message": hand_k is not None, "checkpoint_message": _first_message(ga, "checkpoint") is not None,
             "transferred_by_klatch": None,
             "note": "from the streams only; whether klatch moved or freed the claim needs the store (not exported by run.py yet)"}
 
 
-def compute(log_dir, scn, arm, klatch_bin):
-    """{"blocked": {agent: report or None}, "handoff_claims": ...} for one run, from <log_dir>/<agent>.stream.jsonl."""
+def _read_streams(log_dir, names):
     streams = {}
-    for name in scn["agents"]:
+    for name in names:
         try:
             with open(os.path.join(log_dir, name + ".stream.jsonl"), errors="replace") as f:
                 streams[name] = parse_stream(f)
         except OSError:
             continue
+    return streams
+
+
+def compute(log_dir, scn, arm, klatch_bin):
+    """{"blocked": {agent: report or None}, "handoff_claims": ...} for one run, from <log_dir>/<agent>.stream.jsonl."""
+    streams = _read_streams(log_dir, scn["agents"])
     blocked = {}
     for name, spec in scn["blocked"].items():
         blocked[name] = blocked_report(streams[name], spec["dependency"], spec["guarded"]) if name in streams else None

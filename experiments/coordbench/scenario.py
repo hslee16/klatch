@@ -5,6 +5,7 @@ and maps units to paths and agents to their units. A fixture points at its scena
 fixture with a scenario the harness fills `duplicate_work` and `overwrites` from git history (git_metrics) and keeps the
 checker's extra fields (merge state, per-agent contribution) under the record's `scenario_metrics`.
 """
+import collections
 import json
 import os
 import re
@@ -31,6 +32,32 @@ def _git(repo, args, env):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
+def _is_added_line(line, cur, in_hunk):
+    return in_hunk and cur is not None and line.startswith("+")
+
+
+def _added_lines_by_file(body):
+    """{path: [added lines]} of one commit's unified-0 diff text."""
+    files, cur, in_hunk = {}, None, False
+    for line in body.split("\n"):
+        if line.startswith("diff --git "):
+            m = re.match(r"diff --git a/(.*) b/(.*)$", line)
+            cur, in_hunk = (m.group(2) if m else None), False
+            if cur is not None:
+                files.setdefault(cur, [])
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif _is_added_line(line, cur, in_hunk):
+            files[cur].append(line[1:])
+    return files
+
+
+def _log_records(out):
+    """[(sha, author, parents, body)] of the git log output with the \\x01-separated format."""
+    parts = out.split("\x01")
+    return [tuple(parts[i:i + 4]) for i in range(1, len(parts) - 3, 4)]
+
+
 def _commits(repo, paths, env):
     """{sha: {"author", "files": {path: [added lines]}}} for every non-merge, non-root commit reachable from any ref.
     --full-history: a path-limited log otherwise drops a side branch whose merge equals the other side (#1471)."""
@@ -38,25 +65,50 @@ def _commits(repo, paths, env):
                           "--format=%x01%H%x01%an%x01%P%x01", "--"] + paths, env)
     if rc != 0:
         raise RuntimeError("git log failed in %s" % repo)
-    parts = out.split("\x01")
-    commits = {}
-    for i in range(1, len(parts) - 3, 4):
-        sha, author, parents, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
-        if not parents.strip():
-            continue  # the root commit is the harness's initial tree, not an agent's work
-        files, cur, in_hunk = {}, None, False
-        for line in body.split("\n"):
-            if line.startswith("diff --git "):
-                m = re.match(r"diff --git a/(.*) b/(.*)$", line)
-                cur, in_hunk = (m.group(2) if m else None), False
-                if cur is not None:
-                    files.setdefault(cur, [])
-            elif line.startswith("@@"):
-                in_hunk = True
-            elif in_hunk and cur is not None and line.startswith("+"):
-                files[cur].append(line[1:])
-        commits[sha] = {"author": author, "files": files}
-    return commits
+    return {sha: {"author": author, "files": _added_lines_by_file(body)}
+            for sha, author, parents, body in _log_records(out)
+            if parents.strip()}  # the root commit is the harness's initial tree, not an agent's work
+
+
+def _shared_additions(c, shared):
+    """[((file, line), author)] of the lines this commit added that match a shared file's entry pattern."""
+    out = []
+    for f, lines in c["files"].items():
+        if f in shared:
+            pat = re.compile(shared[f]["entry"])
+            out += [((f, line.rstrip()), c["author"]) for line in lines if pat.match(line.rstrip())]
+    return out
+
+
+def _scan_commits(commits, unit_path, shared):
+    """(authors per unit, {(file, line): author of the first commit seen adding it}) over the commits in sha order."""
+    authors = {u: set() for u in unit_path}
+    added = {}
+    for sha in sorted(commits):
+        c = commits[sha]
+        for u, p in unit_path.items():
+            if p in c["files"]:
+                authors[u].add(c["author"])
+        for key, author in _shared_additions(c, shared):
+            added.setdefault(key, author)
+    return authors, added
+
+
+def _final_lines(origin, shared, branch, env):
+    final = {}
+    for f in shared:
+        rc, out = _git(origin, ["show", "%s:%s" % (branch, f)], env)
+        final[f] = set(l.rstrip() for l in out.splitlines()) if rc == 0 else set()
+    return final
+
+
+def _lost_lines(added, final):
+    return [{"file": f, "line": line, "author": a} for (f, line), a in sorted(added.items()) if line not in final[f]]
+
+
+def _foreign_edits(authors, owner):
+    """Edits to a unit by anyone but the agent that owns it; authors is {unit: set of authors}, in unit order."""
+    return [{"unit": u, "author": a, "owner": owner[u]} for u in authors for a in sorted(authors[u]) if a != owner[u]]
 
 
 def git_metrics(scn, origin, clones, env, branch="main"):
@@ -69,26 +121,11 @@ def git_metrics(scn, origin, clones, env, branch="main"):
     commits = {}
     for repo in [origin] + list(clones):
         commits.update(_commits(repo, paths, env))
-    authors = {u: set() for u in unit_path}
-    added = {}  # (file, line) -> author of the first commit seen adding it, in a deterministic order
-    for sha in sorted(commits):
-        c = commits[sha]
-        for f, lines in c["files"].items():
-            for u, p in unit_path.items():
-                if f == p:
-                    authors[u].add(c["author"])
-            if f in shared:
-                pat = re.compile(shared[f]["entry"])
-                for line in lines:
-                    if pat.match(line.rstrip()):
-                        added.setdefault((f, line.rstrip()), c["author"])
-    final = {}
-    for f in shared:
-        rc, out = _git(origin, ["show", "%s:%s" % (branch, f)], env)
-        final[f] = set(l.rstrip() for l in out.splitlines()) if rc == 0 else set()
-    lost = [{"file": f, "line": line, "author": a} for (f, line), a in sorted(added.items()) if line not in final[f]]
+    authors, added = _scan_commits(commits, unit_path, shared)
+    final = _final_lines(origin, shared, branch, env)
+    lost = _lost_lines(added, final)
     duplicated = [u for u in unit_path if len(authors[u]) > 1]
-    foreign = [{"unit": u, "author": a, "owner": owner[u]} for u in unit_path for a in sorted(authors[u]) if a != owner[u]]
+    foreign = _foreign_edits(authors, owner)
     return {"duplicate_work": len(duplicated), "overwrites": len(lost),
             "details": {"duplicated_units": duplicated, "foreign_edits": foreign, "lost_lines": lost}}
 
@@ -121,32 +158,48 @@ def _ticket_pass(check_py, text, env):
     return obj if isinstance(obj, dict) else {}
 
 
+TicketCheck = collections.namedtuple("TicketCheck", "path check_py env")
+
+
+def _log_commits(repo, env):
+    """[(sha, author)] of the non-merge, non-root commits reachable from any ref of the repository."""
+    rc, out = _git(repo, ["log", "--all", "--no-merges", "--format=%x01%H%x01%an%x01%P%x01"], env)
+    if rc != 0:
+        raise RuntimeError("git log failed in %s" % repo)
+    return [(sha, author) for sha, author, parents, _ in _log_records(out) if parents.strip()]
+
+
+def _is_earlier(ever, ticket, sha):
+    return ticket not in ever or sha < ever[ticket][0]
+
+
+def _first_commits_passing(repo, tc, seen, ever):
+    """Test every commit of the repository not seen yet with the per-ticket check; ever[ticket] is the (sha, author) of
+    the first commit in sha order that had it."""
+    for sha, author in _log_commits(repo, tc.env):
+        if sha in seen:
+            continue
+        seen.add(sha)
+        rc, text = _git(repo, ["show", "%s:%s" % (sha, tc.path)], tc.env)
+        if rc != 0:
+            continue
+        for t, ok in sorted(_ticket_pass(tc.check_py, text, tc.env).items()):
+            if ok and _is_earlier(ever, t, sha):
+                ever[t] = (sha, author)
+
+
 def history_overwrites(scn, origin, clones, env, branch="main"):
     """Edits committed anywhere and missing from the final main, by behaviour (scenario key history_check). Every non-merge,
     non-root commit reachable from any ref of the origin or any clone is tested with the hidden checker's per-ticket check on
     the file as that commit has it; a ticket that passes on some commit and fails on the final main is overwritten. Returns
     {"overwritten": [{"ticket", "author"}]} (the author of the first commit, in sha order, that had it)."""
     hc = scn["history_check"]
-    check_py = os.path.join(HERE, "checks", hc["checker"], "check.py")
+    tc = TicketCheck(hc["path"], os.path.join(HERE, "checks", hc["checker"], "check.py"), env)
     seen, ever = set(), {}
     for repo in [origin] + list(clones):
-        rc, out = _git(repo, ["log", "--all", "--no-merges", "--format=%x01%H%x01%an%x01%P%x01"], env)
-        if rc != 0:
-            raise RuntimeError("git log failed in %s" % repo)
-        parts = out.split("\x01")
-        for i in range(1, len(parts) - 3, 4):
-            sha, author, parents = parts[i], parts[i + 1], parts[i + 2]
-            if not parents.strip() or sha in seen:
-                continue
-            seen.add(sha)
-            rc, text = _git(repo, ["show", "%s:%s" % (sha, hc["path"])], env)
-            if rc != 0:
-                continue
-            for t, ok in sorted(_ticket_pass(check_py, text, env).items()):
-                if ok and (t not in ever or sha < ever[t][0]):
-                    ever[t] = (sha, author)
+        _first_commits_passing(repo, tc, seen, ever)
     rc, text = _git(origin, ["show", "%s:%s" % (branch, hc["path"])], env)
-    final = _ticket_pass(check_py, text, env) if rc == 0 else {}
+    final = _ticket_pass(tc.check_py, text, env) if rc == 0 else {}
     return {"overwritten": [{"ticket": t, "author": ever[t][1]} for t in sorted(ever) if not final.get(t)]}
 
 

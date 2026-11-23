@@ -42,17 +42,18 @@ def _date(d, key):
         raise ApprovalError("budget approval: %s must be a date as YYYY-MM-DD, got %r" % (key, v))
 
 
+def _is_positive_number(v):
+    return not isinstance(v, bool) and isinstance(v, (int, float)) and v > 0
+
+
 def _usd(d, key):
     v = d.get(key)
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not v > 0:
+    if not _is_positive_number(v):
         raise ApprovalError("budget approval: %s must be a number above 0" % key)
     return float(v)
 
 
-def load(path, model, roles_model, run_cap, suite_cap, today=None):
-    """Validate the file at path for a run of model (and roles_model) with the caps given on the command line (None when
-    not given). Returns the approval with the effective caps as per_run_usd and suite_usd."""
-    today = today or datetime.date.today()
+def _read_object(path):
     try:
         with open(path) as f:
             d = json.load(f)
@@ -63,28 +64,66 @@ def load(path, model, roles_model, run_cap, suite_cap, today=None):
     for k in FIELDS:
         if k not in d:
             raise ApprovalError("budget approval: field %s is missing" % k)
-    out = {"approved_by": _text(d, "approved_by"), "scope": _text(d, "scope")}
-    approved, expires = _date(d, "approved_on"), _date(d, "expires_on")
-    suite, per_run = _usd(d, "suite_budget_usd"), _usd(d, "per_run_cap_usd")
+    return d
+
+
+def _is_model_id(m):
+    return isinstance(m, str) and bool(m.strip())
+
+
+def _model_list(d):
     models = d["models"]
-    if not isinstance(models, list) or not models or not all(isinstance(m, str) and m.strip() for m in models):
+    if not (isinstance(models, list) and models):
         raise ApprovalError("budget approval: models must be a non-empty list of model ids")
+    if not all(_is_model_id(m) for m in models):
+        raise ApprovalError("budget approval: models must be a non-empty list of model ids")
+    return models
+
+
+def _check_window(approved, expires, today):
     if approved > today:
         raise ApprovalError("budget approval: approved_on %s is in the future" % approved)
     if expires < approved:
         raise ApprovalError("budget approval: expires_on %s is before approved_on %s" % (expires, approved))
-    if per_run > suite:
-        raise ApprovalError("budget approval: per_run_cap_usd %g is above suite_budget_usd %g" % (per_run, suite))
+
+
+def _check_expiry(expires, today):
     if today > expires:
         raise ApprovalError("budget approval: expired on %s (today is %s)" % (expires, today))
-    for label, m in (("agent model", model), ("roles model", roles_model)):
+
+
+def _check_models(models, asked):
+    for label, m in asked:
         if m and m not in models:
             raise ApprovalError("budget approval: the %s %s is not in the approved models (%s)" % (label, m, ", ".join(models)))
+
+
+def _check_cli_caps(run_cap, suite_cap, per_run, suite):
     if run_cap is not None and run_cap > per_run:
         raise ApprovalError("budget approval: the per-run cap %g is above the approved %g" % (run_cap, per_run))
     if suite_cap is not None and suite_cap > suite:
         raise ApprovalError("budget approval: the suite cap %g is above the approved %g" % (suite_cap, suite))
+
+
+def _effective(approved_cap, cli_cap):
+    return min(approved_cap, cli_cap) if cli_cap is not None else approved_cap
+
+
+def load(path, model, roles_model, run_cap, suite_cap, today=None):
+    """Validate the file at path for a run of model (and roles_model) with the caps given on the command line (None when
+    not given). Returns the approval with the effective caps as per_run_usd and suite_usd."""
+    today = today or datetime.date.today()
+    d = _read_object(path)
+    out = {"approved_by": _text(d, "approved_by"), "scope": _text(d, "scope")}
+    approved, expires = _date(d, "approved_on"), _date(d, "expires_on")
+    suite, per_run = _usd(d, "suite_budget_usd"), _usd(d, "per_run_cap_usd")
+    models = _model_list(d)
+    _check_window(approved, expires, today)
+    if per_run > suite:
+        raise ApprovalError("budget approval: per_run_cap_usd %g is above suite_budget_usd %g" % (per_run, suite))
+    _check_expiry(expires, today)
+    _check_models(models, (("agent model", model), ("roles model", roles_model)))
+    _check_cli_caps(run_cap, suite_cap, per_run, suite)
     out.update(approved_on=str(approved), expires_on=str(expires), models=list(models), suite_budget_usd=suite,
-               per_run_cap_usd=per_run, per_run_usd=min(per_run, run_cap) if run_cap is not None else per_run,
-               suite_usd=min(suite, suite_cap) if suite_cap is not None else suite)
+               per_run_cap_usd=per_run, per_run_usd=_effective(per_run, run_cap), suite_usd=_effective(suite, suite_cap))
     return out

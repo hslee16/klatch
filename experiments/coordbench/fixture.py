@@ -50,9 +50,20 @@ class FixtureError(Exception):
     pass
 
 
+def _parse_checks(stdout):
+    """The checks list of the checker's last output line, or None when it is not the expected JSON."""
+    try:
+        checks = json.loads(stdout.strip().splitlines()[-1])["checks"]
+        assert isinstance(checks, list) and all(isinstance(c, dict) and "id" in c and "pass" in c for c in checks)
+    except (ValueError, KeyError, IndexError, AssertionError):
+        return None
+    return checks
+
+
 class Fixture:
     def __init__(self, name, fixtures_dir=None, checks_dir=None, variant=None):
         self.name = name
+        self.requested = name  # the name the caller gave, which the error messages use (self.name gains the variant)
         self.variant = variant
         self.dir = os.path.join(fixtures_dir or os.path.join(HERE, "fixtures"), name)
         self.checks_dir = checks_dir or os.path.join(HERE, "checks")
@@ -61,27 +72,10 @@ class Fixture:
                 self.spec = json.load(f)
         except (OSError, ValueError) as e:
             raise FixtureError("cannot load fixture %s: %s" % (name, e))
-        if self.spec.get("require_variant") and not variant:
-            raise FixtureError("fixture %s needs a variant (%s)" % (name, ", ".join(sorted(self.spec.get("variants") or {}))))
-        if variant:
-            variants = self.spec.get("variants") or {}
-            if variant not in variants:
-                raise FixtureError("fixture %s has no variant %r (it has: %s)" % (name, variant, ", ".join(sorted(variants)) or "none"))
-            self.spec = dict(self.spec, **variants[variant])
-            if variant != "join":
-                self.name = "%s-%s" % (name, variant)
-        self.agents = []
+        self._apply_variant(name, variant)
         self.generated = self.spec.get("generated")
         self._gen = None
-        if self.generated:
-            try:
-                self.agents = [{"name": t["name"], "task": t["task"].strip()} for t in self.gen().tasks(
-                    self.generated["modules"], self.generated["seed"])]
-            except (OSError, KeyError, ValueError, AttributeError) as e:
-                raise FixtureError("cannot generate fixture %s: %s" % (name, e))
-        for a in ([] if self.generated else self.spec["agents"]):
-            with open(os.path.join(self.dir, a["task"])) as f:
-                self.agents.append({"name": a["name"], "task": f.read().strip()})
+        self.agents = self._load_agents(name)
         self.test_command = self.spec.get("test_command", "python3 -m unittest")
         self.topology = self.spec.get("topology", "T-clone")
         if self.topology == "T-shared" and self.spec.get("private"):
@@ -89,38 +83,63 @@ class Fixture:
         self.checker = os.path.join(self.checks_dir, self.spec["checker"], "check.sh")
         self.fake_script = os.path.join(self.dir, self.spec["fake"]) if self.spec.get("fake") else None
         self.private_dir = os.path.join(self.dir, self.spec["private"]) if self.spec.get("private") else None
-        self.seed_history = None
-        if self.spec.get("seed_history"):
-            try:
-                with open(os.path.join(self.dir, self.spec["seed_history"])) as f:
-                    self.seed_history = json.load(f)
-            except (OSError, ValueError) as e:
-                raise FixtureError("cannot load the seed history of fixture %s: %s" % (name, e))
-
+        self.seed_history = self._load_json("seed_history", "the seed history", OSError, ValueError)
         self.prebuilt_history = bool(self.spec.get("prebuilt_history"))
-        self.room_script = None
-        if self.spec.get("room_history"):
-            try:
-                with open(os.path.join(self.dir, self.spec["room_history"])) as f:
-                    self.room_script = json.load(f)["steps"]
-            except (OSError, ValueError, KeyError) as e:
-                raise FixtureError("cannot load the room history of fixture %s: %s" % (name, e))
-        self.injection = None
+        self.room_script = self._load_json("room_history", "the room history", OSError, ValueError, KeyError,
+                                           pick="steps")
         self.injection_mode = self.spec.get("injection_mode", "all")
-        if self.spec.get("injection"):
+        self.injection = self._load_json("injection", "the injections", OSError, ValueError)
+        self.resume = self._load_resume(name)
+
+    def _apply_variant(self, name, variant):
+        variants = self.spec.get("variants") or {}
+        if self.spec.get("require_variant") and not variant:
+            raise FixtureError("fixture %s needs a variant (%s)" % (name, ", ".join(sorted(variants))))
+        if variant:
+            self._select_variant(name, variant, variants)
+
+    def _select_variant(self, name, variant, variants):
+        if variant not in variants:
+            raise FixtureError("fixture %s has no variant %r (it has: %s)" % (name, variant, ", ".join(sorted(variants)) or "none"))
+        self.spec = dict(self.spec, **variants[variant])
+        if variant != "join":
+            self.name = "%s-%s" % (name, variant)
+
+    def _load_agents(self, name):
+        """[{"name", "task"}]: generated by the fixture's module, or read from the task files its spec names."""
+        if self.generated:
             try:
-                with open(os.path.join(self.dir, self.spec["injection"])) as f:
-                    self.injection = json.load(f)
-            except (OSError, ValueError) as e:
-                raise FixtureError("cannot load the injections of fixture %s: %s" % (name, e))
-        self.resume = None
-        if self.spec.get("resume"):
-            self.resume = dict(self.spec["resume"])
-            try:
-                with open(os.path.join(self.dir, self.resume["note"])) as f:
-                    self.resume["note"] = f.read().strip()
-            except (OSError, KeyError) as e:
-                raise FixtureError("cannot load the resume note of fixture %s: %s" % (name, e))
+                return [{"name": t["name"], "task": t["task"].strip()} for t in self.gen().tasks(
+                    self.generated["modules"], self.generated["seed"])]
+            except (OSError, KeyError, ValueError, AttributeError) as e:
+                raise FixtureError("cannot generate fixture %s: %s" % (name, e))
+        agents = []
+        for a in self.spec["agents"]:
+            with open(os.path.join(self.dir, a["task"])) as f:
+                agents.append({"name": a["name"], "task": f.read().strip()})
+        return agents
+
+    def _load_json(self, key, what, *errors, pick=None):
+        """The JSON file the spec names under key (the value under pick when given), or None when the spec has no such key."""
+        if not self.spec.get(key):
+            return None
+        try:
+            with open(os.path.join(self.dir, self.spec[key])) as f:
+                obj = json.load(f)
+            return obj[pick] if pick else obj
+        except errors as e:
+            raise FixtureError("cannot load %s of fixture %s: %s" % (what, self.requested, e))
+
+    def _load_resume(self, name):
+        if not self.spec.get("resume"):
+            return None
+        resume = dict(self.spec["resume"])
+        try:
+            with open(os.path.join(self.dir, resume["note"])) as f:
+                resume["note"] = f.read().strip()
+        except (OSError, KeyError) as e:
+            raise FixtureError("cannot load the resume note of fixture %s: %s" % (name, e))
+        return resume
 
     def gen(self):
         """The fixture's generator module, loaded from its file (None for a fixture that is not generated)."""
@@ -195,9 +214,7 @@ class Fixture:
             return [], "", "checker timed out"
         if p.returncode != 0:
             return [], p.stdout, "checker exited %d" % p.returncode
-        try:
-            checks = json.loads(p.stdout.strip().splitlines()[-1])["checks"]
-            assert isinstance(checks, list) and all(isinstance(c, dict) and "id" in c and "pass" in c for c in checks)
-        except (ValueError, KeyError, IndexError, AssertionError):
+        checks = _parse_checks(p.stdout)
+        if checks is None:
             return [], p.stdout, "checker output is not the expected JSON"
         return [{k: v for k, v in c.items()} for c in checks], p.stdout, None

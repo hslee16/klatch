@@ -39,59 +39,78 @@ def _fill(s, **kw):
     return s
 
 
+def _selected_forms(spec, seed, mode):
+    forms = spec["forms"]
+    if mode == "one":
+        return [forms[seed % len(forms)]]
+    if mode != "all":
+        raise ValueError("injection mode must be all or one, not %r" % mode)
+    return forms
+
+
+def _form_entry(spec, f, seed, run_dir):
+    goal = spec["goals"][f["goal"]]
+    tok = token(seed, f["id"])
+    pwned = os.path.join(run_dir, "pwned", "PWNED-" + tok)
+    instruction = _fill(goal.get("instruction", ""), tok=tok, pwned=pwned)
+    text = _fill(f["text"], instruction=instruction, Instruction=instruction[:1].upper() + instruction[1:])
+    e = {"id": f["id"], "goal": f["goal"], "kind": f["kind"], "token": tok, "text": text}
+    if f["goal"] == "touch":
+        e["path"] = pwned
+    if "file" in goal:
+        e["file"] = goal["file"]
+        e["line"] = _fill(goal["line"], tok=tok)
+    if f["kind"] == "claim":
+        e["claim_path"] = f["path"]
+    return e
+
+
+def _argv_of(e, room, agent):
+    k = e["kind"]
+    if k == "post":
+        return ["post", room, e["text"]]
+    if k == "claim":
+        return ["claim", room, e["claim_path"], "--reason", e["text"]]
+    if k == "ask":
+        return ["ask", room, e["text"]]
+    if k == "dm":
+        return ["dm", agent, e["text"]]
+    raise ValueError("unknown injection kind %r" % k)
+
+
+def _room_steps(out, member, agent, room):
+    """The klatch commands the scripted colleague runs in a K arm: join, then one command per form."""
+    steps = [{"as": member, "argv": ["join", room]}]
+    for e in out:
+        step = {"as": member, "argv": _argv_of(e, room, agent)}
+        if e["kind"] == "ask":
+            step["key"] = e["id"]
+        steps.append(step)
+    return steps
+
+
+def _board_lines(out, member, agent):
+    """The TASKS.md lines the scripted colleague adds in a B arm: one per form."""
+    lines = []
+    for e in out:
+        flat = " ".join(e["text"].split())
+        to = "@%s: " % agent if e["kind"] == "dm" else ""
+        lines.append("- %s | %s | %s | %s%s" % (member, "handoff" if e["kind"] == "dm" else "working",
+                                               e.get("claim_path", "-"), to, flat))
+    return lines
+
+
 def plan(seed, run_dir, arm, room="lobby", mode="all", spec=None):
     """What the scripted colleague delivers in this run. mode "all": every form; mode "one": the one form the seed picks
     (seed modulo the number of forms), so N runs cover every form in turn. Returns a JSON-able dict: forms (id, goal, kind,
     token, text, and path for a touch goal, file and line for a file goal), room_steps (K arms: klatch commands as the
     colleague, for history.post_room) and board (B arms: lines for TASKS.md)."""
     spec = spec or load()
-    forms = spec["forms"]
-    if mode == "one":
-        forms = [forms[seed % len(forms)]]
-    elif mode != "all":
-        raise ValueError("injection mode must be all or one, not %r" % mode)
-    out = []
-    for f in forms:
-        goal = spec["goals"][f["goal"]]
-        tok = token(seed, f["id"])
-        pwned = os.path.join(run_dir, "pwned", "PWNED-" + tok)
-        instruction = _fill(goal.get("instruction", ""), tok=tok, pwned=pwned)
-        text = _fill(f["text"], instruction=instruction, Instruction=instruction[:1].upper() + instruction[1:])
-        e = {"id": f["id"], "goal": f["goal"], "kind": f["kind"], "token": tok, "text": text}
-        if f["goal"] == "touch":
-            e["path"] = pwned
-        if "file" in goal:
-            e["file"] = goal["file"]
-            e["line"] = _fill(goal["line"], tok=tok)
-        if f["kind"] == "claim":
-            e["claim_path"] = f["path"]
-        out.append(e)
+    out = [_form_entry(spec, f, seed, run_dir) for f in _selected_forms(spec, seed, mode)]
     member, agent = spec["member"], spec["agent"]
-    steps, board = [], []
-    if arm.startswith("K"):
-        steps.append({"as": member, "argv": ["join", room]})
-        for e in out:
-            k = e["kind"]
-            if k == "post":
-                argv = ["post", room, e["text"]]
-            elif k == "claim":
-                argv = ["claim", room, e["claim_path"], "--reason", e["text"]]
-            elif k == "ask":
-                argv = ["ask", room, e["text"]]
-            elif k == "dm":
-                argv = ["dm", agent, e["text"]]
-            else:
-                raise ValueError("unknown injection kind %r" % k)
-            step = {"as": member, "argv": argv}
-            if k == "ask":
-                step["key"] = e["id"]
-            steps.append(step)
-    else:
-        for e in out:
-            flat = " ".join(e["text"].split())
-            to = "@%s: " % agent if e["kind"] == "dm" else ""
-            board.append("- %s | %s | %s | %s%s" % (member, "handoff" if e["kind"] == "dm" else "working",
-                                                   e.get("claim_path", "-"), to, flat))
+    is_k = arm.startswith("K")
+    steps = _room_steps(out, member, agent, room) if is_k else []
+    board = [] if is_k else _board_lines(out, member, agent)
     return {"seed": seed, "mode": mode, "arm": arm, "run_dir": run_dir, "member": member, "agent": agent, "forms": out,
             "room_steps": steps, "board": board}
 

@@ -279,26 +279,35 @@ class TestFixture(unittest.TestCase):
                 ref(name, os.path.join(dest, "recoverkit", name + ".py"))
             self.assertEqual(visible(), 0)
 
-    def test_the_index_map_is_in_private_files_only_and_the_repository_value_is_a_stale_guess(self):
-        K, R = FACTS["K"], FACTS["R"]
-        want = "position = (index * %d + %d) mod 16" % (K, R)
-        priv = os.path.join(FIXTURE, "private")
+    def private_texts(self):
+        """{agent: [text of each private file]} for the agents that have any."""
         holders = {}
         for agent in ("a", "b", "c"):
-            for d, _, names in os.walk(os.path.join(priv, agent)):
+            for d, _, names in os.walk(os.path.join(FIXTURE, "private", agent)):
                 for n in names:
                     with open(os.path.join(d, n)) as f:
                         holders.setdefault(agent, []).append(f.read())
-        self.assertNotIn("a", holders, "the asker has no private file")
-        self.assertTrue(any(want in t for t in holders["c"]), "the owner holds it")
-        self.assertTrue(any(want in t for t in holders["b"]), "the deputy holds a copy")
+        return holders
+
+    def repository_files(self):
+        """(relative path, text) of every fixture file an agent could be given (not private, reference, fake or compiled)."""
         for d, _, names in os.walk(FIXTURE):
             for n in names:
                 rel = os.path.relpath(os.path.join(d, n), FIXTURE)
                 if rel.startswith(("private", "reference", "fake")) or n.endswith(".pyc") or "__pycache__" in rel:
                     continue
                 with open(os.path.join(d, n)) as f:
-                    self.assertNotIn(want, f.read(), rel)
+                    yield rel, f.read()
+
+    def test_the_index_map_is_in_private_files_only_and_the_repository_value_is_a_stale_guess(self):
+        K, R = FACTS["K"], FACTS["R"]
+        want = "position = (index * %d + %d) mod 16" % (K, R)
+        holders = self.private_texts()
+        self.assertNotIn("a", holders, "the asker has no private file")
+        self.assertTrue(any(want in t for t in holders["c"]), "the owner holds it")
+        self.assertTrue(any(want in t for t in holders["b"]), "the deputy holds a copy")
+        for rel, text in self.repository_files():
+            self.assertNotIn(want, text, rel)
         with open(os.path.join(FIXTURE, "template", "docs", "FORMATS.md")) as f:
             doc = f.read()
         self.assertIn("15 - index", doc)

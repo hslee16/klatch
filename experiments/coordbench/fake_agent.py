@@ -129,19 +129,23 @@ class Agent:
         if rc != 0 or not paths:
             return False
         for path in paths:
-            if how == "ours":
-                self.bash(["git", "checkout", "--ours", "--", path])
-            else:  # union: drop the markers, keep every line of both sides
-                with open(path) as f:
-                    lines = f.read().splitlines(keepends=True)
-                keep = [l for l in lines
-                        if not (l.startswith("<<<<<<< ") or l.rstrip("\n") == "=======" or l.startswith(">>>>>>> "))]
-                with open(path, "w") as f:
-                    f.write("".join(keep))
-                self.tool("Edit", {"file_path": path, "resolve": "union"}, "ok")
+            self.resolve_path(path, how)
         self.bash(["git", "add", "--"] + paths)
         self.bash(["git", "commit", "-q", "--no-edit"])
         return True
+
+    def resolve_path(self, path, how):
+        if how == "ours":
+            self.bash(["git", "checkout", "--ours", "--", path])
+            return
+        # union: drop the markers, keep every line of both sides
+        with open(path) as f:
+            lines = f.read().splitlines(keepends=True)
+        keep = [l for l in lines
+                if not (l.startswith("<<<<<<< ") or l.rstrip("\n") == "=======" or l.startswith(">>>>>>> "))]
+        with open(path, "w") as f:
+            f.write("".join(keep))
+        self.tool("Edit", {"file_path": path, "resolve": "union"}, "ok")
 
     def fill(self, text):
         text = text.replace("{{ROOM}}", self.args.room).replace("{{NAME}}", self.args.name)
@@ -155,12 +159,17 @@ class Agent:
 
     def obey(self, forms):
         for f in self.plan()["forms"]:
-            if f["goal"] == "none" or (forms != "all" and f["id"] not in forms):
+            if not self.wants_form(f, forms):
                 continue
             if f["goal"] == "touch":
                 self.bash(["touch", f["path"]])
             else:
                 self.step({"op": "append", "path": f["file"], "content": f["line"] + "\n"})
+
+    @staticmethod
+    def wants_form(f, forms):
+        """An injection form the agent obeys: one with a goal, and listed in forms (or all of them)."""
+        return f["goal"] != "none" and (forms == "all" or f["id"] in forms)
 
     def signal(self, name):
         with open(os.path.join(self.args.out, "sig-%s.%s" % (name, self.args.name)), "w") as f:
@@ -213,219 +222,274 @@ class Agent:
     def integrate(self, st):
         """The integrator: merge the listed branches into main one at a time, in this order."""
         for branch in st["branches"]:
-            deadline = time.time() + float(st.get("timeout", 40))
-            while True:
-                subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                rc, _ = self.run_cmd(["git", "rev-parse", "--verify", "-q", "origin/%s" % branch])
-                if rc == 0:
-                    break
-                if time.time() > deadline:
-                    self.die("branch %s never appeared" % branch)
-                time.sleep(0.1)
+            self.wait_for_branch(branch, float(st.get("timeout", 40)))
             self.announce("integrating: %s" % branch, branch)
             self.bash(["git", "checkout", "-q", "-B", "main", "origin/main"])
-            rc, _ = self.bash(["git", "merge", "--no-ff", "--no-edit", "origin/%s" % branch], True)
-            if rc != 0:
-                if st.get("resolve") == "union" and self.resolve_conflicts("union"):
-                    pass
-                else:
-                    self.bash(["git", "merge", "--abort"], True)
-                    self.announce("dropped: %s conflict" % branch, branch)
-                    continue
-            test = st.get("test")
-            if test and self.bash(list(test), True)[0] != 0:
-                self.bash(["git", "reset", "-q", "--hard", "origin/main"])
-                self.announce("dropped: %s checks-failed" % branch, branch)
-                continue
+            dropped = self.merge_and_push(branch, st)
+            if dropped:
+                self.announce("dropped: %s %s" % (branch, dropped), branch)
+            else:
+                self.announce("merged: %s" % branch, branch)
+
+    def wait_for_branch(self, branch, timeout):
+        deadline = time.time() + timeout
+        while True:
+            subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            rc, _ = self.run_cmd(["git", "rev-parse", "--verify", "-q", "origin/%s" % branch])
+            if rc == 0:
+                return
+            if time.time() > deadline:
+                self.die("branch %s never appeared" % branch)
+            time.sleep(0.1)
+
+    def merge_and_push(self, branch, st):
+        """Merge one branch into main and push it. None when merged; else why it was dropped (conflict, checks-failed, error)."""
+        rc, _ = self.bash(["git", "merge", "--no-ff", "--no-edit", "origin/%s" % branch], True)
+        if rc != 0:
+            if not (st.get("resolve") == "union" and self.resolve_conflicts("union")):
+                self.bash(["git", "merge", "--abort"], True)
+                return "conflict"
+        test = st.get("test")
+        if test and self.bash(list(test), True)[0] != 0:
+            self.bash(["git", "reset", "-q", "--hard", "origin/main"])
+            return "checks-failed"
+        rc, _ = self.bash(["git", "push", "origin", "HEAD:main"], True)
+        if rc != 0:
+            self.bash(["git", "reset", "-q", "--hard", "origin/main"])
+            return "error"
+        return None
+
+    def write_file(self, path, mode, text):
+        with open(path, mode) as f:
+            f.write(text)
+
+    def ensure_dir_of(self, path):
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+    def op_write(self, st, allow):
+        path = st["path"]
+        self.ensure_dir_of(path)
+        content = self.fill(st["content"])
+        self.write_file(path, "w", content)
+        self.tool("Write", {"file_path": path, "content": content}, "ok")
+
+    def op_copy_from(self, st, allow):
+        here = os.path.dirname(os.path.abspath(self.args.script))
+        src = st["from"] if os.path.isabs(st["from"]) else os.path.join(here, st["from"])
+        self.ensure_dir_of(st["path"])
+        with open(src, "rb") as f:
+            data = f.read()
+        for old, new in st.get("replace", []):
+            data = data.replace(old.encode(), new.encode())
+        with open(st["path"], "wb") as f:
+            f.write(data)
+        self.tool("Write", {"file_path": st["path"], "content": data.decode("utf-8", "replace")}, "ok")
+
+    def op_append(self, st, allow):
+        self.ensure_dir_of(st["path"])
+        self.write_file(st["path"], "a", st["content"])
+        self.tool("Edit", {"file_path": st["path"], "append": st["content"]}, "ok")
+
+    def op_replace(self, st, allow):
+        with open(st["path"]) as f:
+            text = f.read()
+        if text.count(st["old"]) != 1:
+            self.die("replace: the text to replace occurs %d times in %s" % (text.count(st["old"]), st["path"]))
+        self.write_file(st["path"], "w", text.replace(st["old"], st["new"]))
+        self.tool("Edit", {"file_path": st["path"], "old_string": st["old"], "new_string": st["new"]}, "ok")
+
+    def op_git(self, st, allow):
+        self.bash(["git"] + st["args"], allow)
+
+    def op_integrate(self, st, allow):
+        self.integrate(st)
+
+    def op_restart(self, st, allow):
+        self.bash([sys.executable, os.path.join(HERE, "restart_member.py"), st["member"]], allow)
+
+    def op_sync(self, st, allow):
+        if self.role_arm() and not st.get("direct"):
+            self.role_sync(st, allow)
+        else:
+            self.plain_sync(st, allow)
+
+    def plain_sync(self, st, allow):
+        self.bash(["git", "add", "-A"], allow)
+        self.bash(["git", "commit", "-q", "-m", st.get("message", "work")], True)
+        resolve = st.get("resolve")
+        for _ in range(int(st.get("retries", 8))):
+            rc, _ = self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], allow or bool(resolve))
+            if rc != 0 and not self.settle_failed_pull(resolve):
+                return
             rc, _ = self.bash(["git", "push", "origin", "HEAD:main"], True)
-            if rc != 0:
-                self.bash(["git", "reset", "-q", "--hard", "origin/main"])
-                self.announce("dropped: %s error" % branch, branch)
-                continue
-            self.announce("merged: %s" % branch, branch)
+            if rc == 0:
+                return
+            time.sleep(0.2)
+        if not allow:
+            self.die("push kept losing the race")
+
+    def settle_failed_pull(self, resolve):
+        """After a failed pull in sync: False to stop (no resolve asked), True to go on once the conflict is resolved."""
+        if not resolve:
+            return False
+        if not self.resolve_conflicts(resolve):
+            self.die("pull failed and there is no conflict to resolve")
+        return True
+
+    def op_klatch(self, st, allow):
+        if not self.args.klatch_bin:
+            self.die("the script runs klatch but --klatch-bin was not given")
+        _, out = self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
+        if st.get("capture"):  # the number of the ask this command made ("asked #N")
+            m = re.search(r"asked #(\d+)", out)
+            self.vars[st["capture"]] = m.group(1) if m else ""
+
+    def op_set_var_from_file(self, st, allow):
+        with open(st["path"]) as f:
+            self.vars[st["key"]] = f.read().strip()
+
+    def op_send(self, st, allow):
+        self.tool("SendMessage", {"to": st["to"], "message": st["text"]}, "sent")
+
+    def op_dump_specs(self, st, allow):
+        _, tracked = self.run_cmd(["git", "ls-files", "SPEC-*"])
+        _, status = self.run_cmd(["git", "status", "--porcelain"])
+        facts = {"files": sorted(n for n in os.listdir(".") if n.startswith("SPEC-")),
+                 "tracked": tracked.split(), "status": status.splitlines()}
+        with open(os.path.join(self.args.out, st["path"]), "w") as f:
+            json.dump(facts, f)
+
+    def op_dump_board(self, st, allow):
+        with open("TASKS.md") as src, open(os.path.join(self.args.out, st["path"]), "w") as f:
+            f.write(src.read())
+
+    def op_read(self, st, allow):
+        with open(st["path"]) as f:
+            self.tool("Read", {"file_path": st["path"]}, f.read())
+
+    def op_run(self, st, allow):
+        self.bash([self.fill(a) for a in st["argv"]], allow)
+
+    def op_hook(self, st, allow):
+        emit({"type": "system", "subtype": "hook_response", "hook_event": "SessionStart", "output": self.fill(st["text"])})
+
+    def op_say(self, st, allow):
+        self.assistant({"type": "text", "text": st["text"]})
+
+    def op_cost(self, st, allow):
+        self.cost = float(st["usd"])
+        emit({"type": "system", "subtype": "fake_cost", "usd": self.cost})
+
+    def op_sleep(self, st, allow):
+        time.sleep(float(st["s"]))
+
+    def op_hang(self, st, allow):
+        time.sleep(3600)
+
+    def op_exit(self, st, allow):
+        sys.exit(int(st.get("code", 1)))
+
+    def op_poll(self, st, allow):
+        for _ in range(int(st.get("n", 1))):
+            self.tool("Bash", {"command": st.get("command", "sleep 5")}, "")
+
+    def op_wait_origin_has(self, st, allow):
+        deadline = time.time() + float(st.get("timeout", 30))
+        while time.time() < deadline:
+            subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            rc, out = self.run_cmd(["git", "show", "origin/main:%s" % st["path"]])
+            if rc == 0 and st.get("contains", "") in out:
+                self.tool("Bash", {"command": "git fetch origin"}, "found %s" % st["path"])
+                return
+            time.sleep(0.1)
+        self.die("origin never had %s" % st["path"])
+
+    def op_wait_file(self, st, allow):
+        deadline = time.time() + float(st.get("timeout", 30))
+        target = os.path.join(self.args.out, st["path"])
+        while time.time() < deadline:
+            if os.path.exists(target):
+                self.tool("Bash", {"command": "ls"}, "found %s" % st["path"])
+                return
+            time.sleep(0.05)
+        self.die("%s never appeared" % st["path"])
+
+    def isolation_facts(self):
+        keys = ("HOME", "KLATCH_HOME", "KLATCH_KEY_DIR", "KLATCH_NAME")
+        facts = {k: os.environ.get(k) for k in keys}
+        facts["modes"] = {k: stat.S_IMODE(os.stat(os.environ[k]).st_mode) for k in ("KLATCH_HOME", "KLATCH_KEY_DIR")
+                          if os.environ.get(k) and os.path.exists(os.environ[k])}
+        facts["cwd"] = os.getcwd()
+        facts["identity"] = {k: os.environ.get(k) for k in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "TMPDIR")}
+        facts["out_inside_cwd"] = os.path.realpath(self.args.out).startswith(os.path.realpath(os.getcwd()) + os.sep)
+        tree = []
+        for d, dirs, names in os.walk("."):
+            dirs[:] = [x for x in dirs if x != ".git"]
+            tree += [os.path.relpath(os.path.join(d, n)) for n in names]
+        facts["tree_files"] = sorted(tree)
+        facts["has_anthropic_key"] = "ANTHROPIC_API_KEY" in os.environ
+        facts["settings_local_exists"] = os.path.exists(os.path.join(".claude", "settings.local.json"))
+        return facts
+
+    def op_dump_env(self, st, allow):
+        with open(os.path.join(self.args.out, st["path"]), "w") as f:
+            json.dump(self.isolation_facts(), f)
+
+    def op_read_into(self, st, allow):
+        with open(st["path"]) as f:
+            text = f.read()
+        self.vars[st["key"]] = text
+        self.tool("Read", {"file_path": st["path"]}, text)
+
+    def op_write_from_var(self, st, allow):
+        text = self.vars[st["key"]]
+        for old, new in st.get("replace", []):
+            if text.count(old) != 1:
+                self.die("write_from_var: the text to replace occurs %d times in the kept copy" % text.count(old))
+            text = text.replace(old, new)
+        text += st.get("append", "")
+        self.write_file(st["path"], "w", text)
+        self.tool("Write", {"file_path": st["path"], "content": text}, "ok")
+
+    def op_signal(self, st, allow):
+        self.signal(st["name"])
+
+    def op_wait_signal(self, st, allow):
+        self.wait_signal(st["name"], int(st.get("parties", 1)), float(st.get("timeout", 30)))
+
+    def op_barrier(self, st, allow):
+        self.signal(st["name"])
+        self.wait_signal(st["name"], int(st["parties"]), float(st.get("timeout", 30)))
+
+    def op_obey(self, st, allow):
+        self.obey(st.get("forms", "all"))
+
+    def op_final(self, st, allow):
+        text = st["text"]
+        if "{{TOKEN:" in text:
+            for f in self.plan()["forms"]:
+                text = text.replace("{{TOKEN:%s}}" % f["id"], f["token"])
+        self.final = text
 
     def step(self, st):
         op = st["op"]
-        allow = bool(st.get("allow_fail"))
-        if op == "write":
-            path = st["path"]
-            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-            content = self.fill(st["content"])
-            with open(path, "w") as f:
-                f.write(content)
-            self.tool("Write", {"file_path": path, "content": content}, "ok")
-        elif op == "copy_from":
-            here = os.path.dirname(os.path.abspath(self.args.script))
-            src = st["from"] if os.path.isabs(st["from"]) else os.path.join(here, st["from"])
-            os.makedirs(os.path.dirname(os.path.abspath(st["path"])), exist_ok=True)
-            with open(src, "rb") as f:
-                data = f.read()
-            for old, new in st.get("replace", []):
-                data = data.replace(old.encode(), new.encode())
-            with open(st["path"], "wb") as f:
-                f.write(data)
-            self.tool("Write", {"file_path": st["path"], "content": data.decode("utf-8", "replace")}, "ok")
-        elif op == "append":
-            os.makedirs(os.path.dirname(os.path.abspath(st["path"])), exist_ok=True)
-            with open(st["path"], "a") as f:
-                f.write(st["content"])
-            self.tool("Edit", {"file_path": st["path"], "append": st["content"]}, "ok")
-        elif op == "replace":
-            with open(st["path"]) as f:
-                text = f.read()
-            if text.count(st["old"]) != 1:
-                self.die("replace: the text to replace occurs %d times in %s" % (text.count(st["old"]), st["path"]))
-            with open(st["path"], "w") as f:
-                f.write(text.replace(st["old"], st["new"]))
-            self.tool("Edit", {"file_path": st["path"], "old_string": st["old"], "new_string": st["new"]}, "ok")
-        elif op == "git":
-            self.bash(["git"] + st["args"], allow)
-        elif op == "sync" and self.role_arm() and not st.get("direct"):
-            self.role_sync(st, allow)
-        elif op == "integrate":
-            self.integrate(st)
-        elif op == "restart":
-            self.bash([sys.executable, os.path.join(HERE, "restart_member.py"), st["member"]], allow)
-        elif op == "sync":
-            msg = st.get("message", "work")
-            self.bash(["git", "add", "-A"], allow)
-            self.bash(["git", "commit", "-q", "-m", msg], True)
-            resolve = st.get("resolve")
-            for _ in range(int(st.get("retries", 8))):
-                rc, _ = self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], allow or bool(resolve))
-                if rc != 0:
-                    if not resolve:
-                        return
-                    if not self.resolve_conflicts(resolve):
-                        self.die("pull failed and there is no conflict to resolve")
-                rc, _ = self.bash(["git", "push", "origin", "HEAD:main"], True)
-                if rc == 0:
-                    return
-                time.sleep(0.2)
-            if not allow:
-                self.die("push kept losing the race")
-        elif op == "klatch":
-            if not self.args.klatch_bin:
-                self.die("the script runs klatch but --klatch-bin was not given")
-            _, out = self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
-            if st.get("capture"):  # the number of the ask this command made ("asked #N")
-                m = re.search(r"asked #(\d+)", out)
-                self.vars[st["capture"]] = m.group(1) if m else ""
-        elif op == "set_var_from_file":
-            with open(st["path"]) as f:
-                self.vars[st["key"]] = f.read().strip()
-        elif op == "send":
-            self.tool("SendMessage", {"to": st["to"], "message": st["text"]}, "sent")
-        elif op == "dump_specs":
-            _, tracked = self.run_cmd(["git", "ls-files", "SPEC-*"])
-            _, status = self.run_cmd(["git", "status", "--porcelain"])
-            facts = {"files": sorted(n for n in os.listdir(".") if n.startswith("SPEC-")),
-                     "tracked": tracked.split(), "status": status.splitlines()}
-            with open(os.path.join(self.args.out, st["path"]), "w") as f:
-                json.dump(facts, f)
-        elif op == "dump_board":
-            with open("TASKS.md") as src, open(os.path.join(self.args.out, st["path"]), "w") as f:
-                f.write(src.read())
-        elif op == "read":
-            with open(st["path"]) as f:
-                self.tool("Read", {"file_path": st["path"]}, f.read())
-        elif op == "run":
-            self.bash([self.fill(a) for a in st["argv"]], allow)
-        elif op == "hook":
-            emit({"type": "system", "subtype": "hook_response", "hook_event": "SessionStart", "output": self.fill(st["text"])})
-        elif op == "say":
-            self.assistant({"type": "text", "text": st["text"]})
-        elif op == "cost":
-            self.cost = float(st["usd"])
-            emit({"type": "system", "subtype": "fake_cost", "usd": self.cost})
-        elif op == "sleep":
-            time.sleep(float(st["s"]))
-        elif op == "hang":
-            time.sleep(3600)
-        elif op == "exit":
-            sys.exit(int(st.get("code", 1)))
-        elif op == "poll":
-            for _ in range(int(st.get("n", 1))):
-                self.tool("Bash", {"command": st.get("command", "sleep 5")}, "")
-        elif op == "wait_origin_has":
-            deadline = time.time() + float(st.get("timeout", 30))
-            while time.time() < deadline:
-                subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                rc, out = self.run_cmd(["git", "show", "origin/main:%s" % st["path"]])
-                if rc == 0 and st.get("contains", "") in out:
-                    self.tool("Bash", {"command": "git fetch origin"}, "found %s" % st["path"])
-                    return
-                time.sleep(0.1)
-            self.die("origin never had %s" % st["path"])
-        elif op == "wait_file":
-            deadline = time.time() + float(st.get("timeout", 30))
-            target = os.path.join(self.args.out, st["path"])
-            while time.time() < deadline:
-                if os.path.exists(target):
-                    self.tool("Bash", {"command": "ls"}, "found %s" % st["path"])
-                    return
-                time.sleep(0.05)
-            self.die("%s never appeared" % st["path"])
-        elif op == "send":
-            self.tool("SendMessage", {"to": st["to"], "message": self.fill(st["text"])}, "sent")
-        elif op == "dump_env":
-            keys = ("HOME", "KLATCH_HOME", "KLATCH_KEY_DIR", "KLATCH_NAME")
-            facts = {k: os.environ.get(k) for k in keys}
-            facts["modes"] = {k: stat.S_IMODE(os.stat(os.environ[k]).st_mode) for k in ("KLATCH_HOME", "KLATCH_KEY_DIR")
-                              if os.environ.get(k) and os.path.exists(os.environ[k])}
-            facts["cwd"] = os.getcwd()
-            facts["identity"] = {k: os.environ.get(k) for k in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "TMPDIR")}
-            facts["out_inside_cwd"] = os.path.realpath(self.args.out).startswith(os.path.realpath(os.getcwd()) + os.sep)
-            tree = []
-            for d, dirs, names in os.walk("."):
-                dirs[:] = [x for x in dirs if x != ".git"]
-                tree += [os.path.relpath(os.path.join(d, n)) for n in names]
-            facts["tree_files"] = sorted(tree)
-            facts["has_anthropic_key"] = "ANTHROPIC_API_KEY" in os.environ
-            facts["settings_local_exists"] = os.path.exists(os.path.join(".claude", "settings.local.json"))
-            with open(os.path.join(self.args.out, st["path"]), "w") as f:
-                json.dump(facts, f)
-        elif op == "read_into":
-            with open(st["path"]) as f:
-                text = f.read()
-            self.vars[st["key"]] = text
-            self.tool("Read", {"file_path": st["path"]}, text)
-        elif op == "write_from_var":
-            text = self.vars[st["key"]]
-            for old, new in st.get("replace", []):
-                if text.count(old) != 1:
-                    self.die("write_from_var: the text to replace occurs %d times in the kept copy" % text.count(old))
-                text = text.replace(old, new)
-            text += st.get("append", "")
-            with open(st["path"], "w") as f:
-                f.write(text)
-            self.tool("Write", {"file_path": st["path"], "content": text}, "ok")
-        elif op == "signal":
-            self.signal(st["name"])
-        elif op == "wait_signal":
-            self.wait_signal(st["name"], int(st.get("parties", 1)), float(st.get("timeout", 30)))
-        elif op == "barrier":
-            self.signal(st["name"])
-            self.wait_signal(st["name"], int(st["parties"]), float(st.get("timeout", 30)))
-        elif op == "obey":
-            self.obey(st.get("forms", "all"))
-        elif op == "final":
-            text = st["text"]
-            if "{{TOKEN:" in text:
-                for f in self.plan()["forms"]:
-                    text = text.replace("{{TOKEN:%s}}" % f["id"], f["token"])
-            self.final = text
-        else:
+        handler = getattr(self, "op_" + op, None) if isinstance(op, str) and re.fullmatch(r"\w+", op) else None
+        if handler is None:
             self.die("unknown op %s" % op)
+        handler(st, bool(st.get("allow_fail")))
+
+    def in_arm(self, st):
+        """A step with no "arms" runs everywhere; else in a listed arm, or in a role arm whose base arm is listed."""
+        arms = st.get("arms")
+        return not arms or self.args.arm in arms or ROLE_ARMS.get(self.args.arm) in arms
 
     def run(self, script):
         key = self.args.name if self.args.session == 1 else "%s#%d" % (self.args.name, self.args.session)
         steps = script.get("agents", {}).get(key, script.get("default", []))
         emit({"type": "system", "subtype": "init", "model": "claude-fake", "session_id": "fake-" + self.args.name})
         for st in steps:
-            if st.get("arms") and self.args.arm not in st["arms"] and ROLE_ARMS.get(self.args.arm) not in st["arms"]:
-                continue
-            self.step(st)
+            if self.in_arm(st):
+                self.step(st)
         self.assistant({"type": "text", "text": self.final})
         emit({"type": "result", "subtype": "success", "is_error": False, "num_turns": self.turn,
               "total_cost_usd": self.cost, "duration_ms": 0, "result": self.final,

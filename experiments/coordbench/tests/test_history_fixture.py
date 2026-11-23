@@ -129,17 +129,22 @@ class TestPrebuiltRepository(Tmp):
                 self.assertNotIn(n, ("facts.json", "check.py", "check.sh", "gen_facts.py"))
         self.assertFalse(os.path.exists(os.path.join(co, "reference")))
 
+    def head_files(self, co, arm):
+        """(name, path) of the files of a checkout (not .git); in B1 not the board and decision files, which are where the
+        record is meant to be."""
+        for d, dirs, names in os.walk(co):
+            dirs[:] = [x for x in dirs if x != ".git"]
+            for n in names:
+                if not (arm == "B1" and n in ("TASKS.md", "DECISIONS.md")):
+                    yield n, os.path.join(d, n)
+
     def test_no_seeded_value_is_in_any_file_of_the_head_or_in_its_code(self):
         for arm in ("B0", "B1"):
             co = build(self.tmp, arm, "v-" + arm)
-            for d, dirs, names in os.walk(co):
-                dirs[:] = [x for x in dirs if x != ".git"]
-                for n in names:
-                    if arm == "B1" and n in ("TASKS.md", "DECISIONS.md"):
-                        continue  # the arm's medium is where the record is meant to be
-                    text = read(os.path.join(d, n))
-                    for v in CURRENT + STALE:
-                        self.assertFalse(has(text, v), "%s holds %s in arm %s" % (n, v, arm))
+            for n, path in self.head_files(co, arm):
+                text = read(path)
+                for v in CURRENT + STALE:
+                    self.assertFalse(has(text, v), "%s holds %s in arm %s" % (n, v, arm))
 
     def test_every_arm_can_recover_every_fact_from_the_git_log_alone(self):
         for arm in ("B0", "B1", "K1"):

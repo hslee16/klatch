@@ -73,37 +73,49 @@ def _git(repo, *args):
     return p.stdout.strip()
 
 
+def _corpus_entry(corpus, repo):
+    top = _git(repo, "rev-parse", "--show-toplevel")
+    inside = os.path.abspath(corpus).startswith(os.path.realpath(top))
+    return {"path": os.path.relpath(os.path.abspath(corpus), top) if inside else os.path.basename(corpus),
+            "sha256": sha256_file(corpus), "items": 0}
+
+
+def _base_record(bench, judge, corpus, repo, now):
+    return {"schema": 1, "kind": "judge-measurement", "scenario": "S10 part 2", "judge": judge,
+            "date": now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "klatch_commit": _git(repo, "rev-parse", "HEAD"),
+            "klatch_tree_dirty": bool(_git(repo, "status", "--porcelain", "--untracked-files=no")),
+            "bench_binary_sha256": sha256_file(bench), "model_calls": 0, "cost_usd": 0.0,
+            "corpus": _corpus_entry(corpus, repo), "splits": {}}
+
+
+def _run_split(bench, judge, split, corpus, scrub):
+    """(the split's summary, the judge-eval argv with <out> in place of the temporary output file)."""
+    with tempfile.TemporaryDirectory(prefix="judge-measure-") as d:
+        out = os.path.join(d, "out.json")
+        argv = [bench, "judge-eval", "--judge", judge, "--split", split, "--corpus", corpus, "--out", out]
+        if scrub:
+            argv += ["--scrub", scrub]
+        p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if p.returncode != 0 or not os.path.exists(out):
+            raise MeasureError("judge-eval failed on %s (exit %d): %s" % (split, p.returncode, p.stdout.strip()[-300:]))
+        with open(out) as f:
+            summary = summarise(json.load(f))
+        return summary, "klatch-bench " + " ".join(argv[1:]).replace(out, "<out>")
+
+
 def measure(bench, judge, corpus, scrub=None, splits=("dev", "test"), repo=None, now=None):
     """Run the free judge on each split and return the record (see the module docstring)."""
     if judge not in FREE_JUDGES:
         raise MeasureError("%r calls a model: this script only measures the free judges %s" % (judge, ", ".join(FREE_JUDGES)))
-    repo = repo or HERE
-    record = {"schema": 1, "kind": "judge-measurement", "scenario": "S10 part 2", "judge": judge,
-              "date": now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "klatch_commit": _git(repo, "rev-parse", "HEAD"),
-              "klatch_tree_dirty": bool(_git(repo, "status", "--porcelain", "--untracked-files=no")),
-              "bench_binary_sha256": sha256_file(bench), "model_calls": 0, "cost_usd": 0.0,
-              "corpus": {"path": os.path.relpath(os.path.abspath(corpus), _git(repo, "rev-parse", "--show-toplevel"))
-                         if os.path.abspath(corpus).startswith(os.path.realpath(_git(repo, "rev-parse", "--show-toplevel")))
-                         else os.path.basename(corpus),
-                         "sha256": sha256_file(corpus), "items": 0},
-              "splits": {}}
+    record = _base_record(bench, judge, corpus, repo or HERE, now)
     with open(corpus) as f:
         record["corpus"]["items"] = sum(1 for l in f if l.strip())
     if scrub:
         record["scrub_sha256"] = sha256_file(scrub)
     for split in splits:
-        with tempfile.TemporaryDirectory(prefix="judge-measure-") as d:
-            out = os.path.join(d, "out.json")
-            argv = [bench, "judge-eval", "--judge", judge, "--split", split, "--corpus", corpus, "--out", out]
-            if scrub:
-                argv += ["--scrub", scrub]
-            p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            if p.returncode != 0 or not os.path.exists(out):
-                raise MeasureError("judge-eval failed on %s (exit %d): %s" % (split, p.returncode, p.stdout.strip()[-300:]))
-            with open(out) as f:
-                record["splits"][split] = summarise(json.load(f))
-        record.setdefault("command", "klatch-bench " + " ".join(argv[1:]).replace(out, "<out>"))
+        record["splits"][split], command = _run_split(bench, judge, split, corpus, scrub)
+        record.setdefault("command", command)
     return record
 
 
