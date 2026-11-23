@@ -63,17 +63,25 @@ fn a_cleaned_path_is_absolute_has_no_dot_segments_and_cleaning_again_changes_not
     );
 }
 
+fn scope_drawn(tc: &TestCase) -> &'static str {
+    SCOPES[tc.draw(gs::integers::<u8>().max_value(SCOPES.len() as u8 - 1)) as usize]
+}
+
+/// Two scopes that are different and neither is the shared one.
+fn distinct_unshared(a: &str, b: &str) -> bool {
+    a != b && a != SHARED_SCOPE && b != SHARED_SCOPE
+}
+
 #[hegel::test]
 fn scopes_collide_is_symmetric_reflexive_and_the_shared_scope_collides_with_everything(
     tc: TestCase,
 ) {
-    let pick = |i: u8| SCOPES[i as usize];
-    let a = pick(tc.draw(gs::integers::<u8>().max_value(SCOPES.len() as u8 - 1)));
-    let b = pick(tc.draw(gs::integers::<u8>().max_value(SCOPES.len() as u8 - 1)));
+    let a = scope_drawn(&tc);
+    let b = scope_drawn(&tc);
     assert_eq!(scopes_collide(a, b), scopes_collide(b, a), "{a:?} {b:?}");
     assert!(scopes_collide(a, a), "{a:?} does not collide with itself");
     assert!(scopes_collide(SHARED_SCOPE, b) && scopes_collide(a, SHARED_SCOPE));
-    if a != SHARED_SCOPE && b != SHARED_SCOPE && a != b {
+    if distinct_unshared(a, b) {
         assert!(
             !scopes_collide(a, b),
             "different scopes {a:?} {b:?} collide"
@@ -139,50 +147,32 @@ fn nasty_text(tc: &TestCase) -> String {
     s.repeat(1 + tc.draw(gs::integers::<u16>().max_value(24)) as usize)
 }
 
-fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
-    use klatch::domain::{Attribution, Claim, Message, OpenAsk, ReleasedClaim, RoomDigest};
-    let count = |max: u8| tc.draw(gs::integers::<u8>().max_value(max)) as usize;
-    let mut d = RoomDigest {
-        room: room.into(),
-        ..RoomDigest::default()
+fn message_for(tc: &TestCase, seq: i64) -> klatch::domain::Message {
+    use klatch::domain::{Attribution, Message};
+    let sender = ["alice", "bob"][tc.draw(gs::integers::<u8>().max_value(1)) as usize];
+    let attribution = if tc.draw(gs::booleans()) {
+        Attribution::Verified
+    } else {
+        Attribution::Unattributed
     };
-    for seq in 1..=count(14) as i64 {
-        d.messages.push(Message {
-            id: format!("m{seq}"),
-            seq,
-            sender: ["alice", "bob"][count(1)].into(),
-            attribution: if tc.draw(gs::booleans()) {
-                Attribution::Verified
-            } else {
-                Attribution::Unattributed
-            },
-            label: "public".into(),
-            body: nasty_text(tc),
-            ts: 1_000,
-            kind: tc.draw(gs::booleans()).then(|| "note".to_string()),
-            payload: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
-            advisory: false,
-            scope: None,
-            refs: Vec::new(),
-        });
+    Message {
+        id: format!("m{seq}"),
+        seq,
+        sender: sender.into(),
+        attribution,
+        label: "public".into(),
+        body: nasty_text(tc),
+        ts: 1_000,
+        kind: tc.draw(gs::booleans()).then(|| "note".to_string()),
+        payload: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
+        advisory: false,
+        scope: None,
+        refs: Vec::new(),
     }
-    for _ in 0..count(12) {
-        d.claims.push(Claim {
-            path: nasty_text(tc),
-            owner: "bob".into(),
-            reason: nasty_text(tc),
-            expires: 2_000,
-            scope: String::new(),
-        });
-    }
-    for _ in 0..count(6) {
-        d.released.push(ReleasedClaim {
-            owner: "bob".into(),
-            path: nasty_text(tc),
-            note: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
-        });
-    }
-    let ask = |seq: i64, text: String| OpenAsk {
+}
+
+fn open_ask(seq: i64, text: String) -> klatch::domain::OpenAsk {
+    klatch::domain::OpenAsk {
         seq,
         sender: "bob".into(),
         text,
@@ -194,12 +184,47 @@ fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
         moved: None,
         scope: None,
         refs: Vec::new(),
+    }
+}
+
+fn claim_for(tc: &TestCase) -> klatch::domain::Claim {
+    klatch::domain::Claim {
+        path: nasty_text(tc),
+        owner: "bob".into(),
+        reason: nasty_text(tc),
+        expires: 2_000,
+        scope: String::new(),
+    }
+}
+
+fn released_for(tc: &TestCase) -> klatch::domain::ReleasedClaim {
+    klatch::domain::ReleasedClaim {
+        owner: "bob".into(),
+        path: nasty_text(tc),
+        note: tc.draw(gs::booleans()).then(|| nasty_text(tc)),
+    }
+}
+
+fn digest_for(tc: &TestCase, room: &str) -> klatch::domain::RoomDigest {
+    let count = |max: u8| tc.draw(gs::integers::<u8>().max_value(max)) as usize;
+    let mut d = klatch::domain::RoomDigest {
+        room: room.into(),
+        ..klatch::domain::RoomDigest::default()
     };
-    for seq in 1..=count(8) as i64 {
-        d.stale.push(ask(seq, nasty_text(tc)));
+    for seq in 1..=count(14) as i64 {
+        d.messages.push(message_for(tc, seq));
+    }
+    for _ in 0..count(12) {
+        d.claims.push(claim_for(tc));
+    }
+    for _ in 0..count(6) {
+        d.released.push(released_for(tc));
     }
     for seq in 1..=count(8) as i64 {
-        d.backlog.push(ask(100 + seq, nasty_text(tc)));
+        d.stale.push(open_ask(seq, nasty_text(tc)));
+    }
+    for seq in 1..=count(8) as i64 {
+        d.backlog.push(open_ask(100 + seq, nasty_text(tc)));
     }
     for _ in 0..count(4) {
         d.aged.push(klatch::domain::AgedClaim {
@@ -283,73 +308,55 @@ fn scratch_file(tag: &str) -> test_dir::TempDb {
     test_dir::temp_db(&format!("prop-{tag}"))
 }
 
-/// Archiving moves old messages out and leaves tombstones; restoring puts them back. For any messages (unicode
-/// bodies, handoffs, either attribution), any two cutoffs and either restore order: `seq` stays 1..n with no gap
-/// after every step, a tombstone is never delivered as mail to anyone, a second archive moves nothing, and after the
-/// restores the room is exactly what it was.
-#[hegel::test]
-fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_never_mail(
-    tc: TestCase,
-) {
-    use klatch::domain::{Attribution, Message};
+/// The messages the archive property posts: `n` of them from three members, with random bodies, attributions and
+/// handoffs, `ts` rising from 10. Returns the last timestamp used.
+fn post_random_messages(
+    tc: &TestCase,
+    s: &klatch::store::SqliteStore,
+    members: &[&str],
+    n: i64,
+) -> i64 {
+    use klatch::domain::Attribution;
+    use klatch::store::NewMessage;
     use klatch::store::areas::*;
-    use klatch::store::{NewMessage, Seat, SqliteStore, insecure_test_key};
-    let s = SqliteStore::open_in_memory().unwrap();
-    let members = ["alice", "bob", "carol"];
-    for m in members {
-        s.join("r", m, 1).unwrap();
-    }
-    let n = tc.draw(gs::integers::<u8>().max_value(14)) as i64;
     let mut ts = 10;
     for _ in 0..n {
         let who = members[tc.draw(gs::integers::<u8>().max_value(2)) as usize];
         ts += tc.draw(gs::integers::<i64>().min_value(0).max_value(3));
-        let body = nasty_text(&tc);
-        let payload = nasty_text(&tc);
-        let mut m = NewMessage::new(
-            ("r", who),
-            if tc.draw(gs::booleans()) {
-                Attribution::Verified
-            } else {
-                Attribution::Unattributed
-            },
-            "public",
-            &body,
-        );
+        let body = nasty_text(tc);
+        let payload = nasty_text(tc);
+        let attribution = if tc.draw(gs::booleans()) {
+            Attribution::Verified
+        } else {
+            Attribution::Unattributed
+        };
+        let mut m = NewMessage::new(("r", who), attribution, "public", &body);
         if tc.draw(gs::booleans()) {
             m = m.with_handoff("note", &payload);
         }
         s.post_as(&m, ts).unwrap();
     }
-    let cutoff = |tc: &TestCase| tc.draw(gs::integers::<i64>().min_value(0).max_value(ts + 2));
-    let key = insecure_test_key();
-    let original = s.tail("r", 0, 1_000).unwrap();
-    let dense = |log: &[Message]| {
-        assert_eq!(
-            log.iter().map(|m| m.seq).collect::<Vec<_>>(),
-            (1..=n).collect::<Vec<_>>(),
-            "seq has a gap"
-        )
-    };
-    let (first, second) = (cutoff(&tc), cutoff(&tc));
-    let (file_a, file_b) = (scratch_file("a"), scratch_file("b"));
-    let moved_a = s.archive_before("r", first, &file_a, &key).unwrap();
-    let moved_b = s.archive_before("r", second, &file_b, &key).unwrap();
-    let archived = s.tail("r", 0, 1_000).unwrap();
-    dense(&archived);
-    let due = |c: i64| original.iter().filter(|m| m.ts < c).count();
+    ts
+}
+
+/// `seq` runs 1..=n with no gap.
+fn assert_dense(log: &[klatch::domain::Message], n: i64) {
     assert_eq!(
-        moved_a,
-        due(first),
-        "the first archive moved the wrong number"
+        log.iter().map(|m| m.seq).collect::<Vec<_>>(),
+        (1..=n).collect::<Vec<_>>(),
+        "seq has a gap"
     );
-    assert_eq!(
-        moved_a + moved_b,
-        due(first.max(second)),
-        "a tombstone was archived again or a message was missed"
-    );
-    for (before, after) in original.iter().zip(&archived) {
-        let gone = before.ts < first.max(second);
+}
+
+/// After archiving up to `cutoff`: exactly the messages before it are tombstones, ids, seqs, senders and times are
+/// unchanged, and a live message is untouched.
+fn assert_tombstoned_exactly_before(
+    original: &[klatch::domain::Message],
+    archived: &[klatch::domain::Message],
+    cutoff: i64,
+) {
+    for (before, after) in original.iter().zip(archived) {
+        let gone = before.ts < cutoff;
         assert_eq!(
             after.kind.as_deref() == Some("archived"),
             gone,
@@ -364,28 +371,71 @@ fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_n
             assert_eq!(after, before, "a live message changed");
         }
     }
-    for (i, m) in members.iter().enumerate() {
+}
+
+/// No member is handed a tombstone as mail.
+fn assert_no_tombstone_mail(tc: &TestCase, s: &klatch::store::SqliteStore, members: &[&str]) {
+    use klatch::store::Seat;
+    use klatch::store::areas::*;
+    for m in members {
         let mail = s
             .read(Seat::new("r", m), tc.draw(gs::booleans()), 5_000)
             .unwrap();
         assert!(
             mail.iter()
                 .all(|x| x.kind.as_deref() != Some("archived") && !x.body.starts_with("[archived")),
-            "{} was handed a tombstone as mail",
-            members[i]
+            "{m} was handed a tombstone as mail"
         );
     }
-    let restore_b_first = tc.draw(gs::booleans());
-    let order = if restore_b_first {
-        [(&file_b, moved_b), (&file_a, moved_a)]
+}
+
+/// Archiving moves old messages out and leaves tombstones; restoring puts them back. For any messages (unicode
+/// bodies, handoffs, either attribution), any two cutoffs and either restore order: `seq` stays 1..n with no gap
+/// after every step, a tombstone is never delivered as mail to anyone, a second archive moves nothing, and after the
+/// restores the room is exactly what it was.
+#[hegel::test]
+fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_never_mail(
+    tc: TestCase,
+) {
+    use klatch::store::areas::*;
+    use klatch::store::{SqliteStore, insecure_test_key};
+    let s = SqliteStore::open_in_memory().unwrap();
+    let members = ["alice", "bob", "carol"];
+    for m in members {
+        s.join("r", m, 1).unwrap();
+    }
+    let n = tc.draw(gs::integers::<u8>().max_value(14)) as i64;
+    let ts = post_random_messages(&tc, &s, &members, n);
+    let cutoff = |tc: &TestCase| tc.draw(gs::integers::<i64>().min_value(0).max_value(ts + 2));
+    let key = insecure_test_key();
+    let original = s.tail("r", 0, 1_000).unwrap();
+    let (first, second) = (cutoff(&tc), cutoff(&tc));
+    let (file_a, file_b) = (scratch_file("a"), scratch_file("b"));
+    let moved_a = s.archive_before("r", first, &file_a, &key).unwrap();
+    let moved_b = s.archive_before("r", second, &file_b, &key).unwrap();
+    let archived = s.tail("r", 0, 1_000).unwrap();
+    assert_dense(&archived, n);
+    let due = |c: i64| original.iter().filter(|m| m.ts < c).count();
+    assert_eq!(
+        moved_a,
+        due(first),
+        "the first archive moved the wrong number"
+    );
+    assert_eq!(
+        moved_a + moved_b,
+        due(first.max(second)),
+        "a tombstone was archived again or a message was missed"
+    );
+    assert_tombstoned_exactly_before(&original, &archived, first.max(second));
+    assert_no_tombstone_mail(&tc, &s, &members);
+    let order = if tc.draw(gs::booleans()) {
+        [&file_b, &file_a]
     } else {
-        [(&file_a, moved_a), (&file_b, moved_b)]
+        [&file_a, &file_b]
     };
-    for (file, _) in order {
-        if file.exists() {
-            s.restore_archive(file, &key).unwrap();
-            dense(&s.tail("r", 0, 1_000).unwrap());
-        }
+    for file in order.into_iter().filter(|f| f.exists()) {
+        s.restore_archive(file, &key).unwrap();
+        assert_dense(&s.tail("r", 0, 1_000).unwrap(), n);
     }
     assert_eq!(
         s.tail("r", 0, 1_000).unwrap(),
@@ -395,6 +445,61 @@ fn archive_then_restore_is_the_identity_and_seq_stays_dense_and_tombstones_are_n
 }
 
 // ---- paging ----------------------------------------------------------------------------------------------------
+
+type Gw = klatch::gateway::Gateway<klatch::store::SqliteStore>;
+
+/// Page through the log with `tail`, `size` at a time, and return everything read.
+fn page_with_tail(
+    gw: &Gw,
+    p: &klatch::domain::Principal,
+    n: i64,
+    size: usize,
+) -> Vec<klatch::domain::Message> {
+    let (mut paged, mut after) = (Vec::new(), 0);
+    for _ in 0..=n + 1 {
+        // bounded, so a pager that never advances fails the property instead of hanging it
+        let page = gw.tail(p, "r", (after, size)).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        assert!(
+            page.len() <= size,
+            "a page of {} for a limit of {size}",
+            page.len()
+        );
+        after = page.last().unwrap().seq;
+        paged.extend(page);
+    }
+    paged
+}
+
+/// Page forward with `history --since`; `more` counts what follows each page.
+fn page_with_history(
+    gw: &Gw,
+    p: &klatch::domain::Principal,
+    n: i64,
+) -> Vec<klatch::domain::Message> {
+    use klatch::gateway::HistoryRange;
+    let (mut paged, mut since) = (Vec::new(), 0);
+    for _ in 0..=n + 1 {
+        // bounded, so a pager that never advances fails the property instead of hanging it
+        let range = HistoryRange {
+            since: Some(since),
+            last: None,
+        };
+        let h = gw.history(p, "r", range).unwrap();
+        let Some(last) = h.messages.last() else { break };
+        assert_eq!(
+            h.more as i64,
+            n - last.seq,
+            "`more` is wrong after seq {}",
+            last.seq
+        );
+        since = last.seq;
+        paged.extend(h.messages);
+    }
+    paged
+}
 
 /// `tail` and `history` read without moving anyone's cursor, and paging through a room with either gives the whole
 /// log, once, in order. Concatenated pages equal the full log; each page is within its size; `more` says how many
@@ -427,65 +532,25 @@ fn paging_through_tail_and_history_returns_the_whole_log_once_and_moves_no_curso
     let unread = |p: &Principal| gw.read(p, "r", false).unwrap();
     let (alice_unread, bob_unread) = (unread(&alice), unread(&bob));
     let full = gw.tail(&alice, "r", (0, 1_000)).unwrap();
-    assert_eq!(
-        full.iter().map(|m| m.seq).collect::<Vec<_>>(),
-        (1..=n).collect::<Vec<_>>()
-    );
-    // tail pages
+    assert_dense(&full, n);
     let size = tc.draw(gs::integers::<usize>().min_value(1).max_value(9));
-    let (mut paged, mut after) = (Vec::new(), 0);
-    for _ in 0..=n + 1 {
-        // bounded, so a pager that never advances fails the property instead of hanging it
-        let page = gw.tail(&bob, "r", (after, size)).unwrap();
-        if page.is_empty() {
-            break;
-        }
-        assert!(
-            page.len() <= size,
-            "a page of {} for a limit of {size}",
-            page.len()
-        );
-        after = page.last().unwrap().seq;
-        paged.extend(page);
-    }
-    assert_eq!(paged, full, "the tail pages are not the log");
-    // history pages forward from `since`; `more` counts what follows
-    let (mut paged, mut since) = (Vec::new(), 0);
-    for _ in 0..=n + 1 {
-        // bounded, so a pager that never advances fails the property instead of hanging it
-        let h = gw
-            .history(
-                &bob,
-                "r",
-                HistoryRange {
-                    since: Some(since),
-                    last: None,
-                },
-            )
-            .unwrap();
-        let Some(last) = h.messages.last() else { break };
-        assert_eq!(
-            h.more as i64,
-            n - last.seq,
-            "`more` is wrong after seq {}",
-            last.seq
-        );
-        since = last.seq;
-        paged.extend(h.messages);
-    }
-    assert_eq!(paged, full, "the history pages are not the log");
+    assert_eq!(
+        page_with_tail(&gw, &bob, n, size),
+        full,
+        "the tail pages are not the log"
+    );
+    assert_eq!(
+        page_with_history(&gw, &bob, n),
+        full,
+        "the history pages are not the log"
+    );
     // the newest k, and nothing moved
     let k = tc.draw(gs::integers::<usize>().min_value(1).max_value(30));
-    let newest = gw
-        .history(
-            &alice,
-            "r",
-            HistoryRange {
-                since: None,
-                last: Some(k),
-            },
-        )
-        .unwrap();
+    let range = HistoryRange {
+        since: None,
+        last: Some(k),
+    };
+    let newest = gw.history(&alice, "r", range).unwrap();
     let want: Vec<_> = full
         .iter()
         .skip(full.len().saturating_sub(k))

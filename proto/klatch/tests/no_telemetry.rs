@@ -12,6 +12,62 @@ fn repo(rel: &str) -> PathBuf {
         .join(rel)
 }
 
+fn manifest(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+}
+
+/// The path of a source file relative to the crate.
+fn rel_of(path: &Path) -> String {
+    path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+        .unwrap()
+        .display()
+        .to_string()
+}
+
+/// Whether a line of a manifest is neither a comment nor blank.
+fn is_content(t: &str) -> bool {
+    !t.starts_with('#') && !t.is_empty()
+}
+
+/// The lines of the `[features]` section of this crate's Cargo.toml, without comments and blank lines.
+fn feature_lines(toml: &str) -> Vec<&str> {
+    let mut in_features = false;
+    let mut out = Vec::new();
+    for t in toml.lines().map(str::trim) {
+        if t.starts_with('[') {
+            in_features = t == "[features]";
+        } else if in_features && is_content(t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// The body of each feature in this crate's Cargo.toml, by name (a feature may span several lines).
+fn feature_bodies() -> std::collections::BTreeMap<String, String> {
+    let toml = std::fs::read_to_string(manifest("Cargo.toml")).unwrap();
+    let mut current = String::new();
+    let mut bodies = std::collections::BTreeMap::<String, String>::new();
+    for t in feature_lines(&toml) {
+        let (name, rest) = t.split_once('=').unzip();
+        if let Some(name) = name {
+            current = name.trim().to_string();
+        }
+        bodies
+            .entry(current.clone())
+            .or_default()
+            .push_str(rest.unwrap_or(t));
+    }
+    assert!(!bodies.is_empty(), "a features section");
+    bodies
+}
+
+/// Whether `lines` has `decl` directly after the line `attr`.
+fn declared_right_after(text: &str, attr: &str, decl: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines.windows(2).any(|w| w[0] == attr && w[1] == decl)
+}
+
 fn rust_sources() -> Vec<(PathBuf, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -24,10 +80,7 @@ fn rust_sources() -> Vec<(PathBuf, String)> {
         }
     }
     let mut files = Vec::new();
-    walk(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
+    walk(&manifest("src"), &mut files);
     files.sort();
     files
         .into_iter()
@@ -37,6 +90,34 @@ fn rust_sources() -> Vec<(PathBuf, String)> {
         })
         .collect()
 }
+
+const NETWORK: &[&str] = &[
+    "reqwest",
+    "hyper",
+    "hyper-util",
+    "h2",
+    "ureq",
+    "curl",
+    "curl-sys",
+    "isahc",
+    "attohttpc",
+    "surf",
+    "minreq",
+    "tungstenite",
+    "tokio-tungstenite",
+    "tokio",
+    "async-std",
+    "smol",
+    "mio",
+    "socket2",
+    "rustls",
+    "native-tls",
+    "openssl",
+    "quinn",
+    "hickory-resolver",
+    "trust-dns-resolver",
+    "reqwest-middleware",
+];
 
 #[test]
 fn no_networking_crate_is_in_the_dependency_tree() {
@@ -52,7 +133,7 @@ fn no_networking_crate_is_in_the_dependency_tree() {
             "none",
             "--offline",
         ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .current_dir(manifest(""))
         .output()
         .expect("run cargo tree");
     assert!(
@@ -65,33 +146,6 @@ fn no_networking_crate_is_in_the_dependency_tree() {
         .lines()
         .filter_map(|l| l.split_whitespace().next())
         .collect();
-    const NETWORK: &[&str] = &[
-        "reqwest",
-        "hyper",
-        "hyper-util",
-        "h2",
-        "ureq",
-        "curl",
-        "curl-sys",
-        "isahc",
-        "attohttpc",
-        "surf",
-        "minreq",
-        "tungstenite",
-        "tokio-tungstenite",
-        "tokio",
-        "async-std",
-        "smol",
-        "mio",
-        "socket2",
-        "rustls",
-        "native-tls",
-        "openssl",
-        "quinn",
-        "hickory-resolver",
-        "trust-dns-resolver",
-        "reqwest-middleware",
-    ];
     for n in NETWORK {
         assert!(
             !deps.contains(n),
@@ -118,12 +172,16 @@ const TEST_ONLY_SPAWNERS: &[&str] = &[
 /// shipped binary. The transport itself (`src/jev/http.rs`) names no socket type and is not exempt.
 const TEST_ONLY_LOOPBACK_SERVERS: &[&str] = &["src/jev/http/tests.rs"];
 
-fn may_open_loopback_socket(rel: &str) -> bool {
-    let name = rel
-        .rsplit('/')
+/// The module a file declares: its file name without `.rs`.
+fn module_name(rel: &str) -> &str {
+    rel.rsplit('/')
         .next()
         .and_then(|f| f.strip_suffix(".rs"))
-        .unwrap_or("");
+        .unwrap_or("")
+}
+
+fn may_open_loopback_socket(rel: &str) -> bool {
+    let name = module_name(rel);
     TEST_ONLY_LOOPBACK_SERVERS.contains(&rel)
         && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
 }
@@ -138,12 +196,11 @@ const CLIENT_SOCKET_FILE: &str = "src/client/socket.rs";
 fn may_connect_unix_socket(rel: &str) -> bool {
     rel == CLIENT_SOCKET_FILE
         && parent_text(rel).is_some_and(|text| {
-            let lines: Vec<&str> = text.lines().map(str::trim).collect();
-            lines.iter().enumerate().any(|(i, l)| {
-                *l == "mod socket;"
-                    && i > 0
-                    && lines[i - 1] == "#[cfg(all(unix, feature = \"client-socket\"))]"
-            })
+            declared_right_after(
+                &text,
+                "#[cfg(all(unix, feature = \"client-socket\"))]",
+                "mod socket;",
+            )
         })
 }
 
@@ -157,10 +214,7 @@ const CLIENT_HTTP_FILE: &str = "src/client/http.rs";
 fn may_connect_tcp(rel: &str) -> bool {
     rel == CLIENT_HTTP_FILE
         && parent_text(rel).is_some_and(|text| {
-            let lines: Vec<&str> = text.lines().map(str::trim).collect();
-            lines.iter().enumerate().any(|(i, l)| {
-                *l == "mod http;" && i > 0 && lines[i - 1] == "#[cfg(feature = \"client-http\")]"
-            })
+            declared_right_after(&text, "#[cfg(feature = \"client-http\")]", "mod http;")
         })
 }
 
@@ -170,7 +224,7 @@ fn parent_text(rel: &str) -> Option<String> {
     let (dir, _) = rel.rsplit_once('/')?;
     [format!("{dir}.rs"), format!("{dir}/mod.rs")]
         .iter()
-        .find_map(|p| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).ok())
+        .find_map(|p| std::fs::read_to_string(manifest(p)).ok())
 }
 
 /// Whether `text` declares `mod name;` directly under `#[cfg(test)]` (other attributes may sit between them).
@@ -194,11 +248,7 @@ fn is_test_only_spawner(
     exempt: &[&str],
     parent_text: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
-    let name = rel
-        .rsplit('/')
-        .next()
-        .and_then(|f| f.strip_suffix(".rs"))
-        .unwrap_or("");
+    let name = module_name(rel);
     exempt.contains(&rel)
         && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
 }
@@ -216,48 +266,47 @@ fn command_problem(rel: &str, code: &str, programs: &[&str]) -> Option<String> {
     }
 }
 
+const SOCKETS: [&str; 6] = [
+    "TcpStream",
+    "TcpListener",
+    "UdpSocket",
+    "UnixStream",
+    "UnixListener",
+    "UnixDatagram",
+];
+
+/// Programs klatch starts by name: git (to find a repository), ps (the process table), secret-tool, busctl (only to ask whether a locked keyring hid a key, #561) and security
+/// (the keystores), codex (only `--version` and `queue --help`, in `klatch doctor`: no login, no model call), claude (`--version` in `klatch doctor` and before `klatch wake`, #482: no login, no model call; and, only when an operator opts in with `klatch judge run --hosted-judge`, one headless call per queued item, #960), and sh only in a unit test that waits for a fake keystore script to be executable. Only that opt-in `claude` call reaches a model service (and only because the operator named `--hosted-judge`); every other listed program is run for a local answer and is not asked to talk to a network. The Rust client starts the binary the caller names.
+const PROGRAMS: &[&str] = &[
+    "git",
+    "ps",
+    "secret-tool",
+    "busctl",
+    "/usr/bin/security",
+    "codex",
+    "claude",
+    "sh",
+];
+
+/// Whether the file at `rel` is allowed to name this socket type.
+fn socket_allowed(rel: &str, socket: &str) -> bool {
+    may_open_loopback_socket(rel)
+        || (socket == "UnixStream" && may_connect_unix_socket(rel))
+        || (socket == "TcpStream" && may_connect_tcp(rel))
+}
+
 #[test]
 fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
-    const SOCKETS: &[&str] = [
-        "TcpStream",
-        "TcpListener",
-        "UdpSocket",
-        "UnixStream",
-        "UnixListener",
-        "UnixDatagram",
-    ]
-    .as_slice();
-    // Programs klatch starts by name: git (to find a repository), ps (the process table), secret-tool, busctl (only to ask whether a locked keyring hid a key, #561) and security
-    // (the keystores), codex (only `--version` and `queue --help`, in `klatch doctor`: no login, no model call), claude (`--version` in `klatch doctor` and before `klatch wake`, #482: no login, no model call; and, only when an operator opts in with `klatch judge run --hosted-judge`, one headless call per queued item, #960), and sh only in a unit test that waits for a fake keystore script to be executable. Only that opt-in `claude` call reaches a model service (and only because the operator named `--hosted-judge`); every other listed program is run for a local answer and is not asked to talk to a network. The Rust client starts the binary the caller names.
-    const PROGRAMS: &[&str] = &[
-        "git",
-        "ps",
-        "secret-tool",
-        "busctl",
-        "/usr/bin/security",
-        "codex",
-        "claude",
-        "sh",
-    ];
     let mut problems = Vec::new();
     for (path, text) in rust_sources() {
-        let rel = path
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap()
-            .display()
-            .to_string();
+        let rel = rel_of(&path);
         for (n, line) in text.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
             let at = format!("{rel}:{}", n + 1);
             problems.extend(
                 SOCKETS
                     .iter()
-                    .filter(|s| {
-                        code.contains(*s)
-                            && !may_open_loopback_socket(&rel)
-                            && !(**s == "UnixStream" && may_connect_unix_socket(&rel))
-                            && !(**s == "TcpStream" && may_connect_tcp(&rel))
-                    })
+                    .filter(|s| code.contains(*s) && !socket_allowed(&rel, s))
                     .map(|s| format!("{at}: uses {s}")),
             );
             problems.extend(command_problem(&rel, code, PROGRAMS).map(|p| format!("{at}: {p}")));
@@ -270,31 +319,34 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
     );
 }
 
+/// What a line importing from `std::net` names that only a socket user needs, if anything.
+fn socket_item_in(rel: &str, line: &str) -> Option<&'static str> {
+    const ITEMS: [&str; 5] = [
+        "TcpStream",
+        "TcpListener",
+        "UdpSocket",
+        "ToSocketAddrs",
+        "lookup_host",
+    ];
+    ITEMS.into_iter().find(|item| {
+        // the client's HTTP file imports `TcpStream` and nothing else of the kind
+        line.contains(item) && !(*item == "TcpStream" && may_connect_tcp(rel))
+    })
+}
+
 #[test]
 fn std_net_is_only_used_to_read_addresses() {
     for (path, text) in rust_sources() {
-        let rel = path
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap()
-            .display()
-            .to_string();
+        let rel = rel_of(&path);
         if may_open_loopback_socket(&rel) {
             continue;
         }
         for line in text.lines().filter(|l| l.contains("std::net")) {
-            for item in [
-                "TcpStream",
-                "TcpListener",
-                "UdpSocket",
-                "ToSocketAddrs",
-                "lookup_host",
-            ] {
-                // the client's HTTP file imports `TcpStream` and nothing else of the kind
-                if item == "TcpStream" && may_connect_tcp(&rel) {
-                    continue;
-                }
-                assert!(!line.contains(item), "{}: {line}", path.display());
-            }
+            assert!(
+                socket_item_in(&rel, line).is_none(),
+                "{}: {line}",
+                path.display()
+            );
         }
     }
 }
@@ -303,28 +355,7 @@ fn std_net_is_only_used_to_read_addresses() {
 /// `default`, `client` or `cli`, and no shipped feature turns on the HTTP client (#871).
 #[test]
 fn the_optional_jev_http_transport_is_in_no_default_feature() {
-    let toml =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
-    let mut in_features = false;
-    let mut current = String::new();
-    let mut shipped = std::collections::BTreeMap::<String, String>::new();
-    for line in toml.lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            in_features = t == "[features]";
-            current.clear();
-            continue;
-        }
-        if !in_features || t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        if let Some((name, rest)) = t.split_once('=') {
-            current = name.trim().to_string();
-            shipped.entry(current.clone()).or_default().push_str(rest);
-        } else {
-            shipped.entry(current.clone()).or_default().push_str(t);
-        }
-    }
+    let shipped = feature_bodies();
     for name in ["default", "client", "cli"] {
         let body = shipped
             .get(name)
@@ -344,27 +375,7 @@ fn the_optional_jev_http_transport_is_in_no_default_feature() {
 /// `klatch` binary contains no socket code, and it brings in nothing but the client.
 #[test]
 fn the_client_socket_is_in_no_default_feature() {
-    let toml =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
-    let section = toml
-        .split("\n[features]")
-        .nth(1)
-        .and_then(|rest| rest.split("\n[").next())
-        .expect("a features section");
-    let mut bodies = std::collections::BTreeMap::<String, String>::new();
-    let mut current = String::new();
-    for line in section.lines() {
-        let t = line.trim();
-        if t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        if let Some((name, rest)) = t.split_once('=') {
-            current = name.trim().to_string();
-            bodies.entry(current.clone()).or_default().push_str(rest);
-        } else {
-            bodies.entry(current.clone()).or_default().push_str(t);
-        }
-    }
+    let bodies = feature_bodies();
     for name in ["default", "client", "cli"] {
         assert!(
             !bodies[name].contains("client-socket"),
@@ -384,27 +395,7 @@ fn the_client_socket_is_in_no_default_feature() {
 /// default features) contains no network socket type, and it brings in nothing but the client.
 #[test]
 fn the_client_http_is_in_no_default_feature() {
-    let toml =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
-    let section = toml
-        .split("\n[features]")
-        .nth(1)
-        .and_then(|rest| rest.split("\n[").next())
-        .expect("a features section");
-    let mut bodies = std::collections::BTreeMap::<String, String>::new();
-    let mut current = String::new();
-    for line in section.lines() {
-        let t = line.trim();
-        if t.starts_with('#') || t.is_empty() {
-            continue;
-        }
-        if let Some((name, rest)) = t.split_once('=') {
-            current = name.trim().to_string();
-            bodies.entry(current.clone()).or_default().push_str(rest);
-        } else {
-            bodies.entry(current.clone()).or_default().push_str(t);
-        }
-    }
+    let bodies = feature_bodies();
     for (name, body) in &bodies {
         if name != "client-http" {
             assert!(
@@ -435,6 +426,15 @@ fn only_the_client_http_file_may_name_a_tcp_stream() {
     }
 }
 
+/// Whether a line fetches a script and pipes it into a shell.
+fn pipes_a_download_into_a_shell(line: &str) -> bool {
+    let piped = ["| sh", "| bash", "|sh", "|bash"]
+        .iter()
+        .any(|p| line.contains(p));
+    let fetches = line.contains("curl") || line.contains("wget");
+    piped && fetches
+}
+
 #[test]
 fn the_documents_never_tell_anyone_to_pipe_a_download_into_a_shell() {
     for doc in [
@@ -447,18 +447,17 @@ fn the_documents_never_tell_anyone_to_pipe_a_download_into_a_shell() {
     ] {
         let text = std::fs::read_to_string(repo(doc)).unwrap();
         for (n, line) in text.lines().enumerate() {
-            let piped = line.contains("| sh")
-                || line.contains("| bash")
-                || line.contains("|sh")
-                || line.contains("|bash");
-            let fetches = line.contains("curl") || line.contains("wget");
             assert!(
-                !(piped && fetches),
+                !pipes_a_download_into_a_shell(line),
                 "{doc}:{}: pipes a download into a shell: {line}",
                 n + 1
             );
         }
     }
+}
+
+fn is_github_host(host: &str) -> bool {
+    host == "github.com" || host == "api.github.com" || host.starts_with('$')
 }
 
 #[test]
@@ -471,7 +470,7 @@ fn the_installer_talks_only_to_github() {
         {
             let host = rest.split(['/', ':']).next().unwrap();
             assert!(
-                host == "github.com" || host == "api.github.com" || host.starts_with('$'),
+                is_github_host(host),
                 "install.sh mentions another host: {word}"
             );
             assert!(
@@ -482,31 +481,24 @@ fn the_installer_talks_only_to_github() {
     }
 }
 
+const EXEMPT_PATH: &str = "src/a/survivor_tests.rs";
+
+fn exempt_with(rel: &str, parent: &dyn Fn(&str) -> Option<String>) -> bool {
+    is_test_only_spawner(rel, &[EXEMPT_PATH], parent)
+}
+
 #[test]
 fn a_test_module_is_exempt_only_by_exact_path_and_only_when_declared_under_cfg_test() {
     let declared = |_: &str| Some("#[cfg(test)]\nmod survivor_tests;\n".to_string());
-    let exempt = ["src/a/survivor_tests.rs"];
-    assert!(is_test_only_spawner(
-        "src/a/survivor_tests.rs",
-        &exempt,
-        &declared
-    ));
+    assert!(exempt_with(EXEMPT_PATH, &declared));
     // the same file name in another directory is not exempt, whatever its parent says
-    assert!(!is_test_only_spawner(
+    for other in [
         "src/b/survivor_tests.rs",
-        &exempt,
-        &declared
-    ));
-    assert!(!is_test_only_spawner(
         "src/a/b/survivor_tests.rs",
-        &exempt,
-        &declared
-    ));
-    assert!(!is_test_only_spawner(
         "src/a/survivor_tests.rs.bak",
-        &exempt,
-        &declared
-    ));
+    ] {
+        assert!(!exempt_with(other, &declared), "{other}");
+    }
     // listed, but the parent declares it without #[cfg(test)], with cfg(not(test)), or not at all
     let plain = |_: &str| Some("mod survivor_tests;\n".to_string());
     let not_test = |_: &str| Some("#[cfg(not(test))]\nmod survivor_tests;\n".to_string());
@@ -514,34 +506,21 @@ fn a_test_module_is_exempt_only_by_exact_path_and_only_when_declared_under_cfg_t
     let separated = |_: &str| Some("#[cfg(test)]\nfn f() {}\nmod survivor_tests;\n".to_string());
     let none = |_: &str| None;
     for parent in
-        [&plain, &not_test, &other_mod, &separated] as [&dyn Fn(&str) -> Option<String>; 4]
+        [&plain, &not_test, &other_mod, &separated, &none] as [&dyn Fn(&str) -> Option<String>; 5]
     {
-        assert!(!is_test_only_spawner(
-            "src/a/survivor_tests.rs",
-            &exempt,
-            parent
-        ));
+        assert!(!exempt_with(EXEMPT_PATH, parent));
     }
-    assert!(!is_test_only_spawner(
-        "src/a/survivor_tests.rs",
-        &exempt,
-        &none
-    ));
     // another attribute between the cfg and the module is fine
     let attr =
         |_: &str| Some("#[cfg(test)]\n#[allow(dead_code)]\nmod survivor_tests;\n".to_string());
-    assert!(is_test_only_spawner(
-        "src/a/survivor_tests.rs",
-        &exempt,
-        &attr
-    ));
+    assert!(exempt_with(EXEMPT_PATH, &attr));
 }
 
 #[test]
 fn every_listed_test_only_spawner_exists_and_is_declared_under_cfg_test_in_the_real_source() {
     for rel in TEST_ONLY_SPAWNERS {
         assert!(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join(rel).is_file(),
+            manifest(rel).is_file(),
             "{rel} is listed but does not exist: remove it from TEST_ONLY_SPAWNERS"
         );
         assert!(

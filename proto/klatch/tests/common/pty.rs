@@ -54,40 +54,40 @@ fn pty() -> (OwnedFd, OwnedFd) {
 
 /// Run `cmd` on a pseudo-terminal, typing `typed` one line per prompt. Kills the child after 120 seconds.
 pub fn run_on_pty(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, 0)
+    run_with(cmd, Setup::new(typed, Layout::Plain))
 }
 
 /// The terminal the human has (pty A, the child's controlling terminal, carrying standard ERROR) while standard input
 /// and OUTPUT are a second pty B that the caller owns, as an agent that makes itself a pty for fd 0 and 1 without
 /// `setsid` would: B's master output comes back as `piped_stdout` (#1233).
 pub fn run_on_pty_split(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, 1)
+    run_with(cmd, Setup::new(typed, Layout::Split))
 }
 
 /// The human's terminal H is standard INPUT (the one the test types at), while the child is the leader of a session of
 /// its own on a pty P that the caller owns, as an agent that forks a pty (`forkpty`) would be: standard output and
 /// error are P, and P is the child's controlling terminal. P's master output comes back as `piped_stdout` (#1233).
 pub fn run_on_pty_forked_session(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, 2)
+    run_with(cmd, Setup::new(typed, Layout::ForkedSession))
 }
 
 /// As `run_on_pty`, but standard ERROR is a pipe (the terminal is still the controlling terminal, input and output);
 /// what it carried comes back as `piped_stdout` (#1233).
 pub fn run_on_pty_stderr_piped(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, false, 3)
+    run_with(cmd, Setup::new(typed, Layout::StderrPiped))
 }
 
 /// As `run_on_pty`, but standard OUTPUT is a pipe (`klatch admin recovery | cat`) while the terminal stays the
 /// controlling terminal, standard input and error: a program that shares the human's terminal and captures what a
 /// command prints (#1233).
 pub fn run_on_pty_stdout_piped(cmd: Command, typed: &[&str]) -> PtyRun {
-    run_with(cmd, typed, None, true, 0)
+    run_with(cmd, Setup::new(typed, Layout::Plain).stdout_piped())
 }
 
 /// As `run_on_pty`, but standard input is a PIPE carrying `stdin_text` while the terminal is still the child's
 /// controlling terminal and its output: an agent that shares the human's terminal and pipes its own input (#1233).
 pub fn run_on_pty_piped(cmd: Command, typed: &[&str], stdin_text: &str) -> PtyRun {
-    run_with(cmd, typed, Some(stdin_text), false, 0)
+    run_with(cmd, Setup::new(typed, Layout::Plain).stdin_text(stdin_text))
 }
 
 /// Whether the output so far ends in a prompt the child is waiting at (see the module note).
@@ -100,40 +100,179 @@ pub fn is_prompt(text: &str) -> bool {
     (text.ends_with(": ") || text.ends_with("> ")) && !last.starts_with("Error:")
 }
 
-fn run_with(
-    mut cmd: Command,
-    typed: &[&str],
-    piped: Option<&str>,
+/// Which descriptors are the pty the test types at, and which are something else.
+#[derive(Clone, Copy, PartialEq)]
+enum Layout {
+    /// Standard input, output and error are all the pty, which is also the controlling terminal.
+    Plain,
+    /// Standard input and output are a second pty B that the caller owns; error is the controlling terminal A.
+    Split,
+    /// Input is the pty H the test types at; output and error are a pty P of the child's own session.
+    ForkedSession,
+    /// Standard error is a pipe; the pty is the controlling terminal, input and output.
+    StderrPiped,
+}
+
+impl Layout {
+    /// The descriptor that becomes the controlling terminal: the one that is the terminal in this layout.
+    fn tty_fd(self) -> i32 {
+        match self {
+            Layout::ForkedSession => 1,
+            Layout::StderrPiped => 0,
+            _ => 2,
+        }
+    }
+
+    fn has_other_pty(self) -> bool {
+        matches!(self, Layout::Split | Layout::ForkedSession)
+    }
+}
+
+/// How a command is run on a pty: what is typed, and which of its descriptors are not the terminal.
+struct Setup<'a> {
+    typed: &'a [&'a str],
+    stdin_text: Option<&'a str>,
     out_piped: bool,
-    layout: u8,
-) -> PtyRun {
+    layout: Layout,
+}
+
+impl<'a> Setup<'a> {
+    fn new(typed: &'a [&'a str], layout: Layout) -> Self {
+        Setup {
+            typed,
+            stdin_text: None,
+            out_piped: false,
+            layout,
+        }
+    }
+
+    fn stdout_piped(mut self) -> Self {
+        self.out_piped = true;
+        self
+    }
+
+    fn stdin_text(mut self, text: &'a str) -> Self {
+        self.stdin_text = Some(text);
+        self
+    }
+}
+
+/// Point the child's standard descriptors at the terminals of this layout.
+fn wire_stdio(
+    cmd: &mut Command,
+    setup: &Setup,
+    slave: &OwnedFd,
+    other: &Option<(OwnedFd, OwnedFd)>,
+) {
+    let clone = |fd: &OwnedFd| Stdio::from(fd.try_clone().unwrap());
+    let b_slave = other.as_ref().map(|(_, s)| s);
+    match (setup.layout, b_slave) {
+        (Layout::ForkedSession, Some(p)) => cmd.stderr(clone(p)),
+        (Layout::StderrPiped, _) => cmd.stderr(Stdio::piped()),
+        _ => cmd.stderr(clone(slave)),
+    };
+    match (b_slave, setup.out_piped) {
+        (Some(b), _) => cmd.stdout(clone(b)),
+        (None, true) => cmd.stdout(Stdio::piped()),
+        (None, false) => cmd.stdout(clone(slave)),
+    };
+    match (setup.layout, b_slave, setup.stdin_text) {
+        (Layout::Split, Some(b), _) => cmd.stdin(clone(b)),
+        (_, _, Some(_)) => cmd.stdin(Stdio::piped()),
+        _ => cmd.stdin(clone(slave)),
+    };
+}
+
+/// Types the next line each time the output ends in a prompt that is new since the last line typed.
+struct Typist<'a> {
+    typed: &'a [&'a str],
+    next: usize,
+    answered_at: usize,
+}
+
+impl Typist<'_> {
+    fn has_something_to_answer(&self, text: &str) -> bool {
+        let new_text = text.len() > self.answered_at;
+        is_prompt(text) && new_text && self.next < self.typed.len()
+    }
+
+    fn answer(&mut self, mfd: i32, text: &str) {
+        if !self.has_something_to_answer(text) {
+            return;
+        }
+        let line = format!("{}\n", self.typed[self.next]);
+        self.next += 1;
+        self.answered_at = text.len();
+        // SAFETY: writes a live slice to the master.
+        unsafe { libc::write(mfd, line.as_ptr().cast(), line.len()) };
+    }
+}
+
+/// Read once from the master, if it has anything: `None` when the terminal is done (an error or a hang up).
+fn read_master(mfd: i32) -> Option<String> {
+    let mut buf = [0u8; 4096];
+    // SAFETY: reads into a live buffer of that length.
+    let got = unsafe { libc::read(mfd, buf.as_mut_ptr().cast(), buf.len()) };
+    (got > 0).then(|| String::from_utf8_lossy(&buf[..got as usize]).replace('\r', ""))
+}
+
+fn poll_in(fd: i32, wait_ms: i32) -> i32 {
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one pollfd, live for the call.
+    unsafe { libc::poll(&mut p, 1, wait_ms) }
+}
+
+/// Read the output of the terminal until the child ends, typing at its prompts; returns the terminal text.
+fn pump(
+    child: &mut std::process::Child,
+    terminals: (i32, &Option<OwnedFd>),
+    typed: &[&str],
+    piped_stdout: &mut String,
+) -> String {
+    let (mfd, b_master) = terminals;
+    let started = Instant::now();
+    let mut text = String::new();
+    let mut typist = Typist {
+        typed,
+        next: 0,
+        answered_at: 0,
+    };
+    loop {
+        if started.elapsed() > Duration::from_secs(120) {
+            let _ = child.kill();
+            panic!("the command did not finish on its pty; so far:\n{text}");
+        }
+        // the other terminal is read as it goes (some systems drop what is unread when the child closes it)
+        if let Some(b) = b_master {
+            drain(b.as_raw_fd(), piped_stdout, 0);
+        }
+        let n = poll_in(mfd, 100);
+        if n > 0 {
+            let Some(got) = read_master(mfd) else { break };
+            text.push_str(&got);
+            typist.answer(mfd, &text);
+        } else if n < 0 {
+            break;
+        } else if child.try_wait().ok().flatten().is_some() {
+            // The child has exited. Whatever it wrote is already in the master (the slave is held open), so drain
+            // it to the end; a prompt in it can no longer be answered.
+            drain(mfd, &mut text, 0);
+            text = text.replace('\r', "");
+            break;
+        }
+    }
+    text
+}
+
+fn run_with(mut cmd: Command, setup: Setup) -> PtyRun {
     let (master, slave) = pty();
-    let other = (layout == 1 || layout == 2).then(pty);
-    match (layout, &other) {
-        (2, Some((_, p))) => cmd.stderr(Stdio::from(p.try_clone().unwrap())),
-        (3, _) => cmd.stderr(Stdio::piped()),
-        _ => cmd.stderr(Stdio::from(slave.try_clone().unwrap())),
-    };
-    if let Some((_, b_slave)) = &other {
-        cmd.stdout(Stdio::from(b_slave.try_clone().unwrap()));
-    } else if out_piped {
-        cmd.stdout(Stdio::piped());
-    } else {
-        cmd.stdout(Stdio::from(slave.try_clone().unwrap()));
-    }
-    if let (1, Some((_, b_slave))) = (layout, &other) {
-        cmd.stdin(Stdio::from(b_slave.try_clone().unwrap()));
-    } else if piped.is_some() {
-        cmd.stdin(Stdio::piped());
-    } else {
-        cmd.stdin(Stdio::from(slave.try_clone().unwrap()));
-    }
-    // the descriptor that becomes the controlling terminal: the one that is the terminal in this layout
-    let tty_fd: i32 = match layout {
-        2 => 1,
-        3 => 0,
-        _ => 2,
-    };
+    let other = setup.layout.has_other_pty().then(pty);
+    wire_stdio(&mut cmd, &setup, &slave, &other);
+    let tty_fd = setup.layout.tty_fd();
     // SAFETY: setsid and ioctl are async-signal-safe and touch nothing of ours.
     unsafe {
         cmd.pre_exec(move || {
@@ -143,7 +282,7 @@ fn run_with(
         });
     }
     let mut child = cmd.spawn().expect("spawn on a pty");
-    if let (Some(text), Some(mut stdin)) = (piped, child.stdin.take()) {
+    if let (Some(text), Some(mut stdin)) = (setup.stdin_text, child.stdin.take()) {
         use std::io::Write;
         let _ = stdin.write_all(text.as_bytes());
     }
@@ -158,71 +297,33 @@ fn run_with(
         Some((m, s)) => (Some(m), Some(s)),
         None => (None, None),
     };
-
-    let mfd = master.as_raw_fd();
     let mut piped_stdout = String::new();
-    let started = Instant::now();
-    let mut text = String::new();
-    let mut next = 0;
-    let mut answered_at = 0;
-    loop {
-        if started.elapsed() > Duration::from_secs(120) {
-            let _ = child.kill();
-            panic!("the command did not finish on its pty; so far:\n{text}");
-        }
-        // the other terminal is read as it goes (some systems drop what is unread when the child closes it)
-        if let Some(b) = &b_master {
-            drain(b.as_raw_fd(), &mut piped_stdout, 0);
-        }
-        let mut p = libc::pollfd {
-            fd: mfd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one pollfd, live for the call.
-        let n = unsafe { libc::poll(&mut p, 1, 100) };
-        if n > 0 {
-            let mut buf = [0u8; 4096];
-            // SAFETY: reads into a live buffer of that length.
-            let got = unsafe { libc::read(mfd, buf.as_mut_ptr().cast(), buf.len()) };
-            if got <= 0 {
-                break;
-            }
-            text.push_str(&String::from_utf8_lossy(&buf[..got as usize]).replace('\r', ""));
-            let prompting = is_prompt(&text);
-            if prompting && text.len() > answered_at && next < typed.len() {
-                let line = format!("{}\n", typed[next]);
-                next += 1;
-                answered_at = text.len();
-                // SAFETY: writes a live slice to the master.
-                unsafe { libc::write(mfd, line.as_ptr().cast(), line.len()) };
-            }
-        } else if n < 0 {
-            break;
-        } else if child.try_wait().ok().flatten().is_some() {
-            // The child has exited. Whatever it wrote is already in the master (the slave is held open), so drain
-            // it to the end; a prompt in it can no longer be answered.
-            drain(mfd, &mut text, 0);
-            text = text.replace('\r', "");
-            break;
-        }
-    }
+    let text = pump(
+        &mut child,
+        (master.as_raw_fd(), &b_master),
+        setup.typed,
+        &mut piped_stdout,
+    );
     if let Some(b) = &b_master {
         drain(b.as_raw_fd(), &mut piped_stdout, 200);
     }
-    if let Some(mut out) = child.stdout.take() {
-        use std::io::Read;
-        let _ = out.read_to_string(&mut piped_stdout);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        use std::io::Read;
-        let _ = err.read_to_string(&mut piped_stdout);
-    }
+    read_child_pipes(&mut child, &mut piped_stdout);
     let status = child.wait().expect("wait");
     PtyRun {
         status,
         text,
         piped_stdout,
+    }
+}
+
+/// Whatever the child wrote to a pipe standard output or error joins `into`.
+fn read_child_pipes(child: &mut std::process::Child, into: &mut String) {
+    use std::io::Read;
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(into);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(into);
     }
 }
 

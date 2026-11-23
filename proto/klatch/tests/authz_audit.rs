@@ -301,19 +301,22 @@ fn row_keys(doc: &str) -> Vec<(String, String)> {
     for line in doc.lines() {
         if let Some(h) = line.strip_prefix("## ") {
             section = h.to_string();
-        } else if line.starts_with('|') {
-            let cell = line
-                .trim_start_matches('|')
-                .split('|')
-                .next()
-                .unwrap_or("")
-                .trim();
-            if cell.starts_with('`') {
-                keys.push((section.clone(), cell.to_string()));
-            }
+        } else if let Some(cell) = first_cell(line).filter(|c| c.starts_with('`')) {
+            keys.push((section.clone(), cell.to_string()));
         }
     }
     keys
+}
+
+/// The first cell of a table row, or `None` for a line that is not a row.
+fn first_cell(line: &str) -> Option<&str> {
+    line.starts_with('|').then(|| {
+        line.trim_start_matches('|')
+            .split('|')
+            .next()
+            .unwrap_or("")
+            .trim()
+    })
 }
 
 /// The keys that occur more than once in one section.
@@ -364,34 +367,45 @@ fn audit_rows_are_unique_by_operation() {
 /// `SHARED_GAP_KEYS` with the reason; never loosen the rule for every row.
 const SHARED_GAP_KEYS: &[&str] = &[];
 
+/// The last cell of a table row.
+fn last_cell(line: &str) -> &str {
+    line.trim()
+        .trim_end_matches('|')
+        .rsplit('|')
+        .next()
+        .unwrap_or("")
+        .trim()
+}
+
+/// The key of a ticket cell: the first `#number` in it, or the whole cell if it names none.
+fn ticket_key(cell: &str) -> String {
+    cell.find('#')
+        .and_then(|i| {
+            let digits: String = cell[i + 1..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            (!digits.is_empty()).then(|| format!("#{digits}"))
+        })
+        .unwrap_or_else(|| cell.to_string())
+}
+
+/// A table row that is not the header row or the separator.
+fn is_ticket_row(line: &str) -> bool {
+    let last = last_cell(line);
+    line.starts_with('|') && last != "Ticket" && !last.starts_with("---")
+}
+
 fn gap_keys(doc: &str) -> Vec<String> {
     let mut in_gaps = false;
     let mut keys = Vec::new();
     for line in doc.lines() {
         if let Some(h) = line.strip_prefix("## ") {
             in_gaps = h.starts_with("Gaps found and ticketed");
-        } else if in_gaps && line.starts_with('|') {
-            let last = line
-                .trim()
-                .trim_end_matches('|')
-                .rsplit('|')
-                .next()
-                .unwrap_or("")
-                .trim();
-            if last == "Ticket" || last.starts_with("---") {
-                continue;
-            }
-            let key = last
-                .find('#')
-                .and_then(|i| {
-                    let digits: String = last[i + 1..]
-                        .chars()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect();
-                    (!digits.is_empty()).then(|| format!("#{digits}"))
-                })
-                .unwrap_or_else(|| last.to_string());
-            keys.push(key);
+            continue;
+        }
+        if in_gaps && is_ticket_row(line) {
+            keys.push(ticket_key(last_cell(line)));
         }
     }
     keys
