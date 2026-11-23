@@ -175,15 +175,21 @@ fn a_tool_call_made_inside_a_subagent_is_not_the_parents_activity() {
 }
 
 #[test]
-fn a_burst_of_tool_calls_does_not_change_the_status_age_inside_the_window() {
+fn a_burst_of_tool_calls_leaves_the_working_status_as_it_is_inside_the_window() {
     let h = Home::new();
     setup(&h);
     tool(&h, "alice", true);
-    let first = status_text(&h, "alice").unwrap();
+    // the age beside the text moves with the clock, so compare the text alone
+    let text = |h: &Home| {
+        let t = status_text(h, "alice").unwrap();
+        t.split(" (").take(2).collect::<Vec<_>>().join(" (")
+    };
+    let first = text(&h);
     for _ in 0..10 {
         tool(&h, "alice", true);
     }
-    assert_eq!(status_text(&h, "alice").unwrap(), first);
+    assert_eq!(text(&h), first);
+    assert_eq!(first, "working (auto)");
 }
 
 /// The room messages a scripted session needs for the same observable state: four phases of work with a long wait and
