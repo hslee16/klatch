@@ -165,8 +165,8 @@ fn new_session_joins(w: &World) -> Res {
         "old chatter",
         "history must not flood a new session",
     )?;
-    has(&start, "[board lobby]", "it sees the board")?;
-    has(&start, "seeking: a rare thing", "with the open ask")?;
+    has(&start, "[briefing lobby]", "it sees the briefing (#1409)")?;
+    has(&start, "a rare thing", "with the open ask")?;
     has(
         &start,
         "[klatch convention v2]",
@@ -453,10 +453,17 @@ fn resumed_session(w: &World) -> Res {
         "back in lobby as res ",
         "the resumed session is the same member",
     )?;
+    // the briefing counts what was not addressed to the member instead of printing it (#1409); it stays unread
     has(
         &out,
+        "since you last read: 1 new in lobby",
+        "the message it had not read is counted in the briefing",
+    )?;
+    let (_, peek) = second.klatch(&["read", "lobby", "--peek"])?;
+    has(
+        &peek,
         "left for later",
-        "the message it had not read is still delivered",
+        "and is still unread, so a read delivers it",
     )?;
     let who = w.ok("observer", &["who", "lobby", "--all"])?;
     check(

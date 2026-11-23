@@ -84,8 +84,12 @@ fn the_session_start_board_is_shown_only_when_asked_for_and_does_not_join() {
             "--no-join",
         ],
     );
-    assert!(start.contains("[board lobby]"), "got: {start}");
-    assert!(start.contains("seeking: slugify") && start.contains("offering: text helpers"));
+    // the board in brief (#1409): the briefing replaces the board text at a session start
+    assert!(start.contains("[briefing lobby]"), "got: {start}");
+    assert!(
+        start.contains("slugify") && start.contains("text helpers"),
+        "{start}"
+    );
     assert!(start.contains("DATA"), "no data warning: {start}");
     let who = h.ok("lib", &["who", "lobby"]);
     assert!(
