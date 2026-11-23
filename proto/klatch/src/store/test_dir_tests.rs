@@ -87,6 +87,8 @@ fn no_unit_test_makes_a_temp_directory_by_hand() {
                             || line.contains("klatch-jev-live.txt")
                             // the hosted judge's own private working directory, removed on drop (#960)
                             || line.contains("klatch-judge-run-")
+                            // the one shared stand-in script of the keyring tests, made once and never a scratch directory
+                            || line.contains("klatch-fake-tool-")
                             // places that read where the temp directory is, to scrub it from a message or to check a
                             // path is under it (the bench), and make nothing
                             || line.contains("let tmp = std::env::temp_dir().to_string_lossy()")

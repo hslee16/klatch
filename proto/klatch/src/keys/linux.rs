@@ -567,7 +567,10 @@ mod tests {
         assert_eq!(id(d1.join("busctl")), id(d1.join("secret-tool")));
         // each one still does what its own test said
         let run = |d: &std::path::Path, tool: &str| {
-            let o = std::process::Command::new(d.join(tool)).output().unwrap();
+            let o = std::process::Command::new("sh")
+                .arg(d.join(tool))
+                .output()
+                .unwrap();
             (
                 o.status.code(),
                 String::from_utf8_lossy(&o.stdout).into_owned(),
