@@ -1,0 +1,1 @@
+- Stop harness_peer_identity tests leaking their client process under nextest (#1334).
