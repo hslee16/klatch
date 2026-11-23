@@ -109,6 +109,14 @@ pub struct MemberCounts {
     pub marked_done: i64,
     pub muted: i64,
     pub with_parent: i64,
+    /// Distinct member names that posted (a live message), the base of the two counts below (#1411).
+    pub posted: i64,
+    /// Of those, the names whose read cursor never moved in any room in scope: the cursor `read` and `ack` move.
+    pub never_read: i64,
+    /// Of those, the names that were also never shown anything: no hook digest, wait or wake either.
+    pub never_shown: i64,
+    /// The `never_read` names by the UTC day of their first post, oldest first. Counts only, never a name.
+    pub never_read_days: Counts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -393,6 +401,18 @@ impl UsageStats {
             "members: {} joined, {} never posted, {} marked done, {} muted, {} with a parent\n",
             m.joined, m.never_posted, m.marked_done, m.muted, m.with_parent
         ));
+        o.push_str(&format!(
+            "members who posted and never read: {} of {} ({} never shown anything by a hook, wait or wake)\n",
+            m.never_read, m.posted, m.never_shown
+        ));
+        if !m.never_read_days.is_empty() {
+            let days: Vec<String> = m
+                .never_read_days
+                .iter()
+                .map(|(d, n)| format!("{d} {n}"))
+                .collect();
+            o.push_str(&format!("  by day of first post: {}\n", days.join(", ")));
+        }
         table(
             &mut o,
             "hook runs by event (cumulative)",
@@ -460,6 +480,9 @@ impl UsageStats {
                 "joined": self.members.joined, "never_posted": self.members.never_posted,
                 "marked_done": self.members.marked_done, "muted": self.members.muted,
                 "with_parent": self.members.with_parent,
+                "posted": self.members.posted, "posted_never_read": self.members.never_read,
+                "posted_never_shown": self.members.never_shown,
+                "posted_never_read_by_day": pairs(&self.members.never_read_days),
             },
             "hooks": pairs(&self.hooks),
             "audit": pairs(&self.audit),

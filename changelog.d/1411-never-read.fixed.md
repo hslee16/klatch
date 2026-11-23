@@ -1,0 +1,1 @@
+- A member's first post or ask in a room it never read now prints one line on standard error with the number of unread messages and the exact `klatch read ROOM` command, once; no cursor moves. `klatch admin stats` counts members who posted and never read, by day (counts only) (#1411).
