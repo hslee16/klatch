@@ -66,7 +66,8 @@ class TestScenarioFile(unittest.TestCase):
 
     def test_not_computed_metrics_are_named_null_with_a_reason(self):
         nc = self.scn["not_computed"]
-        self.assertIn("claim_conflicts", nc)
+        self.assertNotIn("claim_conflicts", nc)  # the K arms' store export fills it (#1433); store_metrics says where
+        self.assertEqual(self.scn["store_metrics"]["fields"]["claim_conflicts"].split(":")[0], "claims.history.conflicts_handled")
         self.assertIn("time_to_recover_s", nc)
 
     def test_the_agents_match_the_fixture_and_the_scenario_is_found_from_it(self):
@@ -224,7 +225,7 @@ class TestFakeAgentsOnS2(S2Base):
         self.assertEqual(r["scenario_metrics"]["per_agent"], {})
         self.assertFalse(any(ids[k] for k in ("timeout", "retries", "header")))
 
-    def test_time_to_recover_and_claim_conflicts_are_null_not_zero(self):
+    def test_time_to_recover_is_null_and_a_b_arm_claim_conflicts_is_null_not_zero(self):
         r, _ = self.one()
         self.assertIsNone(r["metrics"]["claim_conflicts"])
         self.assertIsNone(r["scenario_metrics"]["time_to_recover_s"])

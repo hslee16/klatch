@@ -21,11 +21,13 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface (optional per-agent private files and a seeded history), the test fixture `trivial`, F1 `tallykit` (Scenario S1) and F4 `specialists` (Scenario S4).
-- `asks.py`: the S4 ask and answer metrics from the agents' message events.
-- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3).
+- `asks.py`: the S4 ask and answer metrics from the agents' message events, and the ask counts of the streams for the store cross-check (#1433).
+- `storeexport.py`: the K arms' run store as counts, from `klatch-bench store-stats` (#1433).
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3) and F6 `recovery` (see Scenario S6).
 - `scale.py`, `fixtures/scale/gen.py`, `checks/scale/`: Scenario S7 (see below): the per-member scale metrics, the scaling table,
   the generator of fixture F7 and its hidden checker and oracles.
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
+- `recovery.py`: scenario S6 (failure recovery): the `kill_agent` trigger the harness evaluates and the recovery metrics (see Scenario S6). F6 `recovery` is its fixture.
 - `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
   history metrics that need the map.
 - `prices.json`, `cost_model.json`: the price table (cost estimates while a run is live) and the SPEC 8.1 planning figures
@@ -110,7 +112,7 @@ For a fixture with a scenario the harness now fills two fields it used to leave 
 modules changed by a non-merge commit of more than one agent; `overwrites` is the number of registry or changelog lines
 added by some commit in the origin or any agent clone that are absent from the final main. The detail (which modules, which
 lost lines and who wrote them, edits to a module the agent does not own, merge state, per-agent contribution) is in the
-record's `scenario_metrics`. Not yet computed: `claim_conflicts` and `store_export` (the store, K arms). Fake scripts for
+record's `scenario_metrics`. `claim_conflicts` and `store_export` come from the K arms' run store (see "The run store export" below). Fake scripts for
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
 
@@ -173,7 +175,7 @@ Gaps, stated plainly. Topology T-shared (one working directory used by all agent
 not built: `run.py` makes one clone per agent under the run's scratch, the arm prompts say "your own clone", and both drivers
 take one working directory per agent, so only T-clone runs. T-shared needs its own run mode (one shared checkout), a prompt
 variant that says so, and metrics that do not rely on commits (a final-file check, since agents may never commit); this is a
-follow-up. `claim_conflicts` is null (it needs the K arms' store export) and `time_to_recover_s` is null (the stream parser
+follow-up. `claim_conflicts` comes from the K arms' store export (null in a B arm) and `time_to_recover_s` is null (the stream parser
 counts conflicts but keeps no time of the first one). Fake scripts use the new `replace` step (an edit of the file as it is
 now, failing when the text is absent) next to `copy_from`, `append`, `sync` and `git`; tests are in
 `tests/test_onefile_checker.py` (the checker on the reference and on eleven variants) and `tests/test_s2_scenario.py` (the
@@ -246,12 +248,32 @@ earlier members (the job text says they have finished; the common prompt is not 
 commands from it, printing the same stream-json a real session prints. A step can be limited to some arms, can fail
 (`exit`, a failing command), `hang` until the wall cap kills it, or report spend (`cost`). See the file's docstring for the
 steps; `read`, `run` and `hook` (a session-start style hook output) were added for S9, and `--session 2` runs the steps of
-`NAME#2` (the restarted agent).
+`NAME#2` (the restarted agent). `wait_file` (wait for a file in the logs directory: the harness writes `kill.json` there when it
+kills the victim of S6, so a scripted survivor can "notice") and `send` (a `SendMessage` call) were added for S6.
+
+## The run store export
+
+After each K-arm run the harness calls `klatch-bench store-stats --home KLATCH_HOME --key-dir KLATCH_KEY_DIR --json` on the
+run's own temporary store and writes the result to `artifacts.store_export`. It needs no admin passphrase because it is a bench
+tool, not an admin act: it is in the klatch-bench crate (`proto/klatch-bench/src/store_stats.rs`), is not in the shipped
+klatch binary, opens the file read-only through the same library function as `klatch admin stats` (so the output is the same
+report), and refuses a path under or over `~/.klatch` and a key directory that is not mode 700. The report is counts only (no
+message text, ask text, claim detail, label or payload). Find the tool with `--bench-bin`, `$KLATCH_BENCH_BIN`, or
+`klatch-bench` beside the klatch binary (`cargo build -p klatch -p klatch-bench --locked`); without it the export is skipped,
+the record keeps null with a note, and the run stays valid.
+
+From it the harness fills `metrics.claim_conflicts` and, under `scenario_metrics.store`: `claims_granted`,
+`claims_refused_by_rule`, `claims_released`, `claims_expired`, `asks_created`, `asks_answered`, `asks_closed`,
+`time_to_first_answer_s`, `members_posted_never_read`, `hook_bytes_injected`, and `asks_cross_check` (the ask counts of the
+streams, from `asks.py`, next to the store's, with a mismatch flag and a note). The scenario files (`s1` to `s4`, `s9`) have a
+`store_metrics` section naming the export field behind each one, and the report shows them per arm. In S4 the ask metrics stay
+stream-based for every arm; the store counts sit beside them with the cross-check. Tests: `tests/test_store_export.py` (with `KLATCH_BIN` set, fake K agents claim,
+collide, ask and answer through the real binary and the real tool); the tool's own tests are in the klatch-bench crate.
 
 ## Not computed yet
 
 Fields the spec lists that need a scenario's unit-to-path map or the store export are written as `null` (never omitted):
-`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; S2 leaves `claim_conflicts` and `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
+`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; K arms fill `claim_conflicts` and `store_export` from the run store, B arms leave them null with a reason; S2 leaves `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
 divided by 4) because the standard library has no tokenizer; the record says so in `notes`. `messages` counts klatch posts
 (`post`, `dm`, `ask`, `answer`) and `SendMessage` calls from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.
@@ -305,8 +327,8 @@ agent, never summed. The harness also fills `overwrites` (a's `def parse_bin` an
 `wall_s`. Whether a claim moves with a handoff (#539) is recorded for the K arms as `handoff_claims`, not graded: from the
 streams, the paths `a` claimed, released, released before its handoff message and still held when it stopped, what `c`
 claimed and was refused, and whether `a` posted `checkpoint:` and `handoff:` messages. Whether klatch itself moved or freed a
-claim or an ask needs the store, which `run.py` does not export yet, so `transferred_by_klatch` is null with a note (the same
-gap as `claim_conflicts`). B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
+claim or an ask needs a per-claim record, which the counts-only store export does not carry (no claim name, no member), so
+`transferred_by_klatch` stays null with a note. B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
 8.1's (2.40 USD a run, 40 USD for the M0 suite on Haiku), proposals the human changes before M0. The fake agent gained a `poll`
 step (n polling turns without waiting) for the blocked-agent tests. No real run has been made.
 
@@ -352,3 +374,53 @@ the coordination share growing with the team), so `--runs 6` over B1 and K2 is 1
 136.80 to 228.00 at 16; Sonnet is three times that. Proposed caps (the human changes them before M0): per run 15.60 and 45.60
 USD, suite 78 and 228 USD, wall 1800 s and 2400 s. `run.py` takes the agent count from the fixture variant; 16 agents are 16
 processes and 16 clones, and the K arms run `klatch init` and join the one room for each member.
+
+## Scenario S6: failure recovery, a helper dies while holding a claim or an ask (`scenarios/s6.json`, fixture `recovery`)
+
+F6 `recovery` is F1 at a smaller size: `recoverkit`, four independent modules (`ranges`, `wrap`, `pairs`, `bits`), three agents.
+`a` owns `ranges` and needs one fact for `to_mask`, the INDEX MAP of masks (position = (index * K + R) mod 16, a seeded arbitrary
+pair that is no conventional default: not least or most significant bit first), which `c` owns; `b` owns `wrap` and `pairs`;
+`c`, the victim, owns `bits` and the duty to answer `a`. The ask is necessary: the map is in no repository file and in no job
+text. It is in c's private file (`private/c/SPEC-INDEXMAP.md`) and b's deputy copy (`private/b/SPEC-INDEXMAP-COPY.md`), copied
+into those clones only, untracked and excluded from git (the S4 mechanism), generated from a fixed seed by `gen_facts.py`
+(`--check` proves reproducibility). `docs/FORMATS.md` holds only a superseded legacy map (`15 - index`), wrong on purpose.
+b's job text says it holds the copy and answers when c has not; nobody is told c will die. So a gets the value only through an
+answer, and with c dead the only answerer is b, once it notices (K arms: a lapsed ask lease, a stuck notice). The `bits` module
+works on bit positions (position 0 is the least significant bit, stated in the repository), so recovering the module never
+needs the map: module recovery and ask recovery are separate duties and are scored separately. A victim that answered before
+the kill leaves nothing to recover (variant `claim` does not wait for the question). In B0 nobody can be asked, so a passes only
+if b writes the map into the repository. The hidden checker (`checks/recovery/`, map in `facts.json`) scores 0 to 4 modules
+(each tested by loading its file) and, apart from the units: `recovered` (the victim's module is right on the final main and a
+non-victim commit changed it), `ask-answered` (`to_mask` uses the seeded map; a guess and the superseded revision fail),
+`no-duplicate-work` (at most one survivor committed the victim's module; nobody but its owner committed a live agent's module),
+no conflict markers and the visible tests. `check.py --module NAME FILE` tests one file alone; the harness replays the victim's
+module history through it to find the recovery commit.
+
+**The kill.** The scenario file's `kill_agent` names the victim, the `after` conditions (all must hold, each may be limited to
+some arms) and `fallback_turns`. Every poll, `recovery.Killer` reads the victim's stream and the origin's git history; when
+the conditions hold, run.py sends SIGKILL to the victim's process group (no hook runs, no claim or board line is released, no
+result message is written), records it in `kill.json` and `scenario_metrics.kill`, and goes on with the survivors, who are not
+told. The default trigger: the victim has edited its module and not committed it (`edited`, `no_commit`), holds its claim (K
+arms: `claimed`) or its board line marked working (B1: `board_working`), and a's question has reached it unanswered
+(`ask_open`: a line with `seeking` and an index map word in a tool result or a hook output, and no answer sent since).
+Variant `claim` drops the question; variant `ask` is the question alone (B0 cannot be asked, so its trigger is six turns).
+`fallback_turns` (14) kills a victim that never meets the conditions and says `fallback` in the record. A run whose victim
+exits first has `kill.fired` false and is invalid. The fake driver models the kill as a script that hangs after its edit.
+
+**Metrics** (precise definitions in the scenario file): recovery rate (`recovered`), units completed, `correct`; seconds from
+the kill to the first survivor action on the victim's work and the survivors' turns until it (an action is a claim of the
+module or an `ask:N`, a write of the module, an answer, or a message naming the victim; reading and polling are not);
+`time_to_module_recovery_s` (the first commit that completes the module, found by replaying the history, one second
+resolution) and `time_to_ask_answer_s`; false alarms (a survivor taking over a live agent's module, or the victim's before the
+kill); `duplicate_work` and `duplicated_recovery`. For K arms, how the survivors noticed: the streams are scanned for
+klatch's own text, `stuck_dead_holder` (`dead_holder room R claim C holder V`, the mediator's `holds X in R but its process has
+exited`), `stuck_stale_ask` (`stale_ask ask #N asker X age Ns`), `ask_lease_lapsed` (`V's claim lapsed without an answer; the
+ask is open again`) and `claim_taken_after_lapse` (a survivor's claim of the victim's module succeeds after the kill); a
+refused claim (`is claimed by V in room R (Ns left)`) and the board line `- V | working` are sightings, not notices.
+`how_noticed` is the first marker before or at the first action, or `no-marker`.
+
+**Gaps.** K3 (a supervisor restarts the dead agent) needs the role launcher of #1421 and is listed, not run. The store's claim
+events (#1386) and stuck events are not exported yet, so the streams carry only what a survivor was shown. SessionEnd cleanup
+(#1314) does not run for a SIGKILLed process, which is the case built here. A headless `claude -p` session may have no
+registry record, so a K run may notice by the lease alone. No real run exists: M0 (#1380) needs the human's budget approval.
+Tests: `tests/test_recovery_checker.py`, `test_recovery_unit.py`, `test_s6_scenario.py`.

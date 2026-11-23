@@ -37,14 +37,17 @@ import tempfile
 import time
 
 import approval as approval_mod
+import asks as asks_mod
 import drivers
 import fixture as fixture_mod
 import asks as asks_mod
 import chain
 import history as history_mod
+import recovery
 import scale as scale_mod
 import scenario as scenario_mod
 import schema
+import storeexport
 import streams
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -277,6 +280,15 @@ class Suite:
         shutil.rmtree(seedtree)
         # agents
         procs, states, logs, offs, partial = {}, {}, {}, {}, {}
+        stamps = {}  # session key -> seconds since the agents started, one per stream line (timeline.json)
+        kill_rec, killer, victim_name = None, None, None
+        scn = None
+        if fx.spec.get("scenario"):
+            try:
+                scn = scenario_mod.load(fx.spec["scenario"], a.scenarios_dir)
+            except scenario_mod.ScenarioError:
+                scn = None
+        kill_spec = recovery.kill_spec(scn, fx.variant) if scn else None
         rng = random.Random(seed)
         team = fx.names
         clones = {}
@@ -337,6 +349,7 @@ class Suite:
             errf.close()
             states[key] = streams.StreamState(klatch_bin=a.klatch_bin)
             offs[key], partial[key] = 0, b""
+            stamps[key] = []
             agent_of[key] = name
 
         # a resume variant (fixture "resume"): the agent's first session is cut after after_turns turns and, once it has
@@ -352,6 +365,11 @@ class Suite:
                 cut.add(name)
                 pending[name + ".r2"] = (name, name, ag["task"] + "\n\n" + resume["note"])
         t0 = time.monotonic()
+        if kill_spec:
+            # scenario S6: the victim is killed when the scenario's conditions hold on its stream and the git history
+            victim_name = kill_spec["agent"]
+            unit_paths = [scn["units"][u]["path"] for u in scn["agents"][victim_name]["units"]]
+            killer = recovery.Killer(kill_spec, arm, unit_paths, recovery.GitProbe(origin, henv))
 
         def pump():
             now = round(time.monotonic() - t0, 3)
@@ -364,6 +382,7 @@ class Suite:
                 *lines, partial[name] = data.split(b"\n")
                 for ln in lines:
                     states[name].feed(ln.decode("utf-8", "replace"), now)
+                    stamps[name].append(now)
 
         def checks_now(tag):
             dest = os.path.join(scratch, "check-" + tag)
@@ -377,11 +396,37 @@ class Suite:
             total, done = schema.count_units(checks)
             return total > 0 and total == done
 
+        def maybe_kill(elapsed):
+            """Evaluate the kill trigger; SIGKILL the victim's process group when it is due (no hook runs, nothing is
+            released) and write kill.json, which a scripted fake survivor may wait for. Returns the record or None."""
+            proc = procs[victim_name]
+            if proc.poll() is not None:
+                return {"fired": False, "agent": victim_name,
+                        "reason": "the victim exited (code %s) before the trigger fired" % proc.returncode}
+            with open(os.path.join(log_dir, "%s.stream.jsonl" % victim_name), errors="replace") as f:
+                lines = f.read().splitlines()
+            due = killer.poll(lines)
+            if due is None:
+                return None
+            kill_group(proc)
+            proc.wait()
+            pump()
+            rec_ = {"fired": True, "agent": victim_name, "trigger": due["trigger"], "turns": due["turns"],
+                    "conditions": due["conditions"], "t": round(elapsed, 3), "epoch": time.time(),
+                    "lines": {k: len(v) for k, v in stamps.items()}}
+            tmp = os.path.join(log_dir, "kill.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(rec_, f, sort_keys=True)
+            os.replace(tmp, os.path.join(log_dir, "kill.json"))
+            return rec_
+
         try:
             while True:
                 time.sleep(0.05)
                 pump()
                 elapsed = time.monotonic() - t0
+                if killer and kill_rec is None:
+                    kill_rec = maybe_kill(elapsed)
                 if sum(s.cost_usd for s in states.values()) >= a.max_run_usd:
                     outcome = "spend-cap"
                     break
@@ -408,8 +453,18 @@ class Suite:
         pump()
         wall = time.monotonic() - t0
         rcs = {n: p.returncode for n, p in procs.items()}
+        killed = victim_name if kill_rec and kill_rec.get("fired") else None
+        if killer:
+            if kill_rec is None:
+                kill_rec = {"fired": False, "agent": victim_name, "reason": "the run ended before the trigger fired"}
+            if not kill_rec["fired"]:
+                rec["valid"] = False
+                notes.append("the kill never fired: %s" % kill_rec["reason"])
+            with open(os.path.join(log_dir, "timeline.json"), "w") as f:
+                json.dump(stamps, f, sort_keys=True)
+        self.run_kill = kill_rec
         if outcome is None:
-            outcome = "crash" if any(rc != 0 for k, rc in rcs.items() if k not in cut) else "ok"
+            outcome = "crash" if any(rc != 0 for k, rc in rcs.items() if k not in cut and k != killed) else "ok"
         if outcome == "crash":
             notes.append("agent exit codes %s" % json.dumps(rcs, sort_keys=True))
         # the final hidden check on a clone of the final origin
@@ -458,6 +513,42 @@ class Suite:
         self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
+        self.store_metrics(rec, arm, khome, kkeys, log_dir, notes)
+
+    def store_metrics(self, rec, arm, khome, kkeys, log_dir, notes):
+        """The K arms' run store as counts (#1433): artifacts.store_export, the claim and ask metrics that were null, and the
+        ask counts cross-checked against the streams (scenario_metrics.store). A B arm has no store: null with a reason. A
+        missing tool or an unreadable store leaves null and a note; the run is never invalidated for it."""
+        store = rec.setdefault("scenario_metrics", {}).setdefault("store", {})
+        if not arm.startswith("K"):
+            store["reason"] = "no klatch store in a %s arm (the arm has no klatch)" % arm
+            return
+        tool = self.args.bench_bin or storeexport.find_tool(self.args.klatch_bin, os.environ)
+        report, why = storeexport.export(tool, khome, kkeys)
+        if report is None:
+            notes.append(why)
+            store["reason"] = why
+            return
+        rec["artifacts"]["store_export"] = report
+        m = storeexport.metrics(report)
+        rec["metrics"]["claim_conflicts"] = m["claim_conflicts"]
+        store.update(m)
+        try:
+            streams_by_key = {}
+            for n in sorted(os.listdir(log_dir)):
+                if n.endswith(".stream.jsonl"):
+                    with open(os.path.join(log_dir, n), errors="replace") as f:
+                        streams_by_key[n] = f.read().splitlines()
+            ours = asks_mod.from_streams(streams_by_key, self.args.klatch_bin)
+            theirs = {"created": m["asks_created"], "answered": m["asks_answered"]}
+            if None in theirs.values():
+                raise ValueError("the store report has no ask counts")
+            store["asks_cross_check"] = asks_mod.cross_check(ours, theirs)
+            if not store["asks_cross_check"]["match"]:
+                notes.append("ask counts differ between the streams and the store: %s" % "; ".join(store["asks_cross_check"]["differences"]))
+        except (OSError, ValueError) as e:
+            notes.append("ask cross-check failed: %s" % e)
+            store["asks_cross_check"] = None
 
     def seed_room(self, messages, scratch, env, notes):
         """Post the fixture's seeded earlier exchange into the room, each message as its own member, before any agent starts."""
@@ -497,6 +588,8 @@ class Suite:
         if scn.get("stream_metrics") == "chain" and log_dir:
             # S3: the blocked agents' idle and wasted turns and the handoff claim record, from the streams (chain.py)
             rec["scenario_metrics"].update(chain.compute(log_dir, scn, arm, self.args.klatch_bin))
+        if scn.get("stream_metrics") == "recovery" and log_dir:
+            self.recovery_metrics(rec, scn, arm, log_dir, origin, clone_dirs, henv, notes)
         if scn.get("history_check"):
             # a scenario whose units share one file: overwrites are lost behaviours, found by testing every commit
             try:
@@ -510,6 +603,38 @@ class Suite:
             sm.update(scenario_mod.overwrite_split(hist["overwritten"], rec["metrics"]["git_conflicts"], sm))
             for k in scn.get("not_computed", {}):
                 sm.setdefault(k, None)  # named null, never omitted (the reason is in the scenario file)
+
+    def recovery_metrics(self, rec, scn, arm, log_dir, origin, clone_dirs, henv, notes):
+        """The S6 metrics (recovery.py): from the streams, the timeline and the kill record of this run, and from git. A
+        failure is a note, never a lost run."""
+        kill = getattr(self, "run_kill", None)
+        sm = rec["scenario_metrics"]
+        sm["kill"] = kill
+        try:
+            sessions, timeline = {}, {}
+            for ag in scn["agents"]:
+                with open(os.path.join(log_dir, "%s.stream.jsonl" % ag), errors="replace") as f:
+                    sessions[ag] = f.read().splitlines()
+            tpath = os.path.join(log_dir, "timeline.json")
+            if os.path.exists(tpath):
+                with open(tpath) as f:
+                    timeline = json.load(f)
+            met = recovery.analyze(sessions, timeline, scn, arm, kill)
+            sm.update(met)
+            if kill and kill.get("fired"):
+                check_py = os.path.join(self.args.checks_dir, scn["recovery_check"]["checker"], "check.py")
+                sm.update(recovery.git_recovery(origin, clone_dirs, scn, kill["agent"], kill.get("epoch"), henv, check_py))
+                # false alarms seen only in git: a commit of a live agent's module by someone else
+                owner = {u: ag for ag, v in scn["agents"].items() for u in v["units"]}
+                have = {(d["agent"], d["unit"]) for d in sm["false_alarm_detail"]}
+                for fe in sm.get("foreign_edits", []):
+                    if fe["unit"] != sm["victim_unit"] and (fe["author"], fe["unit"]) not in have:
+                        have.add((fe["author"], fe["unit"]))
+                        sm["false_alarm_detail"].append({"agent": fe["author"], "unit": fe["unit"], "how": "commit",
+                                                         "owner": owner[fe["unit"]], "victim_unit": False})
+                sm["false_alarms"] = len(sm["false_alarm_detail"])
+        except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError) as e:
+            notes.append("recovery metrics failed: %s" % e)
 
     def history_metrics(self, rec, origin, clones, agent_of, log_dir, henv, notes):
         """The S9 metrics (history.py) for a scenario whose file has history_metrics: what the late joiner read and when, and
@@ -663,6 +788,8 @@ def parse_args(argv):
     p.add_argument("--arm-text-version", default="draft-1")
     p.add_argument("--klatch-bin", help="absolute path of the klatch binary (needed by K arms)")
     p.add_argument("--klatch-commit", help="the klatch commit (default: git HEAD of this repository)")
+    p.add_argument("--bench-bin", help="the klatch-bench tool that exports the K arms' run store as counts (default: "
+                   "$KLATCH_BENCH_BIN, else klatch-bench beside the klatch binary; without it the export is skipped with a note)")
     p.add_argument("--room", default="lobby")
     p.add_argument("--seed", type=int, default=1000)
     p.add_argument("--model", help="the agent model id (required with --driver claude)")
