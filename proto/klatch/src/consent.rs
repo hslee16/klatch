@@ -28,6 +28,8 @@ pub enum Setting {
     Wake(bool),
     /// The machine checkpoint (#1408).
     Checkpoint(bool),
+    /// Passive claims (#1401).
+    PassiveClaims(bool),
 }
 
 /// Every consent as it stands in one settings value.
@@ -39,6 +41,7 @@ pub struct State {
     pub enforce: bool,
     pub wake: bool,
     pub checkpoint: bool,
+    pub passive_claims: bool,
     /// The program klatch's hooks run, kept as it is when a consent changes.
     bin: String,
 }
@@ -51,6 +54,7 @@ const LEGEND: &str = "What each one changes (only klatch's own hook entries in t
   enforce: a PreToolUse hook blocks an edit of a path another member claimed
   wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
   checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
+  passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
 A change takes effect at the next session; one already running keeps the hooks it started with.
 ";
 
@@ -79,11 +83,24 @@ pub fn read_state(settings: &Value) -> Option<State> {
         session_end: has("SessionEnd", HookKind::Base),
         enforce: has("PreToolUse", HookKind::Enforce),
         wake: found.iter().any(|(_, _, kind)| *kind == HookKind::Wake),
-        checkpoint: found.iter().any(|(e, cmd, k)| {
-            e == "Stop" && *k == HookKind::Base && cmd.ends_with(" --checkpoint")
-        }),
+        checkpoint: stop_flags(&found).1,
+        passive_claims: stop_flags(&found).0,
         bin: init::hook_program(first).to_string(),
     })
+}
+
+/// The consents the Stop hooks of klatch's carry, as `(passive claims, checkpoint)`.
+fn stop_flags(found: &[(String, String, HookKind)]) -> (bool, bool) {
+    let mut flags = (false, false);
+    for (_, cmd, _) in found
+        .iter()
+        .filter(|(e, _, k)| e == "Stop" && *k == HookKind::Base)
+    {
+        let w = words(cmd);
+        flags.0 |= w.contains(&"--passive-claims");
+        flags.1 |= w.contains(&"--checkpoint");
+    }
+    flags
 }
 
 fn on_off(on: bool) -> &'static str {
@@ -100,6 +117,7 @@ impl State {
             format!("enforce: {}", on_off(self.enforce)),
             format!("wake: {}", on_off(self.wake)),
             format!("checkpoint: {}", on_off(self.checkpoint)),
+            format!("passive-claims: {}", on_off(self.passive_claims)),
         ]
     }
 }
@@ -121,8 +139,9 @@ impl Setting {
             "enforce" => switch().map(Self::Enforce),
             "wake" => switch().map(Self::Wake),
             "checkpoint" => switch().map(Self::Checkpoint),
+            "passive-claims" => switch().map(Self::PassiveClaims),
             other => Err(format!(
-                "unknown consent {other:?}: board, join, session-end, enforce, wake or checkpoint"
+                "unknown consent {other:?}: board, join, session-end, enforce, wake, checkpoint or passive-claims"
             )),
         }
     }
@@ -168,6 +187,7 @@ pub fn apply(settings: &mut Value, setting: &Setting) -> Result<(), String> {
         Setting::Enforce(on) => init::set_enforce(&mut next, bin, switch_of(*on))?,
         Setting::Wake(on) => init::set_wake(&mut next, bin, switch_of(*on))?,
         Setting::Checkpoint(on) => init::set_checkpoint(&mut next, bin, switch_of(*on))?,
+        Setting::PassiveClaims(on) => init::set_passive_claims(&mut next, bin, switch_of(*on))?,
     }
     *settings = next;
     Ok(())

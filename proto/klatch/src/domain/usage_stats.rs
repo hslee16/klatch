@@ -111,6 +111,19 @@ pub struct MachineCheckpointCounts {
     pub bytes: i64,
 }
 
+/// The passive claim events in the window (#1401): claims a hook took when a member edited a file, how many of those
+/// renewed one the member already held, how many another member's claim refused, how many were released at a Stop or
+/// SessionEnd, how many lapsed first and how many steps failed. Counts only: no claim name and no member.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PassiveClaimCounts {
+    pub granted: i64,
+    pub renewed: i64,
+    pub refused: i64,
+    pub released: i64,
+    pub expired: i64,
+    pub errors: i64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemberCounts {
     /// Distinct member names that joined any room in scope.
@@ -146,6 +159,7 @@ pub struct UsageStats {
     pub asks: AskCounts,
     pub claims: ClaimCounts,
     pub machine_checkpoints: MachineCheckpointCounts,
+    pub passive_claims: PassiveClaimCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
@@ -402,6 +416,11 @@ impl UsageStats {
             "machine checkpoints: {} written ({} at session end), {} replaced an earlier one, {} bytes\n",
             mc.written, mc.last, mc.replaced, mc.bytes
         ));
+        let pc = &self.passive_claims;
+        o.push_str(&format!(
+            "passive claims: {} granted, {} renewed, {} refused, {} released, {} lapsed, {} failed\n",
+            pc.granted, pc.renewed, pc.refused, pc.released, pc.expired, pc.errors
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -527,6 +546,11 @@ impl UsageStats {
             "machine_checkpoints": {
                 "written": self.machine_checkpoints.written, "last": self.machine_checkpoints.last,
                 "replaced": self.machine_checkpoints.replaced, "bytes": self.machine_checkpoints.bytes,
+            },
+            "passive_claims": {
+                "granted": self.passive_claims.granted, "renewed": self.passive_claims.renewed,
+                "refused": self.passive_claims.refused, "released": self.passive_claims.released,
+                "lapsed": self.passive_claims.expired, "failed": self.passive_claims.errors,
             },
             "refusals": pairs(&self.refusals),
             "members": {

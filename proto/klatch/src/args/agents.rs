@@ -78,5 +78,11 @@ pub(crate) enum AgentsCmd {
         /// (`klatch init --checkpoint`).
         #[arg(long)]
         checkpoint: bool,
+        /// Claim files as they are edited (#1401): on PostToolUse claim the repo-relative path of each file an edit or
+        /// write touched, for a short lease that every further edit renews, and print one line when another member
+        /// holds it (never a block); on Stop and SessionEnd release those claims. Consent lives here: only a hook
+        /// command that carries this flag claims anything (`klatch init --passive-claims`).
+        #[arg(long)]
+        passive_claims: bool,
     },
 }
