@@ -138,6 +138,17 @@ pub(crate) struct Shared {
     forwarded: crate::forwarded::Ignored,
 }
 
+impl Shared {
+    pub(crate) fn new(backend: SharedBackend, config: SessionConfig) -> Shared {
+        Shared {
+            backend,
+            config,
+            sessions: Arc::default(),
+            forwarded: Default::default(),
+        }
+    }
+}
+
 /// 128 random bits as 32 lower-case hex digits: the name of a session. Not a secret that stands alone (every use also
 /// needs the credential), but unguessable all the same.
 fn new_session_id() -> io::Result<String> {
@@ -241,7 +252,7 @@ impl Route {
     }
 }
 
-fn serve_connection(mut stream: Stream, shared: &Shared) {
+pub(crate) fn serve_connection(mut stream: Stream, shared: &Shared) {
     let limits = Limits::default();
     let deadline = Instant::now() + limits.deadline;
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
@@ -491,12 +502,7 @@ pub fn run(opts: &Options) -> Result<()> {
         &listener.local_addr()?,
         opts.max_connections,
     );
-    let shared = Shared {
-        backend: gateway.session_backend(),
-        config: SessionConfig::default(),
-        sessions: Arc::default(),
-        forwarded: Default::default(),
-    };
+    let shared = Shared::new(gateway.session_backend(), SessionConfig::default());
     loopback::serve_concurrent(
         &listener,
         &crate::daemon::STOP,

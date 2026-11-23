@@ -52,13 +52,59 @@ pub type Listener = TcpListener;
 /// Check the address and bind it. A refusal happens before any socket exists.
 pub fn bind_loopback(addr: &str) -> Result<TcpListener> {
     let parsed = check_loopback(addr)?;
-    let listener = TcpListener::bind(parsed)
-        .map_err(|e| anyhow::anyhow!("cannot listen on {parsed}: {}", e.kind()))?;
+    let listener = bind_checked(parsed)?;
     // the bound address is loopback by construction; check what the system says anyway
     if !is_allowed_ip(&listener.local_addr()?.ip()) {
         bail!("refusing to listen: the bound address is not loopback");
     }
     Ok(listener)
+}
+
+/// The one other way to a listener (#108): the address of a mutual TLS listener. The text is parsed, never resolved
+/// (an IP address and a port, no host name), and `klatch::session::policy::check_mutual_tls_bind` decides before any
+/// socket exists: a client CA must be configured, and an address off loopback needs the operator's explicit allowance
+/// (off by default). Only the TLS listener (`tls.rs`) calls this; a plaintext listener has `bind_loopback` and nothing
+/// else, so plaintext off loopback has no way to start.
+pub fn bind_mutual_tls(addr: &str, tls: klatch::session::policy::TlsBind) -> Result<TcpListener> {
+    let parsed = check_mutual_tls_addr(addr, tls)?;
+    bind_checked(parsed)
+}
+
+/// The check of [`bind_mutual_tls`] alone, so a caller can refuse before it opens anything else.
+pub fn check_mutual_tls_addr(
+    addr: &str,
+    tls: klatch::session::policy::TlsBind,
+) -> Result<SocketAddr> {
+    let Ok(parsed) = addr.parse::<SocketAddr>() else {
+        bail!(
+            "refusing to listen on {:?}: the address must be IP:PORT or [IPv6]:PORT (an IP address, not a host name)",
+            klatch::domain::flat(addr)
+        );
+    };
+    klatch::session::policy::check_mutual_tls_bind(&parsed, tls)?;
+    Ok(parsed)
+}
+
+/// The only `TcpListener::bind` of the crate (`tests/no_network.rs`): both callers have checked the address first.
+fn bind_checked(addr: SocketAddr) -> Result<TcpListener> {
+    TcpListener::bind(addr).map_err(|e| anyhow::anyhow!("cannot listen on {addr}: {}", e.kind()))
+}
+
+/// Two connected local sockets, as the type of a connection: what the TLS listener hands the HTTP handlers (one end)
+/// while it carries the other end's bytes through TLS. In-process, nothing listens and no address is involved.
+pub fn connected_pair() -> std::io::Result<(Stream, Stream)> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: socketpair fills both descriptors on success, and each is owned by exactly one OwnedFd below.
+    unsafe {
+        if libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok((
+            Stream::from(OwnedFd::from_raw_fd(fds[0])),
+            Stream::from(OwnedFd::from_raw_fd(fds[1])),
+        ))
+    }
 }
 
 /// The bounds on one request.

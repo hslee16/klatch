@@ -46,8 +46,8 @@ xattr -d com.apple.quarantine klatch klatch-server
 - Wire protocol 1 over `klatch serve --stdio`; MCP over `klatch mcp --stdio`.
 - Clients: Python, TypeScript (`@klatch/client`) and Rust (the `client` feature of the crate).
 - `klatch-server`: `channel`, `daemon --socket` (Unix socket, mode 0600), `http --listen 127.0.0.1:PORT` (the wire over HTTP
-  and SSE, MCP Streamable HTTP) and a loopback `--webhook` intake. It opens loopback listeners only, starts no program and
-  makes no outbound connection. A non-loopback bind is refused.
+  and SSE, MCP Streamable HTTP) and a loopback `--webhook` intake. It opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own certificates
+  (`https`, experimental), starts no program and makes no outbound connection. A non-loopback plaintext bind is refused.
 - The factory commands of the `klatch` binary: `run`, `worker`, `anchor`.
 - Repository only, optional and unsupported (not part of the installed product): `proto/scripts/team`, `integrator`,
   `pr-sweep`, `ask-supervisor`, the gate and the experiments.

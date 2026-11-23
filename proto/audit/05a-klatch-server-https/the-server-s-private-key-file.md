@@ -1,0 +1,1 @@
+| the server's private key file | read only if it is a regular file (not a symbolic link) owned by the server's user with no access for group or other (mode 0600) | checked on the open file before a byte is read, else the server refuses to start; key bytes are handed to rustls and dropped, and no message or log line holds any; `tests/tls_listener.rs`, `tests/no_network.rs` |

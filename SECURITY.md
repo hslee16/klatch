@@ -107,9 +107,28 @@ Supported versions: the newest release only, the current practice and not a poli
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
 - **`klatch-server` is a second binary with a second, different claim.** It ships next to `klatch` in every archive,
   wheel and Homebrew install, and it does open sockets, so the claim above does not cover it. Its claim is:
-  klatch-server opens loopback listeners only, starts no program and makes no outbound connection. A non-loopback bind
+  klatch-server opens loopback listeners only, plus one mutual TLS listener that exists only when you name your own
+  certificates, starts no program and makes no outbound connection. A non-loopback bind of the plaintext listener
   (`http --listen 0.0.0.0:0`) is refused before anything listens, a Unix socket (`daemon --socket`) is mode 0600 and
-  closes a peer of another user, and no networking crate or HTTP client is in its dependency tree.
+  closes a peer of another user, and no HTTP client is in its dependency tree. The one network crate it links is rustls
+  (with ring), for `klatch-server https` (#108), which is experimental and unreviewed: mutual TLS is mandatory (a client
+  without a certificate from your CA file is refused at the handshake), there is no plaintext mode and no way to skip a
+  check, the key file must be mode 0600, the listener is loopback unless you pass `--allow-off-loopback`, and a certificate
+  gates the port only (the caller is still the worker credential). klatch makes no certificates and runs no CA.
+  **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
+  the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port
+  can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
+  quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound
+  the server enforces at start. When the cap is full, a newcomer is refused if every handshake in progress is younger
+  than half the deadline (the newcomer loses; an honest client mid-handshake is never closed to make room), and
+  otherwise takes the place of the oldest (the oldest, silent or crawling, loses). A flood that keeps the cap full of
+  fresh connections still keeps newcomers out, and an honest client that is slow past half the deadline can be evicted,
+  so the cap bounds a flood and does not remove denial of service by volume. **The real cost of that is low:** a peer
+  with no certificate that keeps the cap full of fresh connections needs only a few connections per second (a reviewer
+  starved 10 of 10 honest clients at a cap of 4 with about 3.3 per second; with the defaults, a cap of 8, a 3 s deadline
+  and a 1.5 s minimum age, roughly 5 to 6 per second). It was equally cheap before the age rule, which only protects a
+  client already mid-handshake from eviction. The remedies are a firewall, a tunnel or loopback (the listener is
+  loopback unless `--allow-off-loopback` is given), and the per-source limit of #1493.
   `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
   the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
   packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
