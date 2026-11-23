@@ -226,6 +226,25 @@ fn a_key_file_that_is_a_symlink_or_missing_stops_the_server() {
 }
 
 #[test]
+fn a_fifo_named_as_the_key_cannot_block_startup_and_is_refused() {
+    let dir = Dir::new();
+    let (files, _) = files_for(&dir, 0o600);
+    let fifo = dir.0.join("pki/fifo.key");
+    let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let fifo_files = Files {
+        key: fifo,
+        cert: files.cert.clone(),
+        ca: files.ca.clone(),
+    };
+    assert_refused(
+        &dir,
+        &listen("127.0.0.1:0", &fifo_files),
+        "not a regular file",
+    );
+}
+
+#[test]
 fn tls_without_a_client_ca_is_refused() {
     let dir = Dir::new();
     let (files, _) = files_for(&dir, 0o600);
@@ -240,7 +259,8 @@ fn a_client_ca_file_with_no_certificate_is_refused() {
     let dir = Dir::new();
     let (files, _) = files_for(&dir, 0o600);
     std::fs::write(&files.ca, "not a certificate\n").unwrap();
-    assert_refused(&dir, &listen("127.0.0.1:0", &files), "client CA");
+    // the refusal is the policy's (no root to check a client against), not a side effect of building the verifier
+    assert_refused(&dir, &listen("127.0.0.1:0", &files), "without a client CA");
 }
 
 #[test]

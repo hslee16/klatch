@@ -3,10 +3,18 @@
 //!
 //! Both sockets are non-blocking and the loop is level-triggered. Each direction has a bounded window ([`WINDOW`]): a
 //! side that stops reading (a slow client, a handler that does not read) fills its window and the pump stops reading the
-//! other side, so memory stays bounded. When the handler is done (its end of the pair is closed or shut for writing) the
-//! pump closes TLS with `close_notify`, lets the client read the answer and drains what the client was still sending, so
-//! closing the socket does not reset a connection whose answer has not been read. When the client is gone or breaks the
-//! protocol the local pair is shut, so the handler stops. Nothing here reads, logs or keeps the content of a message.
+//! other side, so memory stays bounded.
+//!
+//! **Half-close.** A client that is done sending (a TCP FIN, or a TLS `close_notify`) is not a client that is gone: the
+//! pump hands the handler every byte the client sent, then shuts the handler's end for writing (the handler sees the end
+//! of its input, as a loopback client's FIN shows it), and goes on carrying the handler's answer until the handler is
+//! done. Only then is TLS closed with `close_notify`. A client that is truly gone shows as a write or read error, and
+//! the pair is shut.
+//!
+//! **Stall deadline.** If no byte moves in either direction for the stall time (a client that never reads, a handler that
+//! never answers or writes), the connection is closed. A quiet event stream is not idle: it carries a heartbeat. The
+//! poll never watches a descriptor nobody asked about, because a hung-up descriptor is reported even with no events
+//! requested and would make the loop spin. Nothing here reads, logs or keeps the content of a message.
 
 use crate::loopback::Stream;
 use rustls::ServerConnection;
@@ -24,14 +32,27 @@ struct Pending {
     to_app: Vec<u8>,
     /// Plaintext from the handler, not yet taken by TLS.
     from_app: Vec<u8>,
+    /// The client will send nothing more (FIN or `close_notify`); it may still read.
     client_done: bool,
+    /// The handler's end of the pair has been shut for writing, after all the client's bytes were given to it.
+    app_eof_sent: bool,
+    /// The handler is done writing.
     app_done: bool,
+    /// Bytes moved in either direction so far: the stall deadline's clock restarts when this changes.
+    moved: u64,
+    /// The connection broke or stalled: close without ceremony.
+    broken: bool,
 }
 
 impl Pending {
-    /// Whether there is nothing more to carry: the client is gone, or the handler is done and all it wrote is passed on.
+    /// Whether there is nothing more to carry: the handler is done and all it wrote is passed on.
     fn finished(&self) -> bool {
-        self.client_done || (self.app_done && self.from_app.is_empty())
+        self.app_done && self.from_app.is_empty()
+    }
+
+    /// Whether the handler's input should end now: the client is done and the handler has all its bytes.
+    fn input_ends(&self) -> bool {
+        self.client_done && self.to_app.is_empty() && !self.app_eof_sent
     }
 }
 
@@ -48,16 +69,30 @@ struct Interest<'a> {
     write: bool,
 }
 
-/// Wait for readiness of two descriptors, in one call (the one place this module polls).
+/// How long one poll waits at most.
+const POLL_MS: libc::c_int = 1000;
+
+/// The descriptor to give `poll` for this interest: -1 (skipped) when nobody asked about it.
+fn poll_fd(i: Interest) -> libc::c_int {
+    if i.read || i.write {
+        i.stream.as_raw_fd()
+    } else {
+        -1
+    }
+}
+
+/// Wait for readiness of two descriptors, in one call (the one place this module polls). A descriptor with no interest is
+/// given as -1, which `poll` skips: a descriptor that has hung up is reported even when no event was asked for, and
+/// listing it would return at once, every time.
 fn wait(a: Interest, b: Interest) {
     let mut fds = [a, b].map(|i| libc::pollfd {
-        fd: i.stream.as_raw_fd(),
+        fd: poll_fd(i),
         events: if i.read { libc::POLLIN } else { 0 } | if i.write { libc::POLLOUT } else { 0 },
         revents: 0,
     });
     // SAFETY: fds is a valid array of two pollfd for the duration of the call.
     unsafe {
-        libc::poll(fds.as_mut_ptr(), 2, 1000);
+        libc::poll(fds.as_mut_ptr(), 2, POLL_MS);
     }
 }
 
@@ -69,8 +104,9 @@ struct Bridge<'a> {
     p: Pending,
 }
 
-/// Carry bytes between the TLS connection and the local end `app` until either side is done.
-pub fn bridge(conn: ServerConnection, sock: &mut Stream, app: Stream) {
+/// Carry bytes between the TLS connection and the local end `app` until the handler is done, an error breaks the
+/// connection, or nothing has moved for `stall`.
+pub fn bridge(conn: ServerConnection, sock: &mut Stream, app: Stream, stall: Duration) {
     if sock.set_nonblocking(true).is_err() || app.set_nonblocking(true).is_err() {
         return;
     }
@@ -81,8 +117,16 @@ pub fn bridge(conn: ServerConnection, sock: &mut Stream, app: Stream) {
         p: Pending::default(),
     };
     let mut buf = [0u8; 16 * 1024];
+    let (mut seen, mut since) = (0, Instant::now());
     while !b.p.finished() {
         if b.turn(&mut buf).is_err() {
+            b.p.broken = true;
+            break;
+        }
+        if b.p.moved != seen {
+            (seen, since) = (b.p.moved, Instant::now());
+        } else if since.elapsed() >= stall {
+            b.p.broken = true;
             break;
         }
     }
@@ -93,9 +137,14 @@ impl Bridge<'_> {
     /// One pass: write what is ready, wait, read what arrived.
     fn turn(&mut self, buf: &mut [u8]) -> Result<(), ()> {
         let Bridge { conn, sock, app, p } = self;
-        flush_tls(conn, sock).map_err(|_| ())?;
+        p.moved += flush_tls(conn, sock).map_err(|_| ())? as u64;
         pass_to_tls(conn, p).map_err(|_| ())?;
         pass_to_app(app, p).map_err(|_| ())?;
+        if p.input_ends() {
+            // everything the client sent is with the handler: the handler's input ends here
+            p.app_eof_sent = true;
+            let _ = app.shutdown(std::net::Shutdown::Write);
+        }
         let want_tls = !p.client_done && p.to_app.len() < WINDOW;
         let want_app = !p.app_done && p.from_app.len() < WINDOW;
         wait(
@@ -123,9 +172,11 @@ impl Bridge<'_> {
     /// is drained; when the client is gone or broke the protocol, the alert TLS queued is sent and that is all. Either way
     /// the local pair is shut, so the handler stops.
     fn finish(mut self) {
-        if self.p.app_done && !self.p.client_done {
+        if self.p.app_done && !self.p.broken {
             self.close_notify();
-            drain(self.sock);
+            if !self.p.client_done {
+                drain(self.sock);
+            }
         } else {
             let _ = flush_tls(&mut self.conn, self.sock);
         }
@@ -168,17 +219,18 @@ impl Bridge<'_> {
 }
 
 /// Write what TLS has ready; `WouldBlock` leaves the rest for the next turn.
-fn flush_tls(conn: &mut ServerConnection, sock: &mut Stream) -> std::io::Result<()> {
+fn flush_tls(conn: &mut ServerConnection, sock: &mut Stream) -> std::io::Result<usize> {
+    let mut written = 0;
     while conn.wants_write() {
         match conn.write_tls(sock) {
             Ok(0) => break,
-            Ok(_) => {}
+            Ok(n) => written += n,
             Err(e) if e.kind() == ErrorKind::WouldBlock => break,
             Err(e) if retry(&e) => {}
             Err(e) => return Err(e),
         }
     }
-    Ok(())
+    Ok(written)
 }
 
 /// Give TLS the handler's bytes it will take.
@@ -188,6 +240,7 @@ fn pass_to_tls(conn: &mut ServerConnection, p: &mut Pending) -> std::io::Result<
     }
     let n = conn.writer().write(&p.from_app)?;
     p.from_app.drain(..n);
+    p.moved += n as u64;
     Ok(())
 }
 
@@ -197,10 +250,13 @@ fn pass_to_app(app: &mut Stream, p: &mut Pending) -> std::io::Result<()> {
         return Ok(());
     }
     match app.write(&p.to_app) {
-        Ok(n) => p.to_app.drain(..n),
-        Err(e) if retry(&e) => return Ok(()),
+        Ok(n) => {
+            p.to_app.drain(..n);
+            p.moved += n as u64;
+        }
+        Err(e) if retry(&e) => {}
         Err(e) => return Err(e),
-    };
+    }
     Ok(())
 }
 
@@ -218,7 +274,10 @@ fn take_records(conn: &mut ServerConnection, sock: &mut Stream) -> Result<bool, 
 fn drain_plaintext(conn: &mut ServerConnection, p: &mut Pending, buf: &mut [u8]) {
     loop {
         match conn.reader().read(buf) {
-            Ok(n) if n > 0 => p.to_app.extend_from_slice(&buf[..n]),
+            Ok(n) if n > 0 => {
+                p.to_app.extend_from_slice(&buf[..n]);
+                p.moved += n as u64;
+            }
             Err(e) if e.kind() == ErrorKind::WouldBlock => return,
             // a clean end (`close_notify`), or a cut without one
             _ => {
@@ -246,7 +305,10 @@ fn read_tls(
 /// Take what the handler wrote; its end of the stream is the end of the answer.
 fn read_app(app: &mut Stream, p: &mut Pending, buf: &mut [u8]) {
     match app.read(buf) {
-        Ok(n) if n > 0 => p.from_app.extend_from_slice(&buf[..n]),
+        Ok(n) if n > 0 => {
+            p.from_app.extend_from_slice(&buf[..n]);
+            p.moved += n as u64;
+        }
         Err(e) if retry(&e) => {}
         _ => p.app_done = true,
     }
@@ -260,5 +322,37 @@ fn drain(sock: &mut Stream) {
     let mut left = 256 * 1024usize;
     while left > 0 && sock.read(&mut sink).is_ok_and(|n| n > 0) {
         left = left.saturating_sub(sink.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loopback::connected_pair;
+
+    #[test]
+    fn a_descriptor_nobody_asked_about_is_left_out_of_the_poll() {
+        // a hung-up descriptor is reported even when no events were requested (Linux does; macOS does not always), so a
+        // loop that lists it can return at once, every time, and spin: the poll gets -1 for it, which poll skips
+        let (stream, _other) = connected_pair().unwrap();
+        let ask = |read, write| Interest {
+            stream: &stream,
+            read,
+            write,
+        };
+        assert_eq!(poll_fd(ask(false, false)), -1);
+        for (read, write) in [(true, false), (false, true), (true, true)] {
+            assert_eq!(poll_fd(ask(read, write)), stream.as_raw_fd());
+        }
+        // and nothing listed means the call waits its full time: it does not return at once
+        let (quiet, _held) = connected_pair().unwrap();
+        let idle = |stream| Interest {
+            stream,
+            read: false,
+            write: false,
+        };
+        let started = Instant::now();
+        wait(idle(&stream), idle(&quiet));
+        assert!(started.elapsed() >= Duration::from_millis(800));
     }
 }

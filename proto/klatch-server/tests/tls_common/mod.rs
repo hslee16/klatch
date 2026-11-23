@@ -3,6 +3,8 @@
 //! and a rustls client that can present, omit or misuse a certificate. Not a test file: both `tls_*` tests include it.
 #![allow(dead_code)]
 
+pub mod wire;
+
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose, SanType, date_time_ymd,
@@ -230,10 +232,32 @@ impl Drop for Server {
     }
 }
 
-/// Run a server that is expected to refuse to start: its exit code and stderr.
+/// Run a server that is expected to refuse to start: its exit code and stderr. It fails fast, by assertion, when the
+/// server does not refuse: a log line that says it is listening, or no exit within 20 seconds, kills the child (only
+/// the one started here) and panics. A check that was removed from the server therefore fails a test and never hangs it.
 pub fn refused_start(dir: &Dir, subcommand: &str, args: &[String]) -> (Option<i32>, String) {
-    let status = spawn(dir, subcommand, args).wait().unwrap();
-    (status.code(), dir.log())
+    let mut child = spawn(dir, subcommand, args);
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return (status.code(), dir.log());
+        }
+        let listening = dir.log().contains("listening on");
+        if listening || Instant::now() >= until {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "the server was expected to refuse to start but {}:\n{}",
+                if listening {
+                    "is listening"
+                } else {
+                    "did not exit in 20 seconds"
+                },
+                dir.log()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// The server's CA is what a client trusts; `client` is the certificate it presents, if any; `versions` limits what it

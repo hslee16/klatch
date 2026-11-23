@@ -6,8 +6,11 @@
 > key (the file must be mode 0600) and a CA file for client certificates; klatch makes no certificates and runs no CA. A
 > client without a certificate from that CA is refused at the handshake, and a certificate is still only a key to the port:
 > the caller is the worker credential, exactly as in section 1. The listener is loopback unless `--allow-off-loopback` is
-> given. Revocation is yours (short-lived certificates, or a new CA file and a restart). Details and limits:
-> `design/items/108-tls-listener.md`. The tunnel and terminator patterns below remain valid and need none of this.
+> given. **No CRL and no OCSP is checked** (#1491): revocation means short-lived certificates, or a new CA file and a
+> restart. **Denial of service remains possible** from any peer that can reach the port (it can open connections without
+> a certificate; the handshake deadline, the cap on connections in the handshake and the stall deadline bound it, they do
+> not remove it), so keep `--allow-off-loopback` off unless you need it and put a firewall or a tunnel in front. Details
+> and limits: `design/items/108-tls-listener.md`. The tunnel and terminator patterns below remain valid and need none of this.
 
 `klatch-server http` (the wire protocol over HTTP and server-sent events, and MCP at `POST /mcp`) listens on loopback only
 and refuses any other address, naming the zero-trust prerequisites #157 and #161. This page is the safe way to reach it

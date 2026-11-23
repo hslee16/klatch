@@ -15,12 +15,21 @@
 //!
 //! **What a certificate is.** A key to the port, not a name inside klatch. Once the handshake passed, the connection is
 //! handed to the same HTTP handlers as the loopback listener, where the caller is still the worker credential (`Bearer`
-//! with `X-Klatch-Member`), checked live; the certificate's subject is never read, mapped or logged. Revocation is the
-//! operator's: short-lived certificates, or a new CA file (the CA file is read at start).
+//! with `X-Klatch-Member`), checked live; the certificate's subject is never read, mapped or logged.
+//!
+//! **Revocation: NO CRL and NO OCSP is checked.** A client certificate that was valid when it was issued stays accepted
+//! until it expires or until the CA file is replaced (the file is read at start, so replacing it takes a restart).
+//! Revocation therefore means short-lived certificates, or a new CA. A CRL option is ticket #1491.
 //!
 //! **The secret key.** The key file must be a regular file (not a symbolic link) owned by the user running the server and
-//! mode 0600 (no bit for group or other), or the server refuses to start. Key bytes are read once, handed to rustls and
-//! dropped; no message, log line or error holds any of them.
+//! mode 0600 (no bit for group or other), or the server refuses to start; it is opened without blocking, so a FIFO named
+//! as the key is refused and cannot hold startup. Key bytes are read once, handed to rustls and dropped; no message, log
+//! line or error holds any of them. They are not zeroised on drop: the process disables core dumps at start
+//! (`harden` in `main.rs`), which is what keeps them out of a core file.
+//!
+//! **The handshake is bounded.** A short deadline, and a cap on connections in the handshake that closes the oldest to
+//! admit a newcomer (`tls_limits.rs`), so silent sockets cannot keep a valid client out; a flood by volume is still a
+//! denial of service for anyone who can reach the port.
 //!
 //! **How a connection is served.** The HTTP handlers (`wire_http.rs`) take a connected stream and nothing else, so after
 //! the handshake this module makes an in-process pair of sockets, gives one end to the handler and carries the other
@@ -28,7 +37,7 @@
 //! can reach the plaintext side. The pump is `tls_bridge.rs`.
 
 use crate::loopback::{Stream, connected_pair};
-
+use crate::tls_limits::{Handshakes, Limits};
 use anyhow::{Context, Result, bail};
 use klatch::session::policy::{Peer, Security, check_peer};
 use rustls::server::{NoServerSessionStorage, WebPkiClientVerifier};
@@ -49,9 +58,6 @@ pub struct TlsFiles {
     pub client_ca: PathBuf,
 }
 
-/// How long a client has to finish the handshake (a client that stalls there holds one connection slot this long).
-const HANDSHAKE: Duration = Duration::from_secs(5);
-
 /// Read a file the operator named; the error names the file and what kind of failure, never the content.
 fn read_pem(path: &Path, what: &str) -> Result<Vec<u8>> {
     std::fs::read(path)
@@ -59,12 +65,12 @@ fn read_pem(path: &Path, what: &str) -> Result<Vec<u8>> {
 }
 
 /// The private key, read only after the file passed its checks: a regular file (opened without following a symbolic
-/// link), owned by this user, with no access for group or other.
+/// link, and without blocking, so a FIFO cannot hold startup), owned by this user, with no access for group or other.
 fn read_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
     let shown = path.display();
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .map_err(|e| match e.raw_os_error() {
             Some(libc::ELOOP) => {
@@ -107,20 +113,30 @@ fn read_certs(path: &Path, what: &str) -> Result<Vec<CertificateDer<'static>>> {
     Ok(certs)
 }
 
-/// The server configuration for these files, or the reason the server must not start. Client authentication is
-/// mandatory and nothing in this function can turn it off.
-pub fn load_config(files: &TlsFiles) -> Result<Arc<ServerConfig>> {
-    let key = read_key(&files.key)?;
-    let chain = read_certs(&files.cert, "server certificate")?;
+/// The certificates the client CA file holds (possibly none: the bind policy refuses a listener with no root, in its own
+/// words, before any server configuration is built).
+pub fn client_roots(path: &Path) -> Result<RootCertStore> {
+    let bytes = read_pem(path, "client CA file")?;
     let mut roots = RootCertStore::empty();
-    for ca in read_certs(&files.client_ca, "client CA file")? {
+    for ca in CertificateDer::pem_slice_iter(&bytes) {
+        let ca = ca.map_err(|_| {
+            anyhow::anyhow!("the client CA file {} is not valid PEM", path.display())
+        })?;
         roots.add(ca).map_err(|_| {
             anyhow::anyhow!(
                 "the client CA file {} holds a certificate rustls cannot use",
-                files.client_ca.display()
+                path.display()
             )
         })?;
     }
+    Ok(roots)
+}
+
+/// The server configuration for these files and client roots, or the reason the server must not start. Client
+/// authentication is mandatory and nothing in this function can turn it off.
+pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<ServerConfig>> {
+    let key = read_key(&files.key)?;
+    let chain = read_certs(&files.cert, "server certificate")?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
         .build()
@@ -141,9 +157,13 @@ pub fn load_config(files: &TlsFiles) -> Result<Arc<ServerConfig>> {
     Ok(Arc::new(config))
 }
 
-/// Finish the handshake within [`HANDSHAKE`]. An error is any way of not having a verified client.
-fn handshake(conn: &mut ServerConnection, sock: &mut Stream) -> std::io::Result<()> {
-    let until = Instant::now() + HANDSHAKE;
+/// Finish the handshake within `deadline`. An error is any way of not having a verified client.
+fn handshake(
+    conn: &mut ServerConnection,
+    sock: &mut Stream,
+    deadline: Duration,
+) -> std::io::Result<()> {
+    let until = Instant::now() + deadline;
     while conn.is_handshaking() {
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -164,13 +184,26 @@ fn handshake(conn: &mut ServerConnection, sock: &mut Stream) -> std::io::Result<
     })
 }
 
-/// Serve one accepted connection: the handshake, then `inner` on one end of a pair of local sockets while the other end
-/// is carried through TLS. A connection that fails the handshake is dropped without a byte of HTTP.
-pub fn serve_tls(mut sock: Stream, config: &Arc<ServerConfig>, inner: impl Fn(Stream) + Sync) {
-    let Ok(mut conn) = ServerConnection::new(config.clone()) else {
+/// What `serve_tls` needs besides the connection: the TLS configuration, the limits and the handshakes in progress.
+pub struct Listener<'a> {
+    pub config: &'a Arc<ServerConfig>,
+    pub limits: &'a Limits,
+    pub handshakes: &'a Handshakes,
+}
+
+/// Serve one accepted connection: the handshake (counted among the handshakes in progress, with a deadline), then
+/// `inner` on one end of a pair of local sockets while the other end is carried through TLS. A connection that fails
+/// the handshake is dropped without a byte of HTTP.
+pub fn serve_tls(mut sock: Stream, at: &Listener, inner: impl Fn(Stream) + Sync) {
+    let Ok(mut conn) = ServerConnection::new(at.config.clone()) else {
         return;
     };
-    if handshake(&mut conn, &mut sock).is_err() {
+    let Some(ticket) = at.handshakes.enter(&sock, at.limits.max_handshakes) else {
+        return;
+    };
+    let shaken = handshake(&mut conn, &mut sock, at.limits.handshake);
+    at.handshakes.leave(ticket);
+    if shaken.is_err() {
         let _ = sock.shutdown(std::net::Shutdown::Both);
         return;
     }
@@ -180,6 +213,119 @@ pub fn serve_tls(mut sock: Stream, config: &Arc<ServerConfig>, inner: impl Fn(St
     };
     std::thread::scope(|scope| {
         scope.spawn(|| inner(handler_end));
-        crate::tls_bridge::bridge(conn, &mut sock, pump_end);
+        crate::tls_bridge::bridge(conn, &mut sock, pump_end, at.limits.stall);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+
+    /// A throwaway CA certificate, PEM.
+    fn ca_pem() -> String {
+        let mut params = CertificateParams::new(Vec::new()).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let key = KeyPair::generate().unwrap();
+        params.self_signed(&key).unwrap().pem()
+    }
+
+    /// The configuration for a throwaway set of files in a temp directory (this test's own).
+    fn config_for(dir: &str) -> (Arc<ServerConfig>, CertificateDer<'static>) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::path::PathBuf::from(format!("/tmp/kt-unit-{}-{dir}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        params.is_ca = IsCa::NoCa;
+        let key = KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let files = TlsFiles {
+            cert: dir.join("c.pem"),
+            key: dir.join("k.pem"),
+            client_ca: dir.join("ca.pem"),
+        };
+        std::fs::write(&files.cert, cert.pem()).unwrap();
+        std::fs::write(&files.key, key.serialize_pem()).unwrap();
+        std::fs::set_permissions(&files.key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&files.client_ca, ca_pem()).unwrap();
+        let roots = client_roots(&files.client_ca).unwrap();
+        let config = build_config(&files, roots).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        (config, cert.der().clone())
+    }
+
+    /// Run a handshake in memory (no socket, and not `handshake` above, so not its `check_peer`) between this server
+    /// configuration and a client that presents no certificate, and say whether the SERVER refused it.
+    fn server_refuses_a_client_without_a_certificate(
+        config: &Arc<ServerConfig>,
+        server_cert: CertificateDer<'static>,
+    ) -> bool {
+        let mut roots = RootCertStore::empty();
+        roots.add(server_cert).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let client_config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(rustls::DEFAULT_VERSIONS)
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+        let mut client = rustls::ClientConnection::new(Arc::new(client_config), name).unwrap();
+        let mut server = ServerConnection::new(config.clone()).unwrap();
+        for _ in 0..16 {
+            let mut to_server = Vec::new();
+            while client.wants_write() {
+                client.write_tls(&mut to_server).unwrap();
+            }
+            if let Err(e) = feed_server(&mut server, &to_server) {
+                // the server's own refusal, not an alert the client sent because it distrusted the server
+                return matches!(e, rustls::Error::NoCertificatesPresented);
+            }
+            let mut to_client = Vec::new();
+            while server.wants_write() {
+                server.write_tls(&mut to_client).unwrap();
+            }
+            let mut input = &to_client[..];
+            while !input.is_empty() {
+                client.read_tls(&mut input).unwrap();
+                let _ = client.process_new_packets();
+            }
+            if !server.is_handshaking() {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Give the server what the client sent.
+    fn feed_server(server: &mut ServerConnection, bytes: &[u8]) -> Result<(), rustls::Error> {
+        let mut input = bytes;
+        while !input.is_empty() {
+            server.read_tls(&mut input).unwrap();
+            server.process_new_packets()?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_server_configuration_refuses_a_client_without_a_certificate_by_itself() {
+        // at the handshake, through rustls alone: without the second check of `handshake` (which this does not run) a
+        // verifier that let an unauthenticated client through would complete the handshake here and fail this test
+        let (config, cert) = config_for("verifier");
+        assert!(
+            server_refuses_a_client_without_a_certificate(&config, cert),
+            "a client with no certificate completed the handshake: client authentication is optional"
+        );
+    }
+
+    #[test]
+    fn a_ca_file_with_no_certificate_gives_an_empty_root_store_and_is_not_an_error_here() {
+        let path =
+            std::path::PathBuf::from(format!("/tmp/kt-unit-{}-empty-ca", std::process::id()));
+        std::fs::write(&path, "no certificate in here\n").unwrap();
+        assert!(client_roots(&path).unwrap().is_empty());
+        std::fs::write(&path, ca_pem()).unwrap();
+        assert!(!client_roots(&path).unwrap().is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
 }

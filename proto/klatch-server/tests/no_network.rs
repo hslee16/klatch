@@ -312,20 +312,13 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     assert!(dir_check < clear);
 }
 
-/// The names of the crates in klatch-server's dependency tree over the given kinds of edge (`cargo tree`, offline).
-fn dependency_names(edges: &str) -> Vec<String> {
+/// The first words of the lines `cargo tree` prints for these arguments (offline, no prefix): crate names.
+fn tree(args: &[&str]) -> Vec<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(cargo)
-        .args([
-            "tree",
-            "-p",
-            "klatch-server",
-            "--edges",
-            edges,
-            "--prefix",
-            "none",
-            "--offline",
-        ])
+        .arg("tree")
+        .args(args)
+        .args(["--prefix", "none", "--offline"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("run cargo tree");
@@ -340,6 +333,11 @@ fn dependency_names(edges: &str) -> Vec<String> {
         .filter_map(|l| l.split_whitespace().next())
         .map(String::from)
         .collect()
+}
+
+/// The names of the crates in klatch-server's dependency tree over the given kinds of edge (`cargo tree`, offline).
+fn dependency_names(edges: &str) -> Vec<String> {
+    tree(&["-p", "klatch-server", "--edges", edges])
 }
 
 #[test]
@@ -400,8 +398,13 @@ fn the_crate_is_not_published_and_ships_through_archives_wheels_and_the_formula(
 #[test]
 fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     // `jev-http` (ureq, rustls, ring, webpki-roots) is an optional feature of the klatch library that no shipped binary
-    // may link (#871). klatch-server depends on the library with its default features, so none of them may appear in
-    // its build, with every kind of edge counted.
+    // may link (#871). Since #108 the server links rustls, ring and rustls-webpki ITSELF, for its own TLS listener, so
+    // the old check (those three names absent from the server's tree) cannot stand. It is replaced by three that together
+    // say more: (1) `ureq` and `webpki-roots`, the parts only the judge transport uses, are still absent from the
+    // server's tree; (2) the library's own build, with its default features, links none of the five names, so the judge
+    // transport does not come in with the library; (3) in the server's tree the only crate that depends on rustls is
+    // klatch-server, so no other path (ureq, the library) brings it in, and ring and rustls-webpki are reached only
+    // through rustls.
     let deps = dependency_names("normal,build");
     for n in ["ureq", "webpki-roots"] {
         assert!(
@@ -409,6 +412,41 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
             "{n} (the jev-http transport) is linked into klatch-server"
         );
     }
+    let library = tree(&["-p", "klatch", "--edges", "normal,build"]);
+    for n in ["ureq", "rustls", "ring", "webpki-roots", "rustls-webpki"] {
+        assert!(
+            !library.iter().any(|d| d == n),
+            "{n} is in the klatch library's default build (the jev-http transport is optional)"
+        );
+    }
+    let dependents = |krate: &str| -> Vec<String> {
+        let lines = tree(&[
+            "-p",
+            "klatch-server",
+            "--edges",
+            "normal,build",
+            "--invert",
+            krate,
+            "--depth",
+            "1",
+        ]);
+        let mut names: Vec<String> = lines.into_iter().skip(1).collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    assert_eq!(
+        dependents("rustls"),
+        ["klatch-server"],
+        "who depends on rustls"
+    );
+    let webpki = dependents("rustls-webpki");
+    assert!(webpki.iter().all(|d| d == "rustls"), "{webpki:?}");
+    let ring = dependents("ring");
+    assert!(
+        ring.iter().all(|d| d == "rustls" || d == "rustls-webpki"),
+        "{ring:?}"
+    );
 }
 
 #[test]
