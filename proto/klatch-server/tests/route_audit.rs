@@ -182,5 +182,6 @@ fn the_forwarded_header_counter_is_handed_names_and_never_a_value() {
         .into_iter()
         .find(|(f, _)| f.ends_with("src/wire_http.rs"))
         .unwrap();
-    assert!(http.contains("forwarded.note(head.headers.iter().map(|(n, _)| n.as_str()))"));
+    let squeezed: String = http.split_whitespace().collect();
+    assert!(squeezed.contains("forwarded.note(head.headers.iter().map(|(n,_)|n.as_str()))"));
 }
