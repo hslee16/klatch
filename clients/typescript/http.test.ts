@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ApiError, Client, ProtocolError } from "./klatch.ts";
+import "./socket.test.ts"; // CI names only this file and conformance.test.ts: the socket characterisation tests ride with it
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_BIN = process.env.KLATCH_SERVER_BIN || resolve(here, "../../proto/target/debug/klatch-server");
@@ -23,6 +24,7 @@ const TOKEN = "tok-secret-1";
 const WAIT = 5_000;
 
 type Msg = { v: 1; type: "message"; room: string; seq: number; id: string; sender: string; attribution: string; label: string; body: string; ts: number };
+type Session = { res: ServerResponse; subs: Set<string> };
 type Recorded = { method: string; url: string; headers: IncomingMessage["headers"]; body: string };
 
 function sse(frame: Record<string, unknown>): string {
@@ -43,7 +45,7 @@ async function until(cond: () => boolean, ms = WAIT): Promise<void> {
 class FakeServer {
   member = "w-1";
   rooms = new Map<string, Msg[]>();
-  sessions = new Map<string, { res: ServerResponse; subs: Set<string> }>();
+  sessions = new Map<string, Session>();
   requests: Recorded[] = [];
   postsRefused = 0;
   opened = 0;
@@ -109,31 +111,37 @@ class FakeServer {
     return { v: 1, type: "message", room, seq, id: `m${seq}`, sender: "other", attribution: "verified", label: "public", body, ts: seq };
   }
 
-  private handle(session: { res: ServerResponse; subs: Set<string> }, frame: any) {
+  private handle(session: Session, frame: any) {
     if (frame.type !== "request") return;
     const { method, params, id } = frame;
-    let result: Record<string, unknown> = {};
-    let replay: Msg[] = [];
-    if (method === "post") {
-      const msgs = this.rooms.get(params.room) ?? [];
-      this.rooms.set(params.room, msgs);
-      msgs.push(this.message(params.room, msgs.length + 1, params.body));
-      result = { seq: msgs.length, id: `m${msgs.length}` };
-      for (const s of this.sessions.values()) if (s.subs.has(params.room)) s.res.write(sse(msgs[msgs.length - 1]));
-    } else if (method === "subscribe") {
-      session.subs.add(params.room);
-      const msgs = this.rooms.get(params.room) ?? [];
-      this.rooms.set(params.room, msgs);
-      result = { head: msgs.length };
-      replay = msgs.filter((m) => m.seq > params.from_seq);
-    } else if (method === "unsubscribe") {
-      session.subs.delete(params.room);
-    }
+    const { result, replay } = this.act(method, params, session);
     session.res.write(sse({ v: 1, type: "response", id, ok: true, result }));
-    if (method === "subscribe") {
-      for (const m of replay) session.res.write(sse(m));
-      session.res.write(sse({ v: 1, type: "caught_up", room: params.room, head: result.head }));
-    }
+    if (method !== "subscribe") return;
+    for (const m of replay) session.res.write(sse(m));
+    session.res.write(sse({ v: 1, type: "caught_up", room: params.room, head: result.head }));
+  }
+
+  /** What a request does to the rooms: its result and the messages to replay. */
+  private act(method: string, params: any, session: Session): { result: Record<string, unknown>; replay: Msg[] } {
+    if (method === "post") return this.actPost(params);
+    if (method === "subscribe") return this.actSubscribe(params, session);
+    if (method === "unsubscribe") session.subs.delete(params.room);
+    return { result: {}, replay: [] };
+  }
+
+  private actPost(params: any) {
+    const msgs = this.rooms.get(params.room) ?? [];
+    this.rooms.set(params.room, msgs);
+    msgs.push(this.message(params.room, msgs.length + 1, params.body));
+    for (const s of this.sessions.values()) if (s.subs.has(params.room)) s.res.write(sse(msgs[msgs.length - 1]));
+    return { result: { seq: msgs.length, id: `m${msgs.length}` }, replay: [] as Msg[] };
+  }
+
+  private actSubscribe(params: any, session: Session) {
+    session.subs.add(params.room);
+    const msgs = this.rooms.get(params.room) ?? [];
+    this.rooms.set(params.room, msgs);
+    return { result: { head: msgs.length }, replay: msgs.filter((m) => m.seq > params.from_seq) };
   }
 
   say(room: string, body: string) {
