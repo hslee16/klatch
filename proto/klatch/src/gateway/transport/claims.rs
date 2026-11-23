@@ -13,6 +13,10 @@ use crate::store::Store;
 pub trait Claims {
     /// Take a claim (optionally shared with every scope).
     fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()>;
+    /// Claim the repo-relative path of a file the caller just edited, for a short lease (#1401).
+    fn passive_claim(&self, path: &str) -> Result<crate::domain::PassiveOutcome>;
+    /// Release the passive claims the caller holds, never an explicit one; how many were live.
+    fn release_passive(&self) -> Result<usize>;
     fn release(&self, room: &str, path: &str) -> Result<()>;
     /// `release` with a note on what the caller changed.
     fn release_with_note(&self, room: &str, path: &str, note: &str) -> Result<()>;
@@ -31,6 +35,12 @@ pub trait Claims {
 impl<S: Store> Claims for Direct<S> {
     fn claim(&self, room: &str, spec: &ClaimSpec) -> Result<()> {
         self.gateway.claim(&self.principal, room, spec)
+    }
+    fn passive_claim(&self, path: &str) -> Result<crate::domain::PassiveOutcome> {
+        self.gateway.passive_claim(&self.principal, path)
+    }
+    fn release_passive(&self) -> Result<usize> {
+        self.gateway.release_passive_claims(&self.principal)
     }
     fn release(&self, room: &str, path: &str) -> Result<()> {
         self.gateway.release(&self.principal, room, path)
@@ -59,6 +69,8 @@ impl<S: Store> Claims for Direct<S> {
 
 impl Claims for SharedTransport {
     forward! {
+        passive_claim(path: &str) -> Result<crate::domain::PassiveOutcome>;
+        release_passive() -> Result<usize>;
         release(room: &str, path: &str) -> Result<()>;
         release_with_note(room: &str, path: &str, note: &str) -> Result<()>;
         last_release(room: &str, path: &str) -> Result<Option<crate::domain::ReleaseNote>>;

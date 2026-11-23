@@ -51,6 +51,7 @@ mod my_role;
 mod notify;
 mod own_refusals;
 mod parked;
+mod passive_claim;
 mod possible_overwrite;
 mod pr_lifecycle;
 mod priority;
