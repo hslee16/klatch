@@ -42,7 +42,8 @@ import streams
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ARMS = "B0,B1,K1,K2"
-TASK_BOARD = "# Task board\n\nOne line per piece of work: `- [ ] WHO: TITLE (status)`. Edit it, commit it, push it.\n"
+TASK_BOARD = ("# Task board\n\nOne line per piece of work: `- WHO | STATUS | FILES | TITLE`. STATUS is `working`, `done`, "
+              "`blocked` or `handoff`. Add your line at the end, commit it and push it.\n")
 
 
 class GuardError(Exception):

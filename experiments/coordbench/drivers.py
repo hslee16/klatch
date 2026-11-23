@@ -11,6 +11,7 @@ process, tails its stdout as stream-json and never speaks to it again. Two drive
 Environment rule for both: an allowlist, never a copy of the harness environment. The model credential is passed only
 to the claude driver, and only if the harness environment has it; it is never printed or written anywhere.
 """
+import json
 import os
 import re
 import sys
@@ -89,16 +90,28 @@ class ClaudeDriver(Driver):
         tools = FILE_TOOLS + GIT_TOOLS
         if arm.startswith("K") and self.klatch_bin:
             tools.append("Bash(%s:*)" % self.klatch_bin)
+        if arm.startswith("B"):
+            # waiting is a Bash call in a B arm (the K arms wait with `klatch wait`); no other shell is opened up
+            tools.append("Bash(sleep:*)")
         if arm == "B1":
-            tools.append("SendMessage")
+            tools += ["SendMessage", "ListAgents"]
         return tools
+
+    def settings_for(self, arm):
+        """The --settings JSON that decides native cross-session messaging (docs: cross-session-messaging.md). Only B1
+        takes part: it accepts inbound messages unattended (a -p session cannot answer an approval dialog). Every other
+        arm refuses inbound messages and has the two messaging tools removed, so nothing leaks between arms."""
+        if arm == "B1":
+            return {"crossSessionInbound": "accept"}
+        return {"permissions": {"deny": ["SendMessage", "ListAgents"]}, "crossSessionInbound": "refuse"}
 
     def command(self, name, arm, prompt, cwd, out_dir):
         argv = [self.claude_bin, "-p", prompt, "--model", self.model, "--setting-sources", "local",
                 "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
                 "--permission-mode", "acceptEdits", "--allowedTools"] + self.allowed_tools(arm) + [
                 "--max-budget-usd", "%.2f" % self.per_agent_usd, "--max-turns", str(self.max_turns),
-                "--output-format", "stream-json", "--verbose", "--include-hook-events"]
+                "--output-format", "stream-json", "--verbose", "--include-hook-events",
+                "--name", name, "--settings", json.dumps(self.settings_for(arm), sort_keys=True)]
         return argv, {}
 
     def version(self):
