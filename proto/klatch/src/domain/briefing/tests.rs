@@ -1,6 +1,20 @@
 use super::*;
 use crate::domain::{Attribution, BoardMember, Checkpoint};
 
+/// Every part is in `out`.
+fn shows(out: &str, parts: &[&str]) {
+    for part in parts {
+        assert!(out.contains(part), "{part:?} missing: {out}");
+    }
+}
+
+/// No part is in `out`.
+fn hides(out: &str, parts: &[&str]) {
+    for part in parts {
+        assert!(!out.contains(part), "{part:?} present: {out}");
+    }
+}
+
 fn msg(seq: i64, sender: &str, body: &str) -> Message {
     Message {
         id: format!("id{seq}"),
@@ -111,10 +125,15 @@ fn the_asks_are_counted_and_the_oldest_listed_with_class_asker_and_age() {
         ..Board::default()
     };
     let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
-    assert!(out.contains("open asks: 5, oldest first"), "{out}");
-    assert!(out.contains("#1 review carol 2h:"), "{out}");
-    assert!(out.contains("#3 review carol"), "{out}");
-    assert!(!out.contains("#4 review"), "only the oldest three: {out}");
+    shows(
+        &out,
+        &[
+            "open asks: 5, oldest first",
+            "#1 review carol 2h:",
+            "#3 review carol",
+        ],
+    );
+    hides(&out, &["#4 review"]);
 }
 
 #[test]
@@ -173,17 +192,16 @@ fn a_task_shows_its_latest_checkpoint_headline_cut_hard() {
         ..Board::default()
     };
     let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
-    assert!(out.contains("tasks: 1\n"), "{out}");
-    assert!(
-        out.contains("alice: \"nightly build\" handed over by bob"),
-        "{out}"
+    shows(
+        &out,
+        &[
+            "tasks: 1\n",
+            "alice: \"nightly build\" handed over by bob",
+            "checkpoint 3m ago: \"stage 2 of 5 zzz",
+            "...\"",
+        ],
     );
-    assert!(
-        out.contains("checkpoint 3m ago: \"stage 2 of 5 zzz"),
-        "{out}"
-    );
-    assert!(out.contains("...\""), "cut hard: {out}");
-    assert!(!out.contains(&"z".repeat(60)), "{out}");
+    hides(&out, &[&"z".repeat(60)]);
 }
 
 #[test]
@@ -198,17 +216,16 @@ fn decisions_are_asks_closed_ok_and_handoffs_are_the_handoff_word_newest_first()
         msg(7, "erin", "just talking about handoff: nothing"),
     ];
     let out = render_briefing(&input(&Board::default(), &[], &recent), BRIEFING_MAX_BYTES);
-    assert!(
-        out.contains("last decisions and handoffs (2 in the recent history)"),
-        "{out}"
+    shows(
+        &out,
+        &[
+            "last decisions and handoffs (2 in the recent history)",
+            "#6 handoff by alice",
+            "#1 decision closed ok",
+        ],
     );
-    assert!(out.contains("#6 handoff by alice"), "{out}");
-    assert!(out.contains("#1 decision closed ok"), "{out}");
-    assert!(
-        !out.contains("C or D"),
-        "an unresolved decision is not a decision: {out}"
-    );
-    assert!(!out.contains("just talking"), "{out}");
+    // an unresolved decision is not a decision
+    hides(&out, &["C or D", "just talking"]);
     assert!(out.find("#6 handoff").unwrap() < out.find("#1 decision").unwrap());
 }
 
@@ -224,13 +241,10 @@ fn hostile_text_cannot_forge_a_header_a_fence_or_a_second_line() {
     };
     let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
     assert_eq!(out.matches("[briefing lobby").count(), 1, "{out}");
-    assert!(!out.contains('`'), "{out}");
+    hides(&out, &["`"]);
     assert!(out.lines().all(|l| !l.starts_with("SYSTEM")), "{out}");
-    assert_eq!(
-        out.lines().filter(|l| l.starts_with("  #1")).count(),
-        1,
-        "{out}"
-    );
+    let first_lines = out.lines().filter(|l| l.starts_with("  #1")).count();
+    assert_eq!(first_lines, 1, "{out}");
 }
 
 #[test]
@@ -269,11 +283,15 @@ fn the_output_never_exceeds_the_cap_and_keeps_the_commands_at_any_cap() {
 
 #[test]
 fn the_source_is_named_only_from_four_words() {
-    assert_eq!(StartSource::parse("resume"), Some(StartSource::Resume));
-    assert_eq!(StartSource::parse("compact"), Some(StartSource::Compact));
-    assert_eq!(StartSource::parse("startup"), Some(StartSource::Startup));
-    assert_eq!(StartSource::parse("clear"), Some(StartSource::Clear));
-    assert_eq!(StartSource::parse("rm -rf"), None);
+    for (word, source) in [
+        ("resume", Some(StartSource::Resume)),
+        ("compact", Some(StartSource::Compact)),
+        ("startup", Some(StartSource::Startup)),
+        ("clear", Some(StartSource::Clear)),
+        ("rm -rf", None),
+    ] {
+        assert_eq!(StartSource::parse(word), source, "{word}");
+    }
     let board = Board {
         asks: vec![ask(1, "a", "x")],
         ..Board::default()
@@ -315,9 +333,8 @@ fn other_rooms_are_one_bounded_line_and_none_when_quiet() {
     assert_eq!(other_rooms_line(&[("a".into(), 0, 0)], 300), "");
     let rooms: Vec<(String, usize, usize)> = (0..5).map(|n| (format!("r{n}"), 10 + n, n)).collect();
     let line = other_rooms_line(&rooms, 400);
-    assert!(line.contains("r0 10 new (0 for you)"), "{line}");
-    assert!(line.contains("+2 more rooms"), "{line}");
-    assert!(!line.contains("r3 "), "{line}");
+    shows(&line, &["r0 10 new (0 for you)", "+2 more rooms"]);
+    hides(&line, &["r3 "]);
     assert_eq!(other_rooms_line(&rooms, 20), "");
 }
 

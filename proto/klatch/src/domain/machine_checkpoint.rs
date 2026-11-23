@@ -59,10 +59,12 @@ impl ToolClass {
 pub fn repo_relative(path: &str, root: &str) -> Option<String> {
     let root = root.trim_end_matches('/');
     let rest = path.strip_prefix(root)?.strip_prefix('/')?;
-    if rest.is_empty() || rest.len() > TRAIL_PATH_MAX_BYTES || rest.chars().any(char::is_control) {
-        return None;
-    }
-    Some(rest.to_string())
+    keepable(rest).then(|| rest.to_string())
+}
+
+fn keepable(rest: &str) -> bool {
+    let sized = !rest.is_empty() && rest.len() <= TRAIL_PATH_MAX_BYTES;
+    sized && !rest.chars().any(char::is_control)
 }
 
 /// What a member has done since its trail was last cleared: the distinct files it edited or wrote and the classes of
@@ -145,10 +147,8 @@ fn join_numbers(prefix: &str, ns: &[i64]) -> String {
     format!("{prefix} {}", list.join(" "))
 }
 
-/// The one-line body of a checkpoint, at most `MACHINE_MAX_BYTES`. Parts go in order of what a successor needs most:
-/// the end word, claims, asks, status, files, then the tool classes. Files are the part that shrinks (the latest
-/// first, the rest counted as `+N`); a line still too long is cut at a character boundary.
-pub fn machine_body(s: &MachineState) -> String {
+/// The parts of a body that never shrink, in order of what a successor needs most.
+fn fixed_parts(s: &MachineState) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     parts.push(match s.ended {
         Some(w) => format!("session ended ({w})"),
@@ -166,36 +166,48 @@ pub fn machine_body(s: &MachineState) -> String {
     if let Some(w) = &s.status {
         parts.push(format!("status {w}"));
     }
+    parts
+}
+
+/// The files part when the `keep` newest of `newest` are listed and the rest counted.
+fn files_part(newest: &[&String], keep: usize) -> String {
+    if newest.is_empty() {
+        return String::new();
+    }
+    let shown: Vec<&str> = newest[..keep].iter().map(|f| f.as_str()).collect();
+    let more = newest.len() - keep;
+    match (keep, more) {
+        (0, m) => format!("files +{m}"),
+        (_, 0) => format!("files {}", shown.join(" ")),
+        (_, m) => format!("files {} +{m}", shown.join(" ")),
+    }
+}
+
+fn joined(parts: &[String], files: &str, tools: &Option<String>) -> String {
+    let mut all = parts.to_vec();
+    if !files.is_empty() {
+        all.push(files.to_string());
+    }
+    all.extend(tools.clone());
+    all.join("; ")
+}
+
+/// The one-line body of a checkpoint, at most `MACHINE_MAX_BYTES`. Parts go in order of what a successor needs most:
+/// the end word, claims, asks, status, files, then the tool classes. Files are the part that shrinks (the latest
+/// first, the rest counted as `+N`); a line still too long is cut at a character boundary.
+pub fn machine_body(s: &MachineState) -> String {
+    let parts = fixed_parts(s);
     let tools = (!s.tools.is_empty()).then(|| format!("tools {}", s.tools.join(" ")));
-    let line = |parts: &[String], files: &str, tools: &Option<String>| {
-        let mut all = parts.to_vec();
-        if !files.is_empty() {
-            all.push(files.to_string());
-        }
-        all.extend(tools.clone());
-        all.join("; ")
-    };
     // newest file first; drop from the oldest until the line fits
     let newest: Vec<&String> = s.files.iter().rev().collect();
     for keep in (0..=newest.len()).rev() {
-        let files = if newest.is_empty() {
-            String::new()
-        } else {
-            let shown: Vec<&str> = newest[..keep].iter().map(|f| f.as_str()).collect();
-            let more = newest.len() - keep;
-            match (keep, more) {
-                (0, m) => format!("files +{m}"),
-                (_, 0) => format!("files {}", shown.join(" ")),
-                (_, m) => format!("files {} +{m}", shown.join(" ")),
-            }
-        };
-        let text = line(&parts, &files, &tools);
+        let text = joined(&parts, &files_part(&newest, keep), &tools);
         if text.len() <= MACHINE_MAX_BYTES {
             return text;
         }
     }
     // even with no file listed it is too long: drop the tools, then cut
-    let text = line(&parts, "", &None);
+    let text = joined(&parts, "", &None);
     clip(&text, MACHINE_MAX_BYTES).to_string()
 }
 
@@ -216,30 +228,42 @@ mod tests {
 
     #[test]
     fn tools_fall_into_a_closed_vocabulary_and_only_edits_and_writes_keep_paths() {
-        assert_eq!(ToolClass::of_tool("Edit"), ToolClass::Edit);
-        assert_eq!(ToolClass::of_tool("MultiEdit"), ToolClass::Edit);
-        assert_eq!(ToolClass::of_tool("Write"), ToolClass::Write);
-        assert_eq!(ToolClass::of_tool("Bash"), ToolClass::Run);
-        assert_eq!(ToolClass::of_tool("Grep"), ToolClass::Read);
-        assert_eq!(ToolClass::of_tool("mcp__secret__tool"), ToolClass::Other);
-        assert!(ToolClass::Edit.keeps_paths() && ToolClass::Write.keeps_paths());
-        assert!(!ToolClass::Run.keeps_paths() && !ToolClass::Read.keeps_paths());
+        for (name, class) in [
+            ("Edit", ToolClass::Edit),
+            ("MultiEdit", ToolClass::Edit),
+            ("Write", ToolClass::Write),
+            ("Bash", ToolClass::Run),
+            ("Grep", ToolClass::Read),
+            ("mcp__secret__tool", ToolClass::Other),
+        ] {
+            assert_eq!(ToolClass::of_tool(name), class, "{name}");
+        }
+        let keeps = [
+            ToolClass::Edit,
+            ToolClass::Write,
+            ToolClass::Run,
+            ToolClass::Read,
+        ];
+        assert_eq!(
+            keeps.map(ToolClass::keeps_paths),
+            [true, true, false, false]
+        );
     }
 
     #[test]
     fn a_path_is_kept_only_under_the_root_and_only_when_plain() {
-        assert_eq!(
-            repo_relative("/w/p/src/a.rs", "/w/p").as_deref(),
-            Some("src/a.rs")
-        );
-        assert_eq!(repo_relative("/w/other/a.rs", "/w/p"), None);
-        assert_eq!(repo_relative("/w/p", "/w/p"), None);
-        assert_eq!(repo_relative("/w/pp/a.rs", "/w/p"), None);
-        assert_eq!(repo_relative("/w/p/a\nb", "/w/p"), None);
-        assert_eq!(
-            repo_relative(&format!("/w/p/{}", "x".repeat(200)), "/w/p"),
-            None
-        );
+        let long = format!("/w/p/{}", "x".repeat(200));
+        let cases = [
+            ("/w/p/src/a.rs", Some("src/a.rs")),
+            ("/w/other/a.rs", None),
+            ("/w/p", None),
+            ("/w/pp/a.rs", None),
+            ("/w/p/a\nb", None),
+            (long.as_str(), None),
+        ];
+        for (path, want) in cases {
+            assert_eq!(repo_relative(path, "/w/p").as_deref(), want, "{path:?}");
+        }
     }
 
     #[test]
@@ -261,13 +285,15 @@ mod tests {
 
     #[test]
     fn a_session_end_reason_becomes_one_of_a_few_words() {
-        assert_eq!(end_word("clear"), "clear");
-        assert_eq!(end_word("prompt_input_exit"), "exit");
-        assert_eq!(end_word("sudo rm -rf /"), "other");
-        assert_eq!(
-            status_word("blocked: waiting for review").as_deref(),
-            Some("blocked")
-        );
+        for (reason, word) in [
+            ("clear", "clear"),
+            ("prompt_input_exit", "exit"),
+            ("sudo rm -rf /", "other"),
+        ] {
+            assert_eq!(end_word(reason), word, "{reason}");
+        }
+        let status = status_word("blocked: waiting for review");
+        assert_eq!(status.as_deref(), Some("blocked"));
         assert_eq!(status_word("   "), None);
     }
 
@@ -282,11 +308,9 @@ mod tests {
             status: Some("working".into()),
             ended: None,
         };
-        let b = machine_body(&s);
-        assert_eq!(
-            b,
-            "turn ended; claims src/a.rs; asks open #12; waiting on me #14; status working; files src/b.rs src/a.rs; tools read edit"
-        );
+        let want = "turn ended; claims src/a.rs; asks open #12; waiting on me #14; status working; \
+                    files src/b.rs src/a.rs; tools read edit";
+        assert_eq!(machine_body(&s), want);
         let end = machine_body(&MachineState {
             ended: Some("clear"),
             ..s
@@ -305,10 +329,16 @@ mod tests {
             ..MachineState::default()
         };
         let b = machine_body(&s);
-        assert!(b.len() <= MACHINE_MAX_BYTES, "{} bytes", b.len());
-        assert!(b.contains("module_23.rs"), "{b}");
-        assert!(!b.contains("module_00.rs"), "{b}");
-        assert!(b.contains(" +"), "the dropped files are counted: {b}");
+        let facts = [
+            b.len() <= MACHINE_MAX_BYTES,
+            b.contains("module_23.rs"),
+            !b.contains("module_00.rs"),
+            b.contains(" +"),
+        ];
+        assert_eq!(
+            facts, [true; 4],
+            "within the cap, newest kept, oldest dropped and counted: {b}"
+        );
     }
 
     #[test]

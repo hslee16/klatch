@@ -483,12 +483,9 @@ fn clip_line(line: String) -> String {
     format!("{cut}...\n")
 }
 
-/// The briefing of one room within `cap` printed bytes, or an empty string when there is nothing to say beyond the
-/// room being empty. The header, the since line and the commands are kept whole; the sections are added in order of
-/// importance while they fit, each cut by whole lines. The result never exceeds `cap`.
-pub fn render_briefing(input: &BriefingInput, cap: usize) -> String {
-    let room = input.room;
-    let sections: Vec<Section> = [
+/// The sections present in the input, in order of importance.
+fn present_sections(input: &BriefingInput) -> Vec<Section> {
+    [
         asks_section(&input.board.asks, input.now),
         tasks_section(&input.board.tasks, input.now),
         claims_section(input.claims, input.me),
@@ -499,7 +496,34 @@ pub fn render_briefing(input: &BriefingInput, cap: usize) -> String {
     ]
     .into_iter()
     .flatten()
-    .collect();
+    .collect()
+}
+
+/// Whole lines of each section, in order of importance, while they fit in `left` printed bytes.
+fn fit_sections(sections: Vec<Section>, mut left: usize) -> Vec<Vec<String>> {
+    let mut kept: Vec<Vec<String>> = Vec::new();
+    for s in sections {
+        let mut lines = Vec::new();
+        for line in s.lines {
+            let line = clip_line(line);
+            let n = printed_len(&line);
+            if n > left {
+                break;
+            }
+            left -= n;
+            lines.push(line);
+        }
+        kept.push(lines);
+    }
+    kept
+}
+
+/// The briefing of one room within `cap` printed bytes, or an empty string when there is nothing to say beyond the
+/// room being empty. The header, the since line and the commands are kept whole; the sections are added in order of
+/// importance while they fit, each cut by whole lines. The result never exceeds `cap`.
+pub fn render_briefing(input: &BriefingInput, cap: usize) -> String {
+    let room = input.room;
+    let sections = present_sections(input);
     let since = since_line(room, input.standing);
     if sections.is_empty() && since.is_none() {
         return String::new();
@@ -516,29 +540,11 @@ pub fn render_briefing(input: &BriefingInput, cap: usize) -> String {
     if fixed > cap {
         return String::new();
     }
-    let mut left = cap - fixed;
     // the order of importance decides what is kept; the order of printing keeps each section together
-    let mut kept: Vec<Vec<String>> = Vec::new();
-    for s in sections {
-        let mut lines = Vec::new();
-        for line in s.lines {
-            let line = clip_line(line);
-            let n = printed_len(&line);
-            if n > left {
-                break;
-            }
-            left -= n;
-            lines.push(line);
-        }
-        kept.push(lines);
-    }
+    let kept = fit_sections(sections, cap - fixed);
     let mut out = header;
-    if let Some(s) = since {
-        out.push_str(&s);
-    }
-    for line in kept.into_iter().flatten() {
-        out.push_str(&line);
-    }
+    out.extend(since);
+    out.extend(kept.into_iter().flatten());
     out.push_str(&deeper);
     out
 }

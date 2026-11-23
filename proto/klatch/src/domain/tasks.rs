@@ -56,50 +56,52 @@ pub struct Task {
     pub orphaned: bool,
 }
 
+fn flatten(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `s` on one line, cut to 200 characters unless `full`.
+fn clipped(s: &str, full: bool) -> String {
+    let text = flatten(s);
+    if full || text.chars().count() <= 200 {
+        text
+    } else {
+        format!("{}...", text.chars().take(200).collect::<String>())
+    }
+}
+
 impl Task {
+    /// The first note of a line: how long the task has run, or why it is not running.
+    fn standing_notes(&self, now: i64) -> Vec<String> {
+        match (self.undeclared, self.orphaned) {
+            (true, true) => vec!["no task declared".into(), "orphaned".into()],
+            (true, false) => vec!["no task declared".into()],
+            (false, true) => vec![format!("orphaned, last word {} ago", span(now - self.last))],
+            (false, false) => vec![format!("working {}", span(now - self.started))],
+        }
+    }
+
     /// One line for the board or `klatch tasks`. `full` keeps the whole checkpoint instead of a clipped one.
     pub fn line(&self, now: i64, full: bool) -> String {
-        let flatten = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-        let clipped = |s: &str| {
-            let text = flatten(s);
-            if full || text.chars().count() <= 200 {
-                text
-            } else {
-                format!("{}...", text.chars().take(200).collect::<String>())
-            }
-        };
-        let mut out = format!("{}: {}", flatten(&self.owner), flatten(&self.title));
-        let mut notes = Vec::new();
-        if self.undeclared {
-            notes.push("no task declared".to_string());
-            if self.orphaned {
-                notes.push("orphaned".to_string());
-            }
-        } else if self.orphaned {
-            notes.push(format!("orphaned, last word {} ago", span(now - self.last)));
-        } else {
-            notes.push(format!("working {}", span(now - self.started)));
-        }
+        let mut notes = self.standing_notes(now);
         if let Some(from) = &self.from {
             notes.push(format!("handed over by {}", flatten(from)));
         }
         if let Some(c) = &self.checkpoint {
-            notes.push(format!(
-                "checkpoint {} ago: {}",
-                span(now - c.ts),
-                clipped(&c.text)
-            ));
+            let said = clipped(&c.text, full);
+            notes.push(format!("checkpoint {} ago: {said}", span(now - c.ts)));
         }
         if let Some(c) = &self.machine {
-            notes.push(format!(
-                "{} {} ago: {}",
-                crate::domain::MACHINE_MARK,
-                span(now - c.ts),
-                clipped(&c.text)
-            ));
+            let mark = crate::domain::MACHINE_MARK;
+            let said = clipped(&c.text, full);
+            notes.push(format!("{mark} {} ago: {said}", span(now - c.ts)));
         }
-        out.push_str(&format!(" ({})", notes.join(", ")));
-        out
+        format!(
+            "{}: {} ({})",
+            flatten(&self.owner),
+            flatten(&self.title),
+            notes.join(", ")
+        )
     }
 }
 
@@ -147,65 +149,91 @@ fn numbered<'a>(body: &'a str, prefix: &str) -> Option<(String, &'a str)> {
     (!n.is_empty()).then(|| (format!("#{n}"), after.trim()))
 }
 
+/// `working: WHAT`: start a task, or renew the one the title names.
+fn start(tasks: &mut Vec<Task>, what: &str, m: &Message) {
+    let who = m.sender.as_str();
+    let what = what.trim();
+    let title = title_of(what);
+    if title.is_empty() {
+        return;
+    }
+    match find(tasks, who, &title) {
+        Some(i) => {
+            tasks[i].what = what.to_string();
+            tasks[i].last = m.ts;
+        }
+        None => tasks.push(Task {
+            owner: who.into(),
+            title,
+            what: what.to_string(),
+            started: m.ts,
+            last: m.ts,
+            checkpoint: None,
+            machine: None,
+            undeclared: false,
+            from: None,
+            orphaned: false,
+        }),
+    }
+}
+
+/// `checkpoint: STATE`: record the state of the task the name picks.
+fn checkpoint(tasks: &mut [Task], name: &str, state: &str, m: &Message) {
+    if let Some(i) = find(tasks, &m.sender, name) {
+        tasks[i].checkpoint = Some(Checkpoint {
+            text: state.to_string(),
+            ts: m.ts,
+        });
+        tasks[i].last = m.ts;
+    }
+}
+
+/// `handoff: NAME to MEMBER`: the task changes owner, replacing a task of the same title the new owner has.
+fn hand_over(tasks: &mut Vec<Task>, rest: &str, m: &Message) {
+    let who = m.sender.as_str();
+    let Some((name, to)) = rest.rsplit_once(" to ") else {
+        return;
+    };
+    let to = to.trim();
+    let Some(i) = find(tasks, who, name).filter(|_| valid_name(to) && to != who) else {
+        return;
+    };
+    let mut t = tasks.remove(i);
+    tasks.retain(|o| !(o.owner == to && o.title == t.title));
+    t.from = Some(t.owner.clone());
+    t.owner = to.to_string();
+    t.last = m.ts;
+    tasks.push(t);
+}
+
+/// `finished: NAME`: the task ends.
+fn finish(tasks: &mut Vec<Task>, who: &str, name: &str) {
+    if let Some(i) = find(tasks, who, name) {
+        tasks.remove(i);
+    }
+}
+
+/// Fold one message into the tasks.
+fn apply(tasks: &mut Vec<Task>, m: &Message) {
+    let (who, body) = (m.sender.as_str(), m.body.as_str());
+    if let Some(what) = body.strip_prefix(WORKING_PREFIX) {
+        start(tasks, what, m);
+    } else if let Some((name, state)) = numbered(body, CHECKPOINT_PREFIX) {
+        checkpoint(tasks, &name, state, m);
+    } else if let Some(rest) = body.strip_prefix(HANDOFF_PREFIX) {
+        hand_over(tasks, rest, m);
+    } else if let Some((name, rest)) = numbered(body, FINISHED_PREFIX) {
+        finish(tasks, who, if name.is_empty() { rest } else { &name });
+    }
+}
+
 /// The open tasks in `messages`, oldest first.
 pub fn open_tasks(messages: &[Message]) -> Vec<Task> {
     let mut ordered: Vec<&Message> = messages.iter().collect();
     ordered.sort_by_key(|m| m.seq);
     let mut tasks: Vec<Task> = Vec::new();
     for m in ordered {
-        let (who, body) = (m.sender.as_str(), m.body.as_str());
-        if let Some(what) = body.strip_prefix(WORKING_PREFIX) {
-            let what = what.trim();
-            let title = title_of(what);
-            if title.is_empty() {
-                continue;
-            }
-            match find(&tasks, who, &title) {
-                Some(i) => {
-                    tasks[i].what = what.to_string();
-                    tasks[i].last = m.ts;
-                }
-                None => tasks.push(Task {
-                    owner: who.into(),
-                    title,
-                    what: what.to_string(),
-                    started: m.ts,
-                    last: m.ts,
-                    checkpoint: None,
-                    machine: None,
-                    undeclared: false,
-                    from: None,
-                    orphaned: false,
-                }),
-            }
-        } else if let Some((name, state)) = numbered(body, CHECKPOINT_PREFIX) {
-            if let Some(i) = find(&tasks, who, &name) {
-                tasks[i].checkpoint = Some(Checkpoint {
-                    text: state.to_string(),
-                    ts: m.ts,
-                });
-                tasks[i].last = m.ts;
-            }
-        } else if let Some(rest) = body.strip_prefix(HANDOFF_PREFIX) {
-            let Some((name, to)) = rest.rsplit_once(" to ") else {
-                continue;
-            };
-            let to = to.trim();
-            let Some(i) = find(&tasks, who, name).filter(|_| valid_name(to) && to != who) else {
-                continue;
-            };
-            let mut t = tasks.remove(i);
-            tasks.retain(|o| !(o.owner == to && o.title == t.title));
-            t.from = Some(t.owner.clone());
-            t.owner = to.to_string();
-            t.last = m.ts;
-            tasks.push(t);
-        } else if let Some((name, rest)) = numbered(body, FINISHED_PREFIX) {
-            let name = if name.is_empty() { rest } else { &name };
-            if let Some(i) = find(&tasks, who, name) {
-                tasks.remove(i);
-            }
-        }
+        apply(&mut tasks, m);
     }
     tasks.sort_by_key(|t| t.started);
     tasks
