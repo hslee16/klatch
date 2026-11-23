@@ -26,14 +26,15 @@
 //! the wait checks both between polls (about 100 ms) and then ends, so neither SIGTERM nor a departed client is held
 //! up by it (#1125).
 
-use crate::loopback::{self, Head, Limits, Response, Stream};
+use crate::loopback::{self, Pending, Response, Stream};
 use crate::wire_http::{Shared, authenticate, reply_bytes, unauthorized};
+use klatch::domain::Principal;
 use klatch::session::Session;
 use klatch::session::mcp::{MCP_VERSION, McpServer};
 use serde_json::{Value, json};
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const PATH: &str = "/mcp";
 
@@ -105,54 +106,48 @@ fn peer_closed(stream: &Stream) -> bool {
     matches!(stream.peek(&mut [0u8; 1]), Ok(0))
 }
 
-/// `POST /mcp`: the whole exchange, the bytes to send back.
-pub fn post(
-    stream: &mut Stream,
-    head: Head,
-    first: Vec<u8>,
-    limits: &Limits,
-    deadline: Instant,
-    shared: &Shared,
-) -> Vec<u8> {
-    let plain = |r: Response| r.bytes();
-    let Some(who) = authenticate(&shared.backend, &head) else {
-        return plain(unauthorized());
+/// What the head alone decides: the caller, or the refusal. The order is the order of the checks.
+fn admit(req: &Pending, shared: &Shared) -> Result<Principal, Response> {
+    let head = &req.head;
+    let Some(who) = authenticate(&shared.backend, head) else {
+        return Err(unauthorized());
     };
     if head.header("origin").is_some_and(|o| !origin_is_local(o)) {
-        return plain(Response::new(403, "forbidden origin"));
+        return Err(Response::new(403, "forbidden origin"));
     }
-    if head.content_length.is_some_and(|n| n > limits.max_body) {
-        return plain(loopback::Fault::BodyTooLarge.response().unwrap());
+    if req.declares_too_large() {
+        return Err(loopback::Fault::BodyTooLarge.response().unwrap());
     }
     if head
         .header("mcp-protocol-version")
         .is_some_and(|v| v != MCP_VERSION)
     {
-        return plain(Response::new(400, "unsupported mcp-protocol-version"));
+        return Err(Response::new(400, "unsupported mcp-protocol-version"));
     }
     if head.header("accept").is_some_and(|a| !accepts_json(a)) {
-        return plain(Response::new(406, "this server answers application/json"));
+        return Err(Response::new(406, "this server answers application/json"));
     }
-    let body = match head.content_length {
-        Some(n) => match loopback::read_body(stream, n, first, limits, deadline) {
-            Ok(b) => b,
-            Err(f) => return plain(f.response().unwrap_or_else(|| Response::new(0, ""))),
-        },
-        None => return plain(loopback::Fault::LengthRequired.response().unwrap()),
-    };
-    let message: Value = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(_) => return rpc_error_reply(PARSE_ERROR, "not JSON"),
-    };
+    Ok(who)
+}
+
+/// The one JSON-RPC message a body holds, or the error answer for a body that is not one.
+fn parse_message(body: &[u8]) -> Result<Value, Vec<u8>> {
+    let message: Value =
+        serde_json::from_slice(body).map_err(|_| rpc_error_reply(PARSE_ERROR, "not JSON"))?;
     if !message.is_object() {
-        return rpc_error_reply(
+        return Err(rpc_error_reply(
             INVALID_REQUEST,
             "one JSON-RPC message per request, not a batch",
-        );
+        ));
     }
+    Ok(message)
+}
+
+/// Run one message through the MCP adapter for `who` and build the answer.
+fn exchange(stream: &Stream, who: &Principal, message: &Value, shared: &Shared) -> Vec<u8> {
     // the adapter reads one message per line: the compact form of the message is exactly one
     let line = format!("{message}\n");
-    let session = Session::over(&shared.backend, &who, &shared.config);
+    let session = Session::over(&shared.backend, who, &shared.config);
     // a wait ends early when the server is stopping or the client has hung up (#1125)
     let watch = stream.try_clone().ok();
     let cancel = move || {
@@ -164,7 +159,7 @@ pub fn post(
         .serve(Cursor::new(line.into_bytes()), &mut answer)
         .is_err()
     {
-        return plain(Response::new(500, "internal error"));
+        return Response::new(500, "internal error").bytes();
     }
     let text = String::from_utf8_lossy(&answer);
     let text = text.trim();
@@ -173,6 +168,22 @@ pub fn post(
         return b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
     }
     json_reply(200, "OK", text)
+}
+
+/// `POST /mcp`: the whole exchange, the bytes to send back.
+pub fn post(mut req: Pending, shared: &Shared) -> Vec<u8> {
+    let who = match admit(&req, shared) {
+        Ok(who) => who,
+        Err(refusal) => return refusal.bytes(),
+    };
+    let body = match req.body() {
+        Ok(body) => body,
+        Err(refusal) => return refusal.bytes(),
+    };
+    match parse_message(&body) {
+        Ok(message) => exchange(req.stream, &who, &message, shared),
+        Err(bytes) => bytes,
+    }
 }
 
 /// Send what [`post`] built.
