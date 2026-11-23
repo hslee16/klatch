@@ -1,5 +1,6 @@
 //! Hooks and the agent roles.
 
+use super::machine_status::background_counts;
 use super::*;
 
 /// Hooks and the agent roles; every other command was handled before dispatch.
@@ -23,6 +24,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             board,
             no_join,
             checkpoint,
+            machine_status,
             passive_claims,
         } => hook(
             ctx,
@@ -31,6 +33,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
                 board,
                 no_join,
                 checkpoint,
+                machine_status,
                 passive_claims,
             },
         )?,
@@ -130,6 +133,8 @@ pub(super) struct HookArgs {
     pub(super) no_join: bool,
     /// The machine checkpoint consent (#1408): the hook command carries `--checkpoint`.
     pub(super) checkpoint: bool,
+    /// The machine status consent (#1403): the hook command carries `--machine-status`.
+    pub(super) machine_status: bool,
     /// The passive claims consent (#1401): the hook command carries `--passive-claims`.
     pub(super) passive_claims: bool,
 }
@@ -154,7 +159,7 @@ pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>, passive: bool)
     let _ = t.release_all();
     let rooms = t.rooms()?;
     for room in &rooms {
-        let _ = t.set_status(room, "done session ended");
+        let _ = t.set_status(room, klatch::domain::SESSION_END_STATUS);
     }
     let _ = t.record_hook_run("SessionEnd", 0);
     // a worker that holds a credential loses it with its session (a launcher can issue another)
@@ -369,18 +374,6 @@ pub(super) fn inside_subagent(input: &serde_json::Value) -> bool {
         .is_some_and(|id| !id.is_empty())
 }
 
-/// How many background tasks and crons a `Stop` hook input lists. The fields are not documented by Claude Code, so a
-/// list counts its entries, a number counts as itself, and anything else counts as none; only counts are kept, never
-/// what the entries say.
-pub(super) fn background_counts(input: &serde_json::Value) -> (usize, usize) {
-    let count = |key: &str| match input.get(key) {
-        Some(serde_json::Value::Array(a)) => a.len(),
-        Some(serde_json::Value::Number(n)) => n.as_u64().map_or(0, |n| n as usize),
-        _ => 0,
-    };
-    (count("background_tasks"), count("session_crons"))
-}
-
 /// Remember the permission mode this session reports (#553): it is the only place Claude Code says it, and `klatch
 /// doctor` needs it to warn that a bypassing member's socket nudge is held. A subagent's tool call carries the
 /// subagent's mode, which says nothing about this session, and a failure to record must not stop the hook.
@@ -420,12 +413,14 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     // The end of a turn records what still runs in the background (a declared long wait) and prints nothing: the
     // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
     super::checkpoint::note_tool_call(t, ctx.stdin, args.checkpoint && args.is("PostToolUse"));
+    super::machine_status::on_tool_use(t, args.machine_status && args.is("PostToolUse"));
     // a member that edits a file claims it, when the hook carries the consent (#1401); a refusal is one line below
     let passive =
         super::passive::claim_edits(t, ctx.stdin, args.passive_claims && args.is("PostToolUse"));
     if args.is("Stop") {
         let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
         let _ = t.record_stop(tasks, crons);
+        super::machine_status::on_stop(t, args.machine_status, tasks + crons > 0);
         super::checkpoint::stop_checkpoint(t, args.checkpoint);
         super::passive::release(t, args.passive_claims);
         let _ = t.record_hook_run("Stop", 0);

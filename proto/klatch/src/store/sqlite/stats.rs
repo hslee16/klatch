@@ -9,9 +9,9 @@ use super::SqliteStore;
 use super::connect::be;
 use super::schema::{WAIT_WINDOW_SECS, user_version};
 use crate::domain::{
-    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MemberCounts,
-    PassiveClaimCounts, Result, RoomClass, RoomCount, StatsOptions, UsageStats, answer_target,
-    claim_class, closed_target, day_of, is_ask, median_and_p90, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MachineStatusCounts,
+    MemberCounts, PassiveClaimCounts, Result, RoomClass, RoomCount, StatsOptions, UsageStats,
+    answer_target, claim_class, closed_target, day_of, is_ask, median_and_p90, vocab,
 };
 use crate::keys::Key;
 use rusqlite::types::Value;
@@ -450,6 +450,27 @@ fn machine_checkpoint_counts(
     })
 }
 
+/// The machine status updates (#1403) in the window, by class. Nothing in the table is text but a class word.
+fn machine_status_counts(conn: &Connection, o: &StatsOptions) -> Result<MachineStatusCounts> {
+    if !has(conn, "machine_status_events")? {
+        return Ok(MachineStatusCounts::default());
+    }
+    let w = "(?1 IS NULL OR room=?1) AND ts>=?2";
+    let n = |extra: &str| {
+        one(
+            conn,
+            &format!("SELECT COUNT(*) FROM machine_status_events WHERE {w}{extra}"),
+            o,
+        )
+    };
+    Ok(MachineStatusCounts {
+        updates: n("")?,
+        working: n(" AND class='working'")?,
+        idle: n(" AND class='idle'")?,
+        parked: n(" AND class='parked'")?,
+    })
+}
+
 /// The passive claim events (#1401) in the window: counts by event word. Nothing in the table is a name.
 fn passive_claim_counts(conn: &Connection, o: &StatsOptions) -> Result<PassiveClaimCounts> {
     if !has(conn, "claim_events")? {
@@ -599,6 +620,7 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
         history: claim_history(conn, o)?,
     };
     s.machine_checkpoints = machine_checkpoint_counts(conn, o)?;
+    s.machine_status = machine_status_counts(conn, o)?;
     s.passive_claims = passive_claim_counts(conn, o)?;
     s.refusals = words(
         conn,

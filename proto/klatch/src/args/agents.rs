@@ -78,6 +78,12 @@ pub(crate) enum AgentsCmd {
         /// (`klatch init --checkpoint`).
         #[arg(long)]
         checkpoint: bool,
+        /// Keep the member's status from activity (#1403): `working (auto)` at the first tool call after idle
+        /// (PostToolUse), `idle (auto)` or `parked (auto)` at the end of a turn (Stop). Posts no message, records
+        /// no tool, command or content, and never replaces a status the member set. Consent lives here: only a
+        /// hook command that carries this flag writes anything (`klatch init --machine-status`).
+        #[arg(long)]
+        machine_status: bool,
         /// Claim files as they are edited (#1401): on PostToolUse claim the repo-relative path of each file an edit or
         /// write touched, for a short lease that every further edit renews, and print one line when another member
         /// holds it (never a block); on Stop and SessionEnd release those claims. Consent lives here: only a hook

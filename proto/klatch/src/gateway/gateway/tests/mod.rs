@@ -39,6 +39,7 @@ mod lease;
 mod lease_settings;
 mod librarian;
 mod machine_checkpoint;
+mod machine_status;
 mod member_card;
 mod member_kind;
 mod member_places;

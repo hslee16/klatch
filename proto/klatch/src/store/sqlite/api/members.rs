@@ -185,6 +185,16 @@ impl MemberStore for SqliteStore {
         self.do_put_machine_checkpoint(at, body, last, now)
     }
 
+    fn put_machine_status(
+        &self,
+        at: Seat,
+        status: (&str, &str),
+        owned: &[&str],
+        when: (i64, i64),
+    ) -> Result<bool> {
+        self.do_put_machine_status(at, status, owned, when)
+    }
+
     fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {
         self.do_machine_checkpoints(room)
     }

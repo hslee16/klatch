@@ -190,6 +190,7 @@ mod briefing_tests {
             board: board.map(String::from),
             no_join: false,
             checkpoint: false,
+            machine_status: false,
             passive_claims: false,
         };
         session_start(&ctx, &args).unwrap().0

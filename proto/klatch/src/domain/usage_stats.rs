@@ -111,6 +111,16 @@ pub struct MachineCheckpointCounts {
     pub bytes: i64,
 }
 
+/// The machine status updates written in the window (#1403), in all and by class. Counts only: the table behind it
+/// holds a time, a room and a class word, never a tool, a command or a member.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MachineStatusCounts {
+    pub updates: i64,
+    pub working: i64,
+    pub idle: i64,
+    pub parked: i64,
+}
+
 /// The passive claim events in the window (#1401): claims a hook took when a member edited a file, how many of those
 /// renewed one the member already held, how many another member's claim refused, how many were released at a Stop or
 /// SessionEnd, how many lapsed first and how many steps failed. Counts only: no claim name and no member.
@@ -159,6 +169,7 @@ pub struct UsageStats {
     pub asks: AskCounts,
     pub claims: ClaimCounts,
     pub machine_checkpoints: MachineCheckpointCounts,
+    pub machine_status: MachineStatusCounts,
     pub passive_claims: PassiveClaimCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
@@ -416,6 +427,11 @@ impl UsageStats {
             "machine checkpoints: {} written ({} at session end), {} replaced an earlier one, {} bytes\n",
             mc.written, mc.last, mc.replaced, mc.bytes
         ));
+        let ms = &self.machine_status;
+        o.push_str(&format!(
+            "machine status: {} updates (working {}, idle {}, parked {})\n",
+            ms.updates, ms.working, ms.idle, ms.parked
+        ));
         let pc = &self.passive_claims;
         o.push_str(&format!(
             "passive claims: {} granted, {} renewed, {} refused, {} released, {} lapsed, {} failed\n",
@@ -546,6 +562,10 @@ impl UsageStats {
             "machine_checkpoints": {
                 "written": self.machine_checkpoints.written, "last": self.machine_checkpoints.last,
                 "replaced": self.machine_checkpoints.replaced, "bytes": self.machine_checkpoints.bytes,
+            },
+            "machine_status": {
+                "updates": self.machine_status.updates, "working": self.machine_status.working,
+                "idle": self.machine_status.idle, "parked": self.machine_status.parked,
             },
             "passive_claims": {
                 "granted": self.passive_claims.granted, "renewed": self.passive_claims.renewed,

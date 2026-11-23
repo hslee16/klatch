@@ -28,6 +28,7 @@ pub(super) const OWN_RECORD: &[(&str, &str)] = &[
     ("sign_of_life", "the caller's own park, ended by its own hook"),
     ("note_tool", "the caller's own working trail: a class word and a plain repo-relative path, anything else refused (#1408)"),
     ("write_machine_checkpoint", "the caller's own checkpoint, written only into rooms the caller can read (it reads each through the guarded `board`) and where it works (#1408)"),
+    ("set_machine_status", "the caller's own status, set only to a closed class word (working, idle, parked), only in rooms the caller can read and may set a status in, and never over a status the member set itself (#1403)"),
     ("lease_policy", "a policy lookup the lease rules use; takes no principal"),
     ("rate_limit", "a policy lookup the budget check uses on every post; takes no principal"),
     ("rate_limit_for", "the same lookup for one member's own limit (#972); takes no principal and changes nothing"),
@@ -49,6 +50,7 @@ pub(super) const AFTER_END: &[(&str, OwnCall, Option<&str>)] = &[
     ("sign_of_life", |g, w| g.sign_of_life(w), None),
     ("note_tool", |g, w| g.note_tool(w, "edit", Some("a.rs")), None),
     ("write_machine_checkpoint", |g, w| g.write_machine_checkpoint(w, None).map(|_| ()), None),
+    ("set_machine_status", |g, w| g.set_machine_status(w, "working").map(|_| ()), None),
     ("delivery_view", |g, w| g.delivery_view(w).map(|_| ()), None),
     ("set_delivery_view", |g, w| g.set_delivery_view(w, crate::gateway::DeliveryView::Scope), None),
 ];

@@ -52,7 +52,9 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE member_trail(member TEXT PRIMARY KEY, files TEXT NOT NULL, tools TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE machine_checkpoints(room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL, last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member));
  CREATE TABLE machine_checkpoint_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, replaced INTEGER NOT NULL, last INTEGER NOT NULL, bytes INTEGER NOT NULL);
- CREATE INDEX machine_checkpoint_events_ts ON machine_checkpoint_events(ts);";
+ CREATE INDEX machine_checkpoint_events_ts ON machine_checkpoint_events(ts);
+ CREATE TABLE machine_status_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, class TEXT NOT NULL);
+ CREATE INDEX machine_status_events_ts ON machine_status_events(ts);";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -507,6 +509,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v39,
     migrate_v40,
     migrate_v41,
+    migrate_v42,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -583,6 +586,17 @@ pub(super) fn migrate_v41(conn: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS machine_checkpoints(room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL, last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member));
          CREATE TABLE IF NOT EXISTS machine_checkpoint_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, replaced INTEGER NOT NULL, last INTEGER NOT NULL, bytes INTEGER NOT NULL);
          CREATE INDEX IF NOT EXISTS machine_checkpoint_events_ts ON machine_checkpoint_events(ts);",
+    )
+    .map_err(be)
+}
+
+/// Version 42 to 43: the machine status counts (#1403). `machine_status_events` is the counts-only record the usage
+/// report reads: when, which room and which class word (`working`, `idle` or `parked`). It holds no member, tool,
+/// command or text. The status itself lives in the existing `members.status` field. Existing stores start empty.
+pub(super) fn migrate_v42(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS machine_status_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, class TEXT NOT NULL);
+         CREATE INDEX IF NOT EXISTS machine_status_events_ts ON machine_status_events(ts);",
     )
     .map_err(be)
 }
