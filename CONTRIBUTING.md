@@ -2,11 +2,10 @@
 
 ## CI is kept light, on purpose
 
-The human's rule (2026-11-14): **keep CI lightweight for now.** Every pull request runs one job on Linux and one on
-macOS, each about two minutes. A heavier check is added to CI only when it earns its place, and the default for a new
+The human's rule (2026-11-14): **keep CI lightweight for now.** Every pull request runs two parallel jobs on Linux, `test` and `test-clients` (#1349). A heavier check is added to CI only when it earns its place, and the default for a new
 heavy check is a **manual** workflow (`workflow_dispatch`) that is run by hand, not a trigger on pull requests.
 
-**Runs on every pull request** (`.github/workflows/ci.yml`): `cargo fmt --check`, clippy with warnings as errors, build,
+**Runs on every pull request** (`.github/workflows/ci.yml`, job `test` for the Rust checks and job `test-clients` for the client suites, recipes, release checks and policy checks): `cargo fmt --check`, clippy with warnings as errors, build,
 the whole test suite, the `client` and bare feature builds, `cargo publish --dry-run`, the Python and TypeScript
 client suites, the launcher demo, the README quickstart, the installer tests, the release version agreement check
 (`release/check-versions.sh`), the test-clock test, shellcheck, actionlint, the licence notices check and, on Linux,

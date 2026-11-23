@@ -56,6 +56,32 @@ jobs:
           cargo build -p klatch --no-default-features --locked
       - name: The package is publishable to crates.io (dry run, nothing is uploaded)
         run: cargo publish --dry-run --locked -p klatch
+      - name: Tests that need the test-clock build (a panic never prints what it carried)
+        run: cargo test -p klatch --features test-clock --test no_plaintext --locked
+
+  # The second job (#1349): the client suites and the repository checks, in parallel with `test` so the critical path is the
+  # longer of the two. It builds the klatch binary on its own (a distinct cache key, so the two jobs do not fight over one
+  # cache). `test` is the required check; this one starts with "test" so the merge keeper waits for it too.
+  test-clients:
+    name: test-clients (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    defaults:
+      run:
+        working-directory: proto
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: proto
+          shared-key: clients
+      - name: Build the klatch binary the client suites and recipes run against
+        run: cargo build -p klatch --locked
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -110,8 +136,6 @@ jobs:
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/check-integration-examples.sh
       - name: The launcher recipe, a whole run against the real binary (FACTORY.md)
         run: KLATCH_BIN="$PWD/target/debug/klatch" ../clients/recipes/launcher-demo.sh
-      - name: Tests that need the test-clock build (a panic never prints what it carried)
-        run: cargo test -p klatch --features test-clock --test no_plaintext --locked
       - name: Install cargo-about (pinned release, checksum verified)
         if: runner.os == 'Linux'
         env:
