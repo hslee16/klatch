@@ -284,19 +284,15 @@ def readme(status):
             "Run the tests with `python3 -m unittest discover -s tests -t .`.\n\n" + status)
 
 
-def _values(f):
-    """(TARE_G, PAGE_ROWS, stale PAGE_ROWS, TAG, stale TAG) of this fixture's facts."""
-    return f["TARE_G"]["value"], f["PAGE_ROWS"]["value"], f["PAGE_ROWS"]["stale"], f["TAG"]["value"], f["TAG"]["stale"]
+def commits(f):
+    """The 25 scripted commits. Each: author, message, files {path: text}, board [lines], decisions [lines]. Dates are one
+    hour apart from DAY0, set by the builder."""
+    tare, pn, ps, tn, ts = f["TARE_G"]["value"], f["PAGE_ROWS"]["value"], f["PAGE_ROWS"]["stale"], f["TAG"]["value"], f["TAG"]["stale"]
+    c = []
 
-
-def _adder(c):
     def add(author, message, files, board=(), decisions=()):
         c.append({"author": author, "message": message, "files": files, "board": list(board), "decisions": list(decisions)})
-    return add
 
-
-def _commits_tickets_1_to_5(add, f):
-    tare, pn, ps, tn, ts = _values(f)
     add("ada", "scaffold: package parcelkit and the test layout\n\nThe job is eight tickets, listed in README.md with their "
         "modules. ada takes 1, 2 and 4, bo takes 3 and 6, cy takes 5. Ticket 7 (manifest) and 8 (cli) are not assigned yet.",
         {"parcelkit/__init__.py": INIT, "tests/__init__.py": EMPTY, "README.md": readme("Status: nothing is done yet.\n")},
@@ -334,10 +330,6 @@ def _commits_tickets_1_to_5(add, f):
     add("ada", "parcels: tests for parse_line", {"tests/test_parcels.py": T_PARCELS.replace(
         '        self.assertEqual(parse_line("A1 , 500 , 12345 "), {"ref": "A1", "weight_g": 500, "postcode": "12345"})\n', "")})
     add("cy", "labels: tests for paginate and render_label", {"tests/test_labels.py": T_LABELS})
-
-
-def _commits_tickets_6_and_decisions(add, f):
-    tare, pn, ps, tn, ts = _values(f)
     add("bo", "ledger: total_cents refuses floats (ticket 6)", {"parcelkit/ledger.py": LEDGER},
         board=["- bo | working | parcelkit/ledger.py | ticket 6 ledger"])
     add("bo", "ledger: tests for total_cents", {"tests/test_ledger.py": T_LEDGER},
@@ -378,147 +370,121 @@ def _commits_tickets_6_and_decisions(add, f):
         "Status: tickets 1 to 6 are done. Ticket 7 (manifest) is open and needs the team's earlier decisions. "
         "Ticket 8 (cli) waits for ticket 7.\n")},
         board=["- cy | done | parcelkit/labels.py | ticket 5 labels, tests pass"])
-
-
-def commits(f):
-    """The 25 scripted commits. Each: author, message, files {path: text}, board [lines], decisions [lines]. Dates are one
-    hour apart from DAY0, set by the builder."""
-    c = []
-    add = _adder(c)
-    _commits_tickets_1_to_5(add, f)
-    _commits_tickets_6_and_decisions(add, f)
     assert len(c) == 25, len(c)
     return c
-
-
-
-class _Room:
-    """The scripted room history being built: one method per klatch command a member runs."""
-
-    def __init__(self):
-        self.s = []
-
-    def step(self, who, *argv, key=None):
-        d = {"as": who, "argv": list(argv)}
-        if key:
-            d["key"] = key
-        self.s.append(d)
-
-    def post(self, who, text):
-        self.step(who, "post", "lobby", text)
-
-    def claim(self, who, path, reason):
-        self.step(who, "claim", "lobby", path, "--reason", reason)
-
-    def release(self, who, path, note):
-        self.step(who, "release", "lobby", path, "--note", note)
-
-    def ask(self, who, key, text):
-        self.step(who, "ask", "lobby", text, key=key)
-
-    def answer(self, who, key, text):
-        self.step(who, "answer", "lobby", "{{ask:%s}}" % key, text)
-
-    def close(self, who, key, extra=""):
-        self.post(who, ("closed #{{ask:%s}}" % key) + (" " + extra if extra else ""))
-
-
-def _room_tickets_1_to_6(r, f):
-    tare, pn, ps, tn, ts = _values(f)
-    for who in ("ada", "bo", "cy"):
-        r.step(who, "join", "lobby")
-    r.post("ada", "working: ticket 1 weights, parcelkit/weights.py")
-    r.claim("ada", "parcelkit/weights.py", "ticket 1")
-    r.post("ada", "checkpoint: weights.to_grams done, block_count next")
-    r.post("ada", "finished: ticket 1 weights, tests pass")
-    r.post("ada", "merged: ticket 1 on main")
-    r.release("ada", "parcelkit/weights.py", "weights done")
-    r.post("ada", "working: ticket 2 zones, parcelkit/zones.py")
-    r.claim("ada", "parcelkit/zones.py", "ticket 2")
-    r.post("bo", "working: ticket 3 rates, parcelkit/rates.py")
-    r.claim("bo", "parcelkit/rates.py", "ticket 3")
-    r.ask("bo", "units", "what unit are weights in inside parcelkit?")
-    r.answer("ada", "units", "whole grams, weights.to_grams converts from kilograms")
-    r.close("bo", "units")
-    r.ask("cy", "zonearg", "does zone_for take the postcode as a string?")
-    r.answer("ada", "zonearg", "yes, a string of five digits; I will make it raise ValueError for anything else")
-    r.close("cy", "zonearg")
-    r.post("ada", "zone 4 is missing in my first cut, fixing it now: 9xxxx is zone 4")
-    r.post("ada", "finished: ticket 2 zones, four zones")
-    r.post("ada", "merged: ticket 2 on main")
-    r.release("ada", "parcelkit/zones.py", "zones done")
-    r.post("cy", "working: ticket 5 labels, parcelkit/labels.py")
-    r.claim("cy", "parcelkit/labels.py", "ticket 5")
-    r.ask("bo", "tare", "decision: the scanner reports GROSS weights; the manifest subtracts a tare of TARE_G = %d g from each "
-        "parcel, never below 0 g, before rate_cents (which takes the net weight). Agree?" % tare)
-    r.answer("ada", "tare", "ok: agreed, TARE_G = %d g, floor at 0 g" % tare)
-    r.close("bo", "tare", "ok")
-    r.post("bo", "checkpoint: rates has base plus per-block pricing, the tare rule is decision #{{ask:tare}}")
-    r.ask("cy", "pagesold", "decision: a manifest page holds exactly PAGE_ROWS = %d rows because the label sheet layout assumes "
-        "it. Agree?" % ps)
-    r.answer("bo", "pagesold", "ok: agreed, %d rows per page" % ps)
-    r.close("cy", "pagesold", "ok")
-    r.post("bo", "finished: ticket 3 rates, tests pass")
-    r.post("bo", "merged: ticket 3 on main")
-    r.release("bo", "parcelkit/rates.py", "rates done")
-    r.post("ada", "working: ticket 4 parcels, parcelkit/parcels.py")
-    r.claim("ada", "parcelkit/parcels.py", "ticket 4")
-    r.post("cy", "checkpoint: labels.paginate done, render_label next")
-    r.post("ada", "finished: ticket 4 parcels, tests pass")
-    r.post("ada", "merged: ticket 4 on main")
-    r.release("ada", "parcelkit/parcels.py", "parcels done")
-    r.ask("bo", "order", "does paginate keep the order of the rows and never return an empty page?")
-    r.answer("cy", "order", "yes to both; it takes the page size as an argument")
-    r.close("bo", "order")
-    r.post("cy", "finished: ticket 5 labels, tests pass")
-    r.post("cy", "merged: ticket 5 on main")
-    r.release("cy", "parcelkit/labels.py", "labels done")
-    r.post("bo", "working: ticket 6 ledger, parcelkit/ledger.py")
-    r.claim("bo", "parcelkit/ledger.py", "ticket 6")
-    r.post("bo", "finished: ticket 6 ledger, tests pass")
-    r.post("bo", "merged: ticket 6 on main")
-    r.release("bo", "parcelkit/ledger.py", "ledger done")
-
-
-def _room_decisions_and_wrap_up(r, f):
-    tare, pn, ps, tn, ts = _values(f)
-    r.ask("bo", "nameold", "decision: a manifest file is named TAG-YYYYMMDD-SEQ.mf with TAG = %s, the date as 8 digits and SEQ "
-        "zero padded to 3 digits. Agree?" % ts)
-    r.answer("ada", "nameold", "ok: agreed, %s-YYYYMMDD-SEQ.mf" % ts)
-    r.close("bo", "nameold", "ok")
-    r.post("ada", "status: tickets 1 to 6 are being finished, README updated")
-    r.ask("cy", "eight", "is ticket 8 (cli) blocked on ticket 7?")
-    r.answer("bo", "eight", "yes, the cli calls build_manifest, so it waits for ticket 7")
-    r.close("cy", "eight")
-    r.ask("cy", "pagesnew", "decision: PAGE_ROWS is now %d, not %d: the printer test shows %d rows overflow the sheet. This "
-        "supersedes #{{ask:pagesold}}. Agree?" % (pn, ps, ps))
-    r.answer("bo", "pagesnew", "ok: agreed, %d rows per page, supersedes #{{ask:pagesold}}" % pn)
-    r.close("cy", "pagesnew", "ok")
-    r.post("bo", "rates now refuses a negative net weight: the manifest must floor the net weight at 0 g after the tare")
-    r.post("ada", "zones now refuses a postcode that is not five digits")
-    r.ask("bo", "namenew", "decision: the file name tag is now TAG = %s, not %s: the archive tool already uses %s as a prefix. "
-        "This supersedes #{{ask:nameold}}. Agree?" % (tn, ts, ts))
-    r.answer("ada", "namenew", "ok: agreed, TAG = %s, supersedes #{{ask:nameold}}" % tn)
-    r.close("bo", "namenew", "ok")
-    r.post("cy", "labels: render_label pads the reference to 12 characters now")
-    r.post("ada", "parcels: parse_line tolerates spaces around each field now")
-    r.post("bo", "checkpoint: all six tickets merged on main; the manifest is not started")
-    r.post("bo", "handoff: ticket 7 manifest is open and not started; the decisions on tare, page size and file name are in the "
-         "room (klatch asks, klatch history); later decisions supersede earlier ones")
-    r.post("cy", "finished: README status updated, tickets 1 to 6 done")
-    for who in ("ada", "bo", "cy"):
-        r.post(who, "status: done")
-        r.step(who, "status", "lobby", "done")
 
 
 def room(f):
     """The scripted room history: steps {as, argv, key?}. argv is the klatch command line after the binary; {{ask:KEY}} in
     a text is the number the ask got. About 60 messages by ada, bo and cy, in the order of the commits."""
-    r = _Room()
-    _room_tickets_1_to_6(r, f)
-    _room_decisions_and_wrap_up(r, f)
-    return r.s
+    tare, pn, ps, tn, ts = f["TARE_G"]["value"], f["PAGE_ROWS"]["value"], f["PAGE_ROWS"]["stale"], f["TAG"]["value"], f["TAG"]["stale"]
+    s = []
 
+    def step(who, *argv, key=None):
+        d = {"as": who, "argv": list(argv)}
+        if key:
+            d["key"] = key
+        s.append(d)
+
+    def post(who, text):
+        step(who, "post", "lobby", text)
+
+    def claim(who, path, reason):
+        step(who, "claim", "lobby", path, "--reason", reason)
+
+    def release(who, path, note):
+        step(who, "release", "lobby", path, "--note", note)
+
+    def ask(who, key, text):
+        step(who, "ask", "lobby", text, key=key)
+
+    def answer(who, key, text):
+        step(who, "answer", "lobby", "{{ask:%s}}" % key, text)
+
+    def close(who, key, extra=""):
+        post(who, ("closed #{{ask:%s}}" % key) + (" " + extra if extra else ""))
+
+    for who in ("ada", "bo", "cy"):
+        step(who, "join", "lobby")
+    post("ada", "working: ticket 1 weights, parcelkit/weights.py")
+    claim("ada", "parcelkit/weights.py", "ticket 1")
+    post("ada", "checkpoint: weights.to_grams done, block_count next")
+    post("ada", "finished: ticket 1 weights, tests pass")
+    post("ada", "merged: ticket 1 on main")
+    release("ada", "parcelkit/weights.py", "weights done")
+    post("ada", "working: ticket 2 zones, parcelkit/zones.py")
+    claim("ada", "parcelkit/zones.py", "ticket 2")
+    post("bo", "working: ticket 3 rates, parcelkit/rates.py")
+    claim("bo", "parcelkit/rates.py", "ticket 3")
+    ask("bo", "units", "what unit are weights in inside parcelkit?")
+    answer("ada", "units", "whole grams, weights.to_grams converts from kilograms")
+    close("bo", "units")
+    ask("cy", "zonearg", "does zone_for take the postcode as a string?")
+    answer("ada", "zonearg", "yes, a string of five digits; I will make it raise ValueError for anything else")
+    close("cy", "zonearg")
+    post("ada", "zone 4 is missing in my first cut, fixing it now: 9xxxx is zone 4")
+    post("ada", "finished: ticket 2 zones, four zones")
+    post("ada", "merged: ticket 2 on main")
+    release("ada", "parcelkit/zones.py", "zones done")
+    post("cy", "working: ticket 5 labels, parcelkit/labels.py")
+    claim("cy", "parcelkit/labels.py", "ticket 5")
+    ask("bo", "tare", "decision: the scanner reports GROSS weights; the manifest subtracts a tare of TARE_G = %d g from each "
+        "parcel, never below 0 g, before rate_cents (which takes the net weight). Agree?" % tare)
+    answer("ada", "tare", "ok: agreed, TARE_G = %d g, floor at 0 g" % tare)
+    close("bo", "tare", "ok")
+    post("bo", "checkpoint: rates has base plus per-block pricing, the tare rule is decision #{{ask:tare}}")
+    ask("cy", "pagesold", "decision: a manifest page holds exactly PAGE_ROWS = %d rows because the label sheet layout assumes "
+        "it. Agree?" % ps)
+    answer("bo", "pagesold", "ok: agreed, %d rows per page" % ps)
+    close("cy", "pagesold", "ok")
+    post("bo", "finished: ticket 3 rates, tests pass")
+    post("bo", "merged: ticket 3 on main")
+    release("bo", "parcelkit/rates.py", "rates done")
+    post("ada", "working: ticket 4 parcels, parcelkit/parcels.py")
+    claim("ada", "parcelkit/parcels.py", "ticket 4")
+    post("cy", "checkpoint: labels.paginate done, render_label next")
+    post("ada", "finished: ticket 4 parcels, tests pass")
+    post("ada", "merged: ticket 4 on main")
+    release("ada", "parcelkit/parcels.py", "parcels done")
+    ask("bo", "order", "does paginate keep the order of the rows and never return an empty page?")
+    answer("cy", "order", "yes to both; it takes the page size as an argument")
+    close("bo", "order")
+    post("cy", "finished: ticket 5 labels, tests pass")
+    post("cy", "merged: ticket 5 on main")
+    release("cy", "parcelkit/labels.py", "labels done")
+    post("bo", "working: ticket 6 ledger, parcelkit/ledger.py")
+    claim("bo", "parcelkit/ledger.py", "ticket 6")
+    post("bo", "finished: ticket 6 ledger, tests pass")
+    post("bo", "merged: ticket 6 on main")
+    release("bo", "parcelkit/ledger.py", "ledger done")
+    ask("bo", "nameold", "decision: a manifest file is named TAG-YYYYMMDD-SEQ.mf with TAG = %s, the date as 8 digits and SEQ "
+        "zero padded to 3 digits. Agree?" % ts)
+    answer("ada", "nameold", "ok: agreed, %s-YYYYMMDD-SEQ.mf" % ts)
+    close("bo", "nameold", "ok")
+    post("ada", "status: tickets 1 to 6 are being finished, README updated")
+    ask("cy", "eight", "is ticket 8 (cli) blocked on ticket 7?")
+    answer("bo", "eight", "yes, the cli calls build_manifest, so it waits for ticket 7")
+    close("cy", "eight")
+    ask("cy", "pagesnew", "decision: PAGE_ROWS is now %d, not %d: the printer test shows %d rows overflow the sheet. This "
+        "supersedes #{{ask:pagesold}}. Agree?" % (pn, ps, ps))
+    answer("bo", "pagesnew", "ok: agreed, %d rows per page, supersedes #{{ask:pagesold}}" % pn)
+    close("cy", "pagesnew", "ok")
+    post("bo", "rates now refuses a negative net weight: the manifest must floor the net weight at 0 g after the tare")
+    post("ada", "zones now refuses a postcode that is not five digits")
+    ask("bo", "namenew", "decision: the file name tag is now TAG = %s, not %s: the archive tool already uses %s as a prefix. "
+        "This supersedes #{{ask:nameold}}. Agree?" % (tn, ts, ts))
+    answer("ada", "namenew", "ok: agreed, TAG = %s, supersedes #{{ask:nameold}}" % tn)
+    close("bo", "namenew", "ok")
+    post("cy", "labels: render_label pads the reference to 12 characters now")
+    post("ada", "parcels: parse_line tolerates spaces around each field now")
+    post("bo", "checkpoint: all six tickets merged on main; the manifest is not started")
+    post("bo", "handoff: ticket 7 manifest is open and not started; the decisions on tare, page size and file name are in the "
+         "room (klatch asks, klatch history); later decisions supersede earlier ones")
+    post("cy", "finished: README status updated, tickets 1 to 6 done")
+    for who in ("ada", "bo", "cy"):
+        post(who, "status: done")
+        step(who, "status", "lobby", "done")
+    return s
 
 
 # --- the reference solution and the failing variants -------------------------------------------------------------------
