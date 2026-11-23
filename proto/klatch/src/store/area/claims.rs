@@ -1,6 +1,6 @@
 //! The `ClaimStore` area of the store seam; `Store` in the parent module combines every area.
 
-use crate::domain::{Claim, ClaimChanges, ReleaseNote, Result};
+use crate::domain::{Claim, ClaimChanges, Error, PassiveTaken, ReleaseNote, Result};
 use crate::store::{ClaimRequest, Release};
 
 pub trait ClaimStore {
@@ -9,6 +9,38 @@ pub trait ClaimStore {
     /// claims in the same scope or in the shared scope `*`, and a shared claim conflicts with every scope (DESIGN
     /// section 27).
     fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()>;
+
+    /// Take a passive claim (#1401): like `claim`, but a refusal is a value, not an error, and it records no wait (the
+    /// member already edited the file and waits for nothing, so it must not look like a deadlock to anyone), and a store
+    /// that records claim events counts it apart from explicit claims. The default is `claim`.
+    fn take_passive_claim(&self, request: &ClaimRequest, now: i64) -> Result<PassiveTaken> {
+        match self.claim(request, now) {
+            Ok(()) => Ok(PassiveTaken::Granted),
+            Err(Error::Conflict {
+                path,
+                owner,
+                secs_left,
+                held_secs,
+                ..
+            }) => Ok(PassiveTaken::Refused {
+                owner,
+                path,
+                held_secs,
+                secs_left,
+            }),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Release the claims `member` holds that passive claiming took (#1401), in every room; returns how many were still
+    /// live. Explicit claims are never touched. The default releases nothing.
+    fn release_passive_claims(&self, _member: &str, _now: i64) -> Result<usize> {
+        Ok(0)
+    }
+
+    /// Note that a passive claim step failed (#1401), by event word, so the failure is counted and nothing else is
+    /// kept. The default notes nothing.
+    fn note_passive_failure(&self, _now: i64) {}
 
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;

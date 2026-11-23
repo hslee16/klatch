@@ -157,6 +157,15 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`); klatch maps it to one of five words and writes the final
   checkpoint before it releases the member's claims. Compaction fires no `SessionEnd` (it fires `SessionStart` with
   matcher `compact`), so the checkpoint of the last `Stop` stands and the session start board shows it.
+- Passive claims (opt in, `klatch init --passive-claims`, #1401). The hook commands that carry `--passive-claims` claim the
+  repo-relative path of each file a `PostToolUse` edit or write touched, in the default lobby (else the member's first
+  ordinary room), for 300 seconds; each further edit of the path renews the claim and the `Stop` and `SessionEnd` hooks
+  release it. The tool parsing is the checkpoint's: `tool_name`, `tool_input` and `cwd` are read, the path is made
+  repo-relative, and the command line, content and output are dropped. A hook runs after the tool, so the first edit of a
+  path is claimed afterwards. When another member holds the path the hook prints one `additionalContext` line (the
+  holder, how long it has held it, the exact `klatch ask` to send) and never blocks; blocking is `init --enforce`. A tool
+  call made inside a subagent (its input carries `agent_id`) claims nothing, and DESIGN.md, CHANGELOG.md and
+  RESEARCH-NOTES.md are never claimed.
 
 ## 4. Post
 

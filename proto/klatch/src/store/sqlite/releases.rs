@@ -126,6 +126,43 @@ impl SqliteStore {
         })
     }
 
+    /// Release the passive claims of `member` in every room (#1401): one `passive_released` event for each that was
+    /// still live (or `passive_expired` when its lease had lapsed), and nothing for any other claim of the member.
+    pub(super) fn do_release_passive(&self, member: &str, now: i64) -> Result<usize> {
+        self.immediate(|| {
+            let held: Vec<(String, String, i64, i64)> = self.rows(
+                "SELECT room,path,expires,since FROM claims WHERE owner=?1 AND reason=?2",
+                params![member, crate::domain::PASSIVE_REASON],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            let mut released = 0;
+            for (room, path, expires, since) in held {
+                self.exec(
+                    "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
+                    params![room, path, member],
+                )?;
+                let live = expires > now;
+                released += usize::from(live);
+                self.record_claim_event(
+                    now,
+                    &ClaimEvent {
+                        room: &room,
+                        path: &path,
+                        event: if live {
+                            "passive_released"
+                        } else {
+                            "passive_expired"
+                        },
+                        reason: "",
+                        held: held_for(since, if live { now } else { expires }),
+                        waited: None,
+                    },
+                );
+            }
+            Ok(released)
+        })
+    }
+
     pub(super) fn do_release_member_claims(&self, member: &str, now: i64) -> Result<usize> {
         self.immediate(|| {
             let held: Vec<(String, String, i64, i64)> = self.rows("SELECT room,path,expires,since FROM claims WHERE owner=?1", params![member], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
@@ -199,7 +236,9 @@ impl SqliteStore {
             let current: Vec<Claim> = self
                 .claims(room, now)?
                 .into_iter()
-                .filter(|c| c.owner != member)
+                // a passive claim (#1401) is not announced in a digest: it is read with `claims`, and met by the editor
+                // it refuses; a digest line for every edited file would cost every member's context
+                .filter(|c| c.owner != member && c.reason != crate::domain::PASSIVE_REASON)
                 .collect();
             let mut st = self
                 .conn
