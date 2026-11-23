@@ -32,8 +32,9 @@ def _git(repo, args, env):
 
 
 def _commits(repo, paths, env):
-    """{sha: {"author", "files": {path: [added lines]}}} for every non-merge, non-root commit reachable from any ref."""
-    rc, out = _git(repo, ["log", "--all", "--no-merges", "--no-renames", "-p", "--unified=0",
+    """{sha: {"author", "files": {path: [added lines]}}} for every non-merge, non-root commit reachable from any ref.
+    --full-history: a path-limited log otherwise drops a side branch whose merge equals the other side (#1471)."""
+    rc, out = _git(repo, ["log", "--all", "--no-merges", "--full-history", "--no-renames", "-p", "--unified=0",
                           "--format=%x01%H%x01%an%x01%P%x01", "--"] + paths, env)
     if rc != 0:
         raise RuntimeError("git log failed in %s" % repo)
