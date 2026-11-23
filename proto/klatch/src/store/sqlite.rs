@@ -24,6 +24,7 @@ mod review;
 mod rows;
 mod schema;
 mod seal;
+mod stats;
 mod tasks;
 pub use archive::{
     ArchiveInfo, ArchiveState, archives_to_rekey, list_archives, rekey_archives, rekey_archives_in,

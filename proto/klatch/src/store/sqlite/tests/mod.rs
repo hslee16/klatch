@@ -27,6 +27,7 @@ mod migrations;
 mod plaintext;
 mod review;
 mod runs;
+mod stats;
 mod wait_cycles;
 
 pub(super) fn store() -> SqliteStore {
