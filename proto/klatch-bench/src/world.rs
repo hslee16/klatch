@@ -22,6 +22,83 @@ pub struct Run {
     pub stderr: String,
 }
 
+impl Run {
+    /// The result of a command run at a pseudo-terminal: the prompts the terminal echoed are taken out of stdout.
+    fn from_terminal(ok: bool, text: &str, stderr: String) -> Run {
+        Run {
+            ok,
+            stdout: crate::pty::without_prompts(text),
+            stderr,
+        }
+    }
+}
+
+/// The seq of a `read` row (`[12 ...`), or none for any other line.
+fn row_seq(line: &str) -> Option<u64> {
+    line.strip_prefix('[')?.split(' ').next()?.parse().ok()
+}
+
+/// Whether a line is the notice that more messages were not shown.
+fn is_more_notice(line: &str) -> bool {
+    line.starts_with('[') && line.contains(" more messages not shown;")
+}
+
+/// Move `last` to `seq`, which must be past it.
+fn advance_seq(last: &mut u64, seq: u64) -> Result<(), String> {
+    if seq <= *last {
+        return Err(format!("read repeated or reordered seq {seq} after {last}"));
+    }
+    *last = seq;
+    Ok(())
+}
+
+/// Add the rows of one `read` page to `rows`, checking the seqs rise strictly past `last` (updated). Returns whether
+/// the page said more messages were not shown, and how many rows it showed.
+fn take_page_rows(
+    page: &str,
+    last: &mut u64,
+    rows: &mut Vec<String>,
+) -> Result<(bool, usize), String> {
+    let more = page.lines().any(is_more_notice);
+    let mut shown = 0;
+    for l in page.lines().filter(|l| !is_more_notice(l)) {
+        if let Some(seq) = row_seq(l) {
+            advance_seq(last, seq)?;
+            shown += 1;
+        }
+        rows.push(l.to_string());
+    }
+    Ok((more, shown))
+}
+
+/// Run `c` with every request on its own line of standard input, from one process; the output lines come back. A
+/// failing exit is the error `on_failure` makes of the trimmed standard error.
+fn pipe_requests(
+    mut c: Command,
+    requests: &[String],
+    on_failure: impl Fn(&str) -> String,
+) -> Result<Vec<String>, String> {
+    use std::io::Write;
+    c.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("start serve: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    let body: String = requests.iter().map(|r| format!("{r}\n")).collect();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(body.as_bytes());
+    });
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let _ = writer.join();
+    if !out.status.success() {
+        return Err(on_failure(String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(String::from)
+        .collect())
+}
+
 /// What a Codex process hands klatch: a hook's JSON on standard input, or the thread id of a command it runs.
 pub enum CodexInput<'a> {
     Hook(&'a str),
@@ -286,45 +363,38 @@ impl World {
         }
     }
 
+    /// The `klatch` arguments of an admin command: `admin` and then `args`.
+    fn admin_argv<'a>(args: &[&'a str]) -> Vec<&'a str> {
+        let mut full = vec!["admin"];
+        full.extend_from_slice(args);
+        full
+    }
+
     /// Run `klatch admin <args>` the way a person would at a terminal: a pseudo-terminal where the admin passphrase
     /// is typed when asked, then `typed` for a confirmation. The output is what the terminal showed.
     pub fn admin(&self, args: &[&str], typed: &str) -> Run {
         self.set_passphrase();
-        let mut full = vec!["admin"];
-        full.extend_from_slice(args);
-        let c = self.command("admin", &full);
+        let c = self.command("admin", &Self::admin_argv(args));
         let (ok, text) =
             crate::pty::run_on_pty(c, vec![crate::pty::PASS.to_string(), typed.to_string()]);
-        Run {
-            ok,
-            stdout: crate::pty::without_prompts(&text),
-            stderr: String::new(),
-        }
+        Run::from_terminal(ok, &text, String::new())
     }
 
     /// Run `klatch admin <args>` at a pseudo-terminal for a command that runs before the store opens (`recover` with
     /// the key lost): the store cannot be read, so there is no admin passphrase to ask for, and only the typed
     /// confirmation is answered.
     pub fn admin_keyless(&self, args: &[&str], typed: &str) -> Run {
-        let mut full = vec!["admin"];
-        full.extend_from_slice(args);
-        let c = self.command("admin", &full);
+        let c = self.command("admin", &Self::admin_argv(args));
         let (ok, text) = crate::pty::run_on_pty(c, vec![typed.to_string()]);
-        Run {
-            ok,
-            stdout: crate::pty::without_prompts(&text),
-            stderr: text,
-        }
+        Run::from_terminal(ok, &text, text.clone())
     }
 
     /// Start `klatch admin <args>` at a pseudo-terminal without waiting, for scenarios that run several at once. The
     /// passphrase and the confirmation line are typed when it asks.
     pub fn spawn_admin(&self, args: &[&str]) -> std::io::Result<crate::pty::TtyChild> {
         self.set_passphrase();
-        let mut full = vec!["admin"];
-        full.extend_from_slice(args);
         crate::pty::TtyChild::start(
-            self.command("admin", &full),
+            self.command("admin", &Self::admin_argv(args)),
             vec![crate::pty::PASS.to_string(), String::new()],
         )
     }
@@ -337,11 +407,7 @@ impl World {
             self.command("launcher", args),
             vec![crate::pty::PASS.to_string()],
         );
-        Run {
-            ok,
-            stdout: crate::pty::without_prompts(&text),
-            stderr: String::new(),
-        }
+        Run::from_terminal(ok, &text, String::new())
     }
 
     /// Run a command that must succeed; its output, or an error naming the command and what it said.
@@ -373,29 +439,8 @@ impl World {
     /// Speak the wire protocol (`serve --stdio`) as member `who`: send the request lines, return the response
     /// lines. One process handles all of them, which is how a scenario seeds thousands of messages quickly.
     pub fn serve(&self, who: &str, requests: &[String]) -> Result<Vec<String>, String> {
-        use std::io::Write;
-        let mut c = self.command(who, &["serve", "--stdio"]);
-        c.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = c.spawn().map_err(|e| format!("start serve: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
-        let body: String = requests.iter().map(|r| format!("{r}\n")).collect();
-        let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(body.as_bytes());
-        });
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        let _ = writer.join();
-        if !out.status.success() {
-            return Err(format!(
-                "serve failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(String::from)
-            .collect())
+        let c = self.command(who, &["serve", "--stdio"]);
+        pipe_requests(c, requests, |stderr| format!("serve failed: {stderr}"))
     }
 
     /// Run `klatch serve --stdio --ssh-key <label>` the way an `authorized_keys` forced command does (#107), with a
@@ -407,26 +452,8 @@ impl World {
         hostile: &str,
         requests: &[String],
     ) -> Result<Vec<String>, String> {
-        use std::io::Write;
-        let mut c = self.command(hostile, &["serve", "--stdio", "--ssh-key", label]);
-        c.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = c.spawn().map_err(|e| format!("start serve: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
-        let body: String = requests.iter().map(|r| format!("{r}\n")).collect();
-        let writer = std::thread::spawn(move || {
-            let _ = stdin.write_all(body.as_bytes());
-        });
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
-        let _ = writer.join();
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(String::from)
-            .collect())
+        let c = self.command(hostile, &["serve", "--stdio", "--ssh-key", label]);
+        pipe_requests(c, requests, |stderr| stderr.to_string())
     }
 
     /// Everything unread in `room` for `who`, by reading again for as long as the output says more messages were not
@@ -435,28 +462,11 @@ impl World {
     /// when a call that says more is left shows nothing, so a scenario that drains a room also checks the cursor.
     /// It consumes: `read` marks what it showed read (a peek would show the same part every time).
     pub fn read_all(&self, who: &str, room: &str) -> Result<String, String> {
-        let row_seq =
-            |l: &str| -> Option<u64> { l.strip_prefix('[')?.split(' ').next()?.parse().ok() };
         let mut rows = Vec::new();
         let mut last = 0;
         for _ in 0..100_000 {
             let page = self.ok(who, &["read", room])?;
-            let mut more = false;
-            let mut shown = 0;
-            for l in page.lines() {
-                if l.starts_with('[') && l.contains(" more messages not shown;") {
-                    more = true;
-                    continue;
-                }
-                if let Some(seq) = row_seq(l) {
-                    if seq <= last {
-                        return Err(format!("read repeated or reordered seq {seq} after {last}"));
-                    }
-                    last = seq;
-                    shown += 1;
-                }
-                rows.push(l.to_string());
-            }
+            let (more, shown) = take_page_rows(&page, &mut last, &mut rows)?;
             if !more {
                 return Ok(rows.join("\n"));
             }
@@ -667,5 +677,80 @@ mod tests {
         let w = world_with_messages();
         std::fs::remove_dir_all(w.home.join("keys")).unwrap();
         assert!(w.check_integrity().is_err());
+    }
+}
+
+#[cfg(test)]
+mod read_all_and_pipe_tests {
+    use super::*;
+
+    fn page(rows: &[&str]) -> String {
+        rows.join("\n")
+    }
+
+    #[test]
+    fn a_page_adds_its_rows_in_order_and_counts_the_numbered_ones() {
+        let (mut last, mut rows) = (0, Vec::new());
+        let p = page(&["header line", "[1 alice] one", "[2 alice] two"]);
+        let got = take_page_rows(&p, &mut last, &mut rows).unwrap();
+        assert_eq!((got, last), ((false, 2), 2));
+        assert_eq!(rows, ["header line", "[1 alice] one", "[2 alice] two"]);
+    }
+
+    #[test]
+    fn the_more_notice_is_noticed_and_left_out_of_the_rows() {
+        let (mut last, mut rows) = (0, Vec::new());
+        let p = page(&["[3 bob] x", "[7 more messages not shown; read again]"]);
+        let got = take_page_rows(&p, &mut last, &mut rows).unwrap();
+        assert_eq!(got, (true, 1));
+        assert_eq!(rows, ["[3 bob] x"]);
+    }
+
+    #[test]
+    fn a_repeated_or_reordered_seq_is_an_error_naming_both_seqs() {
+        let (mut last, mut rows) = (5, Vec::new());
+        let e = take_page_rows("[5 a] again", &mut last, &mut rows).unwrap_err();
+        assert_eq!(e, "read repeated or reordered seq 5 after 5");
+        let e = take_page_rows("[4 a] back", &mut last, &mut rows).unwrap_err();
+        assert_eq!(e, "read repeated or reordered seq 4 after 5");
+    }
+
+    #[test]
+    fn only_a_bracketed_number_is_a_row_seq() {
+        let seqs = ["[12 x] y", "[x 1] y", "12 y", "[", ""].map(row_seq);
+        assert_eq!(seqs, [Some(12), None, None, None, None]);
+    }
+
+    #[test]
+    fn piped_requests_come_back_as_the_lines_the_process_printed() {
+        let mut c = Command::new("cat");
+        c.env_clear();
+        let lines = pipe_requests(c, &["a".into(), "b".into()], |e| e.to_string()).unwrap();
+        assert_eq!(lines, ["a", "b"]);
+    }
+
+    #[test]
+    fn a_failing_process_is_the_error_the_caller_makes_of_its_trimmed_stderr() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo ' boom ' >&2; exit 3"]);
+        let e = pipe_requests(c, &[], |e| format!("failed: {e}")).unwrap_err();
+        assert_eq!(e, "failed: boom");
+    }
+
+    #[test]
+    fn a_process_that_does_not_start_is_a_start_error() {
+        let c = Command::new("/nonexistent/klatch-bench-test-binary");
+        let e = pipe_requests(c, &[], |e| e.to_string()).unwrap_err();
+        assert!(e.starts_with("start serve: "), "{e}");
+    }
+
+    #[test]
+    fn a_terminal_result_drops_the_passphrase_prompt_lines_from_stdout_only() {
+        let text = "admin passphrase to approve: \nout\n";
+        let r = Run::from_terminal(true, text, "err".into());
+        assert_eq!(
+            (r.ok, r.stdout.as_str(), r.stderr.as_str()),
+            (true, "out\n", "err")
+        );
     }
 }

@@ -121,15 +121,43 @@ fn history_only(o: &Options) -> ! {
     std::process::exit(i32::from(crept));
 }
 
+/// Write what the options ask for after a run: the JSON record, the baseline, the history line.
+fn write_outputs(options: &Options, outcomes: &[klatch_bench::Outcome], bin: &std::path::Path) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if let Some(path) = &options.json {
+        write_file(path, klatch_bench::to_json(outcomes, &version_of(bin), now));
+    }
+    if let Some(path) = &options.save_baseline {
+        let text =
+            serde_json::to_string_pretty(&klatch_bench::baseline_of(outcomes)).unwrap_or_default();
+        write_file(path, format!("{text}\n"));
+        println!("baseline written to {path}");
+    }
+    if options.record {
+        let partial = options.layer.is_some() || !options.names.is_empty();
+        history_cli::record(&history_cli::path(&options.history), outcomes, partial);
+    }
+}
+
+/// Run the other tools that share this binary (`judge-eval`, `store-stats`) when the first argument names one: the
+/// exit code to stop with.
+fn run_subcommand(args: &mut std::iter::Peekable<impl Iterator<Item = String>>) -> Option<i32> {
+    let first = args.peek()?.clone();
+    let tool: fn(&mut dyn Iterator<Item = String>) -> i32 = match first.as_str() {
+        "judge-eval" => |a| klatch_bench::judge_eval::cli::main(a),
+        "store-stats" => |a| klatch_bench::store_stats::main(a),
+        _ => return None,
+    };
+    args.next();
+    Some(tool(args))
+}
+
 fn main() {
     let mut args = std::env::args().skip(1).peekable();
-    if args.peek().map(String::as_str) == Some("judge-eval") {
-        args.next();
-        std::process::exit(klatch_bench::judge_eval::cli::main(args));
-    }
-    if args.peek().map(String::as_str) == Some("store-stats") {
-        args.next();
-        std::process::exit(klatch_bench::store_stats::main(args));
+    if let Some(code) = run_subcommand(&mut args) {
+        std::process::exit(code);
     }
     let options = Options::parse(args);
     if options.trend || options.rebaseline.is_some() {
@@ -145,25 +173,7 @@ fn main() {
         .collect();
     let outcomes = klatch_bench::run_scenarios(&chosen, &bin);
     print!("{}", klatch_bench::table(&outcomes));
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    if let Some(path) = &options.json {
-        write_file(
-            path,
-            klatch_bench::to_json(&outcomes, &version_of(&bin), now),
-        );
-    }
-    if let Some(path) = &options.save_baseline {
-        let text =
-            serde_json::to_string_pretty(&klatch_bench::baseline_of(&outcomes)).unwrap_or_default();
-        write_file(path, format!("{text}\n"));
-        println!("baseline written to {path}");
-    }
-    if options.record {
-        let partial = options.layer.is_some() || !options.names.is_empty();
-        history_cli::record(&history_cli::path(&options.history), &outcomes, partial);
-    }
+    write_outputs(&options, &outcomes, &bin);
     let regressed = options
         .budgets
         .as_deref()

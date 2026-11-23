@@ -1,0 +1,1 @@
+- Internal code health work on the bench (`klatch-bench`): the world helpers, the build helpers, the history record, the pseudo-terminal reader, the runner and the long scenarios are split into smaller named functions with no behaviour change; the 131 scenario names and their outcomes are identical (#1450, part of #1441).

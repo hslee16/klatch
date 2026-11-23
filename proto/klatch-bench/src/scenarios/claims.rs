@@ -1,6 +1,12 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
+    let mut all = first_half();
+    all.extend(second_half());
+    all
+}
+
+fn first_half() -> Vec<Scenario> {
     vec![
         Scenario {
             name: "a_claim_with_extra_words_is_refused_not_truncated",
@@ -38,6 +44,11 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "fault",
             run: ended_holder,
         },
+    ]
+}
+
+fn second_half() -> Vec<Scenario> {
+    vec![
         Scenario {
             name: "a_dead_holders_claim_lapses_and_another_takes_it",
             origin: "#233, #59, #262",

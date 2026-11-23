@@ -282,11 +282,11 @@ pub fn baseline_of(outcomes: &[Outcome]) -> serde_json::Value {
     serde_json::Value::Object(all)
 }
 
-/// The cargo arguments that build the test-clock binary in the same profile as the running bench: a release bench that
-/// built a debug binary would then run whatever stale release binary was left in the directory (#729).
-fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
-    let mut args: Vec<String> = ["build", "-q", "-p", "klatch", "--features", "test-clock"]
+/// `cargo build -q` for `crate_args` (the package and its features), in `profile`, into `dir`.
+fn cargo_build_args(crate_args: &[&str], profile: &str, dir: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = ["build", "-q"]
         .iter()
+        .chain(crate_args)
         .map(|a| a.to_string())
         .collect();
     if profile == "release" {
@@ -295,36 +295,88 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     args.push("--target-dir".into());
     args.push(dir.display().to_string());
     args
+}
+
+/// The cargo arguments that build the test-clock binary in the same profile as the running bench: a release bench that
+/// built a debug binary would then run whatever stale release binary was left in the directory (#729).
+fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
+    cargo_build_args(&["-p", "klatch", "--features", "test-clock"], profile, dir)
 }
 
 /// The cargo arguments that build klatch as the workspace does (default features, no test clock) into the workspace's
 /// own target directory, so a workspace build that already made it leaves cargo nothing to do (#1353).
 fn plain_build_args(profile: &str, target: &std::path::Path) -> Vec<String> {
-    let mut args: Vec<String> = ["build", "-q", "-p", "klatch"]
-        .iter()
-        .map(|a| a.to_string())
-        .collect();
-    if profile == "release" {
-        args.push("--release".into());
-    }
-    args.push("--target-dir".into());
-    args.push(target.display().to_string());
-    args
+    cargo_build_args(&["-p", "klatch"], profile, target)
 }
 
 /// The cargo arguments that build `klatch-server` as shipped (no test clock: the channel never reads it) in the same
 /// profile as the running bench, into its own target directory so it never meets the klatch copies (#1078).
 fn server_build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
-    let mut args: Vec<String> = ["build", "-q", "-p", "klatch-server"]
-        .iter()
-        .map(|a| a.to_string())
-        .collect();
-    if profile == "release" {
-        args.push("--release".into());
+    cargo_build_args(&["-p", "klatch-server"], profile, dir)
+}
+
+/// Where the running bench sits in the cargo target directory.
+struct BuildLayout {
+    /// The profile directory (`target/debug` or `target/release`).
+    profile: std::path::PathBuf,
+    /// The target directory above it.
+    target: std::path::PathBuf,
+    /// The profile's name, `debug` when it has none.
+    name: String,
+}
+
+impl BuildLayout {
+    /// The profile directory is the nearest ancestor of the running executable with that name; the executable can sit
+    /// several levels below it, and where depends on the cargo version.
+    fn of_running_bench() -> Result<BuildLayout, String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let profile = exe
+            .ancestors()
+            .find(|d| {
+                matches!(
+                    d.file_name().and_then(|n| n.to_str()),
+                    Some("debug" | "release")
+                )
+            })
+            .ok_or("could not find the cargo profile directory above the running executable")?
+            .to_path_buf();
+        let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+        let name = profile
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("debug")
+            .to_string();
+        Ok(BuildLayout {
+            profile,
+            target,
+            name,
+        })
     }
-    args.push("--target-dir".into());
-    args.push(dir.display().to_string());
-    args
+}
+
+/// The file name of a binary of this package on this platform.
+fn exe_name(bin: &str) -> String {
+    if cfg!(windows) {
+        format!("{bin}.exe")
+    } else {
+        bin.to_string()
+    }
+}
+
+/// Run cargo with `args`; an error naming `built` when it fails.
+fn run_cargo(args: Vec<String>, built: &std::path::Path) -> Result<(), String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = std::process::Command::new(cargo)
+        .args(args)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "could not build {} (cargo {status}; its own error is printed above)",
+        built.display()
+    ))
 }
 
 /// Runs `build` under an exclusive file lock (so no two threads or processes build at once) and returns a private copy
@@ -447,135 +499,30 @@ pub fn find_server_binary() -> Result<std::path::PathBuf, String> {
 }
 
 fn build_server_binary() -> Result<std::path::PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let profile = exe
-        .ancestors()
-        .find(|d| {
-            matches!(
-                d.file_name().and_then(|n| n.to_str()),
-                Some("debug" | "release")
-            )
-        })
-        .ok_or("could not find the cargo profile directory above the running executable")?
-        .to_path_buf();
-    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
-    let dir = target.join("bench-bin-server");
-    let name = profile
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("debug");
-    let built = dir.join(name).join(if cfg!(windows) {
-        "klatch-server.exe"
-    } else {
-        "klatch-server"
-    });
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let args = server_build_args(name, &dir);
-    obtain_binary(&dir, &built, || {
-        let status = std::process::Command::new(cargo)
-            .args(args)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "could not build {} (cargo {status}; its own error is printed above)",
-                built.display()
-            ))
-        }
-    })
+    let layout = BuildLayout::of_running_bench()?;
+    let dir = layout.target.join("bench-bin-server");
+    let built = dir.join(&layout.name).join(exe_name("klatch-server"));
+    let args = server_build_args(&layout.name, &dir);
+    obtain_binary(&dir, &built, || run_cargo(args, &built))
 }
 
 fn build_plain_binary() -> Result<std::path::PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let profile = exe
-        .ancestors()
-        .find(|d| {
-            matches!(
-                d.file_name().and_then(|n| n.to_str()),
-                Some("debug" | "release")
-            )
-        })
-        .ok_or("could not find the cargo profile directory above the running executable")?
-        .to_path_buf();
-    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+    let layout = BuildLayout::of_running_bench()?;
     // Only the copies and the lock live here; the build itself is the workspace's, in `target`.
-    let dir = target.join("bench-bin-plain");
-    let name = profile
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("debug");
-    let built = profile.join(if cfg!(windows) {
-        "klatch.exe"
-    } else {
-        "klatch"
-    });
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let args = plain_build_args(name, &target);
-    obtain_binary(&dir, &built, || {
-        let status = std::process::Command::new(cargo)
-            .args(args)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "could not build {} (cargo {status}; its own error is printed above)",
-                built.display()
-            ))
-        }
-    })
+    let dir = layout.target.join("bench-bin-plain");
+    let built = layout.profile.join(exe_name("klatch"));
+    let args = plain_build_args(&layout.name, &layout.target);
+    obtain_binary(&dir, &built, || run_cargo(args, &built))
 }
 
 fn build_binary() -> Result<std::path::PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // The profile directory (target/debug or target/release) is the nearest ancestor with that name; the executable
-    // can sit several levels below it, and where depends on the cargo version.
-    let profile = exe
-        .ancestors()
-        .find(|d| {
-            matches!(
-                d.file_name().and_then(|n| n.to_str()),
-                Some("debug" | "release")
-            )
-        })
-        .ok_or("could not find the cargo profile directory above the running executable")?
-        .to_path_buf();
-    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+    let layout = BuildLayout::of_running_bench()?;
     // The bench drives a test build (`--features test-clock`, which lets it set klatch's clock), built into its own
     // target directory so it never replaces the normal debug binary.
-    let dir = target.join("bench-bin");
-    let built = dir
-        .join(profile.file_name().unwrap_or_default())
-        .join(if cfg!(windows) {
-            "klatch.exe"
-        } else {
-            "klatch"
-        });
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let args = build_args(
-        profile
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("debug"),
-        &dir,
-    );
-    let bin = obtain_binary(&dir, &built, || {
-        let status = std::process::Command::new(cargo)
-            .args(args)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "could not build {} (cargo {status}; its own error is printed above)",
-                built.display()
-            ))
-        }
-    })?;
+    let dir = layout.target.join("bench-bin");
+    let built = dir.join(&layout.name).join(exe_name("klatch"));
+    let args = build_args(&layout.name, &dir);
+    let bin = obtain_binary(&dir, &built, || run_cargo(args, &built))?;
     let version = std::process::Command::new(&bin)
         .arg("--version")
         .output()
@@ -733,14 +680,13 @@ mod tests {
             .map(|i| aged_copy(&dir, &format!("klatch-old{i}"), 1000 + i * 100))
             .collect();
         let cur = obtain_binary(&dir, &bin, fake_build(&bin)).unwrap();
-        assert!(cur.exists());
         // The current copy is newest; the two newest old ones stay with it.
-        assert!(old[0].exists() && old[1].exists());
+        let kept = [&cur, &old[0], &old[1], &dir.join(".build.lock")].map(|p| p.exists());
+        assert_eq!(kept, [true; 4]);
         assert!(
             old[2..].iter().all(|p| !p.exists()),
             "old copies not pruned"
         );
-        assert!(dir.join(".build.lock").exists());
     }
 
     #[test]
@@ -883,10 +829,21 @@ mod tests {
     fn the_json_record_lists_every_scenario_with_its_verdict_and_metrics() {
         let v = sample_json();
         let list = v["scenarios"].as_array().unwrap();
-        assert_eq!(list.len(), 3);
-        assert_eq!(list[0]["name"], "good");
-        assert_eq!(list[0]["metrics"]["things"], 3.0);
-        assert_eq!(list[1]["passed"], false);
+        let seen = (
+            list.len(),
+            list[0]["name"].clone(),
+            list[0]["metrics"]["things"].clone(),
+            list[1]["passed"].clone(),
+        );
+        assert_eq!(
+            seen,
+            (
+                3,
+                serde_json::json!("good"),
+                serde_json::json!(3.0),
+                serde_json::json!(false)
+            )
+        );
     }
 
     #[test]
@@ -931,9 +888,8 @@ mod tests {
         assert_eq!(budgets.len(), 1, "{budgets:?}");
         assert_eq!(budgets[0].metric, "hook_ms");
         assert_eq!(baseline_of(&o), serde_json::json!({"s": {"hook_ms": 5.0}}));
-        assert!(!history::is_timing("integrity_ms"));
-        assert!(history::is_timing("hook_ms"));
-        assert!(!history::is_timing("klatch_calls"));
+        let timing = ["integrity_ms", "hook_ms", "klatch_calls"].map(history::is_timing);
+        assert_eq!(timing, [false, true, false]);
     }
 
     /// The scenarios where a latency is the point report it (run with `--ignored`, against the real binary).
@@ -1088,15 +1044,9 @@ mod tests {
             50.0,
         );
         let text = format_budgets(&b);
-        assert!(
-            text.contains("a_ms") && text.contains("b_ms") && text.contains("c_ms"),
-            "{text}"
-        );
-        assert!(
-            text.contains("REGRESSION") && text.contains("new"),
-            "{text}"
-        );
-        assert!(text.contains("1 regression"), "{text}");
+        for needle in ["a_ms", "b_ms", "c_ms", "REGRESSION", "new", "1 regression"] {
+            assert!(text.contains(needle), "{needle} missing:\n{text}");
+        }
         assert!(format_budgets(&[]).contains("0 regressions"));
     }
 
@@ -1120,9 +1070,9 @@ mod build_args_tests {
     #[test]
     fn the_plain_build_is_the_workspaces_own_so_a_workspace_build_leaves_it_nothing_to_do() {
         let dbg = plain_build_args("debug", Path::new("/t"));
-        assert!(!dbg.contains(&"test-clock".to_string()), "{dbg:?}");
-        assert!(!dbg.contains(&"--features".to_string()), "{dbg:?}");
-        assert!(!dbg.contains(&"--release".to_string()), "{dbg:?}");
+        let has = |args: &[String], a: &str| args.iter().any(|x| x == a);
+        let flags = ["test-clock", "--features", "--release"].map(|f| has(&dbg, f));
+        assert_eq!(flags, [false; 3], "{dbg:?}");
         // the workspace target directory, not the private `bench-bin` one
         assert_eq!(dbg.last().map(String::as_str), Some("/t"));
         let rel = plain_build_args("release", Path::new("/t"));

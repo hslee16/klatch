@@ -69,14 +69,14 @@ fn outside_count(text: &str) -> Option<usize> {
     })
 }
 
-/// A lobby shared by many repositories (#673): members in different scopes post to one room. A listener on the `all`
-/// view and one on `scope`, both in repository 0, are compared on hook bytes, hook time and wake time, and the count
-/// the narrowed listener is told is hidden is checked against what the room holds from the other repositories.
-fn many_repository_lobby(w: &World) -> Res {
-    let repos = 12;
-    let per_repo = 4;
-    let each = 10;
-    w.set_clock(T0);
+/// `repos` repositories of `per_repo` members each join the lobby and post `each` messages; two listeners in
+/// repository 0 join too, one of them on the `scope` view.
+fn seed_many_repositories(
+    w: &World,
+    repos: usize,
+    per_repo: usize,
+    each: usize,
+) -> Result<(), String> {
     for r in 0..repos {
         for m in 0..per_repo {
             let scope = format!("git:repo{r}");
@@ -90,6 +90,16 @@ fn many_repository_lobby(w: &World) -> Res {
         w.ok(who, &["--member-scope", "git:repo0", "join", "lobby"])?;
     }
     w.ok("scoped", &["view", "scope"])?;
+    post_in_many_repositories(w, repos, per_repo, each)
+}
+
+/// Every member of every repository posts `each` messages to the lobby, with a minute between repositories.
+fn post_in_many_repositories(
+    w: &World,
+    repos: usize,
+    per_repo: usize,
+    each: usize,
+) -> Result<(), String> {
     for r in 0..repos {
         for m in 0..per_repo {
             let reqs: Vec<String> = (0..each)
@@ -99,22 +109,36 @@ fn many_repository_lobby(w: &World) -> Res {
         }
         w.advance(61);
     }
+    Ok(())
+}
+
+/// Wake `who` (there are unread messages, so it wakes at once): how long it took, and what it said on standard error.
+fn wake_ms(w: &World, who: &str) -> Result<(f64, String), String> {
+    let started = Instant::now();
+    let o = w
+        .spawn(who, &["wake", "--timeout", "30"])
+        .map_err(|e| e.to_string())?
+        .wait_with_output()
+        .map_err(|e| e.to_string())?;
+    let took = ms(started);
+    check(o.status.code() == Some(2), format!("{who} did not wake"))?;
+    Ok((took, String::from_utf8_lossy(&o.stderr).into_owned()))
+}
+
+/// A lobby shared by many repositories (#673): members in different scopes post to one room. A listener on the `all`
+/// view and one on `scope`, both in repository 0, are compared on hook bytes, hook time and wake time, and the count
+/// the narrowed listener is told is hidden is checked against what the room holds from the other repositories.
+fn many_repository_lobby(w: &World) -> Res {
+    let repos = 12;
+    let per_repo = 4;
+    let each = 10;
+    w.set_clock(T0);
+    seed_many_repositories(w, repos, per_repo, each)?;
     let hidden_expected = (repos - 1) * per_repo * each;
     let visible_expected = per_repo * each;
     // the wake pointer first: it reads the same unread messages the hook is about to show
-    let wake_ms = |who: &str| -> Result<(f64, String), String> {
-        let started = Instant::now();
-        let o = w
-            .spawn(who, &["wake", "--timeout", "30"])
-            .map_err(|e| e.to_string())?
-            .wait_with_output()
-            .map_err(|e| e.to_string())?;
-        let took = ms(started);
-        check(o.status.code() == Some(2), format!("{who} did not wake"))?;
-        Ok((took, String::from_utf8_lossy(&o.stderr).into_owned()))
-    };
-    let (wake_all_ms, wake_all) = wake_ms("all-view")?;
-    let (wake_scope_ms, wake_scope) = wake_ms("scoped")?;
+    let (wake_all_ms, wake_all) = wake_ms(w, "all-view")?;
+    let (wake_scope_ms, wake_scope) = wake_ms(w, "scoped")?;
     lacks(
         &wake_all,
         "outside your view",

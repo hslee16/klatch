@@ -32,6 +32,86 @@ fn pty() -> Option<(OwnedFd, OwnedFd)> {
     Some(unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) })
 }
 
+/// What waiting for the master side of a terminal came to.
+enum Wait {
+    Readable,
+    Quiet,
+    Failed,
+}
+
+/// Wait up to 100 ms for `fd` to have something to read.
+fn wait_readable(fd: i32) -> Wait {
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one pollfd, live for the call.
+    let n = unsafe { libc::poll(&mut p, 1, 100) };
+    match n {
+        n if n < 0 => Wait::Failed,
+        0 => Wait::Quiet,
+        _ => Wait::Readable,
+    }
+}
+
+/// Read what is there on `fd` (without the carriage returns), or none when the terminal is closed.
+fn read_chunk(fd: i32) -> Option<String> {
+    let mut buf = [0u8; 4096];
+    // SAFETY: reads into a live buffer of that length.
+    let got = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    if got <= 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..got as usize]).replace('\r', ""))
+}
+
+/// The lines typed at the prompts of a terminal, one for each prompt.
+struct Typist {
+    lines: Vec<String>,
+    next: usize,
+    answered_at: usize,
+}
+
+impl Typist {
+    /// Type the next line when `text` ends at a prompt that has not been answered yet.
+    fn answer(&mut self, fd: i32, text: &str) {
+        let prompting = text.ends_with(": ") || text.ends_with("> ");
+        let unanswered = text.len() > self.answered_at && self.next < self.lines.len();
+        if !(prompting && unanswered) {
+            return;
+        }
+        let line = format!("{}\n", self.lines[self.next]);
+        self.next += 1;
+        self.answered_at = text.len();
+        // SAFETY: writes a live slice to the master.
+        unsafe { libc::write(fd, line.as_ptr().cast(), line.len()) };
+    }
+}
+
+/// Everything the terminal showed, answering its prompts with `typed`, until it closes (or five minutes pass).
+fn read_terminal(master: OwnedFd, typed: Vec<String>) -> String {
+    let mfd = master.as_raw_fd();
+    let started = Instant::now();
+    let mut text = String::new();
+    let mut typist = Typist {
+        lines: typed,
+        next: 0,
+        answered_at: 0,
+    };
+    while started.elapsed() < Duration::from_secs(300) {
+        match wait_readable(mfd) {
+            Wait::Failed => break,
+            Wait::Quiet => continue,
+            Wait::Readable => {}
+        }
+        let Some(chunk) = read_chunk(mfd) else { break };
+        text.push_str(&chunk);
+        typist.answer(mfd, &text);
+    }
+    text
+}
+
 /// Start `cmd` on a pseudo-terminal. The child and a thread that answers its prompts with `typed` and returns
 /// everything the terminal showed once the child has closed it.
 pub fn spawn_on_pty(
@@ -54,44 +134,7 @@ pub fn spawn_on_pty(
     // the command holds clones of the slave until it is dropped; the master reads end only when none is left
     drop(cmd);
     drop(slave);
-    let reader = std::thread::spawn(move || {
-        let mfd = master.as_raw_fd();
-        let started = Instant::now();
-        let mut text = String::new();
-        let mut next = 0;
-        let mut answered_at = 0;
-        while started.elapsed() < Duration::from_secs(300) {
-            let mut p = libc::pollfd {
-                fd: mfd,
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: one pollfd, live for the call.
-            let n = unsafe { libc::poll(&mut p, 1, 100) };
-            if n < 0 {
-                break;
-            }
-            if n == 0 {
-                continue;
-            }
-            let mut buf = [0u8; 4096];
-            // SAFETY: reads into a live buffer of that length.
-            let got = unsafe { libc::read(mfd, buf.as_mut_ptr().cast(), buf.len()) };
-            if got <= 0 {
-                break;
-            }
-            text.push_str(&String::from_utf8_lossy(&buf[..got as usize]).replace('\r', ""));
-            let prompting = text.ends_with(": ") || text.ends_with("> ");
-            if prompting && text.len() > answered_at && next < typed.len() {
-                let line = format!("{}\n", typed[next]);
-                next += 1;
-                answered_at = text.len();
-                // SAFETY: writes a live slice to the master.
-                unsafe { libc::write(mfd, line.as_ptr().cast(), line.len()) };
-            }
-        }
-        text
-    });
+    let reader = std::thread::spawn(move || read_terminal(master, typed));
     Ok((child, reader))
 }
 

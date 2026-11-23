@@ -286,29 +286,35 @@ mod tests {
     #[test]
     fn no_sentinel_text_reaches_the_output_for_any_option_combination() {
         let w = seeded();
-        let mut checked = 0;
+        let rooms = [None, Some("lobby".to_string())];
+        let sinces = [None, Some("2026-11-23".to_string())];
+        let tops = [None, Some(1), Some(50)];
+        let mut combos = Vec::new();
         for json in [true, false] {
-            for room in [None, Some("lobby".to_string())] {
-                for since in [None, Some("2026-11-23".to_string())] {
-                    for top in [None, Some(1), Some(50)] {
-                        let a = Args {
-                            json,
-                            room: room.clone(),
-                            since: since.clone(),
-                            top,
-                            ..args(&w)
-                        };
-                        let out = report(&a, None, T0 + 100).unwrap();
-                        assert!(out.len() > 20);
-                        for s in SENTINELS {
-                            assert!(!out.contains(s), "{s} leaked with {a:?}");
-                        }
-                        checked += 1;
-                    }
+            for room in &rooms {
+                for since in &sinces {
+                    combos.extend(
+                        tops.iter()
+                            .map(|top| (json, room.clone(), since.clone(), *top)),
+                    );
                 }
             }
         }
-        assert_eq!(checked, 24);
+        assert_eq!(combos.len(), 24);
+        for (json, room, since, top) in combos {
+            let a = Args {
+                json,
+                room,
+                since,
+                top,
+                ..args(&w)
+            };
+            let out = report(&a, None, T0 + 100).unwrap();
+            assert!(out.len() > 20);
+            for s in SENTINELS {
+                assert!(!out.contains(s), "{s} leaked with {a:?}");
+            }
+        }
     }
 
     #[test]

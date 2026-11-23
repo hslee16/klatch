@@ -1,6 +1,12 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
+    let mut all = first_half();
+    all.extend(second_half());
+    all
+}
+
+fn first_half() -> Vec<Scenario> {
     vec![
         Scenario {
             name: "ask_claim_answer_close",
@@ -38,6 +44,11 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "functional",
             run: lease_lapse_told,
         },
+    ]
+}
+
+fn second_half() -> Vec<Scenario> {
+    vec![
         Scenario {
             name: "a_question_waiting_on_the_asker_pauses_the_stale_report",
             origin: "#231",
