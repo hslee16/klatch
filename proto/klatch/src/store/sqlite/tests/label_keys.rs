@@ -14,7 +14,7 @@ fn ring(label: &str, b: u8) -> LabelKeys {
     LabelKeys::new().with(label, key(b))
 }
 
-fn post(s: &SqliteStore, room: &str, label: &str, body: &str, ts: i64) {
+fn post(s: &SqliteStore, (room, label): (&str, &str), body: &str, ts: i64) {
     s.post_as(
         &NewMessage::new((room, "alice"), Attribution::Unattributed, label, body),
         ts,
@@ -22,7 +22,7 @@ fn post(s: &SqliteStore, room: &str, label: &str, body: &str, ts: i64) {
     .unwrap();
 }
 
-fn post_handoff(s: &SqliteStore, label: &str, body: &str, payload: &str, ts: i64) {
+fn post_handoff(s: &SqliteStore, label: &str, (body, payload): (&str, &str), ts: i64) {
     s.post_as(
         &NewMessage::new(("r", "alice"), Attribution::Unattributed, label, body)
             .with_handoff("handoff", payload),
@@ -71,10 +71,10 @@ fn sealed_store() -> SqliteStore {
     let s = store();
     s.policy_set("sealed:secret", Some("1"), 1).unwrap();
     s.set_label_keys(ring("secret", 0x33));
-    post(&s, "r", "secret", "first secret", 2);
-    post_handoff(&s, "secret", "second secret", "payload-two", 3);
-    post(&s, "r", "secret", "third secret", 4);
-    post(&s, "r", "public", "an ordinary message", 5);
+    post(&s, ("r", "secret"), "first secret", 2);
+    post_handoff(&s, "secret", ("second secret", "payload-two"), 3);
+    post(&s, ("r", "secret"), "third secret", 4);
+    post(&s, ("r", "public"), "an ordinary message", 5);
     s
 }
 
@@ -83,9 +83,9 @@ fn sealed_store() -> SqliteStore {
 #[test]
 fn sealing_a_label_converts_every_earlier_plain_body_and_payload_of_that_label_and_no_other() {
     let s = store();
-    post(&s, "r", "secret", "old plain one", 1);
-    post_handoff(&s, "secret", "old plain two", "old-payload", 2);
-    post(&s, "r", "public", "left alone", 3);
+    post(&s, ("r", "secret"), "old plain one", 1);
+    post_handoff(&s, "secret", ("old plain two", "old-payload"), 2);
+    post(&s, ("r", "public"), "left alone", 3);
     s.set_label_keys(ring("secret", 0x33));
     let n = s.mark_label_sealed_converting("secret", 10).unwrap();
     assert_eq!(n, 3, "two bodies and one payload");
@@ -105,8 +105,8 @@ fn sealing_a_label_converts_every_earlier_plain_body_and_payload_of_that_label_a
 #[test]
 fn a_converted_body_is_bound_to_its_message_so_a_moved_one_does_not_open() {
     let s = store();
-    post(&s, "r", "secret", "alpha", 1);
-    post(&s, "r", "secret", "beta", 2);
+    post(&s, ("r", "secret"), "alpha", 1);
+    post(&s, ("r", "secret"), "beta", 2);
     s.set_label_keys(ring("secret", 0x33));
     s.mark_label_sealed_converting("secret", 10).unwrap();
     let bodies = raw_bodies(&s, "secret");
@@ -121,7 +121,7 @@ fn a_converted_body_is_bound_to_its_message_so_a_moved_one_does_not_open() {
 #[test]
 fn sealing_converts_nothing_and_seals_nothing_when_the_label_key_is_not_held() {
     let s = store();
-    post(&s, "r", "secret", "old plain", 1);
+    post(&s, ("r", "secret"), "old plain", 1);
     s.set_label_keys(LabelKeys::new());
     let err = s.mark_label_sealed_converting("secret", 10).unwrap_err();
     assert!(
@@ -143,7 +143,7 @@ fn sealing_a_label_with_nothing_to_convert_needs_no_key_and_marks_it_sealed() {
 #[test]
 fn an_archived_tombstone_is_not_sealed_and_a_repeat_converts_nothing() {
     let s = store();
-    post(&s, "r", "secret", "old plain", 1);
+    post(&s, ("r", "secret"), "old plain", 1);
     let dir = crate::store::test_dir::TestDir::new("seal-convert-tomb");
     s.archive_before(
         "r",
@@ -158,7 +158,7 @@ fn an_archived_tombstone_is_not_sealed_and_a_repeat_converts_nothing() {
         raw_bodies(&s, "secret"),
         vec![crate::store::sqlite::archive::TOMBSTONE.to_string()]
     );
-    post(&s, "r", "secret", "later", 600);
+    post(&s, ("r", "secret"), "later", 600);
     assert_eq!(s.mark_label_sealed_converting("secret", 11).unwrap(), 0);
 }
 
@@ -216,7 +216,7 @@ fn a_body_of_another_label_is_never_touched_by_a_move() {
             .with("secret", key(0x33))
             .with("other", key(0x55)),
     );
-    post(&s, "r", "other", "other label text", 6);
+    post(&s, ("r", "other"), "other label text", 6);
     let other = raw_bodies(&s, "other");
     s.reseal_label("secret", &key(0x33), &key(0x44)).unwrap();
     assert_eq!(raw_bodies(&s, "other"), other);
@@ -307,7 +307,7 @@ fn a_failure_part_way_through_a_move_rolls_every_row_back() {
     let s = sealed_store();
     let before = (raw_bodies(&s, "secret"), raw_payloads(&s, "secret"));
     let err = s
-        .reseal_label_hooked("secret", &key(0x33), &key(0x44), &|done| {
+        .reseal_label_hooked("secret", (&key(0x33), &key(0x44)), &|done| {
             if done == 2 {
                 Err(Error::Backend("injected failure".into()))
             } else {
@@ -343,8 +343,8 @@ fn archive_with_secret(dir: &std::path::Path, name: &str) -> (std::path::PathBuf
     s.policy_set("sealed:secret", Some("1"), 1).unwrap();
     s.set_label_keys(ring("secret", 0x33));
     s.join("r", "alice", 1).unwrap();
-    post(&s, "r", "secret", "archived secret", 10);
-    post(&s, "r", "public", "archived public", 11);
+    post(&s, ("r", "secret"), "archived secret", 10);
+    post(&s, ("r", "public"), "archived public", 11);
     let file = dir.join(name);
     let store_key = crate::store::insecure_test_key();
     s.archive_before("r", 500, &file, &store_key).unwrap();
@@ -423,9 +423,9 @@ fn an_archive_row_no_key_opens_refuses_the_move_before_any_file_is_changed() {
 fn plain_archive(dir: &std::path::Path, name: &str) -> (SqliteStore, std::path::PathBuf) {
     let s = store();
     s.join("r", "alice", 1).unwrap();
-    post(&s, "r", "secret", "early secret", 10);
-    post_handoff(&s, "secret", "early handoff", "early payload", 11);
-    post(&s, "r", "public", "early public", 12);
+    post(&s, ("r", "secret"), "early secret", 10);
+    post_handoff(&s, "secret", ("early handoff", "early payload"), 11);
+    post(&s, ("r", "public"), "early public", 12);
     let file = dir.join(name);
     s.archive_before("r", 500, &file, &crate::store::insecure_test_key())
         .unwrap();
@@ -522,8 +522,8 @@ fn restoring_already_sealed_archived_text_puts_it_back_as_it_was() {
     s.policy_set("sealed:secret", Some("1"), 1).unwrap();
     s.set_label_keys(ring("secret", 0x33));
     s.join("r", "alice", 1).unwrap();
-    post(&s, "r", "secret", "archived secret", 10);
-    post(&s, "r", "public", "archived public", 11);
+    post(&s, ("r", "secret"), "archived secret", 10);
+    post(&s, ("r", "public"), "archived public", 11);
     let ours = dir.join("ours.db");
     let store_key = crate::store::insecure_test_key();
     s.archive_before("r", 500, &ours, &store_key).unwrap();

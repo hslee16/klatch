@@ -13,8 +13,8 @@ pub(super) fn all() -> Vec<Scenario> {
     ]
 }
 
-fn labels_and_clearance(w: &World) -> Res {
-    w.set_clock(T0);
+/// A member below the room's label is refused in it, with the levels and the fix named.
+fn below_the_room_is_refused(w: &World) -> Result<(), String> {
     for who in ["priv", "pub"] {
         w.ok(who, &["join", "town"])?;
     }
@@ -26,7 +26,6 @@ fn labels_and_clearance(w: &World) -> Res {
         w.admin(&["clear", "priv", "private"], "").ok,
         "clear failed",
     )?;
-    // a member below the room is refused in it, with the levels named
     let below = w.refused("pub", &["post", "vault", "hello"])?;
     has(
         &below,
@@ -38,6 +37,11 @@ fn labels_and_clearance(w: &World) -> Res {
         "next step: ask the admin to raise your clearance or to relabel the room",
         "the clearance refusal names the fix",
     )?;
+    Ok(())
+}
+
+/// A private fact cannot enter a public room, and nothing past the cap can be granted.
+fn private_facts_stay_out_of_public_rooms(w: &World) -> Result<(), String> {
     w.ok("priv", &["post", "vault", "the machine is called quokka"])?;
     // a private fact cannot enter a public room, and the refusal does not repeat it
     let refused = w.refused(
@@ -69,7 +73,11 @@ fn labels_and_clearance(w: &World) -> Res {
     check(
         !w.admin(&["clear", "priv", "secret"], "").ok,
         "an agent was cleared to secret",
-    )?;
+    )
+}
+
+/// The audit lists the refusals by rule, and a lowered clearance applies on the next call.
+fn the_audit_and_a_lowered_clearance(w: &World) -> Result<(), String> {
     // the audit lists the refusals by rule and never the text
     let log = w.admin(&["refusals"], "");
     check(log.ok, "refusals failed")?;
@@ -89,7 +97,14 @@ fn labels_and_clearance(w: &World) -> Res {
         &w.refused("priv", &["post", "vault", "one more"])?,
         "above your clearance internal",
         "a lowered clearance applies at once",
-    )?;
+    )
+}
+
+fn labels_and_clearance(w: &World) -> Res {
+    w.set_clock(T0);
+    below_the_room_is_refused(w)?;
+    private_facts_stay_out_of_public_rooms(w)?;
+    the_audit_and_a_lowered_clearance(w)?;
     Ok(vec![])
 }
 
@@ -178,8 +193,8 @@ pub(super) fn tripwires() -> Scenario {
     }
 }
 
-fn canary_and_breaker(w: &World) -> Res {
-    w.set_clock(T0);
+/// Label a room, clear a member for it, plant the canary and return the token the member's first digest shows.
+fn canary_in_the_first_digest(w: &World) -> Result<String, String> {
     check(
         w.admin(&["label", "vault", "private"], "").ok,
         "label failed",
@@ -205,11 +220,14 @@ fn canary_and_breaker(w: &World) -> Res {
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let seen = String::from_utf8_lossy(&out.stdout).into_owned();
-    let token = seen
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+    seen.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .find(|t| t.starts_with("kc-canary-"))
         .map(str::to_string)
-        .ok_or_else(|| format!("no canary in the first digest: {seen}"))?;
+        .ok_or_else(|| format!("no canary in the first digest: {seen}"))
+}
+
+/// A leaked canary is refused and pauses the room it reached until an admin reopens it.
+fn a_leaked_canary_pauses_the_room(w: &World, token: &str) -> Result<(), String> {
     // after the digest, read still does not show it
     let read = w.ok("priv", &["read", "vault"])?;
     lacks(&read, "kc-canary-", "read showed the canary")?;
@@ -219,7 +237,7 @@ fn canary_and_breaker(w: &World) -> Res {
         "paused until an admin reopens",
         "a leaked canary is refused",
     )?;
-    lacks(&refused, &token, "the refusal repeated the canary")?;
+    lacks(&refused, token, "the refusal repeated the canary")?;
     has(
         &w.refused("priv", &["post", "town", "anything"])?,
         "paused by a tripwire",
@@ -227,9 +245,14 @@ fn canary_and_breaker(w: &World) -> Res {
     )?;
     let audit = w.admin(&["audit"], "");
     has(&audit.stdout, "tripwire", "the audit records the trip")?;
-    lacks(&audit.stdout, &token, "the audit repeated the canary")?;
+    lacks(&audit.stdout, token, "the audit repeated the canary")?;
     check(w.admin(&["reopen", "town"], "").ok, "reopen failed")?;
     w.ok("priv", &["post", "town", "back to normal"])?;
+    Ok(())
+}
+
+/// A member that keeps running into the safety rules is stopped, then allowed back.
+fn the_breaker_stops_a_nosy_member(w: &World) -> Result<(), String> {
     // a member that keeps running into the safety rules is stopped, then allowed back
     for i in 0..5 {
         w.advance(5);
@@ -246,6 +269,11 @@ fn canary_and_breaker(w: &World) -> Res {
         "allow failed",
     )?;
     w.ok("nosy", &["post", "town", "back"])?;
+    Ok(())
+}
+
+/// Each member lists its own refusals, with the rule and never the text or another member's rows.
+fn members_list_only_their_own_refusals(w: &World, token: &str) -> Result<(), String> {
     // each member lists its own refusals, with the rule and never the text or another member's rows
     let mine = w.ok("nosy", &["refusals"])?;
     check(
@@ -260,6 +288,14 @@ fn canary_and_breaker(w: &World) -> Res {
         "clearance",
         "the list held another member's refusal",
     )?;
-    lacks(&theirs, &token, "the list repeated the canary")?;
+    lacks(&theirs, token, "the list repeated the canary")
+}
+
+fn canary_and_breaker(w: &World) -> Res {
+    w.set_clock(T0);
+    let token = canary_in_the_first_digest(w)?;
+    a_leaked_canary_pauses_the_room(w, &token)?;
+    the_breaker_stops_a_nosy_member(w)?;
+    members_list_only_their_own_refusals(w, &token)?;
     Ok(vec![])
 }

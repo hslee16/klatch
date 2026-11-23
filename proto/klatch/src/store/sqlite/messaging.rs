@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// What a view showed: the channel it was shown on and the seqs.
+#[derive(Clone, Copy)]
+pub(super) struct View<'a> {
+    pub(super) channel: Shown,
+    pub(super) seqs: &'a [Seq],
+}
+
+/// Where a position that starts at `start` ends up over `pending` (in order) when every seq in `shown` is passed: the
+/// last seq of the unbroken run of shown seqs from the front, or `start` when the first is not shown.
+fn contiguous_end(start: i64, pending: &[i64], shown: &std::collections::HashSet<i64>) -> i64 {
+    pending
+        .iter()
+        .take_while(|s| shown.contains(s))
+        .last()
+        .copied()
+        .unwrap_or(start)
+}
+
 impl SqliteStore {
     pub(super) fn do_post_as(&self, message: &NewMessage, now: i64) -> Result<Posted> {
         let NewMessage {
@@ -54,7 +72,7 @@ impl SqliteStore {
             .unwrap_or(0);
         let mut rows = self.others_after(room, last, member)?;
         // what a capped read showed out of order is read, though it lies past the cursor (#1405)
-        let shown = self.shown_past(room, member, &["read"], last)?;
+        let shown = self.shown_past(Seat::new(room, member), &["read"], last)?;
         rows.retain(|m| !shown.contains(&m.seq));
         Ok((rows, last))
     }
@@ -62,11 +80,11 @@ impl SqliteStore {
     /// The seqs past `after` that a view showed out of order, on the given channels (`read`, `wait`).
     fn shown_past(
         &self,
-        room: &str,
-        member: &str,
+        at: Seat<'_>,
         channels: &[&str],
         after: i64,
     ) -> Result<std::collections::HashSet<i64>> {
+        let Seat { room, member } = at;
         let mut out = std::collections::HashSet::new();
         for channel in channels {
             let rows: Vec<i64> = self.rows(
@@ -81,13 +99,7 @@ impl SqliteStore {
 
     /// Record seqs a view showed (#1405), then move the position of `channel` over the contiguous run that is now all
     /// shown, and forget the remembered seqs the positions have passed. One transaction.
-    pub(super) fn do_mark_shown(
-        &self,
-        at: Seat,
-        channel: Shown,
-        seqs: &[Seq],
-        now: i64,
-    ) -> Result<()> {
+    pub(super) fn do_mark_shown(&self, at: Seat<'_>, view: View<'_>, now: i64) -> Result<()> {
         let Seat { room, member } = at;
         self.immediate(|| {
             self.touch(room, member, now)?;
@@ -99,7 +111,7 @@ impl SqliteStore {
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .unwrap_or((0, 0));
-            let (word, start) = match channel {
+            let (word, start) = match view.channel {
                 Shown::Read => ("read", read),
                 Shown::Wait => ("wait", read.max(wait)),
             };
@@ -110,28 +122,21 @@ impl SqliteStore {
                 |r| r.get(0),
             )?;
             let pending_set: std::collections::HashSet<i64> = pending.iter().copied().collect();
-            for s in seqs.iter().filter(|s| pending_set.contains(&s.0)) {
+            for s in view.seqs.iter().filter(|s| pending_set.contains(&s.0)) {
                 self.exec(
                     "INSERT OR IGNORE INTO read_shown(room,member,channel,seq) VALUES(?1,?2,?3,?4)",
                     params![room, member, word, s.0],
                 )?;
             }
             // a wait looks past the read position, so what a read showed counts for it too
-            let channels: &[&str] = match channel {
+            let channels: &[&str] = match view.channel {
                 Shown::Read => &["read"],
                 Shown::Wait => &["read", "wait"],
             };
-            let shown = self.shown_past(room, member, channels, start)?;
-            let mut to = start;
-            for s in &pending {
-                if shown.contains(s) {
-                    to = *s;
-                } else {
-                    break;
-                }
-            }
+            let shown = self.shown_past(at, channels, start)?;
+            let to = contiguous_end(start, &pending, &shown);
             if to > start {
-                let column = match channel {
+                let column = match view.channel {
                     Shown::Read => "last_seq",
                     Shown::Wait => "wait_seq",
                 };
@@ -165,7 +170,7 @@ impl SqliteStore {
             // for good. Own messages after the last returned one are simply filtered again next time.
             // what a capped read showed out of order counts as taken too (#1405)
             let beyond = self
-                .shown_past(room, member, &["read"], last)?
+                .shown_past(Seat::new(room, member), &["read"], last)?
                 .into_iter()
                 .max()
                 .unwrap_or(0);
@@ -213,7 +218,7 @@ impl SqliteStore {
         } else {
             &["read"]
         };
-        let shown = self.shown_past(room, member, channels, read.max(seen))?;
+        let shown = self.shown_past(Seat::new(room, member), channels, read.max(seen))?;
         rows.retain(|m| !shown.contains(&m.seq));
         Ok(rows)
     }
@@ -257,7 +262,7 @@ impl SqliteStore {
             let from = read.max(shown);
             let mut rows = self.others_after(room, from, member)?;
             // the hook does not repeat what a capped read showed out of order (#1405); hook_seq still moves over it
-            let taken = self.shown_past(room, member, &["read"], from)?;
+            let taken = self.shown_past(Seat::new(room, member), &["read"], from)?;
             let newest = rows.last().map(|m| m.seq);
             rows.retain(|m| !taken.contains(&m.seq));
             if let Some(last) = newest {

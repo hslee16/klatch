@@ -7,6 +7,33 @@ fn is_live((expires, revoked): (i64, i64), now: i64) -> bool {
     revoked == 0 && expires > now
 }
 
+/// A stored credential as the renewal sees it.
+struct Stored {
+    expires: i64,
+    revoked: i64,
+    idle: i64,
+    cap: i64,
+}
+
+impl Stored {
+    /// Whether the credential may be renewed at all at `now`: live, with an idle timeout and a cap (a legacy one has none).
+    fn renewable(&self, now: i64) -> bool {
+        is_live((self.expires, self.revoked), now) && self.cap > 0 && self.idle > 0
+    }
+
+    /// The expiry a renewal at `now` writes, or `None` when there is nothing to give: no gain, or a gain under `step`
+    /// that does not land on the cap.
+    fn renewed_expiry(&self, now: i64, step: i64) -> Option<i64> {
+        if !self.renewable(now) {
+            return None;
+        }
+        let next = (now + self.idle).min(self.cap);
+        let worth_writing =
+            next > self.expires && (next - self.expires >= step || next == self.cap);
+        worth_writing.then_some(next)
+    }
+}
+
 impl SqliteStore {
     pub(super) fn do_renew_credential(
         &self,
@@ -15,24 +42,24 @@ impl SqliteStore {
         step: i64,
     ) -> Result<Option<i64>> {
         self.immediate(|| {
-            let row: Option<(i64, i64, i64, i64)> = self
+            let row: Option<Stored> = self
                 .conn
                 .query_row(
                     "SELECT expires, revoked, idle, cap FROM credentials WHERE member=?1",
                     params![member],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    |r| {
+                        Ok(Stored {
+                            expires: r.get(0)?,
+                            revoked: r.get(1)?,
+                            idle: r.get(2)?,
+                            cap: r.get(3)?,
+                        })
+                    },
                 )
                 .ok();
-            let Some((expires, revoked, idle, cap)) = row else {
+            let Some(next) = row.and_then(|c| c.renewed_expiry(now, step)) else {
                 return Ok(None);
             };
-            if revoked != 0 || expires <= now || cap <= 0 || idle <= 0 {
-                return Ok(None);
-            }
-            let next = (now + idle).min(cap);
-            if next <= expires || (next - expires < step && next != cap) {
-                return Ok(None);
-            }
             self.exec(
                 "UPDATE credentials SET expires=?2 WHERE member=?1 AND revoked=0",
                 params![member, next],

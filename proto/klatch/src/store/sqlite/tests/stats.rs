@@ -277,7 +277,56 @@ fn bench_with_claims() -> SqliteStore {
     status("cy-TOPSECRET", "working", t + 742);
     status("amy-TOPSECRET", "idle", t + 743);
     status("bob-TOPSECRET", "parked", t + 744);
+    // ask routing (#1407): ask 1 routed to one member, taken, lapsed and escalated to a coordinator; ask 2 routed to
+    // nobody and escalated with nobody to reach
+    use crate::domain::RouteKind;
+    s.route_ask(
+        "lobby",
+        1,
+        &[("bob-TOPSECRET".into(), RouteKind::Capable)],
+        t + 740,
+    )
+    .unwrap();
+    s.route_ask("lobby", 2, &[], t + 741).unwrap();
+    s.note_route_outcome("lobby", 1, "taken", 1, t + 750)
+        .unwrap();
+    s.note_route_outcome("lobby", 1, "lapsed", 1, t + 800)
+        .unwrap();
+    s.note_route_outcome("lobby", 1, "escalated", 1, t + 801)
+        .unwrap();
+    s.note_route_outcome("lobby", 2, "escalated", 0, t + 900)
+        .unwrap();
     s
+}
+
+#[test]
+fn ask_routing_outcomes_are_counted_per_ask_and_follow_room_and_since() {
+    let r = bench_with_claims().usage_stats(&opts()).unwrap();
+    let a = &r.ask_routing;
+    assert_eq!(
+        (a.routed, a.unrouted, a.taken, a.lapsed, a.escalated),
+        (1, 1, 1, 1, 2)
+    );
+    assert_eq!(a.escalated_unreached, 1);
+    let text = r.to_text();
+    assert!(
+        text.contains("ask routing: 1 routed to capable members, 1 routed to nobody, 1 taken, 1 lapsed, 2 escalated (1 with no coordinator to reach)"),
+        "{text}"
+    );
+    assert_eq!(r.to_json()["ask_routing"]["escalated"], 2);
+    let other = StatsOptions {
+        room: Some("vault".into()),
+        ..opts()
+    };
+    let r = bench_with_claims().usage_stats(&other).unwrap();
+    assert_eq!(r.ask_routing.routed + r.ask_routing.escalated, 0);
+    let late = StatsOptions {
+        since: Some(D2 + 10_000 + 850),
+        ..opts()
+    };
+    let r = bench_with_claims().usage_stats(&late).unwrap();
+    assert_eq!(r.ask_routing.escalated, 1);
+    assert_eq!(r.ask_routing.routed, 0);
 }
 
 #[test]

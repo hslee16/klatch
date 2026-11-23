@@ -86,7 +86,7 @@ pub(super) fn rotate_label_key_in(
     crate::store::reseal_archives(&archives, &store_key, label, &old, &new)?;
     hook(Step::ArchivesMoved)?;
     // 4
-    store.reseal_label_hooked(label, &old, &new, &|n| {
+    store.reseal_label_hooked(label, (&old, &new), &|n| {
         hook(Step::Row(n)).map_err(|e| crate::domain::Error::Backend(e.to_string()))
     })?;
     hook(Step::StoreMoved)?;

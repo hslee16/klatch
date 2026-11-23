@@ -30,9 +30,11 @@ pub fn record(path: &std::path::Path, outcomes: &[klatch_bench::Outcome], partia
     let rec = history::record_of(
         outcomes,
         partial,
-        history::now_utc(),
-        history::current_sha(),
-        history::current_machine(),
+        history::RunStamp {
+            time: history::now_utc(),
+            sha: history::current_sha(),
+            machine: history::current_machine(),
+        },
     );
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);

@@ -9,6 +9,7 @@ mod anchors;
 mod archive;
 mod archive_files;
 mod archive_rekey;
+mod ask_routing;
 mod change_token;
 mod claim_age;
 mod claim_events;

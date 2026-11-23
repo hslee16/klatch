@@ -71,11 +71,14 @@ impl<S: Store> Gateway<S> {
             return Ok((messages, Vec::new()));
         }
         let mine = self.store.member_scope(&who.member)?;
+        let routed = self.routed_asks(room, &who.member)?;
         let mut scopes: HashMap<String, Option<String>> = HashMap::new();
         let mut kept = Vec::new();
         let mut hidden = Vec::new();
         for m in messages {
-            let addressed = crate::domain::mentions(&m.body, &who.member) || is_broadcast(&m);
+            let addressed = crate::domain::mentions(&m.body, &who.member)
+                || is_broadcast(&m)
+                || routed.contains(&m.seq);
             let same_scope = match scopes.get(&m.sender) {
                 Some(s) => *s == mine,
                 None => {

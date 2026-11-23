@@ -495,6 +495,31 @@ fn passive_claim_counts(conn: &Connection, o: &StatsOptions) -> Result<PassiveCl
     })
 }
 
+/// The ask routing events (#1407) in the window: asks routed, taken, lapsed and escalated. One row per ask and outcome,
+/// so these are counts of asks. Nothing in the table is text.
+fn ask_routing_counts(conn: &Connection, o: &StatsOptions) -> Result<crate::domain::RoutingCounts> {
+    if !has(conn, "ask_route_events")? {
+        return Ok(crate::domain::RoutingCounts::default());
+    }
+    let n = |outcome: &str, extra: &str| {
+        one(
+            conn,
+            &format!(
+                "SELECT COUNT(*) FROM ask_route_events WHERE outcome='{outcome}' AND (?1 IS NULL OR room=?1) AND ts>=?2{extra}"
+            ),
+            o,
+        )
+    };
+    Ok(crate::domain::RoutingCounts {
+        routed: n("routed", " AND n>0")?,
+        unrouted: n("routed", " AND n=0")?,
+        taken: n("taken", "")?,
+        lapsed: n("lapsed", "")?,
+        escalated: n("escalated", "")?,
+        escalated_unreached: n("escalated", " AND n=0")?,
+    })
+}
+
 fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     let sealed: HashSet<String> = if has(conn, "policy")? {
         rows(
@@ -622,6 +647,7 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     s.machine_checkpoints = machine_checkpoint_counts(conn, o)?;
     s.machine_status = machine_status_counts(conn, o)?;
     s.passive_claims = passive_claim_counts(conn, o)?;
+    s.ask_routing = ask_routing_counts(conn, o)?;
     s.refusals = words(
         conn,
         "refusals",

@@ -226,6 +226,21 @@ fn copy_rekeyed(file: &Path, partial: &Path, old: &Key, new: &Key) -> Result<()>
 pub const TOMBSTONE: &str = "[archived: restore it with `klatch admin restore-archive`]";
 const KIND: &str = "archived";
 
+/// One archive run: the room, the cutoff (unix seconds), the archive file to write and the key it is written under.
+pub(crate) struct ArchiveJob<'a> {
+    pub(crate) room: &'a str,
+    pub(crate) cutoff: i64,
+    pub(crate) out: &'a Path,
+    pub(crate) key: &'a Key,
+}
+
+fn already_exists(out: &Path) -> Error {
+    Error::Invalid(format!(
+        "{} already exists; an archive never overwrites a file",
+        out.display()
+    ))
+}
+
 impl SqliteStore {
     /// Every room that has at least one message.
     pub fn message_rooms(&self) -> Result<Vec<String>> {
@@ -241,89 +256,43 @@ impl SqliteStore {
     /// archive beside the target and checks it opens before putting it in place, and changes the live rows only after
     /// the archive is safely there.
     pub fn archive_before(&self, room: &str, cutoff: i64, out: &Path, key: &Key) -> Result<usize> {
-        self.archive_before_hooked(room, cutoff, out, key, &|| {})
+        let job = ArchiveJob {
+            room,
+            cutoff,
+            out,
+            key,
+        };
+        self.archive_before_hooked(&job, &|| {})
     }
 
     /// `archive_before` with a hook that runs after the copy and before the tombstones: a test lands a message in
     /// exactly that window (#634). Production passes a no-op.
     pub(crate) fn archive_before_hooked(
         &self,
-        room: &str,
-        cutoff: i64,
-        out: &Path,
-        key: &Key,
+        job: &ArchiveJob<'_>,
         after_copy: &dyn Fn(),
     ) -> Result<usize> {
         let due: i64 = self
             .conn
             .query_row(
                 "SELECT count(*) FROM messages WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3",
-                params![room, cutoff, KIND],
+                params![job.room, job.cutoff, KIND],
                 |r| r.get(0),
             )
             .map_err(be)?;
         if due == 0 {
             return Ok(0);
         }
-        if out.exists() {
-            return Err(Error::Invalid(format!(
-                "{} already exists; an archive never overwrites a file",
-                out.display()
-            )));
+        if job.out.exists() {
+            return Err(already_exists(job.out));
         }
         // one partial file per process: two archivers that share a target name (the name carries only seconds) must
         // not remove or reuse each other's file (#598)
-        let mut partial = out.as_os_str().to_owned();
+        let mut partial = job.out.as_os_str().to_owned();
         partial.push(format!(".{}.partial", std::process::id()));
         let partial = std::path::PathBuf::from(partial);
         let _ = std::fs::remove_file(&partial);
-        let copied = (|| -> Result<usize> {
-            self.conn
-                .execute(
-                    "ATTACH DATABASE ?1 AS ar KEY ?2",
-                    params![partial.to_string_lossy(), key.sqlcipher_pragma().as_str()],
-                )
-                .map_err(be)?;
-            self.conn
-                .execute_batch(
-                    "CREATE TABLE ar.archived(room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL, label TEXT NOT NULL, kind TEXT, payload TEXT, PRIMARY KEY(room,seq));",
-                )
-                .map_err(be)?;
-            let n = self
-                .conn
-                .execute(
-                    "INSERT INTO ar.archived SELECT room,seq,mid,sender,member,body,ts,attribution,label,kind,payload FROM main.messages WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3",
-                    params![room, cutoff, KIND],
-                )
-                .map_err(be)?;
-            // remember exactly which rows went into the file; the tombstones go on these and no others (#634). The
-            // table has a primary key because an unkeyed one made the tombstone UPDATE scan it once per live row:
-            // minutes at fifty thousand messages, with the write lock held.
-            self.conn
-                .execute_batch(
-                    "DROP TABLE IF EXISTS temp.copied;
-                     CREATE TEMP TABLE copied(room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, PRIMARY KEY(room, seq)) WITHOUT ROWID;
-                     INSERT INTO temp.copied SELECT room, seq, mid FROM ar.archived;",
-                )
-                .map_err(be)?;
-            self.conn.execute_batch("DETACH DATABASE ar").map_err(be)?;
-            crate::store::encrypt::check_opens(&partial, key)?;
-            // a hard link fails when the target exists, where a rename would silently replace another archiver's file
-            let linked = std::fs::hard_link(&partial, out);
-            let _ = std::fs::remove_file(&partial);
-            linked.map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    Error::Invalid(format!(
-                        "{} already exists; an archive never overwrites a file",
-                        out.display()
-                    ))
-                } else {
-                    Error::Backend(format!("putting the archive in place: {e}"))
-                }
-            })?;
-            Ok(n)
-        })();
-        let copied = match copied {
+        let copied = match self.copy_due_rows(job, &partial) {
             Ok(n) => n,
             Err(e) => {
                 let _ = self.conn.execute_batch("DETACH DATABASE ar");
@@ -333,17 +302,69 @@ impl SqliteStore {
             }
         };
         after_copy();
-        let tombstoned = self.immediate(|| {
-            self.exec(
-                "UPDATE messages SET body=?4, payload=NULL, kind=?3 WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3
-                   AND EXISTS (SELECT 1 FROM temp.copied c WHERE c.room=messages.room AND c.seq=messages.seq AND c.mid=messages.mid)",
-                params![room, cutoff, KIND, TOMBSTONE],
-            )
-            .map(|_| ())
-        });
+        let tombstoned = self.tombstone_copied(job);
         let _ = self.conn.execute_batch("DROP TABLE IF EXISTS temp.copied");
         tombstoned?;
         Ok(copied)
+    }
+
+    /// Copy the due rows of the job into the encrypted `partial` file, remember which went in, and put the archive in
+    /// place under its name without replacing anything. Returns how many rows were copied.
+    fn copy_due_rows(&self, job: &ArchiveJob<'_>, partial: &Path) -> Result<usize> {
+        let (room, cutoff, key) = (job.room, job.cutoff, job.key);
+        self.conn
+            .execute(
+                "ATTACH DATABASE ?1 AS ar KEY ?2",
+                params![partial.to_string_lossy(), key.sqlcipher_pragma().as_str()],
+            )
+            .map_err(be)?;
+        self.conn
+            .execute_batch(
+                "CREATE TABLE ar.archived(room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, sender TEXT, member TEXT, body TEXT, ts INTEGER, attribution TEXT NOT NULL, label TEXT NOT NULL, kind TEXT, payload TEXT, PRIMARY KEY(room,seq));",
+            )
+            .map_err(be)?;
+        let n = self
+            .conn
+            .execute(
+                "INSERT INTO ar.archived SELECT room,seq,mid,sender,member,body,ts,attribution,label,kind,payload FROM main.messages WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3",
+                params![room, cutoff, KIND],
+            )
+            .map_err(be)?;
+        // remember exactly which rows went into the file; the tombstones go on these and no others (#634). The
+        // table has a primary key because an unkeyed one made the tombstone UPDATE scan it once per live row:
+        // minutes at fifty thousand messages, with the write lock held.
+        self.conn
+            .execute_batch(
+                "DROP TABLE IF EXISTS temp.copied;
+                 CREATE TEMP TABLE copied(room TEXT NOT NULL, seq INTEGER NOT NULL, mid TEXT NOT NULL, PRIMARY KEY(room, seq)) WITHOUT ROWID;
+                 INSERT INTO temp.copied SELECT room, seq, mid FROM ar.archived;",
+            )
+            .map_err(be)?;
+        self.conn.execute_batch("DETACH DATABASE ar").map_err(be)?;
+        crate::store::encrypt::check_opens(partial, key)?;
+        // a hard link fails when the target exists, where a rename would silently replace another archiver's file
+        let linked = std::fs::hard_link(partial, job.out);
+        let _ = std::fs::remove_file(partial);
+        linked.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                already_exists(job.out)
+            } else {
+                Error::Backend(format!("putting the archive in place: {e}"))
+            }
+        })?;
+        Ok(n)
+    }
+
+    /// Replace the text of exactly the rows that were copied (the `temp.copied` table) with the tombstone.
+    fn tombstone_copied(&self, job: &ArchiveJob<'_>) -> Result<()> {
+        self.immediate(|| {
+            self.exec(
+                "UPDATE messages SET body=?4, payload=NULL, kind=?3 WHERE room=?1 AND ts<?2 AND COALESCE(kind,'')<>?3
+                   AND EXISTS (SELECT 1 FROM temp.copied c WHERE c.room=messages.room AND c.seq=messages.seq AND c.mid=messages.mid)",
+                params![job.room, job.cutoff, KIND, TOMBSTONE],
+            )
+            .map(|_| ())
+        })
     }
 
     /// Put archived messages back from `file`: a live row is restored only when it is a tombstone with the same room,
@@ -360,6 +381,36 @@ impl SqliteStore {
         let result = self.immediate(|| self.restore_rows());
         let _ = self.conn.execute_batch("DETACH DATABASE ar");
         result
+    }
+
+    /// Seal the plain texts (`body`, `payload`) of a restored message of a sealed label under the label key, or refuse
+    /// when the key is not held.
+    fn protect_restored(
+        &self,
+        mid: &str,
+        label: &str,
+        mut out: [Option<String>; 2],
+    ) -> Result<[Option<String>; 2]> {
+        let ring = self.labels.borrow();
+        for (text, field) in out.iter_mut().zip(["body", "payload"]) {
+            let Some(plain) = text.as_deref().filter(|t| !crate::keys::is_sealed_text(t)) else {
+                continue;
+            };
+            let Some(key) = ring.get(label) else {
+                return Err(Error::Refused {
+                    rule: "label-key".into(),
+                    reason: format!(
+                        "the archive holds plain {label} text and label {label} is sealed, and you hold no key for it, so nothing was restored"
+                    ),
+                });
+            };
+            let ctx = Self::sealed_context(mid, label, field);
+            *text = Some(
+                crate::keys::protect_text(key, ctx.as_bytes(), plain)
+                    .map_err(|e| Error::Backend(format!("no random source: {e}")))?,
+            );
+        }
+        Ok(out)
     }
 
     /// The restore itself, with the archive attached as `ar`. Plain archived text of a label that is sealed now is
@@ -389,30 +440,11 @@ impl SqliteStore {
                 let is_sealed = self.policy_get(&format!("sealed:{label}"))?.is_some();
                 sealed_labels.insert(label.clone(), is_sealed);
             }
-            let mut out = texts.clone();
-            if sealed_labels[&label] {
-                let ring = self.labels.borrow();
-                for (text, field) in out.iter_mut().zip(["body", "payload"]) {
-                    let Some(plain) = text.as_deref().filter(|t| !crate::keys::is_sealed_text(t))
-                    else {
-                        continue;
-                    };
-                    let Some(key) = ring.get(&label) else {
-                        return Err(Error::Refused {
-                            rule: "label-key".into(),
-                            reason: format!(
-                                "the archive holds plain {label} text and label {label} is sealed, and you hold no key for it, so nothing was restored"
-                            ),
-                        });
-                    };
-                    let ctx = Self::sealed_context(&mid, &label, field);
-                    *text = Some(
-                        crate::keys::protect_text(key, ctx.as_bytes(), plain)
-                            .map_err(|e| Error::Backend(format!("no random source: {e}")))?,
-                    );
-                }
-            }
-            let [body, payload] = out;
+            let [body, payload] = if sealed_labels[&label] {
+                self.protect_restored(&mid, &label, texts)?
+            } else {
+                texts
+            };
             done.push((id, body, payload, kind));
         }
         let count = done.len();

@@ -34,12 +34,16 @@ pub enum AnchorCmd {
     },
 }
 
+fn is_file_safe(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '.' || c == '-'
+}
+
 /// The file name of an anchor: safe on every file system, and never a path.
 pub(crate) fn file_name(anchor: &str) -> String {
     anchor
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+            if is_file_safe(c) {
                 c.to_string()
             } else {
                 format!("_{:02x}", c as u32)
@@ -59,6 +63,11 @@ impl AnchorAdapter for DirAnchors {
     }
 }
 
+/// A name that is a path, or hidden, never names a worktree.
+fn names_a_worktree(name: &str) -> bool {
+    !(name.is_empty() || name.starts_with('.') || name.contains('/'))
+}
+
 /// Done when a worktree directory is gone: the anchor is `wt:<name>`, the worktree is `<root>/<name>`.
 pub(crate) struct WorktreeAnchors(pub PathBuf);
 
@@ -69,7 +78,7 @@ impl AnchorAdapter for WorktreeAnchors {
             return unanswered("not a worktree anchor");
         };
         // a name that is a path, or hidden, never names a worktree; and a root that is not there says nothing
-        if name.is_empty() || name.starts_with('.') || name.contains('/') || !self.0.is_dir() {
+        if !names_a_worktree(name) || !self.0.is_dir() {
             return unanswered("cannot tell");
         }
         Ok(!self.0.join(name).exists())
