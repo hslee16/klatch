@@ -165,6 +165,8 @@ fn a_task_shows_its_latest_checkpoint_headline_cut_hard() {
                 text: format!("stage 2 of 5 {}", "z".repeat(200)),
                 ts: 8000,
             }),
+            machine: None,
+            undeclared: false,
             from: Some("bob".into()),
             orphaned: false,
         }],
@@ -377,6 +379,49 @@ fn an_ask_with_partial_work_names_who_did_it_and_what() {
     let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
     assert!(
         out.contains("; partial by helper: \"parsed the file; tests not written\""),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_machine_checkpoint_is_marked_and_shown_after_the_owners_own_checkpoint() {
+    let mut board = Board {
+        tasks: vec![Task {
+            owner: "alice".into(),
+            title: "nightly build".into(),
+            what: "nightly build".into(),
+            started: 1000,
+            last: 8000,
+            checkpoint: Some(Checkpoint {
+                text: "resume at the grammar".into(),
+                ts: 8000,
+            }),
+            machine: Some(Checkpoint {
+                text: format!("turn ended; claims src/p.rs; files {}", "z".repeat(300)),
+                ts: 8100,
+            }),
+            undeclared: false,
+            from: None,
+            orphaned: false,
+        }],
+        ..Board::default()
+    };
+    let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
+    let own = out
+        .find("checkpoint 2000s ago")
+        .or_else(|| out.find("resume at the grammar"))
+        .unwrap();
+    let machine = out.find("machine checkpoint").unwrap();
+    assert!(own < machine, "{out}");
+    assert!(out.contains("claims src/p.rs"), "{out}");
+    assert!(
+        out.lines().all(|l| l.chars().count() < 400),
+        "the headline is cut: {out}"
+    );
+    board.tasks[0].checkpoint = None;
+    let out = render_briefing(&input(&board, &[], &[]), BRIEFING_MAX_BYTES);
+    assert!(
+        out.contains("machine checkpoint") && !out.contains("resume at the grammar"),
         "{out}"
     );
 }

@@ -352,3 +352,27 @@ fn a_successor_recovers_files_claims_and_open_asks_with_the_machine_checkpoint_a
     );
     assert_eq!(with, 5);
 }
+
+#[test]
+fn the_session_start_briefing_of_a_successor_shows_the_machine_checkpoint() {
+    let h = Home::new();
+    let p = project(&h);
+    h.ok("alice", &["join", "lobby"]);
+    h.ok("alice", &["post", "lobby", "working: parser rewrite"]);
+    h.ok("alice", &["claim", "lobby", "docs/plan.md"]);
+    edit(&h, "alice", &p, "src/a.rs");
+    end(&h, "alice", &p, "clear");
+    let o = hook_with_payload(
+        &h,
+        Some("bob"),
+        r#"{"session_id":"s-bob","source":"startup"}"#,
+        &["hook", "--event", "SessionStart"],
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(
+        text.contains("machine checkpoint") && text.contains("claims docs/plan.md"),
+        "{text}"
+    );
+    assert!(!text.contains(SECRET));
+}
