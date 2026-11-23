@@ -34,6 +34,15 @@ impl SpyStore {
         }
     }
     /// Put a member in a room directly, without going through the gateway.
+    /// The claim event record as the stats report reads it (#1386).
+    pub fn claim_history_for_test(&self) -> crate::domain::ClaimHistory {
+        let opts = crate::domain::StatsOptions {
+            top: 1,
+            ..Default::default()
+        };
+        self.inner.usage_stats(&opts).unwrap().claims.history
+    }
+
     pub fn inner_join_for_test(&self, room: &str, member: &str) {
         self.inner.join(room, member, 0).unwrap();
     }
@@ -258,6 +267,11 @@ impl ClaimStore for SpyStore {
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
         self.gate()?;
         self.inner.release(room, owner, path)
+    }
+
+    fn release_at(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.release_at(room, owner, path, now)
     }
 
     fn release_with(&self, release: &Release, now: i64) -> Result<()> {

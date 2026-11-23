@@ -56,8 +56,10 @@ jobs:
           cargo build -p klatch --no-default-features --locked
       - name: The package is publishable to crates.io (dry run, nothing is uploaded)
         run: cargo publish --dry-run --locked -p klatch
-      - name: Tests that need the test-clock build (a panic never prints what it carried)
-        run: cargo test -p klatch --features test-clock --test no_plaintext --locked
+      - name: Tests that need the test-clock build (a panic never prints what it carried; a used credential outliving its idle timeout)
+        run: |
+          cargo test -p klatch --features test-clock --test no_plaintext --locked
+          cargo test -p klatch --features test-clock --test worker --locked -- a_credential_that_is_used_outlives_its_idle_timeout_up_to_its_cap
 
   # The second job (#1349): the client suites and the repository checks, in parallel with `test` so the critical path is the
   # longer of the two. It builds the klatch binary on its own (a distinct cache key, so the two jobs do not fight over one

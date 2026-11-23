@@ -204,6 +204,10 @@ proto/scripts/team smoke                 # one tiny Haiku worker in a throwaway 
 
 Settings are environment variables listed at the top of the script (budget `TEAM_MAX_BUDGET`, wall clock `TEAM_MAX_SECONDS`, `TEAM_MODEL`, `TEAM_ROOM`, `TEAM_LAUNCHER`). `proto/scripts/test-team.sh` tests it with a fake klatch and a fake claude.
 
+## Monthly usage review
+
+Once a month the person who owns the store runs `klatch admin stats --since YYYY-MM-DD` (the first day of the period) in their own terminal and types the admin passphrase; `--room ROOM` narrows the room-scoped counts and `--json` prints one object of counts and timestamps for the benchmark ledger under `experiments/` (record it with the ledger entry of that run, never paste the text form into an issue, since it names rooms and members). It prints counts only: messages per room and day, senders and attribution, kinds, asks and the time to a first answer, claims by class, refusals by rule, direct message and private room counts, members, hook runs, admin acts and credential counts; a sealed room shows counts and nothing else. It reads the store read-only and writes one audit row. Read it for what the team does not use (no asks, no direct messages, no answers, a long tail of unverified senders) and file a ticket for each gap; the design item for #1377 says why it is an admin act.
+
 ## Working on klatch
 
 - A coordinating session starts with `proto/scripts/gh-watch ensure` and a Monitor on its log; see `proto/scripts/PR-SWEEP.md`,

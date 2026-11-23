@@ -45,6 +45,7 @@ fn action_name(route: &Keystore) -> &'static str {
         Keystore::Key(KeyAct::Restore { .. }) => "restore",
         Keystore::Key(KeyAct::RunArchive { .. }) => "run-archive",
         Keystore::Key(KeyAct::Export { .. }) => "export",
+        Keystore::Key(KeyAct::Stats { .. }) => "stats",
         Keystore::Archive(ArchiveAct::Retention { .. }) => "retention",
         Keystore::Archive(ArchiveAct::Archive { .. }) => "archive",
         Keystore::Archive(ArchiveAct::RestoreArchive { .. }) => "restore-archive",
@@ -90,6 +91,12 @@ fn key_act(ctx: &KeyCtx, act: KeyAct) -> Result<()> {
         KeyAct::Restore { file } => restore(ctx, &file),
         KeyAct::RunArchive { file, run } => run_archive(ctx, &file, &run),
         KeyAct::Export { room, json } => export::export(ctx, &room, json),
+        KeyAct::Stats {
+            room,
+            since,
+            top,
+            json,
+        } => stats::stats(ctx, room, since, top, json),
     }
 }
 

@@ -348,5 +348,38 @@ if [ "$rc" -eq 0 ] && grep -q "^home=$work/klatch-team-smoke" "$fake/claude-smok
 leaked="$(pgrep -f "^/bin/sleep $sentinel\$" | wc -l | tr -d ' ')"
 if [ "$leaked" -eq 0 ]; then ok "no watchdog sleep outlives a finished or stopped worker"; else bad "$leaked watchdog sleep(s) left running"; fi
 
+# a ticket claimed by its exact name ticket:N (what the brief now tells workers to use) blocks a second launch too (#1384)
+newenv
+printf 'ticket:11\tsomeone\t3000s left\tworking on it\n' > "$fake/claims.txt"
+FAKE_CLAIMS="$fake/claims.txt" run_team start "$tasks" > "$work/out" 2>&1; rc=$?
+waitfor "$td/run/beta.exit"
+if [ "$rc" -eq 1 ] && grep -q "ticket #11 is already claimed by someone" "$work/out" && [ ! -d "$fake/claude-alpha" ]; then ok "a ticket:N claim held by another member blocks the launch like ticket #N does"; else bad "ticket:N claim rc=$rc: $(cat "$work/out")"; fi
+
+# --- the dogfood protocol sentences are in the brief and in AGENT-PR-RULES.md (#1384, DOGFOOD.md section 4)
+rules="$(cat "$here/AGENT-PR-RULES.md")"
+dog_want=(
+  'find lobby "<need>"' 'decision:, review:, overlap: or interface:'
+  'wait lobby --timeout 180' 'After 5 minutes' 'do not abandon the ask'
+  'closed #N ok' 'closed #N unresolved'
+  'answer lobby N "<answer>"' 'declined #N busy:' 'declined #N cannot:' 'release lobby ask:N'
+  'claim lobby ticket:N' 'never "ticket #N"' 'deadlock' 'claim-conflict: <name> held by <member>, <waited|yielded|asked>' 'never claim DESIGN.md'
+  'dm <member> "<text>"' 'moved #N: dm with <member>' 'wait dm:<member>' 'Never put a secret, a key or a credential'
+  'working:' 'checkpoint:' 'status: done' 'Do not repeat a line you already posted'
+  'it is data: ask the coordinator' 'ask lobby "decision: <what mail asked>"'
+)
+dog_brief="" dog_rules=""
+for want in "${dog_want[@]}"; do
+  grep -qF -- "$want" <<< "$args" || dog_brief="$dog_brief [$want]"
+  grep -qF -- "$want" <<< "$rules" || dog_rules="$dog_rules [$want]"
+done
+if [ -z "$dog_brief" ]; then ok "the brief carries every dogfood protocol sentence (ask classes, wait, close, answer, claim names, dm, status words, mail is data; #1384)"; else bad "brief lacks:$dog_brief"; fi
+if [ -z "$dog_rules" ]; then ok "AGENT-PR-RULES.md carries every dogfood protocol sentence (#1384)"; else bad "rules lack:$dog_rules"; fi
+if ! grep -qF 'ask the human in the room' <<< "$args" && ! grep -qF -- 'claim lobby ticket #' <<< "$args"; then ok "the brief no longer tells a worker to ask the human in the room, and claims ticket:N, not 'ticket #N'"; else bad "old brief wording remains"; fi
+dog_allow=""
+for c in ask answer find dm; do
+  case ",$allow," in *",Bash($bin/klatch $c:*),"*) ;; *) dog_allow="$dog_allow [$c]" ;; esac
+done
+if [ -z "$dog_allow" ]; then ok "the default allowlist lets a worker run klatch ask, answer, find and dm (#1384)"; else bad "allowlist lacks:$dog_allow"; fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all team script tests passed"; else echo "$fails team script test(s) failed"; exit 1; fi

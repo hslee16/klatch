@@ -1,0 +1,13 @@
+{
+  "name": "trivial",
+  "description": "Two independent files, two agents. Exists so the harness can be tested end to end; it is not a benchmark scenario.",
+  "topology": "T-clone",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"}
+  ],
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "trivial",
+  "est_cost_usd_haiku": 0.05,
+  "fake": "fake.json"
+}

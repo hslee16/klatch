@@ -1,0 +1,1 @@
+- gh-watch-forward no longer loops on HTTP 422 "Hook already exists" after a killed forwarder: it exits 75 with one clear line, `gh-watch status` reports `forwarder down: stale webhook` (exit 5), and the new `gh-watch clean-hooks` prints the delete command without deleting anything (#1350).

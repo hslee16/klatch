@@ -296,6 +296,21 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     args
 }
 
+/// The cargo arguments that build klatch as the workspace does (default features, no test clock) into the workspace's
+/// own target directory, so a workspace build that already made it leaves cargo nothing to do (#1353).
+fn plain_build_args(profile: &str, target: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = ["build", "-q", "-p", "klatch"]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    if profile == "release" {
+        args.push("--release".into());
+    }
+    args.push("--target-dir".into());
+    args.push(target.display().to_string());
+    args
+}
+
 /// The cargo arguments that build `klatch-server` as shipped (no test clock: the channel never reads it) in the same
 /// profile as the running bench, into its own target directory so it never meets the klatch copies (#1078).
 fn server_build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
@@ -412,6 +427,16 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     BINARY.get_or_init(build_binary).clone()
 }
 
+/// The klatch binary as the workspace builds it (no test clock), as a private copy (see `find_binary`), for tests that
+/// do not move klatch's clock. It shares the workspace target directory, so after a workspace build (as `cargo test
+/// --workspace` and nextest make) this builds nothing: the test-clock binary of `find_binary` is a second compile of
+/// klatch into its own directory, about ten seconds of CPU on every fresh run, that such a test has no use for (#1353).
+pub fn find_plain_binary() -> Result<std::path::PathBuf, String> {
+    static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
+        std::sync::OnceLock::new();
+    BINARY.get_or_init(build_plain_binary).clone()
+}
+
 /// The `klatch-server` binary the workspace builds, as a private copy (see `find_binary`). Built on first use, so a
 /// bench run that selects no channel scenario never builds it (#1078).
 pub fn find_server_binary() -> Result<std::path::PathBuf, String> {
@@ -445,6 +470,48 @@ fn build_server_binary() -> Result<std::path::PathBuf, String> {
     });
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let args = server_build_args(name, &dir);
+    obtain_binary(&dir, &built, || {
+        let status = std::process::Command::new(cargo)
+            .args(args)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "could not build {} (cargo {status}; its own error is printed above)",
+                built.display()
+            ))
+        }
+    })
+}
+
+fn build_plain_binary() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let profile = exe
+        .ancestors()
+        .find(|d| {
+            matches!(
+                d.file_name().and_then(|n| n.to_str()),
+                Some("debug" | "release")
+            )
+        })
+        .ok_or("could not find the cargo profile directory above the running executable")?
+        .to_path_buf();
+    let target = profile.parent().ok_or("no target directory")?.to_path_buf();
+    // Only the copies and the lock live here; the build itself is the workspace's, in `target`.
+    let dir = target.join("bench-bin-plain");
+    let name = profile
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("debug");
+    let built = profile.join(if cfg!(windows) {
+        "klatch.exe"
+    } else {
+        "klatch"
+    });
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let args = plain_build_args(name, &target);
     obtain_binary(&dir, &built, || {
         let status = std::process::Command::new(cargo)
             .args(args)
@@ -1046,8 +1113,20 @@ mod tests {
 
 #[cfg(test)]
 mod build_args_tests {
-    use super::{build_args, server_build_args};
+    use super::{build_args, plain_build_args, server_build_args};
     use std::path::Path;
+
+    #[test]
+    fn the_plain_build_is_the_workspaces_own_so_a_workspace_build_leaves_it_nothing_to_do() {
+        let dbg = plain_build_args("debug", Path::new("/t"));
+        assert!(!dbg.contains(&"test-clock".to_string()), "{dbg:?}");
+        assert!(!dbg.contains(&"--features".to_string()), "{dbg:?}");
+        assert!(!dbg.contains(&"--release".to_string()), "{dbg:?}");
+        // the workspace target directory, not the private `bench-bin` one
+        assert_eq!(dbg.last().map(String::as_str), Some("/t"));
+        let rel = plain_build_args("release", Path::new("/t"));
+        assert!(rel.contains(&"--release".to_string()), "{rel:?}");
+    }
 
     #[test]
     fn the_server_build_is_klatch_server_in_the_same_profile_and_its_own_target_dir() {

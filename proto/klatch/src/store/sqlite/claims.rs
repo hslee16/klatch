@@ -1,9 +1,11 @@
 //! Taking a claim: the conflict check, the record of who is waiting for whom (so a conflict that closes a cycle is
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
+use super::claim_events::ClaimEvent;
 use super::{SqliteStore, WAIT_WINDOW_SECS};
 use crate::domain::{
-    AgedClaim, Error, Result, YIELD_WINDOW_SECS, due_milestone, overlaps, scopes_collide,
+    AgedClaim, Error, Result, SHARED_SCOPE, YIELD_WINDOW_SECS, due_milestone, overlaps,
+    scopes_collide,
 };
 use crate::store::ClaimRequest;
 use rusqlite::params;
@@ -28,6 +30,16 @@ struct Held {
     scope: String,
     /// When it was first held; 0 when unknown (#547).
     since: i64,
+}
+
+/// A claim whose lease had lapsed and that an attempt swept away.
+struct Lapsed {
+    room: String,
+    path: String,
+    owner: String,
+    scope: String,
+    /// Seconds it was held until the lease ended.
+    held: i64,
 }
 
 /// A member's refused claim attempt, remembered as a wait.
@@ -72,7 +84,7 @@ fn refuses(h: &Held, req: &Attempt) -> bool {
 }
 
 /// Seconds a claim has been held, 0 when its start is unknown.
-fn held_for(since: i64, now: i64) -> i64 {
+pub(super) fn held_for(since: i64, now: i64) -> i64 {
     if since > 0 { (now - since).max(0) } else { 0 }
 }
 
@@ -236,6 +248,27 @@ impl SqliteStore {
         if deadlock {
             self.mark_yield_parties(req, &cycle)?;
         }
+        let reason = if deadlock {
+            "deadlock"
+        } else if blocker.scope == SHARED_SCOPE || req.scope == SHARED_SCOPE {
+            "shared"
+        } else if blocker.path == req.path {
+            "same-path"
+        } else {
+            "overlap"
+        };
+        self.record_claim_event(
+            req.now,
+            &ClaimEvent {
+                room: req.room,
+                path: req.path,
+                event: "refused",
+                reason,
+                held: 0,
+                waited: None,
+            },
+        );
+        self.open_claim_conflict(req.room, req.owner, req.path, req.now);
         Ok(Error::Conflict {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
@@ -302,11 +335,71 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Delete the claims whose lease has lapsed, record each as an expiry (#1386) and return them.
+    fn sweep_lapsed(&self, now: i64) -> Result<Vec<Lapsed>> {
+        let lapsed: Vec<Lapsed> = self.rows(
+            "SELECT room,path,owner,scope,since,expires FROM claims WHERE expires<=?1",
+            params![now],
+            |r| {
+                Ok(Lapsed {
+                    room: r.get(0)?,
+                    path: r.get(1)?,
+                    owner: r.get(2)?,
+                    scope: r.get(3)?,
+                    held: held_for(r.get(4)?, r.get(5)?),
+                })
+            },
+        )?;
+        self.exec("DELETE FROM claims WHERE expires<=?1", params![now])?;
+        for l in &lapsed {
+            self.record_claim_event(
+                now,
+                &ClaimEvent {
+                    room: &l.room,
+                    path: &l.path,
+                    event: "expired",
+                    reason: "",
+                    held: l.held,
+                    waited: None,
+                },
+            );
+        }
+        Ok(lapsed)
+    }
+
+    /// A new hold was granted (#1386): the grant, with the wait it ended, and a takeover when the claim it overlapped
+    /// had just lapsed under another member.
+    fn record_grant(&self, req: &Attempt, lapsed: &[Lapsed]) {
+        let waited = self.close_claim_conflicts(req.room, req.owner, req.path, req.now);
+        let event = |event, held, waited| ClaimEvent {
+            room: req.room,
+            path: req.path,
+            event,
+            reason: "",
+            held,
+            waited,
+        };
+        self.record_claim_event(req.now, &event("granted", 0, waited));
+        let taken = lapsed
+            .iter()
+            .filter(|l| {
+                l.room == req.room
+                    && l.owner != req.owner
+                    && overlaps(&l.path, req.path)
+                    && scopes_collide(&l.scope, req.scope)
+            })
+            .map(|l| l.held)
+            .max();
+        if let Some(held) = taken {
+            self.record_claim_event(req.now, &event("takeover", held, None));
+        }
+    }
+
     /// Take the claim or say what refused it. The outcome is a value, not an error, so that a refused attempt is
     /// still committed: it is remembered as a wait, which is what lets a later conflict be recognised as closing a
     /// cycle.
     fn attempt(&self, req: &Attempt) -> Result<std::result::Result<(), Error>> {
-        self.exec("DELETE FROM claims WHERE expires<=?1", params![req.now])?;
+        let lapsed = self.sweep_lapsed(req.now)?;
         self.exec(
             "DELETE FROM claim_waits WHERE ts<?1",
             params![req.now - WAIT_WINDOW_SECS],
@@ -320,8 +413,14 @@ impl SqliteStore {
         if let Some(blocker) = blocker {
             return Ok(Err(self.refuse(req, blocker, &held)?));
         }
+        let renewal = held
+            .iter()
+            .any(|h| h.owner == req.owner && h.path == req.path);
         self.end_waits(req)?;
         self.insert_claim(req)?;
+        if !renewal {
+            self.record_grant(req, &lapsed);
+        }
         self.note_overwrites(req)?;
         self.tell_completed_cycles(req)?;
         Ok(Ok(()))

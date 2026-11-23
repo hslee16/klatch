@@ -1,0 +1,4 @@
+The test run is bound by CPU, and the Argon2 proof is compiled optimised in tests (#1352; no schema change; 2026-11-22).
+The CI test step on 4 vCPU took as long as the total CPU time of the tests divided by four (654 CPU seconds, 163 s), so no single long test set the floor and nextest could not beat it. The largest consumer was the admin passphrase proof: the `argon2` and `blake2` crates were built unoptimised in the dev profile, so every Argon2id hash at the production cost took seconds, and the admin tests set a passphrase in a fresh home for each admin command. `proto/Cargo.toml` now builds only those two crates at `opt-level = 3` in the dev profile. The production cost (19 MiB, 2 passes, 1 lane), the release build and every assertion are unchanged; no test-only cost parameter was added.
+
+The long poles that remain are listed in #1353 (a 9 s real wait in a worker test, a second test-clock build by the bench world tests, fake `busctl` scripts, one flake).

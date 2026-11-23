@@ -2,7 +2,7 @@
 # Forwarder wrapper for launchd or systemd (#1343): reads the mode-0600 secret file and execs `gh webhook forward`.
 #   gh-watch-forward [--out-dir DIR] [--secret-file FILE] [--port N] [--repo OWNER/NAME]
 # It refuses to run when the secret file is missing or not mode 0600, and it never prints the secret. It calls gh exactly
-# once, as the final exec; it runs no other gh command. `gh webhook forward` takes the secret only as `--secret VALUE`, so
+# once (as a child, see below); it runs no other gh command. `gh webhook forward` takes the secret only as `--secret VALUE`, so
 # the value is visible in ps to the same user while it runs (#1333). The listener is the loopback receiver only.
 set -uo pipefail
 repo="hslee16/klatch"
@@ -30,4 +30,31 @@ mode="$(stat -f %Lp "$secret_file" 2>/dev/null || stat -c %a "$secret_file" 2>/d
 secret="$(cat "$secret_file")" || die "cannot read the secret file"
 [ -n "$secret" ] || die "the secret file is empty"
 
-exec gh webhook forward "--repo=$repo" "--events=$events" "--url=http://127.0.0.1:$port/hook" --secret "$secret"
+# gh runs as a supervised child (since #1350) so its stderr can be read; SIGTERM from launchd or systemd is passed on, so gh
+# ends cleanly and deletes its development webhook. Stale case: a forwarder ended by kill -9, a crash or a reboot leaves the
+# hook, and the next `gh webhook forward` fails with exit 1 and "Hook already exists". The wrapper then deletes NOTHING; it
+# writes one clear line, leaves the marker forwarder.stale for `gh-watch status`, and exits 75 (EX_TEMPFAIL) so the
+# ThrottleInterval spaces the retries. The human runs `gh-watch clean-hooks`, which prints the delete command.
+(umask 077; mkdir -p "$out_dir") || die "cannot create $out_dir"
+errf="$out_dir/forwarder.stderr"
+marker="$out_dir/forwarder.stale"
+(umask 077; : > "$errf") || die "cannot write $errf"
+
+gh webhook forward "--repo=$repo" "--events=$events" "--url=http://127.0.0.1:$port/hook" --secret "$secret" 2> "$errf" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT HUP
+wait "$child"; rc=$?
+while kill -0 "$child" 2>/dev/null; do wait "$child"; rc=$?; done
+trap - TERM INT HUP
+
+err="$(cat "$errf" 2>/dev/null)"
+err="${err//"$secret"/***}"
+[ -z "$err" ] || printf '%s\n' "$err" >&2
+if [ "$rc" -eq 1 ] && grep -q 'Hook already exists' "$errf" 2>/dev/null; then
+  line="stale webhook on the repository: run gh-watch clean-hooks"
+  printf '%s\n' "$line" > "$marker"
+  echo "gh-watch-forward: $line" >&2
+  exit 75
+fi
+rm -f "$marker"
+exit "$rc"
