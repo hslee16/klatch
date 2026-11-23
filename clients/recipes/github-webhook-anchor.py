@@ -33,7 +33,9 @@ _SIGNATURE = re.compile(r"sha256=[0-9a-f]{64}\Z")
 
 def verify(secret, body, header):
     """True only when `header` is `sha256=` plus the lowercase hex HMAC-SHA256 of `body` under a non-empty `secret`."""
-    if not secret or not header or not _SIGNATURE.match(header):
+    if not (secret and header):
+        return False
+    if not _SIGNATURE.match(header):
         return False
     expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected.encode(), header.encode())

@@ -1,0 +1,1 @@
+- The coordbench harness no longer ends a run early with a setup error now and then: its clones of the run's bare origin (the poll checkout, the agent clones and the final check) use `git clone --no-local`, so a clone cannot fail on the temporary files of an agent's push in flight (#1435).
