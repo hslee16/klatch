@@ -10,6 +10,8 @@ import json
 import re
 import shlex
 
+import chain
+
 MSG_KEYS = ("message", "content", "text", "body", "prompt")
 VERBS = ("post", "dm", "ask", "answer")
 
@@ -170,3 +172,36 @@ def compute(events, done_t, scn, facts, slot_results):
         "unanswered_dependencies": sum(1 for r in slot_results.values() if r["state"] == "unanswered"),
         "need_info_events": need_info,
     }
+
+
+# Ask counts for the run store cross-check (#1433). Where `compute` above reads what agents SENT, these count what the
+# commands DID, from their results: a `klatch ask` that printed `asked #N` made an ask, a `klatch answer` that printed
+# `answered #N` answered one, and a lost race (`not answered: ...`) answered nothing. The store export (storeexport.py) has
+# the same two numbers; run.py records both side by side and flags a difference.
+ASKED = re.compile(r"\basked #\d+")
+ANSWERED = re.compile(r"(?<!not )\banswered #\d+")
+
+
+def from_streams(streams, klatch_bin):
+    """{"created", "answered"} counted over {name: stream lines}: successful ask and answer commands, by their results."""
+    binre = re.escape(klatch_bin) if klatch_bin else r"(?:\S*/)?klatch"
+    pat = re.compile(binre + r"\s+(?:-\S+\s+)*(ask|answer)\b")
+    created = answered = 0
+    for lines in streams.values():
+        for turn in chain.parse_stream(lines):
+            for tool in turn["tools"]:
+                cmd = chain._command(tool)
+                res = tool["result"] or ""
+                for m in pat.finditer(cmd):
+                    if m.group(1) == "ask" and ASKED.search(res):
+                        created += 1
+                    elif m.group(1) == "answer" and ANSWERED.search(res):
+                        answered += 1
+    return {"created": created, "answered": answered}
+
+
+def cross_check(stream_counts, store_counts):
+    """Both sides and whether they agree: {"streams", "store", "match", "differences"}."""
+    diffs = ["%s: streams %d, store %d" % (k, stream_counts[k], store_counts[k])
+             for k in ("created", "answered") if stream_counts[k] != store_counts[k]]
+    return {"streams": dict(stream_counts), "store": dict(store_counts), "match": not diffs, "differences": diffs}

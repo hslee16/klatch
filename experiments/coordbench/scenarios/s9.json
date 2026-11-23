@@ -50,5 +50,23 @@
   },
   "not_computed": {
     "time_to_first_correct_s": "the stream has no timestamps"
+  },
+  "store_metrics": {
+    "source": "artifacts.store_export, the counts-only report of the K arms' run store (klatch-bench store-stats, #1433), the same report as klatch admin stats --json; the metrics below are in scenario_metrics.store",
+    "arms": "K1, K2, K3. B0 and B1 have no klatch store: null, with scenario_metrics.store.reason saying so",
+    "fields": {
+      "claim_conflicts": "claims.history.conflicts_handled: a claim refused and later granted to the same member (also metrics.claim_conflicts)",
+      "claims_granted": "claims.history.granted, summed over claim classes",
+      "claims_refused_by_rule": "claims.history.refused, summed (every refusal carries a rule word)",
+      "claims_released": "claims.history.released, summed",
+      "claims_expired": "claims.history.expired, summed",
+      "asks_created": "asks.created",
+      "asks_answered": "asks.answered",
+      "asks_closed": "asks.closed",
+      "time_to_first_answer_s": "asks.first_answer_median_secs, null when no ask was answered by someone other than the asker",
+      "members_posted_never_read": "members.posted_never_read",
+      "hook_bytes_injected": "hook_bytes, summed over hook events",
+      "asks_cross_check": "asks created and answered from the streams (asks.py) next to the store's counts, with match and differences; a mismatch is flagged in the record's notes and is never resolved silently"
+    }
   }
 }

@@ -9,6 +9,7 @@ pub mod mp;
 pub mod mp_run;
 pub mod pty;
 mod scenarios;
+pub mod store_stats;
 mod world;
 
 /// The scratch directory of the tests and of each world, shared with the klatch crate by a path attribute (#995).
