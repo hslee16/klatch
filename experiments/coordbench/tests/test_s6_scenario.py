@@ -49,7 +49,7 @@ class TestScenarioFile(unittest.TestCase):
         s = self.scn
         self.assertEqual(s["id"], "S6")
         self.assertEqual(s["fixture"], "recovery")
-        self.assertEqual(s["arms"], ["B0", "B1", "K2", "K3"])
+        self.assertEqual(s["arms"], ["B0", "B1", "K2", "K3", "B1-roles"])
         self.assertEqual(s["arms_at_m0"], ["B0", "B1", "K2"])
         self.assertEqual(s["n_per_arm"]["m0"], 10)
         self.assertEqual(s["n_per_arm"]["quick"], 3)

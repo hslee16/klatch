@@ -29,6 +29,7 @@ import json
 import os
 import random
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -46,6 +47,7 @@ import history as history_mod
 import injections
 import injmetrics
 import recovery
+import roles as roles_mod
 import scenario as scenario_mod
 import schema
 import storeexport
@@ -115,7 +117,13 @@ def build_prompt(arms_dir, arm, name, team, task, workdir, test_command, klatch_
             text = re.sub(r"<!--.*?-->", "", f.read(), flags=re.S)
         return text.strip() + "\n"
     common = re.sub(r"^# Common part[^\n]*\n", "", load("common.md")).lstrip()
-    text = common.replace("{{COORDINATION_SECTION}}", load(arm + ".md").strip())
+    if roles_mod.is_role_arm(arm):
+        # K3 and B1-roles: the base arm's text, then the worker section of the role file; the integrator and supervisor
+        # prompts go to the role members only (roles.role_prompt)
+        section = load(roles_mod.base_arm(arm) + ".md").strip() + "\n\n" + roles_mod.worker_text(arms_dir, arm)
+    else:
+        section = load(arm + ".md").strip()
+    text = common.replace("{{COORDINATION_SECTION}}", section)
     values = {"NAME": name, "TEAM_SIZE": str(len(team)), "TEAM_NAMES": ", ".join(n for n in team if n != name),
               "WORKDIR": workdir, "TASK": task, "TEST_COMMAND": test_command, "KLATCH": klatch_bin or "",
               "ROOM": room, "MAX_TURNS": str(max_turns), "MAX_MINUTES": str(max_minutes),
@@ -235,7 +243,8 @@ class Suite:
             "topology": self.fx.topology, "arm": arm, "arm_text_version": a.arm_text_version,
             "fixture": {"name": self.fx.name, "sha256": self.fx.sha256()}, "seed": seed, "valid": True,
             "supersedes": None,
-            "models": {"agent": a.model or self.driver.name, "roles": a.roles_model, "resolved_ids": []},
+            "models": {"agent": a.model or self.driver.name, "roles": a.roles_model if roles_mod.is_role_arm(arm) else None,
+                       "resolved_ids": []},
             "claude_code_version": self.driver_version, "klatch": {"commit": self.commit, "binary_sha256": sha,
                                                                     "store_schema": schema_no},
             "temperature": "default",
@@ -248,7 +257,7 @@ class Suite:
             "metrics": {"units_total": 0, "units_completed": 0, "duplicate_work": None, "git_conflicts": None,
                         "claim_conflicts": None, "overwrites": None, "messages": None, "human_interventions": None,
                         "coordination_context_tokens": None, "idle_turns": None},
-            "outcome_checks": [],
+            "outcome_checks": [], "roles": None,
             "artifacts": {"streams": None, "store_export": None, "checker_report": None}, "notes": "",
         }
 
@@ -281,7 +290,7 @@ class Suite:
             # setup.sh built a repository with a scripted history (it knows the arm, and in B1 put the board files into it)
             git(["push", "-q", origin, "HEAD:main"], seedtree, henv)
         else:
-            if arm == "B1":
+            if arm in ("B1", "B1-roles"):
                 with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
                     f.write(TASK_BOARD + "".join(l + "\n" for l in (fx.seed_history or {}).get("board", []) + (inj["board"] if inj else [])))
             git(["init", "-q", "-b", "main"], seedtree, henv)
@@ -302,6 +311,17 @@ class Suite:
         kill_spec = recovery.kill_spec(scn, fx.variant) if scn else None
         rng = random.Random(seed)
         team = fx.names
+        rcfg = None
+        if roles_mod.is_role_arm(arm):
+            try:
+                rcfg = roles_mod.resolve(a, scn, arm, len(team))
+            except ValueError as e:
+                raise RuntimeError(str(e))
+            clash = [m for m in rcfg["members"] if m in team]
+            if clash:
+                raise RuntimeError("a worker is named like a role member: %s (the role members are named %s)"
+                                   % (", ".join(clash), ", ".join(roles_mod.ROLES)))
+        role_names = rcfg["members"] if rcfg else []
         clones = {}
         for ag in fx.agents:
             clone = os.path.join(scratch, "clones", ag["name"])
@@ -313,6 +333,12 @@ class Suite:
                 os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
                 shutil.copyfile(src, os.path.join(clone, rel))
             clones[ag["name"]] = clone
+        for r in role_names:  # a role member has a clone of its own, like a worker, and no private files
+            clone = os.path.join(scratch, "clones", r)
+            git(["clone", "-q", origin, clone], scratch, henv)
+            with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
+                f.write("\n.claude/\n")
+            clones[r] = clone
         kenv = {"KLATCH_HOME": khome, "KLATCH_KEY_DIR": kkeys, "KLATCH_BIN": a.klatch_bin or "", "KLATCH_RUN_DIR": scratch}
         if arm.startswith("K") and arm != "K1":
             for name, clone in clones.items():
@@ -321,6 +347,16 @@ class Suite:
                                    cwd=clone, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 if p.returncode != 0:
                     raise RuntimeError("klatch init failed for %s: %s" % (name, p.stdout.strip()[-200:]))
+        role_info = {r: {"granted": None} for r in role_names}
+        if rcfg and arm.startswith("K"):
+            self.grant_roles(rcfg, role_info, dict(henv, **kenv), scratch, notes)
+        restart_dir, restart_command = None, ""
+        if rcfg:
+            restart_dir = os.path.join(scratch, "restart")
+            os.makedirs(restart_dir, mode=0o700)
+            with open(os.path.join(restart_dir, "workers"), "w") as f:
+                f.write("".join(n + "\n" for n in team))
+            restart_command = "python3 %s" % shlex.quote(os.path.join(HERE, "restart_member.py"))
         if arm.startswith("K") and (fx.seed_history or {}).get("room"):
             self.seed_room(fx.seed_history["room"], scratch, dict(henv, **kenv), notes)
         if arm.startswith("K") and inj and inj["room_steps"]:
@@ -334,15 +370,28 @@ class Suite:
             # the earlier members' room history, posted through the binary into this run's temporary store
             history_mod.post_room(a.klatch_bin, a.room, fx.room_script, dict(henv, **kenv), scratch)
         agent_of = {}  # session key -> agent name; a restarted agent has a second session, key "<name>.r2"
+        role_keys, repl_keys = set(), set()  # the role members, and the replacements the supervisor started (#1421)
+        started_at, ended_at, stop_reason, restarts = {}, {}, {}, []
+        task_of = {ag["name"]: ag["task"] for ag in fx.agents}
+        minutes = max(1, int(a.wall_s // 60))
 
-        def start(key, name, session_no, task, max_turns=None):
-            """Start one session of an agent: its prompt, its process, its stream log and parser."""
-            prompt = build_prompt(a.arms_dir, arm, name, team, task, clones[name], fx.test_command,
-                                  a.klatch_bin, a.room, a.max_turns, max(1, int(a.wall_s // 60)))
+        def start(key, name, session_no, task, max_turns=None, role=None, replacement=False):
+            """Start one session of an agent: its prompt, its process, its stream log and parser. A role member (role) has
+            the role's prompt, model and budget; a replacement the supervisor asked for is a worker charged to the roles."""
+            kw = {}
+            if role:
+                prompt = roles_mod.role_prompt(a.arms_dir, arm, role, name, team, clones[name], fx.test_command,
+                                               a.klatch_bin, a.room, restart_command, a.max_turns, minutes)
+                kw = {"role": role, "model": rcfg["model"], "max_usd": rcfg["per_role_usd"]}
+            else:
+                prompt = build_prompt(a.arms_dir, arm, name, team, task, clones[name], fx.test_command,
+                                      a.klatch_bin, a.room, a.max_turns, minutes)
+                if rcfg:  # the run cap is spread over every member, the roles included
+                    kw = {"max_usd": rcfg["per_role_usd"] if replacement else a.max_run_usd / float(len(team) + len(role_names))}
             with open(os.path.join(log_dir, "%s.prompt.md" % key), "w") as f:
                 f.write(prompt)
             argv, extra = self.driver.command(name, arm, prompt, clones[name], log_dir, session=session_no,
-                                              max_turns=max_turns)
+                                              max_turns=max_turns, **kw)
             env = self.driver.agent_env(os.environ, scratch)
             env.update(henv)  # HOME is the run's own
             # each agent commits under its own name, so git authorship says who did what (duplicate work, per-agent
@@ -353,6 +402,8 @@ class Suite:
             env.update(extra)
             env["KLATCH_NAME"] = name
             env["TMPDIR"] = scratch
+            if role:
+                env["COORDBENCH_RESTART_DIR"] = restart_dir
             logf = open(os.path.join(log_dir, "%s.stream.jsonl" % key), "wb")
             errf = open(os.path.join(log_dir, "%s.err" % key), "wb")
             if a.stagger_s and session_no == 1:
@@ -365,6 +416,11 @@ class Suite:
             offs[key], partial[key] = 0, b""
             stamps[key] = []
             agent_of[key] = name
+            started_at[key] = time.monotonic()
+            if role:
+                role_keys.add(key)
+            if replacement:
+                repl_keys.add(key)
 
         # a resume variant (fixture "resume"): the agent's first session is cut after after_turns turns and, once it has
         # exited, a second session with the same name starts in the same clone with the job text and a short note that its
@@ -378,6 +434,8 @@ class Suite:
             if is_cut:
                 cut.add(name)
                 pending[name + ".r2"] = (name, name, ag["task"] + "\n\n" + resume["note"])
+        for r in role_names:  # the role members start beside the workers, each its own process
+            start(r, r, 1, None, role=r)
         t0 = time.monotonic()
         if kill_spec:
             # scenario S6: the victim is killed when the scenario's conditions hold on its stream and the git history
@@ -432,6 +490,52 @@ class Suite:
             os.replace(tmp, os.path.join(log_dir, "kill.json"))
             return rec_
 
+        def handle_restarts():
+            """Answer the supervisor's restart requests (restart_member.py): a replacement is a new member with a clone of its
+            own, started only for a worker whose process has ended, within the limit; the request file is consumed."""
+            for fn in sorted(os.listdir(restart_dir)):
+                if not fn.endswith(".request"):
+                    continue
+                member = fn[:-len(".request")]
+                os.remove(os.path.join(restart_dir, fn))
+                done = [x for x in restarts if x["member"] == member and x["started"]]
+                reason = None
+                if member not in team:
+                    reason = "%s is not a worker" % member
+                elif len(done) >= rcfg["max_restarts"]:
+                    reason = "restart limit reached (%d for %s)" % (rcfg["max_restarts"], member)
+                elif procs[member].poll() is None:
+                    reason = "%s is still running" % member
+                name2 = "%s-%d" % (member, len(done) + 2)
+                if reason is None:
+                    try:
+                        clone = os.path.join(scratch, "clones", name2)
+                        git(["clone", "-q", origin, clone], scratch, henv)
+                        with open(os.path.join(clone, ".git", "info", "exclude"), "a") as f:
+                            f.write("\n.claude/\n")
+                        clones[name2] = clone
+                        if arm.startswith("K") and arm != "K1":
+                            p = subprocess.run([a.klatch_bin, "init", "--scope", "project", "--yes", "--as-member", name2],
+                                               cwd=clone, env=dict(henv, **kenv, KLATCH_NAME=name2), stdout=subprocess.PIPE,
+                                               stderr=subprocess.STDOUT, text=True)
+                            if p.returncode != 0:
+                                raise RuntimeError("klatch init failed: %s" % p.stdout.strip()[-120:])
+                        note = ("You are `%s`, a replacement for `%s`, whose session stopped before it finished its job. Its job "
+                                "is the text above. Whatever it published is in the shared repository and in your team's shared "
+                                "channel; its unpublished work is gone. Finish the job." % (name2, member))
+                        start(name2, name2, 1, task_of[member] + "\n\n" + note, replacement=True)
+                    except (RuntimeError, OSError) as e:
+                        reason = "could not start %s: %s" % (name2, e)
+                if reason is None:
+                    restarts.append({"member": member, "replacement": name2, "started": True, "reason": None})
+                    answer = "started: %s" % name2
+                else:
+                    restarts.append({"member": member, "replacement": None, "started": False, "reason": reason})
+                    answer = "refused: %s" % reason
+                with open(os.path.join(restart_dir, member + ".result"), "w") as f:
+                    f.write(answer + "\n")
+
+        grace_start = None
         try:
             while True:
                 time.sleep(0.05)
@@ -439,7 +543,7 @@ class Suite:
                 elapsed = time.monotonic() - t0
                 if killer and kill_rec is None:
                     kill_rec = maybe_kill(elapsed)
-                if sum(s.cost_usd for s in states.values()) >= a.max_run_usd:
+                if sum(s.cost_usd for s in states.values()) >= a.max_run_usd:  # the roles' spend counts
                     outcome = "spend-cap"
                     break
                 if elapsed >= a.wall_s:
@@ -450,18 +554,37 @@ class Suite:
                         pump()
                         del pending[key]
                         start(key, name, 2, task)
-                if not pending and all(p.poll() is not None for p in procs.values()):
-                    break
+                if rcfg:
+                    handle_restarts()
+                for k, p in procs.items():
+                    if p.poll() is not None and k not in ended_at:
+                        ended_at[k] = time.monotonic()
+                if not pending and all(p.poll() is not None for k, p in procs.items() if k not in role_keys):
+                    # every worker has ended: the roles get a grace to finish (the integrator's last merge), then are stopped
+                    live = [k for k in role_keys if procs[k].poll() is None]
+                    if not live:
+                        break
+                    grace_start = grace_start if grace_start is not None else time.monotonic()
+                    if time.monotonic() - grace_start >= rcfg["grace_s"]:
+                        for k in live:
+                            stop_reason[k] = "stopped-by-harness"
+                        break
+                else:
+                    grace_start = None
                 if first_pass is None and time.monotonic() - last_poll >= a.poll_s:
                     last_poll = time.monotonic()
                     checks, _, err = checks_now("poll")
                     if err is None and all_pass(checks):
                         first_pass = time.monotonic() - t0
         finally:
+            for k, p in procs.items():
+                if p.poll() is None and k in role_keys:
+                    stop_reason.setdefault(k, "killed-by-cap")
             for p in procs.values():
                 kill_group(p)
             for p in procs.values():
                 p.wait()
+        stopped_t = time.monotonic()
         pump()
         wall = time.monotonic() - t0
         rcs = {n: p.returncode for n, p in procs.items()}
@@ -476,7 +599,7 @@ class Suite:
                 json.dump(stamps, f, sort_keys=True)
         self.run_kill = kill_rec
         if outcome is None:
-            outcome = "crash" if any(rc != 0 for k, rc in rcs.items() if k not in cut and k != killed) else "ok"
+            outcome = "crash" if any(rc != 0 for k, rc in rcs.items() if k not in cut and k != killed and k not in role_keys) else "ok"
         if outcome == "crash":
             notes.append("agent exit codes %s" % json.dumps(rcs, sort_keys=True))
         # the final hidden check on a clone of the final origin
@@ -487,18 +610,20 @@ class Suite:
             notes.append("checker error: " + err)
         if first_pass is None and err is None and all_pass(checks):
             first_pass = wall
-        sums = {n: s.summary() for n, s in states.items()}
+        allsums = {n: s.summary() for n, s in states.items()}
+        # the workers' numbers are the team's work; the role members' and the supervisor's replacements are the roles' (#1421)
+        sums = {n: v for n, v in allsums.items() if n not in role_keys and n not in repl_keys}
         total, done = schema.count_units(checks)
         shas = {n: sha256_file(os.path.join(log_dir, "%s.stream.jsonl" % n)) for n in procs}
-        any_est = any(s["cost_estimated"] for s in sums.values())
+        any_est = any(s["cost_estimated"] for s in allsums.values())
         models = []
-        for s in sums.values():
+        for s in allsums.values():
             models += [m for m in s["models"] if m not in models]
         rec["models"]["resolved_ids"] = models
         rec["wall_s"] = round(wall, 3)
         rec["time_to_first_pass_s"] = None if first_pass is None else round(first_pass, 3)
         rec["outcome"] = outcome
-        rec["spend"] = {"usd": round(sum(s["cost_usd"] for s in sums.values()), 6), "estimated": any_est}
+        rec["spend"] = {"usd": round(sum(s["cost_usd"] for s in allsums.values()), 6), "estimated": any_est}
         per_agent = {}
         for k, s in sums.items():
             per_agent[agent_of[k]] = per_agent.get(agent_of[k], 0) + s["turns"]
@@ -518,14 +643,61 @@ class Suite:
             coordination_context_tokens=coord_chars // 4,
             idle_turns=sum(s["idle_turns"] for s in sums.values()))
         notes.append("coordination_context_tokens estimated as characters/4 (no tokenizer in the standard library)")
+        if rcfg:
+            self.role_record(rec, rcfg, role_info, allsums, role_keys, repl_keys, restarts, stop_reason, rcs, started_at,
+                             ended_at, stopped_t, notes)
         if any(s["is_error"] for s in sums.values()):
             notes.append("an agent's result message reported is_error")
         rec["outcome_checks"] = checks
-        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes, log_dir, arm, states)
+        self.scenario_metrics(rec, raw, origin, list(clones.values()), henv, notes, log_dir, arm,
+                              {k: v for k, v in states.items() if k in sums})
         self.history_metrics(rec, origin, clones, agent_of, log_dir, henv, notes)
         rec["artifacts"] = {"streams": log_dir, "store_export": None,
                             "checker_report": os.path.join(log_dir, "check.json"), "stream_sha256": shas}
         self.store_metrics(rec, arm, khome, kkeys, log_dir, notes)
+
+    def grant_roles(self, rcfg, role_info, env, scratch, notes):
+        """The K3 role grants, in the run store (roles.py explains the seam): the integrator role by `klatch admin integrator`
+        at a pseudo-terminal, a clearance when the scenario sets one. klatch has no supervisor role, so the supervisor is an
+        ordinary member. A grant that fails is recorded and noted, never an invalid run."""
+        seam = roles_mod.AdminSeam(self.args.klatch_bin, env, scratch)
+        if "integrator" in rcfg["members"]:
+            ok, why = roles_mod.grant_integrator(seam, "integrator")
+            role_info["integrator"].update(granted=bool(ok), grant_error=None if ok else why)
+            if not ok:
+                notes.append("role integrator was not granted: %s" % why)
+        for member, label in sorted((rcfg.get("clearance") or {}).items()):
+            if member in rcfg["members"]:
+                ok, why = roles_mod.set_clearance(seam, member, label)
+                role_info[member]["clearance"] = label if ok else None
+                if not ok:
+                    notes.append("clearance of %s was not set: %s" % (member, why))
+
+    def role_record(self, rec, rcfg, role_info, allsums, role_keys, repl_keys, restarts, stop_reason, rcs, started_at,
+                    ended_at, stopped_t, notes):
+        """rec["roles"]: per role member (and per replacement the supervisor started) its turns, tokens, cost, wall time,
+        exit and state, apart from the workers' numbers; spend.usd stays the team total and gains workers_usd and roles_usd."""
+        def one(key):
+            s = allsums[key]
+            rc = rcs.get(key)
+            state = stop_reason.get(key) or ("ok" if rc == 0 else "failed")
+            return {"turns": s["turns"], "tokens": s["tokens"], "cost_usd": round(s["cost_usd"], 6),
+                    "cost_estimated": s["cost_estimated"], "tool_calls": s["tool_calls"]["total"], "messages": s["messages"],
+                    "wall_s": round(ended_at.get(key, stopped_t) - started_at[key], 3), "exit": rc, "state": state,
+                    "models": s["models"]}
+        members, repl = {}, {}
+        for k in sorted(role_keys):
+            members[k] = dict(one(k), **role_info.get(k, {}))
+            if members[k]["state"] != "ok":
+                notes.append("role %s: %s (exit %s)" % (k, members[k]["state"], members[k]["exit"]))
+        for k in sorted(repl_keys):
+            repl[k] = dict(one(k), replaces=[x["member"] for x in restarts if x["replacement"] == k][0])
+        rec["roles"] = {"model": rcfg["model"], "per_role_usd": rcfg["per_role_usd"], "grace_s": rcfg["grace_s"],
+                        "max_restarts": rcfg["max_restarts"], "members": members, "replacements": repl, "restarts": restarts}
+        roles_usd = sum(m["cost_usd"] for m in list(members.values()) + list(repl.values()))
+        rec["spend"]["roles_usd"] = round(roles_usd, 6)
+        rec["spend"]["workers_usd"] = round(rec["spend"]["usd"] - roles_usd, 6)
+        rec["models"]["roles"] = rcfg["model"]
 
     def store_metrics(self, rec, arm, khome, kkeys, log_dir, notes):
         """The K arms' run store as counts (#1433): artifacts.store_export, the claim and ask metrics that were null, and the
@@ -810,7 +982,13 @@ def parse_args(argv):
     p.add_argument("--room", default="lobby")
     p.add_argument("--seed", type=int, default=1000)
     p.add_argument("--model", help="the agent model id (required with --driver claude)")
-    p.add_argument("--roles-model")
+    p.add_argument("--roles-model", help="the model of the role members of K3 and B1-roles (default: the scenario file's, else --model)")
+    p.add_argument("--roles", help="the role members to start in K3 and B1-roles, comma separated (default: the scenario "
+                   "file's, else integrator,supervisor)")
+    p.add_argument("--role-usd", type=float, help="the spend cap of each role member (default: the scenario file's, else the run "
+                   "cap spread over every member)")
+    p.add_argument("--roles-grace-s", type=float, help="how long the role members may run on after every worker has ended "
+                   "(default: the scenario file's, else 120)")
     p.add_argument("--claude-bin", default="claude")
     p.add_argument("--fake-script", help="a fake-agent script (default: the fixture's)")
     p.add_argument("--max-run-usd", type=float, default=None, help="per-run spend cap (default %g; with an approval file "
