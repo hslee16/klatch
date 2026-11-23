@@ -1,0 +1,1 @@
+- The admin passphrase proof (Argon2id) is compiled optimised in the dev and test profiles, which cuts the test run by about a third; its production cost parameters and the release build are unchanged (#1352).
