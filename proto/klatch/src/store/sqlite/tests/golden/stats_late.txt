@@ -1,0 +1,422 @@
+klatch stats (counts only; no message text, ask text, claim detail, label or payload)
+schema 44; room all; since 2026-11-23; at 2026-11-23
+
+messages per room
+  room        class    messages  sealed  senders  first       last
+  lobby       open            2       0        2  2026-11-23  2026-11-23
+  sealedroom  open            2       2        1  2026-11-23  2026-11-23
+  vault       private         1       0        1  2026-11-23  2026-11-23
+
+messages per day (UTC)
+  day         messages
+  2026-11-23  5
+
+senders: 4 distinct, 0 with a verified message
+
+top senders
+  sender  messages
+  erin    2
+  bob     1
+
+attribution
+  attribution   messages
+  unattributed  5
+
+message kinds
+  kind    messages
+  (none)  4
+  note    1
+
+asks: 1 created, 0 answered, 0 closed, 0 with a declared scope, 0 with refs
+time to first answer: median -, p90 -
+2 messages under a sealed label were not read for asks
+
+ask refs by kind
+  (none)
+
+live claims by class
+  class   claims
+  file    1
+  ticket  1
+  ask     1
+  other   1
+
+claim notes by class
+  class   notes
+  file    2
+  ticket  1
+
+members waiting on a held claim now, by class
+  class  waiting
+  file   1
+claim yields on record: 0
+
+claim grants by class (new holds; renewals are not counted)
+  class   grants
+  file    2
+  ticket  2
+  other   1
+
+claim refusals by rule
+  rule       refusals
+  same-path  2
+
+claim releases by class
+  class  releases
+  file   2
+  other  1
+
+claim releases by who released
+  by       releases
+  anchor   1
+  holder   1
+  session  1
+
+claim expiries by class (the holder's lease lapsed)
+  class   expiries
+  ticket  2
+  file    1
+claims taken over after expiry: 1
+claim conflicts handled (refused, then granted): 1, median wait 90s
+claim hold time: median 100s over 5 holds
+machine checkpoints: 3 written (1 at session end), 1 replaced an earlier one, 183 bytes
+machine status: 5 updates (working 3, idle 1, parked 1)
+passive claims: 0 granted, 0 renewed, 0 refused, 0 released, 0 lapsed, 0 failed
+ask routing: 1 routed to capable members, 1 routed to nobody, 1 taken, 1 lapsed, 2 escalated (1 with no coordinator to reach)
+
+refusals by rule
+  rule        refusals
+  rate-limit  2
+  (other)     1
+  scrub       1
+
+direct message rooms: 0 (0 messages); private rooms: 1 (1 messages)
+members: 3 joined, 3 never posted, 0 marked done, 0 muted, 0 with a parent
+members who posted and never read: 0 of 0 (0 never shown anything by a hook, wait or wake)
+
+hook runs by event (cumulative)
+  event             runs
+  PostToolUse       150
+  UserPromptSubmit  20
+
+bytes injected into sessions by hook event (sizes only; the average is per run)
+  PostToolUse: 45000 bytes in 150 runs (average 300, largest 900)
+  UserPromptSubmit: 2000 bytes in 20 runs (average 100, largest 400)
+
+largest sessions by bytes injected
+  session  bytes
+  alice    42000
+  bob      5000
+
+admin audit by act
+  act    count
+  pause  2
+  close  1
+
+worker credentials: 0 issued, 0 revoked
+
+=== json ===
+{
+  "schema": 44,
+  "room": null,
+  "since": 1795427999,
+  "at": 1795431600,
+  "rooms": [
+    {
+      "room": "lobby",
+      "class": "open",
+      "messages": 2,
+      "sealed": 0,
+      "senders": 2,
+      "first": 1795428000,
+      "last": 1795428005
+    },
+    {
+      "room": "sealedroom",
+      "class": "open",
+      "messages": 2,
+      "sealed": 2,
+      "senders": 1,
+      "first": 1795428020,
+      "last": 1795428021
+    },
+    {
+      "room": "vault",
+      "class": "private",
+      "messages": 1,
+      "sealed": 0,
+      "senders": 1,
+      "first": 1795428009,
+      "last": 1795428009
+    }
+  ],
+  "days": [
+    {
+      "day": "2026-11-23",
+      "messages": 5
+    }
+  ],
+  "room_days": [
+    {
+      "room": "lobby",
+      "day": "2026-11-23",
+      "messages": 2
+    },
+    {
+      "room": "sealedroom",
+      "day": "2026-11-23",
+      "messages": 2
+    },
+    {
+      "room": "vault",
+      "day": "2026-11-23",
+      "messages": 1
+    }
+  ],
+  "senders": {
+    "distinct": 4,
+    "verified": 0,
+    "top": [
+      {
+        "name": "erin",
+        "count": 2
+      },
+      {
+        "name": "bob",
+        "count": 1
+      }
+    ]
+  },
+  "attribution": [
+    {
+      "name": "unattributed",
+      "count": 5
+    }
+  ],
+  "kinds": [
+    {
+      "name": "(none)",
+      "count": 4
+    },
+    {
+      "name": "note",
+      "count": 1
+    }
+  ],
+  "asks": {
+    "created": 1,
+    "answered": 0,
+    "closed": 0,
+    "with_scope": 0,
+    "with_refs": 0,
+    "ref_kinds": [],
+    "first_answer_median_secs": null,
+    "first_answer_p90_secs": null,
+    "sealed_unread": 2
+  },
+  "claims": {
+    "live": [
+      {
+        "name": "file",
+        "count": 1
+      },
+      {
+        "name": "ticket",
+        "count": 1
+      },
+      {
+        "name": "ask",
+        "count": 1
+      },
+      {
+        "name": "other",
+        "count": 1
+      }
+    ],
+    "notes": [
+      {
+        "name": "file",
+        "count": 2
+      },
+      {
+        "name": "ticket",
+        "count": 1
+      }
+    ],
+    "waiting": [
+      {
+        "name": "file",
+        "count": 1
+      }
+    ],
+    "yields": 0,
+    "history": {
+      "granted": [
+        {
+          "name": "file",
+          "count": 2
+        },
+        {
+          "name": "ticket",
+          "count": 2
+        },
+        {
+          "name": "other",
+          "count": 1
+        }
+      ],
+      "refused": [
+        {
+          "name": "same-path",
+          "count": 2
+        }
+      ],
+      "released": [
+        {
+          "name": "file",
+          "count": 2
+        },
+        {
+          "name": "other",
+          "count": 1
+        }
+      ],
+      "released_by": [
+        {
+          "name": "anchor",
+          "count": 1
+        },
+        {
+          "name": "holder",
+          "count": 1
+        },
+        {
+          "name": "session",
+          "count": 1
+        }
+      ],
+      "expired": [
+        {
+          "name": "ticket",
+          "count": 2
+        },
+        {
+          "name": "file",
+          "count": 1
+        }
+      ],
+      "takeovers": 1,
+      "conflicts_handled": 1,
+      "conflict_wait_median_secs": 90,
+      "hold_median_secs": 100,
+      "holds": 5
+    }
+  },
+  "machine_checkpoints": {
+    "written": 3,
+    "last": 1,
+    "replaced": 1,
+    "bytes": 183
+  },
+  "machine_status": {
+    "updates": 5,
+    "working": 3,
+    "idle": 1,
+    "parked": 1
+  },
+  "passive_claims": {
+    "granted": 0,
+    "renewed": 0,
+    "refused": 0,
+    "released": 0,
+    "lapsed": 0,
+    "failed": 0
+  },
+  "ask_routing": {
+    "routed": 1,
+    "unrouted": 1,
+    "taken": 1,
+    "lapsed": 1,
+    "escalated": 2,
+    "escalated_unreached": 1
+  },
+  "refusals": [
+    {
+      "name": "rate-limit",
+      "count": 2
+    },
+    {
+      "name": "(other)",
+      "count": 1
+    },
+    {
+      "name": "scrub",
+      "count": 1
+    }
+  ],
+  "members": {
+    "joined": 3,
+    "never_posted": 3,
+    "marked_done": 0,
+    "muted": 0,
+    "with_parent": 0,
+    "posted": 0,
+    "posted_never_read": 0,
+    "posted_never_shown": 0,
+    "posted_never_read_by_day": []
+  },
+  "hooks": [
+    {
+      "name": "PostToolUse",
+      "count": 150
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 20
+    }
+  ],
+  "hook_bytes": [
+    {
+      "name": "PostToolUse",
+      "count": 45000
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 2000
+    }
+  ],
+  "hook_bytes_max": [
+    {
+      "name": "PostToolUse",
+      "count": 900
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 400
+    }
+  ],
+  "sessions_top_bytes": [
+    {
+      "name": "alice",
+      "count": 42000
+    },
+    {
+      "name": "bob",
+      "count": 5000
+    }
+  ],
+  "audit": [
+    {
+      "name": "pause",
+      "count": 2
+    },
+    {
+      "name": "close",
+      "count": 1
+    }
+  ],
+  "credentials": {
+    "issued": 0,
+    "revoked": 0
+  }
+}

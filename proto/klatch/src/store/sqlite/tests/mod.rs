@@ -33,6 +33,9 @@ mod review;
 mod runs;
 mod shown;
 mod stats;
+mod stats_events;
+mod stats_fixture;
+mod stats_golden;
 mod wait_cycles;
 
 pub(super) fn store() -> SqliteStore {
