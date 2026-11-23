@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 pub(super) const KEY: &str = "sk-live-SECRET-1234";
 
 /// What a loopback server does with one connection.
-enum Reply {
+pub(super) enum Reply {
     /// Write these bytes, then close.
     Bytes(Vec<u8>),
     /// Accept and say nothing for a while (a stalled server).

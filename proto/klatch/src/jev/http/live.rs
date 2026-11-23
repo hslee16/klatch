@@ -170,8 +170,18 @@ fn jev_live_all() {
     let _ = std::fs::remove_file(report_path());
     record(&format!("start model={MODEL} host={HOST}"));
     let c = client(MODEL);
+    live_models(&c);
+    live_text_questions(&c);
+    let in_state = picture_state();
+    live_images(&c, &in_state);
+    live_base64_image(&in_state);
+    live_bad_key_and_model();
+    live_burst();
+    record(&format!("done; report at {}", report_path().display()));
+}
 
-    // the model list, and the key check through it
+/// The model list, and the key check through it.
+fn live_models(c: &JevClient<HttpTransport>) {
     let models = c.list_models();
     record(&format!("models: {}", outcome(&models)));
     if let Ok(m) = &models {
@@ -191,8 +201,10 @@ fn jev_live_all() {
             .map(|s| format!("{s:?}"))
             .map_err(|e| outcome::<()>(&Err(e)))
     ));
+}
 
-    // the made-up text checks of #911: choice (the judge's question), noul
+/// The made-up text checks of #911 and the score question.
+fn live_text_questions(c: &JevClient<HttpTransport>) {
     let judge = judge_question();
     let r = c.ask(&text(), std::slice::from_ref(&judge));
     record(&format!("choice (judge question): {}", outcome(&r)));
@@ -228,14 +240,20 @@ fn jev_live_all() {
             s.score >= 0.0 && s.score <= (s.legend.len().max(1) - 1) as f64
         ));
     }
+}
 
-    // images: in the state, in the instructions, in the criteria (multipart each time), and a box
-    let in_state = Entry::object(vec![(
+/// The state of the image checks: one picture under the key `picture`.
+fn picture_state() -> Entry {
+    Entry::object(vec![(
         Key::Fixed("picture"),
         Entry::image("public", picture()),
-    )]);
+    )])
+}
+
+/// Images in the state, in the instructions and in the criteria (multipart each time), and a box.
+fn live_images(c: &JevClient<HttpTransport>, in_state: &Entry) {
     let r = c.ask(
-        &in_state,
+        in_state,
         &[Question::noul(
             "square",
             "Is there a red square in `picture`?",
@@ -282,7 +300,7 @@ fn jev_live_all() {
         outcome(&c.ask(&text(), &[q]))
     ));
     let r = c.ask(
-        &in_state,
+        in_state,
         &[Question::locate(
             "square",
             "Where is the red square in `picture`?",
@@ -300,10 +318,13 @@ fn jev_live_all() {
             b.confidence.is_some()
         ));
     }
-    // the same image as base64 JSON, to compare what the API says about the two forms
+}
+
+/// The same image as base64 JSON, to compare what the API says about the two forms.
+fn live_base64_image(in_state: &Entry) {
     let prepared = build_request(
         MODEL,
-        &in_state,
+        in_state,
         &[Question::noul(
             "square",
             "Is there a red square in `picture`?",
@@ -324,8 +345,10 @@ fn jev_live_all() {
         "image as base64 JSON: {}",
         transport_outcome(HttpTransport::new().send(&key, &base64_request))
     ));
+}
 
-    // a bad key, an unknown model
+/// A bad key and an unknown model.
+fn live_bad_key_and_model() {
     let bad = JevClient::new(HttpTransport::new(), JevConfig::new(MODEL, 0.8).unwrap())
         .with_key_source(Box::new(|| Some("not-a-real-key".to_string())));
     let r = bad.list_models();
@@ -356,8 +379,11 @@ fn jev_live_all() {
             )]
         ))
     ));
+}
 
-    // a small burst, no retries, to look for a 429 and what it says
+/// A small burst, no retries, to look for a 429 and what it says.
+fn live_burst() {
+    let key = ApiKey::from_env().unwrap();
     let burst_request = JevRequest::system_one(
         &build_request(
             MODEL,
@@ -410,7 +436,6 @@ fn jev_live_all() {
         !hints.is_empty(),
         hints.first()
     ));
-    record(&format!("done; report at {}", report_path().display()));
 }
 
 /// Only the shape of a retry hint: absent, a number, or something else (such as an HTTP date).
