@@ -107,7 +107,7 @@ fn capitalise(s: &str) -> String {
 
 #[test]
 fn every_method_in_the_spec_has_a_rust_wrapper() {
-    assert_every_method_wrapped("proto/klatch/src/client.rs", "Rust", &|m| {
+    assert_every_method_wrapped("proto/klatch/src/client/methods.rs", "Rust", &|m| {
         [format!("pub fn {m}("), format!("pub fn set_{m}(")]
     });
 }
