@@ -138,8 +138,13 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
 /// main.rs of both binaries: lowering the core dump limit. The harness module: the process table. The daemon (#102):
 /// the peer-credential calls, umask, signal handlers and poll, all libc. The admin passphrase prompt (#1233): termios
 /// and read on a terminal descriptor. The tests that drive the binary on a pseudo-terminal (openpty, setsid, poll).
-/// Nothing else.
-const UNSAFE_ALLOWED: [&str; 7] = [
+/// The mutual TLS listener (#108), three libc calls with nothing around them: `socketpair` for the in-process pair
+/// (`loopback.rs`), `poll` over two descriptors (`tls_bridge.rs`), and `geteuid` for the key file's owner check
+/// (`tls.rs`). Nothing else.
+const UNSAFE_ALLOWED: [&str; 10] = [
+    "klatch-server/src/loopback.rs",
+    "klatch-server/src/tls_bridge.rs",
+    "klatch-server/src/tls.rs",
     "klatch/src/proof/tty.rs",
     "klatch/tests/common/",
     "klatch-bench/src/pty.rs",
