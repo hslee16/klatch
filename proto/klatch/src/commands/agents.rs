@@ -22,12 +22,14 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             event,
             board,
             no_join,
+            checkpoint,
         } => hook(
             ctx,
             &HookArgs {
                 event,
                 board,
                 no_join,
+                checkpoint,
             },
         )?,
         AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
@@ -124,6 +126,8 @@ pub(super) struct HookArgs {
     pub(super) event: Option<String>,
     pub(super) board: Option<String>,
     pub(super) no_join: bool,
+    /// The machine checkpoint consent (#1408): the hook command carries `--checkpoint`.
+    pub(super) checkpoint: bool,
 }
 
 impl HookArgs {
@@ -134,7 +138,11 @@ impl HookArgs {
 
 /// A session that ends is marked done in every room it joined, so it leaves the board at once instead of aging out
 /// (DESIGN section 25.13). It prints nothing: the session is over.
-pub(super) fn session_end(t: &dyn Transport) -> Result<()> {
+pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>) -> Result<()> {
+    // The final machine checkpoint (#1408) first: it names the claims the member holds, which the release below frees.
+    if let Some(reason) = ended {
+        let _ = t.write_machine_checkpoint(Some(reason));
+    }
     // Only the rooms are needed: a digest would mark unread messages as shown, and a resumed session would never
     // be shown them (#30).
     // a member that has ended cannot be working: free what it held (#277). First, so a credential that idled out
@@ -325,7 +333,14 @@ pub(super) fn note_permission_mode(ctx: &Ctx) {
 pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
-        return session_end(t);
+        // consent travels in the command (`--checkpoint`); the reason is the input's, a word or nothing
+        let reason = args.checkpoint.then(|| {
+            ctx.stdin
+                .and_then(|i| i.get("reason"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("")
+        });
+        return session_end(t, reason);
     }
     note_permission_mode(ctx);
     if args.is("PreToolUse") {
@@ -344,9 +359,15 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     }
     // The end of a turn records what still runs in the background (a declared long wait) and prints nothing: the
     // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
+    if args.is("PostToolUse") && args.checkpoint {
+        super::checkpoint::note_tool_call(t, ctx.stdin);
+    }
     if args.is("Stop") {
         let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
         let _ = t.record_stop(tasks, crons);
+        if args.checkpoint {
+            let _ = t.write_machine_checkpoint(None);
+        }
         let _ = t.record_hook_run("Stop", 0);
         return Ok(());
     }

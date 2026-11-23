@@ -140,6 +140,8 @@ impl SqliteStore {
             "DELETE FROM member_mode WHERE member=?1",
             "DELETE FROM claim_waits WHERE member=?1",
             "DELETE FROM member_parked WHERE member=?1",
+            "DELETE FROM member_trail WHERE member=?1",
+            "DELETE FROM machine_checkpoints WHERE member=?1",
         ] {
             self.exec(sql, params![name])?;
         }
@@ -160,6 +162,7 @@ impl SqliteStore {
             for sql in [
                 "DELETE FROM claims WHERE room=?1 AND owner=?2",
                 "DELETE FROM members WHERE room=?1 AND name=?2",
+                "DELETE FROM machine_checkpoints WHERE room=?1 AND member=?2",
             ] {
                 self.exec(sql, params![room, member])?;
             }

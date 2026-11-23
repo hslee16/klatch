@@ -72,5 +72,11 @@ pub(crate) enum AgentsCmd {
         /// At session start, do not join the default lobby (the default is to join it, as the session's first act)
         #[arg(long)]
         no_join: bool,
+        /// Keep a machine checkpoint (#1408): on PostToolUse note the class of each tool call and the repo-relative
+        /// path of an edit or write (never a command, content or output); on Stop and SessionEnd write the checkpoint
+        /// beside the member's task. Consent lives here: only a hook command that carries this flag records anything
+        /// (`klatch init --checkpoint`).
+        #[arg(long)]
+        checkpoint: bool,
     },
 }

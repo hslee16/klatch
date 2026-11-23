@@ -27,6 +27,9 @@ pub struct Options {
     /// The PreToolUse claim hook (#33) and the wake hook (#37): opt in, opt out, or leave as is.
     pub enforce: Switch,
     pub wake: Switch,
+    /// The machine checkpoint (#1408): the Stop hook, and a flag on the PostToolUse and SessionEnd hooks that records
+    /// tool classes and edited paths and writes the checkpoint. Opt in, opt out, or leave as is.
+    pub checkpoint: Switch,
     /// Remove every hook klatch wrote instead of installing (#436); nothing else in the settings is touched.
     pub uninstall: bool,
     /// Install into Codex's hooks.json instead of Claude Code's settings (#782).
@@ -56,6 +59,7 @@ struct Choices {
     session_end: bool,
     enforce: Switch,
     wake: Switch,
+    checkpoint: Switch,
 }
 
 /// A settings file and what it would become.
@@ -154,6 +158,9 @@ impl Io<'_> {
             options.yes,
             "Mark a session done when it ends, so it leaves the lobby board at once?",
         )?;
+        if options.checkpoint == Switch::On && !session_end {
+            bail!("--checkpoint needs the SessionEnd hook, which --no-session-end leaves out");
+        }
         Ok(Choices {
             scope,
             board,
@@ -161,6 +168,7 @@ impl Io<'_> {
             session_end,
             enforce: options.enforce,
             wake: options.wake,
+            checkpoint: options.checkpoint,
         })
     }
 }
@@ -215,6 +223,7 @@ fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> any
     set_session_end(&mut merged, bin, choices.session_end).map_err(refuse)?;
     set_enforce(&mut merged, bin, choices.enforce).map_err(refuse)?;
     set_wake(&mut merged, bin, choices.wake).map_err(refuse)?;
+    set_checkpoint(&mut merged, bin, choices.checkpoint).map_err(refuse)?;
     Ok(Plan {
         label,
         path,
@@ -688,8 +697,12 @@ pub(crate) fn merge_commands(
     let mut settings = existing.cloned().unwrap_or_else(|| json!({}));
     let hooks = hooks_of(&mut settings)?;
     for event in EVENTS {
-        let cmd = command(event)?;
+        let mut cmd = command(event)?;
         let list = event_list(hooks, event)?;
+        // a re-run of init without --checkpoint keeps the consent the hook already carries (#1408)
+        if event == "PostToolUse" && carries_checkpoint(list) {
+            cmd.push_str(CHECKPOINT_FLAG);
+        }
         if !sync_entries(list, &cmd, true) {
             list.push(new_entry(&cmd));
         }
@@ -701,7 +714,7 @@ pub(crate) fn merge_commands(
 /// board at once. Everything else in the settings is left as it was.
 pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), String> {
     const EVENT: &str = "SessionEnd";
-    let cmd = hook_command(bin, EVENT, None, true)?;
+    let mut cmd = hook_command(bin, EVENT, None, true)?;
     if !on
         && settings
             .as_object()
@@ -714,12 +727,95 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
         return Ok(());
     }
     let list = event_list(hooks, EVENT)?;
+    if carries_checkpoint(list) {
+        cmd.push_str(CHECKPOINT_FLAG);
+    }
     if !sync_entries(list, &cmd, on) && on {
         list.push(new_entry(&cmd));
     }
     ensure_timeout(list, is_ours);
     if list.is_empty() {
         hooks.remove(EVENT);
+    }
+    Ok(())
+}
+
+/// The flag that is the machine checkpoint consent (#1408): a hook command carries it, or records nothing.
+const CHECKPOINT_FLAG: &str = " --checkpoint";
+
+/// Whether a klatch hook in `list` carries the checkpoint consent.
+fn carries_checkpoint(list: &[Value]) -> bool {
+    list.iter()
+        .filter_map(|m| m.get("hooks").and_then(Value::as_array))
+        .flatten()
+        .filter(|h| is_ours(h))
+        .any(|h| {
+            h.get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|c| c.ends_with(CHECKPOINT_FLAG))
+        })
+}
+
+/// The Stop entry of the checkpoint hook: klatch's own Stop hook, never the wake watcher.
+fn is_checkpoint_stop(hook: &Value) -> bool {
+    is_ours(hook)
+        && hook
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|c| c.contains(" hook --event Stop") && c.ends_with(CHECKPOINT_FLAG))
+}
+
+fn checkpoint_stop_entry(bin: &str) -> Result<Value, String> {
+    let cmd = format!(
+        "{}{CHECKPOINT_FLAG}",
+        hook_command(bin, "Stop", None, true)?
+    );
+    Ok(json!({"hooks": [{"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS}]}))
+}
+
+/// Put the checkpoint flag on, or take it off, every klatch command of `event` in the settings.
+fn flag_event(settings: &mut Value, event: &str, on: bool) -> Result<(), String> {
+    if event_absent(settings, event) {
+        return Ok(());
+    }
+    let list = event_list(hooks_of(settings)?, event)?;
+    for hook in list
+        .iter_mut()
+        .filter_map(|m| m.get_mut("hooks").and_then(Value::as_array_mut))
+        .flatten()
+        .filter(|h| is_ours(h))
+    {
+        let Some(cmd) = hook.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        let bare = cmd.strip_suffix(CHECKPOINT_FLAG).unwrap_or(cmd);
+        hook["command"] = json!(if on {
+            format!("{bare}{CHECKPOINT_FLAG}")
+        } else {
+            bare.to_string()
+        });
+    }
+    Ok(())
+}
+
+/// The machine checkpoint (#1408): a Stop hook that carries `--checkpoint`, and the same flag on klatch's PostToolUse
+/// and SessionEnd commands, so the trail is kept, the checkpoint is written at each turn's end and a last one at the
+/// end of the session. `Switch::Keep` leaves things as they are. The flag is the consent: a hook command without it
+/// records nothing.
+pub fn set_checkpoint(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    if how == Switch::Keep {
+        return Ok(());
+    }
+    let on = how == Switch::On;
+    let spec = Optional {
+        event: "Stop",
+        entry: checkpoint_stop_entry,
+        owns: is_checkpoint_stop,
+        refresh: true,
+    };
+    set_optional(settings, bin, (&spec, how))?;
+    for event in ["PostToolUse", "SessionEnd"] {
+        flag_event(settings, event, on)?;
     }
     Ok(())
 }

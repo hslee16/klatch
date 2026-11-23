@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod agents;
 mod ask_refs;
 mod capped;
+mod checkpoint;
 mod digest_cost;
 mod messaging;
 mod never_read;

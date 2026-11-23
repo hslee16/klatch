@@ -26,6 +26,8 @@ pub enum Setting {
     SessionEnd(bool),
     Enforce(bool),
     Wake(bool),
+    /// The machine checkpoint (#1408).
+    Checkpoint(bool),
 }
 
 /// Every consent as it stands in one settings value.
@@ -36,6 +38,7 @@ pub struct State {
     pub session_end: bool,
     pub enforce: bool,
     pub wake: bool,
+    pub checkpoint: bool,
     /// The program klatch's hooks run, kept as it is when a consent changes.
     bin: String,
 }
@@ -47,6 +50,7 @@ const LEGEND: &str = "What each one changes (only klatch's own hook entries in t
   session-end: a SessionEnd hook marks a finished session done in klatch's store
   enforce: a PreToolUse hook blocks an edit of a path another member claimed
   wake: asyncRewake hooks on SessionStart and Stop wake an idle session for unread messages
+  checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 ";
 
@@ -75,6 +79,9 @@ pub fn read_state(settings: &Value) -> Option<State> {
         session_end: has("SessionEnd", HookKind::Base),
         enforce: has("PreToolUse", HookKind::Enforce),
         wake: found.iter().any(|(_, _, kind)| *kind == HookKind::Wake),
+        checkpoint: found.iter().any(|(e, cmd, k)| {
+            e == "Stop" && *k == HookKind::Base && cmd.ends_with(" --checkpoint")
+        }),
         bin: init::hook_program(first).to_string(),
     })
 }
@@ -92,6 +99,7 @@ impl State {
             format!("session-end: {}", on_off(self.session_end)),
             format!("enforce: {}", on_off(self.enforce)),
             format!("wake: {}", on_off(self.wake)),
+            format!("checkpoint: {}", on_off(self.checkpoint)),
         ]
     }
 }
@@ -112,8 +120,9 @@ impl Setting {
             "session-end" => switch().map(Self::SessionEnd),
             "enforce" => switch().map(Self::Enforce),
             "wake" => switch().map(Self::Wake),
+            "checkpoint" => switch().map(Self::Checkpoint),
             other => Err(format!(
-                "unknown consent {other:?}: board, join, session-end, enforce or wake"
+                "unknown consent {other:?}: board, join, session-end, enforce, wake or checkpoint"
             )),
         }
     }
@@ -158,6 +167,7 @@ pub fn apply(settings: &mut Value, setting: &Setting) -> Result<(), String> {
         Setting::SessionEnd(on) => init::set_session_end(&mut next, bin, *on)?,
         Setting::Enforce(on) => init::set_enforce(&mut next, bin, switch_of(*on))?,
         Setting::Wake(on) => init::set_wake(&mut next, bin, switch_of(*on))?,
+        Setting::Checkpoint(on) => init::set_checkpoint(&mut next, bin, switch_of(*on))?,
     }
     *settings = next;
     Ok(())

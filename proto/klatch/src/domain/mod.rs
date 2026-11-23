@@ -25,6 +25,7 @@ mod judge;
 mod judge_loop;
 mod kind;
 mod labels;
+mod machine_checkpoint;
 mod mediator;
 mod merge_claim;
 mod priority;
@@ -78,6 +79,10 @@ pub use board::{
     short_dir_name, statuses,
 };
 pub use card::{Card, card_of, render_card};
+pub use machine_checkpoint::{
+    MACHINE_MARK, MACHINE_MAX_BYTES, MachineCheckpoint, MachineState, TRAIL_PATH_MAX_BYTES,
+    ToolClass, Trail, end_word, machine_body, repo_relative, status_word,
+};
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
 pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
 pub use tasks::{
@@ -146,8 +151,8 @@ pub use toolguard::{
     patch_targets,
 };
 pub use usage_stats::{
-    AskCounts, ClaimCounts, ClaimHistory, Counts, MemberCounts, RoomClass, RoomCount, StatsOptions,
-    UsageStats, claim_class, day_of, median_and_p90, start_of_day, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MemberCounts, RoomClass,
+    RoomCount, StatsOptions, UsageStats, claim_class, day_of, median_and_p90, start_of_day, vocab,
 };
 pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{cut_to, fit_prefix, mentioning};
