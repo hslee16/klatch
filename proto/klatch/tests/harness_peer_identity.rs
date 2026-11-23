@@ -76,8 +76,19 @@ fn fake_session(dir: &Path, script: &str) -> Child {
         .arg("-c")
         .arg(script)
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap()
+}
+
+/// Stop the connecting client, a grandchild of the test that killing the shell above it does not reach.
+fn kill_client(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn client_script(socket: &Path) -> String {
@@ -134,6 +145,7 @@ fn the_server_learns_the_pid_of_the_process_that_connected_and_maps_it_to_its_se
         .expect("the connecting process maps to its session");
     assert_eq!(found.session_id, "peer-session-0001");
     assert_eq!(found.pid, session.id());
+    kill_client(client);
     let _ = session.kill();
     let _ = session.wait();
 }
@@ -147,13 +159,17 @@ fn a_process_with_no_session_above_it_maps_to_nothing() {
         .arg("-c")
         .arg(client_script(&socket))
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let (stream, _) = listener.accept().unwrap();
     let pid = peer_pid(&stream).unwrap();
     let registry = dir.join("sessions");
     std::fs::create_dir_all(&registry).unwrap();
-    assert!(find_session(pid, &PsTable, &FsRegistry { dir: registry }, domain()).is_err());
+    let found = find_session(pid, &PsTable, &FsRegistry { dir: registry }, domain());
+    kill_client(pid);
+    assert!(found.is_err());
     let _ = client.kill();
     let _ = client.wait();
 }
