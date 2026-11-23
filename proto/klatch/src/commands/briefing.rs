@@ -189,6 +189,7 @@ mod briefing_tests {
             event: Some("SessionStart".into()),
             board: board.map(String::from),
             no_join: false,
+            checkpoint: false,
         };
         session_start(&ctx, &args).unwrap().0
     }

@@ -37,8 +37,35 @@ pub(super) fn tool_trace(input: &serde_json::Value) -> Option<(ToolClass, Vec<St
     Some((class, paths))
 }
 
+/// The SessionEnd reason when the hook carries the checkpoint consent (a word from the input or none), else `None`.
+pub(super) fn end_reason(input: Option<&serde_json::Value>, consent: bool) -> Option<&str> {
+    consent.then(|| {
+        input
+            .and_then(|i| i.get("reason"))
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+    })
+}
+
+/// The checkpoint at the end of a turn, when the hook carries the consent.
+pub(super) fn stop_checkpoint(t: &dyn Transport, consent: bool) {
+    if consent {
+        let _ = t.write_machine_checkpoint(None);
+    }
+}
+
+/// The last checkpoint of a session, when there is a reason (the consent gave one).
+pub(super) fn end_checkpoint(t: &dyn Transport, reason: Option<&str>) {
+    if let Some(reason) = reason {
+        let _ = t.write_machine_checkpoint(Some(reason));
+    }
+}
+
 /// Add one tool call to the caller's trail. A failure to record never stops the hook.
-pub(super) fn note_tool_call(t: &dyn Transport, input: Option<&serde_json::Value>) {
+pub(super) fn note_tool_call(t: &dyn Transport, input: Option<&serde_json::Value>, consent: bool) {
+    if !consent {
+        return;
+    }
     let Some((class, paths)) = input.and_then(tool_trace) else {
         return;
     };
