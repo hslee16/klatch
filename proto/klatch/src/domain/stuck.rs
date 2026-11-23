@@ -180,16 +180,8 @@ pub fn claim_label(path: &str) -> String {
     if plain { path } else { "(unnamed)" }.to_string()
 }
 
-/// The stuck cases of one room, in a fixed order (stale asks and nobody-capable by ask number, then ask cycles, then
-/// claim deadlocks). `claim_cycles` are the member sets of waits that form a cycle (from the store); `stale_after` is
-/// the room's stale window in seconds.
-pub fn stuck_events(
-    asks: &[OpenAsk],
-    claims: &[Claim],
-    claim_cycles: &[Vec<String>],
-    now: i64,
-    stale_after: i64,
-) -> Vec<StuckEvent> {
+/// The nobody-capable and stale-ask cases, by ask number.
+fn unanswered_ask_events(asks: &[OpenAsk], now: i64, stale_after: i64) -> Vec<StuckEvent> {
     let mut sorted: Vec<&OpenAsk> = asks.iter().collect();
     sorted.sort_by_key(|a| a.seq);
     let mut out = Vec::new();
@@ -211,6 +203,20 @@ pub fn stuck_events(
             });
         }
     }
+    out
+}
+
+/// The stuck cases of one room, in a fixed order (stale asks and nobody-capable by ask number, then ask cycles, then
+/// claim deadlocks). `claim_cycles` are the member sets of waits that form a cycle (from the store); `stale_after` is
+/// the room's stale window in seconds.
+pub fn stuck_events(
+    asks: &[OpenAsk],
+    claims: &[Claim],
+    claim_cycles: &[Vec<String>],
+    now: i64,
+    stale_after: i64,
+) -> Vec<StuckEvent> {
+    let mut out = unanswered_ask_events(asks, now, stale_after);
     for c in ask_cycles(asks, claims, now) {
         out.push(StuckEvent::AskCycle {
             members: c.steps.iter().map(|s| s.waiter.clone()).collect(),

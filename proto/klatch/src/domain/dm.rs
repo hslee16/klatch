@@ -40,13 +40,7 @@ pub fn exchange_run<'a>(senders: &[&'a str]) -> Option<(&'a str, &'a str, usize)
 pub fn crossing_exchange(me: &str, rows: &[(i64, &str)], shown: &[i64]) -> Option<(String, usize)> {
     let senders: Vec<&str> = rows.iter().map(|r| r.1).collect();
     let (last, other, len) = exchange_run(&senders)?;
-    if len < DM_NUDGE_MESSAGES || (last != me && other != me) {
-        return None;
-    }
-    let peer = if last == me { other } else { last };
-    if !valid_name(peer) {
-        return None;
-    }
+    let peer = exchange_peer(me, last, other, len)?;
     let run = &rows[rows.len() - len..];
     // the newest threshold the run has reached whose crossing message was handed over now: the first nudge at 4, a
     // repeat at 6 for a pair that did not move (#1222)
@@ -60,39 +54,66 @@ pub fn crossing_exchange(me: &str, rows: &[(i64, &str)], shown: &[i64]) -> Optio
         })
 }
 
+/// The peer of `me` in a run of `len` messages by `last` and `other`: `None` when the run is too short, `me` is not
+/// one of the two, or the peer's name is not valid.
+fn exchange_peer<'a>(me: &str, last: &'a str, other: &'a str, len: usize) -> Option<&'a str> {
+    let peer = match (last == me, other == me) {
+        (true, _) => other,
+        (_, true) => last,
+        _ => return None,
+    };
+    (len >= DM_NUDGE_MESSAGES && valid_name(peer)).then_some(peer)
+}
+
+/// One message row `(seq, sender, body)` as the nudge reads it.
+type Row<'a> = (i64, &'a str, &'a str);
+
+/// Whether `row` is `speaker`'s `need-info #ask:` (`need`) or `info #ask:` (not `need`) message.
+fn is_clarification_of(row: &Row, speaker: &str, need: bool, ask: i64) -> bool {
+    row.1 == speaker
+        && matches!(crate::domain::parse_clarification(row.2), Some((n, a, _)) if n == need && a == ask)
+}
+
+/// Whether `between` (the rows after the peer's first need-info and before its next) holds `me`'s info for `ask` and
+/// no second need-info from `peer`.
+fn is_second_round(between: &[Row], me: &str, peer: &str, ask: i64) -> bool {
+    between
+        .iter()
+        .any(|r| is_clarification_of(r, me, false, ask))
+        && !between
+            .iter()
+            .any(|r| is_clarification_of(r, peer, true, ask))
+}
+
+/// The index of the peer's first need-info when `rows[i]` is the peer's second need-info of one ask after `me`'s
+/// info (the peer is the sender of `rows[i]`), `None` otherwise.
+fn second_round_start(rows: &[Row], i: usize, me: &str) -> Option<usize> {
+    let (_, peer, body) = rows[i];
+    let (true, ask, _) = crate::domain::parse_clarification(body)? else {
+        return None;
+    };
+    // the peer's first need-info for this ask, and my info after it
+    let first = rows[..i]
+        .iter()
+        .position(|r| is_clarification_of(r, peer, true, ask))?;
+    is_second_round(&rows[first + 1..i], me, peer, ask).then_some(first)
+}
+
 /// The second need-info round of one ask between `me` and a peer (#1223), from a room's newest messages as
 /// `(seq, sender, body)` in order and the `seq`s handed to `me` just now: the peer and the number of messages the two
 /// sent from the first need-info through the second. The structured words decide, never the prose: the peer's
 /// `need-info #N:` and `me`'s `info #N:` for the same ask N, then the peer's second `need-info #N:`, which must be
 /// among `shown`. It is the pair's first such second round in the window, so it is handed over once and a third round
 /// does not trigger again. Pure, like `crossing_exchange`.
-pub fn clarification_round(
-    me: &str,
-    rows: &[(i64, &str, &str)],
-    shown: &[i64],
-) -> Option<(String, usize)> {
-    use crate::domain::parse_clarification;
+pub fn clarification_round(me: &str, rows: &[Row], shown: &[i64]) -> Option<(String, usize)> {
     let mut done: Vec<&str> = Vec::new();
-    for (i, (seq, peer, body)) in rows.iter().enumerate() {
+    for (i, (seq, peer, _)) in rows.iter().enumerate() {
         if *peer == me || done.contains(peer) {
             continue;
         }
-        let Some((true, ask, _)) = parse_clarification(body) else {
+        let Some(first) = second_round_start(rows, i, me) else {
             continue;
         };
-        // the peer's first need-info for this ask, and my info after it
-        let first = rows[..i].iter().position(|r| {
-            r.1 == *peer && matches!(parse_clarification(r.2), Some((true, n, _)) if n == ask)
-        });
-        let Some(first) = first else { continue };
-        let second_round = rows[first + 1..i].iter().any(|r| {
-            r.1 == me && matches!(parse_clarification(r.2), Some((false, n, _)) if n == ask)
-        }) && rows[first + 1..i].iter().all(|r| {
-            r.1 != *peer || !matches!(parse_clarification(r.2), Some((true, n, _)) if n == ask)
-        });
-        if !second_round {
-            continue;
-        }
         done.push(peer);
         if shown.contains(seq) && valid_name(peer) {
             let n = rows[first..=i]
@@ -168,34 +189,42 @@ mod tests {
 
     #[test]
     fn the_run_is_the_newest_stretch_sent_by_only_two_members() {
+        let run = |senders: &[&'static str]| exchange_run(senders);
         assert_eq!(
-            exchange_run(&["cy", "ann", "bo", "ann", "bo"]),
+            run(&["cy", "ann", "bo", "ann", "bo"]),
             Some(("bo", "ann", 4))
         );
-        assert_eq!(
-            exchange_run(&["ann", "bo", "cy", "bo"]),
-            Some(("bo", "cy", 3))
-        );
+        assert_eq!(run(&["ann", "bo", "cy", "bo"]), Some(("bo", "cy", 3)));
+    }
+
+    #[test]
+    fn no_run_when_one_member_sent_them_all_or_there_are_none() {
         assert_eq!(exchange_run(&["ann", "ann", "ann"]), None);
         assert_eq!(exchange_run(&[]), None);
+    }
+
+    /// `crossing_exchange` with the peer's name and the run length written as a pair, or `None`.
+    fn crossing(me: &str, rows: &[(i64, &str)], shown: &[i64]) -> Option<(&'static str, usize)> {
+        let hit = crossing_exchange(me, rows, shown)?;
+        let name = ["ann", "bo"].into_iter().find(|n| *n == hit.0)?;
+        Some((name, hit.1))
     }
 
     #[test]
     fn the_nudge_belongs_to_the_message_that_crosses_the_threshold() {
         let rows = [(1, "bo"), (2, "ann"), (3, "bo"), (4, "ann"), (5, "bo")];
         // ann is handed bo's 3 and 5; the 4th place of the run is ann's own, so 5 is the crossing message
-        assert_eq!(
-            crossing_exchange("ann", &rows, &[1, 3, 5]),
-            Some(("bo".to_string(), 5))
-        );
-        assert_eq!(crossing_exchange("ann", &rows, &[1, 3]), None);
+        assert_eq!(crossing("ann", &rows, &[1, 3, 5]), Some(("bo", 5)));
+        assert_eq!(crossing("ann", &rows, &[1, 3]), None);
         // bo is handed only ann's: the 4th place is ann's message 4
-        assert_eq!(
-            crossing_exchange("bo", &rows, &[2, 4]),
-            Some(("ann".to_string(), 5))
-        );
-        assert_eq!(crossing_exchange("cy", &rows, &[1, 2, 3, 4, 5]), None);
-        assert_eq!(crossing_exchange("ann", &rows[..3], &[1, 3]), None);
+        assert_eq!(crossing("bo", &rows, &[2, 4]), Some(("ann", 5)));
+    }
+
+    #[test]
+    fn a_stranger_or_a_short_run_gets_no_nudge() {
+        let rows = [(1, "bo"), (2, "ann"), (3, "bo"), (4, "ann"), (5, "bo")];
+        assert_eq!(crossing("cy", &rows, &[1, 2, 3, 4, 5]), None);
+        assert_eq!(crossing("ann", &rows[..3], &[1, 3]), None);
     }
 
     fn alternating(n: i64) -> Vec<(i64, &'static str)> {
@@ -208,23 +237,18 @@ mod tests {
     fn a_pair_still_exchanging_at_six_crosses_a_second_threshold() {
         let rows = alternating(7);
         // ann is handed bo's 6: the 6th place of the run is bo's, so it is the second crossing
-        assert_eq!(
-            crossing_exchange("ann", &rows[..6], &[6]),
-            Some(("bo".to_string(), 6))
-        );
-        assert_eq!(
-            crossing_exchange("ann", &rows[..5], &[4]),
-            Some(("bo".to_string(), 5))
-        );
-        // a message past the threshold that is not the crossing one does not repeat it
-        assert_eq!(crossing_exchange("ann", &rows, &[]), None);
-        assert_eq!(crossing_exchange("ann", &alternating(8), &[8]), None);
+        assert_eq!(crossing("ann", &rows[..6], &[6]), Some(("bo", 6)));
+        assert_eq!(crossing("ann", &rows[..5], &[4]), Some(("bo", 5)));
         // bo is handed ann's 7: the 6th place is bo's own, so ann's 7 is the crossing message for bo
-        assert_eq!(
-            crossing_exchange("bo", &rows, &[7]),
-            Some(("ann".to_string(), 7))
-        );
-        assert_eq!(crossing_exchange("bo", &rows[..6], &[3]), None);
+        assert_eq!(crossing("bo", &rows, &[7]), Some(("ann", 7)));
+    }
+
+    #[test]
+    fn a_message_past_the_threshold_that_is_not_the_crossing_one_does_not_repeat_it() {
+        let rows = alternating(7);
+        assert_eq!(crossing("ann", &rows, &[]), None);
+        assert_eq!(crossing("ann", &alternating(8), &[8]), None);
+        assert_eq!(crossing("bo", &rows[..6], &[3]), None);
     }
 
     fn talk<'a>(turns: &[(&'a str, &'a str)]) -> Vec<(i64, &'a str, &'a str)> {
@@ -235,31 +259,39 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_second_need_info_round_of_one_ask_nudges_the_recipient_once() {
-        let rows = talk(&[
+    /// `clarification_round` with the peer's name read back as `helper` or `None`.
+    fn round(me: &str, rows: &[(i64, &str, &str)], shown: &[i64]) -> Option<usize> {
+        let (peer, n) = clarification_round(me, rows, shown)?;
+        assert_eq!(peer, "helper");
+        Some(n)
+    }
+
+    fn three_turns() -> Vec<(i64, &'static str, &'static str)> {
+        talk(&[
             ("helper", "need-info #7: which court?"),
             ("alpha", "info #7: the high court"),
             ("helper", "need-info #7: which year?"),
-        ]);
-        assert_eq!(
-            clarification_round("alpha", &rows, &[3]),
-            Some(("helper".to_string(), 3))
-        );
+        ])
+    }
+
+    #[test]
+    fn the_second_need_info_round_of_one_ask_nudges_the_recipient_once() {
+        let rows = three_turns();
+        assert_eq!(round("alpha", &rows, &[3]), Some(3));
         // not before it is handed over, and not to the sender
-        assert_eq!(clarification_round("alpha", &rows, &[1]), None);
-        assert_eq!(clarification_round("helper", &rows, &[2, 3]), None);
+        assert_eq!(round("alpha", &rows, &[1]), None);
+        assert_eq!(round("helper", &rows, &[2, 3]), None);
         // the first round alone is not enough
-        assert_eq!(clarification_round("alpha", &rows[..1], &[1]), None);
-        // a third round is not the trigger again
-        let mut more = rows.clone();
+        assert_eq!(round("alpha", &rows[..1], &[1]), None);
+    }
+
+    #[test]
+    fn a_third_round_is_not_the_trigger_again() {
+        let mut more = three_turns();
         more.push((4, "alpha", "info #7: 2024"));
         more.push((5, "helper", "need-info #7: and the docket?"));
-        assert_eq!(clarification_round("alpha", &more, &[5]), None);
-        assert_eq!(
-            clarification_round("alpha", &more, &[3, 5]),
-            Some(("helper".to_string(), 3))
-        );
+        assert_eq!(round("alpha", &more, &[5]), None);
+        assert_eq!(round("alpha", &more, &[3, 5]), Some(3));
     }
 
     #[test]
@@ -334,22 +366,21 @@ mod tests {
 
     #[test]
     fn the_peer_is_read_from_the_room_name_for_either_side() {
-        assert_eq!(
-            dm_peer_in_room("bob", "dm.alice.bob").as_deref(),
-            Some("alice")
-        );
-        assert_eq!(
-            dm_peer_in_room("alice", "dm.alice.bob").as_deref(),
-            Some("bob")
-        );
+        let peer = |me, room| dm_peer_in_room(me, room);
+        assert_eq!(peer("bob", "dm.alice.bob").as_deref(), Some("alice"));
+        assert_eq!(peer("alice", "dm.alice.bob").as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn no_peer_for_a_stranger_another_room_or_a_hashed_name() {
         assert_eq!(dm_peer_in_room("carol", "dm.alice.bob"), None);
         assert_eq!(dm_peer_in_room("bob", "lobby"), None);
         assert_eq!(dm_peer_in_room("bob", "dm.0123456789abcdef"), None);
-        assert_eq!(
-            dm_peer_in_room("a", "dm.a.a.a"),
-            None,
-            "a name that does not settle it"
-        );
+    }
+
+    #[test]
+    fn no_peer_when_the_name_does_not_settle_it() {
+        assert_eq!(dm_peer_in_room("a", "dm.a.a.a"), None);
     }
 
     #[test]

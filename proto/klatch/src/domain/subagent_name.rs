@@ -17,43 +17,59 @@ const WRAPPERS: [&str; 10] = [
     "env", "command", "exec", "time", "nohup", "nice", "sudo", "builtin", "!", "xargs",
 ];
 
+/// Shells whose `-c` string is looked into.
+const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
+
 /// (a command word is klatch, a word names the member) over the whole text.
 fn scan(command: &str, depth: usize) -> (bool, bool) {
     let (mut klatch, mut named) = (false, false);
     for words in segments(command) {
-        for w in &words {
-            named |= names_member(w);
-        }
-        let mut rest = words.iter().map(String::as_str).peekable();
-        while let Some(w) = rest.peek() {
-            if is_assignment(w) || WRAPPERS.contains(w) || (w.starts_with('-') && w.len() > 1) {
-                rest.next();
-            } else {
-                break;
-            }
-        }
-        let Some(cmd) = rest.next() else { continue };
-        let base = cmd.rsplit('/').next().unwrap_or(cmd);
-        if base == "klatch" {
-            klatch = true;
-        } else if depth < MAX_DEPTH && ["sh", "bash", "zsh", "dash", "ksh"].contains(&base) {
-            // `bash -c 'klatch ...'`: the command is the word after the flags that include c
-            let mut flags_have_c = false;
-            for w in rest {
-                if w.starts_with('-') {
-                    flags_have_c |= w.len() > 1 && !w.starts_with("--") && w.contains('c');
-                } else {
-                    if flags_have_c {
-                        let (k, n) = scan(w, depth + 1);
-                        klatch |= k;
-                        named |= n;
-                    }
-                    break;
-                }
-            }
-        }
+        named |= words.iter().any(|w| names_member(w));
+        let (k, n) = scan_simple(&words, depth);
+        klatch |= k;
+        named |= n;
     }
     (klatch, named)
+}
+
+/// A word that may stand before the real command word: an assignment, a wrapper or a flag of a wrapper.
+fn is_prefix_word(word: &str) -> bool {
+    is_assignment(word) || WRAPPERS.contains(&word) || (word.starts_with('-') && word.len() > 1)
+}
+
+/// (the command word is klatch, a shell string it runs names the member) for one simple command.
+fn scan_simple(words: &[String], depth: usize) -> (bool, bool) {
+    let mut rest = words
+        .iter()
+        .map(String::as_str)
+        .skip_while(|w| is_prefix_word(w));
+    let Some(cmd) = rest.next() else {
+        return (false, false);
+    };
+    let base = cmd.rsplit('/').next().unwrap_or(cmd);
+    if base == "klatch" {
+        (true, false)
+    } else if depth < MAX_DEPTH && SHELLS.contains(&base) {
+        scan_dash_c(rest, depth)
+    } else {
+        (false, false)
+    }
+}
+
+/// `bash -c 'klatch ...'`: the command is the word after the flags that include c.
+fn scan_dash_c<'a>(args: impl Iterator<Item = &'a str>, depth: usize) -> (bool, bool) {
+    let mut flags_have_c = false;
+    for w in args {
+        if !w.starts_with('-') {
+            return if flags_have_c {
+                scan(w, depth + 1)
+            } else {
+                (false, false)
+            };
+        }
+        flags_have_c |= w.len() > 1 && !w.starts_with("--") && w.contains('c');
+    }
+    (false, false)
 }
 
 /// `KLATCH_NAME=<name>` (a non-empty name) or `--as-member <name>` / `--as-member=<name>`; the word after a bare
@@ -80,133 +96,194 @@ fn is_assignment(word: &str) -> bool {
 /// separators do not split; an unquoted `;`, `&`, `|`, newline, parenthesis or backtick ends a command. Not a shell:
 /// it never expands anything and reads only enough to find the command word of each part.
 fn segments(command: &str) -> Vec<Vec<String>> {
-    let mut out: Vec<Vec<String>> = Vec::new();
-    let mut words: Vec<String> = Vec::new();
-    let mut word = String::new();
-    let mut in_word = false;
-    let mut quote: Option<char> = None;
+    let mut split = Splitter::default();
     let mut chars = command.chars();
-    macro_rules! end_word {
-        () => {
-            if in_word {
-                words.push(std::mem::take(&mut word));
-                in_word = false;
-            }
-        };
-    }
     while let Some(c) = chars.next() {
-        match quote {
-            Some(q) if c == q => quote = None,
-            Some('"') if c == '\\' => {
-                if let Some(n) = chars.next() {
-                    word.push(n);
-                }
-            }
-            Some(_) => word.push(c),
-            None => match c {
-                '\'' | '"' => {
-                    quote = Some(c);
-                    in_word = true;
-                }
-                '\\' => {
-                    in_word = true;
-                    if let Some(n) = chars.next() {
-                        word.push(n);
-                    }
-                }
-                c if c.is_whitespace() && c != '\n' => end_word!(),
-                ';' | '&' | '|' | '\n' | '(' | ')' | '`' => {
-                    end_word!();
-                    if !words.is_empty() {
-                        out.push(std::mem::take(&mut words));
-                    }
-                }
-                c => {
-                    in_word = true;
-                    word.push(c);
-                }
-            },
+        split.feed(c, &mut chars);
+    }
+    split.finish()
+}
+
+/// The state of `segments`: finished commands, the words of the open one, the open word and the open quote.
+#[derive(Default)]
+struct Splitter {
+    out: Vec<Vec<String>>,
+    words: Vec<String>,
+    word: String,
+    in_word: bool,
+    quote: Option<char>,
+}
+
+impl Splitter {
+    fn end_word(&mut self) {
+        if self.in_word {
+            self.words.push(std::mem::take(&mut self.word));
+            self.in_word = false;
         }
     }
-    if in_word {
-        words.push(word);
+
+    fn end_command(&mut self) {
+        self.end_word();
+        if !self.words.is_empty() {
+            self.out.push(std::mem::take(&mut self.words));
+        }
     }
-    if !words.is_empty() {
-        out.push(words);
+
+    /// The character after a backslash, taken literally.
+    fn escaped(&mut self, chars: &mut std::str::Chars) {
+        if let Some(n) = chars.next() {
+            self.word.push(n);
+        }
     }
-    out
+
+    fn feed(&mut self, c: char, chars: &mut std::str::Chars) {
+        match self.quote {
+            Some(q) if c == q => self.quote = None,
+            Some('"') if c == '\\' => self.escaped(chars),
+            Some(_) => self.word.push(c),
+            None => self.feed_unquoted(c, chars),
+        }
+    }
+
+    fn feed_unquoted(&mut self, c: char, chars: &mut std::str::Chars) {
+        match c {
+            '\'' | '"' => {
+                self.quote = Some(c);
+                self.in_word = true;
+            }
+            '\\' => {
+                self.in_word = true;
+                self.escaped(chars);
+            }
+            c if c.is_whitespace() && c != '\n' => self.end_word(),
+            ';' | '&' | '|' | '\n' | '(' | ')' | '`' => self.end_command(),
+            c => {
+                self.in_word = true;
+                self.word.push(c);
+            }
+        }
+    }
+
+    fn finish(mut self) -> Vec<Vec<String>> {
+        self.end_command();
+        self.out
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::invokes_klatch_unnamed as unnamed;
 
+    /// Every command in `commands` is (or is not, per `want`) an unnamed klatch command.
+    fn check(commands: &[&str], want: bool) {
+        for c in commands {
+            assert_eq!(unnamed(c), want, "{c}");
+        }
+    }
+
     #[test]
     fn a_bare_klatch_command_is_unnamed() {
-        assert!(unnamed("klatch post lobby hi"));
-        assert!(unnamed("./proto/target/debug/klatch --discover join lobby"));
-        assert!(unnamed("/usr/local/bin/klatch who lobby"));
+        check(
+            &[
+                "klatch post lobby hi",
+                "./proto/target/debug/klatch --discover join lobby",
+                "/usr/local/bin/klatch who lobby",
+            ],
+            true,
+        );
     }
 
     #[test]
     fn a_command_that_sets_its_name_is_named() {
-        assert!(!unnamed("KLATCH_NAME=t1-1 klatch post lobby hi"));
-        assert!(!unnamed("env KLATCH_NAME=t1-1 klatch post lobby hi"));
-        assert!(!unnamed("export KLATCH_NAME=t1-1 && klatch post lobby hi"));
-        assert!(!unnamed("klatch --as-member t1-1 post lobby hi"));
-        assert!(!unnamed("klatch --as-member=t1-1 post lobby hi"));
+        check(
+            &[
+                "KLATCH_NAME=t1-1 klatch post lobby hi",
+                "env KLATCH_NAME=t1-1 klatch post lobby hi",
+                "export KLATCH_NAME=t1-1 && klatch post lobby hi",
+                "klatch --as-member t1-1 post lobby hi",
+                "klatch --as-member=t1-1 post lobby hi",
+            ],
+            false,
+        );
     }
 
     #[test]
     fn an_empty_name_does_not_count() {
-        assert!(unnamed("KLATCH_NAME= klatch post lobby hi"));
-        assert!(unnamed("KLATCH_NAME=\"\" klatch post lobby hi"));
+        check(
+            &[
+                "KLATCH_NAME= klatch post lobby hi",
+                "KLATCH_NAME=\"\" klatch post lobby hi",
+            ],
+            true,
+        );
     }
 
     #[test]
     fn a_command_that_is_not_klatch_is_never_flagged() {
-        assert!(!unnamed("cargo test"));
-        assert!(!unnamed("git commit -m 'fix klatch post'"));
-        assert!(!unnamed("grep klatch README.md"));
-        assert!(!unnamed("echo \"run klatch post; later\""));
-        assert!(!unnamed("ls proto/klatch"));
-        assert!(!unnamed("cat klatch.toml"));
-        assert!(!unnamed(""));
+        check(
+            &[
+                "cargo test",
+                "git commit -m 'fix klatch post'",
+                "grep klatch README.md",
+                "echo \"run klatch post; later\"",
+                "ls proto/klatch",
+                "cat klatch.toml",
+                "",
+            ],
+            false,
+        );
     }
 
     #[test]
     fn klatch_anywhere_in_a_pipeline_or_list_is_found() {
-        assert!(unnamed("cd proto && klatch who lobby"));
-        assert!(unnamed("echo hi | klatch post lobby -"));
-        assert!(unnamed("true; klatch who lobby"));
-        assert!(unnamed("cd x\nklatch who lobby"));
-        assert!(unnamed("x=$(klatch who lobby)"));
-        assert!(unnamed("echo `klatch who lobby`"));
-        assert!(unnamed("(klatch who lobby)"));
+        check(
+            &[
+                "cd proto && klatch who lobby",
+                "echo hi | klatch post lobby -",
+                "true; klatch who lobby",
+                "cd x\nklatch who lobby",
+                "x=$(klatch who lobby)",
+                "echo `klatch who lobby`",
+                "(klatch who lobby)",
+            ],
+            true,
+        );
     }
 
     #[test]
     fn a_name_anywhere_in_the_text_counts_as_the_subagent_naming_itself() {
         // conservative toward allowing a command that names itself somewhere: a subagent that wrote KLATCH_NAME=<name>
         // in its command has understood the rule
-        assert!(!unnamed("KLATCH_NAME=a klatch who lobby; klatch who lobby"));
+        check(&["KLATCH_NAME=a klatch who lobby; klatch who lobby"], false);
     }
 
     #[test]
     fn wrappers_and_shell_dash_c_are_looked_through() {
-        assert!(unnamed("env FOO=1 klatch who lobby"));
-        assert!(unnamed("FOO=1 klatch who lobby"));
-        assert!(unnamed("time klatch who lobby"));
-        assert!(unnamed("command klatch who lobby"));
-        assert!(unnamed("bash -c 'klatch who lobby'"));
-        assert!(unnamed("sh -c \"cd x && klatch who lobby\""));
-        assert!(!unnamed("bash -c 'KLATCH_NAME=a klatch who lobby'"));
-        assert!(!unnamed("bash -c 'cargo test'"));
+        check(
+            &[
+                "env FOO=1 klatch who lobby",
+                "FOO=1 klatch who lobby",
+                "time klatch who lobby",
+                "command klatch who lobby",
+                "bash -c 'klatch who lobby'",
+                "sh -c \"cd x && klatch who lobby\"",
+            ],
+            true,
+        );
+        check(
+            &[
+                "bash -c 'KLATCH_NAME=a klatch who lobby'",
+                "bash -c 'cargo test'",
+            ],
+            false,
+        );
     }
 
     #[test]
     fn a_quoted_separator_does_not_start_a_command() {
-        assert!(!unnamed("echo 'a; klatch post'"));
-        assert!(!unnamed("echo \"a | klatch post\""));
+        check(
+            &["echo 'a; klatch post'", "echo \"a | klatch post\""],
+            false,
+        );
     }
 }
