@@ -9,6 +9,7 @@ from helpers import BENCH  # noqa: F401
 import recovery
 import scenario
 import schema
+from test_recovery_checker import FACTS, MSB_RANGES
 from test_run_fake import Base, NEEDS_BIN, read_json
 
 FIXTURE = os.path.join(BENCH, "fixtures", "recovery")
@@ -23,7 +24,7 @@ SYNC = lambda msg: {"op": "sync", "message": msg, "resolve": "union"}  # noqa: E
 KILLED = {"op": "wait_file", "path": "kill.json", "timeout": 40}
 PULL = {"op": "git", "args": ["pull", "--no-rebase", "--no-edit", "origin", "main"]}
 HALF = {"op": "write", "path": "recoverkit/bits.py", "content": "def set_bit(mask, index):\n    return mask | (0x8000 >> index)\n"}
-ASK = {"op": "hook", "text": "[klatch] a: seeking: what is the bit numbering of a mask?", "arms": ["B1", "K2"]}
+ASK = {"op": "hook", "text": "[klatch] a: seeking: what is the index map of a mask?", "arms": ["B1", "K2"]}
 BOARD = [{"op": "append", "path": "TASKS.md", "content": "- c | working | recoverkit/bits.py | bits\n", "arms": ["B1"]},
          {"op": "sync", "message": "c: working", "arms": ["B1"]}]
 
@@ -34,9 +35,10 @@ def victim(*extra, pre=()):
 
 A_OK = [KILLED, PULL, cp("ranges"), SYNC("ranges"), {"op": "final", "text": "DONE a"}]
 B_BASE = [cp("wrap"), cp("pairs"), SYNC("wrap and pairs")]
-B_RECOVER = B_BASE + [KILLED, cp("bits"), SYNC("bits, taken over"),
-                      {"op": "send", "to": "a", "text": "answer: index 0 is the most significant bit"}, {"op": "final", "text": "DONE b"}]
-LSB = {"op": "write", "path": "recoverkit/ranges.py", "content": "def compress(n):\n    return []\n"}
+MAP = "position = (index * %d + %d) mod 16" % (FACTS["K"], FACTS["R"])
+ANSWER = {"op": "send", "to": "a", "text": "answer: " + MAP}
+B_RECOVER = B_BASE + [KILLED, cp("bits"), SYNC("bits, taken over"), ANSWER, {"op": "final", "text": "DONE b"}]
+GUESS = {"op": "write", "path": "recoverkit/ranges.py", "content": MSB_RANGES}  # what a guesses, or reads in docs/FORMATS.md
 
 
 class TestScenarioFile(unittest.TestCase):
@@ -222,7 +224,7 @@ class TestReferenceRecovery(S6Base):
 
 class TestFailureModes(S6Base):
     def test_survivors_that_never_notice(self):
-        a = [KILLED, LSB, SYNC("ranges"), {"op": "final", "text": "DONE a"}]
+        a = [KILLED, GUESS, SYNC("ranges"), {"op": "final", "text": "DONE a"}]
         b = B_BASE + [KILLED, {"op": "final", "text": "DONE b"}]
         r, sm = self.one({"a": a, "b": b, "c": victim()})
         self.assertTrue(r["valid"], r["notes"])
@@ -237,6 +239,40 @@ class TestFailureModes(S6Base):
         self.assertIsNone(sm["time_to_ask_answer_s"])
         self.assertIsNone(sm["recovery_commit"])
         self.assertEqual(sm["false_alarms"], 0)
+
+    def test_recovering_the_module_without_answering_leaves_the_ask_unanswered(self):
+        # bits is recoverable from the repository alone; the map is not, so a's question stays orphaned
+        b = B_BASE + [KILLED, cp("bits"), SYNC("bits, taken over"), {"op": "final", "text": "DONE b"}]
+        a = [KILLED, PULL, GUESS, SYNC("ranges, guessed"), {"op": "final", "text": "DONE a"}]
+        r, sm = self.one({"a": a, "b": b, "c": victim()})
+        self.assertTrue(sm["recovered"], "the module needed only the repository")
+        self.assertFalse(sm["ask_answered"], "the map was never answered, a guessed")
+        self.assertFalse(sm["correct"])
+        self.assertEqual(r["metrics"]["units_completed"], 3, "bits, wrap, pairs; ranges used the wrong map")
+        self.assertIsNone(sm["time_to_ask_answer_s"])
+
+    def test_a_victim_that_answered_before_the_kill_needs_no_recovery_of_the_ask(self):
+        # variant claim: the trigger does not wait for the ask; c answers a first, then claims, edits and is killed
+        c = BOARD + [ASK, {"op": "send", "to": "a", "text": "answer: " + MAP}, HALF, {"op": "hang"}]
+        a = [KILLED, PULL, cp("ranges"), SYNC("ranges, with the map c sent"), {"op": "final", "text": "DONE a"}]
+        b = B_BASE + [KILLED, cp("bits"), SYNC("bits, taken over"), {"op": "final", "text": "DONE b"}]
+        r, sm = self.one({"a": a, "b": b, "c": c}, arm="B1", variant="claim")
+        self.assertNotIn("ask_open", sm["kill"]["conditions"])
+        self.assertTrue(sm["recovered"])
+        self.assertTrue(sm["ask_answered"])
+        self.assertTrue(sm["correct"], sm)
+        self.assertIsNone(sm["time_to_ask_answer_s"], "no survivor had to answer")
+
+    def test_the_map_is_private_to_c_and_its_deputy_b_and_never_committed(self):
+        sh = lambda cmd: {"op": "run", "argv": ["sh", "-c", cmd]}  # noqa: E731
+        clean = sh('test -z "$(git status --porcelain)"')
+        a = [sh("test ! -e SPEC-INDEXMAP.md && test ! -e SPEC-INDEXMAP-COPY.md"), KILLED, {"op": "final", "text": "DONE a"}]
+        b = [{"op": "read", "path": "SPEC-INDEXMAP-COPY.md"}, sh("test ! -e SPEC-INDEXMAP.md"), clean, KILLED,
+             {"op": "final", "text": "DONE b"}]
+        c = [{"op": "read", "path": "SPEC-INDEXMAP.md"}, clean, sh("test ! -e SPEC-INDEXMAP-COPY.md"), HALF, {"op": "hang"}]
+        r, sm = self.one({"a": a, "b": b, "c": c})
+        self.assertTrue(sm["kill"]["fired"], r["notes"])
+        self.assertNotEqual(r["outcome"], "crash", r["notes"])
 
     def test_a_survivor_that_takes_over_a_live_agents_module_is_a_false_alarm(self):
         b = [cp("ranges"), SYNC("ranges, which is a's")] + B_RECOVER

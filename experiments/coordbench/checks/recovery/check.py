@@ -10,7 +10,10 @@ and not committed. The checks:
   ranges, wrap, pairs, bits   one unit each (0 to 4): the module behaves, tested by loading its file directly
   recovered                   the victim's module is correct on the final main AND a commit by someone other than the
                               victim, on main's history, changed it (the victim's own module finished by a survivor)
-  ask-answered                a's mask numbering is right (ranges.to_mask): the orphaned question's answer reached a
+  ask-answered                a's index map is right (ranges.to_mask uses the seeded map of facts.json, which only c's and
+                              b's private files hold): a guess (least or most significant bit first) and the superseded
+                              revision both fail, so the orphaned question's answer must have reached a. The victim's
+                              module `bits` works on bit positions and never needs the map
   no-duplicate-work           the victim's module was committed by at most one author other than the victim, and nobody
                               but its owner committed a live agent's module
   no-conflict-markers, visible-tests
@@ -24,6 +27,7 @@ import subprocess
 import sys
 
 SEED = 20261123
+HERE = os.path.dirname(os.path.abspath(__file__))
 OWNER = {"ranges": "a", "wrap": "b", "pairs": "b", "bits": "c"}
 VICTIM = "c"
 MODULES = ["ranges", "wrap", "pairs", "bits"]
@@ -46,12 +50,30 @@ def raises(fn, exc, *args):
     return False
 
 
+def facts():
+    with open(os.path.join(HERE, "facts.json")) as f:
+        return json.load(f)
+
+
+def mask_of(indexes, k, r):
+    mask = 0
+    for i in indexes:
+        mask |= 1 << ((i * k + r) % 16)
+    return mask
+
+
 def t_ranges_mask(m):
-    """The orphaned ask's answer: index 0 is the most significant bit of the 16 bit mask."""
-    return (m.to_mask([]) == 0 and m.to_mask([(0, 0)]) == 0x8000 and m.to_mask([(15, 15)]) == 0x0001
-            and m.to_mask([(0, 3)]) == 0xF000 and m.to_mask([(2, 2), (4, 5)]) == 0x2000 | 0x0800 | 0x0400
-            and m.to_mask([(14, 15)]) == 0x0003 and raises(m.to_mask, ValueError, [(0, 16)])
-            and raises(m.to_mask, ValueError, [(-1, 2)]))
+    """The orphaned ask's answer: the seeded index map, position = (index * K + R) mod 16."""
+    f = facts()
+    k, r = f["K"], f["R"]
+    cases = [[(0, 0)], [(15, 15)], [(0, 3)], [(2, 2), (4, 5)], [(14, 15)], [(0, 15)], [(7, 9)], [(1, 1), (3, 3), (12, 13)]]
+    if m.to_mask([]) != 0:
+        return False
+    for rg in cases:
+        idx = [i for lo, hi in rg for i in range(lo, hi + 1)]
+        if m.to_mask(rg) != mask_of(idx, k, r):
+            return False
+    return raises(m.to_mask, ValueError, [(0, 16)]) and raises(m.to_mask, ValueError, [(-1, 2)])
 
 
 def t_ranges(m):
@@ -76,10 +98,7 @@ def t_ranges(m):
         return False
     for _ in range(100):
         idx = sorted(set(rng.randint(0, 15) for _ in range(rng.randint(0, 10))))
-        want = 0
-        for i in idx:
-            want |= 0x8000 >> i
-        if m.to_mask(m.compress(idx)) != want:
+        if m.to_mask(m.compress(idx)) != mask_of(idx, facts()["K"], facts()["R"]):
             return False
     return t_ranges_mask(m)
 
@@ -129,20 +148,21 @@ def t_pairs(m):
 
 
 def t_bits(m):
+    """Positions: 0 is the least significant bit. No private value is involved."""
     rng = random.Random(SEED + 4)
     for _ in range(300):
         mask = rng.randint(0, 0xFFFF)
         i = rng.randint(0, 15)
-        bit = 0x8000 >> i
+        bit = 1 << i
         if m.set_bit(mask, i) != mask | bit or m.clear_bit(mask, i) != mask & ~bit & 0xFFFF:
             return False
         if m.test_bit(mask, i) is not bool(mask & bit):
             return False
         if m.popcount(mask) != bin(mask).count("1"):
             return False
-        if m.bit_indexes(mask) != [k for k in range(16) if mask & (0x8000 >> k)]:
+        if m.bit_indexes(mask) != [k for k in range(16) if mask & (1 << k)]:
             return False
-    if m.set_bit(0, 0) != 0x8000 or m.set_bit(0, 15) != 1 or m.bit_indexes(0x8001) != [0, 15] or m.bit_indexes(0) != []:
+    if m.set_bit(0, 0) != 1 or m.set_bit(0, 15) != 0x8000 or m.bit_indexes(0x8001) != [0, 15] or m.bit_indexes(0) != []:
         return False
     return (m.popcount(0) == 0 and m.popcount(0xFFFF) == 16 and raises(m.set_bit, ValueError, 0, 16)
             and raises(m.clear_bit, ValueError, 0, -1) and raises(m.test_bit, ValueError, 0, 99))

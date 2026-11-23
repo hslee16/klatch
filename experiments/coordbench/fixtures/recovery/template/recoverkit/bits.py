@@ -1,4 +1,4 @@
-"""Bit operations on 16 bit masks. Bit indexes follow the repository's numbering (see docs/FORMATS.md)."""
+"""Bit operations on 16 bit masks. An index here is a bit position: position 0 is the least significant bit (0x0001)."""
 
 
 def set_bit(mask, index):
@@ -22,5 +22,5 @@ def popcount(mask):
 
 
 def bit_indexes(mask):
-    """The indexes of the set bits, in ascending order of index."""
+    """The positions of the set bits, in ascending order."""
     raise NotImplementedError

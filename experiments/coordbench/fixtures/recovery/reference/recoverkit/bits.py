@@ -1,10 +1,10 @@
-"""Bit operations on 16 bit masks. Index 0 is the most significant bit (0x8000)."""
+"""Bit operations on 16 bit masks. Position 0 is the least significant bit (0x0001)."""
 
 
 def _bit(index):
     if not isinstance(index, int) or not 0 <= index <= 15:
-        raise ValueError("bit index %r is outside 0 to 15" % (index,))
-    return 0x8000 >> index
+        raise ValueError("bit position %r is outside 0 to 15" % (index,))
+    return 1 << index
 
 
 def set_bit(mask, index):
@@ -24,4 +24,4 @@ def popcount(mask):
 
 
 def bit_indexes(mask):
-    return [i for i in range(16) if mask & (0x8000 >> i)]
+    return [i for i in range(16) if mask & (1 << i)]

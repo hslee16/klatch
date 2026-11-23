@@ -14,6 +14,7 @@ def expand(ranges):
 
 
 def to_mask(ranges):
-    """The 16 bit mask with one bit set for every integer in the ranges, using the repository's bit numbering (see
-    docs/FORMATS.md). An integer outside 0 to 15 raises ValueError. to_mask([]) is 0."""
+    """The 16 bit mask with one bit set for every integer (an index, 0 to 15) in the ranges, at the bit position the
+    current index map gives it (see docs/FORMATS.md: the map is owned by the owner of bits.py). An integer outside 0 to 15
+    raises ValueError. to_mask([]) is 0."""
     raise NotImplementedError

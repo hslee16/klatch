@@ -313,14 +313,23 @@ step (n polling turns without waiting) for the blocked-agent tests. No real run 
 ## Scenario S6: failure recovery, a helper dies while holding a claim or an ask (`scenarios/s6.json`, fixture `recovery`)
 
 F6 `recovery` is F1 at a smaller size: `recoverkit`, four independent modules (`ranges`, `wrap`, `pairs`, `bits`), three agents.
-`a` owns `ranges` and needs one fact for it, the bit numbering of masks, which `c` owns; `b` owns `wrap` and `pairs`; `c`, the
-victim, owns `bits` and the duty to answer `a`. The numbering (index 0 is the most significant bit of a 16 bit mask) is in
-`docs/FORMATS.md`, in no visible test and in no job text, so a survivor can answer the orphaned question from the repository
-once it stops waiting for `c`. The hidden checker (`checks/recovery/`) scores 0 to 4 modules (each tested by loading its file)
-and, apart from the units: `recovered` (the victim's module is right on the final main and a non-victim commit changed it),
-`ask-answered` (a's masks use the right numbering), `no-duplicate-work` (at most one survivor committed the victim's module;
-nobody but its owner committed a live agent's module), no conflict markers and the visible tests. `check.py --module NAME FILE`
-tests one file alone; the harness replays the victim's module history through it to find the recovery commit.
+`a` owns `ranges` and needs one fact for `to_mask`, the INDEX MAP of masks (position = (index * K + R) mod 16, a seeded arbitrary
+pair that is no conventional default: not least or most significant bit first), which `c` owns; `b` owns `wrap` and `pairs`;
+`c`, the victim, owns `bits` and the duty to answer `a`. The ask is necessary: the map is in no repository file and in no job
+text. It is in c's private file (`private/c/SPEC-INDEXMAP.md`) and b's deputy copy (`private/b/SPEC-INDEXMAP-COPY.md`), copied
+into those clones only, untracked and excluded from git (the S4 mechanism), generated from a fixed seed by `gen_facts.py`
+(`--check` proves reproducibility). `docs/FORMATS.md` holds only a superseded legacy map (`15 - index`), wrong on purpose.
+b's job text says it holds the copy and answers when c has not; nobody is told c will die. So a gets the value only through an
+answer, and with c dead the only answerer is b, once it notices (K arms: a lapsed ask lease, a stuck notice). The `bits` module
+works on bit positions (position 0 is the least significant bit, stated in the repository), so recovering the module never
+needs the map: module recovery and ask recovery are separate duties and are scored separately. A victim that answered before
+the kill leaves nothing to recover (variant `claim` does not wait for the question). In B0 nobody can be asked, so a passes only
+if b writes the map into the repository. The hidden checker (`checks/recovery/`, map in `facts.json`) scores 0 to 4 modules
+(each tested by loading its file) and, apart from the units: `recovered` (the victim's module is right on the final main and a
+non-victim commit changed it), `ask-answered` (`to_mask` uses the seeded map; a guess and the superseded revision fail),
+`no-duplicate-work` (at most one survivor committed the victim's module; nobody but its owner committed a live agent's module),
+no conflict markers and the visible tests. `check.py --module NAME FILE` tests one file alone; the harness replays the victim's
+module history through it to find the recovery commit.
 
 **The kill.** The scenario file's `kill_agent` names the victim, the `after` conditions (all must hold, each may be limited to
 some arms) and `fallback_turns`. Every poll, `recovery.Killer` reads the victim's stream and the origin's git history; when
@@ -328,7 +337,7 @@ the conditions hold, run.py sends SIGKILL to the victim's process group (no hook
 result message is written), records it in `kill.json` and `scenario_metrics.kill`, and goes on with the survivors, who are not
 told. The default trigger: the victim has edited its module and not committed it (`edited`, `no_commit`), holds its claim (K
 arms: `claimed`) or its board line marked working (B1: `board_working`), and a's question has reached it unanswered
-(`ask_open`: a line with `seeking` and a numbering word in a tool result or a hook output, and no answer sent since).
+(`ask_open`: a line with `seeking` and an index map word in a tool result or a hook output, and no answer sent since).
 Variant `claim` drops the question; variant `ask` is the question alone (B0 cannot be asked, so its trigger is six turns).
 `fallback_turns` (14) kills a victim that never meets the conditions and says `fallback` in the record. A run whose victim
 exits first has `kill.fired` false and is invalid. The fake driver models the kill as a script that hangs after its edit.

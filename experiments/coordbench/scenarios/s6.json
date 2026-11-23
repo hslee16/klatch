@@ -5,14 +5,14 @@
   "fixture": "recovery",
   "variants": {
     "default": "The victim is killed once it has edited its module (not committed), holds its claim (K arms) or its board line marked working (B1), and a's question has reached it unanswered. fixture 'recovery', no --variant.",
-    "claim": "Spec variant (a): killed after it holds a claim (or a working board line) and has edited its module, uncommitted; a's question is not part of the trigger. fixture variant 'claim'; records go under scenario 'recovery-claim', never pooled.",
+    "claim": "Spec variant (a): killed after it holds a claim (or a working board line) and has edited its module, uncommitted; a's question is not part of the trigger (a victim that already answered it is covered by this variant). fixture variant 'claim'; records go under scenario 'recovery-claim', never pooled.",
     "ask": "Spec variant (b): killed after a's question has reached it and it has not answered, whatever else it has done (B0 has no way to ask, so its trigger is six turns). fixture variant 'ask'; records go under scenario 'recovery-ask', never pooled."
   },
   "arms": ["B0", "B1", "K2", "K3"],
   "arms_at_m0": ["B0", "B1", "K2"],
   "arm_notes": {
     "K3": "not run at M0 (SPEC section 2.2): the supervisor restarts the dead agent. The K3 role launcher is ticket #1421; this scenario needs no change for it, the kill is the same and the metrics already count a restarted victim's recovery as a survivor action only when another agent does it (a restart of c by the supervisor would be a second session of the victim, which the harness does not model yet).",
-    "B0": "no board and no messages: the survivors can only notice from git (no push from c, a stale file) and answer a's question from docs/FORMATS.md. B0 is in the spec's arm list for S6.",
+    "B0": "no board and no messages: the survivors can only notice from git (no push from c, a stale file) and have nobody to ask: the map a needs is private to c and b, so B0 can pass the ask only if b writes it into the repository. B0 is in the spec's arm list for S6.",
     "B1": "TASKS.md with a stale line `- c | working` and SendMessage that goes nowhere once c is dead",
     "K2": "klatch as shipped: the claim lease, the ask lease, the stuck detection and the dead-holder probe (#1182), the claim events (#1386)"
   },
@@ -40,7 +40,7 @@
   "recovery_check": {"checker": "recovery"},
   "kill_agent": {
     "agent": "c",
-    "ask_pattern": "seeking[^\\n]*(numbering|bit order|bit index|most significant|msb)",
+    "ask_pattern": "seeking[^\\n]*(index map|mapping|numbering|bit position)",
     "after": [
       {"kind": "edited"},
       {"kind": "claimed", "arms": ["K1", "K2", "K3"]},
@@ -54,7 +54,7 @@
     "claim": {
       "kill_agent": {
         "agent": "c",
-        "ask_pattern": "seeking[^\\n]*(numbering|bit order|bit index|most significant|msb)",
+        "ask_pattern": "seeking[^\\n]*(index map|mapping|numbering|bit position)",
         "after": [
           {"kind": "edited"},
           {"kind": "claimed", "arms": ["K1", "K2", "K3"]},
@@ -67,7 +67,7 @@
     "ask": {
       "kill_agent": {
         "agent": "c",
-        "ask_pattern": "seeking[^\\n]*(numbering|bit order|bit index|most significant|msb)",
+        "ask_pattern": "seeking[^\\n]*(index map|mapping|numbering|bit position)",
         "after": [
           {"kind": "ask_open", "arms": ["B1", "K1", "K2", "K3"]},
           {"kind": "turns", "min": 6, "arms": ["B0"]}
@@ -82,8 +82,8 @@
     "definitions": {
       "recovered": "Recovery rate, a yes or no per run, from the hidden checker: the victim's module (recoverkit/bits.py) is correct on the final main AND a non-merge commit by someone other than the victim, on main's history, changed it. A victim that finishes before the kill, or a module nobody finished, is not recovered. Reported as k of n with a Wilson interval per arm and variant.",
       "units_completed": "Modules correct on the final main (0 to 4: ranges, wrap, pairs, bits), each tested on its own by loading its file, so one agent's failure cannot hide behind another's. The victim's module is the one at risk.",
-      "ask_answered": "From the checker (scenario_metrics.ask_answered): a's masks use the right numbering (ranges.to_mask), the orphaned question's answer reached a. The answer is in docs/FORMATS.md, so a survivor can find it from the repository once it stops waiting for c. Whether the answer came as a message is time_to_ask_answer_s.",
-      "kill": "How the kill works, recorded as scenario_metrics.kill: the harness sends SIGKILL to the victim's process group (no hook, no release, no result message) the first poll at which every applicable condition of kill_agent.after holds on the victim's stream and the git history of the origin: edited (a Write, Edit or shell write on the victim's module path), claimed (K arms: a klatch claim of a non-ask path with no later release), board_working (B1: origin main's TASKS.md has a line '- c | working'), ask_open (a message whose line has 'seeking' and a numbering word reached the victim, in a tool result or a hook output, and the victim has sent no answer since), ask_taken (K: a klatch claim of an ask:N path not released or answered), turns (the victim has made at least N assistant turns), no_commit (origin main has no commit by the victim touching its module). Conditions with an arms list apply to those arms only. The fallback_turns (14) kills the victim at that many turns whatever else holds, recorded as trigger 'fallback'. A run in which the victim exits before the trigger fires has kill.fired false and is invalid, with a note. Recorded: fired, trigger, the victim's turns, seconds since the agents started, the conditions' values and, per agent, how many stream lines had been read.",
+      "ask_answered": "From the checker (scenario_metrics.ask_answered): a's ranges.to_mask uses the seeded index map (position = (index * K + R) mod 16, from fixtures/recovery/gen_facts.py, seed 20261123). The map is arbitrary and is not a conventional default: it is in c's private file (the owner) and in b's private file (a deputy copy, b answers when c cannot), in no repository file and in no job text. docs/FORMATS.md carries only a superseded legacy map (position = 15 - index), which is wrong on purpose, and the checker fails a guess (least significant bit first, most significant bit first) and the superseded revision. So the ask is necessary: the only way a gets the value is an answer, and with c dead the only answerer is b. A victim that answered before the kill needs no recovery of the ask (variant claim does not wait for the question). In B0 nobody can be asked, so a can pass only if b publishes the map in the repository, a team choice. The module bits works on bit positions and needs only the repository, so recovering the module and answering the ask are separate duties, scored separately (recovered, ask-answered).",
+      "kill": "How the kill works, recorded as scenario_metrics.kill: the harness sends SIGKILL to the victim's process group (no hook, no release, no result message) the first poll at which every applicable condition of kill_agent.after holds on the victim's stream and the git history of the origin: edited (a Write, Edit or shell write on the victim's module path), claimed (K arms: a klatch claim of a non-ask path with no later release), board_working (B1: origin main's TASKS.md has a line '- c | working'), ask_open (a message whose line has 'seeking' and an index map word reached the victim, in a tool result or a hook output, and the victim has sent no answer since), ask_taken (K: a klatch claim of an ask:N path not released or answered), turns (the victim has made at least N assistant turns), no_commit (origin main has no commit by the victim touching its module). Conditions with an arms list apply to those arms only. The fallback_turns (14) kills the victim at that many turns whatever else holds, recorded as trigger 'fallback'. A run in which the victim exits before the trigger fires has kill.fired false and is invalid, with a note. Recorded: fired, trigger, the victim's turns, seconds since the agents started, the conditions' values and, per agent, how many stream lines had been read.",
       "time_to_first_survivor_action_s": "Wall seconds from the kill to the first survivor action on the victim's work, from the arrival time of each stream line (timeline.json, written by the harness) and the kill time. An action is, after the kill: a klatch claim of the victim's module path or of an ask:N path, a Write or Edit or shell write on the victim's module, an answer message (klatch answer, or any message whose text starts with 'answer'), or a message naming the victim or its module. Reading, listing and polling are not actions. null when no survivor ever acts. survivor_turns_to_first_action counts the survivors' assistant turns (both together) that began from the kill up to and including that event.",
       "first_notice": "The first survivor stream event after the kill that carries a noticing marker (K arms), with its agent, turn and seconds after the kill. Markers (from klatch's own text): stuck_dead_holder ('dead_holder room R claim C holder V' from klatch stuck, or the mediator's 'holds X in R but its process has exited', #1182), stuck_stale_ask ('stale_ask ask #N asker X age Ns'), ask_lease_lapsed (the digest line \"V's claim lapsed without an answer; the ask is open again\"), claim_taken_after_lapse (a survivor's klatch claim of the victim's module path succeeds after the kill, so the lease had run out; the claim events of #1386 say expired and takeover). Sightings, which show the victim's record but say nothing of death and are listed apart: claim_held_by_victim ('PATH is claimed by V in room R (Ns left)') and stale_board_entry ('- V | working' on the board).",
       "how_noticed": "K arms only (null in B arms): the marker of the first notice when it came before or at the first survivor action, 'no-marker' when a survivor acted on the victim's work with no marker before it (it noticed without being told by klatch: from the room, or from a stale file), null when nobody acted. noticed_by lists every marker that occurred, in order; notice_markers has the first of each. The streams are scanned, never the agents' words about themselves.",
@@ -100,6 +100,7 @@
     "k3_supervisor": "K3 restarts a dead agent through the role launcher of #1421, which does not exist yet: a restart would be a second session of the victim (like the S9 resume), and the harness does not start one after a kill. K3 is listed and not run.",
     "store_events": "The claim events of #1386 (expired, takeover) and the stuck events are in the K arms' store, which run.py does not export yet (artifacts.store_export is null); the streams carry only what a survivor was shown. claim_taken_after_lapse stands for an expiry plus a takeover seen from the stream.",
     "sigkill_and_hooks": "SessionEnd cleanup (#1314) does not run for a SIGKILLed process, which is the case this scenario builds: nothing releases the victim's claim or board line, only the lease lapsing or a survivor deciding the victim is gone.",
+    "ask_is_private":"The answer exists only in c and b's private files (the S4 mechanism: fixture private_dir, untracked and excluded from git in that clone only). b is told in its job text that it holds a deputy copy and answers when c has not; it is not told that c will die. A survivor that never asks or never notices ends with a wrong to_mask.",
     "dead_holder_in_a_headless_run": "stuck's dead_holder event needs the victim's registry record and a process that is provably gone; a headless claude -p session may or may not have one, so a K run can notice by the lease alone. The record says which marker fired."
   },
   "not_computed": {

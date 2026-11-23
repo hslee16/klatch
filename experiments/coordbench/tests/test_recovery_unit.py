@@ -41,7 +41,7 @@ class Stream:
         return self
 
 
-ASKTEXT = "[klatch] a: seeking: what is the bit numbering of a mask?"
+ASKTEXT = "[klatch] a: seeking: what is the index map of a mask?"
 
 
 class TestVictimState(unittest.TestCase):
@@ -92,7 +92,7 @@ class TestVictimState(unittest.TestCase):
     def test_a_question_that_is_not_the_ask_does_not_open_it(self):
         s = Stream().hook("[klatch] b: seeking: which test runner do we use?")
         self.assertFalse(self.state(s)["ask_open"])
-        s = Stream().bash("cat docs/FORMATS.md", "Bit indexes count from the most significant bit")
+        s = Stream().bash("cat docs/FORMATS.md", "position 0 is the least significant bit")
         self.assertFalse(self.state(s)["ask_open"], "reading the convention is not being asked about it")
 
 
@@ -240,7 +240,7 @@ class TestAnalyze(unittest.TestCase):
             ("dead_holder room lobby claim recoverkit/bits.py holder c", "stuck_dead_holder"),
             ("mediator proposal: @c holds recoverkit/bits.py in lobby but its process has exited. The claim lapses by its own time", "stuck_dead_holder"),
             ("stale_ask ask #3 asker a age 140s", "stuck_stale_ask"),
-            ("  your ask #3: c's claim lapsed without an answer; the ask is open again: seeking: what is the bit numbering", "ask_lease_lapsed"),
+            ("  your ask #3: c's claim lapsed without an answer; the ask is open again: seeking: what is the index map", "ask_lease_lapsed"),
         ]:
             a = Stream().klatch("stuck", text) if marker != "ask_lease_lapsed" else Stream().hook(text)
             m = analyze({"a": a, "b": Stream(), "c": Stream()}, {"a": 0})

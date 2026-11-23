@@ -24,6 +24,6 @@ def to_mask(ranges):
     mask = 0
     for n in expand(ranges):
         if not 0 <= n <= 15:
-            raise ValueError("bit index %d is outside 0 to 15" % n)
-        mask |= 0x8000 >> n
+            raise ValueError("index %d is outside 0 to 15" % n)
+        mask |= 1 << ((n * 11 + 11) % 16)
     return mask

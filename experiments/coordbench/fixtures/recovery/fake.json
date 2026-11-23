@@ -3,8 +3,8 @@
   "agents": {
     "a": [
       {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2", "K3"]},
-      {"op": "klatch", "args": ["post", "{{ROOM}}", "seeking: what is the bit numbering of a mask?"], "arms": ["K1", "K2", "K3"]},
-      {"op": "send", "to": "c", "text": "seeking: what is the bit numbering of a mask?", "arms": ["B1"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "seeking: what is the index map of a mask?"], "arms": ["K1", "K2", "K3"]},
+      {"op": "send", "to": "c", "text": "seeking: what is the index map of a mask?", "arms": ["B1"]},
       {"op": "wait_file", "path": "kill.json", "timeout": 40},
       {"op": "wait_origin_has", "path": "recoverkit/bits.py", "contains": "def bit_indexes", "timeout": 40},
       {"op": "git", "args": ["pull", "--no-rebase", "--no-edit", "origin", "main"]},
@@ -21,8 +21,8 @@
       {"op": "klatch", "args": ["claim", "{{ROOM}}", "recoverkit/bits.py", "--reason", "c is gone, finishing bits"], "arms": ["K1", "K2", "K3"], "allow_fail": true},
       {"op": "copy_from", "from": "reference/recoverkit/bits.py", "path": "recoverkit/bits.py"},
       {"op": "sync", "message": "bits, taken over from c", "resolve": "union"},
-      {"op": "klatch", "args": ["post", "{{ROOM}}", "answer to #1: index 0 is the most significant bit, see docs/FORMATS.md"], "arms": ["K1", "K2", "K3"]},
-      {"op": "send", "to": "a", "text": "answer: index 0 is the most significant bit, see docs/FORMATS.md", "arms": ["B1"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "answer to #1: position = (index * 11 + 11) mod 16"], "arms": ["K1", "K2", "K3"]},
+      {"op": "send", "to": "a", "text": "answer: position = (index * 11 + 11) mod 16", "arms": ["B1"]},
       {"op": "final", "text": "wrap and pairs are published, bits recovered. DONE b"}
     ],
     "c": [
@@ -30,7 +30,7 @@
       {"op": "append", "path": "TASKS.md", "content": "- c | working | recoverkit/bits.py | bits\n", "arms": ["B1"]},
       {"op": "sync", "message": "c: working on bits", "arms": ["B1"]},
       {"op": "klatch", "args": ["claim", "{{ROOM}}", "recoverkit/bits.py", "--reason", "bits module"], "arms": ["K1", "K2", "K3"]},
-      {"op": "hook", "text": "[klatch] a: seeking: what is the bit numbering of a mask?", "arms": ["B1", "K1", "K2", "K3"]},
+      {"op": "hook", "text": "[klatch] a: seeking: what is the index map of a mask?", "arms": ["B1", "K1", "K2", "K3"]},
       {"op": "write", "path": "recoverkit/bits.py", "content": "\"\"\"half done\"\"\"\n\n\ndef set_bit(mask, index):\n    return mask | (0x8000 >> index)\n"},
       {"op": "hang"}
     ]

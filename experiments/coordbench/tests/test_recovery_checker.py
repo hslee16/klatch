@@ -71,7 +71,9 @@ def passed(out):
     return {c["id"]: c["pass"] for c in out["checks"]}
 
 
-LSB_RANGES = '''"""wrong numbering: index 0 is the least significant bit"""
+def ranges_with(position_expr):
+    """A ranges module whose to_mask maps index n to the bit position given by position_expr (a Python expression of n)."""
+    return '''"""a guess at the index map"""
 
 
 def compress(numbers):
@@ -98,9 +100,15 @@ def to_mask(ranges):
     for n in expand(ranges):
         if not 0 <= n <= 15:
             raise ValueError("out of range")
-        mask |= 1 << n
+        mask |= 1 << (%s)
     return mask
-'''
+''' % position_expr
+
+
+FACTS = json.load(open(os.path.join(BENCH, "checks", "recovery", "facts.json")))
+LSB_RANGES = ranges_with("n")
+MSB_RANGES = ranges_with("15 - n")
+STALE_RANGES = ranges_with("(n * %d + %d) %% 16" % (FACTS["stale"]["K"], FACTS["stale"]["R"]))
 
 
 class TestChecker(unittest.TestCase):
@@ -162,6 +170,33 @@ class TestChecker(unittest.TestCase):
         self.assertTrue(p["bits"] and p["recovered"])
         self.assertEqual(out["units_completed"], 3)
         self.assertFalse(out["correct"])
+
+    def test_the_orphaned_ask_answered_wrongly_with_the_repository_docs_value_or_the_stale_value(self):
+        for name, src in (("msb legacy value in docs/FORMATS.md", MSB_RANGES), ("superseded revision", STALE_RANGES)):
+            sub = os.path.join(self.tmp, name[:4])
+            os.makedirs(sub)
+            out = run_check(build(sub, [("a", {"ranges": src}), ("b", {"wrap": "ref", "pairs": "ref"}), ("b", {"bits": "ref"})]))
+            self.assertFalse(passed(out)["ask-answered"], name)
+            self.assertFalse(passed(out)["ranges"], name)
+
+    def test_the_seeded_value_passes_and_is_the_only_one_that_does(self):
+        good = ranges_with("(n * %d + %d) %% 16" % (FACTS["K"], FACTS["R"]))
+        out = self.check([("a", {"ranges": good}), ("b", {"wrap": "ref", "pairs": "ref"}), ("b", {"bits": "ref"})])
+        self.assertTrue(passed(out)["ask-answered"])
+        self.assertTrue(passed(out)["ranges"])
+
+    def test_the_victims_module_is_checked_without_the_private_map(self):
+        # recovering bits needs only the repository: the module check has no use for the seeded values
+        import re
+        with open(os.path.join(REF, "bits.py")) as f:
+            src = f.read()
+        self.assertNotIn(str(FACTS["K"]), re.findall(r"\d+", src))
+        self.assertNotIn(str(FACTS["R"]), re.findall(r"\d+", src))
+        p = subprocess.run(["python3", "-I", CHECK_PY, "--module", "bits", os.path.join(REF, "bits.py")], stdout=subprocess.PIPE, text=True)
+        self.assertTrue(json.loads(p.stdout)["ok"])
+        with open(os.path.join(FIXTURE, "template", "docs", "FORMATS.md")) as f:
+            text = f.read()
+        self.assertIn("position 0 is the least significant bit", text)
 
     def test_duplicated_work_two_survivors_both_recover_the_module(self):
         out = self.check([("a", {"ranges": "ref"}), ("b", {"wrap": "ref", "pairs": "ref"}), ("b", {"bits": "ref"}),
@@ -244,17 +279,54 @@ class TestFixture(unittest.TestCase):
                 ref(name, os.path.join(dest, "recoverkit", name + ".py"))
             self.assertEqual(visible(), 0)
 
-    def test_the_numbering_is_in_the_repository_and_not_in_a_visible_test_or_a_task_text(self):
-        with open(os.path.join(FIXTURE, "template", "docs", "FORMATS.md")) as f:
-            self.assertIn("most significant bit", f.read())
-        for d, _, names in os.walk(os.path.join(FIXTURE, "template", "tests")):
+    def test_the_index_map_is_in_private_files_only_and_the_repository_value_is_a_stale_guess(self):
+        K, R = FACTS["K"], FACTS["R"]
+        want = "position = (index * %d + %d) mod 16" % (K, R)
+        priv = os.path.join(FIXTURE, "private")
+        holders = {}
+        for agent in ("a", "b", "c"):
+            for d, _, names in os.walk(os.path.join(priv, agent)):
+                for n in names:
+                    with open(os.path.join(d, n)) as f:
+                        holders.setdefault(agent, []).append(f.read())
+        self.assertNotIn("a", holders, "the asker has no private file")
+        self.assertTrue(any(want in t for t in holders["c"]), "the owner holds it")
+        self.assertTrue(any(want in t for t in holders["b"]), "the deputy holds a copy")
+        for d, _, names in os.walk(FIXTURE):
             for n in names:
+                rel = os.path.relpath(os.path.join(d, n), FIXTURE)
+                if rel.startswith(("private", "reference", "fake")) or n.endswith(".pyc") or "__pycache__" in rel:
+                    continue
                 with open(os.path.join(d, n)) as f:
-                    t = f.read()
-                self.assertNotIn("0x8000", t, n)
+                    self.assertNotIn(want, f.read(), rel)
+        with open(os.path.join(FIXTURE, "template", "docs", "FORMATS.md")) as f:
+            doc = f.read()
+        self.assertIn("15 - index", doc)
+        self.assertIn("no longer used", doc)
         for name in ("task-a.md", "task-b.md", "task-c.md"):
             with open(os.path.join(FIXTURE, name)) as f:
-                self.assertNotIn("most significant", f.read(), name)
+                self.assertNotRegex(f.read(), r"\* ?%d" % K, name)
+
+    def test_the_seeded_map_is_not_a_conventional_default_nor_its_own_stale_value(self):
+        K, R = FACTS["K"], FACTS["R"]
+        self.assertEqual(K % 2, 1, "a bijection on 16 positions")
+        self.assertNotIn([K, R], FACTS["plausible"])
+        self.assertNotEqual((K, R), (FACTS["stale"]["K"], FACTS["stale"]["R"]))
+        self.assertEqual(FACTS["seed"], 20261123)
+        for default in ([1, 0], [15, 15]):
+            self.assertIn(default, FACTS["plausible"])
+
+    def test_the_facts_are_reproducible_from_the_seed(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("gen_facts", os.path.join(FIXTURE, "gen_facts.py"))
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        for rel, text in gen.generate().items():
+            with open(os.path.join(BENCH, rel)) as f:
+                self.assertEqual(f.read(), text, rel)
+        p = subprocess.run(["python3", "-I", os.path.join(FIXTURE, "gen_facts.py"), "--check"], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout)
 
 
 if __name__ == "__main__":
