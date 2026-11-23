@@ -36,6 +36,78 @@ def event(frame):
     return (head + "data: " + json.dumps(frame, separators=(",", ":")) + "\n\n").encode()
 
 
+HELLO_FRAME = {"v": 1, "type": "hello", "attribution": "verified", "clearance": "public"}
+
+
+class _Handler(BaseHTTPRequestHandler):
+    """One request of the fake `klatch-server http`; the state is the FakeServer in `self.server.fake`."""
+
+    protocol_version = "HTTP/1.0"
+
+    def log_message(self, *a):
+        pass
+
+    @property
+    def fake(self):
+        return self.server.fake
+
+    def authorized(self):
+        return (
+            self.headers.get("Authorization") == f"Bearer {self.fake.token}"
+            and self.headers.get("X-Klatch-Member") == self.fake.member
+        )
+
+    def reply(self, status, body=b""):
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self.fake.requests.append(("GET", self.path, dict(self.headers), b""))
+        if self.path != "/v1/stream" or not self.authorized():
+            return self.reply(401, b"unauthorized")
+        sid, out = self.fake.open_session()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("X-Klatch-Session", sid)
+        self.end_headers()
+        self.wfile.write(event({**HELLO_FRAME, "member": self.fake.member}))
+        self.wfile.write(b": a comment line the client ignores\n\n")
+        self.wfile.flush()
+        self.pump(sid, out)
+
+    def pump(self, sid, out):
+        """Write what the session is sent until it is told to end or the peer goes."""
+        try:
+            while True:
+                item = out.get(timeout=30)
+                if item is None:
+                    return
+                self.wfile.write(item)
+                self.wfile.flush()
+        except (OSError, queue.Empty):
+            pass
+        finally:
+            with self.fake.lock:
+                self.fake.sessions.pop(sid, None)
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.fake.requests.append(("POST", self.path, dict(self.headers), body))
+        if self.path != "/v1/frames" or not self.authorized():
+            return self.reply(401, b"unauthorized")
+        session = self.fake.sessions.get(self.headers.get("X-Klatch-Session"))
+        if session is None:
+            return self.reply(404, b"no such session")
+        if self.fake.posts_refused > 0:
+            self.fake.posts_refused -= 1
+            return self.reply(429, b"the session is busy; retry")
+        for line in body.decode().splitlines():
+            self.fake.handle(session, json.loads(line))
+        self.reply(202)
+
+
 class FakeServer:
     """The wire of `klatch-server http`, with one member: records what it was sent, keeps rooms in memory."""
 
@@ -47,74 +119,19 @@ class FakeServer:
         self.requests = []  # (method, path, headers dict, body)
         self.posts_refused = 0  # answer this many posts with 429 before accepting
         self.opened = 0
-        outer = self
-
-        class Handler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.0"
-
-            def log_message(self, *a):
-                pass
-
-            def authorized(self):
-                return (
-                    self.headers.get("Authorization") == f"Bearer {outer.token}"
-                    and self.headers.get("X-Klatch-Member") == outer.member
-                )
-
-            def reply(self, status, body=b""):
-                self.send_response(status)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                outer.requests.append(("GET", self.path, dict(self.headers), b""))
-                if self.path != "/v1/stream" or not self.authorized():
-                    return self.reply(401, b"unauthorized")
-                with outer.lock:
-                    outer.opened += 1
-                    sid = f"s{outer.opened}"
-                    out = queue.Queue()
-                    outer.sessions[sid] = {"out": out, "subs": set()}
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("X-Klatch-Session", sid)
-                self.end_headers()
-                self.wfile.write(event({"v": 1, "type": "hello", "member": outer.member, "attribution": "verified", "clearance": "public"}))
-                self.wfile.write(b": a comment line the client ignores\n\n")
-                self.wfile.flush()
-                try:
-                    while True:
-                        item = out.get(timeout=30)
-                        if item is None:
-                            return
-                        self.wfile.write(item)
-                        self.wfile.flush()
-                except (OSError, queue.Empty):
-                    pass
-                finally:
-                    with outer.lock:
-                        outer.sessions.pop(sid, None)
-
-            def do_POST(self):
-                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                outer.requests.append(("POST", self.path, dict(self.headers), body))
-                if self.path != "/v1/frames" or not self.authorized():
-                    return self.reply(401, b"unauthorized")
-                session = outer.sessions.get(self.headers.get("X-Klatch-Session"))
-                if session is None:
-                    return self.reply(404, b"no such session")
-                if outer.posts_refused > 0:
-                    outer.posts_refused -= 1
-                    return self.reply(429, b"the session is busy; retry")
-                for line in body.decode().splitlines():
-                    outer.handle(session, json.loads(line))
-                self.reply(202)
-
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.httpd.fake = self
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def open_session(self):
+        with self.lock:
+            self.opened += 1
+            sid = f"s{self.opened}"
+            out = queue.Queue()
+            self.sessions[sid] = {"out": out, "subs": set()}
+        return sid, out
 
     @property
     def url(self):
@@ -124,29 +141,36 @@ class FakeServer:
         if frame["type"] != "request":
             return
         method, params, rid = frame["method"], frame["params"], frame["id"]
-        result = {}
-        replay = []
         with self.lock:
-            if method == "post":
-                msgs = self.rooms.setdefault(params["room"], [])
-                msgs.append(self.message(params["room"], len(msgs) + 1, params["body"]))
-                result = {"seq": len(msgs), "id": f"m{len(msgs)}"}
-                for other in self.sessions.values():
-                    if params["room"] in other["subs"]:
-                        other["out"].put(event(msgs[-1]))
-            elif method == "subscribe":
-                room = params["room"]
-                session["subs"].add(room)
-                msgs = self.rooms.setdefault(room, [])
-                result = {"head": len(msgs)}
-                replay = [m for m in msgs if m["seq"] > params["from_seq"]]
-            elif method == "unsubscribe":
-                session["subs"].discard(params["room"])
+            result, replay = self._act(method, params, session)
         session["out"].put(event({"v": 1, "type": "response", "id": rid, "ok": True, "result": result}))
         if method == "subscribe":
             for m in replay:
                 session["out"].put(event(m))
             session["out"].put(event({"v": 1, "type": "caught_up", "room": params["room"], "head": result["head"]}))
+
+    def _act(self, method, params, session):
+        """What a request does to the rooms, under the lock: (its result, the messages to replay)."""
+        acts = {"post": self._act_post, "subscribe": self._act_subscribe, "unsubscribe": self._act_unsubscribe}
+        return acts.get(method, lambda params, session: ({}, []))(params, session)
+
+    def _act_post(self, params, session):
+        msgs = self.rooms.setdefault(params["room"], [])
+        msgs.append(self.message(params["room"], len(msgs) + 1, params["body"]))
+        for other in self.sessions.values():
+            if params["room"] in other["subs"]:
+                other["out"].put(event(msgs[-1]))
+        return {"seq": len(msgs), "id": f"m{len(msgs)}"}, []
+
+    def _act_subscribe(self, params, session):
+        room = params["room"]
+        session["subs"].add(room)
+        msgs = self.rooms.setdefault(room, [])
+        return {"head": len(msgs)}, [m for m in msgs if m["seq"] > params["from_seq"]]
+
+    def _act_unsubscribe(self, params, session):
+        session["subs"].discard(params["room"])
+        return {}, []
 
     @staticmethod
     def message(room, seq, body):
@@ -167,15 +191,14 @@ class FakeServer:
             for s in self.sessions.values():
                 s["out"].put(None)
 
-    def subscribes(self):
-        out = []
-        for method, path, _h, body in self.requests:
+    def posted_frames(self):
+        """Every frame the clients POSTed, in order."""
+        for method, _path, _headers, body in self.requests:
             if method == "POST":
-                for line in body.decode().splitlines():
-                    f = json.loads(line)
-                    if f.get("method") == "subscribe":
-                        out.append(f["params"])
-        return out
+                yield from (json.loads(line) for line in body.decode().splitlines())
+
+    def subscribes(self):
+        return [f["params"] for f in self.posted_frames() if f.get("method") == "subscribe"]
 
     def close(self):
         self.drop_streams()

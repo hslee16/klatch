@@ -23,10 +23,18 @@ Optional keys of fixture.json (#1374, scenario S9):
                     second session with the same name and a short note starts (run.py). A variant other than "join" renames
                     the fixture "<name>-<variant>" in records, so results of different variants are never pooled.
 
+Generated fixtures (#1372, scenario S7): "generated": {"module": "gen.py", "modules": M, "seed": S} names a generator in the
+fixture directory with the functions tasks(M, S) -> [{"name", "task"}] (the agents and their job text, instead of "agents"
+and task files) and scenario_map(M, S) (the unit-to-path map the scenario file leaves empty). The harness gives setup.sh and the
+checker COORDBENCH_GEN_MODULES and COORDBENCH_GEN_SEED. The seed belongs to the fixture, not to the run: every run of a size
+gets the same repository. "require_variant": true refuses the fixture without a variant (a size), so the sizes are never
+recorded under one name.
+
 The hidden checker is NOT in the fixture: checks/<checker>/check.sh CHECKOUT prints {"checks": [{"id", "pass",
 "unit"?}]} for a clone of the final origin. It is never copied into a checkout and never named in a prompt.
 """
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -49,6 +57,8 @@ class Fixture:
                 self.spec = json.load(f)
         except (OSError, ValueError) as e:
             raise FixtureError("cannot load fixture %s: %s" % (name, e))
+        if self.spec.get("require_variant") and not variant:
+            raise FixtureError("fixture %s needs a variant (%s)" % (name, ", ".join(sorted(self.spec.get("variants") or {}))))
         if variant:
             variants = self.spec.get("variants") or {}
             if variant not in variants:
@@ -57,7 +67,15 @@ class Fixture:
             if variant != "join":
                 self.name = "%s-%s" % (name, variant)
         self.agents = []
-        for a in self.spec["agents"]:
+        self.generated = self.spec.get("generated")
+        self._gen = None
+        if self.generated:
+            try:
+                self.agents = [{"name": t["name"], "task": t["task"].strip()} for t in self.gen().tasks(
+                    self.generated["modules"], self.generated["seed"])]
+            except (OSError, KeyError, ValueError, AttributeError) as e:
+                raise FixtureError("cannot generate fixture %s: %s" % (name, e))
+        for a in ([] if self.generated else self.spec["agents"]):
             with open(os.path.join(self.dir, a["task"])) as f:
                 self.agents.append({"name": a["name"], "task": f.read().strip()})
         self.test_command = self.spec.get("test_command", "python3 -m unittest")
@@ -98,6 +116,25 @@ class Fixture:
             except (OSError, KeyError) as e:
                 raise FixtureError("cannot load the resume note of fixture %s: %s" % (name, e))
 
+    def gen(self):
+        """The fixture's generator module, loaded from its file (None for a fixture that is not generated)."""
+        if self._gen is None and self.generated:
+            path = os.path.join(self.dir, self.generated["module"])
+            spec = importlib.util.spec_from_file_location("fixture_gen_%s" % self.spec["name"], path)
+            self._gen = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self._gen)
+        return self._gen
+
+    def gen_env(self):
+        """The environment setup.sh and the checker read for a generated fixture ({} otherwise)."""
+        if not self.generated:
+            return {}
+        return {"COORDBENCH_GEN_MODULES": str(self.generated["modules"]), "COORDBENCH_GEN_SEED": str(self.generated["seed"])}
+
+    def scenario_map(self):
+        """The generated unit, agent and shared-file map to merge into the scenario file ({} when not generated)."""
+        return self.gen().scenario_map(self.generated["modules"], self.generated["seed"]) if self.generated else {}
+
     def private_files(self, agent):
         """[(path relative to the clone, absolute source)] of the files only this agent has (fixture key "private":
         private/<agent>/...). The harness copies them into that agent's clone, untracked and excluded from git."""
@@ -118,6 +155,8 @@ class Fixture:
     def sha256(self):
         """A hash of the fixture directory (relative paths and bytes, sorted), recorded in every result."""
         h = hashlib.sha256()
+        if self.generated:  # the generator's parameters are part of what ran
+            h.update(json.dumps(self.generated, sort_keys=True).encode() + b"\0")
         for d, dirs, files in os.walk(self.dir):
             dirs.sort()
             for n in sorted(files):
@@ -129,6 +168,7 @@ class Fixture:
 
     def materialise(self, dest, seed, env, arm=None):
         os.makedirs(dest, exist_ok=True)
+        env = dict(env, **self.gen_env())
         if arm:
             env = dict(env, COORDBENCH_ARM=arm)
         p = subprocess.run(["bash", os.path.join(self.dir, "setup.sh"), dest, str(seed)], stdout=subprocess.PIPE,
@@ -141,6 +181,7 @@ class Fixture:
         ran and printed valid JSON; then checks is its list. Otherwise checks is [] and error says why."""
         if not os.path.exists(self.checker):
             return [], "", "checker %s does not exist" % self.checker
+        env = dict(env, **self.gen_env())
         try:
             p = subprocess.run(["bash", self.checker, checkout], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, env=env, timeout=timeout)
