@@ -21,6 +21,7 @@ pub(in crate::store) fn probe<S: Store>(feature: Feature, make: fn() -> S) {
             members::a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only(
                 make,
             );
+            members::hook_bytes_are_totalled_per_event_and_a_session_start_begins_a_new_count(make);
             members::the_first_parent_noted_for_a_member_is_kept_and_listed_with_it(make);
             members::a_park_holds_live_claims_until_the_return_time_and_not_after(make);
             members::a_parked_member_is_listed_with_why_and_return_time_until_unparked(make);

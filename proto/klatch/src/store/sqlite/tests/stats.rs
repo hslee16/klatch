@@ -207,8 +207,8 @@ fn bench() -> SqliteStore {
            (2000000003,'carol','lobby','x','TOPSECRET rule words');
          INSERT INTO admin_audit(ts,action,target,detail) VALUES
            (2000000000,'pause','TOPSECRET','TOPSECRET'),(2000000001,'pause','','TOPSECRET'),(2000000002,'close','lobby','');
-         INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES
-           ('alice','PostToolUse',2000000000,100,5),('bob','PostToolUse',2000000000,50,5),('alice','UserPromptSubmit',2000000000,20,5);
+         INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes,total_bytes,max_bytes) VALUES
+           ('alice','PostToolUse',2000000000,100,5,40000,900),('bob','PostToolUse',2000000000,50,5,5000,300),('alice','UserPromptSubmit',2000000000,20,5,2000,400);
          INSERT INTO credentials(member,token_hash,clearance,parent,issued,expires,revoked) VALUES
            ('w-1',x'00','internal','human',1000,9999999999,0),('w-2',x'01','internal','human',1000,9999999999,1),
            ('w-3',x'02','internal','human',1000,9999999999,0);
@@ -337,9 +337,70 @@ fn claims_members_refusals_hooks_audit_and_credentials_are_counted() {
     );
     assert_eq!(get(&r.hooks, "PostToolUse"), 150);
     assert_eq!(get(&r.hooks, "UserPromptSubmit"), 20);
+    // bytes injected (#1406): totals and the largest single run per event, the largest sessions first
+    assert_eq!(get(&r.hook_bytes, "PostToolUse"), 45_000);
+    assert_eq!(get(&r.hook_bytes, "UserPromptSubmit"), 2_000);
+    assert_eq!(get(&r.hook_bytes_max, "PostToolUse"), 900);
+    assert_eq!(
+        r.sessions_top_bytes,
+        vec![("alice".to_string(), 42_000), ("bob".to_string(), 5_000)]
+    );
     assert_eq!(get(&r.audit, "pause"), 2);
     assert_eq!(get(&r.audit, "close"), 1);
     assert_eq!((r.credentials_issued, r.credentials_revoked), (3, 1));
+}
+
+#[test]
+fn the_largest_sessions_are_limited_by_top_and_follow_since() {
+    let s = bench();
+    let one = s.usage_stats(&StatsOptions { top: 1, ..opts() }).unwrap();
+    assert_eq!(one.sessions_top_bytes, vec![("alice".to_string(), 42_000)]);
+    let none = s
+        .usage_stats(&StatsOptions {
+            since: Some(2_000_000_001),
+            ..opts()
+        })
+        .unwrap();
+    assert!(none.hook_bytes.is_empty() && none.sessions_top_bytes.is_empty());
+}
+
+#[test]
+fn a_store_from_before_the_byte_columns_reports_runs_and_no_bytes() {
+    let s = bench();
+    exec(
+        &s,
+        "ALTER TABLE hook_runs DROP COLUMN total_bytes; ALTER TABLE hook_runs DROP COLUMN max_bytes; ALTER TABLE hook_runs DROP COLUMN since_start;",
+    );
+    let r = s.usage_stats(&opts()).unwrap();
+    assert_eq!(get(&r.hooks, "PostToolUse"), 150);
+    assert!(
+        r.hook_bytes.is_empty() && r.hook_bytes_max.is_empty() && r.sessions_top_bytes.is_empty()
+    );
+    assert!(r.to_text().contains("bytes injected"));
+}
+
+#[test]
+fn bytes_injected_are_in_the_text_and_the_json_as_counts() {
+    let r = bench().usage_stats(&opts()).unwrap();
+    let text = r.to_text();
+    assert!(
+        text.contains("bytes injected into sessions by hook event"),
+        "{text}"
+    );
+    assert!(
+        text.contains("PostToolUse") && text.contains("45000"),
+        "{text}"
+    );
+    assert!(
+        text.contains("largest sessions by bytes injected"),
+        "{text}"
+    );
+    let j = r.to_json();
+    assert_eq!(j["hook_bytes"][0]["name"], "PostToolUse");
+    assert_eq!(j["hook_bytes"][0]["count"], 45_000);
+    assert_eq!(j["hook_bytes_max"][0]["count"], 900);
+    assert_eq!(j["sessions_top_bytes"][0]["name"], "alice");
+    assert_eq!(j["sessions_top_bytes"][0]["count"], 42_000);
 }
 
 #[test]

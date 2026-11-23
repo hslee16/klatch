@@ -89,11 +89,13 @@ pub(super) fn hooks(ctx: &Ctx, of: Option<String>) -> Result<()> {
     }
     for r in runs {
         println!(
-            "{}\tlast ran {}s ago\truns {}\tprinted {} bytes",
+            "{}\tlast ran {}s ago\truns {}\tprinted {} bytes\t{} in all (largest {})",
             r.event,
             klatch::domain::secs_between(ctx.now, r.last_ts),
             r.runs,
-            r.last_bytes
+            r.last_bytes,
+            r.total_bytes,
+            r.max_bytes
         );
     }
     Ok(())
@@ -180,11 +182,24 @@ pub(super) fn join_lobby(ctx: &Ctx) -> Result<Start> {
     Ok(Start { notice, boards })
 }
 
-/// The rooms the guard would not show, then what the rooms have to say.
-pub(super) fn digest_text(d: &klatch::gateway::Digest) -> String {
-    let (mut text, _) = refused_text(d);
-    text.push_str(&render_hook(&d.rooms, d.now));
-    text
+/// What the rooms have to say to a session that has had `level` of its byte budget spent (#1406). The notes on rooms
+/// the guard would not show are left to the session start: they would repeat, the same fixed lines, at every prompt
+/// and tool call for as long as the room stays refused, and a hook with nothing new prints nothing.
+pub(super) fn digest_text(
+    d: &klatch::gateway::Digest,
+    level: klatch::domain::BudgetLevel,
+) -> String {
+    klatch::domain::render_hook_at(&d.rooms, d.now, level)
+}
+
+/// How much of its byte budget this member's session has spent: the bytes its hooks injected since its latest
+/// `SessionStart`. A store that cannot say counts as none spent.
+pub(super) fn session_level(t: &dyn Transport, me: &str) -> klatch::domain::BudgetLevel {
+    let used: i64 = t
+        .hook_runs(me)
+        .map(|runs| runs.iter().map(|r| r.since_start).sum())
+        .unwrap_or(0);
+    klatch::domain::BudgetLevel::for_used(used.max(0) as u64)
 }
 
 /// The notes on rooms the guard would not show, cut to a fixed budget with a count of the rest (#612), and their
@@ -360,7 +375,10 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let (text, notice) = if args.is("SessionStart") {
         session_start(ctx, args)?
     } else {
-        (digest_text(&t.digest_with(false)?), None)
+        (
+            digest_text(&t.digest_with(false)?, session_level(t, ctx.me)),
+            None,
+        )
     };
     // Record that this hook ran (the size it printed, never the content), so a user can see the hooks are alive for
     // a session. A failure to record must not stop the hook delivering.
@@ -501,7 +519,11 @@ pub(super) fn pre_tool_use(ctx: &Ctx) -> Result<()> {
     );
     match verdict {
         ToolVerdict::Allow => {}
-        ToolVerdict::Warn(w) => print!("{}", hook_output_json("PreToolUse", &w, None)),
+        ToolVerdict::Warn(w) => {
+            // a warning goes into the context, so it counts toward the session's bytes (#1406)
+            let _ = t.record_hook_run("PreToolUse", w.len());
+            print!("{}", hook_output_json("PreToolUse", &w, None));
+        }
         ToolVerdict::Block(reason) => {
             eprintln!("{reason}");
             std::process::exit(2);
@@ -523,5 +545,42 @@ mod stop_tests {
         assert_eq!(background_counts(&numbers), (3, 0));
         assert_eq!(background_counts(&json!({"background_tasks": "x"})), (0, 0));
         assert_eq!(background_counts(&json!({})), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod digest_cost_tests {
+    use super::*;
+    use klatch::domain::BudgetLevel;
+    use klatch::gateway::{Digest, Refused};
+
+    fn refused_only() -> Digest {
+        Digest {
+            rooms: Vec::new(),
+            refused: vec![Refused {
+                room: "vault".into(),
+                reason: "clearance".into(),
+            }],
+            now: 0,
+        }
+    }
+
+    #[test]
+    fn a_refused_room_alone_prints_nothing_at_a_prompt_at_any_level() {
+        for level in [
+            BudgetLevel::Full,
+            BudgetLevel::Short,
+            BudgetLevel::Few,
+            BudgetLevel::CountOnly,
+        ] {
+            assert_eq!(digest_text(&refused_only(), level), "");
+        }
+    }
+
+    #[test]
+    fn a_refused_room_is_still_told_at_the_session_start() {
+        let (text, n) = refused_text(&refused_only());
+        assert!(text.contains("room vault not shown: clearance"), "{text}");
+        assert_eq!(n, klatch::domain::printed_len(&text));
     }
 }
