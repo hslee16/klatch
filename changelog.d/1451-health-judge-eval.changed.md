@@ -1,0 +1,1 @@
+- Code health cleanup of klatch-bench judge_eval (#1451, part of #1441): the report, corpus parser, metrics summary and option parser were split into smaller functions and the tests got table-style assertions. The runner output is unchanged byte for byte (pinned by new golden tests of the printed report and the results JSON); no CLI, output format or documented behaviour changes.

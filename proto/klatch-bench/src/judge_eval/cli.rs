@@ -138,50 +138,10 @@ impl Options {
         };
         while let Some(a) = args.next() {
             let a = a.as_str();
-            match a {
-                "--judge" => judge = Some(JudgeSpec::parse(&value(&mut args, a)?)?),
-                "--split" => {
-                    o.split =
-                        Split::parse(&value(&mut args, a)?).ok_or("--split is dev or test")?;
-                }
-                "--limit" => {
-                    let v = value(&mut args, a)?;
-                    o.limit = Some(
-                        v.parse::<usize>()
-                            .ok()
-                            .filter(|n| *n > 0)
-                            .ok_or_else(|| format!("--limit: {v:?} is not a positive count"))?,
-                    );
-                }
-                "--out" => o.out = Some(value(&mut args, a)?),
-                "--target-leak" => {
-                    o.target_leak = number(&value(&mut args, a)?, a)?;
-                    if !(0.0..=1.0).contains(&o.target_leak) {
-                        return Err("--target-leak is a rate from 0 to 1".into());
-                    }
-                }
-                "--ceiling" => o.ceiling = value(&mut args, a)?,
-                "--budget-usd" => {
-                    o.budget_usd = number(&value(&mut args, a)?, a)?;
-                    if o.budget_usd <= 0.0 {
-                        return Err("--budget-usd must be above zero".into());
-                    }
-                }
-                "--corpus" => o.corpus = Some(value(&mut args, a)?),
-                "--scrub" => o.scrub = Some(value(&mut args, a)?),
-                "--claude" => o.claude = value(&mut args, a)?,
-                "--origin" => {
-                    o.origin = Some(
-                        corpus::Origin::parse(&value(&mut args, a)?)
-                            .ok_or("--origin is design or search")?,
-                    );
-                }
-                "--deny-threshold" => o.deny_threshold = Some(number(&value(&mut args, a)?, a)?),
-                "--allow-threshold" => o.allow_threshold = Some(number(&value(&mut args, a)?, a)?),
-                "--redact-threshold" => {
-                    o.redact_threshold = Some(number(&value(&mut args, a)?, a)?);
-                }
-                other => return Err(format!("unknown option {other}")),
+            if a == "--judge" {
+                judge = Some(JudgeSpec::parse(&value(&mut args, a)?)?);
+            } else {
+                o.apply(a, &mut args)?;
             }
         }
         o.judge = judge.ok_or("--judge is required")?;
@@ -195,6 +155,52 @@ impl Options {
             );
         }
         Ok(o)
+    }
+
+    /// Read one option (not `--judge`) and its value into `self`.
+    fn apply(&mut self, a: &str, args: &mut dyn Iterator<Item = String>) -> Result<(), String> {
+        match a {
+            "--split" => {
+                self.split = Split::parse(&value(args, a)?).ok_or("--split is dev or test")?;
+            }
+            "--limit" => {
+                let v = value(args, a)?;
+                self.limit = Some(
+                    v.parse::<usize>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| format!("--limit: {v:?} is not a positive count"))?,
+                );
+            }
+            "--out" => self.out = Some(value(args, a)?),
+            "--target-leak" => {
+                self.target_leak = number(&value(args, a)?, a)?;
+                if !(0.0..=1.0).contains(&self.target_leak) {
+                    return Err("--target-leak is a rate from 0 to 1".into());
+                }
+            }
+            "--ceiling" => self.ceiling = value(args, a)?,
+            "--budget-usd" => {
+                self.budget_usd = number(&value(args, a)?, a)?;
+                if self.budget_usd <= 0.0 {
+                    return Err("--budget-usd must be above zero".into());
+                }
+            }
+            "--corpus" => self.corpus = Some(value(args, a)?),
+            "--scrub" => self.scrub = Some(value(args, a)?),
+            "--claude" => self.claude = value(args, a)?,
+            "--origin" => {
+                self.origin = Some(
+                    corpus::Origin::parse(&value(args, a)?)
+                        .ok_or("--origin is design or search")?,
+                );
+            }
+            "--deny-threshold" => self.deny_threshold = Some(number(&value(args, a)?, a)?),
+            "--allow-threshold" => self.allow_threshold = Some(number(&value(args, a)?, a)?),
+            "--redact-threshold" => self.redact_threshold = Some(number(&value(args, a)?, a)?),
+            other => return Err(format!("unknown option {other}")),
+        }
+        Ok(())
     }
 
     /// The cascade policy: each flag as given; without `--deny-threshold` the first judge's own threshold in the spec
