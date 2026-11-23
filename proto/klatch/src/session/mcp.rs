@@ -292,6 +292,9 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             };
             if !got.messages.is_empty() {
                 let mut r = json!({"messages": got.messages, "timeout": false});
+                if got.by_importance {
+                    r["by_importance"] = json!(true);
+                }
                 if got.omitted > 0 {
                     r["omitted"] = json!(got.omitted);
                     r["next"] = json!("call klatch_wait again for the next unread messages");
@@ -313,6 +316,7 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
         let mut got = Polled {
             messages: Vec::new(),
             omitted: 0,
+            by_importance: false,
         };
         let share = rooms.len().max(1);
         let params = |room: &String| {
@@ -323,6 +327,7 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             match self.wire("read", params(room)) {
                 Ok(r) => {
                     got.omitted += r["omitted"].as_u64().unwrap_or(0) as usize;
+                    got.by_importance |= r["by_importance"].as_bool().unwrap_or(false);
                     for m in r["messages"].as_array().into_iter().flatten() {
                         let mut m = m.clone();
                         m["room"] = json!(room);
@@ -341,6 +346,8 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
 struct Polled {
     messages: Vec<Value>,
     omitted: usize,
+    /// Some room's page was put in order of importance rather than in sequence (#1405).
+    by_importance: bool,
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, RpcError> {

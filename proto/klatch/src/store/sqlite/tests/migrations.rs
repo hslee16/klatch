@@ -704,7 +704,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 40);
+    assert_eq!(SCHEMA_VERSION, 41);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -744,6 +744,40 @@ fn a_version_39_database_gains_the_hook_byte_columns_and_its_old_runs_start_at_z
     assert_eq!(
         (now[0].runs, now[0].total_bytes, now[0].max_bytes),
         (8, 50, 50)
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
+    let path = temp_db("migrate-v40-read-shown");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "bob"), "one", 2).unwrap();
+        s.post(Seat::new("r", "bob"), "two", 3).unwrap();
+        s.read(Seat::new("r", "alice"), true, 4).unwrap();
+        s.post(Seat::new("r", "bob"), "three", 5).unwrap();
+        s.conn
+            .execute_batch("DROP TABLE read_shown; PRAGMA user_version = 40;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 41);
+    let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
+    assert_eq!(unread.len(), 1, "the cursor survives");
+    s.mark_shown(
+        Seat::new("r", "alice"),
+        crate::store::Shown::Read,
+        &[Seq(3)],
+        7,
+    )
+    .unwrap();
+    assert!(
+        s.read(Seat::new("r", "alice"), false, 8)
+            .unwrap()
+            .is_empty()
     );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

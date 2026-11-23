@@ -3,7 +3,7 @@
 use super::super::schema::POSTS_SINCE_SQL;
 use super::super::{MESSAGE_COLUMNS, SqliteStore, be};
 use crate::domain::{Message, Posted, Result};
-use crate::store::MessageStore;
+use crate::store::{MessageStore, Shown};
 use crate::store::{NewMessage, Seat, Seq};
 use rusqlite::params;
 
@@ -99,6 +99,10 @@ impl MessageStore for SqliteStore {
                 |r| r.get(0),
             )
             .map_err(be)
+    }
+
+    fn mark_shown(&self, at: Seat, channel: Shown, seqs: &[Seq], now: i64) -> Result<()> {
+        self.do_mark_shown(at, channel, seqs, now)
     }
 
     fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {

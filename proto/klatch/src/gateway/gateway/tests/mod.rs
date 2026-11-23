@@ -52,6 +52,7 @@ mod own_refusals;
 mod parked;
 mod possible_overwrite;
 mod pr_lifecycle;
+mod priority;
 mod process_exited;
 mod qa_correlation;
 mod rate_limit;

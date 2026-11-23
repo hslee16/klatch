@@ -46,6 +46,18 @@ pub trait Messages {
     /// Read the unread messages up to `through` (a seq) and mark only those read: the ones past it stay unread, so
     /// a caller that shows a bounded part of what is unread moves its cursor over what it showed (#1390).
     fn read_through(&self, room: &str, through: i64) -> Result<Vec<Message>>;
+    /// The unread messages in the order a capped view shows them: asks for the caller, direct messages, messages to it,
+    /// then the rest, each in sequence order (#1405). Moves no cursor.
+    fn read_ranked(&self, room: &str) -> Result<Vec<(crate::domain::Importance, Message)>>;
+    /// `messages` (unread ones of `room`, for example what a filtered wait found) in that order (#1405).
+    fn rank(
+        &self,
+        room: &str,
+        messages: Vec<Message>,
+    ) -> Result<Vec<(crate::domain::Importance, Message)>>;
+    /// Mark exactly these seqs as shown, which need not be a prefix of the unread messages (#1405): the cursor of `channel`
+    /// moves over the contiguous run, the rest are remembered until it passes them.
+    fn mark_shown(&self, room: &str, channel: crate::store::Shown, seqs: &[i64]) -> Result<()>;
     /// Look back in a room: everyone's messages in `range`, moving no cursor (#518).
     fn history(&self, room: &str, range: HistoryRange) -> Result<History>;
     /// Per-recipient liveness states for a message the caller sent (#546); no text, no read state.
@@ -105,6 +117,20 @@ impl<S: Store> Messages for Direct<S> {
     fn read_through(&self, room: &str, through: i64) -> Result<Vec<Message>> {
         self.gateway.read_through(&self.principal, room, through)
     }
+    fn read_ranked(&self, room: &str) -> Result<Vec<(crate::domain::Importance, Message)>> {
+        self.gateway.read_ranked(&self.principal, room)
+    }
+    fn rank(
+        &self,
+        room: &str,
+        messages: Vec<Message>,
+    ) -> Result<Vec<(crate::domain::Importance, Message)>> {
+        self.gateway.rank(&self.principal, room, messages)
+    }
+    fn mark_shown(&self, room: &str, channel: crate::store::Shown, seqs: &[i64]) -> Result<()> {
+        self.gateway
+            .mark_shown(&self.principal, room, channel, seqs)
+    }
     fn history(&self, room: &str, range: HistoryRange) -> Result<History> {
         self.gateway.history(&self.principal, room, range)
     }
@@ -130,6 +156,9 @@ impl Messages for SharedTransport {
         join(room: &str) -> Result<()>;
         read(room: &str, advance: bool) -> Result<Vec<crate::domain::Message>>;
         read_through(room: &str, through: i64) -> Result<Vec<crate::domain::Message>>;
+        read_ranked(room: &str) -> Result<Vec<(crate::domain::Importance, crate::domain::Message)>>;
+        rank(room: &str, messages: Vec<crate::domain::Message>) -> Result<Vec<(crate::domain::Importance, crate::domain::Message)>>;
+        mark_shown(room: &str, channel: crate::store::Shown, seqs: &[i64]) -> Result<()>;
         history(room: &str, range: HistoryRange) -> Result<crate::gateway::History>;
         receipt(room: &str, seq: i64) -> Result<crate::domain::Receipts>;
         ack(room: &str, seq: i64) -> Result<()>;

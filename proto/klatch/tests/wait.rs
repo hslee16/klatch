@@ -213,7 +213,7 @@ fn a_filtered_or_peeking_wait_keeps_the_waiter_present_in_who() {
 }
 
 #[test]
-fn a_busy_lobby_wait_prints_a_bounded_digest_from_the_oldest_with_a_count_and_the_next_wait_shows_the_rest()
+fn a_busy_lobby_wait_prints_a_bounded_digest_with_the_message_for_the_waiter_first_a_count_and_the_next_wait_shows_the_rest()
  {
     let h = Home::new();
     h.ok("alice", &["join", "r"]);
@@ -223,16 +223,18 @@ fn a_busy_lobby_wait_prints_a_bounded_digest_from_the_oldest_with_a_count_and_th
     }
     h.ok("bob", &["post", "r", "@alice the one for you"]);
     let out = h.ok("alice", &["wait", "r", "--timeout", "5"]);
-    assert!(out.contains("first of the lobby"), "oldest kept: {out}");
+    // what is for the waiter comes first (#1405), then the rest from the oldest
+    let (mine, oldest) = (out.find("the one for you"), out.find("first of the lobby"));
+    assert!(mine.unwrap() < oldest.unwrap(), "addressed first: {out}");
     assert!(!out.contains("chatter 28"), "newest cut: {out}");
     assert!(
-        out.contains("[r: 11 more messages not shown, 1 of them mention you; run `klatch wait r` for the next ones]"),
+        out.contains("[r: 11 more messages not shown; run `klatch wait r` for the next ones]"),
         "count: {out}"
     );
     assert_eq!(out.matches("[r ").count(), 20, "bounded: {out}");
-    // what was not shown is still unread: the next wait shows it, the one for the waiter last
+    // what was not shown is still unread: the next wait shows it, and not the one it already showed
     let rest = h.ok("alice", &["wait", "r", "--timeout", "5"]);
     assert!(rest.contains("chatter 28"), "{rest}");
-    assert!(rest.contains("the one for you"), "{rest}");
+    assert!(!rest.contains("the one for you"), "shown once: {rest}");
     assert!(!rest.contains("more messages not shown"), "{rest}");
 }

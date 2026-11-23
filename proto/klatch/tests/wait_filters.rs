@@ -45,7 +45,9 @@ fn a_room_with_its_own_filter_ignores_the_global_only() {
     let h = Home::new();
     h.ok("alice", &["join", "lobby"]);
     h.ok("alice", &["join", "dm"]);
-    h.ok("bob", &["post", "dm", "seeking: x"]);
+    // the dm room has news that does not match the global filter; with the room's own filter the lobby message wakes
+    // the wait (when both rooms match, the room with the more important message is shown first, #1405)
+    h.ok("bob", &["post", "dm", "other news"]);
     h.ok("bob", &["post", "lobby", "closing: y"]);
     let out = h.ok(
         "alice",
@@ -60,6 +62,7 @@ fn a_room_with_its_own_filter_ignores_the_global_only() {
         ],
     );
     assert!(out.contains("closing: y"), "got: {out}");
+    assert!(!out.contains("other news"), "got: {out}");
 }
 
 #[test]

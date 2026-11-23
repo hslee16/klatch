@@ -47,7 +47,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE ask_refs(room TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT, snippet TEXT, PRIMARY KEY(room,seq,pos));
  CREATE TABLE claim_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, event TEXT NOT NULL, class TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', held INTEGER NOT NULL DEFAULT 0, waited INTEGER);
  CREATE INDEX claim_events_ts ON claim_events(ts);
- CREATE TABLE claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));";
+ CREATE TABLE claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));
+ CREATE TABLE read_shown(room TEXT NOT NULL, member TEXT NOT NULL, channel TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,channel,seq));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -500,6 +501,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v37,
     migrate_v38,
     migrate_v39,
+    migrate_v40,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -550,6 +552,19 @@ pub(super) fn migrate_v39(conn: &Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Version 40 to 41: the messages a capped `read` or `wait` showed out of order (#1405). A capped view puts what is
+/// addressed to the reader first, so what it shows is no longer a prefix of the unread messages and a single cursor
+/// cannot say what was shown. The cursor still only moves over a contiguous shown run; `read_shown` holds the seqs
+/// shown beyond it, per member, room and channel (`read` for the read cursor, `wait` for the wait position of a peeking
+/// or filtered wait), and a row is deleted as soon as its cursor passes it. Seqs only, never text. Existing stores
+/// start empty, which is the old behaviour (every position is a prefix).
+pub(super) fn migrate_v40(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS read_shown(room TEXT NOT NULL, member TEXT NOT NULL, channel TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,channel,seq));",
+    )
+    .map_err(be)
 }
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.

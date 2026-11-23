@@ -70,6 +70,7 @@ mod board;
 mod checks;
 mod claims;
 mod presence;
+mod priority;
 mod reading;
 use checks::{
     check_event_name, check_member, check_no_credentials, check_path, check_reason, check_room,

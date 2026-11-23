@@ -443,8 +443,33 @@ by_copy!(
     Option<i64>,
     Option<(usize, i64)>,
     HistoryRange,
-    crate::gateway::DeliveryView
+    crate::gateway::DeliveryView,
+    crate::store::Shown
 );
+impl Own for &[i64] {
+    type Owned = Vec<i64>;
+    fn own(&self) -> Vec<i64> {
+        self.to_vec()
+    }
+}
+impl<'a> Lend<'a> for Vec<i64> {
+    type Borrowed = &'a [i64];
+    fn lend(&'a self) -> &'a [i64] {
+        self
+    }
+}
+impl Own for Vec<crate::domain::Message> {
+    type Owned = Vec<crate::domain::Message>;
+    fn own(&self) -> Vec<crate::domain::Message> {
+        self.clone()
+    }
+}
+impl<'a> Lend<'a> for Vec<crate::domain::Message> {
+    type Borrowed = Vec<crate::domain::Message>;
+    fn lend(&'a self) -> Vec<crate::domain::Message> {
+        self.clone()
+    }
+}
 
 /// Forward each listed method: copy the arguments, run the same method on the owner's `Direct`.
 macro_rules! forward {

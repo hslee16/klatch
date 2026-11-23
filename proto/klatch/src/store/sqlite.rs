@@ -1,7 +1,7 @@
 use crate::domain::{ASK_LEASE_DEFAULT_SECS, CLAIM_DEFAULT_SECS};
 use crate::domain::{Claim, ClaimChanges, Error, Message, Parked, Posted, ReleasedClaim, Result};
 use crate::store::ids::new_id;
-use crate::store::{NewMessage, Release, Seat};
+use crate::store::{NewMessage, Release, Seat, Seq, Shown};
 use rusqlite::{Connection, params};
 
 mod api;
