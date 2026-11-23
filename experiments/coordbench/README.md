@@ -20,6 +20,9 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `streams.py`: parses the stream-json of an agent (turns, tokens, cost, tool calls, messages, conflicts).
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface (optional per-agent private files and a seeded history), the test fixture `trivial`, F1 `tallykit` (Scenario S1) and F4 `specialists` (Scenario S4).
+- `asks.py`: the S4 ask and answer metrics from the agents' message events, and the ask counts of the streams for the store cross-check (#1433).
+- `storeexport.py`: the K arms' run store as counts, from `klatch-bench store-stats` (#1433).
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3).
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
 - `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
@@ -109,6 +112,32 @@ lost lines and who wrote them, edits to a module the agent does not own, merge s
 record's `scenario_metrics`. `claim_conflicts` and `store_export` come from the K arms' run store (see "The run store export" below). Fake scripts for
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
+
+## Scenario S4: ask and answer across specialists (`scenarios/s4.json`, fixture `specialists`)
+
+F4 `specialists` is a small package `linkkit` (framing, retry, routing, ledger) owned by three agents (`a`, `b`, `c`). Each
+agent's clone has one private specification file (`SPEC-FRAMING.md`, `SPEC-ROUTING.md`, `SPEC-LEDGER.md`, from
+`fixtures/specialists/private/<agent>/`); the harness copies it into that clone only, untracked and excluded from git, so it
+is not in origin and no other agent can read it. Every agent's functions need constants that only another agent's file
+defines (seven slots, one function each: the six needs of the spec plus a's second-phase need). The facts are arbitrary, drawn
+from a fixed seed by `fixtures/specialists/gen_facts.py` (`--check` verifies the committed files; a test does too), never a
+conventional default, each with a stale revision-2 value. The visible tests check only types, so a guess passes them.
+
+Two designed needs: MAX_PAYLOAD was answered before the run in a seeded exchange (`seed.json`: posted into the room for K arms
+before any agent starts, a line on `TASKS.md` for B1), so asking for it again is a repeat; LEDGER_MODULUS is needed by b early
+and by a late, after c has finished and stopped (a's second phase waits for b's published code), so the late ask is answered
+only from history (or from reading b's code, which the metric cannot tell apart). `fixtures/specialists/reference/` is the
+solution, never in a checkout. The hidden checker `checks/specialists/check.sh CHECKOUT` loads each module by file and prints
+per slot `correct`, `wrong` (with the conventional default it matches, or `other`), `stale`, `unanswered` or `broken`, plus
+`wrong_guesses`, `unanswered`, `plausible_default_guesses`, `merge_state` and `private_files_committed`.
+
+The ask metrics are in the record's `scenario_metrics.asks`, from the agents' streams (`asks.py`; K arms and B1 alike, since the
+store export is not wired in yet, so `klatch admin stats` counts are not used): asks made, answered and lost, time to first
+answer, duplicate answers, repeat asks, repeat asks avoided, late asks and their fate, stale answers, wrong guesses (and those
+made without an ask), unanswered dependencies and need-info events (observed, not a rate). Classification is by first word
+(`seeking`, `answer`, `need-info`) and by the fact key or value in the text; definitions are in `scenarios/s4.json`. Arms B1 K1
+K2 (B0 cannot ask). Fake scripts use the extra steps `send`, `copy_from` with `replace`, `dump_specs` and `dump_board`.
+Tests: `tests/test_specialists_checker.py`, `tests/test_asks.py`, `tests/test_s4_scenario.py` (the K-arm seeding test needs `KLATCH_BIN`).
 
 ## Scenario S2: three agents, one file (`scenarios/s2.json`, fixture `onefile`)
 
@@ -232,9 +261,9 @@ the record keeps null with a note, and the run stays valid.
 From it the harness fills `metrics.claim_conflicts` and, under `scenario_metrics.store`: `claims_granted`,
 `claims_refused_by_rule`, `claims_released`, `claims_expired`, `asks_created`, `asks_answered`, `asks_closed`,
 `time_to_first_answer_s`, `members_posted_never_read`, `hook_bytes_injected`, and `asks_cross_check` (the ask counts of the
-streams, from `asks.py`, next to the store's, with a mismatch flag and a note). The scenario files (`s1` to `s3`, `s9`) have a
-`store_metrics` section naming the export field behind each one, and the report shows them per arm. Scenario S4 (#1369) gets
-the same section when its branch merges. Tests: `tests/test_store_export.py` (with `KLATCH_BIN` set, fake K agents claim,
+streams, from `asks.py`, next to the store's, with a mismatch flag and a note). The scenario files (`s1` to `s4`, `s9`) have a
+`store_metrics` section naming the export field behind each one, and the report shows them per arm. In S4 the ask metrics stay
+stream-based for every arm; the store counts sit beside them with the cross-check. Tests: `tests/test_store_export.py` (with `KLATCH_BIN` set, fake K agents claim,
 collide, ask and answer through the real binary and the real tool); the tool's own tests are in the klatch-bench crate.
 
 ## Not computed yet
