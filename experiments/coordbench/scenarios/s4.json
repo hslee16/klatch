@@ -1,0 +1,71 @@
+{
+  "id": "S4",
+  "title": "ask and answer across specialists, including a late ask (#1369)",
+  "spec": "SPEC.md section 3, scenario S4; fixture F4 specialists",
+  "fixture": "specialists",
+  "arms": ["B1", "K1", "K2"],
+  "arms_at_m0": ["B1", "K1", "K2"],
+  "arm_notes": {
+    "B0": "not applicable: B0 has no way to ask (SPEC section 2.2 and the per-scenario table), so S4 is not run on it. The harness accepts --arm B0 for tests (a fake agent that never asks), and the real arm list stays B1 K1 K2.",
+    "K3": "not part of S4 (SPEC section 2.2)"
+  },
+  "n_per_arm": {"m0": 10, "quick": 3, "note": "SPEC section 6.1 and 8.1: 10 per arm at M0 (30 runs, the human approves, section 12), 3 for the quick subset after an epic, labelled exploratory"},
+  "caps": {
+    "per_run_usd": 1.8,
+    "suite_usd_m0_haiku": 22.5,
+    "wall_s": 900,
+    "max_turns_per_agent": 40,
+    "basis": "SPEC section 8.1: S4 assumed at 0.60 USD a run on Haiku, so 3x per run (1.80) and 1.25x the 18 USD estimate for 3 arms x 10 runs (22.50). Proposals; the human changes them before M0 (#1380)."
+  },
+  "agents": {
+    "a": {"units": ["framing", "retry"], "holds": ["FRAME_MAGIC", "MAX_PAYLOAD"]},
+    "b": {"units": ["routing"], "holds": ["TOPIC_PREFIX", "PARTITIONS"]},
+    "c": {"units": ["ledger"], "holds": ["CHECKSUM_SEED", "LEDGER_MODULUS"]}
+  },
+  "units": {
+    "framing": {"path": "linkkit/framing.py"},
+    "retry": {"path": "linkkit/retry.py"},
+    "routing": {"path": "linkkit/routing.py"},
+    "ledger": {"path": "linkkit/ledger.py"}
+  },
+  "shared_files": {},
+  "facts": {
+    "FRAME_MAGIC": {"holder": "a"},
+    "MAX_PAYLOAD": {"holder": "a"},
+    "TOPIC_PREFIX": {"holder": "b"},
+    "PARTITIONS": {"holder": "b"},
+    "CHECKSUM_SEED": {"holder": "c"},
+    "LEDGER_MODULUS": {"holder": "c"}
+  },
+  "slots": {
+    "a.topic_name": {"agent": "a", "fact": "TOPIC_PREFIX"},
+    "a.payload_digest": {"agent": "a", "fact": "CHECKSUM_SEED"},
+    "a.retry_slot": {"agent": "a", "fact": "LEDGER_MODULUS", "kind": "late"},
+    "b.ledger_slot": {"agent": "b", "fact": "LEDGER_MODULUS"},
+    "b.frame_tag": {"agent": "b", "fact": "FRAME_MAGIC"},
+    "c.chunk_count": {"agent": "c", "fact": "MAX_PAYLOAD", "kind": "seeded-repeat"},
+    "c.shard_for": {"agent": "c", "fact": "PARTITIONS"}
+  },
+  "seeded_answers": ["MAX_PAYLOAD"],
+  "metrics": {
+    "primary": "units_completed",
+    "secondary": ["asks_made", "asks_answered", "asks_lost", "time_to_first_answer_s", "duplicate_answers", "repeat_asks", "repeat_asks_avoided", "wrong_guesses", "need_info_events"],
+    "definitions": {
+      "units_completed": "Slots whose function matches the oracle computed from the true fact (0 to 7). The spec's 0 to 6 counts the six needs of the three agents; the seventh slot is a's second-phase need (the late one), which is the same fact b already needed (LEDGER_MODULUS), kept as its own slot so a lost late ask costs a unit. From the checker.",
+      "slot_states": "From the checker, per slot: correct; wrong (the function returns values that differ from the truth: value_used says which conventional default, which stale value or other); stale (a wrong slot whose value is the superseded revision-2 value); unanswered (the stub still raises NotImplementedError or the file is missing); broken (it raises another exception).",
+      "wrong_guesses": "Slots in state wrong or stale, from the checker (a plausible but wrong value in the code). wrong_without_ask is the subset where the agent never asked for that fact, joined by the harness.",
+      "unanswered_dependencies": "Slots in state unanswered, from the checker.",
+      "asks_made": "Messages that start with seeking: (or a klatch ask command), from the agents' streams (SendMessage input, or a klatch post, ask or answer command in Bash), attributed to a fact by the fact's key in the text (case and punctuation ignored); asks that name no fact key are counted in asks_unclassified. The seeded history is not counted.",
+      "asks_answered": "Asks for which a later message starting with answer (or a klatch answer command) names the same fact key, or carries the fact's true or stale value, with the answer's time not before the ask's.",
+      "asks_lost": "asks_made minus asks_answered: an ask nobody answered. late_ask_lost is the same for asks to a holder that had already finished (see late_asks).",
+      "late_asks": "Asks whose holder (the agent that holds the fact) had already finished (its result event was seen) before the ask was posted.",
+      "time_to_first_answer_s": "Seconds from the first ask to the first answer that matches an ask, on the harness's clock as the streams are read (resolution about 0.05 s); null when there was no answered ask. answer_delays_s lists the delay of every answered ask.",
+      "duplicate_answers": "For each ask, the answers beyond the first (matching answers between this ask and the next ask for the same fact), summed.",
+      "repeat_asks": "Asks for a fact whose answer already existed when the ask was posted: in the seeded history (seeded_answers) or in an earlier answer message in this run.",
+      "repeat_asks_avoided": "Slots that were a repeat need (kind seeded-repeat or late, an answer existed before the need) where the agent made no ask for the fact and the slot is correct. The source of the value is not distinguished: room history, the board and reading a colleague's published code all count (a threat to validity, SPEC section 11).",
+      "answers_stale": "Answer messages that carry the stale (revision 2) value of a fact instead of the true one.",
+      "need_info_events": "Messages that start with need-info, from the streams. Reported as events observed, not a rate (SPEC S4: the trigger has not been seen with a real agent, #1255).",
+      "asks_from_store": "Not computed here: the store export is not wired in the harness yet (artifacts.store_export is null), so the K arms' ask and answer counts from klatch admin stats are not available and the stream counts are used for every arm, which keeps the arms comparable."
+    }
+  }
+}

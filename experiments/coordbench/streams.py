@@ -8,6 +8,8 @@ import json
 import os
 import re
 
+import asks
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 USAGE_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
               ("cache_creation", "cache_creation_input_tokens"))
@@ -65,6 +67,10 @@ class StreamState:
         self.messages = 0
         self._anon = 0
         self.last_text = ""
+        self.msg_events = []  # messages sent: {"t", "verb", "text"} (S4 ask metrics, asks.py)
+        self.done_t = None    # the harness clock when the result event was read
+        self._t = None
+        self.klatch_bin = klatch_bin
 
     def _note_model(self, m):
         if m and m not in self.models:
@@ -78,7 +84,8 @@ class StreamState:
             return bool(self.cmd_re.search(inp.get("command", ""))) or "TASKS.md" in blob
         return "TASKS.md" in blob
 
-    def feed(self, line):
+    def feed(self, line, t=None):
+        self._t = t
         line = line.strip()
         if not line:
             return
@@ -129,6 +136,8 @@ class StreamState:
                     cmd = inp.get("command", "") if name == "Bash" else ""
                     if name == "SendMessage" or (cmd and self.msg_re.search(cmd)):
                         self.messages += 1
+                    for ev in asks.extract(name, inp, self.klatch_bin):
+                        self.msg_events.append(dict(ev, t=self._t))
                 elif b.get("type") == "text" and isinstance(b.get("text"), str):
                     m["text"] = b["text"]
                     self.last_text = b["text"]
@@ -143,6 +152,7 @@ class StreamState:
                         self.git_conflicts += 1
         elif t == "result":
             self.result = e
+            self.done_t = self._t
 
     @property
     def estimated_usd(self):
