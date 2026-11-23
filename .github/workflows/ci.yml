@@ -43,8 +43,13 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --locked
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: nextest
       - name: Unit and integration tests
-        run: cargo test --workspace --locked
+        run: |
+          cargo nextest run --workspace --locked
+          cargo test --workspace --doc --locked
       - name: The client feature and the bare build compile on their own
         run: |
           cargo build -p klatch --no-default-features --features client --locked

@@ -1,0 +1,1 @@
+- CI and the local gate run the workspace tests with cargo nextest (then the doctests with cargo test), about 40 percent faster on the CI runner; the gate falls back to cargo test with a notice when nextest is not installed (#1331).
