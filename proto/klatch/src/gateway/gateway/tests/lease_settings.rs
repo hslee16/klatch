@@ -3,7 +3,7 @@
 //! number of seconds or are removed (back to the default), and a nonsense value changes nothing.
 
 use super::*;
-use crate::gateway::gateway::lease::{DEFAULT_CAP_SECS, DEFAULT_GRACE_SECS};
+use crate::gateway::gateway::lease::{DEFAULT_CAP_SECS, DEFAULT_GRACE_SECS, LeasePolicy};
 
 fn ada() -> Principal {
     Principal::unattributed("ada")
@@ -17,27 +17,38 @@ fn the_cap_and_the_grace_default_until_the_human_sets_them() {
     assert_eq!(p.grace_secs, DEFAULT_GRACE_SECS);
 }
 
+/// Set one lease setting, then check the policy reads `(cap, grace)` as given and the store holds `want`
+/// under `key`.
+fn sets_and_reads(
+    set: impl Fn(&Gateway<SpyStore>) -> Result<()>,
+    (cap, grace): (i64, i64),
+    (key, want): (&str, i64),
+) {
+    let (g, _) = timed();
+    set(&g).unwrap();
+    let p = g.lease_policy().unwrap();
+    assert_eq!((p.cap_secs, p.grace_secs), (cap, grace));
+    assert_eq!(
+        g.store_for_tests().policy_get(key).unwrap(),
+        Some(want.to_string())
+    );
+}
+
 #[test]
 fn the_human_sets_the_cap_and_it_is_what_the_lease_rules_read() {
-    let (g, _) = timed();
-    g.admin_set_lease_cap(&admin(), Some(86_400)).unwrap();
-    assert_eq!(g.lease_policy().unwrap().cap_secs, 86_400);
-    assert_eq!(g.lease_policy().unwrap().grace_secs, DEFAULT_GRACE_SECS);
-    assert_eq!(
-        g.store_for_tests().policy_get("lease:cap").unwrap(),
-        Some("86400".into())
+    sets_and_reads(
+        |g| g.admin_set_lease_cap(&admin(), Some(86_400)),
+        (86_400, DEFAULT_GRACE_SECS),
+        ("lease:cap", 86_400),
     );
 }
 
 #[test]
 fn the_human_sets_the_grace_and_it_is_what_the_lease_rules_read() {
-    let (g, _) = timed();
-    g.admin_set_lease_grace(&admin(), Some(60)).unwrap();
-    assert_eq!(g.lease_policy().unwrap().grace_secs, 60);
-    assert_eq!(g.lease_policy().unwrap().cap_secs, DEFAULT_CAP_SECS);
-    assert_eq!(
-        g.store_for_tests().policy_get("lease:grace").unwrap(),
-        Some("60".into())
+    sets_and_reads(
+        |g| g.admin_set_lease_grace(&admin(), Some(60)),
+        (DEFAULT_CAP_SECS, 60),
+        ("lease:grace", 60),
     );
 }
 
@@ -57,44 +68,42 @@ fn off_puts_each_back_to_its_default() {
     assert_eq!(g.store_for_tests().policy_get("lease:grace").unwrap(), None);
 }
 
-#[test]
-fn the_cap_takes_one_second_to_seven_days_and_nothing_outside() {
+/// A setting takes `ok` values and refuses `bad` ones, and a refused value changes nothing (it stays at `top`).
+fn takes_only(
+    set: impl Fn(&Gateway<SpyStore>, i64) -> Result<()>,
+    read: impl Fn(&LeasePolicy) -> i64,
+    ok: [i64; 2],
+    bad: [i64; 5],
+) {
     let (g, _) = timed();
-    for ok in [1, 604_800] {
-        g.admin_set_lease_cap(&admin(), Some(ok)).unwrap();
-        assert_eq!(g.lease_policy().unwrap().cap_secs, ok);
+    for v in ok {
+        set(&g, v).unwrap();
+        assert_eq!(read(&g.lease_policy().unwrap()), v);
     }
-    for bad in [i64::MIN, -1, 0, 604_801, i64::MAX] {
-        assert!(
-            is_invalid(g.admin_set_lease_cap(&admin(), Some(bad))),
-            "{bad}"
-        );
-        assert_eq!(
-            g.lease_policy().unwrap().cap_secs,
-            604_800,
-            "{bad} changed it"
-        );
+    for v in bad {
+        assert!(is_invalid(set(&g, v)), "{v}");
+        assert_eq!(read(&g.lease_policy().unwrap()), ok[1], "{v} changed it");
     }
 }
 
 #[test]
+fn the_cap_takes_one_second_to_seven_days_and_nothing_outside() {
+    takes_only(
+        |g, v| g.admin_set_lease_cap(&admin(), Some(v)),
+        |p| p.cap_secs,
+        [1, 604_800],
+        [i64::MIN, -1, 0, 604_801, i64::MAX],
+    );
+}
+
+#[test]
 fn the_grace_takes_one_second_to_a_day_and_nothing_outside() {
-    let (g, _) = timed();
-    for ok in [1, 86_400] {
-        g.admin_set_lease_grace(&admin(), Some(ok)).unwrap();
-        assert_eq!(g.lease_policy().unwrap().grace_secs, ok);
-    }
-    for bad in [i64::MIN, -1, 0, 86_401, i64::MAX] {
-        assert!(
-            is_invalid(g.admin_set_lease_grace(&admin(), Some(bad))),
-            "{bad}"
-        );
-        assert_eq!(
-            g.lease_policy().unwrap().grace_secs,
-            86_400,
-            "{bad} changed it"
-        );
-    }
+    takes_only(
+        |g, v| g.admin_set_lease_grace(&admin(), Some(v)),
+        |p| p.grace_secs,
+        [1, 86_400],
+        [i64::MIN, -1, 0, 86_401, i64::MAX],
+    );
 }
 
 #[test]

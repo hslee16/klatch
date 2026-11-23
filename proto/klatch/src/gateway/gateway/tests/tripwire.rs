@@ -132,17 +132,27 @@ fn a_member_with_five_safety_refusals_in_five_minutes_is_stopped_everywhere() {
     g.post(&bob(), "town", "back").unwrap();
 }
 
+/// Eight refusals of `rule` for bob in `room`, a `tick` apart, none of which may trip the breaker.
+fn eight_refusals_leave_the_breaker_alone(
+    g: &Gateway<SpyStore>,
+    tick: impl Fn(),
+    room: &str,
+    rule: &str,
+) {
+    for i in 0..8 {
+        tick();
+        assert_eq!(
+            rule_of(g.post(&bob(), room, &format!("try {i}")).unwrap_err()),
+            rule
+        );
+    }
+}
+
 #[test]
 fn refusals_that_are_not_about_safety_do_not_trip_the_breaker() {
     let (g, t) = timed();
     g.admin_close_room(&admin(), "r", true).unwrap();
-    for i in 0..8 {
-        t.set(t.get() + 1);
-        assert_eq!(
-            rule_of(g.post(&bob(), "r", &format!("x{i}")).unwrap_err()),
-            "admin-close"
-        );
-    }
+    eight_refusals_leave_the_breaker_alone(&g, || t.set(t.get() + 1), "r", "admin-close");
     g.post(&bob(), "elsewhere", "fine").unwrap();
 }
 
@@ -151,13 +161,7 @@ fn refusals_spread_over_more_than_the_window_do_not_trip_the_breaker() {
     let (g, t) = timed();
     g.admin_set_room_label(&admin(), "vault", "private")
         .unwrap();
-    for i in 0..8 {
-        t.set(t.get() + 100);
-        assert_eq!(
-            rule_of(g.post(&bob(), "vault", &format!("try {i}")).unwrap_err()),
-            "clearance"
-        );
-    }
+    eight_refusals_leave_the_breaker_alone(&g, || t.set(t.get() + 100), "vault", "clearance");
     g.post(&bob(), "town", "still fine").unwrap();
 }
 

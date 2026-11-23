@@ -94,6 +94,12 @@ fn text_below_the_ceiling_is_sent_in_a_quarantined_session() {
     );
     assert_eq!(r.calls(), 1);
     let inv = r.seen.borrow()[0].clone();
+    assert_quarantine_flags(&inv);
+    assert_merge_text_on_stdin_only(&inv);
+    assert_child_env_is_clean(&inv);
+}
+
+fn assert_quarantine_flags(inv: &Invocation) {
     for flag in [
         "--strict-mcp-config",
         "--no-session-persistence",
@@ -104,10 +110,16 @@ fn text_below_the_ceiling_is_sent_in_a_quarantined_session() {
     let at = |f: &str| inv.args.iter().position(|a| a == f).unwrap();
     assert_eq!(inv.args[at("--tools") + 1], "");
     assert_eq!(inv.args[at("--setting-sources") + 1], "");
-    // the text goes on stdin, never on the command line
+}
+
+/// The text goes on stdin, never on the command line.
+fn assert_merge_text_on_stdin_only(inv: &Invocation) {
     assert!(inv.stdin.contains("merge when green"));
     assert!(!inv.args.iter().any(|a| a.contains("merge when green")));
-    // the child sees no KLATCH_ or CLAUDE variable and holds no key from the repo
+}
+
+/// The child sees no KLATCH_ or CLAUDE variable and holds no key from the repo.
+fn assert_child_env_is_clean(inv: &Invocation) {
     assert!(
         inv.env
             .iter()
@@ -119,9 +131,9 @@ fn text_below_the_ceiling_is_sent_in_a_quarantined_session() {
 fn text_at_or_above_the_ceiling_or_with_an_unknown_label_is_never_sent() {
     let r = FakeRunner::ok(&allow());
     let j = judge(&r, "private");
-    assert_eq!(j.judge(&review("private", "x")), Verdict::Defer);
-    assert_eq!(j.judge(&review("secret", "x")), Verdict::Defer);
-    assert_eq!(j.judge(&review("no-such-label", "x")), Verdict::Defer);
+    for label in ["private", "secret", "no-such-label"] {
+        assert_eq!(j.judge(&review(label, "x")), Verdict::Defer, "{label}");
+    }
     assert_eq!(r.calls(), 0);
 }
 
@@ -222,13 +234,14 @@ fn rules_deny_first_and_the_hosted_judge_never_sees_that_text() {
         crate::domain::LabelChain::default(),
     );
     let stack = Narrowed::new(rules, judge(&r, "private"));
-    assert!(matches!(
-        stack.judge(&review("public", "about ORCA")),
-        Verdict::Deny(_)
-    ));
+    assert_is_deny(stack.judge(&review("public", "about ORCA")));
     assert_eq!(r.calls(), 0);
     assert_eq!(stack.judge(&review("public", "hello")), Verdict::Allow);
     assert_eq!(r.calls(), 1);
+}
+
+fn assert_is_deny(v: Verdict) {
+    assert!(matches!(v, Verdict::Deny(_)), "{v:?}");
 }
 
 #[test]
@@ -238,23 +251,33 @@ fn a_session_sends_the_scrub_list_only_when_the_caller_names_it_and_keeps_the_ga
     let item = review("public", "x");
     let plain = Session::new(config("private"), None, &dir, &env).unwrap();
     let with = Session::new(config("private"), Some(&terms), &dir, &env).unwrap();
-    let arg = |s: &Session, flag: &str| {
-        let a = s.invocation(&item).args;
-        a[a.iter().position(|x| x == flag).unwrap() + 1].clone()
-    };
-    assert_eq!(arg(&plain, "--system-prompt"), SYSTEM_PROMPT);
-    let prompt = arg(&with, "--system-prompt");
-    assert!(prompt.starts_with(SYSTEM_PROMPT));
-    assert!(prompt.contains("Scrub list (private terms):\n- orca-build-07\n"));
+    assert_scrub_prompts(&plain, &with, &item);
     for s in [&plain, &with] {
-        assert!(s.admits(&item));
-        assert!(!s.admits(&review("private", "x")));
-        assert!(!s.admits(&review("nonsense", "x")));
-        assert_eq!(arg(s, "--max-budget-usd"), "0.25");
+        assert_gate_and_budget(s, &item);
     }
     let mut bad = config("private");
     bad.budget_usd = f64::NAN;
     assert!(Session::new(bad, None, &dir, &env).is_err());
+}
+
+/// The value after `flag` on the command line of the session's invocation for `item`.
+fn flag_value(s: &Session, item: &ReviewItem, flag: &str) -> String {
+    let a = s.invocation(item).args;
+    a[a.iter().position(|x| x == flag).unwrap() + 1].clone()
+}
+
+fn assert_scrub_prompts(plain: &Session, with: &Session, item: &ReviewItem) {
+    assert_eq!(flag_value(plain, item, "--system-prompt"), SYSTEM_PROMPT);
+    let prompt = flag_value(with, item, "--system-prompt");
+    assert!(prompt.starts_with(SYSTEM_PROMPT));
+    assert!(prompt.contains("Scrub list (private terms):\n- orca-build-07\n"));
+}
+
+fn assert_gate_and_budget(s: &Session, item: &ReviewItem) {
+    assert!(s.admits(item));
+    assert!(!s.admits(&review("private", "x")));
+    assert!(!s.admits(&review("nonsense", "x")));
+    assert_eq!(flag_value(s, item, "--max-budget-usd"), "0.25");
 }
 
 #[test]
