@@ -19,6 +19,7 @@ mod listing;
 pub(crate) mod prove;
 mod route;
 mod shell;
+mod stats;
 
 #[cfg(test)]
 mod command_tests;
@@ -290,6 +291,22 @@ pub enum AdminCmd {
     /// Read admin, worker, anchor, run and judge commands from the terminal under one passphrase, held in this
     /// process's memory for the unlock window and nowhere else; `exit` or end of input leaves it
     Shell,
+    /// Print a counts-only usage report: messages per room and day, senders and attribution, kinds, asks (created,
+    /// answered, closed, time to first answer), claims by class, refusals by rule, direct message and private rooms,
+    /// members, hook runs, admin acts and worker credentials. Never message text, ask text, claim detail, labels or
+    /// payloads; it does name rooms and members, so it asks for the passphrase and needs your terminal. `--since` is a
+    /// day as YYYY-MM-DD (UTC); `--room` narrows the room-scoped counts; `--json` prints one JSON object for the ledger
+    Stats {
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long)]
+        since: Option<String>,
+        /// How many senders to list, most messages first
+        #[arg(long, default_value_t = 10)]
+        top: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the latest refused calls: who, where, which operation and the rule, never the text
     Refusals {
         #[arg(long, default_value_t = 20)]
@@ -393,6 +410,7 @@ fn prints_stored_text(route: &Route) -> bool {
                 KeyAct::Recovery
                     | KeyAct::Export { .. }
                     | KeyAct::RunArchive { .. }
+                    | KeyAct::Stats { .. }
                     | KeyAct::RotateKey
                     | KeyAct::RotateLabelKey { .. }
             ))

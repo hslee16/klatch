@@ -177,6 +177,12 @@ pub(super) enum KeyAct {
         room: String,
         json: bool,
     },
+    Stats {
+        room: Option<String>,
+        since: Option<String>,
+        top: usize,
+        json: bool,
+    },
 }
 
 pub(super) enum ArchiveAct {
@@ -294,6 +300,17 @@ impl From<AdminCmd> for Route {
             C::Restore { file } => Route::key(KeyAct::Restore { file }),
             C::RunArchive { file, run } => Route::key(KeyAct::RunArchive { file, run }),
             C::Export { room, json } => Route::key(KeyAct::Export { room, json }),
+            C::Stats {
+                room,
+                since,
+                top,
+                json,
+            } => Route::key(KeyAct::Stats {
+                room,
+                since,
+                top,
+                json,
+            }),
             C::Retention { room, days } => Route::archive(ArchiveAct::Retention { room, days }),
             C::Archive { room, all_rooms } => {
                 Route::archive(ArchiveAct::Archive { room, all_rooms })
