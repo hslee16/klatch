@@ -341,3 +341,23 @@ pub fn plain_server(extra: &[&str]) -> PlainRig {
         tokens,
     }
 }
+
+/// Everything a server answers to an upgrade request, to the end of the connection (a refusal ends it): the raw text.
+pub fn raw_answer(net: &Net, head: &str) -> String {
+    let mut c = net.connect();
+    c.write_all(head.as_bytes()).unwrap();
+    c.flush().unwrap();
+    let mut out = Vec::new();
+    let _ = c.read_to_end(&mut out);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The upgrade request of `member` as text, with the headers of `upgrade_request`.
+pub fn upgrade_for(member: &str, token: &str) -> String {
+    let creds = credential(member, token);
+    let extra: Vec<(&str, &str)> = creds
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    upgrade_request(&extra)
+}

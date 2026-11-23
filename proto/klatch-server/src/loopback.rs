@@ -137,6 +137,8 @@ pub struct Head {
     /// Header names lower-cased, values trimmed.
     pub headers: Vec<(String, String)>,
     pub content_length: Option<usize>,
+    /// The request line said `HTTP/1.0` (a WebSocket upgrade needs 1.1).
+    pub http10: bool,
 }
 
 impl Head {
@@ -257,7 +259,7 @@ fn is_method(method: &str) -> bool {
 }
 
 /// The request line: method, target and protocol version, exactly three parts.
-fn parse_request_line(line: &str) -> Result<(&str, &str), Fault> {
+fn parse_request_line(line: &str) -> Result<(&str, &str, bool), Fault> {
     let mut parts = line.split(' ');
     let (Some(method), Some(path), Some(version), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
@@ -270,7 +272,7 @@ fn parse_request_line(line: &str) -> Result<(&str, &str), Fault> {
     if version != "HTTP/1.1" && version != "HTTP/1.0" {
         return Err(Fault::Malformed("unsupported protocol version"));
     }
-    Ok((method, path))
+    Ok((method, path, version == "HTTP/1.0"))
 }
 
 /// A `Content-Length` value: digits only, at most twelve of them.
@@ -287,7 +289,7 @@ fn parse_content_length(value: &str) -> Result<usize, Fault> {
 pub fn parse_head(raw: &[u8]) -> Result<Head, Fault> {
     let text = std::str::from_utf8(raw).map_err(|_| Fault::Malformed("headers are not text"))?;
     let mut lines = text.split("\r\n");
-    let (method, path) = parse_request_line(lines.next().unwrap_or(""))?;
+    let (method, path, http10) = parse_request_line(lines.next().unwrap_or(""))?;
     let mut headers = Vec::new();
     let mut content_length = None;
     for line in lines {
@@ -315,6 +317,7 @@ pub fn parse_head(raw: &[u8]) -> Result<Head, Fault> {
         path: path.to_string(),
         headers,
         content_length,
+        http10,
     })
 }
 

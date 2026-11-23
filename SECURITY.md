@@ -124,8 +124,13 @@ Supported versions: the newest release only, the current practice and not a poli
   `Origin` header is refused (`403`) unless you named that exact origin with `--ws-allow-origin` (off by default), which is
   what keeps a page on another site, or a DNS rebinding page, from opening a connection to a loopback port. Frames must be
   masked, a message is at most 1 MiB, binary is refused, and every wait is bounded (a ping every 20 s, a close for 60 s
-  of silence, 2 s for a close). A client that answers pings can stay connected for ever; a peer that can reach the port can
-  hold connections up to the cap, as for the other routes.
+  of silence, 2 s for a close). One credential cannot hold every connection slot: a member may hold 4 WebSocket
+  connections (`--ws-max-per-member`, 1 up to `--max-connections`), the refusal being the `503` a full server gives anyone
+  (it names nobody), and a connection ends after an hour whatever it does (`--ws-max-age-secs`, 60 to 86400; a client
+  reconnects and resumes with `from_seq`). A socket whose credential is revoked or expires is closed (1008) when the
+  gateway refuses its next request or poll. **`GET /v1/stream` has the same weakness (one credential can hold every
+  slot, and heartbeats keep a stream open for ever) and is not changed by this: it is ticketed separately.** A peer that
+  can reach the port can still hold connections up to the cap, as for the other routes.
   **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
   the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a

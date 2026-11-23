@@ -37,7 +37,7 @@
 use crate::inbox::Inbox;
 use crate::loopback::{Head, Limits, Response, Stream};
 use crate::wire_http::{Shared, authenticate, reply_bytes, unauthorized};
-use anyhow::{Result, anyhow};
+use crate::wire_ws_caps::Settings;
 use klatch::domain::Principal;
 use klatch::protocol::MAX_LINE_BYTES;
 use klatch::session::{Closer, Session};
@@ -61,77 +61,6 @@ const INBOX: usize = 16;
 const TICK_MS: libc::c_int = 100;
 /// RFC 6455 section 1.3: the value hashed with the client's key.
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
-/// What the WebSocket route is configured with.
-#[derive(Debug, Clone)]
-pub(crate) struct Settings {
-    /// Origins let through, exact (`--ws-allow-origin`); none by default.
-    pub(crate) origins: Vec<String>,
-    idle: Duration,
-    ping: Duration,
-    close_wait: Duration,
-    /// A shorter stall time than the session's own, for tests only (see the default); `None` is the session's.
-    stall: Option<Duration>,
-}
-
-impl Default for Settings {
-    /// 60 seconds idle, a ping every 20, 2 for a close, the session's 30 seconds for a stalled write; a debug build with
-    /// `KLATCH_TEST_SHORT_LIMITS` set (as the tests' servers are) takes 3, 1, 1 and 3 so a test need not wait a minute. A release binary has no such knob.
-    fn default() -> Self {
-        let short =
-            cfg!(debug_assertions) && std::env::var_os("KLATCH_TEST_SHORT_LIMITS").is_some();
-        let (idle, ping, close) = if short { (3, 1, 1) } else { (60, 20, 2) };
-        Settings {
-            origins: Vec::new(),
-            idle: Duration::from_secs(idle),
-            ping: Duration::from_secs(ping),
-            close_wait: Duration::from_secs(close),
-            stall: short.then_some(Duration::from_secs(3)),
-        }
-    }
-}
-
-/// The value of `--ws-allow-origin`: an origin as a browser sends it, `http` or `https`, a lower-case host (a name, an IPv4
-/// address or a bracketed IPv6 address) and an optional port; no path and no wildcard.
-pub fn parse_origin(text: &str) -> Result<String> {
-    let bad = || {
-        anyhow!(
-            "--ws-allow-origin is an origin such as https://app.example or http://localhost:3000 (http or https, a lower-case host, an optional port; no path, no wildcard), not {:?}",
-            klatch::domain::flat(text)
-        )
-    };
-    let (scheme, rest) = text.split_once("://").ok_or_else(bad)?;
-    let (host, port, v6) = match rest.strip_prefix('[') {
-        Some(inner) => {
-            let (addr, after) = inner.split_once(']').ok_or_else(bad)?;
-            let port = if after.is_empty() {
-                None
-            } else {
-                Some(after.strip_prefix(':').ok_or_else(bad)?)
-            };
-            (addr, port, true)
-        }
-        None => match rest.split_once(':') {
-            Some((host, port)) => (host, Some(port), false),
-            None => (rest, None, false),
-        },
-    };
-    let host_ok = !host.is_empty()
-        && host.bytes().all(|b| {
-            if v6 {
-                b.is_ascii_hexdigit() || b == b':' || b == b'.'
-            } else {
-                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'
-            }
-        });
-    let port_ok =
-        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
-    if matches!(scheme, "http" | "https") && host_ok && port_ok {
-        Ok(text.to_string())
-    } else {
-        Err(bad())
-    }
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // the upgrade
@@ -195,29 +124,42 @@ fn refusal(status: u16, text: &'static str) -> Vec<u8> {
     Response::new(status, text).bytes()
 }
 
-/// Whether the request is a WebSocket upgrade this server takes: the accept value to answer with, or the answer that
-/// refuses it. Exactly one of each header, version 13, a well-formed key, nothing sent ahead of the answer.
-fn check_upgrade(head: &Head, first: &[u8]) -> Result<String, Vec<u8>> {
+/// Exactly one `Upgrade: websocket` and an `upgrade` token among the `Connection` headers.
+fn is_upgrade(head: &Head) -> bool {
     let upgrade = values(head, "upgrade");
     let connection = values(head, "connection");
-    let tokens = connection.iter().flat_map(|v| v.split(',')).map(str::trim);
-    if upgrade.len() != 1
-        || !upgrade[0].eq_ignore_ascii_case("websocket")
-        || !tokens.clone().any(|t| t.eq_ignore_ascii_case("upgrade"))
-    {
-        return Err(refusal(400, "a websocket upgrade is required"));
-    }
+    let mut tokens = connection.iter().flat_map(|v| v.split(',')).map(str::trim);
+    let named = upgrade.len() == 1 && upgrade[0].eq_ignore_ascii_case("websocket");
+    named && tokens.any(|t| t.eq_ignore_ascii_case("upgrade"))
+}
+
+/// The refusal of a version other than 13 (`426`, naming the version taken) or of a missing one, or `None` for 13.
+fn version_refusal(head: &Head) -> Option<Vec<u8>> {
     match values(head, "sec-websocket-version").as_slice() {
-        ["13"] => {}
-        [] => return Err(refusal(400, "sec-websocket-version is required")),
+        ["13"] => None,
+        [] => Some(refusal(400, "sec-websocket-version is required")),
         _ => {
             let body = "unsupported websocket version";
             let text = format!(
                 "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: 13\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
-            return Err(text.into_bytes());
+            Some(text.into_bytes())
         }
+    }
+}
+
+/// Whether the request is a WebSocket upgrade this server takes: the accept value to answer with, or the answer that
+/// refuses it. HTTP/1.1, exactly one of each header, version 13, a well-formed key, nothing sent ahead of the answer.
+fn check_upgrade(head: &Head, first: &[u8]) -> Result<String, Vec<u8>> {
+    if head.http10 {
+        return Err(refusal(400, "a websocket upgrade needs http/1.1"));
+    }
+    if !is_upgrade(head) {
+        return Err(refusal(400, "a websocket upgrade is required"));
+    }
+    if let Some(answer) = version_refusal(head) {
+        return Err(answer);
     }
     let key = match values(head, "sec-websocket-key").as_slice() {
         [key] if is_key(key) => *key,
@@ -229,15 +171,23 @@ fn check_upgrade(head: &Head, first: &[u8]) -> Result<String, Vec<u8>> {
     Ok(accept_key(key))
 }
 
-/// `GET /v1/ws`: the credential first, then the origin, then the upgrade; each refusal is final.
+/// `GET /v1/ws`: the credential first, then the origin, then the upgrade, then the member's place among her open
+/// connections; each refusal is final. The refusal at her cap is the answer of a full server (`503 busy`): it does not say
+/// who holds the places.
 pub(crate) fn serve(mut stream: Stream, head: &Head, first: &[u8], shared: &Shared) {
     let Some(who) = authenticate(&shared.backend, head) else {
         return reply_bytes(&mut stream, &unauthorized().bytes());
     };
-    match check_origin(head, &shared.ws.origins).and_then(|()| check_upgrade(head, first)) {
-        Ok(accept) => connection(stream, &who, shared, &accept),
-        Err(answer) => reply_bytes(&mut stream, &answer),
-    }
+    let accept =
+        match check_origin(head, &shared.ws.origins).and_then(|()| check_upgrade(head, first)) {
+            Ok(accept) => accept,
+            Err(answer) => return reply_bytes(&mut stream, &answer),
+        };
+    let Some(slot) = shared.ws_open.claim(&who.member, shared.ws.per_member) else {
+        return reply_bytes(&mut stream, &Response::new(503, "busy").bytes());
+    };
+    connection(stream, &who, shared, &accept);
+    drop(slot);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -325,26 +275,33 @@ struct Reader<'a> {
     last_ping: Instant,
     /// When a close began (either side); the connection ends `close_wait` after.
     closing: Option<Instant>,
+    /// When the connection was upgraded: it ends at the maximum age, however lively.
+    born: Instant,
 }
 
 impl Reader<'_> {
     fn run(mut self) {
-        loop {
-            if self.closed.load(Ordering::SeqCst) {
-                self.begin_close();
+        while self.turn() == Step::Go {}
+    }
+
+    /// One turn: a close the session asked for or the age limit, then one read and what it brings.
+    fn turn(&mut self) -> Step {
+        if self.closed.load(Ordering::SeqCst) {
+            self.begin_close();
+        } else if self.closing.is_none() && self.born.elapsed() >= self.settings.max_age {
+            self.refuse(
+                CloseCode::Away,
+                "connection age limit, reconnect and resume",
+            );
+        }
+        let read = lock(&self.ws).read();
+        match read {
+            Ok(message) => self.message(message),
+            Err(WsError::Io(e)) if would_block(&e) => {
+                wait_fd(self.fd, libc::POLLIN);
+                self.tick()
             }
-            let read = lock(&self.ws).read();
-            let step = match read {
-                Ok(message) => self.message(message),
-                Err(WsError::Io(e)) if would_block(&e) => {
-                    wait_fd(self.fd, libc::POLLIN);
-                    self.tick()
-                }
-                Err(e) => self.fail(&e),
-            };
-            if step == Step::End {
-                return;
-            }
+            Err(e) => self.fail(&e),
         }
     }
 
@@ -465,8 +422,10 @@ impl WsWriter {
         }
         let until = Instant::now() + self.stall;
         loop {
-            match lock(&self.ws).flush() {
-                Ok(()) => return Ok(()),
+            // the lock is let go before anything else takes it
+            let flushed = lock(&self.ws).flush();
+            match flushed {
+                Ok(()) => return self.after_sent(line),
                 Err(WsError::Io(e)) if would_block(&e) => {}
                 Err(e) => return Err(io::Error::other(e.to_string())),
             }
@@ -476,6 +435,34 @@ impl WsWriter {
             wait_fd(self.fd, libc::POLLOUT);
         }
     }
+}
+
+impl WsWriter {
+    /// A frame that says the credential ended (revoked or expired) was sent: the socket is closed with 1008, so it does
+    /// not idle on with heartbeats for a member who may no longer act.
+    fn after_sent(&self, line: &[u8]) -> io::Result<()> {
+        if ends_credential(line) {
+            let frame = CloseFrame {
+                code: CloseCode::Policy,
+                reason: "the credential is no longer valid".into(),
+            };
+            let _ = lock(&self.ws).close(Some(frame));
+            self.closed.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+}
+
+/// Whether a frame line is the `refusal` of rule `credential`: what the gateway answers once a credential was revoked or
+/// expired. A cheap look at the text first, so a message of a megabyte is never parsed for this.
+fn ends_credential(line: &[u8]) -> bool {
+    if line.len() > 1024 || !line.windows(12).any(|w| w == b"\"credential\"") {
+        return false;
+    }
+    let Ok(frame) = serde_json::from_slice::<serde_json::Value>(line) else {
+        return false;
+    };
+    frame["type"] == "refusal" && frame["rule"] == "credential"
 }
 
 impl Write for WsWriter {
@@ -496,33 +483,43 @@ impl Write for WsWriter {
     }
 }
 
-/// Answer the upgrade and run the session over the socket until it ends.
-fn connection(mut stream: Stream, who: &Principal, shared: &Shared, accept: &str) {
-    let Ok(closer_end) = stream.try_clone() else {
-        return;
-    };
+/// Send the `101` and put the connection in the hands of the protocol layer: non-blocking, with its limits.
+fn upgraded(mut stream: Stream, accept: &str) -> Option<(Socket, RawFd)> {
     let answer = format!(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
     );
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    if stream
-        .write_all(answer.as_bytes())
-        .and_then(|()| stream.flush())
-        .is_err()
-    {
-        return;
-    }
+    stream.write_all(answer.as_bytes()).ok()?;
+    stream.flush().ok()?;
     let _ = stream.set_write_timeout(None);
     let _ = stream.set_read_timeout(None);
-    if stream.set_nonblocking(true).is_err() {
-        return;
-    }
+    stream.set_nonblocking(true).ok()?;
     let fd = stream.as_raw_fd();
-    let ws: Socket = Arc::new(Mutex::new(WebSocket::from_raw_socket(
-        stream,
-        Role::Server,
-        Some(config()),
-    )));
+    let ws = WebSocket::from_raw_socket(stream, Role::Server, Some(config()));
+    Some((Arc::new(Mutex::new(ws)), fd))
+}
+
+/// What the session does when it ends: a close frame, then the reader takes it from there.
+fn closer_of(ws: &Socket, closed: &Arc<AtomicBool>) -> Closer {
+    let (ws, closed) = (ws.clone(), closed.clone());
+    Box::new(move || {
+        closed.store(true, Ordering::SeqCst);
+        let code = Some(CloseFrame {
+            code: CloseCode::Normal,
+            reason: "".into(),
+        });
+        let _ = lock(&ws).close(code);
+    })
+}
+
+/// Answer the upgrade and run the session over the socket until it ends.
+fn connection(stream: Stream, who: &Principal, shared: &Shared, accept: &str) {
+    let Ok(closer_end) = stream.try_clone() else {
+        return;
+    };
+    let Some((ws, fd)) = upgraded(stream, accept) else {
+        return;
+    };
     let (closed, done) = (Arc::new(AtomicBool::new(false)), AtomicBool::new(false));
     let (tx, rx) = sync_channel::<Vec<u8>>(INBOX);
     let settings = &shared.ws;
@@ -539,6 +536,7 @@ fn connection(mut stream: Stream, who: &Principal, shared: &Shared, accept: &str
             last_rx: now,
             last_ping: now,
             closing: None,
+            born: now,
         };
         scope.spawn(|| {
             let _done = Done(&done);
@@ -551,17 +549,7 @@ fn connection(mut stream: Stream, who: &Principal, shared: &Shared, accept: &str
             stall: settings.stall.unwrap_or(shared.config.stall),
             pending: Vec::new(),
         };
-        let closer: Closer = {
-            let (ws, closed) = (ws.clone(), closed.clone());
-            Box::new(move || {
-                closed.store(true, Ordering::SeqCst);
-                let code = Some(CloseFrame {
-                    code: CloseCode::Normal,
-                    reason: "".into(),
-                });
-                let _ = lock(&ws).close(code);
-            })
-        };
+        let closer = closer_of(&ws, &closed);
         let input: Box<dyn BufRead + Send> = Box::new(io::BufReader::new(Inbox::new(rx, closed)));
         let session = Session::over(&shared.backend, who, &shared.config);
         let _ = session.serve_guarded(input, writer, Some(closer));
@@ -579,157 +567,5 @@ fn wait_until(flag: &AtomicBool, limit: Duration) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::loopback::parse_head;
-
-    fn head(extra: &str) -> Head {
-        let text = format!(
-            "GET /v1/ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13{extra}"
-        );
-        parse_head(text.as_bytes()).unwrap()
-    }
-
-    #[test]
-    fn the_accept_value_is_the_one_of_rfc_6455_and_base64_pads() {
-        assert_eq!(
-            accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
-        for (plain, coded) in [
-            ("", ""),
-            ("f", "Zg=="),
-            ("fo", "Zm8="),
-            ("foo", "Zm9v"),
-            ("foob", "Zm9vYg=="),
-            ("fooba", "Zm9vYmE="),
-            ("foobar", "Zm9vYmFy"),
-        ] {
-            assert_eq!(base64(plain.as_bytes()), coded);
-        }
-    }
-
-    #[test]
-    fn a_key_is_sixteen_bytes_of_base64() {
-        assert!(is_key("dGhlIHNhbXBsZSBub25jZQ=="));
-        for bad in [
-            "",
-            "dGhlIHNhbXBsZQ==",
-            "dGhlIHNhbXBsZSBub25jZQ=A",
-            "!!!!!!!!!!!!!!!!!!!!!!==",
-            "dGhlIHNhbXBsZSBub25jZQ=====",
-        ] {
-            assert!(!is_key(bad), "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn an_upgrade_is_taken_only_whole_and_alone() {
-        assert_eq!(
-            check_upgrade(&head(""), b"").unwrap(),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
-        // a list in Connection and any case are fine
-        let listed = head("")
-            .headers
-            .iter()
-            .map(|(n, v)| {
-                (
-                    n.clone(),
-                    if n == "connection" {
-                        "keep-alive, UPGRADE".to_string()
-                    } else {
-                        v.clone()
-                    },
-                )
-            })
-            .collect();
-        let h = Head {
-            headers: listed,
-            ..head("")
-        };
-        assert!(check_upgrade(&h, b"").is_ok());
-        let status = |r: Vec<u8>| {
-            String::from_utf8(r)
-                .unwrap()
-                .split(' ')
-                .nth(1)
-                .unwrap()
-                .to_string()
-        };
-        let mut dup = head("");
-        dup.headers.push((
-            "sec-websocket-key".into(),
-            "dGhlIHNhbXBsZSBub25jZQ==".into(),
-        ));
-        assert_eq!(status(check_upgrade(&dup, b"").unwrap_err()), "400");
-        assert_eq!(status(check_upgrade(&head(""), b"x").unwrap_err()), "400");
-        let mut old = head("");
-        old.headers.retain(|(n, _)| n != "sec-websocket-version");
-        old.headers
-            .push(("sec-websocket-version".into(), "8".into()));
-        let r = String::from_utf8(check_upgrade(&old, b"").unwrap_err()).unwrap();
-        assert!(
-            r.starts_with("HTTP/1.1 426") && r.contains("Sec-WebSocket-Version: 13"),
-            "{r}"
-        );
-    }
-
-    #[test]
-    fn an_origin_header_is_refused_unless_named_exactly_and_once() {
-        let allowed = vec!["https://app.example".to_string()];
-        assert!(check_origin(&head(""), &allowed).is_ok());
-        assert!(check_origin(&head("\r\nOrigin: https://app.example"), &allowed).is_ok());
-        for origin in [
-            "https://evil.example",
-            "",
-            "null",
-            "https://app.example:1",
-            "HTTPS://APP.EXAMPLE",
-        ] {
-            assert!(
-                check_origin(&head(&format!("\r\nOrigin: {origin}")), &allowed).is_err(),
-                "{origin:?}"
-            );
-            assert!(
-                check_origin(&head(&format!("\r\nOrigin: {origin}")), &[]).is_err(),
-                "{origin:?} with none allowed"
-            );
-        }
-        let twice = head("\r\nOrigin: https://app.example\r\nOrigin: https://app.example");
-        assert!(check_origin(&twice, &allowed).is_err());
-    }
-
-    #[test]
-    fn the_origin_flag_takes_a_plain_origin() {
-        for ok in [
-            "https://app.example",
-            "http://localhost:3000",
-            "http://127.0.0.1:8080",
-            "http://[::1]:5173",
-            "https://a-b.example.org",
-        ] {
-            assert_eq!(parse_origin(ok).unwrap(), ok);
-        }
-        for bad in [
-            "",
-            "*",
-            "app.example",
-            "https://",
-            "https://app.example/",
-            "https://app.example/x",
-            "ftp://app.example",
-            "null",
-            "https://*.example",
-            "https://APP.example",
-            "https://app.example:",
-            "https://app.example:123456",
-            "https://app.example:80x",
-            "http://[::1",
-            "http://[]:1",
-            "http:// app.example",
-        ] {
-            assert!(parse_origin(bad).is_err(), "{bad:?}");
-        }
-    }
-}
+#[path = "wire_ws_tests.rs"]
+mod tests;

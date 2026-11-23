@@ -90,3 +90,6 @@ so a page cannot connect without a shim that holds the credential. Over TLS the 
 only gates the port. Frames must be masked (libraries do this), a message is at most 1 MiB, binary messages are refused,
 and the client must answer pings (libraries do this too): a connection that sends nothing for 60 seconds is closed with
 1001. A text message may hold several frame lines, which are several frames.
+A member may hold 4 WebSocket connections at once (`--ws-max-per-member`; the excess gets the `503` any full server gives) and a connection
+ends after an hour (`--ws-max-age-secs`) with 1001: reconnect and resume with `subscribe` and `from_seq`. If the credential is revoked or
+expires the server closes the socket with 1008 after a `refusal` frame of rule `credential`.

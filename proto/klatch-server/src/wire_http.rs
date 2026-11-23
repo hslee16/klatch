@@ -58,14 +58,14 @@ pub struct Options {
     pub listen: String,
     pub max_connections: usize,
     /// Origins the WebSocket route lets through (`--ws-allow-origin`, #112).
-    pub ws_origins: Vec<String>,
+    pub ws: crate::wire_ws_caps::Options,
 }
 
 /// Read the options after `http`. The address has no default: a server never picks a place by itself.
 pub fn parse(args: &[&str]) -> Result<Options> {
     let mut listen = None;
     let mut max_connections = DEFAULT_MAX_CONNECTIONS;
-    let mut ws_origins = Vec::new();
+    let mut ws = crate::wire_ws_caps::Raw::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| -> Result<&str> {
@@ -82,8 +82,8 @@ pub fn parse(args: &[&str]) -> Result<Options> {
                     .filter(|n| *n > 0)
                     .context("--max-connections is a positive number")?;
             }
-            "--ws-allow-origin" => {
-                ws_origins.push(wire_ws::parse_origin(value("--ws-allow-origin")?)?);
+            flag @ ("--ws-allow-origin" | "--ws-max-per-member" | "--ws-max-age-secs") => {
+                ws.take(flag, value(flag)?)?;
             }
             other => bail!("unknown option {other} for http"),
         }
@@ -91,7 +91,7 @@ pub fn parse(args: &[&str]) -> Result<Options> {
     Ok(Options {
         listen: listen.context("http needs --listen 127.0.0.1:PORT")?,
         max_connections,
-        ws_origins,
+        ws: ws.finish(max_connections, crate::wire_ws_caps::short_limits())?,
     })
 }
 
@@ -114,7 +114,9 @@ pub(crate) struct Shared {
     /// Forwarded identity headers seen and ignored (#110): names and counts only.
     forwarded: crate::forwarded::Ignored,
     /// The WebSocket route's origins and deadlines (#112).
-    pub(crate) ws: wire_ws::Settings,
+    pub(crate) ws: crate::wire_ws_caps::Settings,
+    /// Open WebSocket connections per member.
+    pub(crate) ws_open: crate::wire_ws_caps::Open,
 }
 
 impl Shared {
@@ -125,6 +127,7 @@ impl Shared {
             sessions: Arc::default(),
             forwarded: Default::default(),
             ws: Default::default(),
+            ws_open: Default::default(),
         }
     }
 }
@@ -482,7 +485,7 @@ pub fn run(opts: &Options) -> Result<()> {
         opts.max_connections,
     );
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
-    shared.ws.origins = opts.ws_origins.clone();
+    shared.ws.apply(&opts.ws, opts.max_connections);
     loopback::serve_concurrent(
         &listener,
         &crate::daemon::STOP,

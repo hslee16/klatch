@@ -39,7 +39,7 @@ pub struct Options {
     pub allow_off_loopback: bool,
     pub limits: Limits,
     /// Origins the WebSocket route lets through (`--ws-allow-origin`, #112).
-    pub ws_origins: Vec<String>,
+    pub ws: crate::wire_ws_caps::Options,
 }
 
 /// The longest handshake deadline: a client that needs more than a minute to say hello is not one to wait for.
@@ -123,7 +123,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
     let mut max_connections = wire_http::DEFAULT_MAX_CONNECTIONS;
     let mut allow_off_loopback = false;
     let mut raw = Raw::default();
-    let mut ws_origins = Vec::new();
+    let mut ws = crate::wire_ws_caps::Raw::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| -> Result<&str> {
@@ -137,8 +137,8 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             "--tls-key" => key = Some(PathBuf::from(value("--tls-key")?)),
             "--tls-client-ca" => ca = Some(PathBuf::from(value("--tls-client-ca")?)),
             "--allow-off-loopback" => allow_off_loopback = true,
-            "--ws-allow-origin" => {
-                ws_origins.push(crate::wire_ws::parse_origin(value("--ws-allow-origin")?)?);
+            flag @ ("--ws-allow-origin" | "--ws-max-per-member" | "--ws-max-age-secs") => {
+                ws.take(flag, value(flag)?)?;
             }
             "--max-handshakes" => raw.max_handshakes = Some(value("--max-handshakes")?),
             "--handshake-secs" => raw.handshake = Some(value("--handshake-secs")?),
@@ -166,7 +166,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             )?,
         },
         allow_off_loopback,
-        ws_origins,
+        ws: ws.finish(max_connections, short_limits)?,
     })
 }
 
@@ -206,7 +206,7 @@ pub fn run(opts: &Options) -> Result<()> {
     crate::daemon::install_signal_handlers();
     announce_listening(&mut io::stderr().lock(), &listener.local_addr()?, opts);
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
-    shared.ws.origins = opts.ws_origins.clone();
+    shared.ws.apply(&opts.ws, opts.max_connections);
     let handshakes = Handshakes::default();
     let at = Listener {
         config: &config,

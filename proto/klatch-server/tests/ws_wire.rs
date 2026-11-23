@@ -216,9 +216,9 @@ fn a_client_without_a_valid_credential_is_refused_at_the_upgrade_on_loopback_and
 }
 
 #[test]
-fn a_credential_that_is_revoked_cannot_open_a_connection() {
-    // the credential is checked live at the upgrade, as for a stream: an expired or revoked one is the same 401. Here a
-    // member the store never issued a credential to stands for it (revocation itself is tested with the gateway).
+fn a_token_with_the_name_of_a_member_it_was_not_issued_to_is_refused_at_the_upgrade() {
+    // alice's live token under the name of carol, who was never issued one: the same 401 (a revoked credential is
+    // tested with the real revoke path in `ws_caps.rs`)
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let plain = plain_server(&[]);
     let bearer = format!("Bearer {}", plain.tokens[0]);
