@@ -16,3 +16,11 @@ clap = { version = "4.6.7", features = ["derive"] }
 rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# The admin passphrase proof hashes with Argon2id at its real, unchanged cost (19 MiB, 2 passes). Built unoptimised
+# that takes seconds per hash and dominated the test run (#1352); optimised it takes tens of milliseconds.
+# Only how the crate is compiled in the dev and test profiles changes; the cost parameters and the release build do not.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
