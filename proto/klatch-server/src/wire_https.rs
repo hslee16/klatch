@@ -28,6 +28,7 @@ use klatch::session::SessionConfig;
 use klatch::session::policy::TlsBind;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// What `klatch-server https` was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,21 +40,87 @@ pub struct Options {
     pub limits: Limits,
 }
 
-/// A positive whole number (an option's value).
-fn positive(text: &str) -> Result<u64> {
+/// The longest handshake deadline: a client that needs more than a minute to say hello is not one to wait for.
+pub const MAX_HANDSHAKE_SECS: u64 = 60;
+/// The longest stall time: a day. Larger values only disable the limit.
+pub const MAX_STALL_SECS: u64 = 86_400;
+
+/// A whole number of seconds from 1 to `max`; the refusal names the flag and the bound.
+fn seconds(flag: &str, text: &str, max: u64) -> Result<u64> {
     text.parse()
         .ok()
-        .filter(|n| *n > 0)
-        .with_context(|| format!("{text:?} is not a positive number"))
+        .filter(|n| (1..=max).contains(n))
+        .with_context(|| {
+            format!("{flag} is a whole number of seconds from 1 to {max}, not {text:?}")
+        })
+}
+
+/// Whether this process may take limits below the shipped minimums: only a debug build (what `cargo test` builds) and
+/// only with `KLATCH_TEST_SHORT_LIMITS` set. A release binary has no such knob: the check is compiled out.
+fn short_limits_knob() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("KLATCH_TEST_SHORT_LIMITS").is_some()
 }
 
 /// Read the options after `https`. The address has no default, and each of the three files is required: a server never
 /// picks a place or a certificate by itself, and has no mode without a client CA.
 pub fn parse(args: &[&str]) -> Result<Options> {
+    parse_with(args, short_limits_knob())
+}
+
+/// The flag values as given, checked together once every option has been read (the bounds depend on each other).
+#[derive(Default)]
+struct Raw<'a> {
+    max_handshakes: Option<&'a str>,
+    handshake: Option<&'a str>,
+    stall: Option<&'a str>,
+}
+
+/// The smallest stall time: twice the event stream's heartbeat. A debug build with the test knob may go down to one.
+fn stall_floor(short_limits: bool) -> u64 {
+    if short_limits && cfg!(debug_assertions) {
+        1
+    } else {
+        2 * SessionConfig::default().heartbeat.as_secs()
+    }
+}
+
+/// The limits the options ask for, within their bounds: a handshake of 1 to 60 seconds, a stall of 1 to 86400 seconds and
+/// at least twice the event stream's heartbeat (a quieter limit would cut a stream that is only waiting for its next
+/// heartbeat; `short_limits` lowers that floor, for tests), and no more handshakes than connections.
+fn limits_of(raw: &Raw, max_connections: usize, short_limits: bool) -> Result<Limits> {
+    let mut limits = Limits::defaults(max_connections);
+    if let Some(text) = raw.max_handshakes {
+        limits.max_handshakes = text
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1..=max_connections).contains(n))
+            .with_context(|| {
+                format!("--max-handshakes is a positive number up to --max-connections ({max_connections}), not {text:?}")
+            })?;
+    }
+    if let Some(text) = raw.handshake {
+        limits.handshake =
+            Duration::from_secs(seconds("--handshake-secs", text, MAX_HANDSHAKE_SECS)?);
+    }
+    if let Some(text) = raw.stall {
+        let secs = seconds("--stall-secs", text, MAX_STALL_SECS)?;
+        let floor = stall_floor(short_limits);
+        if secs < floor {
+            bail!(
+                "--stall-secs {secs} is below twice the event stream heartbeat ({floor} seconds): a stream that is only waiting for its next heartbeat would be cut; use {floor} or more"
+            );
+        }
+        limits.stall = Duration::from_secs(secs);
+    }
+    Ok(limits)
+}
+
+/// [`parse`] with the test knob given.
+pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
     let (mut listen, mut cert, mut key, mut ca) = (None, None, None, None);
     let mut max_connections = wire_http::DEFAULT_MAX_CONNECTIONS;
     let mut allow_off_loopback = false;
-    let (mut max_handshakes, mut handshake, mut stall) = (None, None, None);
+    let mut raw = Raw::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| -> Result<&str> {
@@ -67,9 +134,9 @@ pub fn parse(args: &[&str]) -> Result<Options> {
             "--tls-key" => key = Some(PathBuf::from(value("--tls-key")?)),
             "--tls-client-ca" => ca = Some(PathBuf::from(value("--tls-client-ca")?)),
             "--allow-off-loopback" => allow_off_loopback = true,
-            "--max-handshakes" => max_handshakes = Some(positive(value("--max-handshakes")?)?),
-            "--handshake-secs" => handshake = Some(positive(value("--handshake-secs")?)?),
-            "--stall-secs" => stall = Some(positive(value("--stall-secs")?)?),
+            "--max-handshakes" => raw.max_handshakes = Some(value("--max-handshakes")?),
+            "--handshake-secs" => raw.handshake = Some(value("--handshake-secs")?),
+            "--stall-secs" => raw.stall = Some(value("--stall-secs")?),
             "--max-connections" => {
                 max_connections = value("--max-connections")?
                     .parse()
@@ -80,10 +147,7 @@ pub fn parse(args: &[&str]) -> Result<Options> {
             other => bail!("unknown option {other} for https"),
         }
     }
-    let mut limits = Limits::defaults(max_connections);
-    limits.max_handshakes = max_handshakes.map_or(limits.max_handshakes, |n| n as usize);
-    limits.handshake = handshake.map_or(limits.handshake, std::time::Duration::from_secs);
-    limits.stall = stall.map_or(limits.stall, std::time::Duration::from_secs);
+    let limits = limits_of(&raw, max_connections, short_limits)?;
     Ok(Options {
         limits,
         listen: listen.context("https needs --listen IP:PORT")?,
@@ -202,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn the_limits_have_safe_defaults_and_each_can_be_set() {
+    fn the_limits_have_safe_defaults_and_each_can_be_set_within_its_bounds() {
         let d = parse(&with(&["ca.pem"])).unwrap().limits;
         assert_eq!(d, Limits::defaults(wire_http::DEFAULT_MAX_CONNECTIONS));
         assert!(d.max_handshakes < wire_http::DEFAULT_MAX_CONNECTIONS);
@@ -215,7 +279,7 @@ mod tests {
             "--handshake-secs",
             "2",
             "--stall-secs",
-            "9",
+            "90",
         ]))
         .unwrap()
         .limits;
@@ -225,20 +289,78 @@ mod tests {
                 set.handshake.as_secs(),
                 set.stall.as_secs()
             ),
-            (3, 2, 9)
+            (3, 2, 90)
         );
-        // the cap follows --max-connections when it is not given
         let small = parse(&with(&["ca.pem", "--max-connections", "3"])).unwrap();
         assert_eq!(small.limits.max_handshakes, 1);
-        for bad in ["0", "x", "-1"] {
+    }
+
+    fn refusal(extra: &[&'static str], short_limits: bool) -> String {
+        let mut args = with(&["ca.pem"]);
+        args.extend_from_slice(extra);
+        parse_with(&args, short_limits).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_positive_number_or_is_over_its_bound_is_refused_naming_the_flag_and_the_bound()
+     {
+        for bad in ["0", "x", "-1", "18446744073709551615", "61"] {
+            let e = refusal(&["--handshake-secs", bad], false);
             assert!(
-                parse(&with(&["ca.pem", "--max-handshakes", bad])).is_err(),
-                "{bad}"
-            );
-            assert!(
-                parse(&with(&["ca.pem", "--stall-secs", bad])).is_err(),
-                "{bad}"
+                e.contains("--handshake-secs") && e.contains("60"),
+                "{bad}: {e}"
             );
         }
+        for bad in ["0", "x", "18446744073709551615", "86401"] {
+            let e = refusal(&["--stall-secs", bad], false);
+            assert!(
+                e.contains("--stall-secs") && e.contains("86400"),
+                "{bad}: {e}"
+            );
+        }
+        for bad in ["0", "x", "18446744073709551615", "33"] {
+            let e = refusal(&["--max-handshakes", bad], false);
+            assert!(
+                e.contains("--max-handshakes") && e.contains("--max-connections"),
+                "{bad}: {e}"
+            );
+        }
+        // the bound of --max-handshakes is the cap asked for, whatever the order of the options
+        let e = refusal(&["--max-handshakes", "9", "--max-connections", "8"], false);
+        assert!(e.contains("--max-handshakes"), "{e}");
+        assert!(
+            parse(&with(&[
+                "ca.pem",
+                "--max-handshakes",
+                "8",
+                "--max-connections",
+                "8"
+            ]))
+            .is_ok()
+        );
+        for ok in ["1", "60"] {
+            assert!(
+                parse(&with(&["ca.pem", "--handshake-secs", ok])).is_ok(),
+                "{ok}"
+            );
+        }
+        assert!(parse(&with(&["ca.pem", "--stall-secs", "86400"])).is_ok());
+    }
+
+    #[test]
+    fn a_stall_time_under_twice_the_heartbeat_needs_the_test_knob_and_only_a_debug_build_has_it() {
+        let heartbeat = SessionConfig::default().heartbeat.as_secs();
+        let too_short = (2 * heartbeat - 1).to_string();
+        let too_short: &'static str = Box::leak(too_short.into_boxed_str());
+        let e = refusal(&["--stall-secs", too_short], false);
+        assert!(
+            e.contains("heartbeat") && e.contains(&(2 * heartbeat).to_string()),
+            "{e}"
+        );
+        let exact: &'static str = Box::leak((2 * heartbeat).to_string().into_boxed_str());
+        assert!(parse_with(&with(&["ca.pem", "--stall-secs", exact]), false).is_ok());
+        // the knob lowers only that minimum, and only where the build has it
+        let with_knob = parse_with(&with(&["ca.pem", "--stall-secs", "2"]), true);
+        assert_eq!(with_knob.is_ok(), cfg!(debug_assertions));
     }
 }

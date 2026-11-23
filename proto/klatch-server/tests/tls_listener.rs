@@ -180,7 +180,20 @@ fn files_for(dir: &Dir, key_mode: u32) -> (Files, Ca) {
 }
 
 fn assert_refused(dir: &Dir, args: &[String], needle: &str) {
-    let (code, err) = refused_start(dir, "https", args);
+    assert_refused_as(dir, args, needle, true);
+}
+
+/// Refused by the server as an operator runs it (no test knob).
+fn assert_refused_strict(dir: &Dir, args: &[String], needle: &str) {
+    assert_refused_as(dir, args, needle, false);
+}
+
+fn assert_refused_as(dir: &Dir, args: &[String], needle: &str, short_limits: bool) {
+    let (code, err) = if short_limits {
+        refused_start(dir, "https", args)
+    } else {
+        refused_start_strict(dir, "https", args)
+    };
     assert_eq!(code, Some(1), "{err}");
     assert!(err.contains(needle), "wanted {needle:?} in: {err}");
     assert!(!err.contains("listening on"), "{err}");
@@ -327,4 +340,38 @@ fn the_allowance_off_loopback_starts_the_listener_and_the_log_says_where_and_how
     assert!(log.contains("mutual TLS"), "{log}");
     assert!(!log.contains("PRIVATE KEY"), "{log}");
     drop(server);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the limits have bounds
+
+#[test]
+fn each_limit_is_refused_at_the_extreme_and_just_over_its_bound_with_the_flag_named() {
+    let dir = Dir::new();
+    let (files, _) = files_for(&dir, 0o600);
+    let cases: [(&str, &[&str]); 3] = [
+        ("--handshake-secs", &["61", "18446744073709551615"]),
+        ("--stall-secs", &["86401", "18446744073709551615"]),
+        ("--max-handshakes", &["33", "18446744073709551615"]),
+    ];
+    for (flag, values) in cases {
+        for value in values {
+            let mut args = listen("127.0.0.1:0", &files);
+            args.extend([flag.to_string(), value.to_string()]);
+            assert_refused(&dir, &args, flag);
+        }
+    }
+    // the bound of --max-handshakes is the connection cap that was asked for
+    let mut args = listen("127.0.0.1:0", &files);
+    args.extend(["--max-connections", "8", "--max-handshakes", "9"].map(String::from));
+    assert_refused(&dir, &args, "--max-handshakes");
+}
+
+#[test]
+fn a_stall_time_under_twice_the_heartbeat_is_refused_for_the_server_an_operator_runs() {
+    let dir = Dir::new();
+    let (files, _) = files_for(&dir, 0o600);
+    let mut args = listen("127.0.0.1:0", &files);
+    args.extend(["--stall-secs", "29"].map(String::from));
+    assert_refused_strict(&dir, &args, "heartbeat");
 }

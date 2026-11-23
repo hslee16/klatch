@@ -165,14 +165,25 @@ pub fn tls_args(files: &Files) -> Vec<String> {
 
 /// Start `klatch-server SUBCOMMAND ARGS` against the store of `dir`; stderr goes to `err.log`.
 pub fn spawn(dir: &Dir, subcommand: &str, args: &[String]) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_klatch-server"))
+    spawn_with(dir, subcommand, args, true)
+}
+
+/// [`spawn`], with or without the knob that lets a debug build take limits below the shipped minimums (a short stall
+/// time, so that a test need not wait a minute). `false` is the server as an operator runs it.
+pub fn spawn_with(dir: &Dir, subcommand: &str, args: &[String], short_limits: bool) -> Child {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_klatch-server"));
+    command
         .arg(subcommand)
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", dir.home())
         .env("KLATCH_HOME", dir.home())
-        .env("KLATCH_KEY_DIR", dir.home().join("keys"))
+        .env("KLATCH_KEY_DIR", dir.home().join("keys"));
+    if short_limits {
+        command.env("KLATCH_TEST_SHORT_LIMITS", "1");
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(
@@ -236,7 +247,21 @@ impl Drop for Server {
 /// server does not refuse: a log line that says it is listening, or no exit within 20 seconds, kills the child (only
 /// the one started here) and panics. A check that was removed from the server therefore fails a test and never hangs it.
 pub fn refused_start(dir: &Dir, subcommand: &str, args: &[String]) -> (Option<i32>, String) {
-    let mut child = spawn(dir, subcommand, args);
+    refused_start_with(dir, subcommand, args, true)
+}
+
+/// [`refused_start`] for the server as an operator runs it (no test knob for short limits).
+pub fn refused_start_strict(dir: &Dir, subcommand: &str, args: &[String]) -> (Option<i32>, String) {
+    refused_start_with(dir, subcommand, args, false)
+}
+
+fn refused_start_with(
+    dir: &Dir,
+    subcommand: &str,
+    args: &[String],
+    short_limits: bool,
+) -> (Option<i32>, String) {
+    let mut child = spawn_with(dir, subcommand, args, short_limits);
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         if let Some(status) = child.try_wait().unwrap() {

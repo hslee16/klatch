@@ -27,9 +27,10 @@
 //! line or error holds any of them. They are not zeroised on drop: the process disables core dumps at start
 //! (`harden` in `main.rs`), which is what keeps them out of a core file.
 //!
-//! **The handshake is bounded.** A short deadline, and a cap on connections in the handshake that closes the oldest to
-//! admit a newcomer (`tls_limits.rs`), so silent sockets cannot keep a valid client out; a flood by volume is still a
-//! denial of service for anyone who can reach the port.
+//! **The handshake is bounded.** A short deadline, and a cap on connections in the handshake (`tls_limits.rs`): when the
+//! cap is full a newcomer is refused if every handshake is younger than half the deadline, and otherwise takes the place of
+//! the oldest. A flood of silent sockets is bounded by this, not removed: a flood by volume is still a denial of service
+//! for anyone who can reach the port, and `tls_limits.rs` says which side loses in each case.
 //!
 //! **How a connection is served.** The HTTP handlers (`wire_http.rs`) take a connected stream and nothing else, so after
 //! the handshake this module makes an in-process pair of sockets, gives one end to the handler and carries the other
@@ -163,7 +164,10 @@ fn handshake(
     sock: &mut Stream,
     deadline: Duration,
 ) -> std::io::Result<()> {
-    let until = Instant::now() + deadline;
+    // a deadline that does not fit in a clock is not a deadline: the options are bounded, and this holds anyway
+    let Some(until) = Instant::now().checked_add(deadline) else {
+        return Err(ErrorKind::InvalidInput.into());
+    };
     while conn.is_handshaking() {
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -198,11 +202,15 @@ pub fn serve_tls(mut sock: Stream, at: &Listener, inner: impl Fn(Stream) + Sync)
     let Ok(mut conn) = ServerConnection::new(at.config.clone()) else {
         return;
     };
-    let Some(ticket) = at.handshakes.enter(&sock, at.limits.max_handshakes) else {
+    // refused when the cap is full of handshakes too young to close (`tls_limits.rs`): the connection is just dropped
+    let Some(ticket) =
+        at.handshakes
+            .enter(&sock, at.limits.max_handshakes, at.limits.min_evict_age())
+    else {
         return;
     };
     let shaken = handshake(&mut conn, &mut sock, at.limits.handshake);
-    at.handshakes.leave(ticket);
+    drop(ticket);
     if shaken.is_err() {
         let _ = sock.shutdown(std::net::Shutdown::Both);
         return;

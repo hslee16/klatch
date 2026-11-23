@@ -11,8 +11,13 @@
 //! done. Only then is TLS closed with `close_notify`. A client that is truly gone shows as a write or read error, and
 //! the pair is shut.
 //!
-//! **Stall deadline.** If no byte moves in either direction for the stall time (a client that never reads, a handler that
-//! never answers or writes), the connection is closed. A quiet event stream is not idle: it carries a heartbeat. The
+//! **Stall deadline.** If no byte moves on the CLIENT SOCKET in either direction (bytes written to it, bytes read from
+//! it) for the stall time, the connection is closed. Bytes a handler hands to the pump do not count, so a client that
+//! accepts nothing is not kept alive by the handler's own output. What this cannot see: a client that does not read but
+//! whose kernel still acknowledges data (its receive window and our send buffers take a heartbeat every 15 seconds for
+//! hours before they are full) counts as moving, because the bytes did move. Cutting such a client early would need an
+//! application-level acknowledgement, which the handler's protocol does not have; a client that stops reading a busy
+//! stream is cut once the buffers fill. A quiet event stream is not idle: it carries a heartbeat. The
 //! poll never watches a descriptor nobody asked about, because a hung-up descriptor is reported even with no events
 //! requested and would make the loop spin. Nothing here reads, logs or keeps the content of a message.
 
@@ -38,7 +43,7 @@ struct Pending {
     app_eof_sent: bool,
     /// The handler is done writing.
     app_done: bool,
-    /// Bytes moved in either direction so far: the stall deadline's clock restarts when this changes.
+    /// Bytes moved on the client socket in either direction so far: the stall deadline's clock restarts when this changes.
     moved: u64,
     /// The connection broke or stalled: close without ceremony.
     broken: bool,
@@ -240,7 +245,6 @@ fn pass_to_tls(conn: &mut ServerConnection, p: &mut Pending) -> std::io::Result<
     }
     let n = conn.writer().write(&p.from_app)?;
     p.from_app.drain(..n);
-    p.moved += n as u64;
     Ok(())
 }
 
@@ -252,7 +256,6 @@ fn pass_to_app(app: &mut Stream, p: &mut Pending) -> std::io::Result<()> {
     match app.write(&p.to_app) {
         Ok(n) => {
             p.to_app.drain(..n);
-            p.moved += n as u64;
         }
         Err(e) if retry(&e) => {}
         Err(e) => return Err(e),
@@ -261,10 +264,17 @@ fn pass_to_app(app: &mut Stream, p: &mut Pending) -> std::io::Result<()> {
 }
 
 /// Take TLS records from the socket: whether the client closed the connection.
-fn take_records(conn: &mut ServerConnection, sock: &mut Stream) -> Result<bool, ()> {
+fn take_records(
+    conn: &mut ServerConnection,
+    sock: &mut Stream,
+    p: &mut Pending,
+) -> Result<bool, ()> {
     match conn.read_tls(sock) {
         Ok(0) => Ok(true),
-        Ok(_) => Ok(false),
+        Ok(n) => {
+            p.moved += n as u64;
+            Ok(false)
+        }
         Err(e) if retry(&e) => Ok(false),
         Err(_) => Err(()),
     }
@@ -274,10 +284,7 @@ fn take_records(conn: &mut ServerConnection, sock: &mut Stream) -> Result<bool, 
 fn drain_plaintext(conn: &mut ServerConnection, p: &mut Pending, buf: &mut [u8]) {
     loop {
         match conn.reader().read(buf) {
-            Ok(n) if n > 0 => {
-                p.to_app.extend_from_slice(&buf[..n]);
-                p.moved += n as u64;
-            }
+            Ok(n) if n > 0 => p.to_app.extend_from_slice(&buf[..n]),
             Err(e) if e.kind() == ErrorKind::WouldBlock => return,
             // a clean end (`close_notify`), or a cut without one
             _ => {
@@ -296,7 +303,7 @@ fn read_tls(
     p: &mut Pending,
     buf: &mut [u8],
 ) -> Result<(), ()> {
-    p.client_done |= take_records(conn, sock)?;
+    p.client_done |= take_records(conn, sock, p)?;
     conn.process_new_packets().map_err(|_| ())?;
     drain_plaintext(conn, p, buf);
     Ok(())
@@ -305,23 +312,28 @@ fn read_tls(
 /// Take what the handler wrote; its end of the stream is the end of the answer.
 fn read_app(app: &mut Stream, p: &mut Pending, buf: &mut [u8]) {
     match app.read(buf) {
-        Ok(n) if n > 0 => {
-            p.from_app.extend_from_slice(&buf[..n]);
-            p.moved += n as u64;
-        }
+        Ok(n) if n > 0 => p.from_app.extend_from_slice(&buf[..n]),
         Err(e) if retry(&e) => {}
         _ => p.app_done = true,
     }
 }
 
-/// Read and drop what the client is still sending, for a moment and up to a bound.
+/// Read and drop what the client is still sending, up to 256 KiB and at most two seconds in all (a client that trickles
+/// one byte at a time cannot hold the socket longer: the first version bounded only the bytes and could take about 13
+/// seconds). After the answer, `close_notify` is flushed for at most two seconds first, so the close comes at most about
+/// four seconds after the handler finished.
 fn drain(sock: &mut Stream) {
     let _ = sock.set_nonblocking(false);
     let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+    let until = Instant::now() + Duration::from_secs(2);
     let mut sink = [0u8; 4096];
     let mut left = 256 * 1024usize;
-    while left > 0 && sock.read(&mut sink).is_ok_and(|n| n > 0) {
-        left = left.saturating_sub(sink.len());
+    while left > 0 && Instant::now() < until {
+        if sock.read(&mut sink).is_ok_and(|n| n > 0) {
+            left = left.saturating_sub(sink.len());
+        } else {
+            break;
+        }
     }
 }
 
@@ -354,5 +366,24 @@ mod tests {
         let started = Instant::now();
         wait(idle(&stream), idle(&quiet));
         assert!(started.elapsed() >= Duration::from_millis(800));
+    }
+
+    #[test]
+    fn only_bytes_on_the_client_socket_count_as_movement_not_what_passes_between_the_pump_and_the_handler()
+     {
+        // the handler's side of the pump: bytes taken from it and bytes given to it move nothing the stall clock sees,
+        // so a client that accepts nothing is not kept alive by the handler's own output (or its heartbeat)
+        let (mut app, mut handler) = connected_pair().unwrap();
+        app.set_nonblocking(true).unwrap();
+        let mut p = Pending::default();
+        let mut buf = [0u8; 64];
+        handler.write_all(b"heartbeat").unwrap();
+        read_app(&mut app, &mut p, &mut buf);
+        assert_eq!(p.from_app, b"heartbeat");
+        assert_eq!(p.moved, 0, "handler bytes counted as movement");
+        p.to_app = b"request".to_vec();
+        pass_to_app(&mut app, &mut p).unwrap();
+        assert!(p.to_app.is_empty());
+        assert_eq!(p.moved, 0, "bytes given to the handler counted as movement");
     }
 }

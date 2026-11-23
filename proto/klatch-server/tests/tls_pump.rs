@@ -105,33 +105,112 @@ fn a_request_body_still_unread_when_the_client_closes_is_not_discarded() {
 // ---------------------------------------------------------------------------------------------------------------
 // the pre-handshake guard
 
+/// A client config that is valid for the rig's server.
+fn valid_config(t: &TlsRig) -> &std::sync::Arc<rustls::ClientConfig> {
+    t.net.tls.as_ref().unwrap()
+}
+
 #[test]
-fn a_flood_of_silent_sockets_cannot_keep_a_valid_client_out() {
+fn an_honest_client_mid_handshake_is_not_evicted_by_a_flood_and_the_flood_is_refused() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    // a long handshake deadline, so that only the guard (not the clock) can make room
-    // (a small connection cap, so that without the guard the silent sockets would fill every slot)
+    // a minimum age of half of 10 s: nothing younger than 5 s may be closed to make room
     let t = tls_server_with(&[
         "--max-connections",
         "8",
         "--max-handshakes",
-        "4",
+        "2",
         "--handshake-secs",
-        "60",
+        "10",
     ]);
-    let silent: Vec<TcpStream> = (0..24)
+    // the honest client sends the start of its hello, slowly
+    let name = rustls::pki_types::ServerName::IpAddress(t.server.addr.ip().into());
+    let mut conn = rustls::ClientConnection::new(valid_config(&t).clone(), name).unwrap();
+    let mut hello = Vec::new();
+    while conn.wants_write() {
+        conn.write_tls(&mut hello).unwrap();
+    }
+    let mut sock = TcpStream::connect(t.server.addr).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    sock.write_all(&hello[..8]).unwrap();
+    // the flood arrives while that handshake is in progress
+    let flood: Vec<TcpStream> = (0..12)
         .map(|_| TcpStream::connect(t.server.addr).unwrap())
         .collect();
-    let leaf = &t.net;
-    // the server has taken them all in (evicted handshakes are closed and their threads gone) before the client comes
-    std::thread::sleep(Duration::from_millis(400));
-    for _ in 0..3 {
-        assert_eq!(
-            get_status(t.server.addr, leaf.tls.as_ref().unwrap(), "/nope").unwrap(),
-            404,
-            "a valid client is served while {} silent sockets are open",
-            silent.len()
-        );
+    std::thread::sleep(Duration::from_millis(300));
+    // the honest client finishes, and is served
+    sock.write_all(&hello[8..]).unwrap();
+    while conn.is_handshaking() {
+        conn.complete_io(&mut sock)
+            .expect("the honest handshake was cut by the flood");
     }
+    let mut tls = rustls::StreamOwned::new(conn, sock);
+    tls.write_all(b"GET /nope HTTP/1.1\r\nHost: x\r\n\r\n")
+        .unwrap();
+    let mut status = [0u8; 12];
+    tls.read_exact(&mut status).unwrap();
+    assert!(
+        String::from_utf8_lossy(&status).contains("404"),
+        "{status:?}"
+    );
+    drop(flood);
+}
+
+#[test]
+fn newcomers_over_the_cap_are_refused_while_every_handshake_is_young_and_served_once_they_are_old()
+{
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    // min age 2 s of a 4 s deadline; two silent sockets fill the cap
+    let t = tls_server_with(&[
+        "--max-connections",
+        "8",
+        "--max-handshakes",
+        "2",
+        "--handshake-secs",
+        "4",
+    ]);
+    let silent: Vec<TcpStream> = (0..2)
+        .map(|_| TcpStream::connect(t.server.addr).unwrap())
+        .collect();
+    std::thread::sleep(Duration::from_millis(200));
+    // the cap is full of young handshakes: a valid client is the one that loses
+    assert!(
+        get_status(t.server.addr, valid_config(&t), "/nope").is_err(),
+        "a newcomer evicted a young handshake"
+    );
+    // the silent sockets are now older than the minimum age and the deadline has not passed: the next newcomer evicts one
+    std::thread::sleep(Duration::from_millis(2200));
+    assert_eq!(
+        get_status(t.server.addr, valid_config(&t), "/nope").unwrap(),
+        404
+    );
+    drop(silent);
+}
+
+#[test]
+fn the_server_closes_the_socket_within_a_couple_of_seconds_of_a_finished_answer_whatever_the_client_trickles()
+ {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let t = tls_server();
+    let mut tls = connect(&t);
+    tls.write_all(STREAM_REQUEST).unwrap();
+    tls.flush().unwrap();
+    // read the whole answer, then keep sending raw bytes every 150 ms: a drain that waits for the client's silence
+    // would go on for about 13 s, so the close must come from the drain's own bound
+    let mut raw = tls.sock.try_clone().unwrap();
+    let mut got = vec![0u8; 12];
+    tls.read_exact(&mut got).unwrap();
+    let answered = Instant::now();
+    let closed = loop {
+        if answered.elapsed() > Duration::from_secs(20) {
+            panic!("the server never closed the socket");
+        }
+        if raw.write_all(b"x").is_err() {
+            break answered.elapsed();
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    };
+    assert!(closed < Duration::from_secs(6), "closed after {closed:?}");
 }
 
 #[test]

@@ -116,10 +116,14 @@ Supported versions: the newest release only, the current practice and not a poli
   check, the key file must be mode 0600, the listener is loopback unless you pass `--allow-off-loopback`, and a certificate
   gates the port only (the caller is still the worker credential). klatch makes no certificates and runs no CA.
   **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
-  the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer
-  that can reach the port can open connections without a certificate. A handshake deadline (3 s), a cap on connections in
-  the handshake (a quarter of `--max-connections`, the oldest closed to admit a newcomer) and a stall deadline for a
-  client that never reads (60 s) bound it, but a flood by volume still costs the server work, which is why the listener
+  the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port
+  can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
+  quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound
+  the server enforces at start. When the cap is full, a newcomer is refused if every handshake in progress is younger
+  than half the deadline (the newcomer loses; an honest client mid-handshake is never closed to make room), and
+  otherwise takes the place of the oldest (the oldest, silent or crawling, loses). A flood that keeps the cap full of
+  fresh connections still keeps newcomers out, and an honest client that is slow past half the deadline can be evicted,
+  so the cap bounds a flood and does not remove denial of service by volume, which is why the listener
   is loopback unless `--allow-off-loopback` is given and a firewall or a tunnel in front of it is advised.
   `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
   the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the

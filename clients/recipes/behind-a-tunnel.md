@@ -9,7 +9,8 @@
 > given. **No CRL and no OCSP is checked** (#1491): revocation means short-lived certificates, or a new CA file and a
 > restart. **Denial of service remains possible** from any peer that can reach the port (it can open connections without
 > a certificate; the handshake deadline, the cap on connections in the handshake and the stall deadline bound it, they do
-> not remove it), so keep `--allow-off-loopback` off unless you need it and put a firewall or a tunnel in front. Details
+> not remove it: when the cap is full of young handshakes a newcomer is the one refused, and a flood that keeps it full keeps
+> newcomers out), so keep `--allow-off-loopback` off unless you need it and put a firewall or a tunnel in front. Details
 > and limits: `design/items/108-tls-listener.md`. The tunnel and terminator patterns below remain valid and need none of this.
 
 `klatch-server http` (the wire protocol over HTTP and server-sent events, and MCP at `POST /mcp`) listens on loopback only
