@@ -568,7 +568,7 @@ mod tests {
 
     /// A world with one room of three messages, made by the real binary.
     fn world_with_messages() -> World {
-        let w = World::new(&crate::find_binary().expect("the klatch binary"));
+        let w = World::new(&crate::find_plain_binary().expect("the klatch binary"));
         for i in 1..=3 {
             w.ok("alice", &["post", "lobby", &format!("message {i}")])
                 .unwrap();
