@@ -143,6 +143,10 @@ impl MemberStore for SpyStore {
         self.inner.member_cursors(room)
     }
 
+    fn own_post_count(&self, room: &str, member: &str) -> Result<i64> {
+        self.inner.own_post_count(room, member)
+    }
+
     fn is_muted(&self, at: Seat) -> Result<bool> {
         self.inner.is_muted(at)
     }
