@@ -12,6 +12,8 @@ mod digest_cost;
 mod machine_status;
 mod messaging;
 mod never_read;
+mod passive;
+mod tool_input;
 mod wait;
 mod work;
 
@@ -20,6 +22,7 @@ use briefing::*;
 use capped::*;
 use digest_cost::*;
 use messaging::*;
+use tool_input::*;
 use wait::*;
 use work::*;
 

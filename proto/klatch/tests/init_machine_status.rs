@@ -48,8 +48,9 @@ fn machine_status_flags_post_tool_use_and_adds_a_stop_hook_and_nothing_else() {
         "{}",
         stop[0]
     );
-    // SessionEnd needs no flag (it marks the session done as it always did); the other events are not flagged
-    for event in ["SessionEnd", "SessionStart", "UserPromptSubmit"] {
+    // SessionEnd carries it as the record of the consent; the other events are not flagged
+    assert_eq!(has_flag(&v, "SessionEnd", "--machine-status"), vec![true]);
+    for event in ["SessionStart", "UserPromptSubmit"] {
         assert_eq!(
             has_flag(&v, event, "--machine-status"),
             vec![false],
@@ -191,4 +192,83 @@ fn consent_shows_and_switches_the_machine_status() {
     );
     let shown = out(&s.klatch("consent", &["--scope", "project"], ""));
     assert!(shown.contains("machine-status: off"), "{shown}");
+}
+
+#[test]
+fn the_three_consents_share_one_stop_hook_and_toggling_one_keeps_the_other_two() {
+    let s = Setup::new();
+    s.init(
+        &with(&["--passive-claims", "--checkpoint", "--machine-status"]),
+        "",
+    );
+    let all = |v: &serde_json::Value| {
+        let stop = cmds(v, "Stop");
+        assert_eq!(stop.len(), 1, "{stop:?}");
+        assert!(
+            stop[0].ends_with(" --passive-claims --checkpoint --machine-status"),
+            "{stop:?}"
+        );
+        for event in ["PostToolUse", "SessionEnd"] {
+            for flag in ["--passive-claims", "--checkpoint", "--machine-status"] {
+                assert_eq!(has_flag(v, event, flag), vec![true], "{event} {flag}");
+            }
+        }
+    };
+    all(&Setup::read(&s.project_settings()));
+    // a plain rerun changes nothing
+    let before = std::fs::read(s.project_settings()).unwrap();
+    s.init(&ARGS, "");
+    assert_eq!(std::fs::read(s.project_settings()).unwrap(), before);
+    // switching session-end off and on again drops none of them
+    s.init(&with(&["--no-session-end"]), "");
+    s.init(&ARGS, "");
+    all(&Setup::read(&s.project_settings()));
+    // each one off in turn leaves the other two, and back on restores all three
+    for (off, on, keep) in [
+        (
+            "--no-machine-status",
+            "--machine-status",
+            ["--passive-claims", "--checkpoint"],
+        ),
+        (
+            "--no-checkpoint",
+            "--checkpoint",
+            ["--passive-claims", "--machine-status"],
+        ),
+        (
+            "--no-passive-claims",
+            "--passive-claims",
+            ["--checkpoint", "--machine-status"],
+        ),
+    ] {
+        s.init(&with(&[off]), "");
+        let v = Setup::read(&s.project_settings());
+        let stop = cmds(&v, "Stop");
+        assert_eq!(stop.len(), 1, "{off}: {stop:?}");
+        let flag = on;
+        assert!(!stop[0].contains(flag), "{off}: {stop:?}");
+        for k in keep {
+            assert!(stop[0].contains(k), "{off} lost {k}: {stop:?}");
+            assert_eq!(has_flag(&v, "PostToolUse", k), vec![true], "{off} lost {k}");
+        }
+        s.init(&with(&[on]), "");
+        all(&Setup::read(&s.project_settings()));
+    }
+    // consent show and switch see all three
+    let shown = out(&s.klatch("consent", &["--scope", "project"], ""));
+    for line in ["passive-claims: on", "checkpoint: on", "machine-status: on"] {
+        assert!(shown.contains(line), "{shown}");
+    }
+    s.klatch(
+        "consent",
+        &["machine-status", "off", "--scope", "project", "--yes"],
+        "",
+    );
+    let shown = out(&s.klatch("consent", &["--scope", "project"], ""));
+    assert!(
+        shown.contains("machine-status: off")
+            && shown.contains("checkpoint: on")
+            && shown.contains("passive-claims: on"),
+        "{shown}"
+    );
 }

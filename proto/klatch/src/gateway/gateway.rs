@@ -71,6 +71,7 @@ mod checks;
 mod claims;
 mod machine_checkpoint;
 mod machine_status;
+mod passive_claim;
 mod presence;
 mod priority;
 mod reading;

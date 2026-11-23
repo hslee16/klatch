@@ -10,8 +10,8 @@ use super::connect::be;
 use super::schema::{WAIT_WINDOW_SECS, user_version};
 use crate::domain::{
     AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MachineStatusCounts,
-    MemberCounts, Result, RoomClass, RoomCount, StatsOptions, UsageStats, answer_target,
-    claim_class, closed_target, day_of, is_ask, median_and_p90, vocab,
+    MemberCounts, PassiveClaimCounts, Result, RoomClass, RoomCount, StatsOptions, UsageStats,
+    answer_target, claim_class, closed_target, day_of, is_ask, median_and_p90, vocab,
 };
 use crate::keys::Key;
 use rusqlite::types::Value;
@@ -471,6 +471,30 @@ fn machine_status_counts(conn: &Connection, o: &StatsOptions) -> Result<MachineS
     })
 }
 
+/// The passive claim events (#1401) in the window: counts by event word. Nothing in the table is a name.
+fn passive_claim_counts(conn: &Connection, o: &StatsOptions) -> Result<PassiveClaimCounts> {
+    if !has(conn, "claim_events")? {
+        return Ok(PassiveClaimCounts::default());
+    }
+    let n = |event: &str| {
+        one(
+            conn,
+            &format!(
+                "SELECT COUNT(*) FROM claim_events WHERE event='{event}' AND (?1 IS NULL OR room=?1) AND ts>=?2"
+            ),
+            o,
+        )
+    };
+    Ok(PassiveClaimCounts {
+        granted: n("passive_granted")?,
+        renewed: n("passive_renewed")?,
+        refused: n("passive_refused")?,
+        released: n("passive_released")?,
+        expired: n("passive_expired")?,
+        errors: n("passive_error")?,
+    })
+}
+
 fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     let sealed: HashSet<String> = if has(conn, "policy")? {
         rows(
@@ -597,6 +621,7 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     };
     s.machine_checkpoints = machine_checkpoint_counts(conn, o)?;
     s.machine_status = machine_status_counts(conn, o)?;
+    s.passive_claims = passive_claim_counts(conn, o)?;
     s.refusals = words(
         conn,
         "refusals",

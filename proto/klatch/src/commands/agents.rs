@@ -25,6 +25,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             no_join,
             checkpoint,
             machine_status,
+            passive_claims,
         } => hook(
             ctx,
             &HookArgs {
@@ -33,6 +34,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
                 no_join,
                 checkpoint,
                 machine_status,
+                passive_claims,
             },
         )?,
         AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
@@ -133,6 +135,8 @@ pub(super) struct HookArgs {
     pub(super) checkpoint: bool,
     /// The machine status consent (#1403): the hook command carries `--machine-status`.
     pub(super) machine_status: bool,
+    /// The passive claims consent (#1401): the hook command carries `--passive-claims`.
+    pub(super) passive_claims: bool,
 }
 
 impl HookArgs {
@@ -143,9 +147,11 @@ impl HookArgs {
 
 /// A session that ends is marked done in every room it joined, so it leaves the board at once instead of aging out
 /// (DESIGN section 25.13). It prints nothing: the session is over.
-pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>) -> Result<()> {
+pub(super) fn session_end(t: &dyn Transport, ended: Option<&str>, passive: bool) -> Result<()> {
     // the final machine checkpoint (#1408) first: it names the claims the release below frees
     super::checkpoint::end_checkpoint(t, ended);
+    // the passive claims (#1401) before the rest, so they are counted as passive releases
+    super::passive::release(t, passive);
     // Only the rooms are needed: a digest would mark unread messages as shown, and a resumed session would never
     // be shown them (#30).
     // a member that has ended cannot be working: free what it held (#277). First, so a credential that idled out
@@ -383,7 +389,11 @@ pub(super) fn note_permission_mode(ctx: &Ctx) {
 pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let t = ctx.t;
     if args.is("SessionEnd") {
-        return session_end(t, super::checkpoint::end_reason(ctx.stdin, args.checkpoint));
+        return session_end(
+            t,
+            super::checkpoint::end_reason(ctx.stdin, args.checkpoint),
+            args.passive_claims,
+        );
     }
     note_permission_mode(ctx);
     if args.is("PreToolUse") {
@@ -404,17 +414,21 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     // agent did not have to announce it and has nothing to read (DESIGN section 32 item 45).
     super::checkpoint::note_tool_call(t, ctx.stdin, args.checkpoint && args.is("PostToolUse"));
     super::machine_status::on_tool_use(t, args.machine_status && args.is("PostToolUse"));
+    // a member that edits a file claims it, when the hook carries the consent (#1401); a refusal is one line below
+    let passive =
+        super::passive::claim_edits(t, ctx.stdin, args.passive_claims && args.is("PostToolUse"));
     if args.is("Stop") {
         let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
         let _ = t.record_stop(tasks, crons);
         super::machine_status::on_stop(t, args.machine_status, tasks + crons > 0);
         super::checkpoint::stop_checkpoint(t, args.checkpoint);
+        super::passive::release(t, args.passive_claims);
         let _ = t.record_hook_run("Stop", 0);
         return Ok(());
     }
     // Any other hook is a sign of life: it ends a park.
     let _ = t.sign_of_life();
-    let (text, notice) = if args.is("SessionStart") {
+    let (mut text, notice) = if args.is("SessionStart") {
         session_start(ctx, args)?
     } else {
         (
@@ -426,6 +440,12 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
             None,
         )
     };
+    if let Some(line) = passive {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&line);
+    }
     // Record that this hook ran (the size it printed, never the content), so a user can see the hooks are alive for
     // a session. A failure to record must not stop the hook delivering.
     let _ = t.record_hook_run(args.event.as_deref().unwrap_or("hook"), text.len());
@@ -434,61 +454,6 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
         None => print!("{text}"),
     }
     Ok(())
-}
-
-/// One tool call as a `PreToolUse` hook is given it.
-pub(super) struct ToolInput {
-    pub(super) tool: String,
-    pub(super) targets: Vec<String>,
-    pub(super) command: String,
-    pub(super) cwd: String,
-}
-
-pub(super) fn tool_input(v: &serde_json::Value) -> Option<ToolInput> {
-    let tool = v.get("tool_name")?.as_str()?.to_string();
-    let input = v.get("tool_input")?;
-    let text = |k: &str| input.get(k).and_then(|x| x.as_str());
-    let mut targets: Vec<String> = ["file_path", "notebook_path", "path"]
-        .iter()
-        .filter_map(|k| text(k))
-        .map(String::from)
-        .collect();
-    if tool == "apply_patch" {
-        targets.extend(patch_targets(
-            text("command").or(text("input")).unwrap_or(""),
-        ));
-    }
-    Some(ToolInput {
-        tool,
-        targets,
-        command: text("command").unwrap_or_default().to_string(),
-        cwd: v
-            .get("cwd")
-            .and_then(|x| x.as_str())
-            .unwrap_or_default()
-            .to_string(),
-    })
-}
-
-/// `path` with the symlinks in it resolved, when that differs from the path as written. The part that does not
-/// exist yet (a file about to be created) is kept as written under its nearest existing directory, so the result
-/// is where the file will land. Taken from `cwd` when relative.
-pub(super) fn real_path(path: &str, cwd: &str) -> Option<String> {
-    let abs = if path.starts_with('/') || cwd.is_empty() {
-        std::path::PathBuf::from(path)
-    } else {
-        std::path::Path::new(cwd).join(path)
-    };
-    let mut existing = abs.as_path();
-    let mut tail = Vec::new();
-    while !existing.exists() {
-        tail.push(existing.file_name()?);
-        existing = existing.parent()?;
-    }
-    let mut real = existing.canonicalize().ok()?;
-    real.extend(tail.iter().rev());
-    let real = real.to_str()?.to_string();
-    (real != klatch::domain::clean_path(path, cwd)).then_some(real)
 }
 
 /// `PreToolUse`: judge the call against the claims other members hold (#33). A blocked edit prints the reason on

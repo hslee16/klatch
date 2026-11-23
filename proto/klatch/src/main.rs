@@ -177,6 +177,14 @@ enum Cmd {
         /// Remove the machine checkpoint hook and the flag
         #[arg(long)]
         no_checkpoint: bool,
+        /// Claim files as they are edited (off by default): a flag on the PostToolUse, SessionEnd and Stop hooks claims
+        /// the repo-relative path of each file an edit or write touched, for 5 minutes renewed by each edit, releases
+        /// it when the turn or session ends, and prints one line when another member holds the path (never a block)
+        #[arg(long, conflicts_with = "no_passive_claims")]
+        passive_claims: bool,
+        /// Remove the passive claims flag
+        #[arg(long)]
+        no_passive_claims: bool,
         /// Keep each member's status from its activity (off by default; #1403): a flag on the PostToolUse hook and a
         /// Stop hook set `working (auto)`, `idle (auto)` or `parked (auto)` in the status shown by who and the board.
         /// It posts no message, records no tool, command or content, and never replaces a status the member set
@@ -189,15 +197,15 @@ enum Cmd {
         /// and keys
         #[arg(
             long,
-            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "machine_status", "no_machine_status"]
+            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "passive_claims", "no_passive_claims", "machine_status", "no_machine_status"]
         )]
         uninstall: bool,
     },
-    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, machine-status), or switch one on or off
+    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status), or switch one on or off
     /// later; edits only klatch's own hook entries, after a diff and a yes
     #[command(display_order = 35)]
     Consent {
-        /// The consent to change: board, join, session-end, enforce, wake, checkpoint or machine-status (none: show them all)
+        /// The consent to change: board, join, session-end, enforce, wake, checkpoint, passive-claims or machine-status (none: show them all)
         name: Option<String>,
         /// on or off (for board: off or a room name)
         value: Option<String>,
@@ -435,6 +443,8 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_wake,
             checkpoint,
             no_checkpoint,
+            passive_claims,
+            no_passive_claims,
             machine_status,
             no_machine_status,
             uninstall,
@@ -447,6 +457,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             enforce: init::Switch::from_flags(enforce, no_enforce),
             wake: init::Switch::from_flags(wake, no_wake),
             checkpoint: init::Switch::from_flags(checkpoint, no_checkpoint),
+            passive_claims: init::Switch::from_flags(passive_claims, no_passive_claims),
             machine_status: init::Switch::from_flags(machine_status, no_machine_status),
             uninstall,
             codex: cli.who.codex,
