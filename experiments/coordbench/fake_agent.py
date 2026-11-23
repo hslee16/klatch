@@ -34,6 +34,9 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   poll {n, command?}             n polling turns: n Bash calls of the command (default `sleep 5`) with empty output; no real
                                  waiting (the scenario S3 tests use it for a blocked agent that polls many times)
   wait_origin_has {path, contains?, timeout}  fetch until origin/main has the file (and, when given, text in it)
+  wait_file {path, timeout}      wait until OUT/path exists (the harness writes kill.json there when it kills the victim of
+                                 scenario S6: a scripted survivor "notices" once it appears; a real agent never reads it)
+  send {to, text}                a SendMessage tool call (nothing is delivered: the fake team has no messaging)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
   final {text}                   the final message
 """
@@ -195,6 +198,17 @@ class Agent:
                     return
                 time.sleep(0.1)
             self.die("origin never had %s" % st["path"])
+        elif op == "wait_file":
+            deadline = time.time() + float(st.get("timeout", 30))
+            target = os.path.join(self.args.out, st["path"])
+            while time.time() < deadline:
+                if os.path.exists(target):
+                    self.tool("Bash", {"command": "ls"}, "found %s" % st["path"])
+                    return
+                time.sleep(0.05)
+            self.die("%s never appeared" % st["path"])
+        elif op == "send":
+            self.tool("SendMessage", {"to": st["to"], "message": self.fill(st["text"])}, "sent")
         elif op == "dump_env":
             keys = ("HOME", "KLATCH_HOME", "KLATCH_KEY_DIR", "KLATCH_NAME")
             facts = {k: os.environ.get(k) for k in keys}

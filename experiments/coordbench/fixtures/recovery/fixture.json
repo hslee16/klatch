@@ -1,0 +1,19 @@
+{
+  "name": "recovery",
+  "description": "F6 (SPEC section 3, S6): F1 tallykit at a smaller size. A Python package (recoverkit) of four independent modules, three agents: a owns ranges and will ask c what the bit numbering of masks is, b owns wrap and pairs, c (the victim) owns bits and the duty to answer a. The harness kills c with SIGKILL while it holds a claim (K arms) or a board line marked working (B1) with its module edited and not committed and a's question unanswered; nobody is told. The numbering is recorded in docs/FORMATS.md, so the survivors can answer from the repository once they notice.",
+  "topology": "T-clone",
+  "scenario": "s6",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"},
+    {"name": "c", "task": "task-c.md"}
+  ],
+  "variants": {
+    "claim": {},
+    "ask": {}
+  },
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "recovery",
+  "est_cost_usd_haiku": 0.8,
+  "fake": "fake.json"
+}
