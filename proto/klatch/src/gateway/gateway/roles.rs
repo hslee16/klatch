@@ -220,27 +220,12 @@ impl<S: Store> Gateway<S> {
     }
 
     pub(super) fn check_role(&self, who: &Principal, op: &Operation) -> Result<()> {
-        // #523: on a members' gateway the system's own names are nobody's, so a typed one gets no standing
-        if self.for_members && crate::domain::is_reserved_name(&who.member) {
-            return Err(Error::Refused {
-                rule: "reserved-name".into(),
-                reason: "that name is the system's and no member may act as it".into(),
-            });
-        }
+        self.check_reserved(who)?;
         let role = self.role_of(&who.member)?;
         if let Some(e) = reviewer_refusal(role, who, op) {
             return Err(e);
         }
-        if role == Some(Role::Facilitator)
-            && let Some(e) = super::facilitator::refusal(who, op)
-        {
-            return Err(e);
-        }
-        if role == Some(Role::Facilitator)
-            && let Operation::Post { room, body } = op
-        {
-            self.check_facilitator_dm_post(who, room, body)?;
-        }
+        self.check_facilitator_bound(who, op, role)?;
         if let Some(e) = merge_claim_refusal(role, who, op) {
             return Err(e);
         }
@@ -248,6 +233,41 @@ impl<S: Store> Gateway<S> {
             self.check_member_admin(who, op, role)?;
         }
         self.check_room_capability(who, op)?;
+        self.check_role_limit(who, op, role)
+    }
+
+    /// #523: on a members' gateway the system's own names are nobody's, so a typed one gets no standing.
+    fn check_reserved(&self, who: &Principal) -> Result<()> {
+        if self.for_members && crate::domain::is_reserved_name(&who.member) {
+            return Err(Error::Refused {
+                rule: "reserved-name".into(),
+                reason: "that name is the system's and no member may act as it".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// A facilitator's allowlist, then the state rules of its one DM; any other role is not held to either.
+    fn check_facilitator_bound(
+        &self,
+        who: &Principal,
+        op: &Operation,
+        role: Option<Role>,
+    ) -> Result<()> {
+        if role != Some(Role::Facilitator) {
+            return Ok(());
+        }
+        if let Some(e) = super::facilitator::refusal(who, op) {
+            return Err(e);
+        }
+        if let Operation::Post { room, body } = op {
+            self.check_facilitator_dm_post(who, room, body)?;
+        }
+        Ok(())
+    }
+
+    /// The limit of the role itself, last: a librarian only looks, the admin agent keeps to its list.
+    fn check_role_limit(&self, who: &Principal, op: &Operation, role: Option<Role>) -> Result<()> {
         match role {
             Some(Role::Librarian) if !op.is_query() => Err(Error::Refused {
                 rule: "read-only".into(),
@@ -365,10 +385,7 @@ fn merge_claim_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> O
     let Operation::Claim { path, .. } = op else {
         return None;
     };
-    if !crate::domain::is_merge_claim(path)
-        || role == Some(Role::Integrator)
-        || who.member == "admin"
-    {
+    if !crate::domain::is_merge_claim(path) || may_take_merge_claim(role, who) {
         return None;
     }
     Some(Error::Refused {
@@ -379,6 +396,11 @@ fn merge_claim_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> O
             who.member, who.member
         ),
     })
+}
+
+/// An integrator, or the human (the reserved name `admin`), may take `merge:main`.
+fn may_take_merge_claim(role: Option<Role>, who: &Principal) -> bool {
+    role == Some(Role::Integrator) || who.member == "admin"
 }
 
 fn credential_refusal(why: &str) -> Error {

@@ -8,6 +8,50 @@ use crate::domain::{Importance, order_by_importance};
 use crate::store::Shown;
 use std::collections::HashSet;
 
+/// The ask an answer or a close message points at, if it is one.
+fn ask_target(m: &Message) -> Option<i64> {
+    crate::domain::answer_target(&m.body).or_else(|| crate::domain::closed_target(&m.body))
+}
+
+/// What decides the class of each message for one caller: its name, whether the room is its direct message, and the
+/// asks and senders the gateway worked out beforehand.
+struct Reach<'a> {
+    me: &'a str,
+    in_dm: bool,
+    answerable: HashSet<i64>,
+    routed: HashSet<i64>,
+    own_asks: HashSet<i64>,
+    coordinators: HashSet<String>,
+}
+
+impl Reach<'_> {
+    /// The class of `m`, or `None` for `Rest`.
+    fn class_of(&self, m: &Message) -> Option<Importance> {
+        let addressed =
+            crate::domain::mentions(&m.body, self.me) || super::delivery::is_broadcast(m);
+        if self.is_ask_for_me(m, addressed) || self.answers_own_ask(m) {
+            Some(Importance::Ask)
+        } else if self.in_dm {
+            Some(Importance::Dm)
+        } else if addressed || self.coordinators.contains(&m.sender) {
+            Some(Importance::Addressed)
+        } else {
+            None
+        }
+    }
+
+    /// An ask that is addressed to the caller, could be answered by it, or was routed to it.
+    fn is_ask_for_me(&self, m: &Message, addressed: bool) -> bool {
+        crate::domain::is_ask(&m.body)
+            && (addressed || self.answerable.contains(&m.seq) || self.routed.contains(&m.seq))
+    }
+
+    /// An answer or a close that points at one of the caller's own asks.
+    fn answers_own_ask(&self, m: &Message) -> bool {
+        ask_target(m).is_some_and(|n| self.own_asks.contains(&n))
+    }
+}
+
 impl<S: Store> Gateway<S> {
     /// The class of each of `messages` for the caller, as `(seq, class)`; a message not listed is `Rest`. Reads the
     /// ask records, the room kind and the roles of the senders; moves nothing.
@@ -19,7 +63,34 @@ impl<S: Store> Gateway<S> {
     ) -> Result<Vec<(i64, Importance)>> {
         let me = who.member.as_str();
         let in_dm = self.dm_peer(who, room)?.is_some();
-        // asks the caller could answer, and the caller's own asks that an answer or a close points at
+        let answerable = self.answerable_asks(who, room, messages)?;
+        // asks the gateway addressed to the caller (#1407): routed by could_answer and the ask's structured fields, or
+        // escalated to it as a coordinator
+        let routed: HashSet<i64> = self.routed_asks(room, me)?.into_iter().collect();
+        let own_asks = self.own_asks_pointed_at(room, me, messages)?;
+        let coordinators = self.coordinators_among(messages);
+        let reach = Reach {
+            me,
+            in_dm,
+            answerable,
+            routed,
+            own_asks,
+            coordinators,
+        };
+        Ok(messages
+            .iter()
+            .filter_map(|m| reach.class_of(m).map(|class| (m.seq, class)))
+            .collect())
+    }
+
+    /// The asks among `messages` that the caller could answer.
+    fn answerable_asks(
+        &self,
+        who: &Principal,
+        room: &str,
+        messages: &[Message],
+    ) -> Result<HashSet<i64>> {
+        let me = who.member.as_str();
         let mut answerable: HashSet<i64> = HashSet::new();
         if messages
             .iter()
@@ -36,27 +107,45 @@ impl<S: Store> Gateway<S> {
                 }
             }
         }
-        // asks the gateway addressed to the caller (#1407): routed by could_answer and the ask's structured fields, or
-        // escalated to it as a coordinator
-        let routed: HashSet<i64> = self.routed_asks(room, me)?.into_iter().collect();
+        Ok(answerable)
+    }
+
+    /// The caller's own asks that an answer or a close among `messages` points at.
+    fn own_asks_pointed_at(
+        &self,
+        room: &str,
+        me: &str,
+        messages: &[Message],
+    ) -> Result<HashSet<i64>> {
         let mut own_asks: HashSet<i64> = HashSet::new();
         let mut asked: HashSet<i64> = HashSet::new();
         for m in messages {
-            let target = crate::domain::answer_target(&m.body)
-                .or_else(|| crate::domain::closed_target(&m.body));
-            if let Some(n) = target.filter(|n| *n > 0 && asked.insert(*n))
-                && let Some(ask) = self.store.tail(room, n - 1, 1)?.into_iter().next()
-                && ask.seq == n
-                && ask.sender == me
-            {
+            let Some(n) = ask_target(m).filter(|n| *n > 0 && asked.insert(*n)) else {
+                continue;
+            };
+            if self.is_ask_of(room, me, n)? {
                 own_asks.insert(n);
             }
         }
+        Ok(own_asks)
+    }
+
+    /// Whether message `n` of `room` exists and is an ask sent by `me`.
+    fn is_ask_of(&self, room: &str, me: &str, n: i64) -> Result<bool> {
+        Ok(self
+            .store
+            .tail(room, n - 1, 1)?
+            .into_iter()
+            .next()
+            .is_some_and(|ask| ask.seq == n && ask.sender == me))
+    }
+
+    /// The senders among `messages` that coordinate and can post to a room: the admin agent and the integrator (a
+    /// facilitator may not post to a room at all).
+    fn coordinators_among(&self, messages: &[Message]) -> HashSet<String> {
         let mut coordinators: HashSet<String> = HashSet::new();
         let mut checked: HashSet<&str> = HashSet::new();
         for m in messages {
-            // the roles that coordinate and can post to a room: the admin agent and the integrator (a facilitator may
-            // not post to a room at all)
             if checked.insert(m.sender.as_str())
                 && matches!(
                     self.role_of(&m.sender),
@@ -66,29 +155,7 @@ impl<S: Store> Gateway<S> {
                 coordinators.insert(m.sender.clone());
             }
         }
-        Ok(messages
-            .iter()
-            .filter_map(|m| {
-                let addressed =
-                    crate::domain::mentions(&m.body, me) || super::delivery::is_broadcast(m);
-                let is_ask = crate::domain::is_ask(&m.body);
-                let target = crate::domain::answer_target(&m.body)
-                    .or_else(|| crate::domain::closed_target(&m.body));
-                let class = if is_ask
-                    && (addressed || answerable.contains(&m.seq) || routed.contains(&m.seq))
-                    || target.is_some_and(|n| own_asks.contains(&n))
-                {
-                    Importance::Ask
-                } else if in_dm {
-                    Importance::Dm
-                } else if addressed || coordinators.contains(&m.sender) {
-                    Importance::Addressed
-                } else {
-                    return None;
-                };
-                Some((m.seq, class))
-            })
-            .collect())
+        coordinators
     }
 
     /// `messages` (unread ones of `room`) in the order a capped view shows them (#1405): the caller's asks, direct

@@ -172,11 +172,23 @@ run with any conflict puts all its lost edits under `overwrites_after_conflict`.
 N is 20 per arm at M0 (3 for the quick subset); caps are SPEC 8.1's (1.80 USD a run, 60 USD for one topology on Haiku),
 proposals the human changes before M0.
 
-Gaps, stated plainly. Topology T-shared (one working directory used by all agents, SPEC's primary topology for the K arms) is
-not built: `run.py` makes one clone per agent under the run's scratch, the arm prompts say "your own clone", and both drivers
-take one working directory per agent, so only T-clone runs. T-shared needs its own run mode (one shared checkout), a prompt
-variant that says so, and metrics that do not rely on commits (a final-file check, since agents may never commit); this is a
-follow-up. `claim_conflicts` comes from the K arms' store export (null in a B arm) and `time_to_recover_s` is null (the stream parser
+Topology T-shared (#1427, `--fixture onefile --variant shared`, recorded as the scenario `onefile-shared`, never pooled with the
+T-clone runs). `run.py` makes ONE working tree, a clone of the run's bare origin, and starts every agent in it. Each agent has its
+own identity in its process environment (member name and `KLATCH_NAME`, `GIT_AUTHOR_NAME` and `GIT_COMMITTER_NAME`), and its stream,
+prompt and error logs in the log directory, its own HOME and TMPDIR under the run's scratch, all outside the tree. The prompts are
+`arms/common-shared.md` and `arms/<arm>-shared.md` (colleagues are editing the same files in the same directory right now; no clone,
+pull or push), held to the same length rule by `arms/check_parity.py`. The final state is the tree committed by the harness at the
+end under the author `harness-final` if anything is uncommitted (`scenario_metrics.final_commit`); the checker runs on a clone of
+that. `overwrites` cannot come from history, so a watcher thread reads the shared file every `--snapshot-s` seconds (default 5) and
+whenever an agent exits, and a ticket present in some snapshot and absent from the final tree is overwritten (source `snapshot`); the
+agents' Write, Edit and MultiEdit calls on the file give a second measure, `lost_edit_events` (source `stream`). The resolution limit,
+in every record: an edit written and overwritten between two snapshots by an agent that keeps running is not in any snapshot; the
+stream measure sees file-tool edits only, counts an agent's own deliberate removal of an earlier line as lost, and cannot see a shell
+`sed`. Fake agents got `read_into`, `write_from_var`, `signal`, `wait_signal` and `barrier` to make a deterministic lost update.
+Not yet: no shared variant of the role arms (B1-roles, K3); a shared fixture cannot have private files; `klatch init` runs once for
+the tree and members are told apart by `KLATCH_NAME`, which has only been exercised with the fake driver; no real T-shared run exists.
+
+Gaps, stated plainly. `claim_conflicts` comes from the K arms' store export (null in a B arm) and `time_to_recover_s` is null (the stream parser
 counts conflicts but keeps no time of the first one). Fake scripts use the new `replace` step (an edit of the file as it is
 now, failing when the text is absent) next to `copy_from`, `append`, `sync` and `git`; tests are in
 `tests/test_onefile_checker.py` (the checker on the reference and on eleven variants) and `tests/test_s2_scenario.py` (the

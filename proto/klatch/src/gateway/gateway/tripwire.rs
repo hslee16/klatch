@@ -59,15 +59,7 @@ impl<S: Store> Gateway<S> {
     /// is `private` in the default chain) and has none. An admin agent's label act plants nothing, and a room
     /// labelled before this existed has none until the human labels it again.
     pub(super) fn plant_on_label(&self, who: &Principal, room: &str, label: &str) -> Result<()> {
-        let chain = self.chain()?;
-        let threshold = match chain.rank("private") {
-            Some(_) => "private",
-            None => chain.default_cap(),
-        };
-        if !chain.dominates(label, threshold)
-            || self.is_admin_agent(&who.member)?
-            || !self.canary_keys_of(room)?.is_empty()
-        {
+        if !self.plants_on_label(who, (room, label))? {
             return Ok(());
         }
         let now = self.now();
@@ -76,6 +68,23 @@ impl<S: Store> Gateway<S> {
             &NewAudit::new("canary", room, "planted with the label"),
             now,
         )
+    }
+
+    /// Whether the label act reaches the threshold, is the human's and finds the room with no canary. The checks run
+    /// in that order and stop at the first that says no.
+    fn plants_on_label(&self, who: &Principal, (room, label): (&str, &str)) -> Result<bool> {
+        let chain = self.chain()?;
+        let threshold = match chain.rank("private") {
+            Some(_) => "private",
+            None => chain.default_cap(),
+        };
+        if !chain.dominates(label, threshold) {
+            return Ok(false);
+        }
+        if self.is_admin_agent(&who.member)? {
+            return Ok(false);
+        }
+        Ok(self.canary_keys_of(room)?.is_empty())
     }
 
     fn canary_keys_of(&self, room: &str) -> Result<Vec<String>> {

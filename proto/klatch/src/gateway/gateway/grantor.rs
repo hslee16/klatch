@@ -28,6 +28,14 @@ use crate::store::NewAudit;
 const GRANTOR: &str = "grantor:";
 const GRANT: &str = "room-clear:";
 
+/// One grant under check: the room, the member it goes to and the clearance label.
+#[derive(Clone, Copy)]
+struct Grant<'a> {
+    room: &'a str,
+    member: &'a str,
+    label: &'a str,
+}
+
 impl<S: Store> Gateway<S> {
     /// The room's grantor, if it has one.
     pub fn room_grantor(&self, room: &str) -> Result<Option<String>> {
@@ -99,7 +107,14 @@ impl<S: Store> Gateway<S> {
         // lands before it (and the grant is refused) or after it, never between the check and the write
         let mut refusal = None;
         self.store.atomically(&mut || {
-            if let Err(e) = self.check_grant_rules(who, room, member, label) {
+            if let Err(e) = self.check_grant_rules(
+                who,
+                Grant {
+                    room,
+                    member,
+                    label,
+                },
+            ) {
                 refusal = Some(e);
                 return Ok(());
             }
@@ -122,13 +137,12 @@ impl<S: Store> Gateway<S> {
         }
     }
 
-    fn check_grant_rules(
-        &self,
-        who: &Principal,
-        room: &str,
-        member: &str,
-        label: &str,
-    ) -> Result<()> {
+    fn check_grant_rules(&self, who: &Principal, grant: Grant) -> Result<()> {
+        let Grant {
+            room,
+            member,
+            label,
+        } = grant;
         let refuse = |rule: &str, reason: String| Error::Refused {
             rule: rule.into(),
             reason,

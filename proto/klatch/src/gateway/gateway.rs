@@ -32,6 +32,7 @@ mod crossing;
 mod delivery;
 pub use delivery::DeliveryView;
 mod dm;
+mod dm_exchange;
 mod lease;
 pub use lease::{
     DEFAULT_CAP_SECS, DEFAULT_EXTEND_SECS, DEFAULT_GRACE_SECS, LeaseAction, LeasePolicy,
@@ -173,12 +174,7 @@ impl<S: Store> Gateway<S> {
 
     /// Post under a label: the room's own unless `label` says a lower one. `post` is `(room, body, label)`.
     pub fn post_labeled(&self, who: &Principal, post: PostArgs) -> Result<Posted> {
-        let (room, body) = (post.0, post.1);
-        let posted = self.post_with(who, post, None)?;
-        if crate::domain::is_ask(body) {
-            self.route_ask_now(room, posted.seq);
-        }
-        Ok(posted)
+        self.post_and_route(who, post, None)
     }
 
     /// Post a message that carries a handoff: a kind and, optionally, an opaque payload for the next member. The
@@ -190,8 +186,18 @@ impl<S: Store> Gateway<S> {
         post: PostArgs,
         handoff: &Handoff,
     ) -> Result<Posted> {
+        self.post_and_route(who, post, Some(handoff))
+    }
+
+    /// `post_with`, then the routing of the post when it is an ask.
+    fn post_and_route(
+        &self,
+        who: &Principal,
+        post: PostArgs,
+        handoff: Option<&Handoff>,
+    ) -> Result<Posted> {
         let (room, body) = (post.0, post.1);
-        let posted = self.post_with(who, post, Some(handoff))?;
+        let posted = self.post_with(who, post, handoff)?;
         if crate::domain::is_ask(body) {
             self.route_ask_now(room, posted.seq);
         }
@@ -219,19 +225,7 @@ impl<S: Store> Gateway<S> {
         refs: &[crate::domain::AskRef],
     ) -> Result<Posted> {
         check_member(who)?;
-        if let Some(scope) = scope
-            && !crate::domain::valid_scope(scope)
-        {
-            return Err(Error::Invalid(
-                "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
-            ));
-        }
-        if (scope.is_some() || !refs.is_empty()) && !post.1.starts_with(crate::domain::ASK_PREFIX) {
-            return Err(Error::Invalid(
-                "a scope or refs can only go on an ask (a message that starts with `seeking:`)"
-                    .into(),
-            ));
-        }
+        check_ask_shape(post.1, scope, refs)?;
         let room = post.0;
         if !refs.is_empty() {
             check_room(room)?;
@@ -331,6 +325,25 @@ impl<S: Store> Gateway<S> {
         check_room(room)?;
         self.authorize(who, &op)
     }
+}
+
+/// The checks of an ask that declares a scope or refs, before anything is posted: the scope is valid, and a scope or
+/// refs only go on a message that starts with `seeking:`.
+fn check_ask_shape(body: &str, scope: Option<&str>, refs: &[crate::domain::AskRef]) -> Result<()> {
+    if let Some(scope) = scope
+        && !crate::domain::valid_scope(scope)
+    {
+        return Err(Error::Invalid(
+            "bad scope: 1 to 80 characters of letters, digits and . : _ - /".into(),
+        ));
+    }
+    let declares = scope.is_some() || !refs.is_empty();
+    if declares && !body.starts_with(crate::domain::ASK_PREFIX) {
+        return Err(Error::Invalid(
+            "a scope or refs can only go on an ask (a message that starts with `seeking:`)".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -94,6 +94,15 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
             "not a usable worker name: {member}"
         )));
     }
+    check_lifetimes(ttl, max_life)?;
+    match parent {
+        Some(p) if !valid_name(p) || p == member => Err(Error::Invalid("bad parent member".into())),
+        _ => Ok(()),
+    }
+}
+
+/// The lifetime of a credential and its cap, when given, are each from 1 second to `MAX_CREDENTIAL_TTL_SECS`.
+fn check_lifetimes(ttl: i64, max_life: Option<i64>) -> Result<()> {
     if !(1..=MAX_CREDENTIAL_TTL_SECS).contains(&ttl) {
         return Err(Error::Invalid(format!(
             "a credential lives from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
@@ -106,10 +115,7 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
             "a credential's cap is from 1 second to {MAX_CREDENTIAL_TTL_SECS} seconds"
         )));
     }
-    match parent {
-        Some(p) if !valid_name(p) || p == member => Err(Error::Invalid("bad parent member".into())),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 /// The audit detail of an issue: clearance, parent (or `none`) and lifetime.

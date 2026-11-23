@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// What one pass of the digest over a member's rooms carries: who it is for, whether it lists the backlog, and the
+/// time it was taken.
+#[derive(Clone, Copy)]
+struct Walk<'a> {
+    who: &'a Principal,
+    backlog: bool,
+    now: i64,
+}
+
 impl<S: Store> Gateway<S> {
     /// The messages a hook shows for a room: all of them, or only those that mention the caller when it muted the
     /// room. A hook shows each message once and leaves the read cursor alone, so a muted-out message stays readable.
@@ -109,83 +118,103 @@ impl<S: Store> Gateway<S> {
                 });
                 continue;
             }
-            let (messages, outside_view) = self.digest_messages(who, &room, now)?;
-            let addressed = self.addressed_seqs(who, &room, &messages)?;
-            // asks for the member, direct messages and the like come before chatter when the digest is full (#1405)
-            let ranks = self.importances(who, &room, &messages)?;
-            let dm_peer = self.dm_peer(who, &room)?;
-            let move_to_dm = if dm_peer.is_none() {
-                self.long_exchange(who, &room, &messages)?
-            } else {
-                None
-            };
-            let changes = self.store.claim_changes(&room, &who.member, now)?;
-            let stale_after = self.settings_of(&room)?.stale_secs;
-            let stale = self
-                .store
-                .stale_asks(Seat::new(&room, &who.member), now, stale_after)?;
-            let escalated = self.store.escalated_asks(&room, &who.member, now)?;
-            let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
-            let aged = self.store.claim_ages(&room, &who.member, now)?;
-            let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
-            let asks_notes = self.asks_notes(&room, &who.member, now)?;
-            let crossings = self.crossing_notices(&room, &who.member)?;
-            let unowned_prs = if backlog {
-                let mut prs = self.open_prs_of(&room, now)?;
-                prs.retain(|p| p.holder.is_none());
-                prs
-            } else {
-                Vec::new()
-            };
-            let backlog = if backlog {
-                self.store
-                    .open_asks(&room, now)?
-                    .into_iter()
-                    .filter(|a| a.sender != who.member && !a.claimed)
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            // an ask escalated to this member after it was posted is behind its cursors: list it once, like the
-            // backlog (#1407)
-            let mut backlog = backlog;
-            let late = self.untold_escalations(&room, &who.member, 1)?;
-            if !late.is_empty() {
-                let told: Vec<i64> = late.iter().map(|a| a.seq).collect();
-                for a in late {
-                    if !backlog.iter().any(|b| b.seq == a.seq)
-                        && !messages.iter().any(|m| m.seq == a.seq)
-                    {
-                        backlog.push(a);
-                    }
-                }
-                self.store.mark_told(&room, &who.member, &told, 1)?;
-            }
-            rooms.push(RoomDigest {
-                room,
-                messages,
-                outside_view,
-                addressed,
-                ranks,
-                claims: changes.added,
-                released: changes.released,
-                stale,
-                backlog,
-                escalated,
-                lapsed,
-                aged,
-                cycles,
-                asks_notes,
-                crossings,
-                unowned_prs,
-                dm_peer,
-                move_to_dm,
-            });
+            rooms.push(self.digest_room(Walk { who, backlog, now }, room)?);
         }
         Ok(Digest {
             rooms,
             refused,
             now,
         })
+    }
+
+    /// The digest of one room the guard allows: its messages, claim changes, asks and notices.
+    fn digest_room(&self, walk: Walk, room: String) -> Result<RoomDigest> {
+        let Walk { who, backlog, now } = walk;
+        let (messages, outside_view) = self.digest_messages(who, &room, now)?;
+        let addressed = self.addressed_seqs(who, &room, &messages)?;
+        // asks for the member, direct messages and the like come before chatter when the digest is full (#1405)
+        let ranks = self.importances(who, &room, &messages)?;
+        let dm_peer = self.dm_peer(who, &room)?;
+        let move_to_dm = if dm_peer.is_none() {
+            self.long_exchange(who, &room, &messages)?
+        } else {
+            None
+        };
+        let changes = self.store.claim_changes(&room, &who.member, now)?;
+        let stale_after = self.settings_of(&room)?.stale_secs;
+        let stale = self
+            .store
+            .stale_asks(Seat::new(&room, &who.member), now, stale_after)?;
+        let escalated = self.store.escalated_asks(&room, &who.member, now)?;
+        let lapsed = self.store.lapsed_asks(&room, &who.member, now)?;
+        let aged = self.store.claim_ages(&room, &who.member, now)?;
+        let cycles = self.store.deadlock_notices(&room, &who.member, now)?;
+        let asks_notes = self.asks_notes(&room, &who.member, now)?;
+        let crossings = self.crossing_notices(&room, &who.member)?;
+        let unowned_prs = if backlog {
+            let mut prs = self.open_prs_of(&room, now)?;
+            prs.retain(|p| p.holder.is_none());
+            prs
+        } else {
+            Vec::new()
+        };
+        let backlog = self.room_backlog(walk, &room, &messages)?;
+        Ok(RoomDigest {
+            room,
+            messages,
+            outside_view,
+            addressed,
+            ranks,
+            claims: changes.added,
+            released: changes.released,
+            stale,
+            backlog,
+            escalated,
+            lapsed,
+            aged,
+            cycles,
+            asks_notes,
+            crossings,
+            unowned_prs,
+            dm_peer,
+            move_to_dm,
+        })
+    }
+
+    /// The open unclaimed asks from others (when the digest asks for the backlog), and the asks escalated to the
+    /// caller after they were posted, which are behind its cursors: each is listed once, like the backlog (#1407).
+    fn room_backlog(
+        &self,
+        walk: Walk,
+        room: &str,
+        messages: &[Message],
+    ) -> Result<Vec<crate::domain::OpenAsk>> {
+        let Walk {
+            who,
+            backlog: wanted,
+            now,
+        } = walk;
+        let mut backlog: Vec<crate::domain::OpenAsk> = if wanted {
+            self.store
+                .open_asks(room, now)?
+                .into_iter()
+                .filter(|a| a.sender != who.member && !a.claimed)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let late = self.untold_escalations(room, &who.member, 1)?;
+        if !late.is_empty() {
+            let told: Vec<i64> = late.iter().map(|a| a.seq).collect();
+            for a in late {
+                if !backlog.iter().any(|b| b.seq == a.seq)
+                    && !messages.iter().any(|m| m.seq == a.seq)
+                {
+                    backlog.push(a);
+                }
+            }
+            self.store.mark_told(room, &who.member, &told, 1)?;
+        }
+        Ok(backlog)
     }
 }

@@ -40,36 +40,49 @@ impl<S: Store> Gateway<S> {
         tasks: &mut Vec<crate::domain::Task>,
     ) -> Result<()> {
         for m in self.store.machine_checkpoints(room)? {
-            if now - m.ts > crate::domain::TASK_HOLD_SECS {
-                continue;
-            }
-            let done = m.body.split("; ").any(|p| p == "status done");
-            let machine = Some(crate::domain::Checkpoint {
-                text: m.body,
-                ts: m.ts,
-            });
-            let latest = tasks
-                .iter_mut()
-                .filter(|t| t.owner == m.member)
-                .max_by_key(|t| t.last);
-            match latest {
-                Some(t) => t.machine = machine,
-                // a member that said it is done leaves no stand-in task behind
-                None if done => {}
-                None => tasks.push(crate::domain::Task {
-                    owner: m.member,
-                    title: "session".into(),
-                    what: String::new(),
-                    started: m.ts,
-                    last: m.ts,
-                    checkpoint: None,
-                    machine,
-                    undeclared: true,
-                    from: None,
-                    orphaned: false,
-                }),
+            if now - m.ts <= crate::domain::TASK_HOLD_SECS {
+                attach_checkpoint(tasks, m);
             }
         }
         Ok(())
+    }
+}
+
+/// Show the checkpoint `m` beneath its owner's latest task, or as a task of its own when the owner has none.
+fn attach_checkpoint(tasks: &mut Vec<crate::domain::Task>, m: crate::domain::MachineCheckpoint) {
+    let done = m.body.split("; ").any(|p| p == "status done");
+    let machine = Some(crate::domain::Checkpoint {
+        text: m.body,
+        ts: m.ts,
+    });
+    let latest = tasks
+        .iter_mut()
+        .filter(|t| t.owner == m.member)
+        .max_by_key(|t| t.last);
+    match latest {
+        Some(t) => t.machine = machine,
+        // a member that said it is done leaves no stand-in task behind
+        None if done => {}
+        None => tasks.push(stand_in_task(m.member, m.ts, machine)),
+    }
+}
+
+/// The task that stands for a machine checkpoint of a member that declared no work.
+fn stand_in_task(
+    owner: String,
+    ts: i64,
+    machine: Option<crate::domain::Checkpoint>,
+) -> crate::domain::Task {
+    crate::domain::Task {
+        owner,
+        title: "session".into(),
+        what: String::new(),
+        started: ts,
+        last: ts,
+        checkpoint: None,
+        machine,
+        undeclared: true,
+        from: None,
+        orphaned: false,
     }
 }

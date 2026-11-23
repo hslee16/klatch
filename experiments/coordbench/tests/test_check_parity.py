@@ -13,7 +13,7 @@ if ARMS not in sys.path:
     sys.path.insert(0, ARMS)
 import check_parity as cp
 
-ALL = list(cp.BASE_ARMS) + list(cp.ROLE_ARMS) + ["common"]
+ALL = list(cp.BASE_ARMS) + list(cp.ROLE_ARMS) + ["common"] + [n + "-shared" for n in list(cp.BASE_ARMS) + ["common"]]
 
 
 class Parity(unittest.TestCase):
@@ -133,6 +133,52 @@ class Parity(unittest.TestCase):
     def test_plain_prefix_words_are_not_klatch_words(self):
         self.edit("B1", lambda s: s + " question: answer: handoff: decision: review: overlap: interface:")
         self.assertFalse(any("klatch word" in p for p in self.problems()))
+
+    # T-shared variants (#1427)
+    def shared_problems(self, tol=0.15):
+        return cp.run_all(self.dir, tol, cp.SHARED)[0]
+
+    def test_the_real_shared_arms_pass_and_the_main_check_runs_them(self):
+        self.assertEqual(cp.run_all(ARMS, 0.15, cp.SHARED)[0], [])
+        self.assertEqual(cp.run_everything(ARMS, 0.15)[0], [])
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cp.main(["--arms-dir", ARMS]), 0)
+        self.assertIn("T-shared variants", out.getvalue())
+
+    def test_a_shared_arm_out_of_tolerance_fails_the_main_check(self):
+        self.edit("K1-shared", lambda s: s + " filler" * 300)
+        self.assertTrue(any(p.startswith("K1-shared is") for p in self.shared_problems()))
+        self.assertEqual(self.problems(), [], "the clone arms are untouched")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cp.main(["--arms-dir", self.dir]), 1)
+
+    def test_a_shared_arm_missing_a_topic_or_a_prefix_is_caught(self):
+        self.edit("B0-shared", lambda s: s.replace("Handing work over:", "Passing it on:"))
+        self.assertTrue(any("B0-shared" in p and "Handing work over" in p for p in self.shared_problems()))
+        self.edit("B1-shared", lambda s: s.replace("seeking:", "asking:"))
+        self.assertTrue(any("B1-shared" in p and "seeking:" in p for p in self.shared_problems()))
+
+    def test_klatch_words_and_foreign_tools_in_a_shared_b_arm_are_caught(self):
+        self.edit("B0-shared", lambda s: s + " Use klatch. Use SendMessage.")
+        ps = self.shared_problems()
+        self.assertTrue(any("B arm B0-shared" in p for p in ps), ps)
+        self.assertTrue(any("B0-shared names a tool of another arm" in p for p in ps), ps)
+
+    def test_a_shared_file_that_says_own_clone_or_push_is_caught(self):
+        self.edit("common-shared", lambda s: s + " Each of you has your own clone.")
+        self.assertTrue(any("common-shared.md says" in p and "clone" in p for p in self.shared_problems()))
+        shutil.copy(os.path.join(ARMS, "common-shared.md"), self.dir)
+        self.edit("K2-shared", lambda s: s + " Then git push.")
+        self.assertTrue(any("K2-shared.md says" in p for p in self.shared_problems()))
+
+    def test_the_shared_common_part_must_say_colleagues_edit_the_same_files(self):
+        self.edit("common-shared", lambda s: s.replace("editing the same files", "working"))
+        self.assertTrue(any("editing the same files" in p for p in self.shared_problems()))
+
+    def test_text_outside_the_section_is_identical_across_shared_arms(self):
+        self.assertEqual(cp.check_composition(ARMS, cp.SHARED), [])
+        self.edit("common-shared", lambda s: s.replace("{{COORDINATION_SECTION}}", "{{COORDINATION_SECTION}}\nX {{NAME}}"))
+        self.assertEqual(cp.check_composition(self.dir, cp.SHARED), [], "a tail common to every arm is fine")
 
     def test_split_role_sections_keys(self):
         secs = cp.split_role_sections("## Worker section\nA b\n## Integrator prompt (draft)\nC\n")
