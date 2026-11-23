@@ -1,0 +1,1 @@
+- The session start convention text names the four ask classes (decision, review, overlap, interface), says to find first, wait at most five minutes and close with `closed #N ok` or `closed #N unresolved`, and sends the human's decisions to the coordinator as asks; its marker is now `[klatch convention v2]` (#1385).
