@@ -157,6 +157,20 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`); klatch maps it to one of five words and writes the final
   checkpoint before it releases the member's claims. Compaction fires no `SessionEnd` (it fires `SessionStart` with
   matcher `compact`), so the checkpoint of the last `Stop` stands and the session start board shows it.
+- Ask routing (always on, #1407). A `seeking:` message posted in a room that is not a direct message is addressed by the
+  gateway to the members that could take it: those `could_answer` allows (the ask is open and not theirs, no claim holds
+  it, they hold no claim of their own, their credential is live, they are not stopped, their clearance covers the room's
+  label and their role may post), best match first by the ask's declared scope, `repo` and `path` refs and the member's
+  scope and edited paths (#1408), at most three. For those members the ask is an ask for them in the priority order of
+  `read`, `wait` and the digest (#1405), a narrowed delivery view and a mute let it through, and `klatch wake` counts it,
+  so an idle member that opted into wake is woken by it. A claim on `ask:N` or an answer ends the routing. When nobody
+  takes it within the room's ask lease (90 seconds unless the human set another), or a claim on it lapsed or was
+  released while it is still open, it is addressed once to the admin agent and the integrator that can read the room;
+  because their cursors are past the message by then, the digest lists the ask once (like the session start backlog) and
+  the wake count includes it once. Routing only addresses: it posts nothing, claims, answers and closes nothing, holds no
+  admin act and reads no word of a message. `klatch admin stats` prints its counts. It runs inside the gateway (at post
+  time and when a digest, wake count, `stuck` or ask claim next looks at the room), so no extra process is needed; a
+  room switches it off with the policy key `room:ROOM:ask-routing` set to `off`.
 
 ## 4. Post
 
