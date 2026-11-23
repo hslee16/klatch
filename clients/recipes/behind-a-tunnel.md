@@ -1,6 +1,6 @@
 # Reaching a loopback-only klatch-server through a tunnel or a TLS terminator
 
-> **Native mutual TLS now exists (#108, experimental).** `klatch-server https --listen IP:PORT --tls-cert PEM --tls-key PEM
+> **Native mutual TLS now exists (#108, experimental).** `klatch-server https --listen 127.0.0.1:7443 --tls-cert PEM --tls-key PEM
 > --tls-client-ca PEM` serves the same wire behind a mutual TLS listener, so a same-host terminator (pattern C below) is no
 > longer the only way to give remote callers an encrypted, certificate-gated port. You supply the server certificate, its
 > key (the file must be mode 0600) and a CA file for client certificates; klatch makes no certificates and runs no CA. A
