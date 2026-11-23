@@ -95,8 +95,7 @@ pub(super) fn timeout_notes(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Vec
 pub(super) fn asks_note_lines(
     t: &dyn Transport,
     (me, now): (&str, i64),
-    room: &str,
-    handed: bool,
+    (room, handed): (&str, bool),
     cycles: bool,
 ) -> Vec<String> {
     if !handed {
@@ -134,7 +133,6 @@ pub(super) fn dm_help_lines(
     room: &str,
     handed: &[klatch::domain::Message],
 ) -> Vec<String> {
-    use klatch::domain::{dm_nudge, dm_reply_hint, dm_room, move_to_dm_nudge};
     if handed.is_empty() {
         return Vec::new();
     }
@@ -142,43 +140,52 @@ pub(super) fn dm_help_lines(
         return Vec::new();
     };
     if room.starts_with(klatch::domain::DM_PREFIX) {
-        // a dm made by `dm` has exactly its two members; the name alone cannot say it for a hashed room name
-        let peer = klatch::domain::dm_peer_in_room(me, room).or_else(|| {
-            let others: Vec<_> = members.iter().filter(|m| m.name != me).collect();
-            let named = members.iter().any(|m| m.name == me) && others.len() == 1;
-            named
-                .then(|| others[0].name.clone())
-                .filter(|p| klatch::domain::valid_name(p))
-        });
-        return peer
-            .map(|p| format!("klatch: {}", dm_reply_hint(&p)))
-            .into_iter()
-            .collect();
+        return dm_reply_line(me, room, &members).into_iter().collect();
     }
     if members.len() < 3 {
         return Vec::new();
     }
+    dm_nudge_line(t, (me, room), handed).into_iter().collect()
+}
+
+/// The reply hint of a dm room, when the peer can be named.
+fn dm_reply_line(me: &str, room: &str, members: &[klatch::domain::MemberInfo]) -> Option<String> {
+    use klatch::domain::dm_reply_hint;
+    // a dm made by `dm` has exactly its two members; the name alone cannot say it for a hashed room name
+    let peer = klatch::domain::dm_peer_in_room(me, room).or_else(|| {
+        let others: Vec<_> = members.iter().filter(|m| m.name != me).collect();
+        let named = members.iter().any(|m| m.name == me) && others.len() == 1;
+        named
+            .then(|| others[0].name.clone())
+            .filter(|p| klatch::domain::valid_name(p))
+    });
+    peer.map(|p| format!("klatch: {}", dm_reply_hint(&p)))
+}
+
+/// The nudge to move a long two-member exchange of a room into a dm, unless that dm already exists.
+fn dm_nudge_line(
+    t: &dyn Transport,
+    (me, room): (&str, &str),
+    handed: &[klatch::domain::Message],
+) -> Option<String> {
+    use klatch::domain::{dm_nudge, dm_room, move_to_dm_nudge};
     let range = klatch::gateway::HistoryRange {
         since: None,
         last: Some(klatch::domain::DM_NUDGE_WINDOW),
     };
-    let Ok(history) = t.history(room, range) else {
-        return Vec::new();
-    };
+    let history = t.history(room, range).ok()?;
     let rows: Vec<(i64, &str, &str)> = history
         .messages
         .iter()
         .map(|m| (m.seq, m.sender.as_str(), m.body.as_str()))
         .collect();
     let seqs: Vec<i64> = handed.iter().map(|m| m.seq).collect();
-    let Some((peer, n)) = dm_nudge(me, &rows, &seqs) else {
-        return Vec::new();
-    };
+    let (peer, n) = dm_nudge(me, &rows, &seqs)?;
     // a dm between the two that already exists makes the nudge pointless
     if t.who(&dm_room(me, &peer)).is_ok() {
-        return Vec::new();
+        return None;
     }
-    vec![move_to_dm_nudge(&peer, n, room)]
+    Some(move_to_dm_nudge(&peer, n, room))
 }
 
 /// How many recent messages a waiting helper reads to find the asks it answered (#226).
@@ -447,15 +454,7 @@ pub(super) fn wake(t: &dyn Transport, (me, timeout): (&str, u64)) -> Result<()> 
             // Remember what it pointed at, so the same messages never wake the session again (a watcher
             // started again after every turn would otherwise loop on a message nobody read). They stay
             // unread: the hook, `read` and `wait` still show them.
-            // What the view holds back is counted first: marking moves the wake cursor past it.
-            let outside = t.outside_view(&room).ok().flatten();
-            t.wake_mark(&room)?;
-            let mut pointer = klatch::member::wake_pointer_for(Some(me), &room, unread, newest);
-            if let Some((n, last)) = outside {
-                pointer.push(' ');
-                pointer.push_str(&klatch::domain::outside_view_line(&room, n, last));
-                pointer.push('.');
-            }
+            let pointer = wake_pointer(t, me, (&room, unread, newest))?;
             eprintln!("{pointer}");
             std::process::exit(2);
         }
@@ -464,6 +463,24 @@ pub(super) fn wake(t: &dyn Transport, (me, timeout): (&str, u64)) -> Result<()> 
         }
         std::thread::sleep(WAKE_POLL);
     }
+}
+
+/// The pointer a wake prints for a room with unread messages; marking it moves the wake cursor past what it points at.
+fn wake_pointer(
+    t: &dyn Transport,
+    me: &str,
+    (room, unread, newest): (&str, usize, i64),
+) -> Result<String> {
+    // What the view holds back is counted first: marking moves the wake cursor past it.
+    let outside = t.outside_view(room).ok().flatten();
+    t.wake_mark(room)?;
+    let mut pointer = klatch::member::wake_pointer_for(Some(me), room, unread, newest);
+    if let Some((n, last)) = outside {
+        pointer.push(' ');
+        pointer.push_str(&klatch::domain::outside_view_line(room, n, last));
+        pointer.push('.');
+    }
+    Ok(pointer)
 }
 
 /// The first of the member's rooms with unread messages, with its unread count and newest seq.

@@ -278,7 +278,8 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
     /// any (as `read` returns them, moving the cursor), or the timeout marker. A bad bound is a JSON-RPC error.
     fn wait(&self, a: &WaitArgs) -> Result<Result<Value, ToolFailure>, RpcError> {
         let secs = a.timeout.unwrap_or(DEFAULT_WAIT_SECS);
-        if a.rooms.is_empty() || !(1..=MAX_WAIT_SECS).contains(&secs) {
+        let bad_bound = !(1..=MAX_WAIT_SECS).contains(&secs);
+        if a.rooms.is_empty() || bad_bound {
             return Err(rpc_error(
                 INVALID_PARAMS,
                 format!("rooms must name a room and timeout must be 1 to {MAX_WAIT_SECS} seconds"),
@@ -291,15 +292,7 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
                 Err(failure) => return Ok(Err(failure)),
             };
             if !got.messages.is_empty() {
-                let mut r = json!({"messages": got.messages, "timeout": false});
-                if got.by_importance {
-                    r["by_importance"] = json!(true);
-                }
-                if got.omitted > 0 {
-                    r["omitted"] = json!(got.omitted);
-                    r["next"] = json!("call klatch_wait again for the next unread messages");
-                }
-                return Ok(Ok(with_notice(r)));
+                return Ok(Ok(with_notice(woken_json(&got))));
             }
             if Instant::now() >= deadline || self.cancel.is_some_and(|c| c()) {
                 return Ok(Ok(json!({"messages": [], "timeout": true})));
@@ -340,6 +333,19 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
         }
         Ok(got)
     }
+}
+
+/// The result of a `klatch_wait` that found messages.
+fn woken_json(got: &Polled) -> Value {
+    let mut r = json!({"messages": got.messages, "timeout": false});
+    if got.by_importance {
+        r["by_importance"] = json!(true);
+    }
+    if got.omitted > 0 {
+        r["omitted"] = json!(got.omitted);
+        r["next"] = json!("call klatch_wait again for the next unread messages");
+    }
+    r
 }
 
 /// What one pass over the rooms of a `klatch_wait` took: the messages, and how many were left unread.

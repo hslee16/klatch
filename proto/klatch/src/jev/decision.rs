@@ -117,7 +117,8 @@ impl Default for NoulThresholds {
 impl NoulThresholds {
     pub fn new(yes_above: f64, no_below: f64) -> Result<NoulThresholds, String> {
         let unit = |x: f64| x.is_finite() && (0.0..=1.0).contains(&x);
-        if !unit(yes_above) || !unit(no_below) || no_below >= yes_above {
+        let both_in_unit = unit(yes_above) && unit(no_below);
+        if !both_in_unit || no_below >= yes_above {
             return Err(
                 "the noul thresholds must be within 0 and 1 with no_below under yes_above".into(),
             );
@@ -175,7 +176,8 @@ pub fn pick(
     if answer.choice == NONE_CHOICE {
         return if p >= threshold { None } else { rules };
     }
-    if p >= threshold && answer.confidence >= threshold && candidates.contains(&answer.choice) {
+    let sure = p >= threshold && answer.confidence >= threshold;
+    if sure && candidates.contains(&answer.choice) {
         return Some(answer.choice.clone());
     }
     rules
