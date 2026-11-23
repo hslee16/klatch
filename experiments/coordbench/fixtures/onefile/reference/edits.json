@@ -1,0 +1,54 @@
+{
+ "a": [
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    \"port\": (8080, \"int\"),\n",
+   "new": "    \"port\": (8080, \"int\"),\n    \"timeout\": (30, \"seconds\"),\n"
+  },
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    # new kinds go above this line, one block per kind\n",
+   "new": "    if kind == \"seconds\":\n        value = float(value)\n        return (\"%ds\" % value) if value == int(value) else (\"%rs\" % value)\n    # new kinds go above this line, one block per kind\n"
+  },
+  {
+   "op": "append",
+   "path": "onefile/core.py",
+   "content": "\n\ndef parse_timeout(text):\n    \"\"\"Parse a timeout such as \"30\", \"30s\", \"1.5m\" or \"2h\" into seconds, as a float. The text is a non-negative number\n    (digits, optionally with a decimal part) with an optional unit: s (seconds, the default), m (minutes) or h (hours).\n    Surrounding whitespace is ignored. Anything else raises ValueError.\"\"\"\n    import re\n    m = re.fullmatch(r\"(\\d+(?:\\.\\d+)?)([smh]?)\", text.strip())\n    if m is None:\n        raise ValueError(\"not a timeout: %r\" % text)\n    return float(m.group(1)) * {\"\": 1, \"s\": 1, \"m\": 60, \"h\": 3600}[m.group(2)]\n"
+  }
+ ],
+ "b": [
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    \"port\": (8080, \"int\"),\n",
+   "new": "    \"port\": (8080, \"int\"),\n    \"retries\": (3, \"count\"),\n"
+  },
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    # new kinds go above this line, one block per kind\n",
+   "new": "    if kind == \"count\":\n        if int(value) < 0:\n            raise ValueError(\"a count cannot be negative\")\n        return \"%dx\" % int(value)\n    # new kinds go above this line, one block per kind\n"
+  },
+  {
+   "op": "append",
+   "path": "onefile/core.py",
+   "content": "\n\ndef backoff_delays(retries, base=1.0, cap=30.0):\n    \"\"\"The wait before each retry, in seconds, as a list of floats: the first is base, each next one is twice the one\n    before, and none is more than cap. retries is how many retries there are (0 gives an empty list); a negative number\n    raises ValueError.\"\"\"\n    if retries < 0:\n        raise ValueError(\"retries cannot be negative\")\n    return [float(min(cap, base * 2 ** i)) for i in range(retries)]\n"
+  }
+ ],
+ "c": [
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    \"port\": (8080, \"int\"),\n",
+   "new": "    \"port\": (8080, \"int\"),\n    \"label\": (\"default\", \"text\"),\n"
+  },
+  {
+   "op": "replace",
+   "path": "onefile/core.py",
+   "old": "    return \"[settings]\"\n",
+   "new": "    if count == 1:\n        return \"== settings (1 option) ==\"\n    return \"== settings (%d options) ==\" % count\n"
+  }
+ ]
+}

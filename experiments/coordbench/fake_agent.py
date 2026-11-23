@@ -14,6 +14,8 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   git {args}                     run git; a nonzero exit ends the agent with exit 1 unless allow_fail
   copy_from {from, path}         copy a file ("from" is absolute or relative to the script's directory) to path
   append {path, content}         append text to a file (created when absent)
+  replace {path, old, new}       replace the one occurrence of old in a file with new; the agent fails when old is absent
+                                 or occurs more than once (an edit of a file as it is now, not a copy of a stale one)
   sync {message, resolve?}       git add -A, commit, pull --no-rebase, push to origin main (retries a lost race).
                                  resolve: "union" (keep both sides of every conflicted file) or "ours" (keep this
                                  agent's side, dropping the other's lines) resolves a conflicted pull and goes on; without
@@ -122,6 +124,14 @@ class Agent:
             with open(st["path"], "a") as f:
                 f.write(st["content"])
             self.tool("Edit", {"file_path": st["path"], "append": st["content"]}, "ok")
+        elif op == "replace":
+            with open(st["path"]) as f:
+                text = f.read()
+            if text.count(st["old"]) != 1:
+                self.die("replace: the text to replace occurs %d times in %s" % (text.count(st["old"]), st["path"]))
+            with open(st["path"], "w") as f:
+                f.write(text.replace(st["old"], st["new"]))
+            self.tool("Edit", {"file_path": st["path"], "old_string": st["old"], "new_string": st["new"]}, "ok")
         elif op == "git":
             self.bash(["git"] + st["args"], allow)
         elif op == "sync":

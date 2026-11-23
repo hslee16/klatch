@@ -20,7 +20,7 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `streams.py`: parses the stream-json of an agent (turns, tokens, cost, tool calls, messages, conflicts).
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
-- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial` and F1 `tallykit` (see Scenario S1).
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2).
 - `scenario.py`, `scenarios/`: scenario files (fixture, arms, N, caps, unit-to-path map, metric definitions) and the git
   history metrics that need the map.
 - `prices.json`, `cost_model.json`: the price table (cost estimates while a run is live) and the SPEC 8.1 planning figures
@@ -109,6 +109,46 @@ record's `scenario_metrics`. Not yet computed: `claim_conflicts` and `store_expo
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
 
+## Scenario S2: three agents, one file (`scenarios/s2.json`, fixture `onefile`)
+
+F2 `onefile` is a standard library settings renderer whose whole logic is `onefile/core.py` (about 120 lines with the three
+changes in, 85 before). Three agents (`a` to `c`) are told to change it at once with no ordering: A adds the `timeout`
+option and `parse_timeout`; B adds the `retries` option and `backoff_delays`; C changes `render_header` and adds the `label`
+option. Every ticket adds a row to the shared option table `OPTIONS` at the same place, A and B add a kind to the shared
+helper `format_value` at the same place, and A and B append a function at the end of the file, so concurrent edits conflict at
+merge, and a stale copy or a force push silently drops a colleague's work. The header prints the table size, so the changes
+must agree in the merged file. The visible tests cover the old behaviour only and pass after any subset of the changes.
+`fixtures/onefile/reference/` (`core.py`, the full solution, and `edits.json`, each ticket's edit as fake-agent `replace` and
+`append` steps) is read only by tests and fake agents and is never copied into a checkout.
+
+The hidden checker `checks/onefile/check.sh CHECKOUT` loads `core.py` by file and tests each ticket alone against
+independent oracles and seeded random inputs. It prints `{"checks", "units_completed", "units_total", "merge_state",
+"correct", "lost_edits", "lost_table_entries", "per_agent"}`: three unit checks (`timeout`, `retries`, `header`) and structural
+checks `table` (exactly the five rows), `integrated-render`, `imports`, `no-conflict-markers`, `visible-tests`; `merge_state`
+is `clean`, `conflicts-left` or `tests-broken`; `lost_edits` are the tickets missing from main; `per_agent` is commits and
+surviving lines of `core.py` (git blame) by author. `check.sh --file PATH` says which tickets one version of the file has.
+
+Metrics (definitions in the scenario file). `units_completed` 0 to 3 is primary. `overwrites` is computed by the harness for a
+scenario with `history_check`: every non-merge commit of the origin and of every agent's clone is tested with the checker's
+per-ticket check on the file as it has it; a ticket that passes on some commit and fails on the final main is an overwrite
+(edits committed anywhere and missing from the final main). `silent_overwrites` is those overwrites in a run where no agent saw
+a git conflict; `overwrites_after_conflict` is those in a run where one did (a destructive resolution or an unresolved
+conflict); `conflicts_resolved` is the run's git conflicts when it ended correct with no overwrite. The split is per run, so a
+run with any conflict puts all its lost edits under `overwrites_after_conflict`. `git_conflicts` and `merge_state` are as in S1.
+N is 20 per arm at M0 (3 for the quick subset); caps are SPEC 8.1's (1.80 USD a run, 60 USD for one topology on Haiku),
+proposals the human changes before M0.
+
+Gaps, stated plainly. Topology T-shared (one working directory used by all agents, SPEC's primary topology for the K arms) is
+not built: `run.py` makes one clone per agent under the run's scratch, the arm prompts say "your own clone", and both drivers
+take one working directory per agent, so only T-clone runs. T-shared needs its own run mode (one shared checkout), a prompt
+variant that says so, and metrics that do not rely on commits (a final-file check, since agents may never commit); this is a
+follow-up. `claim_conflicts` is null (it needs the K arms' store export) and `time_to_recover_s` is null (the stream parser
+counts conflicts but keeps no time of the first one). Fake scripts use the new `replace` step (an edit of the file as it is
+now, failing when the text is absent) next to `copy_from`, `append`, `sync` and `git`; tests are in
+`tests/test_onefile_checker.py` (the checker on the reference and on eleven variants) and `tests/test_s2_scenario.py` (the
+metrics through the harness with fake agents that cooperate, collide and resolve, collide and leave it, push a stale copy,
+resolve destructively and give up).
+
 ## Fake agents
 
 `fake_agent.py` reads a JSON script (the fixture's `fake.json`, or `--fake-script`) and performs file edits, git and klatch
@@ -119,7 +159,7 @@ steps.
 ## Not computed yet
 
 Fields the spec lists that need a scenario's unit-to-path map or the store export are written as `null` (never omitted):
-`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export`. `coordination_context_tokens` is an estimate (characters
+`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; S2 leaves `claim_conflicts` and `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
 divided by 4) because the standard library has no tokenizer; the record says so in `notes`. `messages` counts klatch posts
 (`post`, `dm`, `ask`, `answer`) and `SendMessage` calls from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.

@@ -101,3 +101,58 @@ def checker_extras(raw):
     if not isinstance(obj, dict):
         return {}
     return {k: v for k, v in obj.items() if k not in ("checks", "units_completed", "units_total")}
+
+
+def _ticket_pass(check_py, text, env):
+    """{ticket: bool} for one version of the file, by the hidden checker's --file mode ({} when it cannot run)."""
+    import sys
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "core.py")
+        with open(path, "w") as f:
+            f.write(text)
+        try:
+            p = subprocess.run([sys.executable, "-I", check_py, "--file", path], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env=env, timeout=60)
+            obj = json.loads(p.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+            return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def history_overwrites(scn, origin, clones, env, branch="main"):
+    """Edits committed anywhere and missing from the final main, by behaviour (scenario key history_check). Every non-merge,
+    non-root commit reachable from any ref of the origin or any clone is tested with the hidden checker's per-ticket check on
+    the file as that commit has it; a ticket that passes on some commit and fails on the final main is overwritten. Returns
+    {"overwritten": [{"ticket", "author"}]} (the author of the first commit, in sha order, that had it)."""
+    hc = scn["history_check"]
+    check_py = os.path.join(HERE, "checks", hc["checker"], "check.py")
+    seen, ever = set(), {}
+    for repo in [origin] + list(clones):
+        rc, out = _git(repo, ["log", "--all", "--no-merges", "--format=%x01%H%x01%an%x01%P%x01"], env)
+        if rc != 0:
+            raise RuntimeError("git log failed in %s" % repo)
+        parts = out.split("\x01")
+        for i in range(1, len(parts) - 3, 4):
+            sha, author, parents = parts[i], parts[i + 1], parts[i + 2]
+            if not parents.strip() or sha in seen:
+                continue
+            seen.add(sha)
+            rc, text = _git(repo, ["show", "%s:%s" % (sha, hc["path"])], env)
+            if rc != 0:
+                continue
+            for t, ok in sorted(_ticket_pass(check_py, text, env).items()):
+                if ok and (t not in ever or sha < ever[t][0]):
+                    ever[t] = (sha, author)
+    rc, text = _git(origin, ["show", "%s:%s" % (branch, hc["path"])], env)
+    final = _ticket_pass(check_py, text, env) if rc == 0 else {}
+    return {"overwritten": [{"ticket": t, "author": ever[t][1]} for t in sorted(ever) if not final.get(t)]}
+
+
+def overwrite_split(overwritten, git_conflicts, extras):
+    """silent_overwrites, overwrites_after_conflict and conflicts_resolved of one run (see scenarios/s2.json)."""
+    n = len(overwritten)
+    conflicts = git_conflicts or 0
+    return {"silent_overwrites": n if conflicts == 0 else 0,
+            "overwrites_after_conflict": n if conflicts > 0 else 0,
+            "conflicts_resolved": conflicts if (n == 0 and extras.get("correct") is True) else 0}
