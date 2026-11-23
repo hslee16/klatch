@@ -1,0 +1,1 @@
+- Code health of the gateway tests and test doubles (#1454, part of #1441): long tests and duplicated setup split into named helpers, `test_support.rs` split into a module of four files, one new test for the `ask.sender == me` check; no production change and no assertion weakened.

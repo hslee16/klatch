@@ -138,6 +138,20 @@ fn wait_and_watch(g: &Gateway<SpyStore>) {
     g.wait_seen(&lib(), "r", 1).unwrap();
 }
 
+/// A member who joined, then was made the librarian, and then five seconds passed: the gateway and the
+/// last-seen it had as a member.
+fn a_former_member_made_librarian() -> (Gateway<SpyStore>, Option<i64>) {
+    let (g, t) = timed();
+    g.join(&alice(), "r").unwrap();
+    g.post(&alice(), "r", "what happened").unwrap();
+    g.join(&lib(), "r").unwrap();
+    let before = lib_seen(&g);
+    assert!(before.is_some());
+    g.admin_set_librarian(&admin(), "lib", true).unwrap();
+    t.set(t.get() + 5_000);
+    (g, before)
+}
+
 #[test]
 fn a_librarian_waiting_or_watching_does_not_join_the_room() {
     let (g, t) = with_librarian();
@@ -148,13 +162,7 @@ fn a_librarian_waiting_or_watching_does_not_join_the_room() {
 
 #[test]
 fn a_librarian_that_was_a_member_keeps_its_last_seen_when_it_waits_or_watches() {
-    let (g, t) = timed();
-    g.join(&alice(), "r").unwrap();
-    g.post(&alice(), "r", "what happened").unwrap();
-    g.join(&lib(), "r").unwrap();
-    let before = lib_seen(&g);
-    g.admin_set_librarian(&admin(), "lib", true).unwrap();
-    t.set(t.get() + 5_000);
+    let (g, before) = a_former_member_made_librarian();
     wait_and_watch(&g);
     assert_eq!(lib_seen(&g), before, "waiting refreshed the presence");
 }
@@ -197,14 +205,7 @@ fn a_librarian_looking_does_not_join_the_room() {
 
 #[test]
 fn a_librarian_that_was_a_member_keeps_its_old_last_seen_when_it_looks() {
-    let (g, t) = timed();
-    g.join(&alice(), "r").unwrap();
-    g.post(&alice(), "r", "what happened").unwrap();
-    g.join(&lib(), "r").unwrap();
-    let before = lib_seen(&g);
-    assert!(before.is_some());
-    g.admin_set_librarian(&admin(), "lib", true).unwrap();
-    t.set(t.get() + 5_000);
+    let (g, before) = a_former_member_made_librarian();
     look_at_the_room(&g);
     assert_eq!(lib_seen(&g), before, "looking refreshed the presence");
 }

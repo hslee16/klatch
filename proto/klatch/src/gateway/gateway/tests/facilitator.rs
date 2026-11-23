@@ -50,12 +50,7 @@ fn it_is_one_role_at_a_time_and_only_the_human_grants_it() {
 #[test]
 fn it_reads_creates_a_room_invites_and_posts_only_the_pointer() {
     let (g, _) = with_facilitator();
-    assert_eq!(g.read(&fac(), "lobby", false).unwrap().len(), 1);
-    assert_eq!(g.read(&fac(), "lobby", true).unwrap().len(), 1);
-    assert!(g.who(&fac(), "lobby").is_ok());
-    assert!(g.claims(&fac(), "lobby").is_ok());
-    assert!(g.board(&fac(), "lobby").is_ok());
-    assert!(g.open_asks(&fac(), "lobby").is_ok());
+    assert_it_may_look_at_the_lobby(&g);
     g.join(&fac(), "topic-login").unwrap();
     g.invite(&fac(), "bob", "topic-login", "lobby").unwrap();
     let seen = g.read(&bob(), "lobby", false).unwrap();
@@ -63,7 +58,21 @@ fn it_reads_creates_a_room_invites_and_posts_only_the_pointer() {
         seen.iter()
             .any(|m| m.sender == "fac" && m.body.starts_with("invite: @bob"))
     );
-    let audit = g.admin_audit(&admin(), 30).unwrap();
+    assert_room_creation_audited(&g, 30);
+}
+
+fn assert_it_may_look_at_the_lobby(g: &Gateway<SpyStore>) {
+    assert_eq!(g.read(&fac(), "lobby", false).unwrap().len(), 1);
+    assert_eq!(g.read(&fac(), "lobby", true).unwrap().len(), 1);
+    assert!(g.who(&fac(), "lobby").is_ok());
+    assert!(g.claims(&fac(), "lobby").is_ok());
+    assert!(g.board(&fac(), "lobby").is_ok());
+    assert!(g.open_asks(&fac(), "lobby").is_ok());
+}
+
+/// The last `rows` audit rows hold a room creation by the facilitator.
+fn assert_room_creation_audited(g: &Gateway<SpyStore>, rows: usize) {
+    let audit = g.admin_audit(&admin(), rows).unwrap();
     assert!(
         audit
             .iter()
@@ -71,11 +80,11 @@ fn it_reads_creates_a_room_invites_and_posts_only_the_pointer() {
     );
 }
 
-#[test]
-fn nothing_else_is_allowed_and_every_refusal_names_the_rule() {
-    let (g, t) = with_facilitator();
-    type Attempt<'a> = Box<dyn Fn() -> Option<Error> + 'a>;
-    let attempts: Vec<(&str, Attempt)> = vec![
+type Attempt<'a> = Box<dyn Fn() -> Option<Error> + 'a>;
+
+/// What a facilitator tries in the rooms and with its own presence.
+fn room_attempts(g: &Gateway<SpyStore>) -> Vec<(&'static str, Attempt<'_>)> {
+    vec![
         (
             "free post",
             Box::new(|| g.post(&fac(), "lobby", "bob, please do this").err()),
@@ -112,6 +121,12 @@ fn nothing_else_is_allowed_and_every_refusal_names_the_rule() {
         ("scope", Box::new(|| g.set_scope(&fac(), "ops").err())),
         ("kind", Box::new(|| g.set_kind(&fac(), None).err())),
         ("prune", Box::new(|| g.prune_members(&fac(), 10).err())),
+    ]
+}
+
+/// What a facilitator tries with clearance, the audit and the roles.
+fn admin_attempts(g: &Gateway<SpyStore>) -> Vec<(&'static str, Attempt<'_>)> {
+    vec![
         (
             "label a room",
             Box::new(|| g.admin_set_room_label(&fac(), "lobby", "private").err()),
@@ -153,7 +168,13 @@ fn nothing_else_is_allowed_and_every_refusal_names_the_rule() {
             "grant rooms to itself",
             Box::new(|| g.admin_grant_room_capability(&fac(), "fac", true).err()),
         ),
-    ];
+    ]
+}
+
+#[test]
+fn nothing_else_is_allowed_and_every_refusal_names_the_rule() {
+    let (g, t) = with_facilitator();
+    let attempts = room_attempts(&g).into_iter().chain(admin_attempts(&g));
     for (name, attempt) in attempts {
         t.set(t.get() + 600);
         match attempt() {
@@ -161,6 +182,10 @@ fn nothing_else_is_allowed_and_every_refusal_names_the_rule() {
             other => panic!("{name} was not refused for a facilitator: {other:?}"),
         }
     }
+    assert_nothing_changed(&g);
+}
+
+fn assert_nothing_changed(g: &Gateway<SpyStore>) {
     assert_eq!(g.clearance_of("fac").unwrap(), "public");
     assert_eq!(g.clearance_of("bob").unwrap(), "public");
     assert_eq!(g.room_label("lobby").unwrap(), "public");
@@ -184,13 +209,22 @@ fn the_role_is_enforced_before_any_guard_is_asked() {
     g.join(&alice(), "lobby").unwrap();
     g.admin_set_facilitator(&admin(), "fac", true).unwrap();
     let before = spy.seen.borrow().len();
-    assert!(g.post(&fac(), "lobby", "hello").is_err());
-    assert!(g.set_status(&fac(), "lobby", "x").is_err());
-    assert!(g.admin_set_clearance(&fac(), "fac", "private").is_err());
-    assert!(
-        g.grant_room_clearance(&fac(), "lobby", "alice", "internal")
-            .is_err()
-    );
+    let refused = [
+        ("post", g.post(&fac(), "lobby", "hello").is_err()),
+        ("status", g.set_status(&fac(), "lobby", "x").is_err()),
+        (
+            "clearance",
+            g.admin_set_clearance(&fac(), "fac", "private").is_err(),
+        ),
+        (
+            "grant",
+            g.grant_room_clearance(&fac(), "lobby", "alice", "internal")
+                .is_err(),
+        ),
+    ];
+    for (name, is_err) in refused {
+        assert!(is_err, "{name}");
+    }
     assert_eq!(
         spy.seen.borrow().len(),
         before,
@@ -488,17 +522,13 @@ fn the_dm_adds_no_privilege() {
         .dm(&fac(), "alice", "need-info #1: which-repo", None)
         .unwrap();
     // still no free text in the DM room, no grant, no lobby text
-    assert_eq!(
+    let rules = [
         rule_of_err(g.post(&fac(), &room, "and one more thing")),
-        "facilitator"
-    );
-    assert_eq!(
         rule_of_err(g.post(&fac(), "lobby", "need-info #1: which-repo")),
-        "facilitator"
-    );
-    assert_eq!(
         rule_of_err(g.grant_room_clearance(&fac(), &room, "alice", "internal")),
-        "facilitator"
-    );
+    ];
+    for rule in rules {
+        assert_eq!(rule, "facilitator");
+    }
     assert_eq!(g.room_grantor(&room).unwrap(), None);
 }

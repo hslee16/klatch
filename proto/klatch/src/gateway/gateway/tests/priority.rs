@@ -133,3 +133,20 @@ fn ranking_moves_no_cursor_and_marking_shown_moves_only_over_what_was_named() {
         .collect();
     assert_eq!(left, vec![3, 4, 5, 6]);
 }
+
+#[test]
+fn an_answer_to_an_ask_that_is_not_mine_is_not_an_answer_to_my_ask() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.post(&bob(), "r", "seeking: one").unwrap(); // 1, bob's ask, not alice's
+    g.claim(
+        &Principal::unattributed("carol"),
+        "r",
+        &ClaimSpec::new("ask:1", 60, ""),
+    )
+    .unwrap(); // someone is on it, so alice has no ask to answer
+    g.post(&Principal::unattributed("carol"), "r", "answer to #1: two")
+        .unwrap(); // 2
+    let cs = classes(&g, &alice(), "r");
+    assert_eq!(class_of(&cs, 2), Importance::Rest);
+}
