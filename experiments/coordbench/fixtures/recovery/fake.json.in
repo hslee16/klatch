@@ -1,0 +1,38 @@
+{
+  "comment": "Scripted agents for the harness tests (#1371): the reference run of scenario S6. c (the victim) takes its claim or board line, is shown a's question, edits bits.py without committing and then hangs: the harness kills it. a and b finish their own modules, then wait for kill.json (the harness writes it when it kills c: this is how a scripted survivor 'notices'), and b recovers bits.py and answers a's question, after which a finishes ranges. The reference is read from reference/, which is never in a checkout.",
+  "agents": {
+    "a": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2", "K3"]},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "seeking: what is the index map of a mask?"], "arms": ["K1", "K2", "K3"]},
+      {"op": "send", "to": "c", "text": "seeking: what is the index map of a mask?", "arms": ["B1"]},
+      {"op": "wait_file", "path": "kill.json", "timeout": 40},
+      {"op": "wait_origin_has", "path": "recoverkit/bits.py", "contains": "def bit_indexes", "timeout": 40},
+      {"op": "git", "args": ["pull", "--no-rebase", "--no-edit", "origin", "main"]},
+      {"op": "copy_from", "from": "reference/recoverkit/ranges.py", "path": "recoverkit/ranges.py"},
+      {"op": "sync", "message": "ranges", "resolve": "union"},
+      {"op": "final", "text": "ranges is published. DONE a"}
+    ],
+    "b": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2", "K3"]},
+      {"op": "copy_from", "from": "reference/recoverkit/wrap.py", "path": "recoverkit/wrap.py"},
+      {"op": "copy_from", "from": "reference/recoverkit/pairs.py", "path": "recoverkit/pairs.py"},
+      {"op": "sync", "message": "wrap and pairs", "resolve": "union"},
+      {"op": "wait_file", "path": "kill.json", "timeout": 40},
+      {"op": "klatch", "args": ["claim", "{{ROOM}}", "recoverkit/bits.py", "--reason", "c is gone, finishing bits"], "arms": ["K1", "K2", "K3"], "allow_fail": true},
+      {"op": "copy_from", "from": "reference/recoverkit/bits.py", "path": "recoverkit/bits.py"},
+      {"op": "sync", "message": "bits, taken over from c", "resolve": "union"},
+      {"op": "klatch", "args": ["post", "{{ROOM}}", "answer to #1: position = (index * @K@ + @R@) mod 16"], "arms": ["K1", "K2", "K3"]},
+      {"op": "send", "to": "a", "text": "answer: position = (index * @K@ + @R@) mod 16", "arms": ["B1"]},
+      {"op": "final", "text": "wrap and pairs are published, bits recovered. DONE b"}
+    ],
+    "c": [
+      {"op": "klatch", "args": ["join", "{{ROOM}}"], "arms": ["K1", "K2", "K3"]},
+      {"op": "append", "path": "TASKS.md", "content": "- c | working | recoverkit/bits.py | bits\n", "arms": ["B1"]},
+      {"op": "sync", "message": "c: working on bits", "arms": ["B1"]},
+      {"op": "klatch", "args": ["claim", "{{ROOM}}", "recoverkit/bits.py", "--reason", "bits module"], "arms": ["K1", "K2", "K3"]},
+      {"op": "hook", "text": "[klatch] a: seeking: what is the index map of a mask?", "arms": ["B1", "K1", "K2", "K3"]},
+      {"op": "write", "path": "recoverkit/bits.py", "content": "\"\"\"half done\"\"\"\n\n\ndef set_bit(mask, index):\n    return mask | (0x8000 >> index)\n"},
+      {"op": "hang"}
+    ]
+  }
+}
