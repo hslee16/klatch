@@ -1,0 +1,23 @@
+### restore, wrong recovery code, attempt 1
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### restore, wrong recovery code, attempt 2
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### restore, wrong recovery code, attempt 3
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### restore, the fourth attempt is refused before it is asked, even with the right code
+the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
+Error: too many wrong passphrases; try again in <N> seconds
+(ended: refused)
+

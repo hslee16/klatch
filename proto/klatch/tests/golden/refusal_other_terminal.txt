@@ -1,0 +1,36 @@
+### input and output on a pty of the caller: klatch admin recovery
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### input and output on a pty of the caller: klatch admin shell
+Error: the admin shell reads its commands from the terminal and shows its answers there; standard input and output are not your terminal (run `klatch admin shell` yourself in a terminal)
+(ended: refused)
+
+### input and output on a pty of the caller: klatch admin export r
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### input and output on a pty of the caller: klatch admin audit
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### a session of its own on a pty: klatch admin recovery
+[pipe carried]
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### a session of its own on a pty: klatch admin export r
+[pipe carried]
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### a session of its own on a pty: klatch admin audit
+[pipe carried]
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### a session of its own on a pty: klatch admin shell
+[pipe carried]
+Error: the admin shell reads its commands from the terminal and shows its answers there; standard input and output are not your terminal (run `klatch admin shell` yourself in a terminal)
+(ended: refused)
+

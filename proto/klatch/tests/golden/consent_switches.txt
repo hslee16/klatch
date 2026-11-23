@@ -1,0 +1,1262 @@
+### klatch consent board off
+<PROJECT>/.claude/settings.local.json (project): already set, nothing to change
+(ended: ok)
+
+### after consent board off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent board on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart --board on",
+-             "command": "<KLATCH> --discover hook --event SessionStart",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent board on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent join off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart --board on --no-join",
+-             "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent join off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on --no-join
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent join on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionStart --board on",
+-             "command": "<KLATCH> --discover hook --event SessionStart --board on --no-join",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent join on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent session-end off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+-     "SessionEnd": [
+-       {
+-         "hooks": [
+-           {
+-             "type": "command",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "timeout": 30
+-           }
+-         ]
+-       }
+-     ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent session-end off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent session-end on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
++     ],
++     "SessionEnd": [
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "timeout": 30
++           }
++         ]
++       }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent session-end on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent enforce off
+<PROJECT>/.claude/settings.local.json (project): already set, nothing to change
+(ended: ok)
+
+### after consent enforce off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent enforce on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
++     ],
++     "PreToolUse": [
++       {
++         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover hook --event PreToolUse",
++             "timeout": 30
++           }
++         ]
++       }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent enforce on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent wake off
+<PROJECT>/.claude/settings.local.json (project): already set, nothing to change
+(ended: ok)
+
+### after consent wake off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent wake on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
++       },
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover wake --timeout 3500",
++             "async": true,
++             "asyncRewake": true,
++             "timeout": 3600
++           }
++         ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
++       },
++       {
++         "hooks": [
++           {
++             "type": "command",
++             "command": "<KLATCH> --discover wake --timeout 3500",
++             "async": true,
++             "asyncRewake": true,
++             "timeout": 3600
++           }
++         ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent wake on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent checkpoint off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent checkpoint off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent checkpoint on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent checkpoint on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent passive-claims off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent passive-claims off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent passive-claims on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent passive-claims on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent machine-status off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent machine-status off: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent machine-status on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent machine-status on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+

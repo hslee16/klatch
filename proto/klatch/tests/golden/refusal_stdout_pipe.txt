@@ -1,0 +1,57 @@
+### standard output is a pipe: klatch admin recovery
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin export r
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin run-archive a.jsonl --run r
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin rotate-key
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin rotate-label-key private
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin rate-limit --list
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin scrub-list
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin review-queue
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin refusals
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin audit
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin archives
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin stats
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard output is a pipe: klatch admin stats --json
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### standard error is a pipe: klatch admin audit
+[pipe carried]
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+

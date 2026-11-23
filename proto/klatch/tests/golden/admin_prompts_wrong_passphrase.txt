@@ -1,0 +1,260 @@
+### $ klatch admin pause
+admin passphrase to approve `admin pause [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin resume
+admin passphrase to approve `admin resume [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin close r
+admin passphrase to approve `admin close r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin reopen r
+admin passphrase to approve `admin reopen r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin remove m --room r
+admin passphrase to approve `admin remove m --room r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin allow m --room r
+admin passphrase to approve `admin allow m --room r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin label r private
+admin passphrase to approve `admin label r private [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin clear m internal
+admin passphrase to approve `admin clear m internal [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin grantor r m
+admin passphrase to approve `admin grantor r m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin ssh-key laptop m
+admin passphrase to approve `admin ssh-key laptop m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin room-clear r m internal
+admin passphrase to approve `admin room-clear r m internal [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin librarian m
+admin passphrase to approve `admin librarian m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin reviewer m
+admin passphrase to approve `admin reviewer m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin facilitator m
+admin passphrase to approve `admin facilitator m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin integrator m
+admin passphrase to approve `admin integrator m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin admin-agent m
+admin passphrase to approve `admin admin-agent m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin room-creation granted
+admin passphrase to approve `admin room-creation granted [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin grant-rooms m
+admin passphrase to approve `admin grant-rooms m [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin rate-limit 30 60
+admin passphrase to approve `admin rate-limit 30 60 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin lease-cap 100
+admin passphrase to approve `admin lease-cap 100 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin lease-grace 60
+admin passphrase to approve `admin lease-grace 60 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin room-stale r 120
+admin passphrase to approve `admin room-stale r 120 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin room-ask-lease r 100
+admin passphrase to approve `admin room-ask-lease r 100 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin room-require r --off
+admin passphrase to approve `admin room-require r --off [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin cap internal
+admin passphrase to approve `admin cap internal [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin chain a,b
+admin passphrase to approve `admin chain a,b [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin canary r
+admin passphrase to approve `admin canary r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin canary-retire r
+admin passphrase to approve `admin canary-retire r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin scrub-add n quokka
+admin passphrase to approve `admin scrub-add n quokka [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin scrub-remove n
+admin passphrase to approve `admin scrub-remove n [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin scrub-list
+admin passphrase to approve `admin scrub-list [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin recovery
+admin passphrase to approve `admin recovery [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin recover KLATCH-AAAA
+admin passphrase to approve `admin recover <code hidden> [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin seal-label private
+admin passphrase to approve `admin seal-label private [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin rotate-key
+admin passphrase to approve `admin rotate-key [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin rotate-label-key private
+admin passphrase to approve `admin rotate-label-key private [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin backup backup.db
+admin passphrase to approve `admin backup backup.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin restore backup.db
+admin passphrase to approve `admin restore backup.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin run-archive a.jsonl --run r
+admin passphrase to approve `admin run-archive a.jsonl --run r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin retention r 30
+admin passphrase to approve `admin retention r 30 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin archive --all-rooms
+admin passphrase to approve `admin archive --all-rooms [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin restore-archive x.db
+admin passphrase to approve `admin restore-archive x.db [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin archives
+admin passphrase to approve `admin archives [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin export r
+admin passphrase to approve `admin export r [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin stats --room lobby --since 2026-01-01
+admin passphrase to approve `admin stats --room lobby --since 2026-01-01 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin init-passphrase
+admin passphrase to approve `change the admin passphrase`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin reset-passphrase
+recovery code: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin unlock-window 60
+admin passphrase to approve `admin unlock-window 60 [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin shell
+admin passphrase to approve `open an admin shell: an unlock window for ALL admin and launcher commands [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin refusals
+admin passphrase to approve `admin refusals [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin review-queue
+admin passphrase to approve `admin review-queue [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
+### $ klatch admin audit
+admin passphrase to approve `admin audit [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+

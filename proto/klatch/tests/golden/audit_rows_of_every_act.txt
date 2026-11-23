@@ -1,0 +1,391 @@
+### $ klatch admin lease-cap 100
+a busy holder with no progress keeps its claims for 100 seconds
+(ended: ok)
+
+### $ klatch admin lease-grace 60
+the claims of a holder found gone linger 60 seconds
+(ended: ok)
+
+### $ klatch admin room-stale r 120
+r: an ask with no claim is reported to its asker after 120 seconds
+(ended: ok)
+
+### $ klatch admin room-ask-lease r 100
+r: an ask claim lasts 100 seconds unless the claimer asks for less
+(ended: ok)
+
+### $ klatch admin room-require r --off
+r is back to no harness requirement
+(ended: ok)
+
+### $ klatch admin rate-limit 30 60
+each member may post 30 times in 60 seconds in all rooms
+(ended: ok)
+
+### $ klatch admin rate-limit --off
+no rate limit
+(ended: ok)
+
+### $ klatch admin room-creation granted
+creating rooms and inviting is now for members with a grant
+(ended: ok)
+
+### $ klatch admin grant-rooms m
+m may now create rooms and invite
+(ended: ok)
+
+### $ klatch admin librarian m
+m is now a librarian
+(ended: ok)
+
+### $ klatch admin reviewer m
+m is now a reviewer
+(ended: ok)
+
+### $ klatch admin facilitator m
+m is now a facilitator
+(ended: ok)
+
+### $ klatch admin integrator m
+m is now an integrator
+(ended: ok)
+
+### $ klatch admin admin-agent m
+m is now the admin agent
+(ended: ok)
+
+### $ klatch admin grantor r m
+m is now the grantor of r
+(ended: ok)
+
+### $ klatch admin label r private
+room r is labelled private
+(ended: ok)
+
+### $ klatch admin clear m internal
+m is cleared to internal
+(ended: ok)
+
+### $ klatch admin room-clear r m internal
+m is cleared to internal in r only
+(ended: ok)
+
+### $ klatch admin cap internal
+the agent cap is internal
+(ended: ok)
+
+### $ klatch admin canary r
+a canary is planted in r; a copy of it anywhere else pauses that room
+(ended: ok)
+
+### $ klatch admin canary-retire r
+the canary of r is retired
+(ended: ok)
+
+### $ klatch admin scrub-add n quokka
+rule n now refuses its term in rooms below the agent cap
+(ended: ok)
+
+### $ klatch admin scrub-list
+n	quokka
+(ended: ok)
+
+### $ klatch admin scrub-remove n
+rule n removed
+(ended: ok)
+
+### $ klatch admin seal-label private
+label private is sealed: new messages under it are stored encrypted under a key of their own
+converted 2 earlier message text(s) of the label to sealed text
+a key was made for it; `klatch admin recovery` shows the code that restores it. Keep that code: a sealed label whose key is lost cannot be read again.
+(ended: ok)
+
+### $ klatch admin unlock-window 120
+the unlock window is now 120 seconds
+(ended: ok)
+
+### $ klatch admin unlock-window --off
+the unlock window is now 60 seconds
+(ended: ok)
+
+### $ klatch admin retention r 30
+messages of r older than 30 days will be archived by `klatch admin archive`
+(ended: ok)
+
+### $ klatch admin pause
+type pause to confirm `admin pause`: pause
+all rooms are paused; nothing is posted, claimed or delivered until `klatch admin resume`
+(ended: ok)
+
+### $ klatch admin resume
+rooms resumed
+(ended: ok)
+
+### $ klatch admin close r
+type r to confirm `admin close r`: r
+room r is closed (read-only)
+(ended: ok)
+
+### $ klatch admin reopen r
+room r is open again
+(ended: ok)
+
+### $ klatch admin remove m --room r
+type m to confirm `admin remove m --room r`: m
+m is removed from r and refused there until `klatch admin allow`
+(ended: ok)
+
+### $ klatch admin allow m --room r
+m is allowed in r again
+(ended: ok)
+
+### $ klatch admin backup <HOME>/backup.db
+wrote an encrypted backup to <HOME>/backup.db (it opens only with this store's key: keep the recovery code too)
+(ended: ok)
+
+### $ klatch admin archive --all-rooms
+nothing is older than its retention
+(ended: ok)
+
+### $ klatch admin archives
+no archives in <HOME>/archive
+(ended: ok)
+
+### $ klatch admin stats
+klatch stats (counts only; no message text, ask text, claim detail, label or payload)
+schema 44; room all; since the start; at 2026-11-23
+
+messages per room
+  room  class    messages  sealed  senders  first       last
+  r     private         2       2        1  2026-11-23  2026-11-23
+
+messages per day (UTC)
+  day         messages
+  2026-11-23  2
+
+senders: 1 distinct, 0 with a verified message
+
+top senders
+  sender  messages
+  canary  2
+
+attribution
+  attribution   messages
+  unattributed  2
+
+message kinds
+  kind    messages
+  canary  2
+
+asks: 0 created, 0 answered, 0 closed, 0 with a declared scope, 0 with refs
+time to first answer: median -, p90 -
+2 messages under a sealed label were not read for asks
+
+ask refs by kind
+  (none)
+
+live claims by class
+  (none)
+
+claim notes by class
+  (none)
+
+members waiting on a held claim now, by class
+  (none)
+claim yields on record: 0
+
+claim grants by class (new holds; renewals are not counted)
+  (none)
+
+claim refusals by rule
+  (none)
+
+claim releases by class
+  (none)
+
+claim releases by who released
+  (none)
+
+claim expiries by class (the holder's lease lapsed)
+  (none)
+claims taken over after expiry: 0
+claim conflicts handled (refused, then granted): 0, median wait -
+claim hold time: median - over 0 holds
+machine checkpoints: 0 written (0 at session end), 0 replaced an earlier one, 0 bytes
+machine status: 0 updates (working 0, idle 0, parked 0)
+passive claims: 0 granted, 0 renewed, 0 refused, 0 released, 0 lapsed, 0 failed
+ask routing: 0 routed to capable members, 0 routed to nobody, 0 taken, 0 lapsed, 0 escalated (0 with no coordinator to reach)
+
+refusals by rule
+  (none)
+
+direct message rooms: 0 (0 messages); private rooms: 1 (2 messages)
+members: 1 joined, 0 never posted, 0 marked done, 0 muted, 0 with a parent
+members who posted and never read: 1 of 1 (1 never shown anything by a hook, wait or wake)
+  by day of first post: 2026-11-23 1
+
+hook runs by event (cumulative)
+  (none)
+
+bytes injected into sessions by hook event (sizes only; the average is per run)
+  (none recorded)
+
+largest sessions by bytes injected
+  (none)
+
+admin audit by act
+  act             count
+  proof-ok        38
+  canary          2
+  rate-limit      2
+  unlock-window   2
+  admin-agent     1
+  allow           1
+  archive         1
+  backup          1
+  canary-retire   1
+  cap             1
+  clear           1
+  close           1
+  create-room     1
+  facilitator     1
+  grant-rooms     1
+  grantor         1
+  integrator      1
+  label           1
+  lease-cap       1
+  lease-grace     1
+  librarian       1
+  passphrase-set  1
+  pause           1
+  remove          1
+  reopen          1
+  resume          1
+  retention       1
+  reviewer        1
+  room-ask-lease  1
+  room-clear      1
+  room-creation   1
+  room-require    1
+  room-stale      1
+  scrub-add       1
+  scrub-remove    1
+  seal-label      1
+
+worker credentials: 0 issued, 0 revoked
+(ended: ok)
+
+### $ klatch admin refusals
+(ended: ok)
+
+### $ klatch admin review-queue
+(ended: ok)
+
+### $ klatch admin export r (output not kept)
+(ended: ok)
+
+### $ klatch admin recovery (output not kept)
+(ended: ok)
+
+### $ klatch admin rotate-label-key private (output not kept)
+(ended: ok)
+
+### $ klatch admin rotate-key (output not kept)
+(ended: ok)
+
+### $ klatch admin chain a,b
+label order is a < b; the agent cap is back to its default
+(ended: ok)
+
+### the audit, oldest first
+<AGE>s ago	passphrase-set		first passphrase
+<AGE>s ago	create-room	r	created by m
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	lease-cap	100	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	lease-grace	60	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-stale	r 120	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-ask-lease	r 100	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-require	r off	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	rate-limit	30/60	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	rate-limit	off	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-creation	granted	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	grant-rooms	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	librarian	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	reviewer	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	facilitator	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	integrator	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	admin-agent	m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	grantor	r/m=true	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	label	r=private	
+<AGE>s ago	canary	r	planted with the label
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	clear	m=internal	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-clear	r/m=internal	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	cap	internal	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	canary	r	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	canary-retire	r	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	scrub-add	n	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	scrub-remove	n	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	seal-label	private	converted 2 earlier text(s)
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	unlock-window		120s
+<AGE>s ago	proof-ok		window 120s
+<AGE>s ago	unlock-window		default
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	retention		r 30 days
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	pause	*	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	resume	*	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	close	r	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	reopen	r	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	remove	r/m	removed from 1 room(s), 0 claim(s) released
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	allow	r/m	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	backup		<HOME>/backup.db
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	archive		0 messages
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	stats		room all since start
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	export	r	readable transcript printed
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	recovery-show		
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	rotate-label-key		private
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	rotate-key		
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	chain	a,b	
+<AGE>s ago	proof-ok		window 60s
+
