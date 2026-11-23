@@ -38,6 +38,8 @@ pub struct Options {
     pub files: TlsFiles,
     pub allow_off_loopback: bool,
     pub limits: Limits,
+    /// Origins the WebSocket route lets through (`--ws-allow-origin`, #112).
+    pub ws_origins: Vec<String>,
 }
 
 /// The longest handshake deadline: a client that needs more than a minute to say hello is not one to wait for.
@@ -121,6 +123,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
     let mut max_connections = wire_http::DEFAULT_MAX_CONNECTIONS;
     let mut allow_off_loopback = false;
     let mut raw = Raw::default();
+    let mut ws_origins = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| -> Result<&str> {
@@ -134,6 +137,9 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             "--tls-key" => key = Some(PathBuf::from(value("--tls-key")?)),
             "--tls-client-ca" => ca = Some(PathBuf::from(value("--tls-client-ca")?)),
             "--allow-off-loopback" => allow_off_loopback = true,
+            "--ws-allow-origin" => {
+                ws_origins.push(crate::wire_ws::parse_origin(value("--ws-allow-origin")?)?);
+            }
             "--max-handshakes" => raw.max_handshakes = Some(value("--max-handshakes")?),
             "--handshake-secs" => raw.handshake = Some(value("--handshake-secs")?),
             "--stall-secs" => raw.stall = Some(value("--stall-secs")?),
@@ -160,13 +166,14 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             )?,
         },
         allow_off_loopback,
+        ws_origins,
     })
 }
 
 /// The readiness line, as one complete write (see `wire_http::announce_listening`).
 fn announce_listening(out: &mut dyn Write, addr: &dyn std::fmt::Display, opts: &Options) {
     let line = format!(
-        "klatch-server: https listening on {addr} (mutual TLS, {}, up to {} connections), GET {}, POST {} and POST {} (MCP)\n",
+        "klatch-server: https listening on {addr} (mutual TLS, {}, up to {} connections), GET {}, POST {}, POST {} (MCP) and GET {} (WebSocket)\n",
         if opts.allow_off_loopback {
             "off loopback allowed"
         } else {
@@ -175,7 +182,8 @@ fn announce_listening(out: &mut dyn Write, addr: &dyn std::fmt::Display, opts: &
         opts.max_connections,
         wire_http::STREAM_PATH,
         wire_http::FRAMES_PATH,
-        crate::mcp_http::PATH
+        crate::mcp_http::PATH,
+        crate::wire_ws::PATH
     );
     let _ = out.write_all(line.as_bytes());
     let _ = out.flush();
@@ -197,7 +205,8 @@ pub fn run(opts: &Options) -> Result<()> {
     let listener = loopback::bind_mutual_tls(&opts.listen, policy)?;
     crate::daemon::install_signal_handlers();
     announce_listening(&mut io::stderr().lock(), &listener.local_addr()?, opts);
-    let shared = Shared::new(gateway.session_backend(), SessionConfig::default());
+    let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
+    shared.ws.origins = opts.ws_origins.clone();
     let handshakes = Handshakes::default();
     let at = Listener {
         config: &config,

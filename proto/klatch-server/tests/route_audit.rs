@@ -106,7 +106,7 @@ fn audit_spans() -> Vec<String> {
 #[test]
 fn the_route_scan_finds_the_routes_that_exist() {
     let paths: Vec<String> = routes().into_iter().map(|(_, p)| p).collect();
-    for want in ["/v1/stream", "/v1/frames", "/mcp", "/github"] {
+    for want in ["/v1/stream", "/v1/frames", "/v1/ws", "/mcp", "/github"] {
         assert!(
             paths.iter().any(|p| p == want),
             "{want} not found in {paths:?}"

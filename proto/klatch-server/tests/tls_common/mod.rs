@@ -3,7 +3,9 @@
 //! and a rustls client that can present, omit or misuse a certificate. Not a test file: both `tls_*` tests include it.
 #![allow(dead_code)]
 
+pub mod scenario;
 pub mod wire;
+pub mod ws;
 
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,

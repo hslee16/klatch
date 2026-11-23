@@ -359,7 +359,7 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         "axum",
         "warp",
         "actix-web",
-        "tungstenite",
+        // tungstenite itself is allowed since #112, as its frame layer only: see the test below that holds it to that
         "tokio-tungstenite",
         "tokio",
         "async-std",
@@ -379,6 +379,55 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         );
     }
     assert!(deps.len() > 10, "the tree looks empty: {deps:?}");
+}
+
+#[test]
+fn websocket_is_the_frame_layer_of_tungstenite_alone_with_no_handshake_no_runtime_and_one_user() {
+    // #112: `tungstenite` with `default-features = false` is the protocol's frame layer: masking, fragmentation, the size
+    // limits, ping and pong and the close handshake, over any `Read + Write`. It does no I/O of its own and brings no HTTP
+    // parser, no `sha1` (banned by deny.toml) and no runtime; the upgrade request is read by `loopback.rs`.
+    let deps = dependency_names("normal");
+    assert!(deps.iter().any(|d| d == "tungstenite"));
+    for n in [
+        "http",
+        "httparse",
+        "sha1",
+        "tokio-tungstenite",
+        "tokio",
+        "futures",
+        "futures-util",
+        "async-std",
+        "mio",
+        "socket2",
+        "hyper",
+    ] {
+        assert!(
+            !deps.iter().any(|d| d == n),
+            "{n} is in klatch-server's dependencies next to tungstenite"
+        );
+    }
+    // only the WebSocket module names it, and it never turns the handshake feature on
+    let problems: Vec<String> = rust_sources()
+        .iter()
+        .filter(|(rel, _)| rel != "src/wire_ws.rs")
+        .flat_map(|(rel, text)| {
+            text.lines()
+                .enumerate()
+                .filter(|(_, l)| code_of(l).contains("tungstenite"))
+                .map(move |(n, _)| format!("{rel}:{}: names tungstenite outside wire_ws.rs", n + 1))
+        })
+        .collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    let manifest =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    let line = manifest
+        .lines()
+        .find(|l| l.starts_with("tungstenite"))
+        .expect("the dependency line");
+    assert!(
+        line.contains("default-features = false") && !line.contains("handshake"),
+        "{line}"
+    );
 }
 
 #[test]
@@ -443,9 +492,38 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     let webpki = dependents("rustls-webpki");
     assert!(webpki.iter().all(|d| d == "rustls"), "{webpki:?}");
     let ring = dependents("ring");
+    // `klatch-server` itself names ring in two places only: the provider handed to rustls (`tls.rs`), and the SHA-1 of the
+    // WebSocket upgrade answer (`wire_ws.rs`, #112: RFC 6455 mandates it; it is no security boundary)
     assert!(
-        ring.iter().all(|d| d == "rustls" || d == "rustls-webpki"),
+        ring.iter()
+            .all(|d| d == "rustls" || d == "rustls-webpki" || d == "klatch-server"),
         "{ring:?}"
+    );
+    // the crate `ring`, not the end of another word (`string::`)
+    let names_ring = |line: &str| {
+        line.match_indices("ring::")
+            .any(|(i, _)| !line[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+    };
+    let users: Vec<String> = rust_sources()
+        .iter()
+        .filter(|(rel, text)| {
+            !["src/tls.rs", "src/wire_ws.rs"].contains(&rel.as_str())
+                && text.lines().any(|l| names_ring(code_of(l)))
+        })
+        .map(|(rel, _)| rel.clone())
+        .collect();
+    assert!(
+        users.is_empty(),
+        "ring is named outside tls.rs and wire_ws.rs: {users:?}"
+    );
+    let (_, ws) = rust_sources()
+        .into_iter()
+        .find(|(rel, _)| rel == "src/wire_ws.rs")
+        .unwrap();
+    let digests: Vec<&str> = ws.lines().map(code_of).filter(|l| names_ring(l)).collect();
+    assert!(
+        digests.iter().all(|l| l.contains("digest")),
+        "wire_ws.rs uses ring for a digest only: {digests:?}"
     );
 }
 
