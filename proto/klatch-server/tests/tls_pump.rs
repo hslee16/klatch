@@ -110,36 +110,71 @@ fn valid_config(t: &TlsRig) -> &std::sync::Arc<rustls::ClientConfig> {
     t.net.tls.as_ref().unwrap()
 }
 
+/// How many of these sockets the server has closed (read the end of the stream), waiting up to ten seconds for at
+/// least `want`. A connection the server refuses is closed at once, so this is an event to wait for, not a time to guess.
+fn wait_until_closed(sockets: &[TcpStream], want: usize) -> usize {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let closed = sockets
+            .iter()
+            .filter(|s| {
+                s.set_nonblocking(true).unwrap();
+                let mut one = [0u8; 1];
+                matches!((&**s).read(&mut one), Ok(0))
+            })
+            .count();
+        if closed >= want || Instant::now() >= until {
+            return closed;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn an_honest_client_mid_handshake_is_not_evicted_by_a_flood_and_the_flood_is_refused() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    // a minimum age of half of 10 s: nothing younger than 5 s may be closed to make room
+    // the longest deadline there is: a minimum age of 30 s, far more than this test takes, so no machine is slow enough
+    // for the age rule to apply to the honest handshake; and nothing here sleeps to order two events
     let t = tls_server_with(&[
         "--max-connections",
         "8",
         "--max-handshakes",
         "2",
         "--handshake-secs",
-        "10",
+        "60",
     ]);
-    // the honest client sends the start of its hello, slowly
     let name = rustls::pki_types::ServerName::IpAddress(t.server.addr.ip().into());
     let mut conn = rustls::ClientConnection::new(valid_config(&t).clone(), name).unwrap();
+    let mut sock = TcpStream::connect(t.server.addr).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    // the honest client says hello and reads the server's answer: when the answer is here the server has the handshake
+    // in progress (it has a place among them), and is waiting for the client's second flight, which is held back
     let mut hello = Vec::new();
     while conn.wants_write() {
         conn.write_tls(&mut hello).unwrap();
     }
-    let mut sock = TcpStream::connect(t.server.addr).unwrap();
-    sock.set_read_timeout(Some(Duration::from_secs(20)))
-        .unwrap();
-    sock.write_all(&hello[..8]).unwrap();
-    // the flood arrives while that handshake is in progress
+    sock.write_all(&hello).unwrap();
+    while !conn.wants_write() {
+        let n = conn
+            .read_tls(&mut sock)
+            .expect("the server answered the hello");
+        assert!(
+            n > 0,
+            "the server closed the honest client before the flood"
+        );
+        conn.process_new_packets().unwrap();
+    }
+    // the flood arrives while that handshake is in progress, and is refused (the cap of two is full of young handshakes)
     let flood: Vec<TcpStream> = (0..12)
         .map(|_| TcpStream::connect(t.server.addr).unwrap())
         .collect();
-    std::thread::sleep(Duration::from_millis(300));
-    // the honest client finishes, and is served
-    sock.write_all(&hello[8..]).unwrap();
+    let refused = wait_until_closed(&flood, 11);
+    assert!(
+        refused >= 11,
+        "only {refused} of 12 flood sockets were refused"
+    );
+    // the honest client sends its second flight and is served
     while conn.is_handshaking() {
         conn.complete_io(&mut sock)
             .expect("the honest handshake was cut by the flood");
@@ -157,8 +192,36 @@ fn an_honest_client_mid_handshake_is_not_evicted_by_a_flood_and_the_flood_is_ref
 }
 
 #[test]
-fn newcomers_over_the_cap_are_refused_while_every_handshake_is_young_and_served_once_they_are_old()
-{
+fn a_newcomer_over_the_cap_is_refused_while_every_handshake_is_young() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    // a 30 s minimum age: every handshake is young for the whole test
+    let t = tls_server_with(&[
+        "--max-connections",
+        "8",
+        "--max-handshakes",
+        "2",
+        "--handshake-secs",
+        "60",
+    ]);
+    // three silent sockets: the cap is two, so one of them is refused, and when that is seen the cap holds two
+    // handshakes that have a place (which three came first does not matter)
+    let silent: Vec<TcpStream> = (0..3)
+        .map(|_| TcpStream::connect(t.server.addr).unwrap())
+        .collect();
+    assert!(
+        wait_until_closed(&silent, 1) >= 1,
+        "no silent socket was refused"
+    );
+    // the cap is full of young handshakes: a valid client is the one that loses
+    assert!(
+        get_status(t.server.addr, valid_config(&t), "/nope").is_err(),
+        "a newcomer evicted a young handshake"
+    );
+    drop(silent);
+}
+
+#[test]
+fn a_flood_of_silent_sockets_older_than_the_minimum_age_is_cleared_for_a_valid_client() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     // min age 2 s of a 4 s deadline; two silent sockets fill the cap
     let t = tls_server_with(&[
@@ -169,17 +232,17 @@ fn newcomers_over_the_cap_are_refused_while_every_handshake_is_young_and_served_
         "--handshake-secs",
         "4",
     ]);
-    let silent: Vec<TcpStream> = (0..2)
+    let silent: Vec<TcpStream> = (0..3)
         .map(|_| TcpStream::connect(t.server.addr).unwrap())
         .collect();
-    std::thread::sleep(Duration::from_millis(200));
-    // the cap is full of young handshakes: a valid client is the one that loses
     assert!(
-        get_status(t.server.addr, valid_config(&t), "/nope").is_err(),
-        "a newcomer evicted a young handshake"
+        wait_until_closed(&silent, 1) >= 1,
+        "no silent socket was refused"
     );
-    // the silent sockets are now older than the minimum age and the deadline has not passed: the next newcomer evicts one
-    std::thread::sleep(Duration::from_millis(2200));
+    // past the minimum age and, on any machine that is not stalled for seconds, before the deadline: the next newcomer
+    // evicts the oldest. (A machine that stalls past the deadline lets the deadline clear them instead, which serves the
+    // client all the same: the test cannot fail by being slow.)
+    std::thread::sleep(Duration::from_millis(2300));
     assert_eq!(
         get_status(t.server.addr, valid_config(&t), "/nope").unwrap(),
         404

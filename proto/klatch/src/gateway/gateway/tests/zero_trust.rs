@@ -368,20 +368,25 @@ fn every_own_record_method_refuses_an_ended_credential_unless_it_is_listed_with_
     for how in [Ending::SessionEnd, Ending::AdminRevoke, Ending::Expiry] {
         for (name, call, allowed) in &after_end() {
             let (g, who) = ended_worker(how);
-            let r = call(&g, &who);
-            match allowed {
-                None => match r {
-                    Err(Error::Refused { rule, .. }) => {
-                        assert_eq!(rule, "credential", "{name} after {how:?}")
-                    }
-                    other => panic!("{name} was not refused after {how:?}: {other:?}"),
-                },
-                Some(_) => assert!(
-                    !matches!(r, Err(Error::Refused { .. })),
-                    "{name} is listed as allowed after the end but was refused after {how:?}: {r:?}"
-                ),
-            }
+            assert_after_end(name, how, call(&g, &who), allowed.is_some());
         }
+    }
+}
+
+/// After the end, an own-record call is refused with the rule `credential`, unless it is listed as allowed.
+fn assert_after_end(name: &str, how: Ending, r: Result<()>, allowed: bool) {
+    if allowed {
+        assert!(
+            !matches!(r, Err(Error::Refused { .. })),
+            "{name} is listed as allowed after the end but was refused after {how:?}: {r:?}"
+        );
+        return;
+    }
+    match r {
+        Err(Error::Refused { rule, .. }) => {
+            assert_eq!(rule, "credential", "{name} after {how:?}")
+        }
+        other => panic!("{name} was not refused after {how:?}: {other:?}"),
     }
 }
 
