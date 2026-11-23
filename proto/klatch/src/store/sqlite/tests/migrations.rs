@@ -704,7 +704,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert!(SCHEMA_VERSION >= 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -764,7 +764,7 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert!(SCHEMA_VERSION >= 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
     assert_eq!(unread.len(), 1, "the cursor survives");
     s.mark_shown(
@@ -797,7 +797,7 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert!(SCHEMA_VERSION >= 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     for table in [
         "member_trail",
         "machine_checkpoints",

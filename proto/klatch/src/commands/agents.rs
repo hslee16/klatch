@@ -1,5 +1,6 @@
 //! Hooks and the agent roles.
 
+use super::machine_status::background_counts;
 use super::*;
 
 /// Hooks and the agent roles; every other command was handled before dispatch.
@@ -365,18 +366,6 @@ pub(super) fn inside_subagent(input: &serde_json::Value) -> bool {
         .get("agent_id")
         .and_then(|v| v.as_str())
         .is_some_and(|id| !id.is_empty())
-}
-
-/// How many background tasks and crons a `Stop` hook input lists. The fields are not documented by Claude Code, so a
-/// list counts its entries, a number counts as itself, and anything else counts as none; only counts are kept, never
-/// what the entries say.
-pub(super) fn background_counts(input: &serde_json::Value) -> (usize, usize) {
-    let count = |key: &str| match input.get(key) {
-        Some(serde_json::Value::Array(a)) => a.len(),
-        Some(serde_json::Value::Number(n)) => n.as_u64().map_or(0, |n| n as usize),
-        _ => 0,
-    };
-    (count("background_tasks"), count("session_crons"))
 }
 
 /// Remember the permission mode this session reports (#553): it is the only place Claude Code says it, and `klatch

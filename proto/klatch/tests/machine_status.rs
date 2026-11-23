@@ -193,7 +193,7 @@ fn scripted_session(machine: bool) -> (usize, Vec<String>) {
     let h = Home::new();
     setup(&h);
     let mut states = Vec::new();
-    let mut announce = |text: &str| {
+    let announce = |text: &str| {
         if !machine {
             h.ok("alice", &["post", "lobby", text]);
         }
