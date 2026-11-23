@@ -104,6 +104,12 @@ pub trait MemberStore {
         Ok(Vec::new())
     }
 
+    /// How many live messages `member` has sent in `room` (#1411). The default says none, so a store without it
+    /// never reports a first post.
+    fn own_post_count(&self, _room: &str, _member: &str) -> Result<i64> {
+        Ok(0)
+    }
+
     /// Whether the member muted the room. The default says no.
     fn is_muted(&self, _at: Seat) -> Result<bool> {
         Ok(false)

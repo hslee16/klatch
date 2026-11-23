@@ -111,16 +111,27 @@ impl MemberStore for SqliteStore {
             event,
             bytes,
         } = *run;
-        self.write(
-            "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes) VALUES(?1,?2,?3,1,?4)
-             ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4",
-            params![member, event, now, bytes],
-        )
+        // a session start begins the member's count of bytes injected since it again; the totals stay
+        self.immediate(|| {
+            if event == "SessionStart" {
+                self.exec(
+                    "UPDATE hook_runs SET since_start=0 WHERE member=?1",
+                    params![member],
+                )?;
+            }
+            self.exec(
+                "INSERT INTO hook_runs(member,event,last_ts,runs,last_bytes,total_bytes,max_bytes,since_start) VALUES(?1,?2,?3,1,?4,?4,?4,?4)
+                 ON CONFLICT(member,event) DO UPDATE SET last_ts=?3, runs=runs+1, last_bytes=?4,
+                   total_bytes=total_bytes+?4, max_bytes=MAX(max_bytes,?4), since_start=since_start+?4",
+                params![member, event, now, bytes],
+            )
+            .map(|_| ())
+        })
     }
 
     fn hook_runs(&self, member: &str) -> Result<Vec<HookRun>> {
         self.rows(
-            "SELECT event,last_ts,runs,last_bytes FROM hook_runs WHERE member=?1 ORDER BY event",
+            "SELECT event,last_ts,runs,last_bytes,total_bytes,max_bytes,since_start FROM hook_runs WHERE member=?1 ORDER BY event",
             params![member],
             |r| {
                 Ok(HookRun {
@@ -128,6 +139,9 @@ impl MemberStore for SqliteStore {
                     last_ts: r.get(1)?,
                     runs: r.get(2)?,
                     last_bytes: r.get(3)?,
+                    total_bytes: r.get(4)?,
+                    max_bytes: r.get(5)?,
+                    since_start: r.get(6)?,
                 })
             },
         )
@@ -211,17 +225,28 @@ impl MemberStore for SqliteStore {
 
     fn member_cursors(&self, room: &str) -> Result<Vec<crate::domain::MemberCursor>> {
         self.rows(
-            "SELECT name,COALESCE(last_seq,0),hook_seq,muted FROM members WHERE room=?1 ORDER BY name",
+            "SELECT name,COALESCE(last_seq,0),hook_seq,MAX(wait_seq,wake_seq),muted FROM members WHERE room=?1 ORDER BY name",
             params![room],
             |r| {
                 Ok(crate::domain::MemberCursor {
                     name: r.get(0)?,
                     read: r.get(1)?,
                     hook: r.get(2)?,
-                    muted: r.get::<_, i64>(3)? != 0,
+                    polled: r.get(3)?,
+                    muted: r.get::<_, i64>(4)? != 0,
                 })
             },
         )
+    }
+
+    fn own_post_count(&self, room: &str, member: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE room=?1 AND sender=?2 AND COALESCE(kind,'')<>'archived'",
+                params![room, member],
+                |r| r.get(0),
+            )
+            .map_err(be)
     }
 
     fn is_muted(&self, at: Seat) -> Result<bool> {

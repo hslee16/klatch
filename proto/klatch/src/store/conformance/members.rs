@@ -82,6 +82,44 @@ pub fn a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_onl
     assert_eq!(s.hook_runs("bob").unwrap().len(), 1);
     assert!(s.hook_runs("nobody").unwrap().is_empty());
 }
+/// Bytes injected are totalled per member and event (#1406): a total, the largest single run and what was injected since
+/// the member's latest session start, which a new `SessionStart` begins again.
+pub fn hook_bytes_are_totalled_per_event_and_a_session_start_begins_a_new_count<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    let run = |m: &str, e: &str, bytes: i64, at: i64| {
+        s.record_hook_run(&HookEvent::new(m, e, bytes), at).unwrap();
+    };
+    run("alice", "SessionStart", 4000, 10);
+    run("alice", "PostToolUse", 120, 11);
+    run("alice", "PostToolUse", 0, 15);
+    run("alice", "PostToolUse", 80, 16);
+    run("bob", "PostToolUse", 999, 16);
+    let by = |m: &str, e: &str| {
+        s.hook_runs(m)
+            .unwrap()
+            .into_iter()
+            .find(|h| h.event == e)
+            .unwrap()
+    };
+    let post = by("alice", "PostToolUse");
+    assert_eq!(
+        (post.total_bytes, post.max_bytes, post.since_start),
+        (200, 120, 200)
+    );
+    assert_eq!(by("alice", "SessionStart").since_start, 4000);
+    // a session start begins the count again for that member only, and keeps the totals
+    run("alice", "SessionStart", 700, 20);
+    let post = by("alice", "PostToolUse");
+    assert_eq!((post.total_bytes, post.since_start), (200, 0));
+    let start = by("alice", "SessionStart");
+    assert_eq!(
+        (start.total_bytes, start.max_bytes, start.since_start),
+        (4700, 4000, 700)
+    );
+    assert_eq!(by("bob", "PostToolUse").since_start, 999);
+}
 pub fn a_session_is_remembered_as_its_member_and_the_last_note_wins<S: Store>(make: fn() -> S) {
     let s = make();
     assert_eq!(s.member_of_session("sess-1").unwrap(), None);

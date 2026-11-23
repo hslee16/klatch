@@ -238,4 +238,9 @@ pub struct HookRun {
     pub last_ts: i64,
     pub runs: i64,
     pub last_bytes: i64,
+    /// Bytes this event has put into the member's context in all its runs, and the most one run did (#1406). Sizes only.
+    pub total_bytes: i64,
+    pub max_bytes: i64,
+    /// Bytes this event has injected since the member's latest `SessionStart`: the part of the session budget it spent.
+    pub since_start: i64,
 }

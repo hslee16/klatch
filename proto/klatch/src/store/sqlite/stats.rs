@@ -22,6 +22,18 @@ use std::path::Path;
 /// The characters of a body the ask fold may read.
 const ASK_PREFIX_CHARS: usize = 48;
 
+/// Whether `table` has `column`: a store read without migrating may predate it.
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name=?2",
+            [table, column],
+            |r| r.get(0),
+        )
+        .map_err(be)?;
+    Ok(n > 0)
+}
+
 fn has(conn: &Connection, table: &str) -> Result<bool> {
     let n: i64 = conn
         .query_row(
@@ -293,7 +305,40 @@ fn members(conn: &Connection, o: &StatsOptions) -> Result<MemberCounts> {
     } else {
         0
     };
+    // One row per posting name: the furthest any of its rows read, was shown, and the day of its first post (#1411).
+    let posters = rows(
+        conn,
+        &format!(
+            "SELECT MAX(COALESCE(last_seq,0)), MAX(MAX(hook_seq,wait_seq,wake_seq)), \
+             (SELECT MIN(ts) FROM messages m WHERE m.sender=members.name AND m.kind IS NOT 'archived' AND (?1 IS NULL OR m.room=?1)) AS first \
+             FROM members WHERE {pop} GROUP BY name HAVING first IS NOT NULL"
+        ),
+        o,
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    let mut by_day: BTreeMap<String, i64> = BTreeMap::new();
+    for (read, _, first) in &posters {
+        if *read == 0 {
+            *by_day.entry(day_of(*first)).or_default() += 1;
+        }
+    }
     Ok(MemberCounts {
+        posted: i64::try_from(posters.len()).unwrap_or(i64::MAX),
+        never_read: by_day.values().sum(),
+        never_shown: i64::try_from(
+            posters
+                .iter()
+                .filter(|(read, shown, _)| *read == 0 && *shown == 0)
+                .count(),
+        )
+        .unwrap_or(i64::MAX),
+        never_read_days: by_day.into_iter().collect(),
         joined: one(
             conn,
             &format!("SELECT COUNT(DISTINCT name) FROM members WHERE {pop}"),
@@ -514,6 +559,29 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
         "SELECT event,SUM(runs) c FROM hook_runs WHERE ?1 IS NOT 0 AND last_ts>=?2 GROUP BY event ORDER BY c DESC, 1",
         o,
     )?;
+    if has_column(conn, "hook_runs", "total_bytes")? {
+        s.hook_bytes = words(
+            conn,
+            "hook_runs",
+            "SELECT event,SUM(total_bytes) c FROM hook_runs WHERE ?1 IS NOT 0 AND last_ts>=?2 GROUP BY event HAVING c>0 ORDER BY c DESC, 1",
+            o,
+        )?;
+        s.hook_bytes_max = words(
+            conn,
+            "hook_runs",
+            "SELECT event,MAX(max_bytes) c FROM hook_runs WHERE ?1 IS NOT 0 AND last_ts>=?2 GROUP BY event HAVING c>0 ORDER BY c DESC, 1",
+            o,
+        )?;
+        s.sessions_top_bytes = rows(
+            conn,
+            &format!("SELECT member,SUM(total_bytes) c FROM hook_runs WHERE ?1 IS NOT 0 AND last_ts>=?2 GROUP BY member HAVING c>0 ORDER BY c DESC, member LIMIT {}", o.top),
+            o,
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )?
+        .into_iter()
+        .map(|(n, c)| (n.chars().filter(|c| !c.is_control()).collect(), c))
+        .collect();
+    }
     s.audit = words(
         conn,
         "admin_audit",

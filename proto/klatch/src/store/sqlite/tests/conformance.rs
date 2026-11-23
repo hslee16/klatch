@@ -189,6 +189,11 @@ fn members_setting_a_status_joins_a_member_who_was_not_there() {
 }
 
 #[test]
+fn members_hook_bytes_are_totalled_per_event_and_a_session_start_begins_a_new_count() {
+    c::members::hook_bytes_are_totalled_per_event_and_a_session_start_begins_a_new_count(store);
+}
+
+#[test]
 fn members_a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only() {
     c::members::a_hook_run_is_recorded_per_member_and_event_with_a_count_and_the_size_only(store);
 }

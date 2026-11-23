@@ -56,6 +56,9 @@ pub trait Messages {
     fn poll(&self, subscription: &mut Subscription, max: usize) -> Result<Batch>;
     /// Acknowledge messages up to `seq`: advances this member's read cursor.
     fn ack(&self, room: &str, seq: i64) -> Result<()>;
+    /// After a post: how many messages from others wait unread when this was the caller's first post in `room` and
+    /// nothing of the room was ever shown to it, else 0 (#1411). Moves no cursor.
+    fn first_post_unread(&self, room: &str) -> Result<usize>;
 }
 
 impl<S: Store> Messages for Direct<S> {
@@ -117,6 +120,9 @@ impl<S: Store> Messages for Direct<S> {
     fn ack(&self, room: &str, seq: i64) -> Result<()> {
         self.gateway.ack(&self.principal, room, seq)
     }
+    fn first_post_unread(&self, room: &str) -> Result<usize> {
+        self.gateway.first_post_unread(&self.principal, room)
+    }
 }
 
 impl Messages for SharedTransport {
@@ -127,6 +133,7 @@ impl Messages for SharedTransport {
         history(room: &str, range: HistoryRange) -> Result<crate::gateway::History>;
         receipt(room: &str, seq: i64) -> Result<crate::domain::Receipts>;
         ack(room: &str, seq: i64) -> Result<()>;
+        first_post_unread(room: &str) -> Result<usize>;
     }
 
     // The calls that store a message also move the posts count, so a waiter's change token moves.

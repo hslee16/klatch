@@ -62,6 +62,9 @@ pub struct MemberCursor {
     pub name: String,
     pub read: i64,
     pub hook: i64,
+    /// The furthest a `wait` or a wake has looked (#1411): messages it returned were shown to the member even though
+    /// no read moved the cursor.
+    pub polled: i64,
     pub muted: bool,
 }
 
@@ -215,6 +218,7 @@ mod tests {
             name: "bob".into(),
             read: 0,
             hook: 4,
+            polled: 0,
             muted: false,
         }];
         let out = render_receipts(&receipts_of(&rows, &cursors, &m, 400), 400);
@@ -235,6 +239,7 @@ mod tests {
             name: "bob".into(),
             read,
             hook,
+            polled: 0,
             muted,
         }
     }

@@ -109,6 +109,14 @@ pub struct MemberCounts {
     pub marked_done: i64,
     pub muted: i64,
     pub with_parent: i64,
+    /// Distinct member names that posted (a live message), the base of the two counts below (#1411).
+    pub posted: i64,
+    /// Of those, the names whose read cursor never moved in any room in scope: the cursor `read` and `ack` move.
+    pub never_read: i64,
+    /// Of those, the names that were also never shown anything: no hook digest, wait or wake either.
+    pub never_shown: i64,
+    /// The `never_read` names by the UTC day of their first post, oldest first. Counts only, never a name.
+    pub never_read_days: Counts,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -130,6 +138,11 @@ pub struct UsageStats {
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
+    /// Bytes the hooks put into session contexts (#1406), by event: the total and the largest single run, and the
+    /// sessions that took the most. Sizes only; empty for a store from before the byte columns.
+    pub hook_bytes: Counts,
+    pub hook_bytes_max: Counts,
+    pub sessions_top_bytes: Counts,
     pub audit: Counts,
     pub credentials_issued: i64,
     pub credentials_revoked: i64,
@@ -393,11 +406,51 @@ impl UsageStats {
             "members: {} joined, {} never posted, {} marked done, {} muted, {} with a parent\n",
             m.joined, m.never_posted, m.marked_done, m.muted, m.with_parent
         ));
+        o.push_str(&format!(
+            "members who posted and never read: {} of {} ({} never shown anything by a hook, wait or wake)\n",
+            m.never_read, m.posted, m.never_shown
+        ));
+        if !m.never_read_days.is_empty() {
+            let days: Vec<String> = m
+                .never_read_days
+                .iter()
+                .map(|(d, n)| format!("{d} {n}"))
+                .collect();
+            o.push_str(&format!("  by day of first post: {}\n", days.join(", ")));
+        }
         table(
             &mut o,
             "hook runs by event (cumulative)",
             ["event", "runs"],
             &self.hooks,
+        );
+        o.push_str(
+            "\nbytes injected into sessions by hook event (sizes only; the average is per run)\n",
+        );
+        if self.hook_bytes.is_empty() {
+            o.push_str("  (none recorded)\n");
+        }
+        for (event, total) in &self.hook_bytes {
+            let runs = self
+                .hooks
+                .iter()
+                .find(|(e, _)| e == event)
+                .map_or(0, |(_, n)| *n);
+            let max = self
+                .hook_bytes_max
+                .iter()
+                .find(|(e, _)| e == event)
+                .map_or(0, |(_, n)| *n);
+            let avg = if runs > 0 { total / runs } else { 0 };
+            o.push_str(&format!(
+                "  {event}: {total} bytes in {runs} runs (average {avg}, largest {max})\n"
+            ));
+        }
+        table(
+            &mut o,
+            "largest sessions by bytes injected",
+            ["session", "bytes"],
+            &self.sessions_top_bytes,
         );
         table(&mut o, "admin audit by act", ["act", "count"], &self.audit);
         o.push_str(&format!(
@@ -460,8 +513,14 @@ impl UsageStats {
                 "joined": self.members.joined, "never_posted": self.members.never_posted,
                 "marked_done": self.members.marked_done, "muted": self.members.muted,
                 "with_parent": self.members.with_parent,
+                "posted": self.members.posted, "posted_never_read": self.members.never_read,
+                "posted_never_shown": self.members.never_shown,
+                "posted_never_read_by_day": pairs(&self.members.never_read_days),
             },
             "hooks": pairs(&self.hooks),
+            "hook_bytes": pairs(&self.hook_bytes),
+            "hook_bytes_max": pairs(&self.hook_bytes_max),
+            "sessions_top_bytes": pairs(&self.sessions_top_bytes),
             "audit": pairs(&self.audit),
             "credentials": {"issued": self.credentials_issued, "revoked": self.credentials_revoked},
         })

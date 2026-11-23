@@ -24,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use klatch::domain::{
     Asker, Claim, Held, Principal, ToolCall, ToolVerdict, convention, flat, hook_output_json,
-    judge_tool, patch_targets, render_board, render_hook, render_who,
+    judge_tool, patch_targets, render_board, render_who,
 };
 use klatch::gateway::{
     AllowAll, ClaimSpec, Direct, ForbidFloors, Gateway, RequireHuman, Transport,
