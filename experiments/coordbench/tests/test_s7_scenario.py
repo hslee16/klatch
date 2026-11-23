@@ -293,6 +293,24 @@ class TestK2RoomWith16Members(S7Base):
             self.assertIn("store", sc["hook_bytes_reason"])
 
 
+BENCH_BIN = os.environ.get("KLATCH_BENCH_BIN")
+NEEDS_BENCH = unittest.skipUnless(BENCH_BIN and os.path.exists(BENCH_BIN or ""),
+                                  "KLATCH_BENCH_BIN is unset: build klatch-bench (cargo build --release -p klatch-bench) and set it")
+
+
+class TestStoreExportAtScale(S7Base):
+    @NEEDS_BIN
+    @NEEDS_BENCH
+    def test_the_store_export_fills_the_hook_bytes_for_sixteen_members(self):
+        r = self.one("n16", arms="K2")
+        self.assertEqual(r["outcome"], "ok", r["notes"])
+        store = r["scenario_metrics"]["store"]
+        self.assertIn("hook_bytes_injected", store)
+        self.assertIsNotNone(store["hook_bytes_injected"], store)
+        d = scale.derive(r)
+        self.assertEqual(d["hook_digest_bytes_per_member"], store["hook_bytes_injected"] / 16)
+
+
 class TestScalingTable(unittest.TestCase):
     def rec(self, variant, arm, n, units, cost, turns, run, msgs, read_tokens, wall=100.0, conflicts=0, hook=None):
         r = make_record("scale-" + variant, arm, run, units=(2 * n, units), cost=cost, turns=turns, wall=wall, messages=msgs)
