@@ -1,0 +1,1 @@
+- The TLS listener test that checks an honest client mid-handshake is not evicted by a flood no longer depends on the order two server threads take their place (it flaked about 2 in 50 under CPU load); it waits for events instead of sleeping (#1509, #108).
