@@ -10,36 +10,36 @@
 
 use std::path::{Path, PathBuf};
 
-/// Why this store is not a throwaway one, or `None` when it is.
-fn refuse(home: &Path, key_dir: &Path, temp_roots: &[PathBuf]) -> Option<String> {
-    // resolve symlinks (macOS /tmp is /private/tmp) through the nearest ancestor that exists
-    fn canon(p: &Path) -> PathBuf {
-        match p.canonicalize() {
-            Ok(c) => c,
-            Err(_) => match (p.parent(), p.file_name()) {
-                (Some(parent), Some(name)) => canon(parent).join(name),
-                _ => p.to_path_buf(),
-            },
+/// Resolve symlinks (macOS /tmp is /private/tmp) through the nearest ancestor that exists.
+fn canon(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    match (p.parent(), p.file_name()) {
+        (Some(parent), Some(name)) => canon(parent).join(name),
+        _ => p.to_path_buf(),
+    }
+}
+
+/// `..` must not climb out: resolve it lexically when the path does not exist yet.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
         }
     }
-    let canon = |p: &Path| canon(p);
-    // `..` must not climb out: resolve it lexically when the path does not exist yet
-    let lexical = |p: &Path| {
-        let mut out = PathBuf::new();
-        for c in p.components() {
-            match c {
-                std::path::Component::ParentDir => {
-                    out.pop();
-                }
-                std::path::Component::CurDir => {}
-                other => out.push(other),
-            }
-        }
-        out
-    };
+    out
+}
+
+/// Why this store is not a throwaway one, or `None` when it is.
+fn refuse(home: &Path, key_dir: &Path, temp_roots: &[PathBuf]) -> Option<String> {
     let home = canon(&lexical(home));
-    let key_dir = lexical(key_dir);
-    let key_dir = canon(&key_dir);
+    let key_dir = canon(&lexical(key_dir));
     let roots: Vec<PathBuf> = temp_roots.iter().map(|r| canon(r)).collect();
     if !roots.iter().any(|r| home.starts_with(r) && home != *r) {
         return Some(format!(

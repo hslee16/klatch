@@ -205,23 +205,43 @@ fn is_token(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
 }
 
-/// Parse the request line and headers (the bytes before the blank line).
-pub fn parse_head(raw: &[u8]) -> Result<Head, Fault> {
-    let text = std::str::from_utf8(raw).map_err(|_| Fault::Malformed("headers are not text"))?;
-    let mut lines = text.split("\r\n");
-    let line = lines.next().unwrap_or("");
+/// A method is a short token.
+fn is_method(method: &str) -> bool {
+    is_token(method) && method.len() <= 16
+}
+
+/// The request line: method, target and protocol version, exactly three parts.
+fn parse_request_line(line: &str) -> Result<(&str, &str), Fault> {
     let mut parts = line.split(' ');
     let (Some(method), Some(path), Some(version), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
         return Err(Fault::Malformed("bad request line"));
     };
-    if !is_token(method) || method.len() > 16 || !path.starts_with('/') {
+    if !is_method(method) || !path.starts_with('/') {
         return Err(Fault::Malformed("bad request line"));
     }
     if version != "HTTP/1.1" && version != "HTTP/1.0" {
         return Err(Fault::Malformed("unsupported protocol version"));
     }
+    Ok((method, path))
+}
+
+/// A `Content-Length` value: digits only, at most twelve of them.
+fn parse_content_length(value: &str) -> Result<usize, Fault> {
+    let bad = Fault::Malformed("bad content-length");
+    let digits = !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+    if !digits || value.len() > 12 {
+        return Err(bad);
+    }
+    value.parse::<usize>().map_err(|_| bad)
+}
+
+/// Parse the request line and headers (the bytes before the blank line).
+pub fn parse_head(raw: &[u8]) -> Result<Head, Fault> {
+    let text = std::str::from_utf8(raw).map_err(|_| Fault::Malformed("headers are not text"))?;
+    let mut lines = text.split("\r\n");
+    let (method, path) = parse_request_line(lines.next().unwrap_or(""))?;
     let mut headers = Vec::new();
     let mut content_length = None;
     for line in lines {
@@ -240,14 +260,7 @@ pub fn parse_head(raw: &[u8]) -> Result<Head, Fault> {
             if content_length.is_some() {
                 return Err(Fault::Malformed("duplicate content-length"));
             }
-            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) || value.len() > 12 {
-                return Err(Fault::Malformed("bad content-length"));
-            }
-            content_length = Some(
-                value
-                    .parse::<usize>()
-                    .map_err(|_| Fault::Malformed("bad content-length"))?,
-            );
+            content_length = Some(parse_content_length(&value)?);
         }
         headers.push((name, value));
     }
@@ -306,25 +319,60 @@ pub fn read_head(
     }
 }
 
+/// The bounds one request is read under: its limits and the moment its deadline passes.
+#[derive(Clone, Copy)]
+pub struct Budget<'a> {
+    pub limits: &'a Limits,
+    pub deadline: Instant,
+}
+
 /// Read the `Content-Length` body (`first` is what arrived with the head).
 pub fn read_body(
     stream: &mut TcpStream,
     want: usize,
     mut first: Vec<u8>,
-    limits: &Limits,
-    deadline: Instant,
+    budget: Budget,
 ) -> Result<Vec<u8>, Fault> {
-    if want > limits.max_body {
+    if want > budget.limits.max_body {
         return Err(Fault::BodyTooLarge);
     }
     first.truncate(want);
     let mut chunk = [0u8; 8192];
     while first.len() < want {
         let room = (want - first.len()).min(chunk.len());
-        let n = read_some(stream, &mut chunk[..room], deadline)?;
+        let n = read_some(stream, &mut chunk[..room], budget.deadline)?;
         first.extend_from_slice(&chunk[..n]);
     }
     Ok(first)
+}
+
+/// A request whose head has been read and whose body has not: what the routes that read a body share.
+pub struct Pending<'a> {
+    pub stream: &'a mut TcpStream,
+    pub head: Head,
+    /// Body bytes that arrived with the head.
+    pub first: Vec<u8>,
+    pub budget: Budget<'a>,
+}
+
+impl Pending<'_> {
+    /// Whether the head declares a body over the limit (refused before anything is read).
+    pub fn declares_too_large(&self) -> bool {
+        self.head
+            .content_length
+            .is_some_and(|n| n > self.budget.limits.max_body)
+    }
+
+    /// The body the head declares, or the answer that refuses it: `Content-Length` is required, and a client that is
+    /// gone gets a status 0 answer (nothing is sent).
+    pub fn body(&mut self) -> Result<Vec<u8>, Response> {
+        let Some(want) = self.head.content_length else {
+            return Err(Fault::LengthRequired.response().unwrap());
+        };
+        let first = std::mem::take(&mut self.first);
+        read_body(self.stream, want, first, self.budget)
+            .map_err(|f| f.response().unwrap_or_else(|| Response::new(0, "")))
+    }
 }
 
 /// What the listener asks of its user.
@@ -345,7 +393,7 @@ fn serve_one(stream: &mut TcpStream, limits: &Limits, handler: &mut dyn Handler)
             return Ok(r);
         }
         let body = match head.content_length {
-            Some(n) => read_body(stream, n, first, limits, deadline)?,
+            Some(n) => read_body(stream, n, first, Budget { limits, deadline })?,
             None if head.method == "POST" || head.method == "PUT" => {
                 return Err(Fault::LengthRequired);
             }
@@ -365,6 +413,37 @@ fn serve_one(stream: &mut TcpStream, limits: &Limits, handler: &mut dyn Handler)
 /// without naming its type (the scan test lets only this file do that).
 pub type Stream = TcpStream;
 
+/// What [`serve_concurrent`] calls: `handler` serves a connection, `excess` answers one over the cap.
+pub struct Callbacks<'a, H, X> {
+    pub handler: &'a H,
+    pub excess: &'a X,
+}
+
+/// The open connections, by number, so that stopping can shut them all down.
+type OpenConnections = Mutex<HashMap<u64, TcpStream>>;
+
+/// Make an accepted socket blocking (it may inherit the listener's non-blocking mode) and clone a handle to keep.
+fn blocking_handle(stream: &TcpStream) -> Option<TcpStream> {
+    stream.set_nonblocking(false).ok()?;
+    stream.try_clone().ok()
+}
+
+/// Take a slot for a connection unless `max_connections` are open: its number, or `None` when the cap is reached.
+fn claim_slot(
+    open: &OpenConnections,
+    max_connections: usize,
+    next: &mut u64,
+    handle: TcpStream,
+) -> Option<u64> {
+    let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
+    if open.len() >= max_connections {
+        return None;
+    }
+    *next += 1;
+    open.insert(*next, handle);
+    Some(*next)
+}
+
 /// Accept connections until `stop` is set and serve each on a thread of its own (phase 3, #1059: a server-sent-events
 /// stream stays open, so the one-at-a-time loop of [`serve`] cannot carry it). At most `max_connections` are open at
 /// once: the excess is given to `excess` (which should answer in a moment and close) and gets no thread. On `stop` every
@@ -374,8 +453,7 @@ pub fn serve_concurrent<H, X>(
     listener: &TcpListener,
     stop: &AtomicBool,
     max_connections: usize,
-    handler: &H,
-    excess: &X,
+    callbacks: Callbacks<H, X>,
 ) where
     H: Fn(Stream) + Sync,
     X: Fn(Stream) + Sync,
@@ -383,39 +461,24 @@ pub fn serve_concurrent<H, X>(
     if listener.set_nonblocking(true).is_err() {
         return;
     }
-    let open: Mutex<HashMap<u64, TcpStream>> = Mutex::default();
+    let open: OpenConnections = Mutex::default();
     std::thread::scope(|scope| {
         let mut next = 0u64;
         while !stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    // an accepted socket may inherit the listener's non-blocking mode
-                    if stream.set_nonblocking(false).is_err() {
-                        continue;
-                    }
-                    let Ok(handle) = stream.try_clone() else {
+                    let Some(handle) = blocking_handle(&stream) else {
                         continue;
                     };
-                    let slot = {
-                        let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
-                        if open.len() >= max_connections {
-                            None
-                        } else {
-                            next += 1;
-                            open.insert(next, handle);
-                            Some(next)
-                        }
+                    let Some(id) = claim_slot(&open, max_connections, &mut next, handle) else {
+                        (callbacks.excess)(stream);
+                        continue;
                     };
-                    match slot {
-                        None => excess(stream),
-                        Some(id) => {
-                            let open = &open;
-                            scope.spawn(move || {
-                                handler(stream);
-                                open.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-                            });
-                        }
-                    }
+                    let (open, handler) = (&open, callbacks.handler);
+                    scope.spawn(move || {
+                        handler(stream);
+                        open.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                    });
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),

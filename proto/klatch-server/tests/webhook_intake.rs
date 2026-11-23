@@ -17,7 +17,7 @@ use sha2::Sha256;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -88,6 +88,43 @@ fn command(home: &Path, args: &[&str]) -> Command {
     c
 }
 
+/// Read the child's standard output on a thread: every line is kept in `text`, and each is one JSON value, sent on.
+fn read_json_lines(stdout: ChildStdout, text: Arc<Mutex<String>>) -> Receiver<Value> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            text.lock().unwrap().push_str(&format!("{line}\n"));
+            let value: Value = serde_json::from_str(&line)
+                .unwrap_or_else(|e| panic!("standard output carries JSON only: {line:?}: {e}"));
+            if tx.send(value).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// The address of an intake line of standard error (`webhook intake on ADDR ...`), or `None` for any other line.
+fn intake_address(line: &str) -> Option<String> {
+    let rest = line.split("webhook intake on ").nth(1)?;
+    Some(rest.split(' ').next().unwrap().to_string())
+}
+
+/// Read the child's standard error on a thread: every line is kept in `text`, and the port comes from the line that
+/// reports the intake.
+fn read_address(stderr: ChildStderr, text: Arc<Mutex<String>>) -> Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            text.lock().unwrap().push_str(&format!("{line}\n"));
+            if let Some(addr) = intake_address(&line) {
+                let _ = tx.send(addr);
+            }
+        }
+    });
+    rx
+}
+
 impl Server {
     fn start(home: &Path) -> Server {
         let mut child = command(
@@ -107,30 +144,8 @@ impl Server {
         let stderr = child.stderr.take().unwrap();
         let stdout_text = Arc::new(Mutex::new(String::new()));
         let stderr_text = Arc::new(Mutex::new(String::new()));
-        let (tx, rx) = mpsc::channel();
-        let seen = stdout_text.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                seen.lock().unwrap().push_str(&format!("{line}\n"));
-                let value: Value = serde_json::from_str(&line)
-                    .unwrap_or_else(|e| panic!("standard output carries JSON only: {line:?}: {e}"));
-                if tx.send(value).is_err() {
-                    break;
-                }
-            }
-        });
-        // the port comes from the first line of standard error
-        let (ptx, prx) = mpsc::channel();
-        let seen = stderr_text.clone();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                seen.lock().unwrap().push_str(&format!("{line}\n"));
-                if let Some(rest) = line.split("webhook intake on ").nth(1) {
-                    let addr = rest.split(' ').next().unwrap().to_string();
-                    let _ = ptx.send(addr);
-                }
-            }
-        });
+        let rx = read_json_lines(stdout, stdout_text.clone());
+        let prx = read_address(stderr, stderr_text.clone());
         let addr: SocketAddr = prx
             .recv_timeout(Duration::from_secs(20))
             .expect("the server reports its address")

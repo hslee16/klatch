@@ -26,13 +26,12 @@
 //!
 //! This module names no socket type: the listener and the connection come from `loopback`.
 
-use crate::loopback::{self, Head, Limits, Response, Stream};
+use crate::loopback::{self, Budget, Head, Limits, Pending, Response, Stream};
+use crate::wire_sse::SseWriter;
 use anyhow::{Context, Result, bail};
 use klatch::domain::Principal;
 use klatch::gateway::{Identity, LocalIdentity, PeerEvidence, SharedBackend, SharedGateway};
-use klatch::protocol::MAX_LINE_BYTES;
 use klatch::session::{Backend, Closer, Session, SessionConfig};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,68 +83,6 @@ pub fn parse(args: &[&str]) -> Result<Options> {
         listen: listen.context("http needs --listen 127.0.0.1:PORT")?,
         max_connections,
     })
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// the frames of a session as server-sent events
-
-/// One frame line (without its newline) as one server-sent event. The event name is the frame's type, a `message`
-/// frame carries `id: <room>:<seq>`, and the data is the line exactly as the stdio session writes it.
-pub fn sse_event(line: &[u8]) -> Vec<u8> {
-    let text = String::from_utf8_lossy(line);
-    let frame: Option<Value> = serde_json::from_str(&text).ok();
-    let mut out = String::new();
-    if let Some(f) = &frame
-        && let Some(t) = f["type"].as_str()
-        && t.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-    {
-        out.push_str(&format!("event: {t}\n"));
-        if t == "message"
-            && let (Some(room), Some(seq)) = (f["room"].as_str(), f["seq"].as_u64())
-            && room.bytes().all(|b| (0x21..0x7f).contains(&b))
-        {
-            out.push_str(&format!("id: {room}:{seq}\n"));
-        }
-    }
-    // a frame line holds no raw newline (JSON escapes them); a stray carriage return would end an SSE line early
-    out.push_str(&format!("data: {}\n\n", text.replace('\r', "\\r")));
-    out.into_bytes()
-}
-
-/// The output of a session: bytes in, whole lines out as events. The session writes one frame per write, but a line is
-/// only an event once its newline has come.
-pub struct SseWriter<W: Write> {
-    out: W,
-    pending: Vec<u8>,
-}
-
-impl<W: Write> SseWriter<W> {
-    pub fn new(out: W) -> Self {
-        SseWriter {
-            out,
-            pending: Vec::new(),
-        }
-    }
-}
-
-impl<W: Write> Write for SseWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.pending.extend_from_slice(buf);
-        while let Some(at) = self.pending.iter().position(|b| *b == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=at).collect();
-            let event = sse_event(&line[..at]);
-            self.out.write_all(&event)?;
-        }
-        if self.pending.len() > 2 * MAX_LINE_BYTES {
-            return Err(io::Error::other("a frame is over the size limit"));
-        }
-        self.out.flush()?;
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.out.flush()
-    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -276,6 +213,32 @@ fn refuse_excess(mut stream: Stream) {
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
+/// The routes of the server: each has the one method it takes.
+#[derive(Clone, Copy)]
+enum Route {
+    Stream,
+    Frames,
+    Mcp,
+}
+
+impl Route {
+    fn of(path: &str) -> Option<Route> {
+        match path {
+            STREAM_PATH => Some(Route::Stream),
+            FRAMES_PATH => Some(Route::Frames),
+            crate::mcp_http::PATH => Some(Route::Mcp),
+            _ => None,
+        }
+    }
+
+    fn method(self) -> &'static str {
+        match self {
+            Route::Stream => "GET",
+            Route::Frames | Route::Mcp => "POST",
+        }
+    }
+}
+
 fn serve_connection(mut stream: Stream, shared: &Shared) {
     let limits = Limits::default();
     let deadline = Instant::now() + limits.deadline;
@@ -289,23 +252,46 @@ fn serve_connection(mut stream: Stream, shared: &Shared) {
             return;
         }
     };
-    match (head.method.as_str(), head.path.as_str()) {
-        ("GET", STREAM_PATH) => match authenticate(&shared.backend, &head) {
-            Some(who) => stream_session(stream, &who, shared),
-            None => reply(&mut stream, &unauthorized()),
-        },
-        ("POST", FRAMES_PATH) => {
-            let response = post_frames(&mut stream, head, first, &limits, deadline, shared);
+    let Some(route) = Route::of(&head.path) else {
+        return reply(&mut stream, &Response::new(404, "not found"));
+    };
+    if head.method != route.method() {
+        return reply(&mut stream, &method_not_allowed(route.method()));
+    }
+    let budget = Budget {
+        limits: &limits,
+        deadline,
+    };
+    match route {
+        Route::Stream => open_session(stream, &head, shared),
+        Route::Frames => {
+            let pending = Pending {
+                stream: &mut stream,
+                head,
+                first,
+                budget,
+            };
+            let response = post_frames(pending, shared);
             reply(&mut stream, &response);
         }
-        ("POST", crate::mcp_http::PATH) => {
-            let bytes = crate::mcp_http::post(&mut stream, head, first, &limits, deadline, shared);
+        Route::Mcp => {
+            let pending = Pending {
+                stream: &mut stream,
+                head,
+                first,
+                budget,
+            };
+            let bytes = crate::mcp_http::post(pending, shared);
             crate::mcp_http::finish(&mut stream, &bytes);
         }
-        (_, crate::mcp_http::PATH) => reply(&mut stream, &method_not_allowed("POST")),
-        (_, STREAM_PATH) => reply(&mut stream, &method_not_allowed("GET")),
-        (_, FRAMES_PATH) => reply(&mut stream, &method_not_allowed("POST")),
-        _ => reply(&mut stream, &Response::new(404, "not found")),
+    }
+}
+
+/// `GET /v1/stream` for whoever the credential names; everyone else gets the one `401`.
+fn open_session(mut stream: Stream, head: &Head, shared: &Shared) {
+    match authenticate(&shared.backend, head) {
+        Some(who) => stream_session(stream, &who, shared),
+        None => reply(&mut stream, &unauthorized()),
     }
 }
 
@@ -315,44 +301,40 @@ fn method_not_allowed(allow: &'static str) -> Response {
     r
 }
 
+/// The input of the member's own session `id`, or `None` for one that is another member's or never was.
+fn session_input(shared: &Shared, id: &str, member: &str) -> Option<SyncSender<Vec<u8>>> {
+    let sessions = shared.sessions.lock().unwrap_or_else(|e| e.into_inner());
+    // another member's session is as absent as one that never was
+    sessions
+        .get(id)
+        .filter(|e| is_session_id(id) && e.member == member)
+        .map(|e| e.tx.clone())
+}
+
 /// `POST /v1/frames`: the credential, then the session, then the body, in that order, so nothing is read from a caller
 /// who is not one and nothing is said about a session that is not theirs.
-fn post_frames(
-    stream: &mut Stream,
-    head: Head,
-    first: Vec<u8>,
-    limits: &Limits,
-    deadline: Instant,
-    shared: &Shared,
-) -> Response {
-    let Some(who) = authenticate(&shared.backend, &head) else {
+fn post_frames(mut req: Pending, shared: &Shared) -> Response {
+    let Some(who) = authenticate(&shared.backend, &req.head) else {
         return unauthorized();
     };
     // a body over the limit is refused before it is read, and before anything is said about the session
-    if head.content_length.is_some_and(|n| n > limits.max_body) {
+    if req.declares_too_large() {
         return loopback::Fault::BodyTooLarge.response().unwrap();
     }
-    let Some(id) = head.header(SESSION_HEADER) else {
+    let Some(id) = req.head.header(SESSION_HEADER) else {
         return Response::new(400, "x-klatch-session is required");
     };
-    let tx = {
-        let sessions = shared.sessions.lock().unwrap_or_else(|e| e.into_inner());
-        match sessions.get(id) {
-            // another member's session is as absent as one that never was
-            Some(e) if is_session_id(id) && e.member == who.member => Some(e.tx.clone()),
-            _ => None,
-        }
-    };
-    let Some(tx) = tx else {
+    let Some(tx) = session_input(shared, id, &who.member) else {
         return Response::new(404, "no such session");
     };
-    let mut body = match head.content_length {
-        Some(n) => match loopback::read_body(stream, n, first, limits, deadline) {
-            Ok(b) => b,
-            Err(f) => return f.response().unwrap_or_else(|| Response::new(0, "")),
-        },
-        None => return loopback::Fault::LengthRequired.response().unwrap(),
-    };
+    match req.body() {
+        Ok(body) => queue_frames(&tx, body),
+        Err(refusal) => refusal,
+    }
+}
+
+/// Put the posted frames (one line each, a missing final newline added) in the session's input.
+fn queue_frames(tx: &SyncSender<Vec<u8>>, mut body: Vec<u8>) -> Response {
     if body.is_empty() {
         return Response::new(400, "an empty body carries no frame");
     }
@@ -366,6 +348,74 @@ fn post_frames(
     }
 }
 
+/// A session's place in the registry: removing it ends what `POST /v1/frames` can reach.
+#[derive(Clone)]
+struct Registration {
+    sessions: Sessions,
+    id: String,
+}
+
+impl Registration {
+    fn remove(&self) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
+}
+
+/// Register a new session of `who`: its registration, and the receiving end of its input.
+fn register(shared: &Shared, id: &str, who: &Principal) -> (Registration, Receiver<Vec<u8>>) {
+    let (tx, rx) = sync_channel::<Vec<u8>>(INBOX);
+    let entry = Entry {
+        member: who.member.clone(),
+        tx,
+    };
+    let sessions = shared.sessions.clone();
+    sessions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id.to_string(), entry);
+    let id = id.to_string();
+    (Registration { sessions, id }, rx)
+}
+
+/// The head of the event stream's answer.
+fn stream_head(id: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\nX-Accel-Buffering: no\r\nX-Klatch-Session: {id}\r\n\r\n"
+    )
+}
+
+/// The three handles of one stream's connection, each with its own job.
+struct Handles {
+    out: Stream,
+    watch: Stream,
+    shut: Stream,
+}
+
+/// Clone the connection three ways and send the head; `None` when either fails.
+fn open_stream(stream: &mut Stream, id: &str) -> Option<Handles> {
+    let handles = Handles {
+        out: stream.try_clone().ok()?,
+        watch: stream.try_clone().ok()?,
+        shut: stream.try_clone().ok()?,
+    };
+    stream
+        .write_all(stream_head(id).as_bytes())
+        .and_then(|()| stream.flush())
+        .ok()?;
+    Some(handles)
+}
+
+/// Read the stream for nothing but its end: a client that goes away ends the session without waiting for the next write
+/// to fail.
+fn watch_for_hangup(mut watch: Stream, gone: &AtomicBool) {
+    let mut sink = [0u8; 256];
+    while matches!(watch.read(&mut sink), Ok(n) if n > 0) {}
+    gone.store(true, Ordering::SeqCst);
+}
+
 /// `GET /v1/stream`: register a session, answer with the event-stream head, and run the session loop until the
 /// connection ends. The loop is the one every transport runs.
 fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
@@ -376,56 +426,20 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         );
         return;
     };
-    let (tx, rx) = sync_channel::<Vec<u8>>(INBOX);
-    let closed = Arc::new(AtomicBool::new(false));
-    shared
-        .sessions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(
-            id.clone(),
-            Entry {
-                member: who.member.clone(),
-                tx,
-            },
-        );
-    let unregister = {
-        let sessions = shared.sessions.clone();
-        let id = id.clone();
-        move || {
-            sessions
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
-        }
-    };
-    let head = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\nX-Accel-Buffering: no\r\nX-Klatch-Session: {id}\r\n\r\n"
-    );
-    let (Ok(out), Ok(watch), Ok(shut)) =
-        (stream.try_clone(), stream.try_clone(), stream.try_clone())
-    else {
-        unregister();
+    let (registration, rx) = register(shared, &id, who);
+    let Some(Handles { out, watch, shut }) = open_stream(&mut stream, &id) else {
+        registration.remove();
         return;
     };
-    if stream
-        .write_all(head.as_bytes())
-        .and_then(|()| stream.flush())
-        .is_err()
-    {
-        unregister();
-        return;
-    }
-    // the stream is read for nothing but its end: a client that goes away ends the session without waiting for the
-    // next write to fail
     let _ = stream.set_read_timeout(None);
     let _ = stream.set_write_timeout(None);
+    let closed = Arc::new(AtomicBool::new(false));
     let gone = closed.clone();
     let closer: Closer = {
         let closed = closed.clone();
         Box::new(move || {
             closed.store(true, Ordering::SeqCst);
-            unregister();
+            registration.remove();
             let _ = shut.shutdown(std::net::Shutdown::Both);
         })
     };
@@ -436,12 +450,7 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         at: 0,
     });
     std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let mut watch = watch;
-            let mut sink = [0u8; 256];
-            while matches!(watch.read(&mut sink), Ok(n) if n > 0) {}
-            gone.store(true, Ordering::SeqCst);
-        });
+        scope.spawn(move || watch_for_hangup(watch, &gone));
         let session = Session::over(&shared.backend, who, &shared.config);
         let _ = session.serve_guarded(input_box(input), SseWriter::new(out), Some(closer));
     });
@@ -486,8 +495,10 @@ pub fn run(opts: &Options) -> Result<()> {
         &listener,
         &crate::daemon::STOP,
         opts.max_connections,
-        &|stream| serve_connection(stream, &shared),
-        &refuse_excess,
+        loopback::Callbacks {
+            handler: &|stream| serve_connection(stream, &shared),
+            excess: &refuse_excess,
+        },
     );
     drop(shared);
     drop(gateway);
@@ -526,87 +537,6 @@ mod tests {
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.starts_with("klatch-server: http listening on 127.0.0.1:43210 "));
         assert!(text.ends_with('\n'));
-    }
-
-    fn events(out: &[u8]) -> Vec<String> {
-        String::from_utf8(out.to_vec())
-            .unwrap()
-            .split("\n\n")
-            .filter(|e| !e.is_empty())
-            .map(String::from)
-            .collect()
-    }
-
-    #[test]
-    fn an_event_carries_the_type_the_line_as_data_and_for_a_message_its_room_and_sequence_number() {
-        let line = br#"{"v":1,"type":"message","room":"lobby","seq":42,"id":"m","sender":"a","body":"hi"}"#;
-        let e = String::from_utf8(sse_event(line)).unwrap();
-        assert_eq!(
-            e,
-            format!(
-                "event: message\nid: lobby:42\ndata: {}\n\n",
-                std::str::from_utf8(line).unwrap()
-            )
-        );
-        let e = String::from_utf8(sse_event(br#"{"v":1,"type":"heartbeat","ts":5}"#)).unwrap();
-        assert_eq!(
-            e,
-            "event: heartbeat\ndata: {\"v\":1,\"type\":\"heartbeat\",\"ts\":5}\n\n"
-        );
-        // no id for a frame that is not a message, none when the room is odd
-        let e =
-            String::from_utf8(sse_event(br#"{"type":"caught_up","room":"r","seq":3}"#)).unwrap();
-        assert!(!e.contains("\nid:"), "{e}");
-        let e = String::from_utf8(sse_event(
-            "{\"type\":\"message\",\"room\":\"a b\\n\",\"seq\":1}".as_bytes(),
-        ))
-        .unwrap();
-        assert!(!e.contains("\nid:"), "{e}");
-    }
-
-    #[test]
-    fn a_line_that_is_not_json_is_still_one_data_line_and_never_breaks_the_event() {
-        for bad in [&b"not json"[..], b"{\"type\":\"x y\"}", b"a\rb: c"] {
-            let e = String::from_utf8(sse_event(bad)).unwrap();
-            assert!(e.ends_with("\n\n"), "{e:?}");
-            let lines: Vec<&str> = e.trim_end_matches('\n').split('\n').collect();
-            assert!(
-                lines
-                    .iter()
-                    .all(|l| l.starts_with("data: ") || l.starts_with("event: ")),
-                "{e:?}"
-            );
-            assert_eq!(
-                lines.iter().filter(|l| l.starts_with("data: ")).count(),
-                1,
-                "{e:?}"
-            );
-            assert!(!e.contains('\r'), "{e:?}");
-        }
-    }
-
-    #[test]
-    fn the_writer_makes_an_event_of_each_whole_line_and_holds_a_partial_one() {
-        let mut out = Vec::new();
-        {
-            let mut w = SseWriter::new(&mut out);
-            w.write_all(b"{\"type\":\"hel").unwrap();
-            w.write_all(b"lo\"}\n{\"type\":\"heartbeat\"}\n{\"typ")
-                .unwrap();
-        }
-        let evs = events(&out);
-        assert_eq!(evs.len(), 2, "{evs:?}");
-        assert!(evs[0].starts_with("event: hello\n"));
-        assert!(evs[1].starts_with("event: heartbeat\n"));
-    }
-
-    #[test]
-    fn the_writer_refuses_a_line_with_no_end_that_grows_without_bound() {
-        let mut w = SseWriter::new(Vec::new());
-        let chunk = vec![b'x'; MAX_LINE_BYTES];
-        assert!(w.write_all(&chunk).is_ok());
-        assert!(w.write_all(&chunk).is_ok());
-        assert!(w.write_all(&chunk).is_err());
     }
 
     #[test]
