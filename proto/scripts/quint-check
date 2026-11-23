@@ -80,7 +80,7 @@ cmd_check() {
   [ $# -gt 0 ] && invariants="$*"
   echo "random runs ($samples samples of 30 steps each), every invariant"
   for inv in $invariants; do
-    if "$quint" run "$model" --max-samples="$samples" --max-steps=30 --invariant="$inv" 2>&1 | grep -q '^\[ok\]'; then
+    if "$quint" run "$model" --max-samples="$samples" --max-steps=30 --invariant="$inv" 2>&1 | grep '^\[ok\]' > /dev/null; then
       printf '  %-34s ok\n' "$inv"
     else
       printf '  %-34s VIOLATED in a random run\n' "$inv"; bad=1
@@ -140,7 +140,7 @@ cmd_traces() {
     local inv="${w#*:}" name="${w%%:*}" r depth=12
     # a witness that needs the cycle test is found at a few steps, and deeper searches are slow on it
     case " $core " in *" $inv "*) depth=8 ;; esac
-    if [ $# -gt 0 ] && ! printf '%s\n' "$@" | grep -qx "$name"; then continue; fi
+    if [ $# -gt 0 ] && ! printf '%s\n' "$@" | grep -x "$name" > /dev/null; then continue; fi
     if [ "$name" = stalewait ]; then
       # Apalache is slow on this one (it compares the cycle test with and without the window); a random search finds it fast
       (cd "$work" && "$quint" run "$model" --step=stepCore --max-samples=300000 --max-steps=12 --invariant="$inv" \
@@ -168,7 +168,7 @@ cmd_versions() {
   echo "quint $("$quint" --version 2>&1 | tail -n 1)"
   local d
   for d in "$HOME"/.quint/apalache-dist-*; do [ -e "$d" ] && echo "apalache ${d##*/apalache-dist-}"; done
-  java -version 2>&1 | head -n 1
+  java -version 2>&1 | sed -n 1p
   node --version | sed 's/^/node /'
 }
 

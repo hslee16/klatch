@@ -117,7 +117,7 @@ alpha_pid=$!
 i=0
 limit=$((120 * PATIENCE))
 while [ "$i" -lt "$limit" ]; do
-  if KLATCH_NAME=alpha "$K" history --last 20 2> /dev/null | grep -q 'seeking:'; then break; fi
+  if KLATCH_NAME=alpha "$K" history --last 20 2> /dev/null | grep 'seeking:' > /dev/null; then break; fi
   kill -0 "$alpha_pid" 2> /dev/null || break
   i=$((i + 1))
   sleep 1

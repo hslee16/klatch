@@ -215,7 +215,7 @@ a=d['alpha']
 sys.exit(0 if a['hook_events']==3 and a['hook_post_tool_use']==2 and a['nudge_lines']==1 and d['exchange']['nudge_lines']==2 and a['turns']==3 else 1)" "$out"; then ok "the result counts hook events and digest nudge lines"; else bad "hook counts: $out"; fi
 : > "$FAKE_LOG"
 out="$(KLATCH_HOME="$work/hh2" KLATCH_KEY_DIR="$work/kh2" scen stay --arm nudge 2>/dev/null | tail -1)"
-if grep '^alpha ' "$FAKE_LOG" | grep -q -- 'include-hook-events'; then bad "hook flag leaked without --hook-events"; else ok "no hook flag without --hook-events"; fi
+if grep '^alpha ' "$FAKE_LOG" | grep -- 'include-hook-events' > /dev/null; then bad "hook flag leaked without --hook-events"; else ok "no hook flag without --hook-events"; fi
 if python3 -c "import json,sys; a=json.loads(sys.argv[1])['agents']['alpha']; sys.exit(0 if 'nudge_lines' not in a else 1)" "$out"; then ok "no nudge count when hook events are not recorded"; else bad "nudge count without hooks: $out"; fi
 # metric.py alone: one hook line counts once though output and stdout repeat it; model text and hook_started do not count
 NL='klatch: you and x exchanged 4 messages in lobby. Do this now: klatch dm x'

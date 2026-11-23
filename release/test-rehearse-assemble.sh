@@ -62,7 +62,7 @@ chmod +x "$fakecargo"
 export FAKE_LOG="$work/fake.log"
 ct() { : > "$FAKE_LOG"; TMPDIR="$work/tmp" REHEARSE_CARGO="$fakecargo" "$here/rehearse-assemble.sh" --check-tests "$t" > "$work/out" 2> "$work/err"; }
 notices() { printf 'x\n- klatch %s (https://example.invalid)\n- klatch-bench %s\n' "$1" "$1" > "$t/proto/THIRD-PARTY-LICENSES.txt"; }
-curver() { sed -n 's/^version = "\(.*\)"$/\1/p' "$t/proto/Cargo.toml" | head -1; }
+curver() { sed -n 's/^version = "\(.*\)"$/\1/p' "$t/proto/Cargo.toml" | sed -n 1p; }
 fresh; notices "$(curver)"; printf '#!/usr/bin/env bash\necho shell-test-ran >> "$FAKE_LOG"\n' > "$t/release/test-fake.sh"; chmod +x "$t/release/test-fake.sh"
 printf '#!/usr/bin/env bash\necho recursion >> "$FAKE_LOG"\n' > "$t/release/test-rehearse-assemble.sh"; chmod +x "$t/release/test-rehearse-assemble.sh"
 before="$(snapshot)"

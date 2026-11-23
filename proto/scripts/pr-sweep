@@ -154,7 +154,7 @@ ghcall() { # tries, gh arguments: prints the output; 0 ok, 1 failed after the tr
   while [ "$i" -lt "$tries" ]; do
     out="$(perl -e 'alarm shift; exec @ARGV' "$gh_timeout" gh "$@" 2> "$err")"; rc=$?
     if [ "$rc" -eq 0 ]; then rm -f "$err"; printf '%s\n' "$out"; return 0; fi
-    if grep -qi 'rate limit' "$err" 2> /dev/null || printf '%s' "$out" | grep -qi 'rate limit'; then
+    if grep -qi 'rate limit' "$err" 2> /dev/null || grep -qi 'rate limit' <<< "$out"; then
       : > "$run/ratelimited"; echo "gh $1 $2" >> "$run/failed"
       printf 'pr-sweep: gh %s %s: GitHub API rate limit exceeded\n' "$1" "$2" >&2
       rm -f "$err"; return 2
@@ -320,7 +320,7 @@ bench_main() { # label: bench main as it now is, on a throwaway branch. 0 clean,
   t0=$(date +%s)
   if [ -n "${PR_SWEEP_BENCH:-}" ]; then out="$("$PR_SWEEP_BENCH" 2>&1)"; else out="$(cd proto && cargo run -q --release -p klatch-bench 2>&1)"; fi
   tlog bench main "$t0" 0
-  printf '%s\n' "$out" | grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed'
+  grep -qE '(^|[^0-9])[0-9]+ passed, 0 failed' <<< "$out"
 }
 
 run_bench() { # PR: bench main as it now is; record only a clean run
@@ -676,7 +676,7 @@ rows="$(printf '%s\n' "$ledger_out" | grep -E '^#[0-9]+ ')" || rows=""
 if [ "$ledger_rc" -ne 0 ]; then
   echo "pr-ledger exit $ledger_rc" >> "$run/failed"
   printf '%s\n' "$ledger_out" | grep -E '^pr-ledger: ' | sed 's/^/pr-sweep: /'
-  if printf '%s\n' "$ledger_out" | grep -qi 'rate limit'; then : > "$run/ratelimited"; fi
+  if grep -qi 'rate limit' <<< "$ledger_out"; then : > "$run/ratelimited"; fi
 fi
 if [ "$batch" -eq 1 ]; then do_batch; fi
 while IFS= read -r row; do

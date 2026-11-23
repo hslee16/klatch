@@ -16,7 +16,7 @@ SUMS="${3:-}"
 # shellcheck source=release/pep440.sh
 . "$here/pep440.sh"
 
-first() { sed -n "$2" "$ROOT/$1" | head -n 1; }
+first() { sed -n "$2" "$ROOT/$1" | sed -n 1p; }
 cargo=$(first proto/Cargo.toml 's/^version = "\(.*\)"$/\1/p')
 pypi=$(first clients/python/pyproject.toml 's/^version = "\(.*\)"$/\1/p')
 wheel=$(first clients/python/package/wheel_init.py 's/^__version__ = "\(.*\)"$/\1/p')
@@ -47,7 +47,7 @@ if [ ! -f "$FORMULA" ]; then
 else
   # brew audit --strict rejects a version line that repeats the one in the URL (#1297), so the formula normally has none and its
   # version is what the four URLs carry (checked below against the tag and archive name). A line, if present, must still agree.
-  fver=$(sed -n 's/^ *version "\(.*\)" *$/\1/p' "$FORMULA" | head -n 1)
+  fver=$(sed -n 's/^ *version "\(.*\)" *$/\1/p' "$FORMULA" | sed -n 1p)
   if [ -n "$fver" ] && [ "$fver" != "$cargo" ]; then fcheck "version is '$fver', expected '$cargo'"; fi
   seen=""
   pairs=""
@@ -69,7 +69,7 @@ else
       *'sha256 "'*)
         sum=${line#*sha256 \"}
         sum=${sum%%\"*}
-        if ! printf '%s\n' "$sum" | grep -Eq '^[0-9a-f]{64}$'; then
+        if ! grep -Eq '^[0-9a-f]{64}$' <<< "$sum"; then
           fcheck "sha256 '$sum' is not 64 hex digits (url for ${last:-no recognised url})"
         elif [ -z "$last" ]; then
           fcheck "sha256 '$sum' follows no recognised url"

@@ -81,5 +81,5 @@ jobs:
           test -d "$home/state/klatch/keys"
           stat -c '%a %n' "$home"/state/klatch/keys/*
           KLATCH_NAME=bob "$bin" join lobby
-          KLATCH_NAME=bob "$bin" read lobby --peek 2>/dev/null | grep -q "from the key file fallback"
+          KLATCH_NAME=bob "$bin" read lobby --peek 2>/dev/null | grep "from the key file fallback" > /dev/null
           echo "key file fallback ok" | tee -a "$GITHUB_STEP_SUMMARY"
