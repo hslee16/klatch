@@ -232,52 +232,68 @@ fn room_require(t: &dyn Transport, room: &str, (spec, off): (Option<String>, boo
     Ok(())
 }
 
+fn room_creation(t: &dyn Transport, policy: RoomPolicy) -> Result<()> {
+    let granted = matches!(policy, RoomPolicy::Granted);
+    t.admin_set_room_creation_granted(granted)?;
+    println!(
+        "creating rooms and inviting is now {}",
+        if granted {
+            "for members with a grant"
+        } else {
+            "open to every member"
+        }
+    );
+    Ok(())
+}
+
+fn member_rate_limit(t: &dyn Transport, member: &str, limit: Option<(usize, i64)>) -> Result<()> {
+    t.admin_set_member_rate_limit(member, limit)?;
+    match limit {
+        Some((p, s)) => println!(
+            "{member} may post {p} times in {s} seconds in all rooms, whatever the global limit is"
+        ),
+        None => println!("{member} has no limit of its own and follows the global one"),
+    }
+    Ok(())
+}
+
+/// `policy rate-limit`: the listing, one member's own limit, or the global one.
+fn rate_limit(
+    t: &dyn Transport,
+    (posts, secs, off): (Option<usize>, Option<i64>, bool),
+    list: bool,
+    member: Option<String>,
+) -> Result<()> {
+    if list {
+        for line in rate_limit_lines(&t.admin_rate_limits()?) {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+    let limit = rate_limit_of(posts, secs, off)?;
+    if let Some(member) = member {
+        return member_rate_limit(t, &member, limit);
+    }
+    t.admin_set_rate_limit(limit)?;
+    match limit {
+        Some((p, s)) => {
+            println!("each member may post {p} times in {s} seconds in all rooms")
+        }
+        None => println!("no rate limit"),
+    }
+    Ok(())
+}
+
 fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
     match act {
-        PolicyAct::RoomCreation { policy } => {
-            let granted = matches!(policy, RoomPolicy::Granted);
-            t.admin_set_room_creation_granted(granted)?;
-            println!(
-                "creating rooms and inviting is now {}",
-                if granted {
-                    "for members with a grant"
-                } else {
-                    "open to every member"
-                }
-            );
-        }
+        PolicyAct::RoomCreation { policy } => room_creation(t, policy)?,
         PolicyAct::RateLimit {
             posts,
             secs,
             off,
             list,
             member,
-        } => {
-            if list {
-                for line in rate_limit_lines(&t.admin_rate_limits()?) {
-                    println!("{line}");
-                }
-                return Ok(());
-            }
-            let limit = rate_limit_of(posts, secs, off)?;
-            if let Some(member) = member {
-                t.admin_set_member_rate_limit(&member, limit)?;
-                match limit {
-                    Some((p, s)) => println!(
-                        "{member} may post {p} times in {s} seconds in all rooms, whatever the global limit is"
-                    ),
-                    None => println!("{member} has no limit of its own and follows the global one"),
-                }
-                return Ok(());
-            }
-            t.admin_set_rate_limit(limit)?;
-            match limit {
-                Some((p, s)) => {
-                    println!("each member may post {p} times in {s} seconds in all rooms")
-                }
-                None => println!("no rate limit"),
-            }
-        }
+        } => rate_limit(t, (posts, secs, off), list, member)?,
         PolicyAct::LeaseCap { secs, off } => {
             let secs = secs_or_off(secs, off, "lease-cap")?;
             t.admin_set_lease_cap(secs)?;
