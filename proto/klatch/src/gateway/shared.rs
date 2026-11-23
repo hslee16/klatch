@@ -55,6 +55,54 @@ struct Job {
     run: Work,
 }
 
+/// Build the gateway on the owner thread and tell `ready_tx` whether it worked; a panic in `build` is an error, not a
+/// dead thread with no word. `None` when the gateway could not be built.
+fn build_gateway<S: Store + 'static>(
+    build: impl FnOnce() -> Result<Gateway<S>>,
+    ready_tx: &mpsc::Sender<Result<()>>,
+) -> Option<Rc<Gateway<S>>> {
+    let gateway = match catch_unwind(AssertUnwindSafe(build)) {
+        Ok(Ok(g)) => Rc::new(g),
+        Ok(Err(e)) => {
+            let _ = ready_tx.send(Err(e));
+            return None;
+        }
+        Err(_) => {
+            let _ = ready_tx.send(Err(Error::Backend("building the gateway panicked".into())));
+            return None;
+        }
+    };
+    let _ = ready_tx.send(Ok(()));
+    Some(gateway)
+}
+
+/// Run one request on the owner thread, with the keys of its principal loaded for it alone when it is keyed.
+fn serve<S: Store + 'static>(gateway: &Rc<Gateway<S>>, job: Job, loader: Option<&KeyLoader>) {
+    // The keys of this request's principal, and no one else's, for this request only (#1096).
+    let keyed = job.keyed.then_some(()).and(loader);
+    if let Some(loader) = keyed {
+        gateway.use_label_keys(ring_for(gateway, loader, &job.principal.member));
+    }
+    // A panic in one request fails that request (its reply channel closes) and nothing else: SQLite
+    // rolls back what was open, and the next request starts clean.
+    match job.run {
+        Work::Transport(run) => {
+            let mut direct = Direct::new(gateway.clone(), job.principal);
+            if let Some(make) = &job.harness {
+                direct = direct.with_harness(make());
+            }
+            let _ = catch_unwind(AssertUnwindSafe(|| run(&direct)));
+        }
+        Work::Backend(run) => {
+            let harness = job.harness.as_ref().map(|make| make());
+            let _ = catch_unwind(AssertUnwindSafe(|| run(&**gateway, harness.as_deref())));
+        }
+    }
+    if keyed.is_some() {
+        gateway.use_label_keys(crate::keys::LabelKeys::new());
+    }
+}
+
 /// The keys `member`'s clearance reaches, from `loader`; none when it reaches no sealed label or the loader fails
 /// (fails closed: a sealed label stays sealed).
 fn ring_for<S: Store>(
@@ -119,44 +167,11 @@ impl SharedGateway {
         let (tx, rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
         let thread = thread::spawn(move || {
-            let gateway = match catch_unwind(AssertUnwindSafe(build)) {
-                Ok(Ok(g)) => Rc::new(g),
-                Ok(Err(e)) => {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
-                Err(_) => {
-                    let _ =
-                        ready_tx.send(Err(Error::Backend("building the gateway panicked".into())));
-                    return;
-                }
+            let Some(gateway) = build_gateway(build, &ready_tx) else {
+                return;
             };
-            let _ = ready_tx.send(Ok(()));
             while let Ok(job) = rx.recv() {
-                // The keys of this request's principal, and no one else's, for this request only (#1096).
-                let keyed = job.keyed.then_some(()).and(loader.as_ref());
-                if let Some(loader) = keyed {
-                    gateway.use_label_keys(ring_for(&gateway, loader, &job.principal.member));
-                }
-                // A panic in one request fails that request (its reply channel closes) and nothing else: SQLite
-                // rolls back what was open, and the next request starts clean.
-                match job.run {
-                    Work::Transport(run) => {
-                        let mut direct = Direct::new(gateway.clone(), job.principal);
-                        if let Some(make) = &job.harness {
-                            direct = direct.with_harness(make());
-                        }
-                        let _ = catch_unwind(AssertUnwindSafe(|| run(&direct)));
-                    }
-                    Work::Backend(run) => {
-                        let harness = job.harness.as_ref().map(|make| make());
-                        let _ =
-                            catch_unwind(AssertUnwindSafe(|| run(&*gateway, harness.as_deref())));
-                    }
-                }
-                if keyed.is_some() {
-                    gateway.use_label_keys(crate::keys::LabelKeys::new());
-                }
+                serve(&gateway, job, loader.as_ref());
             }
         });
         match ready_rx.recv() {

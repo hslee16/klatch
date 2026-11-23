@@ -64,6 +64,7 @@ mod receipt;
 mod refusal_hints;
 mod reserved_names;
 mod reviewer;
+mod role_order;
 mod room_canary;
 mod room_capability;
 mod room_grantor;

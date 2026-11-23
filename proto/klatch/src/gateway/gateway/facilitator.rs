@@ -69,12 +69,13 @@ impl<S: Store> Gateway<S> {
             ));
         };
         let to = if a == who.member { b } else { a };
-        self.check_need_info(who, &to, room, body)
+        self.check_need_info(who, NeedInfo::new(&to, room, body))
     }
 
     /// The state rules of the one DM: the ask is open, `to` asked it, and no earlier need-info for it from this
     /// facilitator in the room.
-    fn check_need_info(&self, who: &Principal, to: &str, room: &str, body: &str) -> Result<()> {
+    fn check_need_info(&self, who: &Principal, dm: NeedInfo) -> Result<()> {
+        let NeedInfo { to, room, body } = dm;
         let no = |why: String| Err(refused(who, &why));
         let Some((n, _)) = parse_need_info(body) else {
             return no("a message that is not the need-info form".into());
@@ -102,20 +103,15 @@ impl<S: Store> Gateway<S> {
 
     /// Before a direct message by a facilitator makes its room: the form and the state rules, and the create-room
     /// capability when the room is new. A refusal here leaves no room behind. Returns whether the room is new.
-    pub(super) fn check_facilitator_dm(
-        &self,
-        who: &Principal,
-        to: &str,
-        room: &str,
-        body: &str,
-    ) -> Result<bool> {
+    pub(super) fn check_facilitator_dm(&self, who: &Principal, dm: NeedInfo) -> Result<bool> {
+        let NeedInfo { room, body, .. } = dm;
         let op = Operation::Post {
             room: room.into(),
             body: body.into(),
         };
         let gate = refusal(who, &op)
             .map_or(Ok(()), Err)
-            .and_then(|()| self.check_need_info(who, to, room, body));
+            .and_then(|()| self.check_need_info(who, dm));
         gate.inspect_err(|e| self.note_refusal(who, (room, "dm"), e))?;
         let new = self.dm_pair(room)?.is_none();
         if new {
@@ -131,11 +127,10 @@ impl<S: Store> Gateway<S> {
     pub(super) fn audit_facilitator_dm(
         &self,
         who: &Principal,
-        to: &str,
-        room: &str,
-        body: &str,
+        dm: NeedInfo,
         created: bool,
     ) -> Result<()> {
+        let NeedInfo { to, room, body } = dm;
         let Some((n, code)) = parse_need_info(body) else {
             return Ok(());
         };
@@ -156,6 +151,20 @@ impl<S: Store> Gateway<S> {
             return Err(refused(who, what));
         }
         Ok(())
+    }
+}
+
+/// The three parts of the one DM (#902): who is asked, the direct message room, and the need-info body.
+#[derive(Clone, Copy)]
+pub(super) struct NeedInfo<'a> {
+    to: &'a str,
+    room: &'a str,
+    body: &'a str,
+}
+
+impl<'a> NeedInfo<'a> {
+    pub(super) fn new(to: &'a str, room: &'a str, body: &'a str) -> Self {
+        Self { to, room, body }
     }
 }
 

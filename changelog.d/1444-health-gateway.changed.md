@@ -1,0 +1,1 @@
+- Code health of the gateway production modules (#1444, part of #1441): long functions of the gateway split into named steps with the same order of checks, no change to behaviour, output, audit rows or public signatures; `check_role` has a test of the order of its checks.

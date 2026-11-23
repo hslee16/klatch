@@ -68,7 +68,7 @@ impl<S: Store> Gateway<S> {
                 continue;
             }
             if !self
-                .could_answer_of(room, &m.name, (seq, Some(ask)), now)?
+                .could_answer_of((room, &m.name), (seq, Some(ask)), now)?
                 .could()
             {
                 continue;
@@ -185,7 +185,7 @@ impl<S: Store> Gateway<S> {
             {
                 continue;
             }
-            let c = self.could_answer_of(room, &m.name, (ask.seq, Some(ask)), now)?;
+            let c = self.could_answer_of((room, &m.name), (ask.seq, Some(ask)), now)?;
             if c.blockers
                 .iter()
                 .all(|b| COORDINATOR_MAY.contains(&b.rule.as_str()))

@@ -23,6 +23,24 @@ fn class_of(word: &str) -> Option<ToolClass> {
     .find(|c| c.word() == word)
 }
 
+/// The first word of the member's last status on the board.
+fn status_in(board: &crate::domain::Board, member: &str) -> Option<String> {
+    board
+        .members
+        .iter()
+        .find(|m| m.name == member)
+        .and_then(|m| m.status.as_deref())
+        .and_then(status_word)
+}
+
+/// Whether a state holds nothing a successor would need: no files, tools, claims or open asks.
+fn is_quiet(state: &MachineState) -> bool {
+    state.files.is_empty()
+        && state.tools.is_empty()
+        && state.claims.is_empty()
+        && state.asks_open.is_empty()
+}
+
 /// A path a trail may keep: repo-relative, plain, short.
 fn plain_path(p: &str) -> bool {
     !p.is_empty()
@@ -30,6 +48,16 @@ fn plain_path(p: &str) -> bool {
         && !p.starts_with('/')
         && !p.split('/').any(|s| s == "..")
         && !p.chars().any(char::is_control)
+}
+
+/// The caller's own state that every room's checkpoint is drawn from: who, the trail the hooks kept, the end word
+/// and the time.
+#[derive(Clone, Copy)]
+struct Own<'a> {
+    member: &'a str,
+    trail: &'a crate::domain::Trail,
+    ended: Option<&'static str>,
+    now: i64,
 }
 
 impl<S: Store> Gateway<S> {
@@ -63,54 +91,21 @@ impl<S: Store> Gateway<S> {
         let member = who.member.as_str();
         let trail = self.store.trail_of(member)?;
         let ended = ended.map(end_word);
+        let own = Own {
+            member,
+            trail: &trail,
+            ended,
+            now,
+        };
         let mut written = 0;
         for room in self.store.rooms_of(member)? {
             // the board is a read: a room the member cannot read refuses here and nothing of it is recorded
             let Ok(board) = self.board(who, &room) else {
                 continue;
             };
-            let claims: Vec<String> = self
-                .store
-                .claims(&room, now)?
-                .into_iter()
-                .filter(|c| c.owner == member)
-                .map(|c| c.path)
-                .collect();
-            let mine: Vec<&crate::domain::OpenAsk> =
-                board.asks.iter().filter(|a| a.sender == member).collect();
-            let has_task = board
-                .tasks
-                .iter()
-                .any(|t| t.owner == member && !t.undeclared);
-            let works_here = has_task || !claims.is_empty() || !mine.is_empty();
-            if !works_here && room != DEFAULT_ROOM {
+            let Some(state) = self.room_machine_state(own, &room, &board)? else {
                 continue;
-            }
-            let state = MachineState {
-                files: trail.files.clone(),
-                tools: trail.tools.clone(),
-                claims,
-                asks_open: mine.iter().map(|a| a.seq).collect(),
-                asks_waiting: mine
-                    .iter()
-                    .filter(|a| a.waiting_on_asker.is_some())
-                    .map(|a| a.seq)
-                    .collect(),
-                status: board
-                    .members
-                    .iter()
-                    .find(|m| m.name == member)
-                    .and_then(|m| m.status.as_deref())
-                    .and_then(status_word),
-                ended,
             };
-            let quiet = state.files.is_empty()
-                && state.tools.is_empty()
-                && state.claims.is_empty()
-                && state.asks_open.is_empty();
-            if quiet && ended.is_none() {
-                continue;
-            }
             let body = machine_body(&state);
             self.store
                 .put_machine_checkpoint((&room, member), &body, ended.is_some(), now)?;
@@ -120,5 +115,47 @@ impl<S: Store> Gateway<S> {
             self.store.clear_trail(member)?;
         }
         Ok(written)
+    }
+
+    /// What the caller's checkpoint says for `room`, or `None` when none is written there: the member has no work
+    /// in the room and it is not the default one, or there is nothing to say and the session did not end.
+    fn room_machine_state(
+        &self,
+        own: Own,
+        room: &str,
+        board: &crate::domain::Board,
+    ) -> Result<Option<MachineState>> {
+        let member = own.member;
+        let claims: Vec<String> = self
+            .store
+            .claims(room, own.now)?
+            .into_iter()
+            .filter(|c| c.owner == member)
+            .map(|c| c.path)
+            .collect();
+        let mine: Vec<&crate::domain::OpenAsk> =
+            board.asks.iter().filter(|a| a.sender == member).collect();
+        let has_task = board
+            .tasks
+            .iter()
+            .any(|t| t.owner == member && !t.undeclared);
+        let works_here = has_task || !claims.is_empty() || !mine.is_empty();
+        if !works_here && room != DEFAULT_ROOM {
+            return Ok(None);
+        }
+        let state = MachineState {
+            files: own.trail.files.clone(),
+            tools: own.trail.tools.clone(),
+            claims,
+            asks_open: mine.iter().map(|a| a.seq).collect(),
+            asks_waiting: mine
+                .iter()
+                .filter(|a| a.waiting_on_asker.is_some())
+                .map(|a| a.seq)
+                .collect(),
+            status: status_in(board, member),
+            ended: own.ended,
+        };
+        Ok((!is_quiet(&state) || own.ended.is_some()).then_some(state))
     }
 }
