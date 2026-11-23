@@ -1,0 +1,1 @@
+- `proto/scripts/test-team.sh` no longer fails intermittently ("the relaunch prompt carries the unread digest"): its `printf | grep -q` checks raced under `pipefail` (grep exits at the first match, printf dies of SIGPIPE); they now use here-strings (#1323).
