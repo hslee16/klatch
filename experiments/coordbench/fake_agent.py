@@ -48,6 +48,7 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
 import argparse
 import json
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -66,6 +67,7 @@ class Agent:
         self.turn = 0
         self.cost = 0.0
         self.final = "DONE %s" % args.name
+        self.vars = {}  # values a step captured ("capture") or read from a file ("set_var_from_file"), used as {{var:KEY}}
 
     def assistant(self, block):
         self.turn += 1
@@ -115,7 +117,10 @@ class Agent:
         return True
 
     def fill(self, text):
-        return text.replace("{{ROOM}}", self.args.room).replace("{{NAME}}", self.args.name)
+        text = text.replace("{{ROOM}}", self.args.room).replace("{{NAME}}", self.args.name)
+        for k, v in self.vars.items():
+            text = text.replace("{{var:%s}}" % k, v)
+        return text
 
     def step(self, st):
         op = st["op"]
@@ -123,9 +128,10 @@ class Agent:
         if op == "write":
             path = st["path"]
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            content = self.fill(st["content"])
             with open(path, "w") as f:
-                f.write(st["content"])
-            self.tool("Write", {"file_path": path, "content": st["content"]}, "ok")
+                f.write(content)
+            self.tool("Write", {"file_path": path, "content": content}, "ok")
         elif op == "copy_from":
             here = os.path.dirname(os.path.abspath(self.args.script))
             src = st["from"] if os.path.isabs(st["from"]) else os.path.join(here, st["from"])
@@ -173,7 +179,13 @@ class Agent:
         elif op == "klatch":
             if not self.args.klatch_bin:
                 self.die("the script runs klatch but --klatch-bin was not given")
-            self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
+            _, out = self.bash([self.args.klatch_bin] + [self.fill(a) for a in st["args"]], allow)
+            if st.get("capture"):  # the number of the ask this command made ("asked #N")
+                m = re.search(r"asked #(\d+)", out)
+                self.vars[st["capture"]] = m.group(1) if m else ""
+        elif op == "set_var_from_file":
+            with open(st["path"]) as f:
+                self.vars[st["key"]] = f.read().strip()
         elif op == "send":
             self.tool("SendMessage", {"to": st["to"], "message": st["text"]}, "sent")
         elif op == "dump_specs":

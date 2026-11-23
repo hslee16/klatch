@@ -188,7 +188,9 @@ class TestFakeAgentsOnS1(S1Base):
         code, out, err = self.go(Base.argv(self, "B0", 1))
         r = [x for x in self.records_trivial()][0]
         self.assertIsNone(r["metrics"]["duplicate_work"])
-        self.assertNotIn("scenario_metrics", r)
+        # no scenario metrics, only the note that a B arm has no store (#1433)
+        self.assertEqual(list(r["scenario_metrics"]), ["store"])
+        self.assertIn("no klatch store", r["scenario_metrics"]["store"]["reason"])
 
     def records_trivial(self):
         out = []

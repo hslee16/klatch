@@ -21,6 +21,9 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `drivers.py`, `fake_agent.py`: the agent driver interface with the `fake` (scripted, no model) and `claude` (headless
   `claude -p`) drivers.
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface (optional per-agent private files and a seeded history), the test fixture `trivial`, F1 `tallykit` (Scenario S1) and F4 `specialists` (Scenario S4).
+- `asks.py`: the S4 ask and answer metrics from the agents' message events, and the ask counts of the streams for the store cross-check (#1433).
+- `storeexport.py`: the K arms' run store as counts, from `klatch-bench store-stats` (#1433).
+- `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3).
 - `asks.py`: the S4 ask and answer metrics from the agents' message events.
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3) and F6 `recovery` (see Scenario S6).
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
@@ -109,7 +112,7 @@ For a fixture with a scenario the harness now fills two fields it used to leave 
 modules changed by a non-merge commit of more than one agent; `overwrites` is the number of registry or changelog lines
 added by some commit in the origin or any agent clone that are absent from the final main. The detail (which modules, which
 lost lines and who wrote them, edits to a module the agent does not own, merge state, per-agent contribution) is in the
-record's `scenario_metrics`. Not yet computed: `claim_conflicts` and `store_export` (the store, K arms). Fake scripts for
+record's `scenario_metrics`. `claim_conflicts` and `store_export` come from the K arms' run store (see "The run store export" below). Fake scripts for
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
 
@@ -172,7 +175,7 @@ Gaps, stated plainly. Topology T-shared (one working directory used by all agent
 not built: `run.py` makes one clone per agent under the run's scratch, the arm prompts say "your own clone", and both drivers
 take one working directory per agent, so only T-clone runs. T-shared needs its own run mode (one shared checkout), a prompt
 variant that says so, and metrics that do not rely on commits (a final-file check, since agents may never commit); this is a
-follow-up. `claim_conflicts` is null (it needs the K arms' store export) and `time_to_recover_s` is null (the stream parser
+follow-up. `claim_conflicts` comes from the K arms' store export (null in a B arm) and `time_to_recover_s` is null (the stream parser
 counts conflicts but keeps no time of the first one). Fake scripts use the new `replace` step (an edit of the file as it is
 now, failing when the text is absent) next to `copy_from`, `append`, `sync` and `git`; tests are in
 `tests/test_onefile_checker.py` (the checker on the reference and on eleven variants) and `tests/test_s2_scenario.py` (the
@@ -248,10 +251,29 @@ steps; `read`, `run` and `hook` (a session-start style hook output) were added f
 `NAME#2` (the restarted agent). `wait_file` (wait for a file in the logs directory: the harness writes `kill.json` there when it
 kills the victim of S6, so a scripted survivor can "notice") and `send` (a `SendMessage` call) were added for S6.
 
+## The run store export
+
+After each K-arm run the harness calls `klatch-bench store-stats --home KLATCH_HOME --key-dir KLATCH_KEY_DIR --json` on the
+run's own temporary store and writes the result to `artifacts.store_export`. It needs no admin passphrase because it is a bench
+tool, not an admin act: it is in the klatch-bench crate (`proto/klatch-bench/src/store_stats.rs`), is not in the shipped
+klatch binary, opens the file read-only through the same library function as `klatch admin stats` (so the output is the same
+report), and refuses a path under or over `~/.klatch` and a key directory that is not mode 700. The report is counts only (no
+message text, ask text, claim detail, label or payload). Find the tool with `--bench-bin`, `$KLATCH_BENCH_BIN`, or
+`klatch-bench` beside the klatch binary (`cargo build -p klatch -p klatch-bench --locked`); without it the export is skipped,
+the record keeps null with a note, and the run stays valid.
+
+From it the harness fills `metrics.claim_conflicts` and, under `scenario_metrics.store`: `claims_granted`,
+`claims_refused_by_rule`, `claims_released`, `claims_expired`, `asks_created`, `asks_answered`, `asks_closed`,
+`time_to_first_answer_s`, `members_posted_never_read`, `hook_bytes_injected`, and `asks_cross_check` (the ask counts of the
+streams, from `asks.py`, next to the store's, with a mismatch flag and a note). The scenario files (`s1` to `s4`, `s9`) have a
+`store_metrics` section naming the export field behind each one, and the report shows them per arm. In S4 the ask metrics stay
+stream-based for every arm; the store counts sit beside them with the cross-check. Tests: `tests/test_store_export.py` (with `KLATCH_BIN` set, fake K agents claim,
+collide, ask and answer through the real binary and the real tool); the tool's own tests are in the klatch-bench crate.
+
 ## Not computed yet
 
 Fields the spec lists that need a scenario's unit-to-path map or the store export are written as `null` (never omitted):
-`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; S2 leaves `claim_conflicts` and `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
+`duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; K arms fill `claim_conflicts` and `store_export` from the run store, B arms leave them null with a reason; S2 leaves `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
 divided by 4) because the standard library has no tokenizer; the record says so in `notes`. `messages` counts klatch posts
 (`post`, `dm`, `ask`, `answer`) and `SendMessage` calls from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.
@@ -305,8 +327,8 @@ agent, never summed. The harness also fills `overwrites` (a's `def parse_bin` an
 `wall_s`. Whether a claim moves with a handoff (#539) is recorded for the K arms as `handoff_claims`, not graded: from the
 streams, the paths `a` claimed, released, released before its handoff message and still held when it stopped, what `c`
 claimed and was refused, and whether `a` posted `checkpoint:` and `handoff:` messages. Whether klatch itself moved or freed a
-claim or an ask needs the store, which `run.py` does not export yet, so `transferred_by_klatch` is null with a note (the same
-gap as `claim_conflicts`). B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
+claim or an ask needs a per-claim record, which the counts-only store export does not carry (no claim name, no member), so
+`transferred_by_klatch` stays null with a note. B arms have null `handoff_claims`. N is 10 per arm at M0 (3 for the quick subset); caps are SPEC
 8.1's (2.40 USD a run, 40 USD for the M0 suite on Haiku), proposals the human changes before M0. The fake agent gained a `poll`
 step (n polling turns without waiting) for the blocked-agent tests. No real run has been made.
 
