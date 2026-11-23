@@ -104,8 +104,7 @@ fn bench_messages(s: &SqliteStore) {
         Msg::new(("dm.alice.bob", 2), "bob", D1 + 210, "hi TOPSECRET-dm"),
         Msg::new(("vault", 1), "dave", D2 + 9, "TOPSECRET-vault").label("TOPSECRET-label"),
         Msg::new(
-            "sealedroom",
-            1,
+            ("sealedroom", 1),
             "erin",
             D2 + 20,
             "seeking: TOPSECRET-sealedask",
