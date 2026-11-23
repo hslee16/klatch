@@ -1,5 +1,6 @@
-//! A session start prints the digest, the convention and the boards; together they must stay inside the hook byte
-//! budget (#557), because Claude Code keeps only a 2 KB preview of hook output of about 9.8 KB or more.
+//! A session start prints the digest, the convention and the briefing (#1409, which replaced the board dump); together
+//! they must stay inside the hook byte budget (#557), because Claude Code keeps only a 2 KB preview of hook output of
+//! about 9.8 KB or more.
 mod common;
 
 use common::*;
@@ -40,17 +41,21 @@ fn start(h: &Home) -> String {
 fn a_session_start_with_a_huge_board_and_many_messages_stays_inside_the_hook_budget() {
     let out = start(&crowded());
     assert!(out.len() < HOOK_CAP, "the hook printed {} bytes", out.len());
-    assert!(out.contains("[board lobby]"), "the board header is kept");
+    let at = out.find("[briefing lobby]").expect("the briefing is kept");
+    assert!(out.len() - at <= 2000, "the briefing is bounded: {out}");
     assert!(
-        out.contains("more board lines not shown; run `klatch board lobby`"),
-        "the cut is not counted: {out}"
+        out.contains("open asks: 40"),
+        "the asks are counted whole: {out}"
+    );
+    assert!(
+        out.contains("klatch asks lobby"),
+        "the way to read the rest: {out}"
     );
 }
 
 #[test]
-fn the_board_shrinks_before_the_messages_do() {
-    // Open asks are digest items that go before messages by design (item 50), and offers are messages, so build the
-    // big board from members, which only the board lists.
+fn a_crowded_room_is_counted_in_a_member_line_and_a_since_line_not_dumped() {
+    // Many members and many long unaddressed messages: the briefing counts them, it prints none of the messages.
     let h = Home::new();
     h.ok("reader", &["join", "lobby"]);
     for i in 0..25 {
@@ -64,18 +69,21 @@ fn the_board_shrinks_before_the_messages_do() {
     }
     let out = start(&h);
     assert!(out.len() < HOOK_CAP, "{} bytes", out.len());
-    // the member list is capped by the board itself (a line says how many more), so this board may fit whole; what
-    // matters here is that the messages keep their room (the first test covers a board that has to be cut)
-    let shown = out.matches("note ").count();
-    assert!(shown >= 4, "only {shown} messages shown: {out}");
+    assert!(!out.contains("note 00"), "the backlog was printed: {out}");
+    assert!(
+        out.contains("since you last read: 15 new in lobby, 0 for you"),
+        "{out}"
+    );
+    assert!(out.contains("members: ") && out.contains("+"), "{out}");
 }
 
 #[test]
-fn a_small_board_is_shown_whole_with_no_cut_line() {
+fn a_small_room_is_briefed_whole_with_nothing_cut() {
     let h = Home::new();
     h.ok("reader", &["join", "lobby"]);
     h.ok("peer", &["post", "lobby", "seeking: slugify"]);
     let out = start(&h);
-    assert!(out.contains("seeking: slugify"), "{out}");
+    assert!(out.contains("#1 ask peer"), "{out}");
+    assert!(out.contains("open asks: 1"), "{out}");
     assert!(!out.contains("more board lines"), "{out}");
 }

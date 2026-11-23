@@ -33,10 +33,10 @@ fn a_joining_session_is_not_flooded_with_the_lobbys_history_but_sees_the_board()
         "history flooded the new session: {start}"
     );
     assert!(
-        start.contains("[board lobby]") && start.contains("seeking: a rare thing"),
-        "no board: {start}"
+        start.contains("[briefing lobby]") && start.contains("a rare thing"),
+        "no briefing: {start}"
     );
-    assert!(start.contains("offering: text helpers"));
+    assert!(start.contains("text helpers"), "{start}");
     h.ok("old", &["post", "lobby", "fresh news"]);
     let later = h.ok("fresh", &["hook", "--event", "PostToolUse"]);
     assert!(
@@ -49,12 +49,21 @@ fn a_joining_session_is_not_flooded_with_the_lobbys_history_but_sees_the_board()
 fn a_session_already_in_the_lobby_keeps_its_unread_messages_at_session_start() {
     let h = Home::new();
     h.ok("alice", &["join", "lobby"]);
-    h.ok("bob", &["post", "lobby", "while you were away"]);
+    h.ok("bob", &["post", "lobby", "@alice while you were away"]);
+    h.ok("bob", &["post", "lobby", "plain chatter nobody asked for"]);
+    let before = h.ok("alice", &["read", "lobby", "--peek"]);
     let start = h.ok("alice", &["hook", "--event", "SessionStart"]);
+    // what is addressed to the member is shown; the rest is counted (#1409) and stays unread
     assert!(
         start.contains("while you were away"),
-        "a resumed session lost its unread: {start}"
+        "a resumed session lost what was addressed to it: {start}"
     );
+    assert!(!start.contains("plain chatter"), "{start}");
+    assert!(
+        start.contains("since you last read: 2 new in lobby, 1 for you"),
+        "{start}"
+    );
+    assert_eq!(before, h.ok("alice", &["read", "lobby", "--peek"]));
 }
 
 #[test]

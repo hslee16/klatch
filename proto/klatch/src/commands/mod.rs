@@ -5,6 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
 mod ask_refs;
+mod briefing;
 mod capped;
 mod checkpoint;
 mod digest_cost;
@@ -14,6 +15,7 @@ mod wait;
 mod work;
 
 use agents::*;
+use briefing::*;
 use capped::*;
 use digest_cost::*;
 use messaging::*;
