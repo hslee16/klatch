@@ -1,0 +1,10 @@
+{
+  "date": "2026-11-22",
+  "note": "Planning price table in USD per million tokens, used only to ESTIMATE spend while a run is live (the spend cap) and when a run is killed before its result message (SPEC section 5, Cost). A finished agent's cost is the total_cost_usd the stream reports. Verify these rows against the provider's price list before a real run and change the date when you do.",
+  "per_mtok": {
+    "haiku": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25},
+    "sonnet": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75},
+    "opus": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_creation": 6.25},
+    "fake": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_creation": 0.0}
+  }
+}
