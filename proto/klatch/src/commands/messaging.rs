@@ -184,6 +184,7 @@ pub(super) fn post(t: &dyn Transport, args: &PostArgs) -> Result<()> {
         None => t.post_labeled(room, &body, label)?,
     };
     println!("posted (queued; not proof of read)");
+    super::never_read::note(t, room);
     if klatch::domain::is_ask(&body) {
         // After the post, so a failed who never hides that the ask went in; on standard error like other notes.
         if let Ok(members) = t.who(room) {
@@ -229,6 +230,7 @@ pub(super) fn ask(
         "asked #{} in {room}{declared} (queued; `klatch wait {room}` for the answer)",
         posted.seq
     );
+    super::never_read::note(ctx.t, room);
     if let Some(note) = ctx
         .t
         .who(room)

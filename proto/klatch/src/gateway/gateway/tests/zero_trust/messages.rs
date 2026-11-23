@@ -19,6 +19,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("history", |g, w| refused(g.history(w, "r", crate::gateway::HistoryRange::default()))),
     ("head", |g, w| refused(g.head(w, "r"))),
     ("ack", |g, w| refused(g.ack(w, "r", 1))),
+    ("first_post_unread", |g, w| refused(g.first_post_unread(w, "r"))),
     ("who", |g, w| refused(g.who(w, "r"))),
     ("receipt", |g, w| refused(g.receipt(w, "r", 1))),
     ("board", |g, w| refused(g.board(w, "r"))),

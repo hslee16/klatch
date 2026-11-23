@@ -704,6 +704,46 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 39);
+    assert_eq!(SCHEMA_VERSION, 40);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_39_database_gains_the_hook_byte_columns_and_its_old_runs_start_at_zero_bytes() {
+    let path = temp_db("migrate-v39-hook-bytes");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.conn
+            .execute_batch(
+                "DROP TABLE hook_runs;
+                 CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
+                 INSERT INTO hook_runs VALUES('alice','PostToolUse',10,7,300);
+                 PRAGMA user_version = 39;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    let old = s.hook_runs("alice").unwrap();
+    assert_eq!(
+        (
+            old[0].runs,
+            old[0].last_bytes,
+            old[0].total_bytes,
+            old[0].max_bytes,
+            old[0].since_start
+        ),
+        (7, 300, 0, 0, 0)
+    );
+    s.record_hook_run(
+        &crate::store::HookEvent::new("alice", "PostToolUse", 50),
+        11,
+    )
+    .unwrap();
+    let now = s.hook_runs("alice").unwrap();
+    assert_eq!(
+        (now[0].runs, now[0].total_bytes, now[0].max_bytes),
+        (8, 50, 50)
+    );
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
