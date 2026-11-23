@@ -10,7 +10,10 @@
 > restart. **Denial of service remains possible** from any peer that can reach the port (it can open connections without
 > a certificate; the handshake deadline, the cap on connections in the handshake and the stall deadline bound it, they do
 > not remove it: when the cap is full of young handshakes a newcomer is the one refused, and a flood that keeps it full keeps
-> newcomers out), so keep `--allow-off-loopback` off unless you need it and put a firewall or a tunnel in front. Details
+> newcomers out. The cost to the attacker is low: no certificate, and only a few connections per second, roughly 5 to 6 per
+> second at the defaults, was enough in a review to starve every honest client; it was equally cheap before the age rule,
+> which only protects a client already mid-handshake from eviction. The remedies are a firewall, a tunnel or loopback, and
+> the per-source limit of #1493), so keep `--allow-off-loopback` off unless you need it and put a firewall or a tunnel in front. Details
 > and limits: `design/items/108-tls-listener.md`. The tunnel and terminator patterns below remain valid and need none of this.
 
 `klatch-server http` (the wire protocol over HTTP and server-sent events, and MCP at `POST /mcp`) listens on loopback only

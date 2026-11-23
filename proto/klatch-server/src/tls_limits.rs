@@ -15,8 +15,14 @@
 //!
 //! This bounds the flood; it does not remove denial of service by volume. A peer that can reach the port and keeps the
 //! cap full of fresh connections (opening one whenever one ends) keeps newcomers out, and an honest client that is merely
-//! slow (older than the minimum age with the deadline not yet reached) can be evicted by a newcomer. Which is why the
-//! listener is loopback unless `--allow-off-loopback` is given, and a firewall or a tunnel in front of it is advised.
+//! slow (older than the minimum age with the deadline not yet reached) can be evicted by a newcomer.
+//!
+//! **The real cost of that is low.** A peer with NO certificate needs only a few connections per second to keep the cap
+//! full: a reviewer starved 10 of 10 honest clients at a cap of 4 with about 3.3 connections per second, and with the
+//! defaults (a cap of 8, a 3 s deadline, a 1.5 s minimum age) it is roughly 5 to 6 per second. It was equally cheap
+//! before the age rule; what the rule changed is that a client already mid-handshake is no longer evicted. The remedies
+//! are outside this module: the listener is loopback unless `--allow-off-loopback` is given, a firewall or a tunnel in
+//! front of it is advised, and a per-source limit is #1493.
 
 use crate::loopback::Stream;
 use std::collections::VecDeque;

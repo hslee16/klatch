@@ -15,8 +15,8 @@
 //! it) for the stall time, the connection is closed. Bytes a handler hands to the pump do not count, so a client that
 //! accepts nothing is not kept alive by the handler's own output. What this cannot see: a client that does not read but
 //! whose kernel still acknowledges data (its receive window and our send buffers take a heartbeat every 15 seconds for
-//! hours before they are full) counts as moving, because the bytes did move. Cutting such a client early would need an
-//! application-level acknowledgement, which the handler's protocol does not have; a client that stops reading a busy
+//! days before they are full: tens of bytes every 15 seconds) counts as moving, because the bytes did move. Cutting such a client early would need an
+//! application-level acknowledgement, which the handler's protocol does not have (no test of it exists); a client that stops reading a busy
 //! stream is cut once the buffers fill. A quiet event stream is not idle: it carries a heartbeat. The
 //! poll never watches a descriptor nobody asked about, because a hung-up descriptor is reported even with no events
 //! requested and would make the loop spin. Nothing here reads, logs or keeps the content of a message.
