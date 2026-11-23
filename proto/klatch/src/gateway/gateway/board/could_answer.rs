@@ -37,18 +37,31 @@ impl<S: Store> Gateway<S> {
                 .inspect_err(|e| self.note_refusal(who, (room, "could_answer"), e))?;
         }
         let now = self.now();
+        let open = self
+            .store
+            .open_asks(room, now)?
+            .into_iter()
+            .find(|a| a.seq == ask);
+        self.could_answer_of(room, member, (ask, open.as_ref()), now)
+    }
+
+    /// `could_answer` without the guard on who asks, for the gateway's own routing (#1407): the verdict for `member`
+    /// on `open`, the open ask `ask` of `room` (`None` when it is not open), with every reason it could not. Only the
+    /// gateway calls it, and what it learns never leaves as more than the names of members that could.
+    pub(in crate::gateway) fn could_answer_of(
+        &self,
+        room: &str,
+        member: &str,
+        (ask, open): (i64, Option<&crate::domain::OpenAsk>),
+        now: i64,
+    ) -> Result<CouldAnswer> {
         let mut out = CouldAnswer {
             member: member.into(),
             ask,
             blockers: Vec::new(),
             refs: Vec::new(),
         };
-        let Some(open) = self
-            .store
-            .open_asks(room, now)?
-            .into_iter()
-            .find(|a| a.seq == ask)
-        else {
+        let Some(open) = open else {
             out.blockers.push(blocker(
                 "no-such-ask",
                 format!("ask #{ask} is not open in room {room}"),

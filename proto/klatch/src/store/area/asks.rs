@@ -121,4 +121,69 @@ pub trait AskStore: MessageStore + ClaimStore {
             .filter(|a| a.sender == member && a.no_capable_member())
             .collect())
     }
+
+    /// Record that ask `seq` of `room` was routed (#1407): the members it is addressed to, each with its kind, and the
+    /// `routed` event with their count (zero is a real answer: nobody capable). Only the first call for an ask
+    /// records anything; whether it did. Ids, member names and numbers, never text. The default records nothing.
+    fn route_ask(
+        &self,
+        _room: &str,
+        _seq: i64,
+        _to: &[(String, crate::domain::RouteKind)],
+        _now: i64,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Address ask `seq` to more members after it was routed (the coordinators, once the lease ran out), without
+    /// touching the earlier ones. The default records nothing.
+    fn add_ask_routes(
+        &self,
+        _room: &str,
+        _seq: i64,
+        _to: &[(String, crate::domain::RouteKind)],
+        _now: i64,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Every addressing recorded for `room`, oldest ask first (#1407). The default knows none.
+    fn ask_routes(&self, _room: &str) -> Result<Vec<crate::domain::AskRoute>> {
+        Ok(Vec::new())
+    }
+
+    /// Record a routing outcome (`taken`, `lapsed` or `escalated`) of ask `seq`, once per ask and outcome, with the
+    /// number of members it concerns; whether this call was the first. The default records nothing.
+    fn note_route_outcome(
+        &self,
+        _room: &str,
+        _seq: i64,
+        _outcome: &str,
+        _n: i64,
+        _now: i64,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// The outcomes recorded for ask `seq` of `room`, as words. The default knows none.
+    fn route_outcomes(&self, _room: &str, _seq: i64) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// The asks of `room` that were addressed to `member` as a coordinator, after the ask was posted, and that surface
+    /// `bit` (1 the hook digest, 2 the wake count) has not pointed out to it yet. The message itself is behind the
+    /// member's cursors by then, so a later addressing needs this one more way to reach it. The default knows none.
+    fn untold_routes(&self, _room: &str, _member: &str, _bit: i64) -> Result<Vec<i64>> {
+        Ok(Vec::new())
+    }
+
+    /// Remember that surface `bit` pointed out these asks to `member`. The default remembers nothing.
+    fn mark_told(&self, _room: &str, _member: &str, _seqs: &[i64], _bit: i64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Every routing event recorded for `room` as (seq, outcome, ts), by ask and time (#1407). The default knows none.
+    fn route_events(&self, _room: &str) -> Result<Vec<(i64, String, i64)>> {
+        Ok(Vec::new())
+    }
 }

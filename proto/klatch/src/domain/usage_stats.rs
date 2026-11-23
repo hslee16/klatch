@@ -171,6 +171,7 @@ pub struct UsageStats {
     pub machine_checkpoints: MachineCheckpointCounts,
     pub machine_status: MachineStatusCounts,
     pub passive_claims: PassiveClaimCounts,
+    pub ask_routing: crate::domain::RoutingCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
@@ -437,6 +438,11 @@ impl UsageStats {
             "passive claims: {} granted, {} renewed, {} refused, {} released, {} lapsed, {} failed\n",
             pc.granted, pc.renewed, pc.refused, pc.released, pc.expired, pc.errors
         ));
+        let ar = &self.ask_routing;
+        o.push_str(&format!(
+            "ask routing: {} routed to capable members, {} routed to nobody, {} taken, {} lapsed, {} escalated ({} with no coordinator to reach)\n",
+            ar.routed, ar.unrouted, ar.taken, ar.lapsed, ar.escalated, ar.escalated_unreached
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -571,6 +577,12 @@ impl UsageStats {
                 "granted": self.passive_claims.granted, "renewed": self.passive_claims.renewed,
                 "refused": self.passive_claims.refused, "released": self.passive_claims.released,
                 "lapsed": self.passive_claims.expired, "failed": self.passive_claims.errors,
+            },
+            "ask_routing": {
+                "routed": self.ask_routing.routed, "unrouted": self.ask_routing.unrouted,
+                "taken": self.ask_routing.taken, "lapsed": self.ask_routing.lapsed,
+                "escalated": self.ask_routing.escalated,
+                "escalated_unreached": self.ask_routing.escalated_unreached,
             },
             "refusals": pairs(&self.refusals),
             "members": {
