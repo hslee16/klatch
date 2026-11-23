@@ -7,7 +7,9 @@
 # Fix a hit by feeding the consumer without a pipe (`grep -qF want <<< "$text"`), or by letting the consumer read all
 # its input (`cmd | grep want > /dev/null`, `cmd | sed -n 1p`). A reviewed exception carries `# sigpipe-ok: <reason>` on
 # the same line or on the line right above it (a producer that writes one short line, say).
-# Only scripts that set pipefail are checked. A pipeline split over lines with a trailing `|` is read as one line.
+# Only scripts that set pipefail are checked (tracked files and new untracked ones). A pipeline split over lines with a
+# trailing `|` is read as one line. Comments and the text of single-quoted strings are not code and are not matched
+# (a pipe inside double quotes, as in "$(cmd | head -1)", is code and is matched).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -15,7 +17,7 @@ root="$(cd "$here/.." && pwd)"
 scripts() {
   if [ "$#" -gt 0 ]; then printf '%s\n' "$@"; return; fi
   local f
-  git -C "$root" ls-files | while IFS= read -r f; do
+  git -C "$root" ls-files --cached --others --exclude-standard | while IFS= read -r f; do
     [ -f "$root/$f" ] && [ ! -L "$root/$f" ] || continue
     case "$f" in
       *.sh) echo "$root/$f" ;;
@@ -29,11 +31,39 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   grep -qE '^[[:space:]]*set[[:space:]].*-[A-Za-z]*o[[:space:]]+pipefail' "$f" || continue
   out="$(awk -v file="$f" '
-    function flush() {
-      if (acc != "" && acc !~ /^[ \t]*#/ && acc ~ risky && acc !~ /sigpipe-ok:[ \t]*[^ \t]/ && prev !~ /sigpipe-ok:[ \t]*[^ \t]/) print file ":" start ": " acc
-      prev = acc; acc = ""
+    # code(s): s without comments and without string text (single-quoted, ANSI-C quoted and double-quoted text); what is
+    # run inside $(...) stays, also inside double quotes. The quote stack stk carries over lines.
+    function top() { return substr(stk, length(stk), 1) }
+    function push(k) { stk = stk k }
+    function pop() { stk = substr(stk, 1, length(stk) - 1) }
+    function code(s,   i, c, d, t, out, n) {
+      out = ""; n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1); d = substr(s, i + 1, 1); t = top()
+        if (t == "s") { if (c == SQ) pop(); continue }
+        if (t == "S") { if (c == "\\") i++; else if (c == SQ) pop(); continue }
+        if (c == "\\") { if (t != "d") out = out c d; i++; continue }
+        if (t == "d") {
+          if (c == DQ) pop(); else if (c == "$" && d == "(") { push("c"); out = out "(" ; i++ }
+          continue
+        }
+        if (c == SQ) { push("s"); continue }
+        if (c == "$" && d == SQ) { push("S"); i++; continue }
+        if (c == DQ) { push("d"); continue }
+        if (c == "$" && d == "(") { push("c"); out = out "$("; i++; continue }
+        if (c == ")" && t == "c") { pop(); out = out c; continue }
+        if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;|&(]/)) break
+        out = out c
+      }
+      return out
+    }
+    function flush(   cd) {
+      cd = acc_code
+      if (acc != "" && cd ~ risky && acc !~ /sigpipe-ok:[ \t]*[^ \t]/ && prev !~ /sigpipe-ok:[ \t]*[^ \t]/) print file ":" start ": " acc
+      prev = acc; acc = ""; acc_code = ""
     }
     BEGIN {
+      SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); stk = ""
       risky = "(^|[^|])\\|[ \t]*(grep[ \t]+((-[A-Za-z0-9-]+|[0-9]+)[ \t]+)*-([A-Za-z]*[qm][A-Za-z0-9]*|-quiet|-max-count)([ \t=]|$)|head[ \t]+(-n[ \t]*1|-1)([^0-9]|$)|sed[ \t]+-[A-Za-z]*q)"
     }
     {
@@ -41,6 +71,7 @@ while IFS= read -r f; do
       line = $0
       sub(/\\$/, "", line)
       acc = acc (acc == "" ? "" : " ") line
+      acc_code = acc_code (acc_code == "" ? "" : " ") code(line)
       if ($0 ~ /\|[ \t]*$/ && $0 !~ /\|\|[ \t]*$/) next
       if ($0 ~ /\\$/) next
       flush()
