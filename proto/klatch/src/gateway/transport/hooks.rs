@@ -18,6 +18,10 @@ pub trait Hooks {
     fn note_session(&self, session_id: &str) -> Result<()>;
     /// The Stop hook: end any park, then park the caller if background tasks or crons still run.
     fn record_stop(&self, background_tasks: usize, crons: usize) -> Result<()>;
+    /// A tool call, for the caller's working trail (#1408): its class word and, for an edit or a write, the repo-relative path.
+    fn note_tool(&self, class: &str, path: Option<&str>) -> Result<()>;
+    /// Write the caller's machine checkpoint (`ended` is the SessionEnd reason, none at a Stop); how many rooms got one.
+    fn write_machine_checkpoint(&self, ended: Option<&str>) -> Result<usize>;
     /// Any other hook ran: a sign of life, which ends a park.
     fn sign_of_life(&self) -> Result<()>;
 }
@@ -39,6 +43,13 @@ impl<S: Store> Hooks for Direct<S> {
         self.gateway
             .record_stop(&self.principal, background_tasks, crons)
     }
+    fn note_tool(&self, class: &str, path: Option<&str>) -> Result<()> {
+        self.gateway.note_tool(&self.principal, class, path)
+    }
+    fn write_machine_checkpoint(&self, ended: Option<&str>) -> Result<usize> {
+        self.gateway
+            .write_machine_checkpoint(&self.principal, ended)
+    }
     fn sign_of_life(&self) -> Result<()> {
         self.gateway.sign_of_life(&self.principal)
     }
@@ -51,6 +62,8 @@ impl Hooks for SharedTransport {
         note_member_mode(mode: &str) -> Result<()>;
         note_session(session_id: &str) -> Result<()>;
         record_stop(background_tasks: usize, crons: usize) -> Result<()>;
+        note_tool(class: &str, path: Option<&str>) -> Result<()>;
+        write_machine_checkpoint(ended: Option<&str>) -> Result<usize>;
         sign_of_life() -> Result<()>;
     }
 }

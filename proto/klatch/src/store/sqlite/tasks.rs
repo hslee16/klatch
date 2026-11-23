@@ -38,8 +38,9 @@ impl SqliteStore {
     pub(super) fn members_that_may_return(&self, now: i64) -> Result<Vec<String>> {
         let mut keep: Vec<String> = self.rows(
             "SELECT DISTINCT owner FROM claims WHERE expires>?1
-             UNION SELECT member FROM member_parked WHERE back_by>?1",
-            params![now],
+             UNION SELECT member FROM member_parked WHERE back_by>?1
+             UNION SELECT member FROM machine_checkpoints WHERE ts>?1-?2",
+            params![now, crate::domain::TASK_HOLD_SECS],
             |r| r.get(0),
         )?;
         keep.extend(self.task_owners(now)?);

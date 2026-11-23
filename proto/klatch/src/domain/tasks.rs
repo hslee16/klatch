@@ -45,6 +45,11 @@ pub struct Task {
     /// The time of the latest word about it (a renewal, a checkpoint or a handoff).
     pub last: i64,
     pub checkpoint: Option<Checkpoint>,
+    /// The machine checkpoint a hook wrote for the owner (#1408), shown beneath the owner's own checkpoint, which wins.
+    /// Set by the reader; the fold of messages leaves it `None`.
+    pub machine: Option<Checkpoint>,
+    /// Set by the reader: the owner declared no task, and this one stands only for its machine checkpoint.
+    pub undeclared: bool,
     /// The member that handed it over, if it was handed over.
     pub from: Option<String>,
     /// Set by the reader: the owner is gone (not present, not parked, holds nothing), so the task waits for someone.
@@ -55,9 +60,22 @@ impl Task {
     /// One line for the board or `klatch tasks`. `full` keeps the whole checkpoint instead of a clipped one.
     pub fn line(&self, now: i64, full: bool) -> String {
         let flatten = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let clipped = |s: &str| {
+            let text = flatten(s);
+            if full || text.chars().count() <= 200 {
+                text
+            } else {
+                format!("{}...", text.chars().take(200).collect::<String>())
+            }
+        };
         let mut out = format!("{}: {}", flatten(&self.owner), flatten(&self.title));
         let mut notes = Vec::new();
-        if self.orphaned {
+        if self.undeclared {
+            notes.push("no task declared".to_string());
+            if self.orphaned {
+                notes.push("orphaned".to_string());
+            }
+        } else if self.orphaned {
             notes.push(format!("orphaned, last word {} ago", span(now - self.last)));
         } else {
             notes.push(format!("working {}", span(now - self.started)));
@@ -66,13 +84,19 @@ impl Task {
             notes.push(format!("handed over by {}", flatten(from)));
         }
         if let Some(c) = &self.checkpoint {
-            let text = flatten(&c.text);
-            let text = if full || text.chars().count() <= 200 {
-                text
-            } else {
-                format!("{}...", text.chars().take(200).collect::<String>())
-            };
-            notes.push(format!("checkpoint {} ago: {text}", span(now - c.ts)));
+            notes.push(format!(
+                "checkpoint {} ago: {}",
+                span(now - c.ts),
+                clipped(&c.text)
+            ));
+        }
+        if let Some(c) = &self.machine {
+            notes.push(format!(
+                "{} {} ago: {}",
+                crate::domain::MACHINE_MARK,
+                span(now - c.ts),
+                clipped(&c.text)
+            ));
         }
         out.push_str(&format!(" ({})", notes.join(", ")));
         out
@@ -148,6 +172,8 @@ pub fn open_tasks(messages: &[Message]) -> Vec<Task> {
                     started: m.ts,
                     last: m.ts,
                     checkpoint: None,
+                    machine: None,
+                    undeclared: false,
                     from: None,
                     orphaned: false,
                 }),

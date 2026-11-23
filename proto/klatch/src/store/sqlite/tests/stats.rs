@@ -251,7 +251,45 @@ fn bench_with_claims() -> SqliteStore {
     .unwrap();
     s.release_anchored("gh:TOPSECRET", t + 560).unwrap();
     s.release_member_claims("amy-TOPSECRET", t + 700).unwrap();
+    // machine checkpoints (#1408): two for one member (the second replaces the first), then a last one for another
+    let at = |m| ("lobby", m);
+    let body = "turn ended; claims TOPSECRET/plan.rs; files TOPSECRET/plan.rs";
+    s.put_machine_checkpoint(at("amy-TOPSECRET"), body, false, t + 710)
+        .unwrap();
+    s.put_machine_checkpoint(at("amy-TOPSECRET"), body, false, t + 720)
+        .unwrap();
+    s.put_machine_checkpoint(at("bob-TOPSECRET"), body, true, t + 730)
+        .unwrap();
     s
+}
+
+#[test]
+fn machine_checkpoints_are_counted_with_their_bytes_and_follow_room_and_since() {
+    let r = bench_with_claims().usage_stats(&opts()).unwrap();
+    let m = &r.machine_checkpoints;
+    let size = "turn ended; claims TOPSECRET/plan.rs; files TOPSECRET/plan.rs".len() as i64;
+    assert_eq!((m.written, m.last, m.replaced), (3, 1, 1));
+    assert_eq!(m.bytes, 3 * size);
+    let text = r.to_text();
+    assert!(
+        text.contains(
+            "machine checkpoints: 3 written (1 at session end), 1 replaced an earlier one"
+        ),
+        "{text}"
+    );
+    assert_eq!(r.to_json()["machine_checkpoints"]["written"], 3);
+    let other = StatsOptions {
+        room: Some("vault".into()),
+        ..opts()
+    };
+    let r = bench_with_claims().usage_stats(&other).unwrap();
+    assert_eq!(r.machine_checkpoints.written, 0);
+    let late = StatsOptions {
+        since: Some(D2 + 10_000 + 725),
+        ..opts()
+    };
+    let r = bench_with_claims().usage_stats(&late).unwrap();
+    assert_eq!(r.machine_checkpoints.written, 1);
 }
 
 fn opts() -> StatsOptions {

@@ -7,6 +7,7 @@ mod agents;
 mod ask_refs;
 mod briefing;
 mod capped;
+mod checkpoint;
 mod digest_cost;
 mod messaging;
 mod never_read;

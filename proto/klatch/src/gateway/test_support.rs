@@ -207,6 +207,37 @@ impl MemberStore for SpyStore {
         self.inner.note_member_mode(member, mode, now)
     }
 
+    fn trail_of(&self, member: &str) -> Result<crate::domain::Trail> {
+        self.gate()?;
+        self.inner.trail_of(member)
+    }
+
+    fn save_trail(&self, member: &str, trail: &crate::domain::Trail, now: i64) -> Result<()> {
+        self.gate()?;
+        self.inner.save_trail(member, trail, now)
+    }
+
+    fn clear_trail(&self, member: &str) -> Result<()> {
+        self.gate()?;
+        self.inner.clear_trail(member)
+    }
+
+    fn put_machine_checkpoint(
+        &self,
+        at: (&str, &str),
+        body: &str,
+        last: bool,
+        now: i64,
+    ) -> Result<bool> {
+        self.gate()?;
+        self.inner.put_machine_checkpoint(at, body, last, now)
+    }
+
+    fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {
+        self.gate()?;
+        self.inner.machine_checkpoints(room)
+    }
+
     fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
         self.gate()?;
         self.inner.member_modes()

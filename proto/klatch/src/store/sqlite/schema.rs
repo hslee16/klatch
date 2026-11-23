@@ -48,7 +48,11 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE claim_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, event TEXT NOT NULL, class TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', held INTEGER NOT NULL DEFAULT 0, waited INTEGER);
  CREATE INDEX claim_events_ts ON claim_events(ts);
  CREATE TABLE claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));
- CREATE TABLE read_shown(room TEXT NOT NULL, member TEXT NOT NULL, channel TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,channel,seq));";
+ CREATE TABLE read_shown(room TEXT NOT NULL, member TEXT NOT NULL, channel TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,channel,seq));
+ CREATE TABLE member_trail(member TEXT PRIMARY KEY, files TEXT NOT NULL, tools TEXT NOT NULL, ts INTEGER NOT NULL);
+ CREATE TABLE machine_checkpoints(room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL, last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member));
+ CREATE TABLE machine_checkpoint_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, replaced INTEGER NOT NULL, last INTEGER NOT NULL, bytes INTEGER NOT NULL);
+ CREATE INDEX machine_checkpoint_events_ts ON machine_checkpoint_events(ts);";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -502,6 +506,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v38,
     migrate_v39,
     migrate_v40,
+    migrate_v41,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -563,6 +568,21 @@ pub(super) fn migrate_v39(conn: &Connection) -> Result<()> {
 pub(super) fn migrate_v40(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS read_shown(room TEXT NOT NULL, member TEXT NOT NULL, channel TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,channel,seq));",
+    )
+    .map_err(be)
+}
+
+/// Version 41 to 42: the automatic machine checkpoint (#1408). `member_trail` is the working state between hooks, one row per
+/// member: the distinct repo-relative paths it edited or wrote and the classes of its latest tool calls (never a
+/// command, content or output). `machine_checkpoints` holds the latest checkpoint per room and member, replaced and never
+/// appended. `machine_checkpoint_events` is the counts-only record the usage report reads: when, which room, whether it
+/// replaced one, whether it was the last of a session, and its size in bytes. Existing stores start empty.
+pub(super) fn migrate_v41(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS member_trail(member TEXT PRIMARY KEY, files TEXT NOT NULL, tools TEXT NOT NULL, ts INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS machine_checkpoints(room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL, last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member));
+         CREATE TABLE IF NOT EXISTS machine_checkpoint_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, replaced INTEGER NOT NULL, last INTEGER NOT NULL, bytes INTEGER NOT NULL);
+         CREATE INDEX IF NOT EXISTS machine_checkpoint_events_ts ON machine_checkpoint_events(ts);",
     )
     .map_err(be)
 }

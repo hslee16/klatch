@@ -63,6 +63,8 @@ fn board() -> Board {
             started: NOW - 100,
             last: NOW - 20,
             checkpoint: None,
+            machine: None,
+            undeclared: false,
             from: None,
             orphaned: false,
         }],

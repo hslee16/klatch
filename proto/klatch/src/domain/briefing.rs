@@ -396,6 +396,15 @@ fn tasks_section(tasks: &[Task], now: i64) -> Option<Section> {
                 headline(&c.text, BRIEFING_HEADLINE_CHARS)
             ));
         }
+        // the hook's own checkpoint (#1408), marked and beneath the owner's: it never replaces what the owner said
+        if let Some(c) = &t.machine {
+            line.push_str(&format!(
+                ", {} {} ago: \"{}\"",
+                crate::domain::MACHINE_MARK,
+                span(now - c.ts),
+                headline(&c.text, BRIEFING_HEADLINE_CHARS)
+            ));
+        }
         line.push('\n');
         lines.push(line);
     }

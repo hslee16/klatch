@@ -1,6 +1,6 @@
 //! The `MemberStore` area of the store seam; `Store` in the parent module combines every area.
 
-use crate::domain::{HookRun, MemberAttrs, MemberInfo, Parked, Result};
+use crate::domain::{HookRun, MachineCheckpoint, MemberAttrs, MemberInfo, Parked, Result, Trail};
 use crate::store::{HookEvent, Seat};
 
 pub trait MemberStore {
@@ -156,6 +156,39 @@ pub trait MemberStore {
 
     /// Every member's last reported permission mode as (member, mode, time), ordered by member.
     fn member_modes(&self) -> Result<Vec<(String, String, i64)>> {
+        Ok(Vec::new())
+    }
+
+    /// What a member has done since its trail was cleared (#1408): repo-relative paths it edited or wrote and the
+    /// classes of its latest tool calls. The default holds nothing.
+    fn trail_of(&self, _member: &str) -> Result<Trail> {
+        Ok(Trail::default())
+    }
+
+    /// Keep `trail` as the member's working trail, replacing the earlier one. The default keeps nothing.
+    fn save_trail(&self, _member: &str, _trail: &Trail, _now: i64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Forget the member's working trail.
+    fn clear_trail(&self, _member: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Replace the member's machine checkpoint in the room (never append); whether one was replaced. The default
+    /// keeps nothing.
+    fn put_machine_checkpoint(
+        &self,
+        _at: (&str, &str),
+        _body: &str,
+        _last: bool,
+        _now: i64,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// The machine checkpoints of a room, ordered by member.
+    fn machine_checkpoints(&self, _room: &str) -> Result<Vec<MachineCheckpoint>> {
         Ok(Vec::new())
     }
 
