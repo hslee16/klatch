@@ -292,6 +292,9 @@ fn machine_status_updates_are_counted_by_class_and_follow_room_and_since() {
     );
     assert!(!text.contains("(auto)") && !to_json_text(&r).contains("TOPSECRET"));
     assert_eq!(r.to_json()["machine_status"]["working"], 3);
+    // the passive claims line (#1401) and this one sit side by side in the text and in the JSON
+    assert!(text.contains("passive claims: "), "{text}");
+    assert!(r.to_json()["passive_claims"]["granted"].is_number());
     let other = StatsOptions {
         room: Some("vault".into()),
         ..opts()
