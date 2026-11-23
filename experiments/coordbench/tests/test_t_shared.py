@@ -61,7 +61,9 @@ def lost_update_scripts(hold="snapshot"):
     b += [stale_write("b")]
     if hold == "none":
         b += [{"op": "signal", "name": "b_wrote"}]
-    return {"a": a + [DONE("a")], "b": b + [DONE("b")], "c": GIVE_UP}
+    # c gives up only after b has written (hold none), so that no exit snapshot of c falls between a's and b's writes
+    c = [{"op": "wait_signal", "name": "b_wrote"}] + GIVE_UP if hold == "none" else GIVE_UP
+    return {"a": a + [DONE("a")], "b": b + [DONE("b")], "c": c}
 
 
 class SharedBase(S2Base):

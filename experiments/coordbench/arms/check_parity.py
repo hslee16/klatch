@@ -86,7 +86,7 @@ def check_lengths(arms_dir, tolerance, sfx=""):
         n, dev, ok = res[a]
         lines.append("  %-9s %4d words  %+5.1f%%  %s" % (a, n, dev * 100, "ok" if ok else "OUT OF TOLERANCE"))
         if not ok:
-            problems.append("%s is %d words, %+.1f%% from the mean %.1f" % (a, n, dev * 100, mean))
+            problems.append("%s is %d words, %+.1f%% from the mean %.1f" % (a + sfx, n, dev * 100, mean))
     secs = {a: split_role_sections(read(arms_dir, a)) for a in ROLE_ARMS} if not sfx else {}
     for key in ROLE_SECTIONS if not sfx else ():
         missing = [a for a in ROLE_ARMS if key not in secs[a]]
