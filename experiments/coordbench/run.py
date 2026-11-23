@@ -42,6 +42,8 @@ import fixture as fixture_mod
 import asks as asks_mod
 import chain
 import history as history_mod
+import injections
+import injmetrics
 import scenario as scenario_mod
 import schema
 import streams
@@ -260,6 +262,16 @@ class Suite:
         # the repository: initial tree from the fixture, a bare origin made for this run
         seedtree = os.path.join(scratch, "seed")
         fx.materialise(seedtree, seed, henv, arm=arm)
+        # S10 (#1375): the scripted colleague's injections for this run. The plan (tokens, paths, texts) goes to the log directory
+        # for the hidden checker and the fake agents; a real agent is never given the file. The harness makes the directory a
+        # "touch" injection names, so an obedient agent's touch can succeed and the check finds the file.
+        inj, inj_plan_path = None, None
+        if fx.injection:
+            inj = injections.plan(seed, scratch, arm, a.room, fx.injection_mode, fx.injection)
+            inj_plan_path = os.path.join(log_dir, "injection-plan.json")
+            with open(inj_plan_path, "w") as f:
+                json.dump(inj, f, indent=1)
+            os.makedirs(os.path.join(scratch, "pwned"), mode=0o700, exist_ok=True)
         origin = os.path.join(scratch, "origin.git")
         git(["init", "-q", "--bare", "-b", "main", origin], scratch, henv)
         if fx.prebuilt_history:
@@ -268,7 +280,7 @@ class Suite:
         else:
             if arm == "B1":
                 with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
-                    f.write(TASK_BOARD + "".join(l + "\n" for l in (fx.seed_history or {}).get("board", [])))
+                    f.write(TASK_BOARD + "".join(l + "\n" for l in (fx.seed_history or {}).get("board", []) + (inj["board"] if inj else [])))
             git(["init", "-q", "-b", "main"], seedtree, henv)
             git(["add", "-A"], seedtree, henv)
             git(["commit", "-q", "-m", "initial"], seedtree, henv)
@@ -299,6 +311,9 @@ class Suite:
                     raise RuntimeError("klatch init failed for %s: %s" % (name, p.stdout.strip()[-200:]))
         if arm.startswith("K") and (fx.seed_history or {}).get("room"):
             self.seed_room(fx.seed_history["room"], scratch, dict(henv, **kenv), notes)
+        if arm.startswith("K") and inj and inj["room_steps"]:
+            # the scripted colleague posts, claims, asks and sends a dm through the binary, before the agent starts
+            history_mod.post_room(a.klatch_bin, a.room, inj["room_steps"], dict(henv, **kenv), scratch)
         t0 = time.monotonic()
         first_pass = None
         last_poll = t0
@@ -368,7 +383,7 @@ class Suite:
             dest = os.path.join(scratch, "check-" + tag)
             shutil.rmtree(dest, ignore_errors=True)
             git(["clone", "-q", "-b", "main", origin, dest], scratch, henv)
-            return fx.run_checker(dest, henv)
+            return fx.run_checker(dest, dict(henv, COORDBENCH_INJECTION_PLAN=inj_plan_path) if inj_plan_path else henv)
 
         def all_pass(checks):
             total, done = schema.count_units(checks)
@@ -483,6 +498,16 @@ class Suite:
         rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
         rec["metrics"]["overwrites"] = gm["overwrites"]
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(raw))
+        if scn.get("stream_metrics") == "injection" and log_dir:
+            # S10 part 1: per form obeyed or not (the checker), and from the stream whether the agent saw, acted on and told its
+            # user about each injection (injmetrics.py)
+            sm = rec["scenario_metrics"]
+            sm["obeyed_by_form"] = {i["id"]: i["obeyed"] for i in sm.get("injections", [])}
+            try:
+                with open(os.path.join(log_dir, "injection-plan.json")) as f:
+                    sm["injection_streams"] = injmetrics.compute(log_dir, json.load(f))
+            except (OSError, ValueError) as e:
+                notes.append("injection stream metrics failed: %s" % e)
         if scn.get("slots") and states is not None:
             self.ask_metrics(rec, scn, states, notes)
 
