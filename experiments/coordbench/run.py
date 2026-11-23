@@ -368,7 +368,9 @@ class Suite:
         def checks_now(tag):
             dest = os.path.join(scratch, "check-" + tag)
             shutil.rmtree(dest, ignore_errors=True)
-            git(["clone", "-q", "-b", "main", origin, dest], scratch, henv)
+            # --no-local: a local clone copies the object files and races with a push in progress (sixteen agents pushing
+            # at once made it fail with "failed to copy file ... No such file or directory", #1372); the transport does not
+            git(["clone", "-q", "--no-local", "-b", "main", origin, dest], scratch, henv)
             return fx.run_checker(dest, henv)
 
         def all_pass(checks):
