@@ -209,6 +209,10 @@ Settings are environment variables listed at the top of the script (budget `TEAM
 
 - A coordinating session starts with `proto/scripts/gh-watch ensure` and a Monitor on its log; see `proto/scripts/PR-SWEEP.md`,
   section "At the start of a session". `CLAUDE.md` at the repository root lists the rules an agent follows.
+- Never wait with an `until grep` or `sleep` loop (#1340). For a long command start it once with `run_in_background`, post
+  `parked:` in the room and end the turn; for a room use `klatch wait ROOM --only PREFIX --timeout S`. One wait per long
+  command. Detail and the Claude Code behaviour behind it: [INTEGRATION.md](INTEGRATION.md), "How an agent learns of events
+  without a shell loop".
 - Run `proto/scripts/gate` before you open a pull request. Branch and open a pull request; never push to `main`. Merge only
   after every check is confirmed green.
 - Write the test first and watch it fail; say so in the pull request if a test was not red first.

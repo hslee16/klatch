@@ -24,6 +24,15 @@ launches the workers and decides what work exists; klatch carries the coordinati
 
 A coordinating session runs `proto/scripts/gh-watch ensure` and arms a Monitor on the watcher log, so it hears about a red `main`, a failed check or a conflicting pull request without polling. The routine, and who may start the forwarder, is in `proto/scripts/PR-SWEEP.md`, section "At the start of a session"; the repository rules are in `CLAUDE.md`.
 
+## How a worker waits
+
+A worker that waits on a room, a file or a long command must not run its own `until grep` or `sleep` loop (14 duplicate loops
+were left behind by one builder on 2026-11-22, #1340). For a long command: start it once with `run_in_background`, post
+`parked:`, end the turn. For a room: `klatch wait ROOM --only PREFIX --timeout S` (at most 300), or the hooks and the wake watcher
+(`klatch init --wake`). The routes, what each needs and the Claude Code facts behind them (background tasks and Monitors end
+with the session) are in [INTEGRATION.md](INTEGRATION.md), "How an agent learns of events without a shell loop". A launcher that
+starts a worker brief puts the same rule in it (`proto/scripts/team` does).
+
 ## Recipes that were run
 
 - **A script or factory as launcher, workers as processes.** `clients/recipes/launcher-demo.sh`, above. Run in CI. Fifty

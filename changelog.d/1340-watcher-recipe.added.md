@@ -1,0 +1,1 @@
+- INTEGRATION.md has a table of how an agent learns of events without a shell loop (hook digest, `klatch wake`, `klatch wait`, `stream --follow`, the channel, `klatch mcp`) and the builder rule against `until grep` and `sleep` wait loops, repeated in FACTORY.md, CONTRIBUTING.md, CLAUDE.md and the team brief (#1340).
