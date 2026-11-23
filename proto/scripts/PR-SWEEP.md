@@ -111,7 +111,7 @@ nohup proto/scripts/gh-watch serve > ~/.local/state/klatch-gh-watch/serve.out 2>
 tail -F ~/.local/state/klatch-gh-watch/gh-watch.log
 ```
 
-Stop it with `kill -9 PID` (the pid is in `gh-watch.pid` in the state dir). `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
+Stop the receiver with `kill -9 PID` (the pid is in `gh-watch.pid` in the state dir). `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
 
 To also post each note to a klatch room, add `--klatch-bin /path/to/klatch --as-member NAME --room ROOM` (optionally `--post-min ALERT`). The post is `KLATCH_NAME=NAME klatch post ROOM LINE` with whatever `KLATCH_HOME` the caller has, so start it with the isolated factory store's home (FACTORY.md), never the live store.
 
@@ -123,9 +123,17 @@ Every coordinating Claude session (one that merges, sweeps or answers for the op
 2. Arm a Monitor on `tail -F ~/.local/state/klatch-gh-watch/gh-watch.log | grep --line-buffered -E 'ALERT|INFO'` (use the state dir the `ensure` output names if you set `GH_WATCH_DIR` or `--out-dir`). ALERT lines are what you report to the human; INFO lines are context. A Monitor expires after 30 minutes: re-arm it when it does.
 3. Keep the slow poll as the backstop (see Limits below): events are missed while the forwarder or the receiver is down.
 
-`status` prints the receiver (up or down), whether a `gh webhook forward` process for this repository exists, the age of the last line in `gh-watch.log`, and a last line that is `gh-watch: ok` (exit 0), `gh-watch: receiver down` (exit 3) or `gh-watch: forwarder down` (exit 4). The receiver counts as up only when the pid in `gh-watch.pid` (written by `serve`, removed when it ends) is alive AND a TCP connect to `127.0.0.1:PORT` succeeds: the pid file alone goes stale after a crash, and the port alone would count any other program on it. The forwarder is found with `ps` and only a yes or no is printed, never its arguments, because the secret is on its command line. The age is that of the log file's last write, one write per line.
+`status` prints the receiver (up or down), whether a `gh webhook forward` process for this repository exists, the age of the last line in `gh-watch.log`, and a last line that is `gh-watch: ok` (exit 0), `gh-watch: receiver down` (exit 3) `gh-watch: forwarder down` (exit 4) or `gh-watch: forwarder down: stale webhook` (exit 5, see "A stale webhook" below). The receiver counts as up only when the pid in `gh-watch.pid` (written by `serve`, removed when it ends) is alive AND a TCP connect to `127.0.0.1:PORT` succeeds: the pid file alone goes stale after a crash, and the port alone would count any other program on it. The forwarder is found with `ps` and only a yes or no is printed, never its arguments, because the secret is on its command line. The age is that of the log file's last write, one write per line.
 
 A SessionStart hook that runs `gh-watch ensure` is not part of this: installing hooks belongs to `klatch init` and the hook installer.
+
+### A stale webhook (#1350)
+
+`gh webhook forward` creates a development webhook (name `cli`, forwarding URL on github.com) on the repository and deletes it on a clean exit. Stop the forwarder with `launchctl bootout gui/$(id -u)/dev.klatch.gh-watch-forwarder` (SIGTERM; the wrapper passes it to gh, which removes the hook), never with `kill -9`, a crash or a reboot: those leave the hook, and the next `gh webhook forward` fails with `HTTP 422: Hook already exists on this repository` and exit 1.
+
+`gh-watch-forward` runs gh as a child (not an exec) so it can read gh's stderr. On exit 1 with `Hook already exists` it deletes nothing: it writes one line (`stale webhook on the repository: run gh-watch clean-hooks`) to its stderr (`forwarder.launchd.err`), writes the marker `forwarder.stale` in the state dir and exits 75, so launchd's `ThrottleInterval` spaces the retries. Any other end removes the marker. `gh-watch status` then ends with `gh-watch: forwarder down: stale webhook` (exit 5; a running forwarder wins over a leftover marker).
+
+`gh-watch clean-hooks` runs one read-only `gh api repos/OWNER/REPO/hooks` (only when you run it; never `status`, `serve`, `install-launchd`, `forward-command` or the receiver), lists hooks named `cli` whose URL is the GitHub forwarding service, and PRINTS `gh api -X DELETE repos/OWNER/REPO/hooks/ID` for you to run after you stopped the forwarder. There is no flag that deletes: another machine's live forwarder owns a hook that looks identical, so deleting is the human's call.
 
 ### What the receiver accepts and writes
 

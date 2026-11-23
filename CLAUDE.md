@@ -10,7 +10,10 @@ run; an agent never installs them). When the receiver is down and nothing is ins
 `nohup` fallback. Then arm a Monitor on
 `tail -F <state dir>/gh-watch.log | grep --line-buffered -E 'ALERT|INFO'` and re-arm it when it expires (30 minutes). ALERT
 lines are what you report. Keep the slow poll as the backstop. `ensure` starts only the receiver. Only the human starts the
-forwarder (`gh webhook forward`), or an agent when the human explicitly asked for it in that session. Detail:
+forwarder (`gh webhook forward`), or an agent when the human explicitly asked for it in that session. Stop the forwarder with
+`launchctl bootout gui/$(id -u)/dev.klatch.gh-watch-forwarder` (SIGTERM, the clean exit that removes its webhook), never
+`kill -9`: a killed forwarder leaves a stale webhook and the next one fails (`gh-watch status` exit 5, then the human runs
+`gh-watch clean-hooks`, which prints the delete command and deletes nothing, #1350). Detail:
 [proto/scripts/PR-SWEEP.md](proto/scripts/PR-SWEEP.md), "At the start of a session".
 
 ## Waiting
