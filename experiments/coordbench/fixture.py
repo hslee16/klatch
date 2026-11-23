@@ -70,18 +70,6 @@ class Fixture:
             except (OSError, ValueError) as e:
                 raise FixtureError("cannot load the seed history of fixture %s: %s" % (name, e))
 
-    def private_files(self, agent):
-        """[(path relative to the clone, absolute source)] of the files only this agent has (fixture key "private":
-        private/<agent>/...). The harness copies them into that agent's clone, untracked and excluded from git."""
-        if not self.private_dir:
-            return []
-        root = os.path.join(self.private_dir, agent)
-        out = []
-        for d, _, names in os.walk(root):
-            for n in sorted(names):
-                p = os.path.join(d, n)
-                out.append((os.path.relpath(p, root), p))
-        return sorted(out)
         self.prebuilt_history = bool(self.spec.get("prebuilt_history"))
         self.room_script = None
         if self.spec.get("room_history"):
@@ -98,6 +86,19 @@ class Fixture:
                     self.resume["note"] = f.read().strip()
             except (OSError, KeyError) as e:
                 raise FixtureError("cannot load the resume note of fixture %s: %s" % (name, e))
+
+    def private_files(self, agent):
+        """[(path relative to the clone, absolute source)] of the files only this agent has (fixture key "private":
+        private/<agent>/...). The harness copies them into that agent's clone, untracked and excluded from git."""
+        if not self.private_dir:
+            return []
+        root = os.path.join(self.private_dir, agent)
+        out = []
+        for d, _, names in os.walk(root):
+            for n in sorted(names):
+                p = os.path.join(d, n)
+                out.append((os.path.relpath(p, root), p))
+        return sorted(out)
 
     @property
     def names(self):
