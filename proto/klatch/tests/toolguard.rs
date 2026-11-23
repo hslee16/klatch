@@ -199,17 +199,20 @@ fn edit_of(h: &Home, who: &str, file: &std::path::Path) -> Option<i32> {
     .code()
 }
 
+/// A home where bob has claimed `file` in room r and alice has joined it.
+fn home_with_claim(file: &std::path::Path) -> Home {
+    let h = Home::new();
+    h.ok("alice", &["join", "r"]);
+    h.ok("bob", &["join", "r"]);
+    h.ok("bob", &["claim", "r", file.to_str().unwrap()]);
+    h
+}
+
 #[test]
 fn an_edit_through_a_symlink_to_a_claimed_file_is_blocked() {
     let (_dir, real, link) = linked();
     std::fs::write(real.join("api.rs"), "x").unwrap();
-    let h = Home::new();
-    h.ok("alice", &["join", "r"]);
-    h.ok("bob", &["join", "r"]);
-    h.ok(
-        "bob",
-        &["claim", "r", real.join("api.rs").to_str().unwrap()],
-    );
+    let h = home_with_claim(&real.join("api.rs"));
     assert_eq!(edit_of(&h, "alice", &link.join("api.rs")), Some(2));
     assert_eq!(edit_of(&h, "alice", &real.join("other.rs")), Some(0));
 }
@@ -218,13 +221,7 @@ fn an_edit_through_a_symlink_to_a_claimed_file_is_blocked() {
 fn a_claim_made_through_a_symlink_blocks_an_edit_by_the_real_path() {
     let (_dir, real, link) = linked();
     std::fs::write(real.join("api.rs"), "x").unwrap();
-    let h = Home::new();
-    h.ok("alice", &["join", "r"]);
-    h.ok("bob", &["join", "r"]);
-    h.ok(
-        "bob",
-        &["claim", "r", link.join("api.rs").to_str().unwrap()],
-    );
+    let h = home_with_claim(&link.join("api.rs"));
     assert_eq!(edit_of(&h, "alice", &real.join("api.rs")), Some(2));
 }
 

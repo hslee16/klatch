@@ -69,32 +69,33 @@ fn the_spec_lists_the_methods_this_check_expects() {
     }
 }
 
-#[test]
-fn every_method_in_the_spec_has_a_python_wrapper() {
-    let source = repo("clients/python/klatch_client.py");
+/// Every spec method has a wrapper in `source` under one of the names `names_of` gives for it.
+fn assert_every_method_wrapped(source: &str, client: &str, names_of: &dyn Fn(&str) -> [String; 2]) {
+    let source = repo(source);
     for m in spec_methods() {
-        let names = [format!("def {m}("), format!("def set_{m}(")];
         assert!(
-            defines(&source, &names),
-            "Python client has no wrapper for {m}"
+            defines(&source, &names_of(&m)),
+            "{client} client has no wrapper for {m}"
         );
     }
 }
 
 #[test]
+fn every_method_in_the_spec_has_a_python_wrapper() {
+    assert_every_method_wrapped("clients/python/klatch_client.py", "Python", &|m| {
+        [format!("def {m}("), format!("def set_{m}(")]
+    });
+}
+
+#[test]
 fn every_method_in_the_spec_has_a_typescript_wrapper() {
-    let source = repo("clients/typescript/klatch.ts");
-    for m in spec_methods() {
-        let c = camel(&m);
-        let names = [
+    assert_every_method_wrapped("clients/typescript/klatch.ts", "TypeScript", &|m| {
+        let c = camel(m);
+        [
             format!("async {c}("),
             format!("async set{}(", capitalise(&c)),
-        ];
-        assert!(
-            defines(&source, &names),
-            "TypeScript client has no wrapper for {m}"
-        );
-    }
+        ]
+    });
 }
 
 fn capitalise(s: &str) -> String {
@@ -106,12 +107,7 @@ fn capitalise(s: &str) -> String {
 
 #[test]
 fn every_method_in_the_spec_has_a_rust_wrapper() {
-    let source = repo("proto/klatch/src/client.rs");
-    for m in spec_methods() {
-        let names = [format!("pub fn {m}("), format!("pub fn set_{m}(")];
-        assert!(
-            defines(&source, &names),
-            "Rust client has no wrapper for {m}"
-        );
-    }
+    assert_every_method_wrapped("proto/klatch/src/client.rs", "Rust", &|m| {
+        [format!("pub fn {m}("), format!("pub fn set_{m}(")]
+    });
 }

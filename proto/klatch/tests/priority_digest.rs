@@ -123,6 +123,25 @@ fn the_page_says_it_is_in_priority_order_and_how_many_were_left_with_the_exact_c
     assert!(out.contains("[shown by importance"), "{out}");
 }
 
+/// Fail if any seq of `page` was already shown; `at` says which call.
+fn assert_none_shown_twice(page: &[u64], shown: &[u64], at: &str) {
+    for s in page {
+        assert!(!shown.contains(s), "seq {s} shown twice{at}");
+    }
+}
+
+/// Read to the end with `klatch read`, adding what each page shows to `shown`.
+fn read_to_the_end(h: &Home, shown: &mut Vec<u64>) {
+    loop {
+        let page = rows(&h.ok("alice", &["read", "r"]));
+        if page.is_empty() {
+            return;
+        }
+        assert_none_shown_twice(&page, shown, "");
+        shown.extend(page);
+    }
+}
+
 #[test]
 fn three_reads_in_a_row_show_every_message_once_and_lose_none() {
     let h = mixed_room();
@@ -130,9 +149,7 @@ fn three_reads_in_a_row_show_every_message_once_and_lose_none() {
     for call in 0..3 {
         let page = rows(&h.ok("alice", &["read", "r"]));
         assert!(!page.is_empty(), "call {call}");
-        for s in &page {
-            assert!(!shown.contains(s), "seq {s} shown twice (call {call})");
-        }
+        assert_none_shown_twice(&page, &shown, &format!(" (call {call})"));
         shown.extend(&page);
         assert_eq!(
             unread(&h),
@@ -141,16 +158,7 @@ fn three_reads_in_a_row_show_every_message_once_and_lose_none() {
         );
     }
     // the rest, to the end
-    loop {
-        let page = rows(&h.ok("alice", &["read", "r"]));
-        if page.is_empty() {
-            break;
-        }
-        for s in &page {
-            assert!(!shown.contains(s), "seq {s} shown twice");
-        }
-        shown.extend(page);
-    }
+    read_to_the_end(&h, &mut shown);
     let all: BTreeSet<u64> = shown.iter().copied().collect();
     assert_eq!(shown.len(), TOTAL, "no repeat");
     assert_eq!(
@@ -239,9 +247,7 @@ fn waits_show_the_same_order_and_three_waits_lose_nothing_and_repeat_nothing() {
                 "{page:?}"
             );
         }
-        for s in &page {
-            assert!(!shown.contains(s), "seq {s} shown twice (call {call})");
-        }
+        assert_none_shown_twice(&page, &shown, &format!(" (call {call})"));
         shown.extend(&page);
         assert!(
             out.contains(&format!(
@@ -253,16 +259,7 @@ fn waits_show_the_same_order_and_three_waits_lose_nothing_and_repeat_nothing() {
         assert_eq!(unread(&h), TOTAL - shown.len());
     }
     // a read continues, mixing the two commands loses and repeats nothing
-    loop {
-        let page = rows(&h.ok("alice", &["read", "r"]));
-        if page.is_empty() {
-            break;
-        }
-        for s in &page {
-            assert!(!shown.contains(s), "seq {s} shown twice");
-        }
-        shown.extend(page);
-    }
+    read_to_the_end(&h, &mut shown);
     assert_eq!(
         shown.iter().copied().collect::<BTreeSet<_>>(),
         (1..=TOTAL as u64).collect::<BTreeSet<_>>()
@@ -287,9 +284,7 @@ fn peeking_waits_put_the_addressed_first_and_together_cover_the_room_once() {
                 "{page:?}"
             );
         }
-        for s in &page {
-            assert!(!shown.contains(s), "seq {s} shown twice (call {call})");
-        }
+        assert_none_shown_twice(&page, &shown, &format!(" (call {call})"));
         shown.extend(page);
     }
     assert_eq!(shown.len(), TOTAL);

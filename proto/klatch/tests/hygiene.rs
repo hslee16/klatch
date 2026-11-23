@@ -10,38 +10,42 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Every `.rs` file under a crate's `src`, excluding the build output.
-fn sources() -> Vec<(PathBuf, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
         }
     }
+}
+
+/// Whether the directory is a crate of the workspace (it has a manifest and is not the build output).
+fn is_crate(p: &Path) -> bool {
+    p.is_dir() && p.join("Cargo.toml").exists() && p.file_name().is_some_and(|n| n != "target")
+}
+
+/// Test modules kept in their own files (`src/.../tests/*.rs`, `tests.rs`) are not shipped code.
+fn is_shipped(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    !s.contains("/tests/") && !s.ends_with("/tests.rs")
+}
+
+/// Every `.rs` file under a crate's `src`, excluding the build output.
+fn sources() -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(workspace_root()).unwrap().flatten() {
-        let p = entry.path();
-        if p.is_dir()
-            && p.join("Cargo.toml").exists()
-            && p.file_name().is_some_and(|n| n != "target")
-        {
-            walk(&p.join("src"), &mut files);
+        if is_crate(&entry.path()) {
+            walk(&entry.path().join("src"), &mut files);
         }
     }
     files
         .into_iter()
-        // test modules kept in their own files (`src/.../tests/*.rs`, `tests.rs`) are not shipped code
-        .filter(|p| {
-            let s = p.to_string_lossy();
-            !s.contains("/tests/") && !s.ends_with("/tests.rs")
-        })
+        .filter(|p| is_shipped(p))
         .map(|p| {
             let t = std::fs::read_to_string(&p).unwrap_or_default();
             (p, t)
@@ -61,53 +65,61 @@ fn fn_name(line: &str) -> Option<&str> {
     Some(rest[..end].trim())
 }
 
+/// The non-comment lines of the shipped code of one file, numbered from 1 and trimmed at the start.
+fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    code_only(text)
+        .lines()
+        .enumerate()
+        .map(|(n, line)| (n + 1, line.trim_start()))
+        .filter(|(_, t)| !t.starts_with("//"))
+}
+
+const FORBIDDEN: [&str; 19] = [
+    "encrypt",
+    "decrypt",
+    "seal",
+    "unseal",
+    "cipher",
+    "hmac",
+    "sha1",
+    "sha2",
+    "sha256",
+    "sha512",
+    "md5",
+    "aes",
+    "chacha",
+    "salsa",
+    "xor_cipher",
+    "rot13",
+    "kdf",
+    "pbkdf",
+    "derive_key",
+];
+
+/// helpers that only call the audited crates: they ask SQLCipher its version, and seal a message body or payload
+/// through `klatch::keys::protect_text`
+const REVIEWED: [&str; 3] = ["cipher_version", "seal_body", "seal_text"];
+
+/// Whether a function of this name is named like a primitive and is not one of the reviewed helpers.
+fn is_home_grown_name(name: &str) -> bool {
+    let hit = FORBIDDEN
+        .iter()
+        .any(|f| name == *f || name.starts_with(&format!("{f}_")));
+    hit && !REVIEWED.contains(&name)
+}
+
+fn is_sbox(t: &str) -> bool {
+    t.contains("const SBOX") || t.contains("static SBOX")
+}
+
 #[test]
 fn nothing_defines_its_own_cipher_hash_mac_or_key_derivation() {
-    let forbidden = [
-        "encrypt",
-        "decrypt",
-        "seal",
-        "unseal",
-        "cipher",
-        "hmac",
-        "sha1",
-        "sha2",
-        "sha256",
-        "sha512",
-        "md5",
-        "aes",
-        "chacha",
-        "salsa",
-        "xor_cipher",
-        "rot13",
-        "kdf",
-        "pbkdf",
-        "derive_key",
-    ];
-    // helpers that only call the audited crates: they ask SQLCipher its version, and seal a message body or payload
-    // through `klatch::keys::protect_text`
-    let reviewed = ["cipher_version", "seal_body", "seal_text"];
     let mut found = Vec::new();
     for (path, text) in sources() {
-        for (n, line) in code_only(&text).lines().enumerate() {
-            let t = line.trim_start();
-            if t.starts_with("//") {
-                continue;
-            }
-            let Some(name) = fn_name(t) else { continue };
-            let hit = forbidden
-                .iter()
-                .any(|f| name == *f || name.starts_with(&format!("{f}_")));
-            if hit && !reviewed.contains(&name) {
-                found.push(format!("{}:{}: {}", path.display(), n + 1, t));
-            }
-        }
-        for (n, line) in code_only(&text).lines().enumerate() {
-            let t = line.trim_start();
-            if !t.starts_with("//") && (t.contains("const SBOX") || t.contains("static SBOX")) {
-                found.push(format!("{}:{}: {}", path.display(), n + 1, t));
-            }
-        }
+        let named = code_lines(&text)
+            .filter(|(_, t)| fn_name(t).is_some_and(is_home_grown_name))
+            .chain(code_lines(&text).filter(|(_, t)| is_sbox(t)));
+        found.extend(named.map(|(n, t)| format!("{}:{}: {}", path.display(), n, t)));
     }
     assert!(found.is_empty(), "home-grown crypto?\n{}", found.join("\n"));
 }
@@ -123,22 +135,26 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
     assert_eq!(fn_name("let x = 3;"), None);
 }
 
+/// main.rs of both binaries: lowering the core dump limit. The harness module: the process table. The daemon (#102):
+/// the peer-credential calls, umask, signal handlers and poll, all libc. The admin passphrase prompt (#1233): termios
+/// and read on a terminal descriptor. The tests that drive the binary on a pseudo-terminal (openpty, setsid, poll).
+/// Nothing else.
+const UNSAFE_ALLOWED: [&str; 7] = [
+    "klatch/src/proof/tty.rs",
+    "klatch/tests/common/",
+    "klatch-bench/src/pty.rs",
+    "klatch/src/main.rs",
+    "klatch-server/src/main.rs",
+    "klatch-server/src/daemon.rs",
+    "klatch/src/harness/",
+];
+
+fn is_unsafe(t: &str) -> bool {
+    t.contains("unsafe {") || t.contains("unsafe fn") || t.contains("unsafe impl")
+}
+
 #[test]
 fn unsafe_code_is_only_where_it_was_reviewed() {
-    // main.rs of both binaries: lowering the core dump limit. The harness module: the process table. The daemon (#102):
-    // the peer-credential calls, umask, signal handlers and poll, all libc. The admin passphrase prompt (#1233): termios
-    // and read on a terminal descriptor. The tests that drive the binary on a pseudo-terminal (openpty, setsid, poll).
-    // Nothing else.
-    let allowed = [
-        "klatch/src/proof/tty.rs",
-        "klatch/tests/common/",
-        "klatch/tests/admin_proof.rs",
-        "klatch-bench/src/pty.rs",
-        "klatch/src/main.rs",
-        "klatch-server/src/main.rs",
-        "klatch-server/src/daemon.rs",
-        "klatch/src/harness/",
-    ];
     let mut found = Vec::new();
     for (path, text) in sources() {
         let rel = path
@@ -146,17 +162,14 @@ fn unsafe_code_is_only_where_it_was_reviewed() {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        if allowed.iter().any(|a| rel.contains(a)) {
+        if UNSAFE_ALLOWED.iter().any(|a| rel.contains(a)) {
             continue;
         }
-        for (n, line) in code_only(&text).lines().enumerate() {
-            let t = line.trim_start();
-            if !t.starts_with("//")
-                && (t.contains("unsafe {") || t.contains("unsafe fn") || t.contains("unsafe impl"))
-            {
-                found.push(format!("{rel}:{}", n + 1));
-            }
-        }
+        found.extend(
+            code_lines(&text)
+                .filter(|(_, t)| is_unsafe(t))
+                .map(|(n, _)| format!("{rel}:{n}")),
+        );
     }
     assert!(found.is_empty(), "unreviewed unsafe code: {found:?}");
 }

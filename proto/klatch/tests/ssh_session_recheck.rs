@@ -11,7 +11,7 @@ use klatch::gateway::{AllowAll, Gateway};
 use klatch::member::{CliClock, custody, db_path};
 use klatch::protocol::{ServerFrame, decode_server_line};
 use std::io::{BufRead as _, Write as _};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 fn with_store<T>(home: &Home, f: impl FnOnce(&Gateway<klatch::store::SqliteStore>) -> T) -> T {
     // SAFETY: the only test in this file, so nothing else touches the process environment.
@@ -25,15 +25,9 @@ fn with_store<T>(home: &Home, f: impl FnOnce(&Gateway<klatch::store::SqliteStore
     f(&Gateway::new(store, CliClock, AllowAll))
 }
 
-#[test]
-fn an_open_session_ends_with_a_refusal_when_its_key_is_unmapped() {
-    let home = Home::new();
-    let human = Principal::unattributed("admin");
-    with_store(&home, |g| {
-        g.admin_set_ssh_key(&human, "a", "member-a", true).unwrap()
-    });
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_klatch"))
+/// `klatch serve --stdio --ssh-key a` with a pipe on standard input and output, as an `authorized_keys` forced command.
+fn spawn_session(home: &Home) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_klatch"))
         .env_remove("KLATCH_IDENTITY_FILE")
         .env("KLATCH_HOME", &home.0)
         .env("KLATCH_KEY_DIR", home.0.join("keys"))
@@ -42,7 +36,25 @@ fn an_open_session_ends_with_a_refusal_when_its_key_is_unmapped() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap();
+        .unwrap()
+}
+
+/// Send one post of `body` to room r as request `id`.
+fn send_post(stdin: &mut ChildStdin, id: &str, body: &str) {
+    let params = format!(r#"{{"room":"r","body":"{body}"}}"#);
+    writeln!(stdin, "{}", request(id, "post", &params)).unwrap();
+    stdin.flush().unwrap();
+}
+
+#[test]
+fn an_open_session_ends_with_a_refusal_when_its_key_is_unmapped() {
+    let home = Home::new();
+    let human = Principal::unattributed("admin");
+    with_store(&home, |g| {
+        g.admin_set_ssh_key(&human, "a", "member-a", true).unwrap()
+    });
+
+    let mut child = spawn_session(&home);
     let mut stdin = child.stdin.take().unwrap();
     let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
     let mut until = |stop: &dyn Fn(&ServerFrame) -> bool| -> Vec<ServerFrame> {
@@ -59,13 +71,7 @@ fn an_open_session_ends_with_a_refusal_when_its_key_is_unmapped() {
     };
     let answers = |id: &'static str| move |f: &ServerFrame| matches!(f, ServerFrame::Response { id: i, .. } if i == id);
 
-    writeln!(
-        stdin,
-        "{}",
-        request("p1", "post", r#"{"room":"r","body":"while mapped"}"#)
-    )
-    .unwrap();
-    stdin.flush().unwrap();
+    send_post(&mut stdin, "p1", "while mapped");
     let frames = until(&answers("p1"));
     assert!(
         matches!(frames.last(), Some(ServerFrame::Response { ok: true, .. })),
@@ -77,13 +83,7 @@ fn an_open_session_ends_with_a_refusal_when_its_key_is_unmapped() {
         g.admin_set_ssh_key(&human, "a", "member-a", false).unwrap()
     });
 
-    writeln!(
-        stdin,
-        "{}",
-        request("p2", "post", r#"{"room":"r","body":"after unmap"}"#)
-    )
-    .unwrap();
-    stdin.flush().unwrap();
+    send_post(&mut stdin, "p2", "after unmap");
     let frames = until(&answers("p2"));
     assert!(
         frames.iter().any(|f| matches!(
