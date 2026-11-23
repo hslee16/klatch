@@ -84,33 +84,39 @@ impl fmt::Debug for Image {
     }
 }
 
+/// The format by its signature, and the size the file declares.
+fn sniff(bytes: &[u8]) -> Result<(ImageFormat, u32, u32), ImageError> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        let (w, h) = png_size(bytes)?;
+        Ok((ImageFormat::Png, w, h))
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        let (w, h) = jpeg_size(bytes)?;
+        Ok((ImageFormat::Jpeg, w, h))
+    } else {
+        Err(ImageError::Format)
+    }
+}
+
+fn check_dimensions(width: u32, height: u32) -> Result<(), ImageError> {
+    let area = u64::from(width) * u64::from(height);
+    let too_small = width < MIN_SIDE || height < MIN_SIDE || area < MIN_PIXELS;
+    if too_small {
+        return Err(ImageError::TooSmall);
+    }
+    let too_large = width > MAX_SIDE || height > MAX_SIDE || area > MAX_PIXELS;
+    if too_large {
+        return Err(ImageError::TooLarge);
+    }
+    Ok(())
+}
+
 impl Image {
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Image, ImageError> {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(ImageError::TooBig);
         }
-        let (format, width, height) =
-            if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
-                let (w, h) = png_size(&bytes)?;
-                (ImageFormat::Png, w, h)
-            } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-                let (w, h) = jpeg_size(&bytes)?;
-                (ImageFormat::Jpeg, w, h)
-            } else {
-                return Err(ImageError::Format);
-            };
-        if width < MIN_SIDE
-            || height < MIN_SIDE
-            || u64::from(width) * u64::from(height) < MIN_PIXELS
-        {
-            return Err(ImageError::TooSmall);
-        }
-        if width > MAX_SIDE
-            || height > MAX_SIDE
-            || u64::from(width) * u64::from(height) > MAX_PIXELS
-        {
-            return Err(ImageError::TooLarge);
-        }
+        let (format, width, height) = sniff(&bytes)?;
+        check_dimensions(width, height)?;
         Ok(Image {
             format,
             width,
@@ -172,7 +178,8 @@ fn png_size(b: &[u8]) -> Result<(u32, u32), ImageError> {
         let data = at + 8;
         match kind {
             b"IHDR" => {
-                if len != 13 || size.is_some() || at != 8 {
+                let first = at == 8 && size.is_none();
+                if len != 13 || !first {
                     return Err(ImageError::Damaged);
                 }
                 let d = b.get(data..data + 8).ok_or(ImageError::Damaged)?;
