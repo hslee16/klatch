@@ -89,11 +89,13 @@ pub(super) fn hooks(ctx: &Ctx, of: Option<String>) -> Result<()> {
     }
     for r in runs {
         println!(
-            "{}\tlast ran {}s ago\truns {}\tprinted {} bytes",
+            "{}\tlast ran {}s ago\truns {}\tprinted {} bytes\t{} in all (largest {})",
             r.event,
             klatch::domain::secs_between(ctx.now, r.last_ts),
             r.runs,
-            r.last_bytes
+            r.last_bytes,
+            r.total_bytes,
+            r.max_bytes
         );
     }
     Ok(())
@@ -178,13 +180,6 @@ pub(super) fn join_lobby(ctx: &Ctx) -> Result<Start> {
         boards.push(DEFAULT_ROOM.to_string());
     }
     Ok(Start { notice, boards })
-}
-
-/// The rooms the guard would not show, then what the rooms have to say.
-pub(super) fn digest_text(d: &klatch::gateway::Digest) -> String {
-    let (mut text, _) = refused_text(d);
-    text.push_str(&render_hook(&d.rooms, d.now));
-    text
 }
 
 /// The notes on rooms the guard would not show, cut to a fixed budget with a count of the rest (#612), and their
@@ -360,7 +355,14 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     let (text, notice) = if args.is("SessionStart") {
         session_start(ctx, args)?
     } else {
-        (digest_text(&t.digest_with(false)?), None)
+        (
+            digest_text(
+                &t.digest_with(false)?,
+                session_level(t, ctx.me),
+                args.is("UserPromptSubmit"),
+            ),
+            None,
+        )
     };
     // Record that this hook ran (the size it printed, never the content), so a user can see the hooks are alive for
     // a session. A failure to record must not stop the hook delivering.
@@ -501,7 +503,11 @@ pub(super) fn pre_tool_use(ctx: &Ctx) -> Result<()> {
     );
     match verdict {
         ToolVerdict::Allow => {}
-        ToolVerdict::Warn(w) => print!("{}", hook_output_json("PreToolUse", &w, None)),
+        ToolVerdict::Warn(w) => {
+            // a warning goes into the context, so it counts toward the session's bytes (#1406)
+            let _ = t.record_hook_run("PreToolUse", w.len());
+            print!("{}", hook_output_json("PreToolUse", &w, None));
+        }
         ToolVerdict::Block(reason) => {
             eprintln!("{reason}");
             std::process::exit(2);

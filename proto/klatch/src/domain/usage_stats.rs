@@ -138,6 +138,11 @@ pub struct UsageStats {
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
+    /// Bytes the hooks put into session contexts (#1406), by event: the total and the largest single run, and the
+    /// sessions that took the most. Sizes only; empty for a store from before the byte columns.
+    pub hook_bytes: Counts,
+    pub hook_bytes_max: Counts,
+    pub sessions_top_bytes: Counts,
     pub audit: Counts,
     pub credentials_issued: i64,
     pub credentials_revoked: i64,
@@ -419,6 +424,34 @@ impl UsageStats {
             ["event", "runs"],
             &self.hooks,
         );
+        o.push_str(
+            "\nbytes injected into sessions by hook event (sizes only; the average is per run)\n",
+        );
+        if self.hook_bytes.is_empty() {
+            o.push_str("  (none recorded)\n");
+        }
+        for (event, total) in &self.hook_bytes {
+            let runs = self
+                .hooks
+                .iter()
+                .find(|(e, _)| e == event)
+                .map_or(0, |(_, n)| *n);
+            let max = self
+                .hook_bytes_max
+                .iter()
+                .find(|(e, _)| e == event)
+                .map_or(0, |(_, n)| *n);
+            let avg = if runs > 0 { total / runs } else { 0 };
+            o.push_str(&format!(
+                "  {event}: {total} bytes in {runs} runs (average {avg}, largest {max})\n"
+            ));
+        }
+        table(
+            &mut o,
+            "largest sessions by bytes injected",
+            ["session", "bytes"],
+            &self.sessions_top_bytes,
+        );
         table(&mut o, "admin audit by act", ["act", "count"], &self.audit);
         o.push_str(&format!(
             "\nworker credentials: {} issued, {} revoked\n",
@@ -485,6 +518,9 @@ impl UsageStats {
                 "posted_never_read_by_day": pairs(&self.members.never_read_days),
             },
             "hooks": pairs(&self.hooks),
+            "hook_bytes": pairs(&self.hook_bytes),
+            "hook_bytes_max": pairs(&self.hook_bytes_max),
+            "sessions_top_bytes": pairs(&self.sessions_top_bytes),
             "audit": pairs(&self.audit),
             "credentials": {"issued": self.credentials_issued, "revoked": self.credentials_revoked},
         })

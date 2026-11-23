@@ -160,6 +160,13 @@ impl MemberStore for Faulty {
 
     fn record_hook_run(&self, run: &HookEvent, now: i64) -> Result<()> {
         let mut h = self.hooks.borrow_mut();
+        if run.event == "SessionStart" {
+            for ((m, _), r) in h.iter_mut() {
+                if m == run.member {
+                    r.since_start = 0;
+                }
+            }
+        }
         let e = h
             .entry((run.member.into(), run.event.into()))
             .or_insert_with(|| HookRun {
@@ -167,6 +174,9 @@ impl MemberStore for Faulty {
                 last_ts: now,
                 runs: 0,
                 last_bytes: 0,
+                total_bytes: 0,
+                max_bytes: 0,
+                since_start: 0,
             });
         e.last_ts = now;
         e.runs = if self.fault == Fault::HookRunsAreNotCounted {
@@ -175,6 +185,9 @@ impl MemberStore for Faulty {
             e.runs + 1
         };
         e.last_bytes = run.bytes;
+        e.total_bytes += run.bytes;
+        e.max_bytes = e.max_bytes.max(run.bytes);
+        e.since_start += run.bytes;
         Ok(())
     }
 

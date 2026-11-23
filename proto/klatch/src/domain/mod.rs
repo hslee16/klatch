@@ -27,6 +27,7 @@ mod kind;
 mod labels;
 mod mediator;
 mod merge_claim;
+mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
 mod merge_queue;
 pub use merge_queue::{
@@ -101,7 +102,7 @@ pub use dm::{
 pub use error::{Error, NEXT_STEP, Result};
 pub use hook::{
     RoomDigest, cut_lines_to_fit, hook_context_json, hook_output_json, outside_view_line,
-    printed_len, refused_lines_within, render_hook, render_hook_within,
+    printed_len, refused_lines_within, render_hook, render_hook_at, render_hook_within,
 };
 pub use hosted_judge::{HostedConfig, HostedJudge, HostedTransport, label_below_ceiling};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
@@ -127,6 +128,7 @@ pub use scope::{
     MemberAttrs, SHARED_SCOPE, WORK_ITEM_NOUNS, canonical_claim_path, claim_scope, scopes_collide,
     valid_scope, work_item_name,
 };
+pub use session_budget::{BudgetLevel, PROMPT_BUDGET_BYTES, SESSION_BUDGET_BYTES};
 pub use stuck::{StuckEvent, YIELD_WINDOW_SECS, claim_label, stuck_events};
 pub use subagent_name::invokes_klatch_unnamed;
 #[cfg(kani)]

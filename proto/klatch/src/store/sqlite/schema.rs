@@ -23,7 +23,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE claims_seen(room TEXT NOT NULL, member TEXT NOT NULL, owner TEXT NOT NULL, path TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(room,member,owner,path));
  CREATE TABLE asks_reported(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
  CREATE TABLE asks_escalated(room TEXT NOT NULL, member TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(room,member,seq));
- CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, PRIMARY KEY(member,event));
+ CREATE TABLE hook_runs(member TEXT NOT NULL, event TEXT NOT NULL, last_ts INTEGER NOT NULL, runs INTEGER NOT NULL, last_bytes INTEGER NOT NULL, total_bytes INTEGER NOT NULL DEFAULT 0, max_bytes INTEGER NOT NULL DEFAULT 0, since_start INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(member,event));
  CREATE TABLE claim_waits(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, ts INTEGER NOT NULL, scope TEXT NOT NULL DEFAULT '', told INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member,path));
  CREATE TABLE sessions(session_id TEXT PRIMARY KEY, member TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_scope(member TEXT PRIMARY KEY, scope TEXT NOT NULL, ts INTEGER NOT NULL);
@@ -499,6 +499,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v36,
     migrate_v37,
     migrate_v38,
+    migrate_v39,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -525,6 +526,30 @@ pub(super) fn migrate_v38(conn: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS claim_conflicts_open(room TEXT NOT NULL, member TEXT NOT NULL, path TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY(room,member,path));",
     )
     .map_err(be)
+}
+
+/// Version 39 to 40: the bytes each hook event has put into a member's context (#1406). `total_bytes` and `max_bytes` are
+/// all-time counts per member and event (the report reads them), `since_start` is what was injected since the member's
+/// latest `SessionStart` (the session budget reads it). Sizes only, never content. Rows written before this keep their
+/// run counts and start at zero bytes: what an old run printed was never added up.
+pub(super) fn migrate_v39(conn: &Connection) -> Result<()> {
+    // a database a fresh schema made (and then marked older, as the tests do) already has the columns
+    for column in ["total_bytes", "max_bytes", "since_start"] {
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('hook_runs') WHERE name=?1",
+                params![column],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        if has == 0 {
+            conn.execute_batch(&format!(
+                "ALTER TABLE hook_runs ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;"
+            ))
+            .map_err(be)?;
+        }
+    }
+    Ok(())
 }
 
 /// Bring a database that is at `version` up to the current schema, one step at a time.
