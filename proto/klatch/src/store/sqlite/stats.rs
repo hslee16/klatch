@@ -9,8 +9,9 @@ use super::SqliteStore;
 use super::connect::be;
 use super::schema::{WAIT_WINDOW_SECS, user_version};
 use crate::domain::{
-    AskCounts, ClaimCounts, Counts, MemberCounts, Result, RoomClass, RoomCount, StatsOptions,
-    UsageStats, answer_target, claim_class, closed_target, day_of, is_ask, median_and_p90, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MemberCounts, Result, RoomClass, RoomCount,
+    StatsOptions, UsageStats, answer_target, claim_class, closed_target, day_of, is_ask,
+    median_and_p90, vocab,
 };
 use crate::keys::Key;
 use rusqlite::types::Value;
@@ -322,6 +323,60 @@ fn members(conn: &Connection, o: &StatsOptions) -> Result<MemberCounts> {
     })
 }
 
+/// The claim event record (#1386): counts by class and word from a closed vocabulary, and medians of seconds. Nothing
+/// in the table is a name, so nothing here can print one.
+fn claim_history(conn: &Connection, o: &StatsOptions) -> Result<ClaimHistory> {
+    const T: &str = "claim_events";
+    let by = |col: &str, event: &str| {
+        words(
+            conn,
+            T,
+            &format!(
+                "SELECT {col},COUNT(*) c FROM claim_events WHERE event='{event}' AND (?1 IS NULL OR room=?1) AND ts>=?2 GROUP BY {col} ORDER BY c DESC, 1"
+            ),
+            o,
+        )
+    };
+    let mut h = ClaimHistory {
+        granted: by("class", "granted")?,
+        refused: by("reason", "refused")?,
+        released: by("class", "released")?,
+        released_by: by("reason", "released")?,
+        expired: by("class", "expired")?,
+        ..ClaimHistory::default()
+    };
+    if !has(conn, T)? {
+        return Ok(h);
+    }
+    let w = "(?1 IS NULL OR room=?1) AND ts>=?2";
+    h.takeovers = one(
+        conn,
+        &format!("SELECT COUNT(*) FROM claim_events WHERE event='takeover' AND {w}"),
+        o,
+    )?;
+    let waits = rows(
+        conn,
+        &format!(
+            "SELECT waited FROM claim_events WHERE event='granted' AND waited IS NOT NULL AND {w}"
+        ),
+        o,
+        |r| r.get::<_, i64>(0),
+    )?;
+    h.handled = waits.len() as i64;
+    h.handled_wait_median = median_and_p90(waits).0;
+    let holds = rows(
+        conn,
+        &format!(
+            "SELECT held FROM claim_events WHERE event IN ('released','expired') AND held>0 AND {w}"
+        ),
+        o,
+        |r| r.get::<_, i64>(0),
+    )?;
+    h.holds = holds.len() as i64;
+    h.hold_median = median_and_p90(holds).0;
+    Ok(h)
+}
+
 fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     let sealed: HashSet<String> = if has(conn, "policy")? {
         rows(
@@ -444,6 +499,7 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
         } else {
             0
         },
+        history: claim_history(conn, o)?,
     };
     s.refusals = words(
         conn,

@@ -13,6 +13,12 @@ pub trait ClaimStore {
     /// Release a claim you hold; `Error::NotFound` if you hold none on that exact path.
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()>;
 
+    /// `release` at a known moment, so a store that records claim events can say how long the claim was held (#1386).
+    /// The default is `release`.
+    fn release_at(&self, room: &str, owner: &str, path: &str, _now: i64) -> Result<()> {
+        self.release(room, owner, path)
+    }
+
     /// `release` with a note on what the holder changed (#272), kept for those who saw the claim and for the next
     /// claimant of the path; an empty note clears an older one. The default drops the note.
     fn release_with(&self, release: &Release, _now: i64) -> Result<()> {

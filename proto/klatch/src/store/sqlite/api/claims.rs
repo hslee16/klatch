@@ -24,7 +24,11 @@ impl ClaimStore for SqliteStore {
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
-        self.do_release(room, owner, path)
+        self.do_release(room, owner, path, None)
+    }
+
+    fn release_at(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
+        self.do_release(room, owner, path, Some(now))
     }
 
     fn release_with(&self, release: &Release, now: i64) -> Result<()> {

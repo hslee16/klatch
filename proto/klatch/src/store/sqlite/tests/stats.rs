@@ -220,6 +220,40 @@ fn bench() -> SqliteStore {
     s
 }
 
+fn req<'a>(who: &'a str, path: &'a str, ttl: i64) -> ClaimRequest<'a> {
+    ClaimRequest::new(("sealedroom", who), path, ttl, "TOPSECRET why")
+}
+
+/// The bench plus real claim traffic in a room and by members whose names carry `TOPSECRET`: two claims on one
+/// path where the second is refused and later granted (a handled conflict, 90 s), a release, a lapse taken over, an
+/// anchor release and a session end. The history rows are the ones the claim paths wrote, not rows made by hand.
+fn bench_with_claims() -> SqliteStore {
+    let s = bench();
+    let t = D2 + 10_000;
+    s.claim(&req("bob-TOPSECRET", "TOPSECRET/plan.rs", 5_000), t)
+        .unwrap();
+    s.claim(&req("amy-TOPSECRET", "TOPSECRET/plan.rs", 5_000), t + 10)
+        .unwrap_err();
+    s.claim(&req("amy-TOPSECRET", "TOPSECRET/plan.rs", 5_000), t + 20)
+        .unwrap_err();
+    s.release_at("sealedroom", "bob-TOPSECRET", "TOPSECRET/plan.rs", t + 70)
+        .unwrap();
+    s.claim(&req("amy-TOPSECRET", "TOPSECRET/plan.rs", 5_000), t + 100)
+        .unwrap();
+    s.claim(&req("cy-TOPSECRET", "ticket:TOPSECRET", 100), t + 200)
+        .unwrap();
+    s.claim(&req("dee-TOPSECRET", "ticket:TOPSECRET", 100), t + 400)
+        .unwrap(); // lapsed under cy: takeover
+    s.claim(
+        &req("eve-TOPSECRET", "merge:TOPSECRET", 1_000).anchored("gh:TOPSECRET"),
+        t + 500,
+    )
+    .unwrap();
+    s.release_anchored("gh:TOPSECRET", t + 560).unwrap();
+    s.release_member_claims("amy-TOPSECRET", t + 700).unwrap();
+    s
+}
+
 fn opts() -> StatsOptions {
     StatsOptions {
         top: 10,
@@ -309,6 +343,68 @@ fn claims_members_refusals_hooks_audit_and_credentials_are_counted() {
 }
 
 #[test]
+fn claim_history_is_counted_by_class_and_word() {
+    let h = bench_with_claims()
+        .usage_stats(&opts())
+        .unwrap()
+        .claims
+        .history;
+    assert_eq!(get(&h.granted, "file"), 2);
+    assert_eq!(get(&h.granted, "ticket"), 2);
+    assert_eq!(get(&h.granted, "other"), 1);
+    assert_eq!(get(&h.refused, "same-path"), 2);
+    assert_eq!(get(&h.released, "file"), 2);
+    assert_eq!(get(&h.released, "other"), 1);
+    assert_eq!(get(&h.released_by, "holder"), 1);
+    assert_eq!(get(&h.released_by, "anchor"), 1);
+    assert_eq!(get(&h.released_by, "session"), 1);
+    // cy's and dee's ticket leases lapse, and so does the bench's old file claim (held time unknown, so 0)
+    assert_eq!((get(&h.expired, "ticket"), get(&h.expired, "file")), (2, 1));
+    assert_eq!(h.takeovers, 1);
+    assert_eq!((h.handled, h.handled_wait_median), (1, Some(90)));
+    // holds: bob 70 s, the two lapsed tickets 100 s each, the merge claim 60 s, amy's 600 s (the old file claim has no
+    // known start and is left out): median of 60, 70, 100, 100, 600
+    assert_eq!((h.holds, h.hold_median), (5, Some(100)));
+}
+
+#[test]
+fn claim_history_follows_room_and_since() {
+    let s = bench_with_claims();
+    let none = s
+        .usage_stats(&StatsOptions {
+            room: Some("lobby".into()),
+            ..opts()
+        })
+        .unwrap()
+        .claims
+        .history;
+    assert_eq!((none.granted.len(), none.handled, none.holds), (0, 0, 0));
+    let late = s
+        .usage_stats(&StatsOptions {
+            since: Some(D2 + 10_450),
+            ..opts()
+        })
+        .unwrap()
+        .claims
+        .history;
+    assert_eq!(get(&late.granted, "other"), 1);
+    assert_eq!(late.handled, 0);
+}
+
+#[test]
+fn a_store_with_no_claim_record_reports_an_empty_history() {
+    let s = bench();
+    exec(&s, "DROP TABLE claim_events;");
+    let h = s.usage_stats(&opts()).unwrap().claims.history;
+    assert_eq!(h, crate::domain::ClaimHistory::default());
+    let text = s.usage_stats(&opts()).unwrap().to_text();
+    assert!(
+        text.contains("claim hold time: median - over 0 holds"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_sealed_room_shows_counts_only() {
     let r = bench().usage_stats(&opts()).unwrap();
     let sealed = r.rooms.iter().find(|x| x.room == "sealedroom").unwrap();
@@ -387,19 +483,22 @@ fn every_option() -> Vec<StatsOptions> {
 
 #[test]
 fn no_member_written_text_appears_for_any_combination_of_options() {
-    let s = bench();
-    for o in every_option() {
-        let r: UsageStats = s.usage_stats(&o).unwrap();
-        for out in [r.to_text(), r.to_json().to_string()] {
-            for needle in [
-                "TOPSECRET",
-                "hello",
-                "closed #1",
-                "answer to",
-                "seeking",
-                "snippet",
-            ] {
-                assert!(!out.contains(needle), "{needle} leaked with {o:?}:\n{out}");
+    for s in [bench(), bench_with_claims()] {
+        for o in every_option() {
+            let r: UsageStats = s.usage_stats(&o).unwrap();
+            for out in [r.to_text(), r.to_json().to_string()] {
+                for needle in [
+                    "TOPSECRET",
+                    "plan.rs",
+                    "-TOPSECRET",
+                    "hello",
+                    "closed #1",
+                    "answer to",
+                    "seeking",
+                    "snippet",
+                ] {
+                    assert!(!out.contains(needle), "{needle} leaked with {o:?}:\n{out}");
+                }
             }
         }
     }

@@ -106,3 +106,27 @@ fn another_members_activity_does_not_renew_a_claim() {
     t.set(t.get() + 20);
     assert!(!held_by_anyone(&g, "p"));
 }
+
+#[test]
+fn claims_through_the_gateway_leave_event_rows_and_a_release_carries_its_hold_time() {
+    let (g, t) = timed();
+    g.join(&alice(), "lobby").unwrap();
+    g.join(&bob(), "lobby").unwrap();
+    t.set(1_000);
+    g.claim(&alice(), "lobby", &ClaimSpec::new("src/a.rs", 3_600, "x"))
+        .unwrap();
+    t.set(1_010);
+    g.claim(&bob(), "lobby", &ClaimSpec::new("src/a.rs", 3_600, "x"))
+        .unwrap_err();
+    t.set(1_090);
+    g.release(&alice(), "lobby", "src/a.rs").unwrap();
+    t.set(1_100);
+    g.claim(&bob(), "lobby", &ClaimSpec::new("src/a.rs", 3_600, "x"))
+        .unwrap();
+    let h = g.store_for_tests().claim_history_for_test();
+    assert_eq!(h.granted, vec![("file".to_string(), 2)]);
+    assert_eq!(h.refused, vec![("same-path".to_string(), 1)]);
+    assert_eq!(h.released_by, vec![("holder".to_string(), 1)]);
+    assert_eq!((h.handled, h.handled_wait_median), (1, Some(90)));
+    assert_eq!((h.holds, h.hold_median), (1, Some(90)));
+}
