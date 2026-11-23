@@ -1,5 +1,6 @@
 """Command construction for the real driver. Nothing here starts claude: it only checks the argv and the environment the
 driver would use (SPEC 2.1, 8). Real runs are the human's call after the budget approval."""
+import json
 import unittest
 
 from helpers import BENCH  # noqa: F401
@@ -58,8 +59,31 @@ class Command(unittest.TestCase):
 
     def test_b1_gets_the_native_messaging_tool_and_nobody_else_does(self):
         self.assertIn("SendMessage", self.allowed("B1"))
+        self.assertIn("ListAgents", self.allowed("B1"))
         for arm in ("B0", "K1", "K2"):
             self.assertNotIn("SendMessage", self.allowed(arm))
+            self.assertNotIn("ListAgents", self.allowed(arm))
+
+    def test_b_arms_may_wait_with_sleep_and_k_arms_may_not(self):
+        self.assertIn("Bash(sleep:*)", self.allowed("B0"))
+        self.assertIn("Bash(sleep:*)", self.allowed("B1"))
+        self.assertNotIn("Bash(sleep:*)", self.allowed("K1"))
+        self.assertNotIn("Bash(sleep:*)", self.allowed("K2"))
+
+    def settings(self, arm):
+        a = self.argv(arm)
+        return json.loads(a[a.index("--settings") + 1])
+
+    def test_b1_accepts_inbound_messages_and_every_other_arm_refuses_them(self):
+        self.assertEqual(self.settings("B1"), {"crossSessionInbound": "accept"})
+        for arm in ("B0", "K1", "K2"):
+            s = self.settings(arm)
+            self.assertEqual(s["crossSessionInbound"], "refuse", arm)
+            self.assertEqual(sorted(s["permissions"]["deny"]), ["ListAgents", "SendMessage"], arm)
+
+    def test_the_session_name_is_the_agent_name(self):
+        a = self.argv("B1")
+        self.assertEqual(a[a.index("--name") + 1], "a")
 
     def test_every_arm_gets_the_same_file_and_git_tools(self):
         common = {"Read", "Edit", "Write", "Glob", "Grep", "Bash(git:*)", "Bash(python3:*)"}

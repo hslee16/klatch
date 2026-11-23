@@ -7,11 +7,12 @@ conditions, thresholds (empty until the M0 baseline), milestones and threats to 
 Status: the harness, the results ledger and the report generator exist (#1364) and run with fake agents. The real-agent
 driver is built and its command and stream parser are unit tested, but no real run has been made: that needs the human's
 written budget approval (SPEC section 8). Scenario fixtures other than the trivial test fixture are the scenario tickets'
-work (#1366 to #1380), and the arm prompts stay DRAFT until #1365 reviews them.
+work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused until the human has reviewed them (`arms/REVIEW.md`) and run the pilot (`arms/PILOT.md`).
 
 - `SPEC.md`: the specification.
-- `arms/`: the agent prompts for each arm. DRAFT until the B1 ticket (#1365) has them reviewed by someone who did not
-  write them; the klatch arms must not get a better prompt than the baselines.
+- `arms/`: the agent prompts for each arm (B0, B1, B1-roles, K1, K2, K3), `check_parity.py` (lengths, outline, shared prompt,
+  no klatch words in B arms), `REVIEW.md` (the checklist for a reviewer who did not write them) and `PILOT.md` (the pilot
+  plan). Proposed by #1365, unused until the human reviews them; the klatch arms must not get a better prompt than the baselines.
 - `run.py`: runs one scenario against one or more arms, N times each (see Usage).
 - `report.py`, `compare.py`: generate REPORT.md from a results directory; compare two results directories.
 - `stats.py`: Fisher exact, Mann-Whitney U, Hodges-Lehmann, seeded bootstrap interval, Wilson, Newcombe and Holm, standard
