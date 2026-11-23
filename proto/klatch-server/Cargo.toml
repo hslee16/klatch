@@ -27,6 +27,12 @@ subtle = "2"
 hmac = "0.12"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
+# The WebSocket frame layer only (#112): no `handshake` feature, so no `http`, `httparse` or `sha1` (that crate is banned by
+# deny.toml); loopback.rs parses the upgrade request and wire_ws.rs makes the accept key. Synchronous, no runtime.
+tungstenite = { version = "0.30", default-features = false }
+# Already in the tree under rustls. Used for one thing here: the SHA-1 that RFC 6455 puts in the upgrade answer (`Sec-WebSocket-
+# Accept`), which proves nothing about anyone and is no security boundary; ring names it for legacy use only.
+ring = { version = "0.17", default-features = false }
 
 [dev-dependencies]
 # the Rust client's socket connect (#1095) and HTTP connect (#1122) are features the server's own binary never links: only

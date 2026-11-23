@@ -20,6 +20,7 @@ fn head(method: &str, path: &str, sig: Option<&str>, event: Option<&str>) -> Hea
         path: path.into(),
         headers,
         content_length: None,
+        http10: false,
     }
 }
 

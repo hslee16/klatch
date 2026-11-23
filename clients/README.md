@@ -64,3 +64,32 @@ Each library exports `PROTOCOL_VERSION` (1) and refuses any other. The conforman
 and payload kept, a history look-back that moves no cursor and pages with `since`, replay then catch-up then push then resume, a claim conflict and release, a refusal that names its rule and
 never repeats the text, bad requests that fail without ending the session, and a clean close). A change to the protocol is a
 change to the fixtures in `proto/klatch/fixtures/protocol/`, which all three read.
+
+## Over a WebSocket
+
+`GET /v1/ws` (#112, experimental) on `klatch-server http` (loopback, `ws://`) and `klatch-server https` (mutual TLS, `wss://`)
+carries the same session as `GET /v1/stream` plus `POST /v1/frames` over one connection: the server sends `hello` first, a
+frame line (the JSON of `PROTOCOL.md`, without its newline) is one text message each way, a `response` arrives as a message
+as it does on the other transports, and a new connection resumes with `subscribe` and `from_seq` set to the last `seq` seen.
+Any WebSocket library works; the client libraries here have no WebSocket transport (not built).
+
+```
+GET /v1/ws HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: <16 random bytes, base64>
+Authorization: Bearer TOKEN
+X-Klatch-Member: MEMBER
+```
+
+The credential is checked at the upgrade (any other result is the one `401`, and no `Sec-WebSocket-` header). Send no `Origin`
+header: a non-browser client has none to send, and a request that carries one is refused with `403` unless the operator
+started the server with `--ws-allow-origin` naming exactly that origin. A browser cannot set `Authorization` on a WebSocket,
+so a page cannot connect without a shim that holds the credential. Over TLS the client also presents its certificate, which
+only gates the port. Frames must be masked (libraries do this), a message is at most 1 MiB, binary messages are refused,
+and the client must answer pings (libraries do this too): a connection that sends nothing for 60 seconds is closed with
+1001. A text message may hold several frame lines, which are several frames.
+A member may hold 4 WebSocket connections at once (`--ws-max-per-member`; the excess gets the `503` any full server gives) and a connection
+ends after an hour (`--ws-max-age-secs`) with 1001: reconnect and resume with `subscribe` and `from_seq`. If the credential is revoked or
+expires the server closes the socket with 1008 after a `refusal` frame of rule `credential`.

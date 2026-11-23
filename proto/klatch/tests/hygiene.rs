@@ -140,11 +140,12 @@ fn the_name_check_catches_what_it_is_meant_to_and_lets_ordinary_names_through() 
 /// and read on a terminal descriptor. The tests that drive the binary on a pseudo-terminal (openpty, setsid, poll).
 /// The mutual TLS listener (#108), three libc calls with nothing around them: `socketpair` for the in-process pair
 /// (`loopback.rs`), `poll` over two descriptors (`tls_bridge.rs`), and `geteuid` for the key file's owner check
-/// (`tls.rs`). Nothing else.
-const UNSAFE_ALLOWED: [&str; 10] = [
+/// (`tls.rs`). The WebSocket route (#112): one `poll` over one descriptor (`wire_ws.rs`). Nothing else.
+const UNSAFE_ALLOWED: [&str; 11] = [
     "klatch-server/src/loopback.rs",
     "klatch-server/src/tls_bridge.rs",
     "klatch-server/src/tls.rs",
+    "klatch-server/src/wire_ws.rs",
     "klatch/src/proof/tty.rs",
     "klatch/tests/common/",
     "klatch-bench/src/pty.rs",

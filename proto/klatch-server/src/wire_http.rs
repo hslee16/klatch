@@ -9,6 +9,7 @@
 //! - `POST /v1/frames` with `X-Klatch-Session` writes the frames in the body (JSON lines, as on stdio) into that
 //!   session and answers `202` with nothing: the `response` to a request arrives on the stream, as the daemon's does on
 //!   its connection. A session that has ended is `404`.
+//! - `GET /v1/ws` upgrades to a WebSocket that carries the same frames as text messages, both ways (`wire_ws.rs`, #112).
 //! - Resume needs nothing new: sequence numbers are the store's, so a new stream sends `subscribe` with `from_seq` set
 //!   to the last `seq` it saw and gets the same messages with the same numbers.
 //!
@@ -26,8 +27,10 @@
 //!
 //! This module names no socket type: the listener and the connection come from `loopback`.
 
+use crate::inbox::Inbox;
 use crate::loopback::{self, Budget, Head, Limits, Pending, Response, Stream};
 use crate::wire_sse::SseWriter;
+use crate::wire_ws;
 use anyhow::{Context, Result, bail};
 use klatch::domain::Principal;
 use klatch::gateway::{Identity, LocalIdentity, PeerEvidence, SharedBackend, SharedGateway};
@@ -35,7 +38,7 @@ use klatch::session::{Backend, Closer, Session, SessionConfig};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -54,12 +57,15 @@ const INBOX: usize = 16;
 pub struct Options {
     pub listen: String,
     pub max_connections: usize,
+    /// Origins the WebSocket route lets through (`--ws-allow-origin`, #112).
+    pub ws: crate::wire_ws_caps::Options,
 }
 
 /// Read the options after `http`. The address has no default: a server never picks a place by itself.
 pub fn parse(args: &[&str]) -> Result<Options> {
     let mut listen = None;
     let mut max_connections = DEFAULT_MAX_CONNECTIONS;
+    let mut ws = crate::wire_ws_caps::Raw::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| -> Result<&str> {
@@ -76,50 +82,21 @@ pub fn parse(args: &[&str]) -> Result<Options> {
                     .filter(|n| *n > 0)
                     .context("--max-connections is a positive number")?;
             }
+            flag @ ("--ws-allow-origin" | "--ws-max-per-member" | "--ws-max-age-secs") => {
+                ws.take(flag, value(flag)?)?;
+            }
             other => bail!("unknown option {other} for http"),
         }
     }
     Ok(Options {
         listen: listen.context("http needs --listen 127.0.0.1:PORT")?,
         max_connections,
+        ws: ws.finish(max_connections, crate::wire_ws_caps::short_limits())?,
     })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// the input of a session: what POSTs put in
-
-/// The input side of a session, fed by `POST /v1/frames`. It ends when the stream's connection is gone (`closed`) or
-/// the session is dropped from the registry (the sender is gone).
-struct Inbox {
-    rx: Receiver<Vec<u8>>,
-    closed: Arc<AtomicBool>,
-    buf: Vec<u8>,
-    at: usize,
-}
-
-impl Read for Inbox {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        loop {
-            if self.at < self.buf.len() {
-                let n = out.len().min(self.buf.len() - self.at);
-                out[..n].copy_from_slice(&self.buf[self.at..self.at + n]);
-                self.at += n;
-                return Ok(n);
-            }
-            if self.closed.load(Ordering::SeqCst) {
-                return Ok(0);
-            }
-            match self.rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(bytes) => {
-                    self.buf = bytes;
-                    self.at = 0;
-                }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Ok(0),
-            }
-        }
-    }
-}
+// the input of a session: what POSTs put in (`Inbox`, in `inbox.rs`)
 
 /// A session that is open: whose it is, and where its input goes.
 struct Entry {
@@ -136,6 +113,10 @@ pub(crate) struct Shared {
     sessions: Sessions,
     /// Forwarded identity headers seen and ignored (#110): names and counts only.
     forwarded: crate::forwarded::Ignored,
+    /// The WebSocket route's origins and deadlines (#112).
+    pub(crate) ws: crate::wire_ws_caps::Settings,
+    /// Open WebSocket connections per member.
+    pub(crate) ws_open: crate::wire_ws_caps::Open,
 }
 
 impl Shared {
@@ -145,6 +126,8 @@ impl Shared {
             config,
             sessions: Arc::default(),
             forwarded: Default::default(),
+            ws: Default::default(),
+            ws_open: Default::default(),
         }
     }
 }
@@ -232,6 +215,7 @@ enum Route {
     Stream,
     Frames,
     Mcp,
+    Ws,
 }
 
 impl Route {
@@ -240,13 +224,14 @@ impl Route {
             STREAM_PATH => Some(Route::Stream),
             FRAMES_PATH => Some(Route::Frames),
             crate::mcp_http::PATH => Some(Route::Mcp),
+            wire_ws::PATH => Some(Route::Ws),
             _ => None,
         }
     }
 
     fn method(self) -> &'static str {
         match self {
-            Route::Stream => "GET",
+            Route::Stream | Route::Ws => "GET",
             Route::Frames | Route::Mcp => "POST",
         }
     }
@@ -280,6 +265,7 @@ pub(crate) fn serve_connection(mut stream: Stream, shared: &Shared) {
     };
     match route {
         Route::Stream => open_session(stream, &head, shared),
+        Route::Ws => wire_ws::serve(stream, &head, &first, shared),
         Route::Frames => {
             let pending = Pending {
                 stream: &mut stream,
@@ -459,12 +445,7 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
             let _ = shut.shutdown(std::net::Shutdown::Both);
         })
     };
-    let input = io::BufReader::new(Inbox {
-        rx,
-        closed,
-        buf: Vec::new(),
-        at: 0,
-    });
+    let input = io::BufReader::new(Inbox::new(rx, closed));
     std::thread::scope(|scope| {
         scope.spawn(move || watch_for_hangup(watch, &gone));
         let session = Session::over(&shared.backend, who, &shared.config);
@@ -481,8 +462,9 @@ fn input_box(input: io::BufReader<Inbox>) -> Box<dyn BufRead + Send> {
 /// (#1173, #1207). Launchers also wait for the newline before they trust the line.
 fn announce_listening(out: &mut dyn Write, addr: &dyn std::fmt::Display, max_connections: usize) {
     let line = format!(
-        "klatch-server: http listening on {addr} (loopback only, up to {max_connections} connections), GET {STREAM_PATH}, POST {FRAMES_PATH} and POST {} (MCP)\n",
-        crate::mcp_http::PATH
+        "klatch-server: http listening on {addr} (loopback only, up to {max_connections} connections), GET {STREAM_PATH}, POST {FRAMES_PATH}, POST {} (MCP) and GET {} (WebSocket)\n",
+        crate::mcp_http::PATH,
+        wire_ws::PATH
     );
     let _ = out.write_all(line.as_bytes());
     let _ = out.flush();
@@ -502,7 +484,8 @@ pub fn run(opts: &Options) -> Result<()> {
         &listener.local_addr()?,
         opts.max_connections,
     );
-    let shared = Shared::new(gateway.session_backend(), SessionConfig::default());
+    let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
+    shared.ws.apply(&opts.ws, opts.max_connections);
     loopback::serve_concurrent(
         &listener,
         &crate::daemon::STOP,
@@ -550,39 +533,6 @@ mod tests {
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.starts_with("klatch-server: http listening on 127.0.0.1:43210 "));
         assert!(text.ends_with('\n'));
-    }
-
-    #[test]
-    fn the_inbox_hands_over_posted_bytes_in_order_and_ends_when_closed_or_dropped() {
-        let (tx, rx) = sync_channel(4);
-        let closed = Arc::new(AtomicBool::new(false));
-        let mut r = io::BufReader::new(Inbox {
-            rx,
-            closed: closed.clone(),
-            buf: Vec::new(),
-            at: 0,
-        });
-        tx.send(b"a\nb".to_vec()).unwrap();
-        tx.send(b"c\n".to_vec()).unwrap();
-        let mut line = String::new();
-        r.read_line(&mut line).unwrap();
-        assert_eq!(line, "a\n");
-        line.clear();
-        r.read_line(&mut line).unwrap();
-        assert_eq!(line, "bc\n");
-        closed.store(true, Ordering::SeqCst);
-        line.clear();
-        assert_eq!(r.read_line(&mut line).unwrap(), 0);
-        // a dropped sender ends it too
-        let (tx, rx) = sync_channel::<Vec<u8>>(1);
-        drop(tx);
-        let mut r = Inbox {
-            rx,
-            closed: Arc::default(),
-            buf: Vec::new(),
-            at: 0,
-        };
-        assert_eq!(r.read(&mut [0u8; 4]).unwrap(), 0);
     }
 
     #[test]

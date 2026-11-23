@@ -210,3 +210,31 @@ fn a_server_that_saw_none_reports_zero() {
     let log = s.stop();
     assert!(summary(&log).contains("requests=0"), "{log}");
 }
+
+/// The WebSocket route (#112) is behind the same counter: an upgrade request with forwarded headers is counted by name,
+/// and no value reaches the log.
+#[test]
+fn an_upgrade_request_to_the_websocket_route_is_counted_by_header_name_and_never_by_value() {
+    let dir = Dir::new();
+    let s = Server::started(&dir);
+    let headers = [
+        ("Upgrade", "websocket"),
+        ("Connection", "Upgrade"),
+        ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+        ("Sec-WebSocket-Version", "13"),
+        ("X-Forwarded-For", "10.4.4.4"),
+        ("X-Remote-User", "mallory"),
+    ];
+    assert_eq!(status_of(s.addr, ("GET", "/v1/ws"), &headers), 401);
+    let log = s.stop();
+    let line = summary(&log);
+    assert!(line.contains("requests=1"), "{line}");
+    assert!(
+        line.contains("x-forwarded-for=1") && line.contains("x-remote-user=1"),
+        "{line}"
+    );
+    assert!(
+        !log.contains("10.4.4.4") && !log.contains("mallory"),
+        "{log}"
+    );
+}

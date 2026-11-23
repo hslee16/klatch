@@ -12,38 +12,10 @@
 //! one `UnixListener::bind` and one `UnixStream::connect` (the probe of its own socket path that tells a live daemon from
 //! a dead one's file); no UDP, datagram socket, name resolution or HTTP client anywhere; no `Command`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod scan_common;
 
-fn rust_sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-    let mut files = Vec::new();
-    walk(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
-    files.sort();
-    files
-        .into_iter()
-        .map(|p| {
-            let rel = p
-                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                .unwrap()
-                .display()
-                .to_string();
-            (rel, std::fs::read_to_string(&p).unwrap())
-        })
-        .collect()
-}
+use scan_common::*;
+use std::path::Path;
 
 /// The one source file that may name the socket types and open a listener (#1058): the loopback listener, which refuses
 /// every address but 127.0.0.1 and ::1, and (#108) the policy-checked bind of the mutual TLS listener. Phases 3 and 4 and
@@ -70,11 +42,6 @@ const DAEMON_NAMES: &[&str] = &[
 /// The one source file that may connect a client socket: the tests of the loopback listener, which connect to a listener
 /// they started themselves on a loopback port the system chose. Nothing else may connect, in any file.
 const TEST_CLIENT: &[&str] = &["src/loopback_tests.rs"];
-
-/// The code of a line: what is left of it before a `//` comment, and not the text of a string.
-fn code_of(line: &str) -> &str {
-    line.split("//").next().unwrap_or("")
-}
 
 /// Socket types and the network module: only the loopback module (and, for a client, its tests) may name them.
 const SOCKETS: &[&str] = &["TcpStream", "TcpListener", "std::net", "SocketAddr"];
@@ -312,34 +279,6 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     assert!(dir_check < clear);
 }
 
-/// The first words of the lines `cargo tree` prints for these arguments (offline, no prefix): crate names.
-fn tree(args: &[&str]) -> Vec<String> {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let out = Command::new(cargo)
-        .arg("tree")
-        .args(args)
-        .args(["--prefix", "none", "--offline"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run cargo tree");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .unwrap()
-        .lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .map(String::from)
-        .collect()
-}
-
-/// The names of the crates in klatch-server's dependency tree over the given kinds of edge (`cargo tree`, offline).
-fn dependency_names(edges: &str) -> Vec<String> {
-    tree(&["-p", "klatch-server", "--edges", edges])
-}
-
 #[test]
 fn no_http_or_networking_crate_is_in_the_dependency_tree() {
     let deps = dependency_names("normal");
@@ -359,7 +298,7 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         "axum",
         "warp",
         "actix-web",
-        "tungstenite",
+        // tungstenite itself is allowed since #112, as its frame layer only: see the test below that holds it to that
         "tokio-tungstenite",
         "tokio",
         "async-std",
@@ -443,8 +382,11 @@ fn the_optional_hosted_judge_transport_is_not_linked_into_the_server() {
     let webpki = dependents("rustls-webpki");
     assert!(webpki.iter().all(|d| d == "rustls"), "{webpki:?}");
     let ring = dependents("ring");
+    // `klatch-server` itself depends on ring for the SHA-1 of the WebSocket upgrade answer (#112; `no_network_ws.rs` checks
+    // where it is named)
     assert!(
-        ring.iter().all(|d| d == "rustls" || d == "rustls-webpki"),
+        ring.iter()
+            .all(|d| d == "rustls" || d == "rustls-webpki" || d == "klatch-server"),
         "{ring:?}"
     );
 }

@@ -37,6 +37,22 @@ pub fn issue_credential(dir: &Dir, member: &str) -> String {
         .to_string()
 }
 
+/// Revoke the credential of `member` in the store of `dir`, by the admin path of the gateway (a throwaway store; the caller
+/// holds ENV, as for `issue_credential`).
+pub fn revoke_credential(dir: &Dir, member: &str) {
+    unsafe {
+        std::env::set_var("KLATCH_HOME", dir.home());
+        std::env::set_var("KLATCH_KEY_DIR", dir.home().join("keys"));
+        std::env::remove_var("KLATCH_NAME");
+        std::env::remove_var("KLATCH_IDENTITY_FILE");
+    }
+    let store = klatch::member::custody::open_store(&klatch::member::db_path().unwrap()).unwrap();
+    let gateway =
+        klatch::gateway::Gateway::new(store, klatch::member::CliClock, klatch::gateway::AllowAll);
+    let who = klatch::domain::Principal::unattributed("launcher");
+    gateway.admin_revoke_credential(&who, member).unwrap();
+}
+
 /// A way to reach a server: plain TCP (the loopback listener) or TLS with a client certificate.
 #[derive(Clone)]
 pub struct Net {
