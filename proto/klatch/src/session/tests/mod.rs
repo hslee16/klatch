@@ -110,3 +110,4 @@ mod recheck;
 mod replay;
 mod stuck;
 mod wire;
+mod wire_guard;
