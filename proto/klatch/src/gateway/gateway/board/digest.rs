@@ -11,6 +11,7 @@ impl<S: Store> Gateway<S> {
         room: &str,
         now: i64,
     ) -> Result<(Vec<Message>, Hidden)> {
+        self.sweep_ask_routes(room);
         let messages = self.store.hook_read(Seat::new(room, &who.member), now)?;
         let outside = self.hidden_count(who, room, messages.clone())?;
         let messages = self.in_view(who, room, messages)?;
@@ -18,10 +19,14 @@ impl<S: Store> Gateway<S> {
         if !self.store.is_muted(Seat::new(room, &who.member))? {
             return Ok((messages, outside));
         }
+        // a mute holds back what is not addressed to the member; an ask routed to it is addressed (#1407)
+        let routed = self.routed_asks(room, &who.member)?;
         Ok((
             messages
                 .into_iter()
-                .filter(|m| crate::domain::mentions(&m.body, &who.member))
+                .filter(|m| {
+                    crate::domain::mentions(&m.body, &who.member) || routed.contains(&m.seq)
+                })
                 .collect(),
             outside,
         ))
@@ -36,11 +41,13 @@ impl<S: Store> Gateway<S> {
         messages: &[Message],
     ) -> Result<Vec<i64>> {
         let dm = self.dm_pair(room)?.is_some();
+        let routed = self.routed_asks(room, &who.member)?;
         Ok(messages
             .iter()
             .filter(|m| {
                 dm || crate::domain::mentions(&m.body, &who.member)
                     || super::super::delivery::is_broadcast(m)
+                    || routed.contains(&m.seq)
             })
             .map(|m| m.seq)
             .collect())
@@ -139,6 +146,21 @@ impl<S: Store> Gateway<S> {
             } else {
                 Vec::new()
             };
+            // an ask escalated to this member after it was posted is behind its cursors: list it once, like the
+            // backlog (#1407)
+            let mut backlog = backlog;
+            let late = self.untold_escalations(&room, &who.member, 1)?;
+            if !late.is_empty() {
+                let told: Vec<i64> = late.iter().map(|a| a.seq).collect();
+                for a in late {
+                    if !backlog.iter().any(|b| b.seq == a.seq)
+                        && !messages.iter().any(|m| m.seq == a.seq)
+                    {
+                        backlog.push(a);
+                    }
+                }
+                self.store.mark_told(&room, &who.member, &told, 1)?;
+            }
             rooms.push(RoomDigest {
                 room,
                 messages,

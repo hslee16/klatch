@@ -5,6 +5,9 @@ use super::SqliteStore;
 use crate::domain::{OpenAsk, Result};
 use rusqlite::params;
 
+/// Routing rows older than this are deleted as new ones are written: 30 days, like the claim events.
+const ROUTE_MAX_AGE_SECS: i64 = 30 * 86_400;
+
 /// An open ask of `member`'s that nobody has claimed for `after` seconds and that is not waiting on something
 /// else (its asker owing an answer, or a working room in use).
 pub(super) fn is_stale(a: &OpenAsk, member: &str, now: i64, after: i64) -> bool {
@@ -52,5 +55,73 @@ impl SqliteStore {
             params![room, member, seq, expires],
         )?;
         Ok(n == 1)
+    }
+
+    /// The members ask `seq` is addressed to, inserted once each.
+    pub(super) fn insert_routes(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<()> {
+        for (member, kind) in to {
+            self.exec(
+                "INSERT OR IGNORE INTO ask_routes(room,seq,member,kind,ts) VALUES(?1,?2,?3,?4,?5)",
+                params![room, seq, member, kind.word(), now],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn do_route_ask(
+        &self,
+        room: &str,
+        seq: i64,
+        to: &[(String, crate::domain::RouteKind)],
+        now: i64,
+    ) -> Result<bool> {
+        self.immediate(|| {
+            let first = self.exec(
+                "INSERT OR IGNORE INTO ask_route_events(room,seq,outcome,n,ts) VALUES(?1,?2,'routed',?3,?4)",
+                params![room, seq, to.len() as i64, now],
+            )? == 1;
+            if first {
+                self.insert_routes(room, seq, to, now)?;
+                let old = now - ROUTE_MAX_AGE_SECS;
+                self.exec("DELETE FROM ask_routes WHERE ts<?1", params![old])?;
+                self.exec("DELETE FROM ask_route_events WHERE ts<?1", params![old])?;
+            }
+            Ok(first)
+        })
+    }
+
+    pub(super) fn do_ask_routes(&self, room: &str) -> Result<Vec<crate::domain::AskRoute>> {
+        self.rows(
+            "SELECT seq,member,kind,ts FROM ask_routes WHERE room=?1 ORDER BY seq,member",
+            params![room],
+            |r| {
+                Ok(crate::domain::AskRoute {
+                    seq: r.get(0)?,
+                    member: r.get(1)?,
+                    kind: crate::domain::RouteKind::parse(&r.get::<_, String>(2)?),
+                    ts: r.get(3)?,
+                })
+            },
+        )
+    }
+
+    pub(super) fn do_note_route_outcome(
+        &self,
+        room: &str,
+        seq: i64,
+        outcome: &str,
+        n: i64,
+        now: i64,
+    ) -> Result<bool> {
+        Ok(self.exec(
+            "INSERT OR IGNORE INTO ask_route_events(room,seq,outcome,n,ts) VALUES(?1,?2,?3,?4,?5)",
+            params![room, seq, outcome, n, now],
+        )? == 1)
     }
 }

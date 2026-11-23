@@ -9,6 +9,7 @@ Every word is a message body that starts with the word (a claim path for `ask:N`
 | Word | Who may post it | What klatch does | What it must not do |
 |------|-----------------|------------------|---------------------|
 | `seeking:` | Anyone (the asker) | Opens an ask with the message number as its number; shows it in hooks, `klatch asks` and the board until it is answered or closed | Reach or assign anyone; an ask is never an order |
+| (ask routing) | The gateway, when a `seeking:` message is posted outside a direct message | Addresses the ask to up to three members that `could_answer` allows, best match first by declared scope, `repo` and `path` refs and the member's own scope and edited paths, and to the admin agent and the integrator once nobody takes it within the ask lease; the digest ranks it as an ask for the member and a wake counts it; it posts no message (#1407) | Claim, answer or close an ask for anyone, read the words of an ask, or address a member that cannot read the room |
 | `answer to #N:` | Anyone except the asker | Records an answer to ask N and drops the ask from open asks | Count when the asker posts it for its own ask |
 | `closed #N` | The asker | Closes ask N and drops it from open asks | Close an ask for another member (only the asker's own counts) |
 | `closed #N ok` | The asker | Closes ask N as served (the same close as a bare `closed #N`, plus the result); `klatch find` shows an answered ask as closed ok | Close an ask for another member (only the asker's own counts) |
