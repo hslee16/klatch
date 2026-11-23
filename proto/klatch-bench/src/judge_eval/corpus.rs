@@ -195,19 +195,10 @@ fn field<'a>(o: &'a serde_json::Map<String, Value>, name: &str) -> Result<&'a st
     }
 }
 
-/// Parse and check one line.
-pub fn parse_line(line: &str) -> Result<Item, String> {
-    let v: Value = serde_json::from_str(line).map_err(|e| format!("not JSON: {e}"))?;
-    let o = v.as_object().ok_or("not a JSON object")?;
-    if let Some(k) = o.keys().find(|k| !FIELDS.contains(&k.as_str())) {
-        return Err(format!("unknown field \"{k}\""));
-    }
-    let id = field(o, "id")?.to_string();
-    let split = Split::parse(field(o, "split")?).ok_or("split must be dev or test")?;
-    let category = field(o, "category")?.to_string();
-    if !CATEGORIES.contains(&category.as_str()) {
-        return Err(format!("unknown category \"{category}\""));
-    }
+type Fields = serde_json::Map<String, Value>;
+
+/// The `label` and `to` of a crossing: both known, and the crossing goes down.
+fn crossing(o: &Fields) -> Result<(String, String), String> {
     let label = field(o, "label")?.to_string();
     let to = field(o, "to")?.to_string();
     for l in [&label, &to] {
@@ -221,57 +212,64 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
             "a crossing goes down: to ({to}) must be below label ({label})"
         ));
     }
-    let verdict =
-        Truth::parse(field(o, "verdict")?).ok_or("verdict must be allow, redact or deny")?;
-    let raw_text = field(o, "text")?.to_string();
-    let rationale = field(o, "rationale")?.to_string();
-    let strings = |name: &str| -> Result<Vec<String>, String> {
-        match o.get(name) {
-            None => Ok(vec![]),
-            Some(Value::Array(a)) => a
-                .iter()
-                .map(|s| {
-                    s.as_str()
-                        .map(String::from)
-                        .ok_or_else(|| format!("{name} must be strings"))
-                })
-                .collect(),
-            Some(_) => Err(format!("{name} must be an array of strings")),
-        }
-    };
-    let raw_spans = strings("spans")?;
-    let raw_names = strings("name_spans")?;
-    let contested = match o.get("contested") {
-        None => false,
-        Some(Value::Bool(b)) => *b,
-        Some(_) => return Err("contested must be true or false".into()),
-    };
-    let origin = match o.get("origin") {
-        None => None,
-        Some(_) => {
-            Some(Origin::parse(field(o, "origin")?).ok_or("origin must be design or search")?)
-        }
-    };
-    let text = expand(&id, &raw_text)?;
-    let spans = raw_spans
-        .iter()
-        .map(|s| expand(&id, s))
-        .collect::<Result<Vec<_>, _>>()?;
-    let name_spans = raw_names
-        .iter()
-        .map(|s| expand(&id, s))
-        .collect::<Result<Vec<_>, _>>()?;
-    if !name_spans.is_empty() {
-        if verdict != Truth::Redact {
-            return Err("name_spans belong to a redact item only".into());
-        }
-        if let Some(n) = name_spans.iter().find(|n| !spans.contains(n)) {
-            return Err(format!("name_spans entry {n:?} is not one of the spans"));
-        }
-        if spans.iter().all(|s| name_spans.contains(s)) {
-            return Err("name_spans leaves no data span: a name alone is not tied to data".into());
-        }
+    Ok((label, to))
+}
+
+/// An optional array of strings.
+fn strings(o: &Fields, name: &str) -> Result<Vec<String>, String> {
+    match o.get(name) {
+        None => Ok(vec![]),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|s| {
+                s.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| format!("{name} must be strings"))
+            })
+            .collect(),
+        Some(_) => Err(format!("{name} must be an array of strings")),
     }
+}
+
+fn contested_flag(o: &Fields) -> Result<bool, String> {
+    match o.get("contested") {
+        None => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err("contested must be true or false".into()),
+    }
+}
+
+fn origin_field(o: &Fields) -> Result<Option<Origin>, String> {
+    if o.get("origin").is_none() {
+        return Ok(None);
+    }
+    let origin = Origin::parse(field(o, "origin")?).ok_or("origin must be design or search")?;
+    Ok(Some(origin))
+}
+
+fn expand_all(id: &str, raw: &[String]) -> Result<Vec<String>, String> {
+    raw.iter().map(|s| expand(id, s)).collect()
+}
+
+/// A name span belongs to a redact item, is one of the spans and leaves a data span.
+fn check_name_spans(verdict: Truth, spans: &[String], name_spans: &[String]) -> Result<(), String> {
+    if name_spans.is_empty() {
+        return Ok(());
+    }
+    if verdict != Truth::Redact {
+        return Err("name_spans belong to a redact item only".into());
+    }
+    if let Some(n) = name_spans.iter().find(|n| !spans.contains(n)) {
+        return Err(format!("name_spans entry {n:?} is not one of the spans"));
+    }
+    if spans.iter().all(|s| name_spans.contains(s)) {
+        return Err("name_spans leaves no data span: a name alone is not tied to data".into());
+    }
+    Ok(())
+}
+
+/// Spans exist exactly for the items that block, and each is in the text.
+fn check_spans(verdict: Truth, spans: &[String], text: &str) -> Result<(), String> {
     match (verdict, spans.is_empty()) {
         (Truth::Allow, false) => return Err("an allow item carries no spans".into()),
         (Truth::Redact | Truth::Deny, true) => {
@@ -279,12 +277,42 @@ pub fn parse_line(line: &str) -> Result<Item, String> {
         }
         _ => {}
     }
-    if let Some(s) = spans
+    match spans
         .iter()
         .find(|s| s.trim().is_empty() || !text.contains(*s))
     {
-        return Err(format!("span {s:?} is not in the text"));
+        Some(s) => Err(format!("span {s:?} is not in the text")),
+        None => Ok(()),
     }
+}
+
+/// Parse and check one line.
+pub fn parse_line(line: &str) -> Result<Item, String> {
+    let v: Value = serde_json::from_str(line).map_err(|e| format!("not JSON: {e}"))?;
+    let o = v.as_object().ok_or("not a JSON object")?;
+    if let Some(k) = o.keys().find(|k| !FIELDS.contains(&k.as_str())) {
+        return Err(format!("unknown field \"{k}\""));
+    }
+    let id = field(o, "id")?.to_string();
+    let split = Split::parse(field(o, "split")?).ok_or("split must be dev or test")?;
+    let category = field(o, "category")?.to_string();
+    if !CATEGORIES.contains(&category.as_str()) {
+        return Err(format!("unknown category \"{category}\""));
+    }
+    let (label, to) = crossing(o)?;
+    let verdict =
+        Truth::parse(field(o, "verdict")?).ok_or("verdict must be allow, redact or deny")?;
+    let raw_text = field(o, "text")?.to_string();
+    let rationale = field(o, "rationale")?.to_string();
+    let raw_spans = strings(o, "spans")?;
+    let raw_names = strings(o, "name_spans")?;
+    let contested = contested_flag(o)?;
+    let origin = origin_field(o)?;
+    let text = expand(&id, &raw_text)?;
+    let spans = expand_all(&id, &raw_spans)?;
+    let name_spans = expand_all(&id, &raw_names)?;
+    check_name_spans(verdict, &spans, &name_spans)?;
+    check_spans(verdict, &spans, &text)?;
     Ok(Item {
         id,
         split,
@@ -624,26 +652,30 @@ pub fn looks_like_real_credential(text: &str) -> Option<&'static str> {
     if t.contains("PRIVATE KEY-----") {
         return Some("a private key header");
     }
-    let b = t.as_bytes();
-    for (i, _) in t.match_indices("xox") {
-        if b.get(i + 3).is_some_and(|c| b"abposr".contains(c)) && b.get(i + 4) == Some(&b'-') {
-            return Some("a Slack token prefix");
-        }
+    if has_slack_prefix(&t) {
+        return Some("a Slack token prefix");
     }
     let token = |c: char| c.is_ascii_alphanumeric() || "+/_=-".contains(c);
-    for word in t.split(|c: char| !token(c)) {
-        if word.starts_with("npm_") && word.len() >= 34 {
-            return Some("an npm token");
-        }
-        let mixed = word.len() >= 32
-            && word.chars().any(|c| c.is_ascii_uppercase())
-            && word.chars().any(|c| c.is_ascii_lowercase())
-            && word.chars().any(|c| c.is_ascii_digit());
-        if mixed {
-            return Some("a long mixed-case token");
-        }
+    t.split(|c: char| !token(c)).find_map(token_word_reason)
+}
+
+fn has_slack_prefix(t: &str) -> bool {
+    let b = t.as_bytes();
+    t.match_indices("xox").any(|(i, _)| {
+        b.get(i + 3).is_some_and(|c| b"abposr".contains(c)) && b.get(i + 4) == Some(&b'-')
+    })
+}
+
+/// Why one run of token characters looks like a real credential: an npm token, or a long mixed-case token.
+fn token_word_reason(word: &str) -> Option<&'static str> {
+    if word.starts_with("npm_") && word.len() >= 34 {
+        return Some("an npm token");
     }
-    None
+    let mixed = word.len() >= 32
+        && word.chars().any(|c| c.is_ascii_uppercase())
+        && word.chars().any(|c| c.is_ascii_lowercase())
+        && word.chars().any(|c| c.is_ascii_digit());
+    mixed.then_some("a long mixed-case token")
 }
 
 #[cfg(test)]
