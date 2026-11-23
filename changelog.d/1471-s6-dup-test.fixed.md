@@ -1,0 +1,1 @@
+- The bench's duplicate_work and foreign_edits no longer miss a commit that a merge hides from a path-limited git log, which made S6's duplicated recovery test fail depending on push order (#1471).
