@@ -48,9 +48,17 @@ Generate the report, check the ledger, compare with a previous release:
     python3 experiments/coordbench/compare.py experiments/coordbench/results/release-0.3.0 \
         experiments/coordbench/results/release-0.2.0
 
-A real run (not made yet) adds `--driver claude --model MODEL_ID --claude-bin PATH --budget-approved-in REF
---max-run-usd N --max-suite-usd N`. `--budget-approved-in` is the harness's guard for SPEC section 8: it refuses real agents
-without it and writes the reference into the ledger header. The model API key (`ANTHROPIC_API_KEY`) is read from the
+A real run (not made yet) adds `--driver claude --model MODEL_ID --claude-bin PATH --budget-approved-in FILE`, and
+optionally `--max-run-usd N --max-suite-usd N`. FILE is the budget approval (SPEC section 8; `approval.py`): a JSON file
+the coordinator makes at run time, outside the repository (never commit one), for example
+
+    {"approved_by": "NAME", "approved_on": "2026-11-23", "suite_budget_usd": 2.0, "per_run_cap_usd": 0.5,
+     "scope": "The B1 pilot, one run per arm on the trivial fixture.", "models": ["MODEL_ID"], "expires_on": "2026-11-30"}
+
+All seven fields are required. The harness refuses (exit 2, nothing written) when the file is missing, malformed or
+expired, when `--model` or `--roles-model` is not in `models`, or when a cap given on the command line is above the
+file's; caps not given become the file's numbers, and caps given below them stand. The ledger header records the file's
+path, approver, date and scope. The model API key (`ANTHROPIC_API_KEY`) is read from the
 harness environment and passed to the agent processes of the claude driver only; it is never printed or written.
 
 What a run does, in order: a private scratch directory under `--tmp-root` (mode 700) with an empty KLATCH_HOME and

@@ -106,6 +106,34 @@ class Parity(unittest.TestCase):
         self.edit("K3", lambda s: s.replace("## Supervisor prompt (draft)", "## Overseer"))
         self.assertTrue(any("supervisor" in p for p in self.problems()))
 
+    def test_b1_arms_use_the_shared_prefixes_and_b0_has_none(self):
+        for arm in ("B1", "B1-roles"):
+            text = cp.strip_comments(open(os.path.join(ARMS, arm + ".md")).read())
+            for prefix in cp.SHARED_PREFIXES:
+                self.assertIn(prefix, text, arm)
+        self.assertEqual(cp.check_prefixes(ARMS), [])
+        self.assertIn("seeking:", cp.SHARED_PREFIXES)
+        # the K arms say the same words
+        for arm in ("K1", "K2"):
+            text = cp.strip_comments(open(os.path.join(ARMS, arm + ".md")).read())
+            for prefix in cp.SHARED_PREFIXES:
+                self.assertIn(prefix.replace("answer:", "answer"), text, arm)
+
+    def test_a_b1_arm_missing_a_prefix_is_caught(self):
+        self.edit("B1", lambda s: s.replace("seeking:", "asking:"))
+        self.assertTrue(any("B1" in p and "seeking:" in p for p in self.problems()))
+        shutil.copy(os.path.join(ARMS, "B1.md"), self.dir)
+        self.edit("B1-roles", lambda s: s.replace("ready:", "ready"))
+        self.assertTrue(any("B1-roles" in p and "ready:" in p for p in self.problems()))
+
+    def test_b0_with_a_prefix_is_caught(self):
+        self.edit("B0", lambda s: s + " Start a message with `handoff:`.")
+        self.assertTrue(any("B0" in p and "prefix" in p for p in self.problems()))
+
+    def test_plain_prefix_words_are_not_klatch_words(self):
+        self.edit("B1", lambda s: s + " question: answer: handoff: decision: review: overlap: interface:")
+        self.assertFalse(any("klatch word" in p for p in self.problems()))
+
     def test_split_role_sections_keys(self):
         secs = cp.split_role_sections("## Worker section\nA b\n## Integrator prompt (draft)\nC\n")
         self.assertEqual(secs, {"worker": "A b", "integrator": "C"})
