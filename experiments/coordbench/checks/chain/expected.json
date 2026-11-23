@@ -1,0 +1,640 @@
+{
+ "alt_lines": [
+  "0000342S16413  TA/0108    fragile       ",
+  "0000715S10259  NY0901     fragile       ",
+  "0000490S12403  MD-0493    returns       ",
+  "0000944S15871  KH/0656    inbound       ",
+  "0000190S16834  KH-781     recount       ",
+  "0000890S17169  US944      recount       "
+ ],
+ "alt_records": [
+  {
+   "bin": "TA/0108",
+   "note": "fragile",
+   "qty": 342,
+   "sku": "S16413"
+  },
+  {
+   "bin": "NY0901",
+   "note": "fragile",
+   "qty": 715,
+   "sku": "S10259"
+  },
+  {
+   "bin": "MD-0493",
+   "note": "returns",
+   "qty": 490,
+   "sku": "S12403"
+  },
+  {
+   "bin": "KH/0656",
+   "note": "inbound",
+   "qty": 944,
+   "sku": "S15871"
+  },
+  {
+   "bin": "KH-781",
+   "note": "recount",
+   "qty": 190,
+   "sku": "S16834"
+  },
+  {
+   "bin": "US944",
+   "note": "recount",
+   "qty": 890,
+   "sku": "S17169"
+  }
+ ],
+ "alt_schema": {
+  "fields": [
+   {
+    "end": 7,
+    "name": "qty",
+    "start": 0
+   },
+   {
+    "end": 15,
+    "name": "sku",
+    "start": 7
+   },
+   {
+    "end": 26,
+    "name": "bin",
+    "start": 15
+   },
+   {
+    "end": 40,
+    "name": "note",
+    "start": 26
+   }
+  ],
+  "record_length": 40
+ },
+ "canon_cases": [
+  [
+   "CF-312",
+   "CF-00312"
+  ],
+  [
+   "CF/951",
+   "CF-00951"
+  ],
+  [
+   "CF831",
+   "CF-00831"
+  ],
+  [
+   "NY-841",
+   "NY-00841"
+  ],
+  [
+   "NY/463",
+   "NY-00463"
+  ],
+  [
+   "NY136",
+   "NY-00136"
+  ],
+  [
+   "KH-722",
+   "KH-00722"
+  ],
+  [
+   "KH/715",
+   "KH-00715"
+  ],
+  [
+   "KH508",
+   "KH-00508"
+  ],
+  [
+   "YA-452",
+   "YA-00452"
+  ],
+  [
+   "YA/297",
+   "YA-00297"
+  ],
+  [
+   "YA504",
+   "YA-00504"
+  ]
+ ],
+ "lines": [
+  "fragile     TA/0108  S1641300342",
+  "fragile     NY0901   S1025900715",
+  "returns     MD-0493  S1240300490",
+  "inbound     KH/0656  S1587100944",
+  "recount     KH-781   S1683400190",
+  "recount     US944    S1716900890",
+  "inbound     KH0802   S1875100652",
+  "recount     US674    S1405600716",
+  "inbound     CF-0703  S1178900336",
+  "inbound     KH0836   S1229700188",
+  "pallet      CF601    S1770400294",
+  "inbound     MD0947   S1143800638",
+  "outbound    NY466    S1837600059",
+  "recount     TA-699   S1490600728",
+  "fragile     TA-63    S1795800726",
+  "damaged     US/0480  S1457900015",
+  "crate       YA/265   S1777500062",
+  "pallet      KH/580   S1866800809",
+  "damaged     CF883    S1316300646",
+  "seasonal    CF/515   S1243500778",
+  "seasonal    MD-118   S1802800033",
+  "seasonal    KH853    S1800000858",
+  "returns     TA-364   S1051700544",
+  "overstock   TA-0225  S1510300484",
+  "crate       TA-551   S1144000434",
+  "inbound     MD175    S1118500041",
+  "fragile     TA/425   S1058600612",
+  "seasonal    US-584   S1024600104",
+  "inbound     MD-522   S1210800739",
+  "seasonal    CF-405   S1740200764",
+  "crate       CF716    S1672900369",
+  "pallet      TA0720   S1576300365",
+  "overstock   YA0090   S1504300149",
+  "seasonal    KH-338   S1160200193",
+  "returns     NY-395   S1868700216",
+  "outbound    MD0260   S1720700027",
+  "pallet      TA0327   S1299100684",
+  "damaged     CF-455   S1186900634",
+  "pallet      YA156    S1462300144",
+  "recount     TA209    S1615500733",
+  "outbound    YA/0354  S1819200800",
+  "pallet      NY/470   S1823500137",
+  "fragile     NY-203   S1490100975",
+  "recount     US-737   S1001400471",
+  "inbound     NY-670   S1826700019",
+  "pallet      US0783   S1061700963",
+  "recount     MD-0743  S1780600042",
+  "returns     KH112    S1518300835"
+ ],
+ "parse_cases": [
+  [
+   "CF-312",
+   "CF",
+   312
+  ],
+  [
+   "CF/951",
+   "CF",
+   951
+  ],
+  [
+   "CF831",
+   "CF",
+   831
+  ],
+  [
+   "NY-841",
+   "NY",
+   841
+  ],
+  [
+   "NY/463",
+   "NY",
+   463
+  ],
+  [
+   "NY136",
+   "NY",
+   136
+  ],
+  [
+   "KH-722",
+   "KH",
+   722
+  ],
+  [
+   "KH/715",
+   "KH",
+   715
+  ],
+  [
+   "KH508",
+   "KH",
+   508
+  ],
+  [
+   "YA-452",
+   "YA",
+   452
+  ],
+  [
+   "YA/297",
+   "YA",
+   297
+  ],
+  [
+   "YA504",
+   "YA",
+   504
+  ],
+  [
+   "MD-244",
+   "MD",
+   244
+  ],
+  [
+   "MD/471",
+   "MD",
+   471
+  ],
+  [
+   "MD471",
+   "MD",
+   471
+  ]
+ ],
+ "quirk": {
+  "legacy": "MD",
+  "new": "RW",
+  "offset": 176
+ },
+ "quirk_cases": [
+  [
+   "MD-244",
+   "RW-00420"
+  ],
+  [
+   "MD/471",
+   "RW-00647"
+  ],
+  [
+   "MD471",
+   "RW-00647"
+  ],
+  [
+   "MD-0007",
+   "RW-00183"
+  ]
+ ],
+ "records": [
+  {
+   "bin": "TA/0108",
+   "note": "fragile",
+   "qty": 342,
+   "sku": "S16413"
+  },
+  {
+   "bin": "NY0901",
+   "note": "fragile",
+   "qty": 715,
+   "sku": "S10259"
+  },
+  {
+   "bin": "MD-0493",
+   "note": "returns",
+   "qty": 490,
+   "sku": "S12403"
+  },
+  {
+   "bin": "KH/0656",
+   "note": "inbound",
+   "qty": 944,
+   "sku": "S15871"
+  },
+  {
+   "bin": "KH-781",
+   "note": "recount",
+   "qty": 190,
+   "sku": "S16834"
+  },
+  {
+   "bin": "US944",
+   "note": "recount",
+   "qty": 890,
+   "sku": "S17169"
+  },
+  {
+   "bin": "KH0802",
+   "note": "inbound",
+   "qty": 652,
+   "sku": "S18751"
+  },
+  {
+   "bin": "US674",
+   "note": "recount",
+   "qty": 716,
+   "sku": "S14056"
+  },
+  {
+   "bin": "CF-0703",
+   "note": "inbound",
+   "qty": 336,
+   "sku": "S11789"
+  },
+  {
+   "bin": "KH0836",
+   "note": "inbound",
+   "qty": 188,
+   "sku": "S12297"
+  },
+  {
+   "bin": "CF601",
+   "note": "pallet",
+   "qty": 294,
+   "sku": "S17704"
+  },
+  {
+   "bin": "MD0947",
+   "note": "inbound",
+   "qty": 638,
+   "sku": "S11438"
+  },
+  {
+   "bin": "NY466",
+   "note": "outbound",
+   "qty": 59,
+   "sku": "S18376"
+  },
+  {
+   "bin": "TA-699",
+   "note": "recount",
+   "qty": 728,
+   "sku": "S14906"
+  },
+  {
+   "bin": "TA-63",
+   "note": "fragile",
+   "qty": 726,
+   "sku": "S17958"
+  },
+  {
+   "bin": "US/0480",
+   "note": "damaged",
+   "qty": 15,
+   "sku": "S14579"
+  },
+  {
+   "bin": "YA/265",
+   "note": "crate",
+   "qty": 62,
+   "sku": "S17775"
+  },
+  {
+   "bin": "KH/580",
+   "note": "pallet",
+   "qty": 809,
+   "sku": "S18668"
+  },
+  {
+   "bin": "CF883",
+   "note": "damaged",
+   "qty": 646,
+   "sku": "S13163"
+  },
+  {
+   "bin": "CF/515",
+   "note": "seasonal",
+   "qty": 778,
+   "sku": "S12435"
+  },
+  {
+   "bin": "MD-118",
+   "note": "seasonal",
+   "qty": 33,
+   "sku": "S18028"
+  },
+  {
+   "bin": "KH853",
+   "note": "seasonal",
+   "qty": 858,
+   "sku": "S18000"
+  },
+  {
+   "bin": "TA-364",
+   "note": "returns",
+   "qty": 544,
+   "sku": "S10517"
+  },
+  {
+   "bin": "TA-0225",
+   "note": "overstock",
+   "qty": 484,
+   "sku": "S15103"
+  },
+  {
+   "bin": "TA-551",
+   "note": "crate",
+   "qty": 434,
+   "sku": "S11440"
+  },
+  {
+   "bin": "MD175",
+   "note": "inbound",
+   "qty": 41,
+   "sku": "S11185"
+  },
+  {
+   "bin": "TA/425",
+   "note": "fragile",
+   "qty": 612,
+   "sku": "S10586"
+  },
+  {
+   "bin": "US-584",
+   "note": "seasonal",
+   "qty": 104,
+   "sku": "S10246"
+  },
+  {
+   "bin": "MD-522",
+   "note": "inbound",
+   "qty": 739,
+   "sku": "S12108"
+  },
+  {
+   "bin": "CF-405",
+   "note": "seasonal",
+   "qty": 764,
+   "sku": "S17402"
+  },
+  {
+   "bin": "CF716",
+   "note": "crate",
+   "qty": 369,
+   "sku": "S16729"
+  },
+  {
+   "bin": "TA0720",
+   "note": "pallet",
+   "qty": 365,
+   "sku": "S15763"
+  },
+  {
+   "bin": "YA0090",
+   "note": "overstock",
+   "qty": 149,
+   "sku": "S15043"
+  },
+  {
+   "bin": "KH-338",
+   "note": "seasonal",
+   "qty": 193,
+   "sku": "S11602"
+  },
+  {
+   "bin": "NY-395",
+   "note": "returns",
+   "qty": 216,
+   "sku": "S18687"
+  },
+  {
+   "bin": "MD0260",
+   "note": "outbound",
+   "qty": 27,
+   "sku": "S17207"
+  },
+  {
+   "bin": "TA0327",
+   "note": "pallet",
+   "qty": 684,
+   "sku": "S12991"
+  },
+  {
+   "bin": "CF-455",
+   "note": "damaged",
+   "qty": 634,
+   "sku": "S11869"
+  },
+  {
+   "bin": "YA156",
+   "note": "pallet",
+   "qty": 144,
+   "sku": "S14623"
+  },
+  {
+   "bin": "TA209",
+   "note": "recount",
+   "qty": 733,
+   "sku": "S16155"
+  },
+  {
+   "bin": "YA/0354",
+   "note": "outbound",
+   "qty": 800,
+   "sku": "S18192"
+  },
+  {
+   "bin": "NY/470",
+   "note": "pallet",
+   "qty": 137,
+   "sku": "S18235"
+  },
+  {
+   "bin": "NY-203",
+   "note": "fragile",
+   "qty": 975,
+   "sku": "S14901"
+  },
+  {
+   "bin": "US-737",
+   "note": "recount",
+   "qty": 471,
+   "sku": "S10014"
+  },
+  {
+   "bin": "NY-670",
+   "note": "inbound",
+   "qty": 19,
+   "sku": "S18267"
+  },
+  {
+   "bin": "US0783",
+   "note": "pallet",
+   "qty": 963,
+   "sku": "S10617"
+  },
+  {
+   "bin": "MD-0743",
+   "note": "recount",
+   "qty": 42,
+   "sku": "S17806"
+  },
+  {
+   "bin": "KH112",
+   "note": "returns",
+   "qty": 835,
+   "sku": "S15183"
+  }
+ ],
+ "ruler": "note=12,bin=9,sku=6,qty=5",
+ "schema": {
+  "fields": [
+   {
+    "end": 12,
+    "name": "note",
+    "start": 0
+   },
+   {
+    "end": 21,
+    "name": "bin",
+    "start": 12
+   },
+   {
+    "end": 27,
+    "name": "sku",
+    "start": 21
+   },
+   {
+    "end": 32,
+    "name": "qty",
+    "start": 27
+   }
+  ],
+  "record_length": 32
+ },
+ "seed": 1368,
+ "totals": {
+  "CF-00405": 764,
+  "CF-00455": 634,
+  "CF-00515": 778,
+  "CF-00601": 294,
+  "CF-00703": 336,
+  "CF-00716": 369,
+  "CF-00883": 646,
+  "KH-00112": 835,
+  "KH-00338": 193,
+  "KH-00580": 809,
+  "KH-00656": 944,
+  "KH-00781": 190,
+  "KH-00802": 652,
+  "KH-00836": 188,
+  "KH-00853": 858,
+  "NY-00203": 975,
+  "NY-00395": 216,
+  "NY-00466": 59,
+  "NY-00470": 137,
+  "NY-00670": 19,
+  "NY-00901": 715,
+  "RW-00294": 33,
+  "RW-00351": 41,
+  "RW-00436": 27,
+  "RW-00669": 490,
+  "RW-00698": 739,
+  "RW-00919": 42,
+  "RW-01123": 638,
+  "TA-00063": 726,
+  "TA-00108": 342,
+  "TA-00209": 733,
+  "TA-00225": 484,
+  "TA-00327": 684,
+  "TA-00364": 544,
+  "TA-00425": 612,
+  "TA-00551": 434,
+  "TA-00699": 728,
+  "TA-00720": 365,
+  "US-00480": 15,
+  "US-00584": 104,
+  "US-00674": 716,
+  "US-00737": 471,
+  "US-00783": 963,
+  "US-00944": 890,
+  "YA-00090": 149,
+  "YA-00156": 144,
+  "YA-00265": 62,
+  "YA-00354": 800
+ }
+}
