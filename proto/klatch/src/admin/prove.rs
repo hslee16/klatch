@@ -61,20 +61,32 @@ pub(crate) fn describe_words(words: &[String]) -> String {
     let command = family.map(|f| f + 1);
     let protected =
         |i: usize| Some(i) == family || Some(i) == command || (family.is_none() && i < 2);
-    let mut out: Vec<String> = Vec::new();
-    for (i, w) in words.iter().enumerate() {
-        let w = plain(w);
-        let shown = if !protected(i) && w.chars().count() > WORD_LIMIT {
-            let n = w.chars().count();
-            let head: String = w.chars().take(HEAD_TAIL).collect();
-            let tail: String = w.chars().skip(n - HEAD_TAIL).collect();
-            format!("{head}...({} chars unseen)...{tail}", n - 2 * HEAD_TAIL)
-        } else {
-            w
-        };
-        out.push(shown);
-    }
+    let out: Vec<String> = words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let w = plain(w);
+            if protected(i) { w } else { cut_word(w) }
+        })
+        .collect();
     let first_free = command.map_or(1, |c| c.max(1)) + 1;
+    cap_words(&out, first_free)
+}
+
+/// A word longer than `WORD_LIMIT` as its head and tail with the count of characters between them unseen.
+fn cut_word(w: String) -> String {
+    let n = w.chars().count();
+    if n <= WORD_LIMIT {
+        return w;
+    }
+    let head: String = w.chars().take(HEAD_TAIL).collect();
+    let tail: String = w.chars().skip(n - HEAD_TAIL).collect();
+    format!("{head}...({} chars unseen)...{tail}", n - 2 * HEAD_TAIL)
+}
+
+/// The words joined by a space; from word `first_free` on, a word that would take the text past 200 characters
+/// ends it with how many words went.
+fn cap_words(out: &[String], first_free: usize) -> String {
     let mut text = String::new();
     for (i, w) in out.iter().enumerate() {
         if i >= first_free && text.chars().count() + w.chars().count() > 200 {
