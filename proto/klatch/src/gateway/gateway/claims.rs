@@ -55,7 +55,12 @@ impl<S: Store> Gateway<S> {
         )?;
         // a member that claims is back at work: a `done` it set earlier no longer holds (#260)
         self.store
-            .clear_done(Seat::new(room, &who.member), self.now())
+            .clear_done(Seat::new(room, &who.member), self.now())?;
+        // a claim on an ask is the ask being taken: note it now, so a lease that runs out before anyone looks is a lapse
+        if path.starts_with("ask:") {
+            self.sweep_ask_routes(room);
+        }
+        Ok(())
     }
 
     /// The `possible_overwrite` stuck events of `room` (#909): a claim taken, inside the window, on a path another member

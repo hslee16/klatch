@@ -5,6 +5,7 @@ mod ask_bounds;
 mod ask_cycle;
 mod ask_find;
 mod ask_refs;
+mod ask_routing;
 mod asker_gone;
 mod asks;
 mod asks_notes;
@@ -63,6 +64,10 @@ pub use ask_refs::{
     AskRef, KNOWN_KINDS, MAX_LABEL_BYTES, MAX_REFS, MAX_SNIPPET_BYTES, MAX_TOTAL_BYTES,
     MAX_VALUE_BYTES, RefProblem, check_refs, inert, named_room, ref_lines, refs_mark,
     valid_ref_kind,
+};
+pub use ask_routing::{
+    AskRoute, Candidate, ESCALATED, LAPSED, ROUTE_MAX, ROUTED, RouteKind, RoutingCounts, TAKEN,
+    affinity as route_affinity, pick as pick_routes,
 };
 pub use asker_gone::{Served, exited_asker_notes, gone_asker_notes, served_by};
 pub use asks::{

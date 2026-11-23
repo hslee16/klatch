@@ -142,6 +142,7 @@ impl SqliteStore {
             "DELETE FROM member_parked WHERE member=?1",
             "DELETE FROM member_trail WHERE member=?1",
             "DELETE FROM machine_checkpoints WHERE member=?1",
+            "DELETE FROM ask_routes WHERE member=?1",
         ] {
             self.exec(sql, params![name])?;
         }

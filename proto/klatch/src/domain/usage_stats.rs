@@ -146,6 +146,7 @@ pub struct UsageStats {
     pub asks: AskCounts,
     pub claims: ClaimCounts,
     pub machine_checkpoints: MachineCheckpointCounts,
+    pub ask_routing: crate::domain::RoutingCounts,
     pub refusals: Counts,
     pub members: MemberCounts,
     pub hooks: Counts,
@@ -402,6 +403,11 @@ impl UsageStats {
             "machine checkpoints: {} written ({} at session end), {} replaced an earlier one, {} bytes\n",
             mc.written, mc.last, mc.replaced, mc.bytes
         ));
+        let ar = &self.ask_routing;
+        o.push_str(&format!(
+            "ask routing: {} routed to capable members, {} routed to nobody, {} taken, {} lapsed, {} escalated ({} with no coordinator to reach)\n",
+            ar.routed, ar.unrouted, ar.taken, ar.lapsed, ar.escalated, ar.escalated_unreached
+        ));
         table(
             &mut o,
             "refusals by rule",
@@ -527,6 +533,12 @@ impl UsageStats {
             "machine_checkpoints": {
                 "written": self.machine_checkpoints.written, "last": self.machine_checkpoints.last,
                 "replaced": self.machine_checkpoints.replaced, "bytes": self.machine_checkpoints.bytes,
+            },
+            "ask_routing": {
+                "routed": self.ask_routing.routed, "unrouted": self.ask_routing.unrouted,
+                "taken": self.ask_routing.taken, "lapsed": self.ask_routing.lapsed,
+                "escalated": self.ask_routing.escalated,
+                "escalated_unreached": self.ask_routing.escalated_unreached,
             },
             "refusals": pairs(&self.refusals),
             "members": {

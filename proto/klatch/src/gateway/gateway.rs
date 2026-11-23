@@ -23,6 +23,7 @@ pub struct Refused {
 mod admin;
 mod anchors;
 mod ask_refs;
+mod ask_routing;
 mod github_anchor;
 pub use anchors::{AnchorAdapter, valid_anchor};
 use github_anchor::{normalize_anchor, parse_events};
@@ -170,7 +171,12 @@ impl<S: Store> Gateway<S> {
 
     /// Post under a label: the room's own unless `label` says a lower one. `post` is `(room, body, label)`.
     pub fn post_labeled(&self, who: &Principal, post: PostArgs) -> Result<Posted> {
-        self.post_with(who, post, None)
+        let (room, body) = (post.0, post.1);
+        let posted = self.post_with(who, post, None)?;
+        if crate::domain::is_ask(body) {
+            self.route_ask_now(room, posted.seq);
+        }
+        Ok(posted)
     }
 
     /// Post a message that carries a handoff: a kind and, optionally, an opaque payload for the next member. The
@@ -182,7 +188,12 @@ impl<S: Store> Gateway<S> {
         post: PostArgs,
         handoff: &Handoff,
     ) -> Result<Posted> {
-        self.post_with(who, post, Some(handoff))
+        let (room, body) = (post.0, post.1);
+        let posted = self.post_with(who, post, Some(handoff))?;
+        if crate::domain::is_ask(body) {
+            self.route_ask_now(room, posted.seq);
+        }
+        Ok(posted)
     }
 
     /// Post an ask that declares a scope (#1171): the asker names the repository, bot area or project the ask is
@@ -230,6 +241,10 @@ impl<S: Store> Gateway<S> {
         }
         if !refs.is_empty() {
             self.store.set_ask_refs(room, posted.seq, refs)?;
+        }
+        // after the scope and refs are stored: they are part of what the routing reads (#1407)
+        if crate::domain::is_ask(post.1) {
+            self.route_ask_now(room, posted.seq);
         }
         Ok(posted)
     }

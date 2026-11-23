@@ -14,6 +14,7 @@ impl<S: Store> Gateway<S> {
     /// refuses it), and it carries ids, member names and numbers, never message text.
     pub fn stuck(&self, who: &Principal, room: &str) -> Result<Vec<crate::domain::StuckEvent>> {
         self.admit(who, room, Operation::read(room, false))?;
+        self.sweep_ask_routes(room);
         let now = self.now();
         let asks = self.store.open_asks(room, now)?;
         let claims = self.store.claims(room, now)?;

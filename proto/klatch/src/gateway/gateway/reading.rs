@@ -104,6 +104,7 @@ impl<S: Store> Gateway<S> {
     /// time (Claude Code drops a nudge identical to a recent one, #550).
     pub fn wake_summary(&self, who: &Principal, room: &str) -> Result<(usize, i64)> {
         self.admit(who, room, Operation::read(room, false))?;
+        self.sweep_ask_routes(room);
         let unread = if self.is_librarian(&who.member)? {
             self.store.look(Seat::new(room, &who.member), self.now())?
         } else {
@@ -113,10 +114,22 @@ impl<S: Store> Gateway<S> {
         let unread = Self::without_canary(unread);
         let unread = self.in_view(who, room, unread)?;
         let muted = self.store.is_muted(Seat::new(room, &who.member))?;
-        let counted = unread
+        // an ask routed to the caller wakes it even in a muted room (#1407)
+        let routed = if muted {
+            self.routed_asks(room, &who.member)?
+        } else {
+            Vec::new()
+        };
+        let counted = unread.iter().filter(|m| {
+            !muted || crate::domain::mentions(&m.body, &who.member) || routed.contains(&m.seq)
+        });
+        let (n, last) = counted.fold((0, 0), |(n, last), m| (n + 1, last.max(m.seq)));
+        // an ask escalated to the caller after it was posted is behind its cursors; it wakes the caller once (#1407)
+        let late = self.untold_escalations(room, &who.member, 2)?;
+        let late = late
             .iter()
-            .filter(|m| !muted || crate::domain::mentions(&m.body, &who.member));
-        Ok(counted.fold((0, 0), |(n, last), m| (n + 1, last.max(m.seq))))
+            .filter(|a| !unread.iter().any(|m| m.seq == a.seq));
+        Ok(late.fold((n, last), |(n, last), a| (n + 1, last.max(a.seq))))
     }
 
     /// Record that a watcher pointed at everything unread in the room, so it does not wake the caller for those
@@ -128,6 +141,14 @@ impl<S: Store> Gateway<S> {
             return Ok(());
         }
         let now = self.now();
+        let told: Vec<i64> = self
+            .untold_escalations(room, &who.member, 2)?
+            .iter()
+            .map(|a| a.seq)
+            .collect();
+        if !told.is_empty() {
+            self.store.mark_told(room, &who.member, &told, 2)?;
+        }
         let unread = self.store.wake_poll(Seat::new(room, &who.member), now)?;
         match unread.iter().map(|m| m.seq).max() {
             Some(last) => self

@@ -704,7 +704,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 42);
+    assert_eq!(SCHEMA_VERSION, 43);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -764,7 +764,7 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 42);
+    assert_eq!(SCHEMA_VERSION, 43);
     let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
     assert_eq!(unread.len(), 1, "the cursor survives");
     s.mark_shown(
@@ -797,7 +797,7 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 42);
+    assert_eq!(SCHEMA_VERSION, 43);
     for table in [
         "member_trail",
         "machine_checkpoints",
@@ -822,5 +822,38 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
             .unwrap()
     );
     assert_eq!(s.machine_checkpoints("r").unwrap().len(), 1);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_42_database_gains_the_ask_routing_tables_and_keeps_its_data() {
+    let path = temp_db("migrate-v42-ask-routing");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "seeking: x", 2).unwrap();
+        s.conn
+            .execute_batch(
+                "DROP TABLE ask_routes; DROP TABLE ask_route_events; PRAGMA user_version = 42;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 43);
+    for table in ["ask_routes", "ask_route_events"] {
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "{table}");
+    }
+    assert!(s.ask_routes("r").unwrap().is_empty(), "starts empty");
+    assert!(s.route_ask("r", 1, &[], 3).unwrap());
+    assert_eq!(s.open_asks("r", 4).unwrap().len(), 1, "the ask survives");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
