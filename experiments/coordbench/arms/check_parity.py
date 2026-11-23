@@ -8,7 +8,8 @@ Checks, with the standard library only and no model:
   2. outline: each base arm has the six topic labels, in the same order;
   3. the common prompt: one coordination slot, and nothing arm-specific in it;
   4. the composed prompts: with the same inputs, the text outside the coordination section is identical in every arm;
-  5. no klatch words in a B arm, and no arm names another arm's tools; placeholders limited to the ones the harness fills.
+  5. message prefixes: B1 and B1-roles use the shared ones, B0 none;
+  6. no klatch words in a B arm, and no arm names another arm's tools; placeholders limited to the ones the harness fills.
 
 Usage: python3 check_parity.py [--arms-dir DIR] [--tolerance 0.15]    (exit 0 when every check passes, 1 otherwise)
 """
@@ -28,6 +29,11 @@ OUTLINE = ("Telling others what you are doing:", "Not stepping on each other's w
 SLOT = "{{COORDINATION_SECTION}}"
 COMMON_PLACEHOLDERS = {"TEST_COMMAND", "RESTART_COMMAND"}
 KLATCH_PLACEHOLDERS = {"KLATCH", "ROOM"}
+# the message prefixes the arms with messaging share (#1365 decision of 2026-11-23): the words klatch's convention and the K
+# arms use. They are plain words, not klatch words. B0 has no messaging tool and uses none; the role arms add the K3 verbs.
+SHARED_PREFIXES = ("seeking:", "answer:", "handoff:")
+ROLE_PREFIXES = ("ready:", "merged:", "dropped:")
+K_FORMS = ("seeking:", "answer", "handoff:")
 # words that must not appear in a B arm (case-insensitive); the B arms are the control for klatch
 KLATCH_WORDS = (r"klatch", r"\broom\b", r"\blobby\b", r"KLATCH_[A-Z_]+")
 # tools that belong to one arm only: (pattern, arms that may name it)
@@ -105,6 +111,27 @@ def check_outline(arms_dir):
     return problems
 
 
+def check_prefixes(arms_dir):
+    """B1 and B1-roles use the shared message prefixes (and the role arms the role verbs); B0 uses none; K1 and K2 say the
+    same words, so that B1 is not given a vocabulary klatch does not use."""
+    problems = []
+    for a, want in (("B1", SHARED_PREFIXES), ("B1-roles", SHARED_PREFIXES + ROLE_PREFIXES)):
+        text = strip_comments(read(arms_dir, a))
+        for prefix in want:
+            if prefix not in text:
+                problems.append("%s lacks the message prefix '%s'" % (a, prefix))
+    text = strip_comments(read(arms_dir, "B0"))
+    for prefix in SHARED_PREFIXES:
+        if prefix in text:
+            problems.append("B0 has no messaging tool but uses the message prefix '%s'" % prefix)
+    for a in ("K1", "K2"):
+        text = strip_comments(read(arms_dir, a))
+        for form in K_FORMS:
+            if form not in text:
+                problems.append("%s no longer says '%s', so the B1 prefixes differ from klatch's" % (a, form))
+    return problems
+
+
 def check_common(arms_dir):
     text = strip_comments(read(arms_dir, "common"))
     problems = []
@@ -174,6 +201,7 @@ def run_all(arms_dir, tolerance):
     problems += p
     report += lines
     problems += check_outline(arms_dir)
+    problems += check_prefixes(arms_dir)
     problems += check_common(arms_dir)
     problems += check_words_and_placeholders(arms_dir)
     problems += check_composition(arms_dir)

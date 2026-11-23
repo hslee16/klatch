@@ -18,8 +18,9 @@ Records go to results/<suite-id>/<scenario>/<arm>/<run-id>.json, one line per ru
 --logs-dir outside the repository.
 
 Exit codes: 0 every run ok, 1 some run was not ok or not valid, 2 refused (usage, guard, missing approval), 3 suite cap hit.
-Real agents (--driver claude) cost money: they are refused unless --budget-approved-in names where the human approved the
-budget (recorded in the ledger header). This file is tested only with the fake driver.
+Real agents (--driver claude) cost money: they are refused unless --budget-approved-in names a valid budget approval file (JSON
+outside the repository, see approval.py: approver, caps, models, expiry), whose numbers become the caps if lower and whose
+approver, scope and path are recorded in the ledger header. This file is tested only with the fake driver.
 """
 import argparse
 import datetime
@@ -35,6 +36,7 @@ import sys
 import tempfile
 import time
 
+import approval as approval_mod
 import drivers
 import fixture as fixture_mod
 import scenario as scenario_mod
@@ -43,6 +45,8 @@ import streams
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ARMS = "B0,B1,K1,K2"
+DEFAULT_RUN_USD = 3.0
+DEFAULT_SUITE_USD = 150.0
 TASK_BOARD = ("# Task board\n\nOne line per piece of work: `- WHO | STATUS | FILES | TITLE`. STATUS is `working`, `done`, "
               "`blocked` or `handoff`. Add your line at the end, commit it and push it.\n")
 
@@ -443,7 +447,7 @@ class Suite:
         meta = {"suite_id": a.suite_id, "fixture": self.fx.name, "arms": a.arm_list, "runs_per_arm": a.runs,
                 "seed": a.seed, "driver": self.driver.name, "model": a.model,
                 "caps": {"per_run_usd": a.max_run_usd, "suite_usd": a.max_suite_usd, "wall_s": a.wall_s},
-                "budget_approved_in": a.budget_approved_in, "planned": len(self.plan), "executed": self.executed,
+                "budget_approved_in": a.budget_approved_in, "budget_approval": a.approval, "planned": len(self.plan), "executed": self.executed,
                 "spent_usd": round(self.spent, 6), "cap_hit": self.cap_hit, "not_run": list(not_run),
                 "started": started, "ended": ended}
         os.makedirs(self.results_root, exist_ok=True)
@@ -467,7 +471,9 @@ class Suite:
         with open(os.path.join(a.results_dir, "LEDGER.md"), "a") as f:
             f.write("# suite %s started %s, driver %s, caps per run %.2f suite %.2f USD, budget approval: %s\n"
                     % (a.suite_id, started, self.driver.name, a.max_run_usd, a.max_suite_usd,
-                       a.budget_approved_in or "none (fake agents only)"))
+                       ("%s, approved by %s on %s, scope: %s" % (a.budget_approved_in, a.approval["approved_by"],
+                                                                a.approval["approved_on"], a.approval["scope"]))
+                       if a.approval else (a.budget_approved_in or "none (fake agents only)")))
         self.write_meta(started)
         not_run = []
         for i, (block, arm) in enumerate(self.plan):
@@ -530,15 +536,32 @@ def parse_args(argv):
     p.add_argument("--roles-model")
     p.add_argument("--claude-bin", default="claude")
     p.add_argument("--fake-script", help="a fake-agent script (default: the fixture's)")
-    p.add_argument("--max-run-usd", type=float, default=3.0)
-    p.add_argument("--max-suite-usd", type=float, default=150.0)
+    p.add_argument("--max-run-usd", type=float, default=None, help="per-run spend cap (default %g; with an approval file "
+                   "the file's cap)" % DEFAULT_RUN_USD)
+    p.add_argument("--max-suite-usd", type=float, default=None, help="suite spend cap (default %g; with an approval file "
+                   "the file's budget)" % DEFAULT_SUITE_USD)
     p.add_argument("--wall-s", type=float, default=1800)
     p.add_argument("--max-turns", type=int, default=60, help="turn cap per agent")
     p.add_argument("--poll-s", type=float, default=60.0, help="how often the hidden checker is polled while agents run")
     p.add_argument("--stagger-s", type=float, default=0.0, help="launch stagger of agents, drawn from the seed")
-    p.add_argument("--budget-approved-in", help="where the human approved the budget (required with --driver claude)")
+    p.add_argument("--budget-approved-in", metavar="FILE", help="the budget approval file (JSON, outside the repository; "
+                   "see approval.py and README.md); required with --driver claude")
     p.add_argument("--dry-run", action="store_true", help="print the plan and the cost range; run nothing, write nothing")
-    return p.parse_args(argv)
+    a = p.parse_args(argv)
+    a.cli_run_cap, a.cli_suite_cap = a.max_run_usd, a.max_suite_usd  # None when not given on the command line
+    a.max_run_usd = DEFAULT_RUN_USD if a.max_run_usd is None else a.max_run_usd
+    a.max_suite_usd = DEFAULT_SUITE_USD if a.max_suite_usd is None else a.max_suite_usd
+    a.approval = None
+    return a
+
+
+def resolve_caps(a):
+    """(per-run cap, suite cap) in USD. A real run takes them from the approval file (validated here, see approval.py;
+    ApprovalError when it refuses); a fake run from the command line or the defaults."""
+    if a.driver == "claude":
+        a.approval = approval_mod.load(a.budget_approved_in, a.model, a.roles_model, a.cli_run_cap, a.cli_suite_cap)
+        return a.approval["per_run_usd"], a.approval["suite_usd"]
+    return a.max_run_usd, a.max_suite_usd
 
 
 def main(argv=None):
@@ -566,11 +589,16 @@ def main(argv=None):
         return dry_run(a, fx, plan)
     if a.driver == "claude":
         if not a.budget_approved_in:
-            print("run.py: real agents cost money; --budget-approved-in must name where the human approved the budget "
-                  "(SPEC section 8). Without it only --driver fake runs.", file=sys.stderr)
+            print("run.py: real agents cost money; --budget-approved-in must name the budget approval file the human "
+                  "made (SPEC section 8, approval.py). Without it only --driver fake runs.", file=sys.stderr)
             return 2
         if not a.model:
             print("run.py: --driver claude needs --model (a pinned model id)", file=sys.stderr)
+            return 2
+        try:
+            a.max_run_usd, a.max_suite_usd = resolve_caps(a)
+        except approval_mod.ApprovalError as e:
+            print("run.py: %s" % e, file=sys.stderr)
             return 2
         driver = drivers.ClaudeDriver(a.claude_bin, a.model, a.max_turns, a.max_run_usd / len(fx.agents), a.klatch_bin)
     else:
