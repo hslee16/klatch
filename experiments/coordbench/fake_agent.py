@@ -12,13 +12,18 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
 
   write {path, content}          write a file in the working directory
   git {args}                     run git; a nonzero exit ends the agent with exit 1 unless allow_fail
-  sync {message}                 git add -A, commit, pull --no-rebase, push origin HEAD:main (retries a lost race)
+  copy_from {from, path}         copy a file ("from" is absolute or relative to the script's directory) to path
+  append {path, content}         append text to a file (created when absent)
+  sync {message, resolve?}       git add -A, commit, pull --no-rebase, push to origin main (retries a lost race).
+                                 resolve: "union" (keep both sides of every conflicted file) or "ours" (keep this
+                                 agent's side, dropping the other's lines) resolves a conflicted pull and goes on; without
+                                 it the agent stops on a conflict as before
   klatch {args}                  run the klatch binary given by --klatch-bin ({{ROOM}} and {{NAME}} are filled in)
   say {text}                     an assistant text message
   cost {usd}                     report cumulative spend so far (a fake_cost event)
   sleep {s}, hang                wait; hang waits until the harness kills it
   exit {code}                    stop at once with that exit code, with no result message (a crashed agent)
-  wait_origin_has {path, timeout}  fetch until origin/main has the file
+  wait_origin_has {path, contains?, timeout}  fetch until origin/main has the file (and, when given, text in it)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
   final {text}                   the final message
 """
@@ -70,6 +75,27 @@ class Agent:
               "total_cost_usd": self.cost, "result": why})
         sys.exit(1)
 
+    def resolve_conflicts(self, how):
+        """Resolve a conflicted merge in the working tree and commit it. False when there are no unmerged paths."""
+        rc, out = self.run_cmd(["git", "diff", "--name-only", "--diff-filter=U"])
+        paths = [p for p in out.splitlines() if p]
+        if rc != 0 or not paths:
+            return False
+        for path in paths:
+            if how == "ours":
+                self.bash(["git", "checkout", "--ours", "--", path])
+            else:  # union: drop the markers, keep every line of both sides
+                with open(path) as f:
+                    lines = f.read().splitlines(keepends=True)
+                keep = [l for l in lines
+                        if not (l.startswith("<<<<<<< ") or l.rstrip("\n") == "=======" or l.startswith(">>>>>>> "))]
+                with open(path, "w") as f:
+                    f.write("".join(keep))
+                self.tool("Edit", {"file_path": path, "resolve": "union"}, "ok")
+        self.bash(["git", "add", "--"] + paths)
+        self.bash(["git", "commit", "-q", "--no-edit"])
+        return True
+
     def fill(self, text):
         return text.replace("{{ROOM}}", self.args.room).replace("{{NAME}}", self.args.name)
 
@@ -82,16 +108,34 @@ class Agent:
             with open(path, "w") as f:
                 f.write(st["content"])
             self.tool("Write", {"file_path": path, "content": st["content"]}, "ok")
+        elif op == "copy_from":
+            here = os.path.dirname(os.path.abspath(self.args.script))
+            src = st["from"] if os.path.isabs(st["from"]) else os.path.join(here, st["from"])
+            os.makedirs(os.path.dirname(os.path.abspath(st["path"])), exist_ok=True)
+            with open(src, "rb") as f:
+                data = f.read()
+            with open(st["path"], "wb") as f:
+                f.write(data)
+            self.tool("Write", {"file_path": st["path"], "content": data.decode("utf-8", "replace")}, "ok")
+        elif op == "append":
+            os.makedirs(os.path.dirname(os.path.abspath(st["path"])), exist_ok=True)
+            with open(st["path"], "a") as f:
+                f.write(st["content"])
+            self.tool("Edit", {"file_path": st["path"], "append": st["content"]}, "ok")
         elif op == "git":
             self.bash(["git"] + st["args"], allow)
         elif op == "sync":
             msg = st.get("message", "work")
             self.bash(["git", "add", "-A"], allow)
             self.bash(["git", "commit", "-q", "-m", msg], True)
-            for _ in range(6):
-                rc, _ = self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], allow)
+            resolve = st.get("resolve")
+            for _ in range(8):
+                rc, _ = self.bash(["git", "pull", "--no-rebase", "--no-edit", "origin", "main"], allow or bool(resolve))
                 if rc != 0:
-                    return
+                    if not resolve:
+                        return
+                    if not self.resolve_conflicts(resolve):
+                        self.die("pull failed and there is no conflict to resolve")
                 rc, _ = self.bash(["git", "push", "origin", "HEAD:main"], True)
                 if rc == 0:
                     return
@@ -117,8 +161,8 @@ class Agent:
             deadline = time.time() + float(st.get("timeout", 30))
             while time.time() < deadline:
                 subprocess.run(["git", "fetch", "-q", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                rc, _ = self.run_cmd(["git", "cat-file", "-e", "origin/main:%s" % st["path"]])
-                if rc == 0:
+                rc, out = self.run_cmd(["git", "show", "origin/main:%s" % st["path"]])
+                if rc == 0 and st.get("contains", "") in out:
                     self.tool("Bash", {"command": "git fetch origin"}, "found %s" % st["path"])
                     return
                 time.sleep(0.1)

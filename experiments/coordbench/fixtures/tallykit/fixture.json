@@ -1,0 +1,16 @@
+{
+  "name": "tallykit",
+  "description": "F1 (SPEC section 3, S1): a small Python package of eight independent modules, four tickets of two modules each, plus a shared registry (tallykit/__init__.py) and CHANGELOG.md that every ticket touches, so a real merge conflict is possible.",
+  "topology": "T-clone",
+  "scenario": "s1",
+  "agents": [
+    {"name": "a", "task": "task-a.md"},
+    {"name": "b", "task": "task-b.md"},
+    {"name": "c", "task": "task-c.md"},
+    {"name": "d", "task": "task-d.md"}
+  ],
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "tallykit",
+  "est_cost_usd_haiku": 2.0,
+  "fake": "fake.json"
+}
