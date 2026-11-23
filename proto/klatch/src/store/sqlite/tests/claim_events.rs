@@ -256,3 +256,41 @@ fn no_claim_name_or_member_is_in_the_event_rows() {
         .join("\n");
     assert!(!all.contains("SECRET"), "{all}");
 }
+
+#[test]
+fn passive_events_and_explicit_events_keep_their_own_caps() {
+    let s = store();
+    let cap = super::super::claim_events::PASSIVE_EVENT_MAX_ROWS;
+    // a flood of passive renewals (#1401) must not push the explicit history out
+    s.conn
+        .execute_batch(&format!(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<{}) \
+             INSERT INTO claim_events(ts,room,event,class) SELECT 5,'r','passive_renewed','file' FROM n",
+            cap + 50
+        ))
+        .unwrap();
+    take(&s, "bob", "a", 600, 6).unwrap();
+    let count = |like: &str| -> i64 {
+        s.conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM claim_events WHERE event {like} 'passive\\_%' ESCAPE '\\'"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(count("NOT LIKE"), 1, "the explicit grant is kept");
+    s.take_passive_claim(
+        &ClaimRequest::new(("r", "bob"), "b", 300, "passive: edited (klatch hook)"),
+        7,
+    )
+    .unwrap();
+    assert_eq!(
+        count("LIKE"),
+        cap,
+        "the passive events are capped on their own"
+    );
+    assert_eq!(count("NOT LIKE"), 1);
+}

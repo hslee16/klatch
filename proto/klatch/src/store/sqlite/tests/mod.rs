@@ -23,6 +23,7 @@ mod encryption;
 mod label_keys;
 mod long_tasks;
 mod machine_checkpoint;
+mod machine_status;
 mod members;
 mod messages;
 mod migration_property;

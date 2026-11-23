@@ -44,7 +44,7 @@ class TestScenarioFile(unittest.TestCase):
     def test_arms_n_caps_and_metrics_come_from_the_spec(self):
         s = self.scn
         self.assertEqual(s["fixture"], "tallykit")
-        self.assertEqual(s["arms"], ["B0", "B1", "K1", "K2", "K3"])
+        self.assertEqual(s["arms"], ["B0", "B1", "K1", "K2", "K3", "B1-roles"])
         self.assertEqual(s["arms_at_m0"], ["B0", "B1", "K1", "K2"])
         self.assertEqual(s["n_per_arm"]["m0"], 10)
         self.assertEqual(s["n_per_arm"]["quick"], 3)

@@ -28,11 +28,17 @@ mod judge_loop;
 mod kind;
 mod labels;
 mod machine_checkpoint;
+mod machine_status;
 mod mediator;
 mod merge_claim;
+mod passive_claim;
 mod priority;
 mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
+pub use passive_claim::{
+    PASSIVE_CLAIM_SECS, PASSIVE_REASON, PassiveOutcome, PassiveRefusal, PassiveTaken, covers,
+    never_claimed, passive_path, refusal_line,
+};
 mod merge_queue;
 pub use merge_queue::{
     CHECKING_PREFIX, DROPPED_PREFIX, DropReason, HALTED_PREFIX, Halt, HaltReason,
@@ -92,6 +98,9 @@ pub use card::{Card, card_of, render_card};
 pub use machine_checkpoint::{
     MACHINE_MARK, MACHINE_MAX_BYTES, MachineCheckpoint, MachineState, TRAIL_PATH_MAX_BYTES,
     ToolClass, Trail, end_word, machine_body, repo_relative, status_word,
+};
+pub use machine_status::{
+    MACHINE_STATUS_WINDOW_SECS, MachineClass, SESSION_END_STATUS, is_machine_status, machine_owned,
 };
 pub use parked::{PARKED_DEFAULT_SECS, PARKED_MAX_SECS, PARKED_PREFIX, Parked, parse_parked};
 pub use pr_lifecycle::{MERGED_PREFIX, OpenPr, PR_PREFIX, PR_WORDS, is_merged_note, open_prs};
@@ -161,8 +170,9 @@ pub use toolguard::{
     patch_targets,
 };
 pub use usage_stats::{
-    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MemberCounts, RoomClass,
-    RoomCount, StatsOptions, UsageStats, claim_class, day_of, median_and_p90, start_of_day, vocab,
+    AskCounts, ClaimCounts, ClaimHistory, Counts, MachineCheckpointCounts, MachineStatusCounts,
+    MemberCounts, PassiveClaimCounts, RoomClass, RoomCount, StatsOptions, UsageStats, claim_class,
+    day_of, median_and_p90, start_of_day, vocab,
 };
 pub use wait_filter::{Filter as WaitFilter, resolve_dm_targets, room_filters};
 pub use wake_cap::{cut_to, fit_prefix, mentioning};

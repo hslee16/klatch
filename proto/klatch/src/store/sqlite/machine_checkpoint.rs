@@ -3,6 +3,7 @@
 
 use super::SqliteStore;
 use crate::domain::{MachineCheckpoint, Result, Trail};
+use crate::store::Seat;
 use rusqlite::params;
 
 /// Counts rows older than this are deleted as events are written: 30 days, like the claim events.
@@ -71,6 +72,53 @@ impl SqliteStore {
                 params![EVENT_MAX_ROWS],
             )?;
             Ok(replaced)
+        })
+    }
+
+    /// Write the member's machine status in the room if it is due (see `Store::put_machine_status`) and count it.
+    /// `status` is the text and its class word; `when` is now and the window, in seconds.
+    pub(super) fn do_put_machine_status(
+        &self,
+        at: Seat,
+        (text, class): (&str, &str),
+        owned: &[&str],
+        (now, window): (i64, i64),
+    ) -> Result<bool> {
+        self.immediate(|| {
+            let row: Option<(Option<String>, i64)> = self.optional(
+                "SELECT status,status_ts FROM members WHERE room=?1 AND name=?2",
+                params![at.room, at.member],
+                |r| Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+            )?;
+            // a member that is not in the room has no status to set, and the machine does not join it
+            let Some((current, set_at)) = row else {
+                return Ok(false);
+            };
+            let due = match current.as_deref() {
+                None => true,
+                Some(t) if !owned.contains(&t) => false,
+                Some(t) => t != text || now - set_at >= window,
+            };
+            if !due {
+                return Ok(false);
+            }
+            self.exec(
+                "UPDATE members SET status=?3, status_ts=?4 WHERE room=?1 AND name=?2",
+                params![at.room, at.member, text, now],
+            )?;
+            self.exec(
+                "INSERT INTO machine_status_events(ts,room,class) VALUES(?1,?2,?3)",
+                params![now, at.room, class],
+            )?;
+            self.exec(
+                "DELETE FROM machine_status_events WHERE ts<?1",
+                params![now - EVENT_MAX_AGE_SECS],
+            )?;
+            self.exec(
+                "DELETE FROM machine_status_events WHERE id <= (SELECT MAX(id) FROM machine_status_events) - ?1",
+                params![EVENT_MAX_ROWS],
+            )?;
+            Ok(true)
         })
     }
 

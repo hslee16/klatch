@@ -53,6 +53,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE machine_checkpoints(room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL, last INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,member));
  CREATE TABLE machine_checkpoint_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, replaced INTEGER NOT NULL, last INTEGER NOT NULL, bytes INTEGER NOT NULL);
  CREATE INDEX machine_checkpoint_events_ts ON machine_checkpoint_events(ts);
+ CREATE TABLE machine_status_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, class TEXT NOT NULL);
+ CREATE INDEX machine_status_events_ts ON machine_status_events(ts);
  CREATE TABLE ask_routes(room TEXT NOT NULL, seq INTEGER NOT NULL, member TEXT NOT NULL, kind TEXT NOT NULL, ts INTEGER NOT NULL, told INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,seq,member));
  CREATE TABLE ask_route_events(room TEXT NOT NULL, seq INTEGER NOT NULL, outcome TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, PRIMARY KEY(room,seq,outcome));
  CREATE INDEX ask_route_events_ts ON ask_route_events(ts);";
@@ -511,6 +513,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v40,
     migrate_v41,
     migrate_v42,
+    migrate_v43,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -591,12 +594,24 @@ pub(super) fn migrate_v41(conn: &Connection) -> Result<()> {
     .map_err(be)
 }
 
-/// Version 42 to 43: ask routing (#1407). `ask_routes` is who an ask is addressed to (the capable members at post time, the
-/// coordinators once the lease ran out), one row per ask and member (`told` holds which surfaces already pointed a late addressing out to the member: 1 the hook digest, 2 the wake count); `ask_route_events` is the counts-only record the
+/// Version 42 to 43: the machine status counts (#1403). `machine_status_events` is the counts-only record the usage
+/// report reads: when, which room and which class word (`working`, `idle` or `parked`). It holds no member, tool,
+/// command or text. The status itself lives in the existing `members.status` field. Existing stores start empty.
+pub(super) fn migrate_v42(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS machine_status_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, room TEXT NOT NULL, class TEXT NOT NULL);
+         CREATE INDEX IF NOT EXISTS machine_status_events_ts ON machine_status_events(ts);",
+    )
+    .map_err(be)
+}
+
+/// Version 43 to 44: ask routing (#1407). `ask_routes` is who an ask is addressed to (the capable members at post time, the
+/// coordinators once the lease ran out), one row per ask and member (`told` holds which surfaces already pointed a late
+/// addressing out to the member: 1 the hook digest, 2 the wake count); `ask_route_events` is the counts-only record the
 /// usage report reads: one row per ask and outcome (`routed`, `taken`, `lapsed`, `escalated`) with how many members it
 /// concerned and when. Ids, member names and numbers, never text. Existing stores start empty, so no ask posted before
 /// the upgrade is ever routed or escalated.
-pub(super) fn migrate_v42(conn: &Connection) -> Result<()> {
+pub(super) fn migrate_v43(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS ask_routes(room TEXT NOT NULL, seq INTEGER NOT NULL, member TEXT NOT NULL, kind TEXT NOT NULL, ts INTEGER NOT NULL, told INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,seq,member));
          CREATE TABLE IF NOT EXISTS ask_route_events(room TEXT NOT NULL, seq INTEGER NOT NULL, outcome TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, PRIMARY KEY(room,seq,outcome));

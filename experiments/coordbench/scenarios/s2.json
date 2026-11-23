@@ -3,9 +3,18 @@
   "title": "same-file contention race with three agents (#1367)",
   "spec": "SPEC.md section 3, scenario S2; fixture F2 onefile",
   "fixture": "onefile",
-  "arms": ["B0", "B1", "K1", "K2", "K3"],
+  "arms": ["B0", "B1", "K1", "K2", "K3", "B1-roles"],
   "arms_at_m0": ["B0", "B1", "K1", "K2"],
   "arm_notes": {"K3": "K3 is not run at M0 (SPEC section 2.2); it joins when the arms review (#1365) has accepted its text"},
+  "roles": {
+    "arms": ["K3", "B1-roles"],
+    "members": ["integrator", "supervisor"],
+    "model": null,
+    "per_role_usd": 0.18,
+    "grace_s": 120,
+    "max_restarts": 1,
+    "note": "Role members of the arms K3 and B1-roles (#1421, SPEC section 2.2): each is its own agent process with its own cap (per_role_usd, a tenth of the run cap: the integrator and the supervisor mostly wait), the roles model (null: the agent model; --roles-model overrides) and its own line in the run record (roles.members, spend.roles_usd). grace_s is how long they may run on after every worker has ended; max_restarts is how many replacements the supervisor may start for one worker. Both arms stay out of the M0 set until the human approves them and their budget (SPEC section 12)."
+  },
   "n_per_arm": {"m0": 20, "quick": 3, "note": "SPEC section 6.1: 20 per arm for the cheap binary scenarios S2, S5 and S10 part 1 (rates need more runs than medians); 3 for the quick subset after an epic, labelled exploratory. Each topology is reported separately and never pooled with the other (SPEC S2)."},
   "topologies": {
     "T-clone": {"status": "implemented", "note": "Each agent has its own clone and the run's bare origin, integrates by git pull --no-rebase origin main then git push origin HEAD:main. This is the only topology run.py builds."},

@@ -260,6 +260,23 @@ fn bench_with_claims() -> SqliteStore {
         .unwrap();
     s.put_machine_checkpoint(at("bob-TOPSECRET"), body, true, t + 730)
         .unwrap();
+    // machine status (#1403): members in the lobby, three working writes, one idle and one parked
+    let status = |m, class: &str, at| {
+        s.join("lobby", m, at).unwrap();
+        let text = format!("{class} (auto)");
+        s.put_machine_status(
+            crate::store::Seat::new("lobby", m),
+            (&text, class),
+            &["working (auto)", "idle (auto)", "parked (auto)"],
+            (at, 60),
+        )
+        .unwrap();
+    };
+    status("amy-TOPSECRET", "working", t + 740);
+    status("bob-TOPSECRET", "working", t + 741);
+    status("cy-TOPSECRET", "working", t + 742);
+    status("amy-TOPSECRET", "idle", t + 743);
+    status("bob-TOPSECRET", "parked", t + 744);
     // ask routing (#1407): ask 1 routed to one member, taken, lapsed and escalated to a coordinator; ask 2 routed to
     // nobody and escalated with nobody to reach
     use crate::domain::RouteKind;
@@ -310,6 +327,33 @@ fn ask_routing_outcomes_are_counted_per_ask_and_follow_room_and_since() {
     let r = bench_with_claims().usage_stats(&late).unwrap();
     assert_eq!(r.ask_routing.escalated, 1);
     assert_eq!(r.ask_routing.routed, 0);
+}
+
+#[test]
+fn machine_status_updates_are_counted_by_class_and_follow_room_and_since() {
+    let r = bench_with_claims().usage_stats(&opts()).unwrap();
+    let m = &r.machine_status;
+    assert_eq!((m.updates, m.working, m.idle, m.parked), (5, 3, 1, 1));
+    let text = r.to_text();
+    assert!(
+        text.contains("machine status: 5 updates (working 3, idle 1, parked 1)"),
+        "{text}"
+    );
+    assert!(!text.contains("(auto)") && !to_json_text(&r).contains("TOPSECRET"));
+    assert_eq!(r.to_json()["machine_status"]["working"], 3);
+    // the passive claims line (#1401) and this one sit side by side in the text and in the JSON
+    assert!(text.contains("passive claims: "), "{text}");
+    assert!(r.to_json()["passive_claims"]["granted"].is_number());
+    let other = StatsOptions {
+        room: Some("vault".into()),
+        ..opts()
+    };
+    let r = bench_with_claims().usage_stats(&other).unwrap();
+    assert_eq!(r.machine_status.updates, 0);
+}
+
+fn to_json_text(r: &crate::domain::UsageStats) -> String {
+    r.to_json().to_string()
 }
 
 #[test]

@@ -43,6 +43,20 @@ impl SpyStore {
         self.inner.usage_stats(&opts).unwrap().claims.history
     }
 
+    /// The passive claim counts as the stats report reads them (#1401).
+    pub fn passive_counts_for_test(&self) -> crate::domain::PassiveClaimCounts {
+        let opts = crate::domain::StatsOptions {
+            top: 1,
+            ..Default::default()
+        };
+        self.inner.usage_stats(&opts).unwrap().passive_claims
+    }
+
+    /// The whole usage report, for a test of what it prints.
+    pub fn stats_for_test(&self, opts: &crate::domain::StatsOptions) -> crate::domain::UsageStats {
+        self.inner.usage_stats(opts).unwrap()
+    }
+
     pub fn inner_join_for_test(&self, room: &str, member: &str) {
         self.inner.join(room, member, 0).unwrap();
     }
@@ -233,6 +247,17 @@ impl MemberStore for SpyStore {
         self.inner.put_machine_checkpoint(at, body, last, now)
     }
 
+    fn put_machine_status(
+        &self,
+        at: Seat,
+        status: (&str, &str),
+        owned: &[&str],
+        when: (i64, i64),
+    ) -> Result<bool> {
+        self.gate()?;
+        self.inner.put_machine_status(at, status, owned, when)
+    }
+
     fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {
         self.gate()?;
         self.inner.machine_checkpoints(room)
@@ -297,6 +322,24 @@ impl ClaimStore for SpyStore {
     fn claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
         self.gate()?;
         self.inner.claim(request, now)
+    }
+
+    fn take_passive_claim(
+        &self,
+        request: &ClaimRequest,
+        now: i64,
+    ) -> Result<crate::domain::PassiveTaken> {
+        self.gate()?;
+        self.inner.take_passive_claim(request, now)
+    }
+
+    fn release_passive_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.gate()?;
+        self.inner.release_passive_claims(member, now)
+    }
+
+    fn note_passive_failure(&self, now: i64) {
+        self.inner.note_passive_failure(now);
     }
 
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {

@@ -22,6 +22,8 @@ pub trait Hooks {
     fn note_tool(&self, class: &str, path: Option<&str>) -> Result<()>;
     /// Write the caller's machine checkpoint (`ended` is the SessionEnd reason, none at a Stop); how many rooms got one.
     fn write_machine_checkpoint(&self, ended: Option<&str>) -> Result<usize>;
+    /// Set the caller's machine status (#1403) of `class` (`working`, `idle`, `parked`) where it is due; how many rooms.
+    fn set_machine_status(&self, class: &str) -> Result<usize>;
     /// Any other hook ran: a sign of life, which ends a park.
     fn sign_of_life(&self) -> Result<()>;
 }
@@ -50,6 +52,9 @@ impl<S: Store> Hooks for Direct<S> {
         self.gateway
             .write_machine_checkpoint(&self.principal, ended)
     }
+    fn set_machine_status(&self, class: &str) -> Result<usize> {
+        self.gateway.set_machine_status(&self.principal, class)
+    }
     fn sign_of_life(&self) -> Result<()> {
         self.gateway.sign_of_life(&self.principal)
     }
@@ -64,6 +69,7 @@ impl Hooks for SharedTransport {
         record_stop(background_tasks: usize, crons: usize) -> Result<()>;
         note_tool(class: &str, path: Option<&str>) -> Result<()>;
         write_machine_checkpoint(ended: Option<&str>) -> Result<usize>;
+        set_machine_status(class: &str) -> Result<usize>;
         sign_of_life() -> Result<()>;
     }
 }

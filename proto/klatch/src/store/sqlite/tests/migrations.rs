@@ -704,7 +704,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 43);
+    const { assert!(SCHEMA_VERSION >= 42) };
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -764,7 +764,7 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 43);
+    const { assert!(SCHEMA_VERSION >= 42) };
     let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
     assert_eq!(unread.len(), 1, "the cursor survives");
     s.mark_shown(
@@ -797,7 +797,7 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 43);
+    const { assert!(SCHEMA_VERSION >= 42) };
     for table in [
         "member_trail",
         "machine_checkpoints",
@@ -826,21 +826,59 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
 }
 
 #[test]
-fn a_version_42_database_gains_the_ask_routing_tables_and_keeps_its_data() {
-    let path = temp_db("migrate-v42-ask-routing");
+fn a_version_42_database_gains_the_machine_status_counts_and_keeps_its_data() {
+    let path = temp_db("migrate-v42-machine-status");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "working: x", 2).unwrap();
+        s.conn
+            .execute_batch("DROP TABLE machine_status_events; PRAGMA user_version = 42;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 44);
+    let columns: String = s
+        .conn
+        .query_row(
+            "SELECT group_concat(name) FROM pragma_table_info('machine_status_events')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        columns, "id,ts,room,class",
+        "a time, a room and a class word"
+    );
+    assert!(
+        s.put_machine_status(
+            Seat::new("r", "alice"),
+            ("working (auto)", "working"),
+            &["working (auto)"],
+            (3, 60)
+        )
+        .unwrap()
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_43_database_gains_the_ask_routing_tables_and_keeps_its_data() {
+    let path = temp_db("migrate-v43-ask-routing");
     {
         let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
         s.join("r", "alice", 1).unwrap();
         s.post(Seat::new("r", "alice"), "seeking: x", 2).unwrap();
         s.conn
             .execute_batch(
-                "DROP TABLE ask_routes; DROP TABLE ask_route_events; PRAGMA user_version = 42;",
+                "DROP TABLE ask_routes; DROP TABLE ask_route_events; PRAGMA user_version = 43;",
             )
             .unwrap();
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 43);
+    assert_eq!(SCHEMA_VERSION, 44);
     for table in ["ask_routes", "ask_route_events"] {
         let n: i64 = s
             .conn
