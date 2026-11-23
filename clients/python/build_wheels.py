@@ -17,6 +17,7 @@ import os
 import struct
 import sys
 import tarfile
+import time
 import zipfile
 
 NAME = "klatch"
@@ -46,31 +47,43 @@ def tags_for(target):
         raise ValueError(f"no wheel for target {target}: it is one of {sorted(TARGET_TAGS)}") from None
 
 
+_MACHO_HEADER_SIZE = {0xFEEDFACF: 32, 0xFEEDFACE: 28}  # 64-bit and 32-bit little-endian
+# load command -> (offset of the packed minimum version in it, the size it needs): LC_BUILD_VERSION is cmd, size,
+# platform, minos; LC_VERSION_MIN_MACOSX is cmd, size, version
+_MACHO_VERSION_COMMANDS = {0x32: (12, 16), 0x24: (8, 12)}
+
+
+def _macho_header_size(path, data):
+    if len(data) < 32:
+        raise ValueError(f"{path} is not a Mach-O binary")
+    magic = struct.unpack_from("<I", data, 0)[0]
+    if magic not in _MACHO_HEADER_SIZE:
+        raise ValueError(f"{path} is not a thin little-endian Mach-O binary")
+    return _MACHO_HEADER_SIZE[magic]
+
+
+def _version_in_command(data, offset, cmd):
+    """The (major, minor) a load command carries when it is one of the version commands and whole, else None."""
+    field, needed = _MACHO_VERSION_COMMANDS.get(cmd, (None, None))
+    if field is None or offset + needed > len(data):
+        return None
+    version = struct.unpack_from("<I", data, offset + field)[0]
+    return (version >> 16, (version >> 8) & 0xFF)
+
+
 def macho_minos(path):
     """The (major, minor) macOS version a Mach-O binary asks for, from LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX."""
     with open(path, "rb") as f:
         data = f.read(1 << 16)
-    if len(data) < 32:
-        raise ValueError(f"{path} is not a Mach-O binary")
-    magic = struct.unpack_from("<I", data, 0)[0]
-    if magic == 0xFEEDFACF:
-        header = 32
-    elif magic == 0xFEEDFACE:
-        header = 28
-    else:
-        raise ValueError(f"{path} is not a thin little-endian Mach-O binary")
+    offset = _macho_header_size(path, data)
     ncmds = struct.unpack_from("<I", data, 16)[0]
-    offset = header
     for _ in range(ncmds):
         if offset + 8 > len(data):
             break
         cmd, size = struct.unpack_from("<II", data, offset)
-        if cmd == 0x32 and offset + 16 <= len(data):  # LC_BUILD_VERSION: cmd, size, platform, minos
-            version = struct.unpack_from("<I", data, offset + 12)[0]
-            return (version >> 16, (version >> 8) & 0xFF)
-        if cmd == 0x24 and offset + 12 <= len(data):  # LC_VERSION_MIN_MACOSX: cmd, size, version
-            version = struct.unpack_from("<I", data, offset + 8)[0]
-            return (version >> 16, (version >> 8) & 0xFF)
+        found = _version_in_command(data, offset, cmd)
+        if found is not None:
+            return found
         if size < 8:
             break
         offset += size
@@ -106,25 +119,26 @@ def _metadata(version, readme_text, license_names):
     return "\n".join(lines) + "\n"
 
 
-def build_wheel(version, binary, server_binary, tags, out_dir, license_file, notices_file, client_source, init_source, readme):
-    """Write one wheel and return its path. Raises FileNotFoundError if an input file is missing."""
-    def read(path):
-        with open(path, "rb") as f:
-            return f.read()
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
 
-    command = read(binary)
-    server = read(server_binary)
+
+def _wheel_files(version, tags, sources):
+    """name -> (bytes, mode) of everything in the wheel, RECORD last. `sources` are the input paths by role."""
+    command = _read_bytes(sources["binary"])
+    server = _read_bytes(sources["server_binary"])
     dist_info = f"{NAME}-{version}.dist-info"
     data_dir = f"{NAME}-{version}.data"
-    files = {  # name -> (bytes, mode)
-        f"{NAME}/__init__.py": (read(init_source), 0o644),
-        f"{NAME}/client.py": (read(client_source), 0o644),
+    files = {
+        f"{NAME}/__init__.py": (_read_bytes(sources["init_source"]), 0o644),
+        f"{NAME}/client.py": (_read_bytes(sources["client_source"]), 0o644),
         f"{data_dir}/scripts/{NAME}": (command, 0o755),
         f"{data_dir}/scripts/{SERVER_NAME}": (server, 0o755),
-        f"{dist_info}/licenses/LICENSE": (read(license_file), 0o644),
-        f"{dist_info}/licenses/THIRD-PARTY-LICENSES.txt": (read(notices_file), 0o644),
+        f"{dist_info}/licenses/LICENSE": (_read_bytes(sources["license_file"]), 0o644),
+        f"{dist_info}/licenses/THIRD-PARTY-LICENSES.txt": (_read_bytes(sources["notices_file"]), 0o644),
     }
-    readme_text = read(readme).decode("utf-8").rstrip("\n")
+    readme_text = _read_bytes(sources["readme"]).decode("utf-8").rstrip("\n")
     files[f"{dist_info}/METADATA"] = (_metadata(version, readme_text, ["LICENSE", "THIRD-PARTY-LICENSES.txt"]).encode(), 0o644)
     wheel_lines = ["Wheel-Version: 1.0", "Generator: klatch build_wheels.py", "Root-Is-Purelib: false"]
     wheel_lines += [f"Tag: py3-none-{t}" for t in tags]
@@ -133,14 +147,10 @@ def build_wheel(version, binary, server_binary, tags, out_dir, license_file, not
     record = [f"{n},{_record_hash(d)},{len(d)}" for n, (d, _) in sorted(files.items())]
     record.append(f"{dist_info}/RECORD,,")
     files[f"{dist_info}/RECORD"] = (("\n".join(record) + "\n").encode(), 0o644)
+    return files
 
-    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", DEFAULT_EPOCH))
-    stamp = max(epoch, DEFAULT_EPOCH)
-    import time
-    date_time = time.gmtime(stamp)[:6]
 
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"{NAME}-{version}-py3-none-{'.'.join(tags)}.whl")
+def _write_zip(path, files, date_time):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in sorted(files, key=lambda n: (n.endswith("/RECORD"), n)):
             data, mode = files[name]
@@ -149,19 +159,39 @@ def build_wheel(version, binary, server_binary, tags, out_dir, license_file, not
             info.create_system = 3
             info.external_attr = (0o100000 | mode) << 16
             zf.writestr(info, data)
+
+
+def build_wheel(version, binary, server_binary, tags, out_dir, license_file, notices_file, client_source, init_source, readme):
+    """Write one wheel and return its path. Raises FileNotFoundError if an input file is missing."""
+    sources = {
+        "binary": binary, "server_binary": server_binary, "license_file": license_file, "notices_file": notices_file,
+        "client_source": client_source, "init_source": init_source, "readme": readme,
+    }
+    files = _wheel_files(version, tags, sources)
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", DEFAULT_EPOCH))
+    date_time = time.gmtime(max(epoch, DEFAULT_EPOCH))[:6]
+
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{NAME}-{version}-py3-none-{'.'.join(tags)}.whl")
+    _write_zip(path, files, date_time)
     return path
+
+
+def _extract_needed(tar, archive, work):
+    """Write the binaries, LICENSE and the notices of a release archive into `work`."""
+    members = {os.path.basename(m.name): m for m in tar.getmembers() if m.isfile()}
+    for need in ("klatch", "klatch-server", "LICENSE", "THIRD-PARTY-LICENSES.txt"):
+        if need not in members:
+            raise ValueError(f"{archive} does not contain {need}")
+        with open(os.path.join(work, need), "wb") as f:
+            f.write(tar.extractfile(members[need]).read())
 
 
 def from_archive(version, target, archive, out_dir, repo_root):
     """Build the wheel for a release target from its release archive (the binary, LICENSE and the notices in it)."""
     tags = tags_for(target)
     with tarfile.open(archive) as tar, _scratch() as work:
-        members = {os.path.basename(m.name): m for m in tar.getmembers() if m.isfile()}
-        for need in ("klatch", "klatch-server", "LICENSE", "THIRD-PARTY-LICENSES.txt"):
-            if need not in members:
-                raise ValueError(f"{archive} does not contain {need}")
-            with open(os.path.join(work, need), "wb") as f:
-                f.write(tar.extractfile(members[need]).read())
+        _extract_needed(tar, archive, work)
         binary = os.path.join(work, "klatch")
         server_binary = os.path.join(work, "klatch-server")
         if target.endswith("apple-darwin"):
