@@ -1,0 +1,56 @@
+### $ klatch worker issue w-1 --clearance internal --out <HOME>/w.bundle
+(ended: ok)
+
+### $ klatch worker list
+w-1	live	clearance internal	parent none	expires in <N>	cap in <N>	last renewed never
+(ended: ok)
+
+### $ klatch worker revoke w-1
+revoked the credential of w-1
+(ended: ok)
+
+### $ klatch run create r1
+run r1 is open: its rooms are run.r1.<name>
+(ended: ok)
+
+### $ klatch run list
+r1	0 room(s)	opened <N>s ago
+(ended: ok)
+
+### $ klatch run end r1
+run r1 ended: 0 room(s) and 0 message(s) removed
+(ended: ok)
+
+### $ klatch anchor done a
+released 0 claim(s)
+(ended: ok)
+
+### $ klatch anchor reap --dir /nonexistent-klatch-dir
+released 0 claim(s)
+(ended: ok)
+
+### $ klatch judge run --once
+judged 0 item(s): 0 allowed, 0 redacted, 0 denied; 0 left queued
+applied 0 crossing verdict(s)
+(ended: ok)
+
+### the audit, oldest first
+<AGE>s ago	passphrase-set		first passphrase
+<AGE>s ago	create-room	r	created by m
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	issue-credential	w-1	clearance=internal parent=none ttl=3600s max-life=86400s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	revoke-credential	w-1	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	run-create	r1	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	run-end	r1	0 room(s), 0 message(s) removed
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	anchor-done	a	released 0 claim(s)
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	reap-anchors		released 0 claim(s)
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	proof-ok		window 60s
+

@@ -1,0 +1,1 @@
+- Internal cleanup of the domain modules (dm, subagent name scan, mediator, credential detection, router, stuck cases and others): smaller functions, no behaviour change (#1446).

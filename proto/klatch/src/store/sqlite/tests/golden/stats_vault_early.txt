@@ -1,0 +1,274 @@
+klatch stats (counts only; no message text, ask text, claim detail, label or payload)
+schema 44; room vault; since 2026-11-22; at 2026-11-23
+
+messages per room
+  room   class    messages  sealed  senders  first       last
+  vault  private         1       0        1  2026-11-23  2026-11-23
+
+messages per day (UTC)
+  day         messages
+  2026-11-23  1
+
+senders: 1 distinct, 0 with a verified message
+
+top senders
+  sender  messages
+  dave    1
+
+attribution
+  attribution   messages
+  unattributed  1
+
+message kinds
+  kind    messages
+  (none)  1
+
+asks: 0 created, 0 answered, 0 closed, 0 with a declared scope, 0 with refs
+time to first answer: median -, p90 -
+
+ask refs by kind
+  (none)
+
+live claims by class
+  (none)
+
+claim notes by class
+  (none)
+
+members waiting on a held claim now, by class
+  (none)
+claim yields on record: 0
+
+claim grants by class (new holds; renewals are not counted)
+  (none)
+
+claim refusals by rule
+  (none)
+
+claim releases by class
+  (none)
+
+claim releases by who released
+  (none)
+
+claim expiries by class (the holder's lease lapsed)
+  (none)
+claims taken over after expiry: 0
+claim conflicts handled (refused, then granted): 0, median wait -
+claim hold time: median - over 0 holds
+machine checkpoints: 0 written (0 at session end), 0 replaced an earlier one, 0 bytes
+machine status: 0 updates (working 0, idle 0, parked 0)
+passive claims: 0 granted, 0 renewed, 0 refused, 0 released, 0 lapsed, 0 failed
+ask routing: 0 routed to capable members, 0 routed to nobody, 0 taken, 0 lapsed, 0 escalated (0 with no coordinator to reach)
+
+refusals by rule
+  rule   refusals
+  scrub  1
+
+direct message rooms: 0 (0 messages); private rooms: 1 (1 messages)
+members: 1 joined, 0 never posted, 0 marked done, 0 muted, 0 with a parent
+members who posted and never read: 1 of 1 (1 never shown anything by a hook, wait or wake)
+  by day of first post: 2026-11-23 1
+
+hook runs by event (cumulative)
+  event             runs
+  PostToolUse       150
+  UserPromptSubmit  20
+
+bytes injected into sessions by hook event (sizes only; the average is per run)
+  PostToolUse: 45000 bytes in 150 runs (average 300, largest 900)
+  UserPromptSubmit: 2000 bytes in 20 runs (average 100, largest 400)
+
+largest sessions by bytes injected
+  session  bytes
+  alice    42000
+
+admin audit by act
+  act    count
+  pause  2
+  close  1
+
+worker credentials: 0 issued, 0 revoked
+
+=== json ===
+{
+  "schema": 44,
+  "room": "vault",
+  "since": 1795341600,
+  "at": 1795431600,
+  "rooms": [
+    {
+      "room": "vault",
+      "class": "private",
+      "messages": 1,
+      "sealed": 0,
+      "senders": 1,
+      "first": 1795428009,
+      "last": 1795428009
+    }
+  ],
+  "days": [
+    {
+      "day": "2026-11-23",
+      "messages": 1
+    }
+  ],
+  "room_days": [
+    {
+      "room": "vault",
+      "day": "2026-11-23",
+      "messages": 1
+    }
+  ],
+  "senders": {
+    "distinct": 1,
+    "verified": 0,
+    "top": [
+      {
+        "name": "dave",
+        "count": 1
+      }
+    ]
+  },
+  "attribution": [
+    {
+      "name": "unattributed",
+      "count": 1
+    }
+  ],
+  "kinds": [
+    {
+      "name": "(none)",
+      "count": 1
+    }
+  ],
+  "asks": {
+    "created": 0,
+    "answered": 0,
+    "closed": 0,
+    "with_scope": 0,
+    "with_refs": 0,
+    "ref_kinds": [],
+    "first_answer_median_secs": null,
+    "first_answer_p90_secs": null,
+    "sealed_unread": 0
+  },
+  "claims": {
+    "live": [],
+    "notes": [],
+    "waiting": [],
+    "yields": 0,
+    "history": {
+      "granted": [],
+      "refused": [],
+      "released": [],
+      "released_by": [],
+      "expired": [],
+      "takeovers": 0,
+      "conflicts_handled": 0,
+      "conflict_wait_median_secs": null,
+      "hold_median_secs": null,
+      "holds": 0
+    }
+  },
+  "machine_checkpoints": {
+    "written": 0,
+    "last": 0,
+    "replaced": 0,
+    "bytes": 0
+  },
+  "machine_status": {
+    "updates": 0,
+    "working": 0,
+    "idle": 0,
+    "parked": 0
+  },
+  "passive_claims": {
+    "granted": 0,
+    "renewed": 0,
+    "refused": 0,
+    "released": 0,
+    "lapsed": 0,
+    "failed": 0
+  },
+  "ask_routing": {
+    "routed": 0,
+    "unrouted": 0,
+    "taken": 0,
+    "lapsed": 0,
+    "escalated": 0,
+    "escalated_unreached": 0
+  },
+  "refusals": [
+    {
+      "name": "scrub",
+      "count": 1
+    }
+  ],
+  "members": {
+    "joined": 1,
+    "never_posted": 0,
+    "marked_done": 0,
+    "muted": 0,
+    "with_parent": 0,
+    "posted": 1,
+    "posted_never_read": 1,
+    "posted_never_shown": 1,
+    "posted_never_read_by_day": [
+      {
+        "name": "2026-11-23",
+        "count": 1
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "name": "PostToolUse",
+      "count": 150
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 20
+    }
+  ],
+  "hook_bytes": [
+    {
+      "name": "PostToolUse",
+      "count": 45000
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 2000
+    }
+  ],
+  "hook_bytes_max": [
+    {
+      "name": "PostToolUse",
+      "count": 900
+    },
+    {
+      "name": "UserPromptSubmit",
+      "count": 400
+    }
+  ],
+  "sessions_top_bytes": [
+    {
+      "name": "alice",
+      "count": 42000
+    }
+  ],
+  "audit": [
+    {
+      "name": "pause",
+      "count": 2
+    },
+    {
+      "name": "close",
+      "count": 1
+    }
+  ],
+  "credentials": {
+    "issued": 0,
+    "revoked": 0
+  }
+}

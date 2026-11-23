@@ -187,13 +187,9 @@ fn a_version_two_database_migrates_to_seventeen_with_everything_intact() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
-#[test]
-fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
-    let path = temp_db("real-v0");
-    std::fs::write(&path, PROTOTYPE_V0).unwrap();
-    crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
-    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
-    assert_eq!(version(&s), SCHEMA_VERSION);
+/// What the real prototype database held in `messages`: per-room seq backfilled in the original order, ids assigned and
+/// distinct, every row unattributed and public.
+fn check_prototype_messages(s: &SqliteStore) {
     // messages: per-room seq backfilled in the original order, ids assigned and distinct
     let core = s.tail("core", 0, 10).unwrap();
     assert_eq!(
@@ -216,6 +212,10 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
             .chain(side.iter())
             .all(|m| m.attribution == Attribution::Unattributed && m.label == "public")
     );
+}
+
+/// What it held besides messages: the read cursor, the members, and the claim with its expiry.
+fn check_prototype_members_and_claims(s: &SqliteStore) {
     // alice had read through beta in the prototype, so only gamma is unread
     let unread = s.read(Seat::new("core", "alice"), false, 1).unwrap();
     assert_eq!(
@@ -245,6 +245,10 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
         ),
         ("bob", "src/a.rs", "prototype claim")
     );
+}
+
+/// The migrated prototype database keeps working: a new post continues the seq and carries the tenant.
+fn check_migrated_prototype_keeps_working(s: &SqliteStore) {
     // the migrated database keeps working
     assert_eq!(
         s.post(Seat::new("core", "dave"), "after the migration", 5)
@@ -261,6 +265,18 @@ fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
         )
         .unwrap();
     assert_eq!(tenants, 5);
+}
+
+#[test]
+fn a_database_written_by_the_real_prototype_migrates_with_everything_intact() {
+    let path = temp_db("real-v0");
+    std::fs::write(&path, PROTOTYPE_V0).unwrap();
+    crate::store::encrypt::ensure_encrypted(&path, &crate::store::insecure_test_key()).unwrap();
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    check_prototype_messages(&s);
+    check_prototype_members_and_claims(&s);
+    check_migrated_prototype_keeps_working(&s);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -704,7 +720,7 @@ fn a_version_38_database_gains_the_claim_event_tables_and_starts_with_no_history
         .query_row("SELECT COUNT(*) FROM claim_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 1);
-    assert_eq!(SCHEMA_VERSION, 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -764,7 +780,7 @@ fn a_version_40_database_gains_the_shown_table_and_keeps_its_cursors() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     let unread = s.read(Seat::new("r", "alice"), false, 6).unwrap();
     assert_eq!(unread.len(), 1, "the cursor survives");
     s.mark_shown(
@@ -797,7 +813,7 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 42);
+    const { assert!(SCHEMA_VERSION >= 42) };
     for table in [
         "member_trail",
         "machine_checkpoints",
@@ -822,5 +838,76 @@ fn a_version_41_database_gains_the_machine_checkpoint_tables_and_keeps_its_data(
             .unwrap()
     );
     assert_eq!(s.machine_checkpoints("r").unwrap().len(), 1);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_42_database_gains_the_machine_status_counts_and_keeps_its_data() {
+    let path = temp_db("migrate-v42-machine-status");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "working: x", 2).unwrap();
+        s.conn
+            .execute_batch("DROP TABLE machine_status_events; PRAGMA user_version = 42;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 44);
+    let columns: String = s
+        .conn
+        .query_row(
+            "SELECT group_concat(name) FROM pragma_table_info('machine_status_events')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        columns, "id,ts,room,class",
+        "a time, a room and a class word"
+    );
+    assert!(
+        s.put_machine_status(
+            Seat::new("r", "alice"),
+            ("working (auto)", "working"),
+            &["working (auto)"],
+            (3, 60)
+        )
+        .unwrap()
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_43_database_gains_the_ask_routing_tables_and_keeps_its_data() {
+    let path = temp_db("migrate-v43-ask-routing");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "seeking: x", 2).unwrap();
+        s.conn
+            .execute_batch(
+                "DROP TABLE ask_routes; DROP TABLE ask_route_events; PRAGMA user_version = 43;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 44);
+    for table in ["ask_routes", "ask_route_events"] {
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "{table}");
+    }
+    assert!(s.ask_routes("r").unwrap().is_empty(), "starts empty");
+    assert!(s.route_ask("r", 1, &[], 3).unwrap());
+    assert_eq!(s.open_asks("r", 4).unwrap().len(), 1, "the ask survives");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

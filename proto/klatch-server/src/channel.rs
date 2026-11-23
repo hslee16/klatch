@@ -297,31 +297,41 @@ pub fn watch(
 ) {
     while !stop.load(Ordering::SeqCst) {
         let seen = src.token();
-        if ready.load(Ordering::SeqCst) {
-            match selector.look(src) {
-                Ok(events) => {
-                    for event in events {
-                        if out.send(&event.notification()).is_err() {
-                            return;
-                        }
-                    }
-                }
-                Err(e) => eprintln!(
-                    "klatch-server: channel could not read the rooms: {}",
-                    klatch::domain::flat(&e.root_cause().to_string())
-                ),
+        if ready.load(Ordering::SeqCst) && push_events(src, selector, out).is_err() {
+            return;
+        }
+        idle_until_change(src, seen, stop);
+    }
+}
+
+/// Look at the rooms once and send each event; `Err` when the channel is gone. A room that cannot be read is reported
+/// on stderr and looked at again next time.
+fn push_events(src: &dyn Rooms, selector: &mut Selector, out: &SharedOut) -> Result<(), ()> {
+    match selector.look(src) {
+        Ok(events) => {
+            for event in events {
+                out.send(&event.notification()).map_err(|_| ())?;
             }
         }
-        let until = Instant::now() + IDLE_LOOK;
-        loop {
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() || stop.load(Ordering::SeqCst) {
-                break;
-            }
-            let changed = pause_for_change(&|| src.token(), seen, left.min(STOP_CHECK), TOKEN_TICK);
-            if changed == klatch::gateway::Pause::Changed {
-                break;
-            }
+        Err(e) => eprintln!(
+            "klatch-server: channel could not read the rooms: {}",
+            klatch::domain::flat(&e.root_cause().to_string())
+        ),
+    }
+    Ok(())
+}
+
+/// Sleep for up to [`IDLE_LOOK`], waking early when the store's change token moves from `seen` or `stop` is set.
+fn idle_until_change(src: &dyn Rooms, seen: Option<u64>, stop: &AtomicBool) {
+    let until = Instant::now() + IDLE_LOOK;
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() || stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let changed = pause_for_change(&|| src.token(), seen, left.min(STOP_CHECK), TOKEN_TICK);
+        if changed == klatch::gateway::Pause::Changed {
+            return;
         }
     }
 }
@@ -341,7 +351,7 @@ mod tests {
     }
 
     impl Fake {
-        fn room(&self, name: &str, unread: usize, newest: i64, sender: &'static str) {
+        fn room(&self, name: &str, (unread, newest, sender): (usize, i64, &'static str)) {
             self.rooms
                 .borrow_mut()
                 .insert(name.into(), (unread, newest, sender));
@@ -384,7 +394,7 @@ mod tests {
     #[test]
     fn what_was_unread_at_the_start_is_marked_silently_and_not_announced() {
         let fake = Fake::default();
-        fake.room("lobby", 3, 9, "bob");
+        fake.room("lobby", (3, 9, "bob"));
         let mut s = Selector::default();
         s.baseline(&fake).unwrap();
         assert_eq!(*fake.marked.borrow(), ["lobby"]);
@@ -394,9 +404,9 @@ mod tests {
     #[test]
     fn a_room_with_unread_is_announced_once_and_marked() {
         let fake = Fake::default();
-        fake.room("lobby", 0, 0, "bob");
+        fake.room("lobby", (0, 0, "bob"));
         let mut s = started(&fake);
-        fake.room("lobby", 2, 11, "bob");
+        fake.room("lobby", (2, 11, "bob"));
         let events = s.look(&fake).unwrap();
         assert_eq!(
             events,
@@ -415,7 +425,7 @@ mod tests {
     #[test]
     fn a_quiet_room_marks_nothing_and_says_nothing() {
         let fake = Fake::default();
-        fake.room("lobby", 0, 0, "bob");
+        fake.room("lobby", (0, 0, "bob"));
         let mut s = started(&fake);
         assert!(s.look(&fake).unwrap().is_empty());
         assert!(fake.marked.borrow().is_empty());
@@ -424,22 +434,22 @@ mod tests {
     #[test]
     fn a_room_joined_later_starts_quiet() {
         let fake = Fake::default();
-        fake.room("lobby", 0, 0, "bob");
+        fake.room("lobby", (0, 0, "bob"));
         let mut s = started(&fake);
-        fake.room("review", 4, 7, "carol");
+        fake.room("review", (4, 7, "carol"));
         assert!(s.look(&fake).unwrap().is_empty());
-        fake.room("review", 1, 8, "carol");
+        fake.room("review", (1, 8, "carol"));
         assert_eq!(s.look(&fake).unwrap().len(), 1);
     }
 
     #[test]
     fn each_room_gets_its_own_event_in_order() {
         let fake = Fake::default();
-        fake.room("a", 0, 0, "x");
-        fake.room("b", 0, 0, "x");
+        fake.room("a", (0, 0, "x"));
+        fake.room("b", (0, 0, "x"));
         let mut s = started(&fake);
-        fake.room("a", 1, 3, "x");
-        fake.room("b", 5, 4, "y");
+        fake.room("a", (1, 3, "x"));
+        fake.room("b", (5, 4, "y"));
         let rooms: Vec<String> = s.look(&fake).unwrap().into_iter().map(|e| e.room).collect();
         assert_eq!(rooms, ["a", "b"]);
     }
@@ -447,9 +457,9 @@ mod tests {
     #[test]
     fn the_view_held_back_is_counted_in_the_content_with_the_hook_words() {
         let fake = Fake::default();
-        fake.room("lobby", 0, 0, "bob");
+        fake.room("lobby", (0, 0, "bob"));
         let mut s = started(&fake);
-        fake.room("lobby", 1, 5, "bob");
+        fake.room("lobby", (1, 5, "bob"));
         *fake.outside.borrow_mut() = Some((2, 4));
         let e = &s.look(&fake).unwrap()[0];
         assert!(

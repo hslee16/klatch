@@ -18,50 +18,25 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
             label,
             kind,
             payload,
-        } => post(
-            t,
-            &PostArgs {
-                room: &room,
-                body: &body,
-                me: ctx.me,
-                now: ctx.now,
-                label: label.as_deref(),
-                handoff: kind.as_deref().map(|k| (k, payload.as_deref())),
-            },
+        } => post_command(
+            ctx,
+            (&room, &body),
+            label.as_deref(),
+            kind.as_deref().map(|k| (k, payload.as_deref())),
         )?,
         MessagingCmd::Ask {
-            scope: Some(_),
-            to: Some(_),
-            ..
-        } => bail!(
-            "--scope goes with a room ask: klatch ask ROOM TEXT --scope S (a dm ask carries no scope)"
-        ),
-        MessagingCmd::Ask {
-            refs,
-            ref_labels,
-            ref_snippet_files,
-            to: Some(_),
-            ..
-        } if super::ask_refs::given(&refs, &ref_labels, &ref_snippet_files) => {
-            bail!(super::ask_refs::DM_REFUSAL)
-        }
-        MessagingCmd::Ask {
-            args, to: Some(to), ..
-        } => ask_to(ctx, &to, &args)?,
-        MessagingCmd::Ask {
             args,
-            to: None,
+            to,
             scope,
             refs,
             ref_labels,
             ref_snippet_files,
-        } => match args.split_first() {
-            Some((room, text)) => {
-                let refs = super::ask_refs::build_refs(&refs, &ref_labels, &ref_snippet_files)?;
-                ask(ctx, room, text, (scope.as_deref(), &refs))?
-            }
-            None => bail!("klatch ask needs a room and text, or --to MEMBER and text"),
-        },
+        } => ask_command(
+            ctx,
+            (args, to),
+            scope,
+            (&refs, &ref_labels, &ref_snippet_files),
+        )?,
         MessagingCmd::Answer { room, number, text } => {
             let room = resolve_answer_room(ctx.me, &room)?;
             answer(ctx, &room, number, &text)?
@@ -80,10 +55,7 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
             room,
             member,
             label,
-        } => {
-            t.grant_room_clearance(&room, &member, &label)?;
-            println!("{member} may now reach {label} in {room} only (audited)");
-        }
+        } => grant(t, (&room, &member), &label)?,
         MessagingCmd::Receipt { room, seq } => print!(
             "{}",
             klatch::domain::render_receipts(&t.receipt(&room, seq)?, ctx.now)
@@ -97,6 +69,58 @@ pub(super) fn run_messaging(ctx: &Ctx, cmd: MessagingCmd) -> Result<()> {
         MessagingCmd::Unmute { room } => mute(t, &room, false)?,
         MessagingCmd::View { view } => view_cmd(t, view.as_deref())?,
     }
+    Ok(())
+}
+
+fn post_command(
+    ctx: &Ctx,
+    (room, body): (&str, &[String]),
+    label: Option<&str>,
+    handoff: Option<(&str, Option<&str>)>,
+) -> Result<()> {
+    post(
+        ctx.t,
+        &PostArgs {
+            room,
+            body,
+            me: ctx.me,
+            now: ctx.now,
+            label,
+            handoff,
+        },
+    )
+}
+
+/// `klatch ask`: a room ask, or a dm ask with `--to`; the room-only flags are refused with `--to`.
+fn ask_command(
+    ctx: &Ctx,
+    (args, to): (Vec<String>, Option<String>),
+    scope: Option<String>,
+    (refs, labels, files): (&[String], &[String], &[String]),
+) -> Result<()> {
+    let Some(to) = to else {
+        return match args.split_first() {
+            Some((room, text)) => {
+                let refs = super::ask_refs::build_refs(refs, labels, files)?;
+                ask(ctx, room, text, (scope.as_deref(), &refs))
+            }
+            None => bail!("klatch ask needs a room and text, or --to MEMBER and text"),
+        };
+    };
+    if scope.is_some() {
+        bail!(
+            "--scope goes with a room ask: klatch ask ROOM TEXT --scope S (a dm ask carries no scope)"
+        );
+    }
+    if super::ask_refs::given(refs, labels, files) {
+        bail!(super::ask_refs::DM_REFUSAL);
+    }
+    ask_to(ctx, &to, &args)
+}
+
+fn grant(t: &dyn Transport, (room, member): (&str, &str), label: &str) -> Result<()> {
+    t.grant_room_clearance(room, member, label)?;
+    println!("{member} may now reach {label} in {room} only (audited)");
     Ok(())
 }
 

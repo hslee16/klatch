@@ -72,6 +72,11 @@ impl Default for CascadePolicy {
 /// The placeholder a first-stage redact carries when `redact_threshold` accepts one.
 pub const FIRST_STAGE_REDACTION: &str = "[redacted by the first judge]";
 
+/// A finite number from 0 to 1.
+fn is_unit_interval(t: f64) -> bool {
+    t.is_finite() && (0.0..=1.0).contains(&t)
+}
+
 impl CascadePolicy {
     /// A policy with each threshold checked to be a number from 0 to 1.
     pub fn new(
@@ -84,9 +89,7 @@ impl CascadePolicy {
             ("allow", allow_threshold),
             ("redact", redact_threshold),
         ] {
-            if let Some(t) = t
-                && !(t.is_finite() && (0.0..=1.0).contains(&t))
-            {
+            if t.is_some_and(|t| !is_unit_interval(t)) {
                 return Err(format!("the {name} threshold must be a number from 0 to 1"));
             }
         }

@@ -1,0 +1,1 @@
+- Internal: the usage report (`klatch admin stats`) code is split into smaller functions and modules (store/sqlite/stats, domain/usage_stats) and its tests regrouped; output, SQL and schema are unchanged, and a golden test now pins the text and JSON of a seeded store (#1442).

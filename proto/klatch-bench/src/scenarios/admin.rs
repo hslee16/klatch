@@ -57,12 +57,8 @@ fn receiver_budget(w: &World) -> Res {
     Ok(vec![])
 }
 
-fn admin_controls(w: &World) -> Res {
-    w.set_clock(T0);
-    w.ok("alice", &["join", "r"])?;
-    w.ok("mallory", &["join", "r"])?;
-    w.ok("mallory", &["join", "side"])?;
-    w.ok("mallory", &["claim", "r", "a.rs"])?;
+/// A wrong confirmation changes nothing; a pause stops posts and a hook says why; resume undoes it.
+fn pause_and_resume(w: &World) -> Result<(), String> {
     // a wrong confirmation changes nothing
     let r = w.admin(&["pause"], "nope");
     check(!r.ok, "pause went ahead without the confirmation")?;
@@ -82,6 +78,11 @@ fn admin_controls(w: &World) -> Res {
     )?;
     check(w.admin(&["resume"], "").ok, "resume failed")?;
     w.ok("alice", &["post", "r", "after resume"])?;
+    Ok(())
+}
+
+/// A closed room is read-only until it is reopened.
+fn close_and_reopen(w: &World) -> Result<(), String> {
     // close: read-only
     check(w.admin(&["close", "r"], "r").ok, "close failed")?;
     has(
@@ -94,7 +95,11 @@ fn admin_controls(w: &World) -> Res {
         "after resume",
         "a closed room stays readable",
     )?;
-    check(w.admin(&["reopen", "r"], "").ok, "reopen failed")?;
+    check(w.admin(&["reopen", "r"], "").ok, "reopen failed")
+}
+
+/// Remove one member from one room, then allow it back.
+fn remove_and_allow_one_member(w: &World) -> Result<(), String> {
     // remove one member from one room: its claims go, it is refused there and nowhere else
     check(
         w.admin(&["remove", "mallory", "--room", "r"], "mallory").ok,
@@ -115,6 +120,11 @@ fn admin_controls(w: &World) -> Res {
         "allow failed",
     )?;
     w.ok("mallory", &["post", "r", "back"])?;
+    Ok(())
+}
+
+/// The audit shows each act, newest first.
+fn the_audit_shows_each_act(w: &World) -> Result<(), String> {
     // the audit shows each act, newest first
     let log = w.admin(&["audit"], "");
     check(log.ok, "audit failed")?;
@@ -147,6 +157,18 @@ fn admin_controls(w: &World) -> Res {
             "create-room",
         ],
         format!("audit order: {acts:?}"),
-    )?;
+    )
+}
+
+fn admin_controls(w: &World) -> Res {
+    w.set_clock(T0);
+    w.ok("alice", &["join", "r"])?;
+    w.ok("mallory", &["join", "r"])?;
+    w.ok("mallory", &["join", "side"])?;
+    w.ok("mallory", &["claim", "r", "a.rs"])?;
+    pause_and_resume(w)?;
+    close_and_reopen(w)?;
+    remove_and_allow_one_member(w)?;
+    the_audit_shows_each_act(w)?;
     Ok(vec![])
 }

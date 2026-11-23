@@ -9,6 +9,7 @@ mod anchors;
 mod archive;
 mod archive_files;
 mod archive_rekey;
+mod ask_routing;
 mod change_token;
 mod claim_age;
 mod claim_events;
@@ -22,6 +23,7 @@ mod encryption;
 mod label_keys;
 mod long_tasks;
 mod machine_checkpoint;
+mod machine_status;
 mod members;
 mod messages;
 mod migration_property;
@@ -31,6 +33,9 @@ mod review;
 mod runs;
 mod shown;
 mod stats;
+mod stats_events;
+mod stats_fixture;
+mod stats_golden;
 mod wait_cycles;
 
 pub(super) fn store() -> SqliteStore {

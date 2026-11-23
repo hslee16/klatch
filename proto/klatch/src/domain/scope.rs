@@ -42,14 +42,17 @@ pub fn canonical_claim_path(path: &str) -> String {
     work_item_name(path).unwrap_or_else(|| path.to_string())
 }
 
+/// A claim name that is shared by its form: `ask:<N>`, a work item name or the merge claim.
+fn is_room_wide(path: &str) -> bool {
+    path.starts_with("ask:")
+        || work_item_name(path).is_some()
+        || crate::domain::is_merge_claim(path)
+}
+
 /// The scope a claim is stored under: shared for an explicit `--shared`, for room-wide names (`ask:<N>`) and for work
 /// item names (`ticket:<N>`, #632), otherwise the member's own scope (empty when it has none).
 pub fn claim_scope(path: &str, shared: bool, member_scope: Option<&str>) -> String {
-    if shared
-        || path.starts_with("ask:")
-        || work_item_name(path).is_some()
-        || crate::domain::is_merge_claim(path)
-    {
+    if shared || is_room_wide(path) {
         SHARED_SCOPE.to_string()
     } else {
         member_scope.unwrap_or("").to_string()

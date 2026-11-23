@@ -13,6 +13,8 @@ pub use pty::PtyRun;
 pub mod test_dir;
 use test_dir::TestDir;
 
+pub mod admin;
+pub mod golden;
 pub mod pty;
 
 /// The terminal text without the passphrase prompt lines (they are the terminal's, not the command's output).
@@ -20,6 +22,22 @@ pub fn without_prompts(text: &str) -> String {
     text.split_inclusive('\n')
         .filter(|l| !l.starts_with("admin passphrase to approve"))
         .collect()
+}
+
+/// Assert that `text` contains every needle; the failure names the missing one and shows the whole text.
+#[track_caller]
+pub fn assert_has(text: &str, needles: &[&str]) {
+    for needle in needles {
+        assert!(text.contains(needle), "missing {needle:?} in: {text}");
+    }
+}
+
+/// Assert that `text` contains none of the needles; the failure names the one found and shows the whole text.
+#[track_caller]
+pub fn assert_lacks(text: &str, needles: &[&str]) {
+    for needle in needles {
+        assert!(!text.contains(needle), "unexpected {needle:?} in: {text}");
+    }
 }
 
 /// Run in a session of its own, so the child has no controlling terminal. A person who runs `cargo test` at a

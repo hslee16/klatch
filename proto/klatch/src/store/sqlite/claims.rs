@@ -1,11 +1,11 @@
 //! Taking a claim: the conflict check, the record of who is waiting for whom (so a conflict that closes a cycle is
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
-use super::claim_events::ClaimEvent;
+use super::claim_events::{ClaimEvent, ClaimKey};
 use super::{SqliteStore, WAIT_WINDOW_SECS};
 use crate::domain::{
-    AgedClaim, Error, Result, SHARED_SCOPE, YIELD_WINDOW_SECS, due_milestone, overlaps,
-    scopes_collide,
+    AgedClaim, Error, PASSIVE_REASON, PassiveTaken, Result, SHARED_SCOPE, YIELD_WINDOW_SECS,
+    due_milestone, overlaps, scopes_collide,
 };
 use crate::store::ClaimRequest;
 use rusqlite::params;
@@ -34,6 +34,8 @@ struct Held {
 
 /// A claim whose lease had lapsed and that an attempt swept away.
 struct Lapsed {
+    /// It was a passive claim (#1401), so its expiry is counted apart.
+    passive: bool,
     room: String,
     path: String,
     owner: String,
@@ -154,13 +156,8 @@ impl SqliteStore {
 
     /// Before `owner` releases `path` (#909): when it has a live claim there and was a party to a deadlock inside the
     /// window, remember the release so a take of the path by someone else is flagged.
-    pub(super) fn do_note_yield_release(
-        &self,
-        room: &str,
-        owner: &str,
-        path: &str,
-        now: i64,
-    ) -> Result<()> {
+    pub(super) fn do_note_yield_release(&self, key: ClaimKey<'_>, now: i64) -> Result<()> {
+        let ClaimKey { room, owner, path } = key;
         self.immediate(|| {
             let live = self
                 .optional(
@@ -268,7 +265,7 @@ impl SqliteStore {
                 waited: None,
             },
         );
-        self.open_claim_conflict(req.room, req.owner, req.path, req.now);
+        self.open_claim_conflict(ClaimKey::new(req.room, req.owner, req.path), req.now);
         Ok(Error::Conflict {
             path: blocker.path.clone(),
             owner: blocker.owner.clone(),
@@ -338,10 +335,11 @@ impl SqliteStore {
     /// Delete the claims whose lease has lapsed, record each as an expiry (#1386) and return them.
     fn sweep_lapsed(&self, now: i64) -> Result<Vec<Lapsed>> {
         let lapsed: Vec<Lapsed> = self.rows(
-            "SELECT room,path,owner,scope,since,expires FROM claims WHERE expires<=?1",
+            "SELECT room,path,owner,scope,since,expires,reason FROM claims WHERE expires<=?1",
             params![now],
             |r| {
                 Ok(Lapsed {
+                    passive: r.get::<_, String>(6)? == PASSIVE_REASON,
                     room: r.get(0)?,
                     path: r.get(1)?,
                     owner: r.get(2)?,
@@ -357,7 +355,11 @@ impl SqliteStore {
                 &ClaimEvent {
                     room: &l.room,
                     path: &l.path,
-                    event: "expired",
+                    event: if l.passive {
+                        "passive_expired"
+                    } else {
+                        "expired"
+                    },
                     reason: "",
                     held: l.held,
                     waited: None,
@@ -370,7 +372,8 @@ impl SqliteStore {
     /// A new hold was granted (#1386): the grant, with the wait it ended, and a takeover when the claim it overlapped
     /// had just lapsed under another member.
     fn record_grant(&self, req: &Attempt, lapsed: &[Lapsed]) {
-        let waited = self.close_claim_conflicts(req.room, req.owner, req.path, req.now);
+        let waited =
+            self.close_claim_conflicts(ClaimKey::new(req.room, req.owner, req.path), req.now);
         let event = |event, held, waited| ClaimEvent {
             room: req.room,
             path: req.path,
@@ -424,6 +427,69 @@ impl SqliteStore {
         self.note_overwrites(req)?;
         self.tell_completed_cycles(req)?;
         Ok(Ok(()))
+    }
+
+    /// Take a passive claim (#1401) in one transaction: a refusal is returned as a value and records no wait, so the
+    /// member that already edited the file never looks like it waits for the holder; a grant and a renewal are counted
+    /// as passive events, not as explicit claims.
+    pub(super) fn do_passive_claim(
+        &self,
+        request: &ClaimRequest,
+        now: i64,
+    ) -> Result<PassiveTaken> {
+        let attempt = Attempt {
+            room: request.room,
+            owner: request.owner,
+            scope: request.scope,
+            path: request.path,
+            ttl: request.ttl,
+            reason: request.reason,
+            anchor: request.anchor,
+            now,
+        };
+        let passive = |event, held| ClaimEvent {
+            room: request.room,
+            path: request.path,
+            event,
+            reason: "",
+            held,
+            waited: None,
+        };
+        self.immediate(|| {
+            self.sweep_lapsed(now)?;
+            let held = self.live_claims(attempt.room)?;
+            if let Some(b) = held.iter().find(|h| refuses(h, &attempt)) {
+                self.record_claim_event(now, &passive("passive_refused", 0));
+                return Ok(PassiveTaken::Refused {
+                    owner: b.owner.clone(),
+                    path: b.path.clone(),
+                    held_secs: held_for(b.since, now),
+                    secs_left: crate::domain::secs_between(b.expires, now),
+                });
+            }
+            let renewal = held
+                .iter()
+                .any(|h| h.owner == attempt.owner && h.path == attempt.path);
+            self.insert_claim(&attempt)?;
+            self.record_claim_event(
+                now,
+                &passive(
+                    if renewal {
+                        "passive_renewed"
+                    } else {
+                        "passive_granted"
+                    },
+                    0,
+                ),
+            );
+            self.note_overwrites(&attempt)?;
+            self.tell_completed_cycles(&attempt)?;
+            Ok(if renewal {
+                PassiveTaken::Renewed
+            } else {
+                PassiveTaken::Granted
+            })
+        })
     }
 
     pub(super) fn take_claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {

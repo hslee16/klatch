@@ -1,0 +1,16 @@
+{
+  "name": "scale",
+  "description": "F7 (SPEC section 3, S7): a generated tallykit-like package of M independent modules (one small pure function each) for N = M / 2 agents, two modules per ticket, plus the same shared registry (scalekit/__init__.py) and CHANGELOG.md as F1 that every ticket touches, so the chance of a real merge conflict grows with N. gen.py writes the template, the tasks and the reference from a seed; the hidden checker is checks/scale.",
+  "topology": "T-clone",
+  "scenario": "s7",
+  "require_variant": true,
+  "generated": {"module": "gen.py", "modules": 16, "seed": 20261123},
+  "test_command": "python3 -m unittest discover -s tests -t .",
+  "checker": "scale",
+  "variants": {
+    "n2": {"generated": {"module": "gen.py", "modules": 4, "seed": 20261123}, "est_cost_usd_haiku": 1.0,
+           "note": "a two-agent smoke size for tests and a first look; not a size of scenario S7"},
+    "n8": {"generated": {"module": "gen.py", "modules": 16, "seed": 20261123}, "est_cost_usd_haiku": 5.2},
+    "n16": {"generated": {"module": "gen.py", "modules": 32, "seed": 20261123}, "est_cost_usd_haiku": 15.2}
+  }
+}

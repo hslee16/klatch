@@ -1,0 +1,3 @@
+Bench duplicate_work sees commits a merge hides (#1471; no schema change; 2026-11-23).
+
+    The harness's git history metric listed the commits that touched a unit with a path-limited git log, and git's default history simplification drops a side branch whose merge result equals the other side. When two agents wrote the same module with the same content, which of them showed up as an author depended on who pushed first, so duplicate_work and foreign_edits could read 0 for a real duplicate (S6's duplicated recovery test failed on main after a change of timing). The log now uses --full-history, so every non-merge commit that touched the unit counts, in every scenario; a deterministic test builds the hidden side branch.

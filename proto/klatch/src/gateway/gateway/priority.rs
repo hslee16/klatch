@@ -36,6 +36,9 @@ impl<S: Store> Gateway<S> {
                 }
             }
         }
+        // asks the gateway addressed to the caller (#1407): routed by could_answer and the ask's structured fields, or
+        // escalated to it as a coordinator
+        let routed: HashSet<i64> = self.routed_asks(room, me)?.into_iter().collect();
         let mut own_asks: HashSet<i64> = HashSet::new();
         let mut asked: HashSet<i64> = HashSet::new();
         for m in messages {
@@ -71,7 +74,8 @@ impl<S: Store> Gateway<S> {
                 let is_ask = crate::domain::is_ask(&m.body);
                 let target = crate::domain::answer_target(&m.body)
                     .or_else(|| crate::domain::closed_target(&m.body));
-                let class = if is_ask && (addressed || answerable.contains(&m.seq))
+                let class = if is_ask
+                    && (addressed || answerable.contains(&m.seq) || routed.contains(&m.seq))
                     || target.is_some_and(|n| own_asks.contains(&n))
                 {
                     Importance::Ask

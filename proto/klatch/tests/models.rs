@@ -6,11 +6,14 @@
 //! --test models`. A failure prints the shortest failing sequence (each rule notes what it did) and a replay blob
 //! (see CONTRIBUTING.md, "Property tests").
 
+#[path = "models/roles.rs"]
+mod roles;
 use hegel::TestCase;
 use hegel::generators as gs;
 use klatch::domain::{Error, Principal};
 use klatch::gateway::{AllowAll, ClaimSpec, Clock, Gateway};
 use klatch::store::SqliteStore;
+use roles::{Held4, ROLES, Try, every_try, parked_expiry, role_spec};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -239,15 +242,7 @@ impl ClaimsRoom {
         {
             // renewal first; short of the return time: stretched to it; the stretch of an earlier park (beyond the
             // new return time or the claim's own ttl from now, within the earlier return time): cut back to that
-            let renewed = c.expires.max(now + c.ttl);
-            let floor = back_by.max(now + c.ttl);
-            c.expires = if renewed < back_by {
-                back_by
-            } else if held > now && renewed <= held && renewed > floor {
-                floor
-            } else {
-                renewed
-            };
+            c.expires = parked_expiry(c.expires, c.ttl, (now, back_by, held));
         }
     }
 
@@ -430,152 +425,6 @@ fn read_cursors_agree_with_the_model_under_any_sequence_of_posts_reads_and_ackno
 }
 
 // ---- roles -----------------------------------------------------------------------------------------------------
-
-/// What a member holds. The real type is private to the gateway; this is the spec's own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Held4 {
-    Nobody,
-    Librarian,
-    Admin,
-    Reviewer,
-}
-const ROLES: [Held4; 4] = [
-    Held4::Nobody,
-    Held4::Librarian,
-    Held4::Admin,
-    Held4::Reviewer,
-];
-
-/// Every way a member can try something, one per `Operation` variant the gateway builds (an admin act once per
-/// action name, since the action is what the allowlist decides on).
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Try {
-    Join,
-    Post,
-    ReadAdvance,
-    ReadPeek,
-    Who,
-    Claim,
-    Release,
-    Claims,
-    Tail,
-    Head,
-    History,
-    Status,
-    Ack,
-    Mute,
-    ReviewNext,
-    ReviewVerdict,
-    Admin(&'static str),
-}
-
-/// The admin actions the gateway builds today plus ones it does not (a new act must be added to the spec to be
-/// allowed: the allowlist is closed by default, so an unknown name is refused).
-const ADMIN_ACTIONS: [&str; 33] = [
-    "close",
-    "reopen",
-    "remove",
-    "allow",
-    "clear",
-    "label",
-    "prune",
-    "run-create",
-    "run-end",
-    "reap-anchors",
-    "anchor-done",
-    "audit",
-    "refusals",
-    "hook_runs",
-    "cap",
-    "chain",
-    "scrub-add",
-    "scrub-remove",
-    "seal-label",
-    "canary",
-    "librarian",
-    "admin-agent",
-    "reviewer",
-    "issue-credential",
-    "revoke-credential",
-    "paused",
-    "closed",
-    "credentials",
-    "runs",
-    "review-queue",
-    "stop",
-    "an-act-nobody-has-written-yet",
-    "",
-];
-
-fn every_try() -> Vec<Try> {
-    let mut all = vec![
-        Try::Join,
-        Try::Post,
-        Try::ReadAdvance,
-        Try::ReadPeek,
-        Try::Who,
-        Try::Claim,
-        Try::Release,
-        Try::Claims,
-        Try::Tail,
-        Try::Head,
-        Try::History,
-        Try::Status,
-        Try::Ack,
-        Try::Mute,
-        Try::ReviewNext,
-        Try::ReviewVerdict,
-    ];
-    all.extend(ADMIN_ACTIONS.iter().map(|a| Try::Admin(a)));
-    all
-}
-
-/// The spec table, written out and not derived from the gateway's own lists. `Some(rule)`: the role layer must
-/// refuse under that rule; `None`: the role layer lets it through (another layer may still say no).
-fn role_spec(role: Held4, attempt: &Try) -> Option<&'static str> {
-    const FLOORS: [&str; 4] = ["cap", "chain", "scrub-add", "scrub-remove"];
-    // what an admin agent may do, and nothing else
-    const ADMIN_LIST: [&str; 14] = [
-        "close",
-        "reopen",
-        "remove",
-        "allow",
-        "clear",
-        "label",
-        "prune",
-        "run-create",
-        "run-end",
-        "reap-anchors",
-        "anchor-done",
-        "audit",
-        "refusals",
-        "hook_runs",
-    ];
-    const LOOKING: [&str; 3] = ["audit", "refusals", "review-queue"];
-    let reviewing = matches!(attempt, Try::ReviewNext | Try::ReviewVerdict);
-    match (role == Held4::Reviewer, reviewing) {
-        (true, false) | (false, true) => return Some("reviewer"),
-        (true, true) => return None,
-        (false, false) => {}
-    }
-    if let Try::Admin(action) = attempt {
-        // the gateway is the members' one: a floor act is a floor act for everyone
-        if FLOORS.contains(action) {
-            return Some("floors");
-        }
-        return match role {
-            Held4::Nobody if !matches!(*action, "prune" | "hook_runs") => Some("admin-scope"),
-            Held4::Admin if !ADMIN_LIST.contains(action) => Some("admin-scope"),
-            Held4::Librarian if !LOOKING.contains(action) => Some("read-only"),
-            _ => None,
-        };
-    }
-    let looking = matches!(
-        attempt,
-        Try::ReadPeek | Try::Who | Try::Claims | Try::Tail | Try::Head | Try::History
-    );
-    (role == Held4::Librarian && !looking).then_some("read-only")
-}
 
 const ROLE_RULES: [&str; 4] = ["reviewer", "read-only", "admin-scope", "floors"];
 

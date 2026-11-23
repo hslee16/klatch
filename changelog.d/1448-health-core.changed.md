@@ -1,0 +1,1 @@
+- Code health K07 (#1448, part of #1441): the klatch core (client, session, jev, commands) was cleaned up with no behaviour change: long and branching functions were split, and `client.rs`, `jev/request.rs`, the hook code of `commands/agents.rs` and the large test files were split into smaller files. No wire, stored, CLI output or public API change.

@@ -1,0 +1,1 @@
+- Internal cleanup of klatch's admin shell word splitter, anchor file names and label key names (code health, #1452); no behaviour change.

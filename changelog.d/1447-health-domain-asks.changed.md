@@ -1,0 +1,1 @@
+- Internal cleanup of the domain modules for asks, ask refs, hook output, briefing, tasks, merge queue and machine checkpoint: long functions split, large test files split by family; no behaviour, wire or stored data changed (#1447).

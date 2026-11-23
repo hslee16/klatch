@@ -8,7 +8,7 @@ fn hash(b: u8) -> [u8; 32] {
     [b; 32]
 }
 
-fn issue(s: &SqliteStore, member: &str, now: i64, ttl: i64) -> Result<()> {
+fn issue_with(s: &SqliteStore, member: &str, now: i64, (ttl, max_life): (i64, i64)) -> Result<()> {
     s.issue_credential(
         &NewCredential {
             member,
@@ -16,10 +16,14 @@ fn issue(s: &SqliteStore, member: &str, now: i64, ttl: i64) -> Result<()> {
             clearance: "private",
             parent: "lead",
             ttl,
-            max_life: 0,
+            max_life,
         },
         now,
     )
+}
+
+fn issue(s: &SqliteStore, member: &str, now: i64, ttl: i64) -> Result<()> {
+    issue_with(s, member, now, (ttl, 0))
 }
 
 #[test]
@@ -55,18 +59,7 @@ fn a_database_from_before_credentials_gains_the_table_on_open() {
 }
 
 fn issue_renewable(s: &SqliteStore, now: i64, ttl: i64, max_life: i64) {
-    s.issue_credential(
-        &NewCredential {
-            member: "w-1",
-            token_hash: &hash(1),
-            clearance: "private",
-            parent: "lead",
-            ttl,
-            max_life,
-        },
-        now,
-    )
-    .unwrap();
+    issue_with(s, "w-1", now, (ttl, max_life)).unwrap();
 }
 
 #[test]

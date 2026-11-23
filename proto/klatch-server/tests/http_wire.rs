@@ -80,6 +80,21 @@ fn issue_credential(dir: &Dir, member: &str) -> String {
     token.to_text().to_string()
 }
 
+/// The address the readiness line names. Trust the line only once it is complete (its newline is there), never half an
+/// address (#1173, #1207).
+fn logged_addr(log: &str) -> Option<SocketAddr> {
+    let rest = log.split("http listening on ").nth(1)?;
+    if !rest.contains('\n') {
+        return None;
+    }
+    Some(
+        rest.split_whitespace()
+            .next()?
+            .parse()
+            .expect("the logged address"),
+    )
+}
+
 struct Server {
     child: Child,
     addr: SocketAddr,
@@ -121,12 +136,8 @@ impl Server {
         let until = Instant::now() + Duration::from_secs(60);
         while Instant::now() < until {
             let text = std::fs::read_to_string(&server.log).unwrap_or_default();
-            // Trust the line only once it is complete (its newline is there), never half an address (#1173, #1207).
-            if let Some(rest) = text.split("http listening on ").nth(1)
-                && rest.contains('\n')
-                && let Some(addr) = rest.split_whitespace().next()
-            {
-                server.addr = addr.parse().expect("the logged address");
+            if let Some(addr) = logged_addr(&text) {
+                server.addr = addr;
                 return server;
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -186,8 +197,7 @@ impl Reply {
 
 fn send_request(
     addr: SocketAddr,
-    method: &str,
-    path: &str,
+    (method, path): (&str, &str),
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> TcpStream {
@@ -231,12 +241,11 @@ fn read_head(r: &mut BufReader<TcpStream>) -> (u16, Vec<(String, String)>) {
 
 fn exchange(
     addr: SocketAddr,
-    method: &str,
-    path: &str,
+    target: (&str, &str),
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Reply {
-    let s = send_request(addr, method, path, headers, body);
+    let s = send_request(addr, target, headers, body);
     let mut r = BufReader::new(s);
     let (status, headers) = read_head(&mut r);
     let mut body = String::new();
@@ -251,7 +260,7 @@ fn exchange(
 /// Only the status of an exchange: the connection is dropped after the head. For a request whose answer may be an event
 /// stream, which never ends (heartbeats keep resetting a read timeout, so reading it to the end would wait forever).
 fn status_of(addr: SocketAddr, path: &str, headers: &[(&str, &str)]) -> u16 {
-    let s = send_request(addr, "GET", path, headers, b"");
+    let s = send_request(addr, ("GET", path), headers, b"");
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     read_head(&mut BufReader::new(s)).0
 }
@@ -259,6 +268,46 @@ fn status_of(addr: SocketAddr, path: &str, headers: &[(&str, &str)]) -> u16 {
 fn auth<'a>(member: &'a str, token: &'a str, bearer: &'a str) -> [(&'a str, &'a str); 2] {
     let _ = (member, token);
     [("X-Klatch-Member", member), ("Authorization", bearer)]
+}
+
+/// Whether a read error just means the stream is over.
+fn ended_stream(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::ConnectionReset
+    )
+}
+
+/// An event being read, line by line.
+#[derive(Default)]
+struct Event {
+    id: Option<String>,
+    data: Option<Value>,
+}
+
+impl Event {
+    /// Take one line of the stream; the finished event when the line is the blank one that ends it.
+    fn take_line(&mut self, line: &str) -> Option<(Option<String>, Value)> {
+        if line.is_empty() {
+            let data = self.data.take()?;
+            return Some((self.id.take(), data));
+        }
+        if line.starts_with(':') || line.starts_with("event: ") {
+            // a comment, or the event name (the frame's type): checked where a test cares
+            return None;
+        }
+        if let Some(v) = line.strip_prefix("id: ") {
+            self.id = Some(v.to_string());
+        } else if let Some(v) = line.strip_prefix("data: ") {
+            assert!(self.data.is_none(), "one data line per event");
+            self.data = Some(serde_json::from_str(v).unwrap_or_else(|e| panic!("{v:?}: {e}")));
+        } else {
+            panic!("unexpected line in the stream: {line:?}");
+        }
+        None
+    }
 }
 
 /// One server-sent-events session of a member.
@@ -278,8 +327,7 @@ impl Sse {
         let bearer = format!("Bearer {token}");
         let s = send_request(
             addr,
-            "GET",
-            "/v1/stream",
+            ("GET", "/v1/stream"),
             &auth(member, token, &bearer),
             b"",
         );
@@ -308,46 +356,24 @@ impl Sse {
         }
     }
 
+    /// The next line of the stream, `None` when the stream ended (closed, reset or timed out).
+    fn read_line(&mut self) -> Option<String> {
+        let mut line = String::new();
+        match self.r.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(line.trim_end_matches(['\r', '\n']).to_string()),
+            Err(e) if ended_stream(e.kind()) => None,
+            Err(e) => panic!("read: {e}"),
+        }
+    }
+
     /// The next event: its `id:` line (when it has one) and the frame in its `data:` line. Comment lines are skipped.
     fn recv(&mut self) -> Option<(Option<String>, Value)> {
-        let mut id = None;
-        let mut data: Option<Value> = None;
+        let mut event = Event::default();
         loop {
-            let mut line = String::new();
-            match self.r.read_line(&mut line) {
-                Ok(0) => return None,
-                Ok(_) => {}
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::TimedOut
-                            | std::io::ErrorKind::ConnectionReset
-                    ) =>
-                {
-                    return None;
-                }
-                Err(e) => panic!("read: {e}"),
-            }
-            let line = line.trim_end_matches(['\r', '\n']);
-            if line.is_empty() {
-                if let Some(d) = data {
-                    return Some((id, d));
-                }
-                continue;
-            }
-            if line.starts_with(':') {
-                continue;
-            }
-            if let Some(v) = line.strip_prefix("id: ") {
-                id = Some(v.to_string());
-            } else if let Some(v) = line.strip_prefix("data: ") {
-                assert!(data.is_none(), "one data line per event");
-                data = Some(serde_json::from_str(v).unwrap_or_else(|e| panic!("{v:?}: {e}")));
-            } else if line.starts_with("event: ") {
-                // the event name is the frame's type: checked where a test cares
-            } else {
-                panic!("unexpected line in the stream: {line:?}");
+            let line = self.read_line()?;
+            if let Some(done) = event.take_line(&line) {
+                return Some(done);
             }
         }
     }
@@ -362,7 +388,7 @@ impl Sse {
         body.push(b'\n');
         let mut h = auth(&self.member, "", &self.bearer).to_vec();
         h.push(("X-Klatch-Session", &self.session));
-        exchange(self.addr, "POST", "/v1/frames", &h, &body).status
+        exchange(self.addr, ("POST", "/v1/frames"), &h, &body).status
     }
 
     fn request(&mut self, method: &str, params: Value) -> Value {
@@ -448,7 +474,7 @@ fn every_route_needs_a_live_credential_for_the_member_named() {
         for (method, path) in [("GET", "/v1/stream"), ("POST", "/v1/frames")] {
             let mut h = headers.clone();
             h.push(("X-Klatch-Session", "0123456789abcdef0123456789abcdef"));
-            let r = exchange(s.addr, method, path, &h, b"{}\n");
+            let r = exchange(s.addr, (method, path), &h, b"{}\n");
             assert_eq!(r.status, 401, "{method} {path} {headers:?}");
             assert_eq!(r.body, "unauthorized");
             assert!(!r.body.contains(&token) && !r.headers.iter().any(|(_, v)| v.contains(&token)));
@@ -487,14 +513,14 @@ fn forwarded_identity_headers_give_no_identity_and_change_none() {
     for (method, path) in [("GET", "/v1/stream"), ("POST", "/v1/frames")] {
         let mut h = forged.to_vec();
         h.push(("X-Klatch-Session", "0123456789abcdef0123456789abcdef"));
-        let r = exchange(s.addr, method, path, &h, b"{}\n");
+        let r = exchange(s.addr, (method, path), &h, b"{}\n");
         assert_eq!(r.status, 401, "{method} {path}");
         let mut h = forged.to_vec();
         h.push(("X-Klatch-Member", "w-1"));
-        let r = exchange(s.addr, method, path, &h, b"{}\n");
+        let r = exchange(s.addr, (method, path), &h, b"{}\n");
         assert_eq!(r.status, 401, "{method} {path} with a member name only");
     }
-    let r = exchange(s.addr, "POST", "/mcp", forged, b"{}");
+    let r = exchange(s.addr, ("POST", "/mcp"), forged, b"{}");
     assert_eq!(r.status, 401, "/mcp");
     // a credential for w-1 with headers that claim w-2: the session is w-1's, whatever the proxy says
     let bearer = format!("Bearer {token}");
@@ -504,7 +530,7 @@ fn forwarded_identity_headers_give_no_identity_and_change_none() {
         .collect();
     h.push(("X-Klatch-Member", "w-1"));
     h.push(("Authorization", bearer.as_str()));
-    let st = send_request(s.addr, "GET", "/v1/stream", &h, b"");
+    let st = send_request(s.addr, ("GET", "/v1/stream"), &h, b"");
     let mut r = BufReader::new(st);
     let (status, _) = read_head(&mut r);
     assert_eq!(status, 200);
@@ -575,8 +601,7 @@ fn a_frame_posted_to_no_session_or_to_another_members_session_is_not_found() {
     ] {
         let r = exchange(
             s.addr,
-            "POST",
-            "/v1/frames",
+            ("POST", "/v1/frames"),
             &[
                 ("X-Klatch-Member", member),
                 ("Authorization", bearer),
@@ -589,8 +614,7 @@ fn a_frame_posted_to_no_session_or_to_another_members_session_is_not_found() {
     // no session header at all is a bad request, not a guess
     let r = exchange(
         s.addr,
-        "POST",
-        "/v1/frames",
+        ("POST", "/v1/frames"),
         &[("X-Klatch-Member", "w-1"), ("Authorization", b1.as_str())],
         line,
     );
@@ -638,6 +662,53 @@ fn two_members_share_one_gateway_with_dense_sequence_numbers() {
     assert_eq!(got[1].1, "bob");
 }
 
+/// Read frames until a `message` with sequence number `seq` or more arrives; the last number seen.
+fn read_until_seq(sse: &mut Sse, seq: i64) -> i64 {
+    let mut last = 0;
+    while last < seq {
+        let (_, f) = sse.recv().expect("live frames");
+        if f["type"] == "message" {
+            last = f["seq"].as_i64().unwrap();
+        }
+    }
+    last
+}
+
+/// POST a frame to an old session until the answer settles to its final status (the session may take a moment to end).
+fn status_once_gone(addr: SocketAddr, member: &str, bearer: &str, session: &str) -> u16 {
+    let line = b"{\"v\":1,\"type\":\"request\",\"id\":\"x\",\"method\":\"whoami\",\"params\":{}}\n";
+    let headers = [
+        ("X-Klatch-Member", member),
+        ("Authorization", bearer),
+        ("X-Klatch-Session", session),
+    ];
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        let r = exchange(addr, ("POST", "/v1/frames"), &headers, line);
+        if r.status == 404 || Instant::now() > until {
+            return r.status;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The next `n` messages of a stream as (sequence number, body), each with the `id:` line `<room>:<seq>`.
+fn next_messages(sse: &mut Sse, n: usize) -> Vec<(i64, String)> {
+    let mut got = Vec::new();
+    while got.len() < n {
+        let (eid, f) = sse.recv().expect("frames");
+        if f["type"] != "message" {
+            continue;
+        }
+        assert_eq!(eid.as_deref(), Some(format!("r:{}", f["seq"]).as_str()));
+        got.push((
+            f["seq"].as_i64().unwrap(),
+            f["body"].as_str().unwrap().to_string(),
+        ));
+    }
+    got
+}
+
 #[test]
 fn a_new_stream_resumes_from_the_sequence_numbers_a_client_last_saw() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -655,13 +726,7 @@ fn a_new_stream_resumes_from_the_sequence_numbers_a_client_last_saw() {
     for i in 0..3 {
         b.post("r", &format!("m{i}"));
     }
-    let mut last = 0;
-    while last < 3 {
-        let (_, f) = a.recv().expect("live frames");
-        if f["type"] == "message" {
-            last = f["seq"].as_i64().unwrap();
-        }
-    }
+    let last = read_until_seq(&mut a, 3);
     // alice's connection drops; the session ends, and a post to it is not found
     let old = a.session.clone();
     drop(a);
@@ -670,45 +735,12 @@ fn a_new_stream_resumes_from_the_sequence_numbers_a_client_last_saw() {
     let mut a2 = Sse::open(s.addr, "alice", &ta);
     assert_ne!(a2.session, old);
     a2.frame();
-    let line = b"{\"v\":1,\"type\":\"request\",\"id\":\"x\",\"method\":\"whoami\",\"params\":{}}\n";
     let bearer = format!("Bearer {ta}");
-    let gone = {
-        // the old session may take a moment to end: the answer settles to 404
-        let until = Instant::now() + Duration::from_secs(20);
-        loop {
-            let r = exchange(
-                s.addr,
-                "POST",
-                "/v1/frames",
-                &[
-                    ("X-Klatch-Member", "alice"),
-                    ("Authorization", bearer.as_str()),
-                    ("X-Klatch-Session", old.as_str()),
-                ],
-                line,
-            );
-            if r.status == 404 || Instant::now() > until {
-                break r.status;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    assert_eq!(gone, 404);
+    assert_eq!(status_once_gone(s.addr, "alice", &bearer, &old), 404);
     // resume: from the last sequence number seen, exactly the missed messages arrive, with their original numbers
     a2.request("subscribe", json!({"room": "r", "from_seq": last}));
-    let mut got = Vec::new();
-    while got.len() < 2 {
-        let (eid, f) = a2.recv().expect("frames");
-        if f["type"] == "message" {
-            assert_eq!(eid.as_deref(), Some(format!("r:{}", f["seq"]).as_str()));
-            got.push((
-                f["seq"].as_i64().unwrap(),
-                f["body"].as_str().unwrap().to_string(),
-            ));
-        }
-    }
     assert_eq!(
-        got,
+        next_messages(&mut a2, 2),
         [
             (4, "while-away-1".to_string()),
             (5, "while-away-2".to_string())
@@ -727,7 +759,7 @@ fn garbage_in_a_posted_frame_gets_an_error_frame_on_the_stream_and_the_session_g
     let bearer = format!("Bearer {t}");
     let mut h = auth("w-1", "", &bearer).to_vec();
     h.push(("X-Klatch-Session", &c.session));
-    let r = exchange(s.addr, "POST", "/v1/frames", &h, b"this is not json\n");
+    let r = exchange(s.addr, ("POST", "/v1/frames"), &h, b"this is not json\n");
     assert_eq!(r.status, 202);
     let f = c.frame();
     assert_eq!(f["type"], "refusal", "{f}");
@@ -741,12 +773,12 @@ fn routes_methods_and_sizes_are_limited() {
     let dir = Dir::new();
     let t = issue_credential(&dir, "w-1");
     let s = Server::started(&dir, &[]);
-    let r = exchange(s.addr, "GET", "/nope", &[], b"");
+    let r = exchange(s.addr, ("GET", "/nope"), &[], b"");
     assert_eq!(r.status, 404);
-    let r = exchange(s.addr, "POST", "/v1/stream", &[], b"x");
+    let r = exchange(s.addr, ("POST", "/v1/stream"), &[], b"x");
     assert_eq!(r.status, 405);
     assert_eq!(r.header("allow"), Some("GET"));
-    let r = exchange(s.addr, "GET", "/v1/frames", &[], b"");
+    let r = exchange(s.addr, ("GET", "/v1/frames"), &[], b"");
     assert_eq!(r.status, 405);
     assert_eq!(r.header("allow"), Some("POST"));
     // a body over 1 MiB is refused before it is read, and without the credential check telling anything first
@@ -754,8 +786,7 @@ fn routes_methods_and_sizes_are_limited() {
     let bearer = format!("Bearer {t}");
     let r = exchange(
         s.addr,
-        "POST",
-        "/v1/frames",
+        ("POST", "/v1/frames"),
         &[
             ("X-Klatch-Member", "w-1"),
             ("Authorization", bearer.as_str()),

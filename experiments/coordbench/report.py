@@ -22,6 +22,7 @@ import json
 import os
 import sys
 
+import scale
 import stats
 
 DEFAULT_SEED = 20261122
@@ -35,6 +36,8 @@ CONT = {
     "units_completed": (lambda r: r["metrics"].get("units_completed"), True),
     "cost_usd": (lambda r: r["spend"].get("usd"), False),
     "turns": (lambda r: r["turns"].get("total"), False),
+    # the cost of the role members of K3 and B1-roles (#1421), already inside cost_usd; absent for an arm without roles
+    "roles_cost_usd": (lambda r: r["spend"].get("roles_usd"), None),
     "wall_s": (lambda r: r.get("wall_s"), False),
     "tokens": (lambda r: sum(v for v in r["tokens"].values() if isinstance(v, (int, float))), False),
     "messages": (lambda r: r["metrics"].get("messages"), None),
@@ -186,6 +189,7 @@ def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEF
         t["significant"] = (not t["exploratory"]) and a < 0.05
     out["tests_made"] = total
     out["primary_tests_made"] = len(primary_tests)
+    out["scaling"] = scale.scaling(records)
     return out
 
 
@@ -380,6 +384,7 @@ def render_markdown(a, cmp_=None, baseline_dir=None, source=None, comparison_onl
                   "against 0.4 with only 0.47 (SPEC 6.1), and Mann-Whitney detects a shift of about 1.3 standard deviations "
                   "with power 0.78. A result of no significant difference is not the same as no difference; effects under about "
                   "one standard deviation are out of reach at affordable N. Means and standard deviations are a second line.", ""]
+    L += scale.render(a.get("scaling"))
     return "\n".join(L)
 
 

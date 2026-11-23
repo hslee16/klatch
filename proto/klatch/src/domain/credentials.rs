@@ -99,26 +99,11 @@ fn words_at(text: &str) -> Vec<(usize, &str)> {
 /// range of the run, its word width and the joined value.
 fn spaced_runs(text: &str) -> Vec<(std::ops::Range<usize>, usize, String)> {
     let words = words_at(text);
-    let single_space = |a: (usize, &str), b: (usize, &str)| text[a.0 + a.1.len()..b.0] == *" ";
     let mut runs = Vec::new();
     let mut i = 0;
     while i < words.len() {
         let width = words[i].1.chars().count();
-        let mut j = i + 1;
-        if (1..=8).contains(&width) {
-            while j < words.len()
-                && single_space(words[j - 1], words[j])
-                && words[j].1.chars().count() == width
-            {
-                j += 1;
-            }
-            if j < words.len()
-                && single_space(words[j - 1], words[j])
-                && words[j].1.chars().count() < width
-            {
-                j += 1;
-            }
-        }
+        let j = run_end(text, &words, i, width);
         let joined: String = words[i..j].iter().map(|w| w.1).collect();
         if j - i >= 4 && joined.chars().count() >= 12 {
             let end = words[j - 1].0 + words[j - 1].1.len();
@@ -129,6 +114,34 @@ fn spaced_runs(text: &str) -> Vec<(std::ops::Range<usize>, usize, String)> {
         }
     }
     runs
+}
+
+/// Whether word `j` follows word `j - 1` after exactly one space and has `fits` as its width.
+fn next_in_run(
+    text: &str,
+    words: &[(usize, &str)],
+    j: usize,
+    fits: impl Fn(usize) -> bool,
+) -> bool {
+    j < words.len()
+        && text[words[j - 1].0 + words[j - 1].1.len()..words[j].0] == *" "
+        && fits(words[j].1.chars().count())
+}
+
+/// One past the last word of the run that starts at word `i` of `width` characters: words of the same width, then
+/// at most one narrower. A word of no width or more than eight characters starts no run (`i + 1`).
+fn run_end(text: &str, words: &[(usize, &str)], i: usize, width: usize) -> usize {
+    let mut j = i + 1;
+    if !(1..=8).contains(&width) {
+        return j;
+    }
+    while next_in_run(text, words, j, |w| w == width) {
+        j += 1;
+    }
+    if next_in_run(text, words, j, |w| w < width) {
+        j += 1;
+    }
+    j
 }
 
 /// The text with each spaced-out run joined into one value.
@@ -491,8 +504,21 @@ fn trim_value(word: &str) -> &str {
 /// A password in a connection URL (`scheme://user:PASSWORD@host`), after `-u user:PASSWORD` or `--user` of a
 /// curl command, in `mysql -pPASSWORD`, or in `--password=PASSWORD`.
 fn url_or_command_password(text: &str) -> bool {
-    let real = |p: &str| p.len() >= 3 && !placeholder(p);
-    let in_url = text.match_indices("://").any(|(i, _)| {
+    if url_password(text) {
+        return true;
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    curl_user_password(text, &words) || mysql_flag_password(text, &words) || password_flag(&words)
+}
+
+/// A password that is long enough and not a placeholder.
+fn real_password(p: &str) -> bool {
+    p.len() >= 3 && !placeholder(p)
+}
+
+/// `scheme://user:PASSWORD@host` anywhere in the text.
+fn url_password(text: &str) -> bool {
+    text.match_indices("://").any(|(i, _)| {
         let rest = &text[i + 3..];
         let authority = rest
             .split(|c: char| matches!(c, '/' | '?' | '#') || c.is_whitespace())
@@ -501,29 +527,37 @@ fn url_or_command_password(text: &str) -> bool {
         authority
             .rsplit_once('@')
             .and_then(|(info, _)| info.split_once(':'))
-            .is_some_and(|(_, pw)| real(pw))
-    });
-    if in_url {
-        return true;
-    }
-    let words: Vec<&str> = text.split_whitespace().collect();
-    let curl_user = text.contains("curl")
+            .is_some_and(|(_, pw)| real_password(pw))
+    })
+}
+
+/// `-u user:PASSWORD` or `--user user:PASSWORD` in a text that mentions curl.
+fn curl_user_password(text: &str, words: &[&str]) -> bool {
+    text.contains("curl")
         && words.windows(2).any(|w| {
             matches!(w[0], "-u" | "--user")
                 && w[1]
                     .split_once(':')
-                    .is_some_and(|(_, pw)| real(trim_value(pw)))
-        });
-    let mysql_flag = text.contains("mysql")
+                    .is_some_and(|(_, pw)| real_password(trim_value(pw)))
+        })
+}
+
+/// `-pPASSWORD` (four characters or more) in a text that mentions mysql.
+fn mysql_flag_password(text: &str, words: &[&str]) -> bool {
+    text.contains("mysql")
         && words.iter().any(|w| {
-            w.strip_prefix("-p")
-                .is_some_and(|pw| !pw.starts_with('-') && pw.len() >= 4 && real(trim_value(pw)))
-        });
-    let password_flag = words.iter().any(|w| {
+            w.strip_prefix("-p").is_some_and(|pw| {
+                !pw.starts_with('-') && pw.len() >= 4 && real_password(trim_value(pw))
+            })
+        })
+}
+
+/// `--password=PASSWORD`.
+fn password_flag(words: &[&str]) -> bool {
+    words.iter().any(|w| {
         w.strip_prefix("--password=")
-            .is_some_and(|pw| real(trim_value(pw)))
-    });
-    curl_user || mysql_flag || password_flag
+            .is_some_and(|pw| real_password(trim_value(pw)))
+    })
 }
 
 /// A value that reads as a secret after a label: long enough, not a placeholder, and with a digit or a symbol
@@ -964,5 +998,75 @@ mod tests {
         for text in cases {
             assert_eq!(credential_kind(text), None, "{text:?}");
         }
+    }
+
+    // Characterisation tests for the helpers #1446 refactors: they pass before and after (a pure refactor has no
+    // red test).
+
+    /// The joined values of the spaced-out runs in `text`, with their widths.
+    fn runs(text: &str) -> Vec<(usize, String)> {
+        spaced_runs(text)
+            .into_iter()
+            .map(|(_, w, j)| (w, j))
+            .collect()
+    }
+
+    #[test]
+    fn a_spaced_run_is_four_or_more_equal_words_with_a_shorter_last_and_twelve_characters() {
+        // equal widths, the last one shorter
+        assert_eq!(
+            runs("ab cd ef gh ij kl mn o"),
+            [(2, "abcdefghijklmno".to_string())]
+        );
+        // fewer than four words, or fewer than twelve characters joined: no run
+        assert!(runs("abcd efgh ijkl").is_empty());
+        assert!(runs("ab cd ef gh ij").is_empty());
+        // a word wider than eight characters never starts a run
+        assert!(runs("abcdefghi abcdefghi abcdefghi abcdefghi").is_empty());
+        // a double space breaks the run; a longer last word is left out of it
+        assert!(runs("ab cd  ef gh ij kl mn").is_empty());
+        assert_eq!(
+            runs("ab cd ef gh ij kl mnp"),
+            [(2, "abcdefghijkl".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_spaced_run_reports_its_byte_range_and_a_second_run_after_the_first() {
+        let text = "x ab cd ef gh ij kl mn yyy";
+        let found = spaced_runs(text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(&text[found[0].0.clone()], "ab cd ef gh ij kl mn");
+        assert_eq!(joined_spaces(text).as_deref(), Some("x abcdefghijklmn yyy"));
+        let twice = "ab cd ef gh ij kl mn then 12 34 56 78 90 ab cd";
+        assert_eq!(runs(twice).len(), 2);
+    }
+
+    #[test]
+    fn a_command_password_must_be_real_and_long_enough() {
+        let flagged = |t: &str| url_or_command_password(t);
+        // the length floors: three characters in a url or after curl -u, four after mysql -p
+        assert!(flagged("curl -u me:abc https://x.example"));
+        assert!(!flagged("curl -u me:ab https://x.example"));
+        assert!(flagged("mysql -u root -pabcd db"));
+        assert!(!flagged("mysql -u root -pabc db"));
+        assert!(!flagged("mysql -u root -p-abcd db"));
+        assert!(flagged("psql --password=abc app"));
+        assert!(!flagged("psql --password=ab app"));
+        // the tool word has to be in the text
+        assert!(!flagged("wget -u me:abcdef https://x.example"));
+        assert!(!flagged("psql -pabcdef app"));
+        // trailing punctuation is not part of the password
+        assert!(!flagged("curl -u me:pass. https://x.example"));
+        assert!(flagged("(curl -u me:s3cr3t) now"));
+    }
+
+    #[test]
+    fn a_url_password_is_read_from_the_authority_only() {
+        let flagged = |t: &str| url_or_command_password(t);
+        assert!(flagged("db at postgres://u:s3cr3t@h/db now"));
+        assert!(!flagged("db at postgres://h/path:s3cr3t@x"));
+        assert!(!flagged("see postgres://u@h:5432/db"));
+        assert!(flagged("a://b a://u:s3cr3t@h"));
     }
 }

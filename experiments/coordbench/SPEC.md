@@ -65,7 +65,19 @@ within one scenario: model, task text, fixture, launch topology, team size, test
 A B-arm variant that adds the same two roles without klatch (B1 plus integrator and supervisor sessions that talk through
 messages and the board) is B1-roles (`arms/B1-roles.md`, mirroring `K3.md` section by section). Proposed, pending human
 approval: it runs alongside K3 whenever K3 is, so that "roles help" is not credited to klatch; it is a cost, so the human
-approves it in the budget. The harness has no launcher for role members yet, for K3 or B1-roles.
+approves it in the budget.
+
+Role members (#1421). The harness starts them: in K3 and B1-roles each role in the scenario's `roles` setting (`integrator`
+and `supervisor` by default; `--roles` chooses) is its own agent process beside the workers (a `claude -p` session with the
+role's section of `arms/K3.md` or `arms/B1-roles.md`, a scripted fake in tests), in a clone of its own, with its own spend cap
+(`per_role_usd`, `--role-usd`), model (`--roles-model`) and cost line, and with no `Edit` or `Write` tool. In K3 the integrator
+is granted its klatch role in the run store through the same pseudo-terminal admin path the klatch bench uses (a throwaway
+passphrase for the run's own temporary store, never the human's, never the live store); klatch has no supervisor role, so the
+supervisor is an ordinary member. The supervisor's restart command only writes a request file; the harness starts a replacement
+for a worker that has ended, as a new member (`c-2`) with a fresh clone, at most `max_restarts` times per worker. The roles'
+turns, tokens, cost, wall time, exit and state are in the run record under `roles` (section 7.1); `spend.usd` is the team
+total including them, so the per-run and suite caps include them; a failed role member is recorded and does not invalidate
+the run; once every worker has ended the roles get `grace_s` seconds to finish and are then stopped.
 
 Per-scenario arm lists (the same lists the scenario tickets give):
 
@@ -410,6 +422,7 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "time_to_first_pass_s": 640.0,
   "outcome": "ok",
   "spend": {"usd": 0.84, "estimated": false},
+  "roles": null,
   "turns": {"total": 61, "per_agent": {"a": 19, "b": 21, "c": 21}},
   "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
   "tool_calls": {"total": 143, "by_tool": {"Bash": 90, "Edit": 31}},
@@ -440,6 +453,17 @@ no message text, ask text, claim detail, label or payload. Under `scenario_metri
 store's counts, with `match` and `differences`; a mismatch is a note on the record and is never resolved silently. B arms
 have no store: `store_export` and these metrics are null and `scenario_metrics.store.reason` says so. When the tool is
 missing or the store cannot be read, the same fields stay null, `notes` says why, and the run is not invalid.
+
+`roles` (#1421) is null for an arm without roles. In K3 and B1-roles it holds `model` (the roles model), `per_role_usd`,
+`grace_s`, `max_restarts`, `members` (per role member: `turns`, `tokens`, `tool_calls`, `messages`, `cost_usd`,
+`cost_estimated`, `wall_s`, `exit`, `state` of `ok`, `failed` (a nonzero exit), `stopped-by-harness` (still running when the
+grace after the last worker ended was spent) or `killed-by-cap` (running when the run hit its spend or wall cap), `models`, and
+in K3 `granted`: true or false for the integrator's klatch role, null for the supervisor, which has none, with `grant_error`
+when a grant failed), `replacements` (the members the supervisor had started, same fields plus `replaces`) and `restarts`
+(every request: `member`, `replacement`, `started`, `reason` when refused). The top-level `turns`, `tokens`, `tool_calls`
+and `metrics` stay the workers' own; `spend.usd` is the team total including the roles and replacements, with
+`spend.workers_usd` and `spend.roles_usd` beside it (only in a role arm). The report adds the roles to the cost, and shows
+`roles_cost_usd` separately. A role member's failure is a note and a state, not an invalid run.
 
 ### 7.2 Ledger layout
 

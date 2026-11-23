@@ -2,6 +2,7 @@
 //! (#1049, follows #1045). The credential is issued by `World::issue_worker` through the launcher command, inside the
 //! world's temporary home and key directory; nothing of the live keychain or `~/.klatch` is touched.
 use super::*;
+use crate::Session;
 
 pub(super) fn all() -> Vec<Scenario> {
     vec![
@@ -47,11 +48,9 @@ pub(super) fn all() -> Vec<Scenario> {
 /// The own-record commands a worker may use while its credential is live, each refused once it ended.
 const OWN_RECORD: &[&[&str]] = &[&["crossings"], &["refusals"], &["scope", "repo"]];
 
-fn own_record_after_end(w: &World) -> Res {
-    w.set_clock(T0);
-    let revoked = w.issue_worker("w-rev", "internal", (600, None))?;
-    let idle = w.issue_worker("w-idle", "internal", (5, None))?;
-    for bundle in [&revoked, &idle] {
+/// Every own-record command is served to each of the live credentials.
+fn own_record_served_while_live(w: &World, bundles: [&std::path::Path; 2]) -> Result<(), String> {
+    for bundle in bundles {
         w.as_worker(bundle, &["join", "r"]);
         for args in OWN_RECORD {
             let r = w.as_worker(bundle, args);
@@ -61,12 +60,15 @@ fn own_record_after_end(w: &World) -> Res {
             )?;
         }
     }
-    check(
-        w.run("launcher", &["worker", "revoke", "w-rev"]).ok,
-        "revoke failed",
-    )?;
-    w.advance(30);
-    for (bundle, word) in [(&revoked, "revoked"), (&idle, "expired")] {
+    Ok(())
+}
+
+/// Every own-record command is refused to a credential that ended, and the refusal says how it ended.
+fn own_record_refused_once_ended(
+    w: &World,
+    ended: [(&std::path::Path, &str); 2],
+) -> Result<(), String> {
+    for (bundle, word) in ended {
         for args in OWN_RECORD {
             let r = w.as_worker(bundle, args);
             check(
@@ -80,6 +82,20 @@ fn own_record_after_end(w: &World) -> Res {
             )?;
         }
     }
+    Ok(())
+}
+
+fn own_record_after_end(w: &World) -> Res {
+    w.set_clock(T0);
+    let revoked = w.issue_worker("w-rev", "internal", (600, None))?;
+    let idle = w.issue_worker("w-idle", "internal", (5, None))?;
+    own_record_served_while_live(w, [&revoked, &idle])?;
+    check(
+        w.run("launcher", &["worker", "revoke", "w-rev"]).ok,
+        "revoke failed",
+    )?;
+    w.advance(30);
+    own_record_refused_once_ended(w, [(&revoked, "revoked"), (&idle, "expired")])?;
     // the door is not the only check: a process that proved its credential at the start and stays up (the wire) is
     // refused on its own record once the credential ends under it (#835)
     own_record_on_a_live_wire(w)?;
@@ -268,8 +284,9 @@ fn worker_list(w: &World) -> Res {
     Ok(vec![])
 }
 
-fn advisory_mark(w: &World) -> Res {
-    w.set_clock(T0);
+/// Two rooms ask for a capability Claude Code only has at a degraded level, in flag mode (one of them after a member
+/// joined the first without the requirement).
+fn advisory_rooms_require(w: &World) -> Result<(), String> {
     // a member who joined before the room asked for anything is never flagged
     w.ok("early", &["join", "flagged"])?;
     w.ok(
@@ -290,8 +307,11 @@ fn advisory_mark(w: &World) -> Res {
         .ok,
         "room-require failed",
     )?;
-    let h = FakeHarness::new(w)?;
-    let s = h.start("adv-sid-0001", "adv")?;
+    Ok(())
+}
+
+/// A verified session joins and posts in the flagged room; `who` marks it and leaves the early member clean.
+fn advisory_who_marks_the_flagged_member(w: &World, s: &Session) -> Result<(), String> {
     let (ok, out) = s.klatch(&["join", "flagged"])?;
     check(ok, format!("the verified session was not admitted: {out}"))?;
     let (ok, out) = s.klatch(&["post", "flagged", "hello from a flagged harness"])?;
@@ -307,7 +327,11 @@ fn advisory_mark(w: &World) -> Res {
         line_of("early"),
         "advisory",
         "who marks a member admitted before the requirement",
-    )?;
+    )
+}
+
+/// The read, the history and the live stream carry the mark of the flagged sender and no other.
+fn advisory_reads_carry_the_mark(w: &World) -> Result<(), String> {
     let read = w.ok("obs", &["read", "flagged", "--peek"])?;
     marked(&read, "read")?;
     let history = w.ok("obs", &["history", "flagged"])?;
@@ -324,7 +348,12 @@ fn advisory_mark(w: &World) -> Res {
         frame("before the requirement"),
         "advisory",
         "the stream marks a clean sender",
-    )?;
+    )
+}
+
+/// A second room: the harness the gateway verified has the capability, so it is admitted clean there; a caller that
+/// names no harness is flagged for the same requirement.
+fn advisory_second_room(w: &World, s: &Session) -> Result<(), String> {
     // the harness the gateway verified has the capability a second room asks for, so it is admitted clean there; a
     // caller that names no harness stays at the generic floor and is flagged for the same requirement
     let (ok, out) = s.klatch(&["join", "native"])?;
@@ -341,7 +370,17 @@ fn advisory_mark(w: &World) -> Res {
         line_of("typed"),
         "advisory",
         &format!("a caller that names no harness was not flagged in:\n{who}"),
-    )?;
+    )
+}
+
+fn advisory_mark(w: &World) -> Res {
+    w.set_clock(T0);
+    advisory_rooms_require(w)?;
+    let h = FakeHarness::new(w)?;
+    let s = h.start("adv-sid-0001", "adv")?;
+    advisory_who_marks_the_flagged_member(w, &s)?;
+    advisory_reads_carry_the_mark(w)?;
+    advisory_second_room(w, &s)?;
     Ok(vec![])
 }
 

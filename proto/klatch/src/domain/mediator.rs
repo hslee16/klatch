@@ -46,6 +46,10 @@ fn mention(names: &[&str]) -> String {
         .join(" ")
 }
 
+fn names(members: &[String]) -> Vec<&str> {
+    members.iter().map(String::as_str).collect()
+}
+
 /// The proposals this view calls for, in event order, at most `MAX_PROPOSALS`; deterministic.
 pub fn plan(view: &View) -> Vec<Proposal> {
     let mut out = Vec::new();
@@ -59,66 +63,39 @@ pub fn plan(view: &View) -> Vec<Proposal> {
         if who.iter().any(|m| *m == view.me || !valid_name(m)) {
             continue;
         }
-        if let Some(p) = propose(view, e, &who) {
+        if let Some(p) = propose(view, e) {
             out.push(p);
         }
     }
     out
 }
 
-fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
+/// A proposal that is only a post: no room, no invites.
+fn post(key: String, text: String) -> Proposal {
+    Proposal {
+        key,
+        text,
+        room: None,
+        invites: Vec::new(),
+    }
+}
+
+fn propose(view: &View, e: &StuckEvent) -> Option<Proposal> {
     let key = e.key();
     Some(match e {
-        StuckEvent::AskCycle { members, asks } => {
-            let first = asks.iter().min()?;
-            let room = format!("mediate-{first}");
-            let mut invites: Vec<String> = view
-                .members
-                .iter()
-                .filter(|m| super::router::present(m, view.now))
-                .map(|m| m.name.clone())
-                .filter(|n| members.contains(n))
-                .collect();
-            invites.sort();
-            invites.dedup();
-            Proposal {
-                key,
-                text: format!(
-                    "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
-                     post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
-                     {room}). {TAIL}",
-                    mention(who),
-                    members.first()?
-                ),
-                room: Some(room),
-                invites,
-            }
-        }
-        StuckEvent::ClaimDeadlock { members } => Proposal {
-            key,
-            text: format!(
-                "mediator proposal: claim deadlock, {} wait on each other. klatch's own rule stands: the member whose \
-                 claim attempt closed the cycle yields. If none has, by a fixed rule @{} releases its claims in this \
-                 room, waits, then tries again. {TAIL}",
-                mention(who),
-                members.first()?
-            ),
-            room: None,
-            invites: Vec::new(),
-        },
+        StuckEvent::AskCycle { members, asks } => ask_cycle(view, key, members, asks)?,
+        StuckEvent::ClaimDeadlock { members } => claim_deadlock(key, members)?,
         StuckEvent::StaleAsk {
             ask,
             asker,
             age_secs,
-        } => Proposal {
+        } => post(
             key,
-            text: format!(
+            format!(
                 "mediator proposal: ask #{ask} by @{asker} has had no taker for {age_secs}s. @{asker} could narrow or \
                  repeat it, or a member could claim ask:{ask}. {TAIL}"
             ),
-            room: None,
-            invites: Vec::new(),
-        },
+        ),
         StuckEvent::LongExchange {
             room,
             members,
@@ -127,57 +104,90 @@ fn propose(view: &View, e: &StuckEvent, who: &[&str]) -> Option<Proposal> {
             let [a, b] = members.as_slice() else {
                 return None;
             };
-            Proposal {
+            post(
                 key,
-                text: format!(
+                format!(
                     "mediator proposal: @{a} and @{b} have exchanged {messages} messages in {room}. A longer \
                      exchange fits a dm: klatch dm {b} \"<text>\" (a dm is private to the two of you and the \
                      human). {TAIL}"
                 ),
-                room: None,
-                invites: Vec::new(),
-            }
+            )
         }
         StuckEvent::DeadHolder {
             room,
             claim,
             holder,
-        } => Proposal {
+        } => post(
             key,
-            text: format!(
+            format!(
                 "mediator proposal: @{holder} holds {} in {room} but its process has exited. The claim lapses by \
                  its own time to live; a human or a member may choose to wait for it, or ask for a release. {TAIL}",
                 super::claim_label(claim)
             ),
-            room: None,
-            invites: Vec::new(),
-        },
+        ),
         StuckEvent::PossibleOverwrite {
             room,
             path,
             previous,
             new,
-        } => Proposal {
+        } => post(
             key,
-            text: format!(
+            format!(
                 "mediator proposal: @{new} took {} in {room} after @{previous} released it following a claim \
                  deadlock. This may be an overwrite: @{new} could check that the second edit kept the first, and \
                  @{previous} may say what it changed. {TAIL}",
                 super::claim_label(path)
             ),
-            room: None,
-            invites: Vec::new(),
-        },
-        StuckEvent::NobodyCapable { ask, asker, cannot } => Proposal {
+        ),
+        StuckEvent::NobodyCapable { ask, asker, cannot } => post(
             key,
-            text: format!(
+            format!(
                 "mediator proposal: ask #{ask} by @{asker} was declined as cannot by {cannot} members and none is \
                  busy. @{asker} could tell its user, or a human could add a member that can. {TAIL}"
             ),
-            room: None,
-            invites: Vec::new(),
-        },
+        ),
     })
+}
+
+/// A cycle through asks: the first name yields, and the members present are invited into `mediate-<lowest ask>`.
+fn ask_cycle(view: &View, key: String, members: &[String], asks: &[i64]) -> Option<Proposal> {
+    let first = asks.iter().min()?;
+    let room = format!("mediate-{first}");
+    let mut invites: Vec<String> = view
+        .members
+        .iter()
+        .filter(|m| super::router::present(m, view.now))
+        .map(|m| m.name.clone())
+        .filter(|n| members.contains(n))
+        .collect();
+    invites.sort();
+    invites.dedup();
+    Some(Proposal {
+        key,
+        text: format!(
+            "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
+             post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
+             {room}). {TAIL}",
+            mention(&names(members)),
+            members.first()?
+        ),
+        room: Some(room),
+        invites,
+    })
+}
+
+/// A claim deadlock: klatch's own rule stands, and the first name releases if nobody has.
+fn claim_deadlock(key: String, members: &[String]) -> Option<Proposal> {
+    let first = members.first()?;
+    Some(post(
+        key,
+        format!(
+            "mediator proposal: claim deadlock, {} wait on each other. klatch's own rule stands: the member whose \
+             claim attempt closed the cycle yields. If none has, by a fixed rule @{first} releases its claims in this \
+             room, waits, then tries again. {TAIL}",
+            mention(&names(members)),
+        ),
+    ))
 }
 
 #[cfg(test)]
@@ -218,6 +228,13 @@ mod tests {
         })
     }
 
+    /// The proposal text holds every fragment in `parts`.
+    fn assert_text(p: &Proposal, parts: &[&str]) {
+        for part in parts {
+            assert!(p.text.contains(part), "{part:?} missing from {}", p.text);
+        }
+    }
+
     #[test]
     fn an_ask_cycle_proposes_the_first_name_yields_and_a_room_with_both_invited() {
         let ps = run(&[cycle()], &[member("ann"), member("bo"), member("cy")]);
@@ -225,12 +242,7 @@ mod tests {
         let p = &ps[0];
         assert_eq!(p.room.as_deref(), Some("mediate-2"));
         assert_eq!(p.invites, ["ann", "bo"]);
-        assert!(
-            p.text.contains("@ann yields") && p.text.contains("@bo"),
-            "{}",
-            p.text
-        );
-        assert!(p.text.contains("A proposal only"), "{}", p.text);
+        assert_text(p, &["@ann yields", "@bo", "A proposal only"]);
     }
 
     #[test]
@@ -272,8 +284,8 @@ mod tests {
         ];
         let ps = run(&evs, &[member("ann"), member("bo")]);
         assert_eq!(ps.len(), 2);
-        assert!(ps[0].text.contains("ask #3 by @ann") && ps[0].text.contains("200s"));
-        assert!(ps[1].text.contains("ask #5 by @bo") && ps[1].text.contains("by 2 members"));
+        assert_text(&ps[0], &["ask #3 by @ann", "200s"]);
+        assert_text(&ps[1], &["ask #5 by @bo", "by 2 members"]);
         assert!(ps.iter().all(|p| p.room.is_none() && p.invites.is_empty()));
     }
 
@@ -327,16 +339,17 @@ mod tests {
     fn a_dead_holder_proposal_is_a_fixed_template_that_releases_nothing() {
         let ps = run(&[dead_holder("ann")], &[member("ann")]);
         assert_eq!(ps.len(), 1);
-        let t = &ps[0].text;
-        assert!(
-            t.contains("@ann holds ask:4 in lobby but its process has exited")
-                && t.contains("lapses by its own time to live")
-                && t.contains("A proposal only"),
-            "{t}"
+        assert_text(
+            &ps[0],
+            &[
+                "@ann holds ask:4 in lobby but its process has exited",
+                "lapses by its own time to live",
+                "A proposal only",
+            ],
         );
         assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
         assert_eq!(ps[0].key, "dead_holder:lobby:ask:4");
-        assert!(!t.contains('\u{2014}'));
+        assert!(!ps[0].text.contains('\u{2014}'));
     }
 
     fn overwrite(path: &str, previous: &str, new: &str) -> StuckEvent {
@@ -355,17 +368,17 @@ mod tests {
             &[member("ann"), member("bo")],
         );
         assert_eq!(ps.len(), 1);
-        let t = &ps[0].text;
-        assert!(
-            t.contains(
-                "@bo took src/a.rs in lobby after @ann released it following a claim deadlock"
-            ) && t.contains("check that the second edit kept the first")
-                && t.contains("A proposal only"),
-            "{t}"
+        assert_text(
+            &ps[0],
+            &[
+                "@bo took src/a.rs in lobby after @ann released it following a claim deadlock",
+                "check that the second edit kept the first",
+                "A proposal only",
+            ],
         );
         assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
         assert_eq!(ps[0].key, "possible_overwrite:lobby:src/a.rs:ann:bo");
-        assert!(!t.contains('\u{2014}'));
+        assert!(!ps[0].text.contains('\u{2014}'));
     }
 
     #[test]

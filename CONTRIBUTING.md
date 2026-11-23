@@ -204,6 +204,16 @@ proto/scripts/team smoke                 # one tiny Haiku worker in a throwaway 
 
 Settings are environment variables listed at the top of the script (budget `TEAM_MAX_BUDGET`, wall clock `TEAM_MAX_SECONDS`, `TEAM_MODEL`, `TEAM_ROOM`, `TEAM_LAUNCHER`). `proto/scripts/test-team.sh` tests it with a fake klatch and a fake claude.
 
+## CodeScene components (code health, #1441)
+
+The CodeScene Refactoring Targets tab needs architectural components before it can show local refactoring opportunities. They are defined once, in `.codescene/components.json`, an exact partition of the tracked source files (every `*.rs`, `*.py`, `*.ts`, `*.sh` and shebang script is in exactly one component; no file is in two, because CodeScene's behaviour for overlaps is not documented). `proto/scripts/codescene-components check` verifies that against `git ls-files` and runs in the local gate, so a new directory or source file must be assigned to a component in the same pull request. The `cs` CLI has no components command; the human applies them (an agent never does, and nothing here calls CodeScene unless you run `apply`):
+
+1. Create an API token in the CodeScene UI (the `cs` OAuth login is not a token) and find the project id with `curl -H "Authorization: Bearer $CODESCENE_TOKEN" https://api.codescene.io/v2/projects`.
+2. Run `CODESCENE_TOKEN=... proto/scripts/codescene-components apply --project-id ID --yes --run-analysis` (add `--leading-slash` if `apply` notes that the existing patterns have one; `--dry-run` shows what would be sent; `--token-file FILE` reads a mode-0600 file instead). Without `--yes` it only prints the existing components and the difference, because the PUT replaces every existing component.
+3. Or paste the output of `proto/scripts/codescene-components csv` into the UI components import (two columns, no header).
+
+When the analysis has run, compare the Refactoring Targets view with the inventory in #1441.
+
 ## Monthly usage review
 
 Once a month the person who owns the store runs `klatch admin stats --since YYYY-MM-DD` (the first day of the period) in their own terminal and types the admin passphrase; `--room ROOM` narrows the room-scoped counts and `--json` prints one object of counts and timestamps for the benchmark ledger under `experiments/` (record it with the ledger entry of that run, never paste the text form into an issue, since it names rooms and members). It prints counts only: messages per room and day, senders and attribution, kinds, asks and the time to a first answer, claims by class, refusals by rule, direct message and private room counts, members, hook runs, admin acts and credential counts; a sealed room shows counts and nothing else. It reads the store read-only and writes one audit row. Read it for what the team does not use (no asks, no direct messages, no answers, a long tail of unverified senders) and file a ticket for each gap; the design item for #1377 says why it is an admin act.

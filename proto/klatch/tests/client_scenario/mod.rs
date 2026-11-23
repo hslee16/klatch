@@ -19,6 +19,11 @@ fn api(e: Error) -> klatch::client::ApiError {
     }
 }
 
+/// The code of the api error a call is refused with.
+fn code_of<T: std::fmt::Debug>(r: Result<T, Error>) -> String {
+    api(r.unwrap_err()).code
+}
+
 #[test]
 fn the_protocol_version_is_one_and_hello_says_who_you_are() {
     assert_eq!(PROTOCOL_VERSION, 1);
@@ -42,21 +47,18 @@ fn a_post_is_read_by_another_member_and_a_handoff_keeps_its_kind_and_payload() {
     a.post(PostRequest::new("r", "see the order").handoff("work-order", Some("{\"id\":7}")))
         .unwrap();
     let ms = b.read("r", true).unwrap();
-    assert_eq!(
-        ms.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
-        vec!["just words", "see the order"]
-    );
-    assert_eq!(
-        (ms[0].kind.as_deref(), ms[0].payload.as_deref()),
-        (None, None)
-    );
-    assert_eq!(
-        (ms[1].kind.as_deref(), ms[1].payload.as_deref()),
-        (Some("work-order"), Some("{\"id\":7}"))
-    );
+    let facts: Vec<_> = ms
+        .iter()
+        .map(|m| (m.body.as_str(), m.kind.as_deref(), m.payload.as_deref()))
+        .collect();
+    let want = vec![
+        ("just words", None, None),
+        ("see the order", Some("work-order"), Some("{\"id\":7}")),
+    ];
+    assert_eq!(facts, want);
     assert_eq!(ms[0].attribution, ATTRIBUTION);
-    assert_eq!(b.read("r", false).unwrap().len(), 2);
-    assert!(b.read("r", false).unwrap().is_empty());
+    let (first_read, second_read) = (b.read("r", false).unwrap(), b.read("r", false).unwrap());
+    assert_eq!((first_read.len(), second_read.is_empty()), (2, true));
 }
 
 #[test]
@@ -96,6 +98,18 @@ fn an_ask_scope_survives_post_read_the_stream_and_asks_and_could_answer_names_a_
     );
 }
 
+/// The first message of the read has no refs; the second has the three that were posted, with their label and snippet.
+fn assert_refs_as_posted(ms: &[klatch::client::Message]) {
+    assert!(ms[0].refs.is_empty());
+    let kinds: Vec<_> = ms[1].refs.iter().map(|r| r.kind.as_str()).collect();
+    assert_eq!(kinds, vec!["pr", "log", "figma-frame"]);
+    let detail = (
+        ms[1].refs[0].label.as_deref(),
+        ms[1].refs[1].snippet.as_deref(),
+    );
+    assert_eq!(detail, (Some("the fix"), Some("boom\nbang")));
+}
+
 #[test]
 fn ask_refs_survive_post_read_the_stream_and_asks_and_a_bad_ref_is_refused() {
     let h = home();
@@ -110,17 +124,7 @@ fn ask_refs_survive_post_read_the_stream_and_asks_and_a_bad_ref_is_refused() {
         .post(PostRequest::new("r", "seeking: with refs").refs(&refs))
         .unwrap();
     let ms = b.read("r", false).unwrap();
-    assert!(ms[0].refs.is_empty());
-    assert_eq!(
-        ms[1]
-            .refs
-            .iter()
-            .map(|r| r.kind.as_str())
-            .collect::<Vec<_>>(),
-        vec!["pr", "log", "figma-frame"]
-    );
-    assert_eq!(ms[1].refs[0].label.as_deref(), Some("the fix"));
-    assert_eq!(ms[1].refs[1].snippet.as_deref(), Some("boom\nbang"));
+    assert_refs_as_posted(&ms);
     assert_eq!(b.subscribe("r", 0).unwrap(), 2);
     let seen = b.collect(true, Duration::from_secs(10)).unwrap();
     assert_eq!(seen.messages[1].refs.len(), 3);
@@ -130,11 +134,12 @@ fn ask_refs_survive_post_read_the_stream_and_asks_and_a_bad_ref_is_refused() {
         .unwrap();
     assert_eq!(answer["refs"][0]["kind"], "pr");
     let bad = [RefInput::new("path", "/etc/passwd")];
-    assert!(
+    let refused = [
         a.post(PostRequest::new("r", "seeking: x").refs(&bad))
-            .is_err()
-    );
-    assert!(a.post(PostRequest::new("r", "hello").refs(&refs)).is_err());
+            .is_err(),
+        a.post(PostRequest::new("r", "hello").refs(&refs)).is_err(),
+    ];
+    assert_eq!(refused, [true, true]);
 }
 
 #[test]
@@ -182,10 +187,7 @@ fn a_second_claim_conflicts_names_the_holder_and_a_release_frees_the_path() {
     assert_eq!(b.claim_owners("r").unwrap(), vec!["alice".to_string()]);
     a.release("r", "src/a.rs", Some("done")).unwrap();
     b.claim(ClaimRequest::new("r", "src/a.rs")).unwrap();
-    assert_eq!(
-        api(a.release("r", "never/claimed", None).unwrap_err()).code,
-        "not_found"
-    );
+    assert_eq!(code_of(a.release("r", "never/claimed", None)), "not_found");
 }
 
 #[test]
@@ -209,28 +211,14 @@ fn a_refusal_carries_its_rule_and_never_repeats_the_text() {
 fn bad_requests_get_a_failed_response_and_the_session_carries_on() {
     let h = home();
     let mut a = connect(&h, "alice");
-    assert_eq!(
-        api(a
-            .request("no_such_method", serde_json::json!({}))
-            .unwrap_err())
-        .code,
-        "unknown_method"
-    );
-    assert_eq!(
-        api(a
-            .request("post", serde_json::json!({"room": "r"}))
-            .unwrap_err())
-        .code,
-        "invalid_params"
-    );
-    assert_eq!(
-        api(a.post(PostRequest::new("bad room name", "x")).unwrap_err()).code,
-        "invalid"
-    );
-    assert!(
-        a.post(PostRequest::new("r", "p").handoff("", Some("needs a kind")))
-            .is_err()
-    );
+    let codes = [
+        code_of(a.request("no_such_method", serde_json::json!({}))),
+        code_of(a.request("post", serde_json::json!({"room": "r"}))),
+        code_of(a.post(PostRequest::new("bad room name", "x"))),
+    ];
+    assert_eq!(codes, ["unknown_method", "invalid_params", "invalid"]);
+    let no_kind = a.post(PostRequest::new("r", "p").handoff("", Some("needs a kind")));
+    assert!(no_kind.is_err());
     assert_eq!(a.post(PostRequest::new("r", "still working")).unwrap().0, 1);
 }
 
@@ -244,21 +232,14 @@ fn a_member_without_the_admin_role_is_refused_every_act_and_may_prune() {
         ("anchor-done", serde_json::json!({"anchor": "gh:pr:o/r/1"})),
         ("close", serde_json::json!({"room": "r"})),
     ] {
-        assert_eq!(
-            api(a.role_act(act, params).unwrap_err()).code,
-            "refused",
-            "{act}"
-        );
+        assert_eq!(code_of(a.role_act(act, params)), "refused", "{act}");
     }
     assert_eq!(
-        api(a
-            .role_act("reap-anchors", serde_json::json!({}))
-            .unwrap_err())
-        .code,
+        code_of(a.role_act("reap-anchors", serde_json::json!({}))),
         "unknown_act"
     );
     assert_eq!(
-        api(a.role_act("run-create", serde_json::json!({})).unwrap_err()).code,
+        code_of(a.role_act("run-create", serde_json::json!({}))),
         "invalid_params"
     );
     assert_eq!(a.prune().unwrap(), 0);
@@ -284,16 +265,10 @@ fn a_direct_message_reaches_one_member_in_a_room_nobody_else_may_use() {
         vec![("alice", "hello bob")]
     );
     assert_eq!(b.dm("alice", "hi back", None).unwrap().1, 2);
-    assert_eq!(api(c.read(&room, false).unwrap_err()).code, "refused");
+    assert_eq!(code_of(c.read(&room, false)), "refused");
+    assert_eq!(code_of(a.dm("alice", "to myself", None)), "invalid");
     assert_eq!(
-        api(a.dm("alice", "to myself", None).unwrap_err()).code,
-        "invalid"
-    );
-    assert_eq!(
-        api(a
-            .dm("bob", "above the ceiling", Some("secret"))
-            .unwrap_err())
-        .code,
+        code_of(a.dm("bob", "above the ceiling", Some("secret"))),
         "refused"
     );
 }
@@ -307,7 +282,7 @@ fn a_member_mutes_and_unmutes_a_room_and_read_still_shows_everything() {
     assert_eq!(a.read("r", true).unwrap().len(), 1);
     a.mute("r", false).unwrap();
     a.mute("r", true).unwrap();
-    assert_eq!(api(a.mute("bad room", true).unwrap_err()).code, "invalid");
+    assert_eq!(code_of(a.mute("bad room", true)), "invalid");
 }
 
 #[test]
@@ -327,19 +302,10 @@ fn an_invite_is_a_pointer_posted_where_the_member_already_is() {
         bodies.iter().any(|x| x.contains("klatch join design")),
         "{bodies:?}"
     );
+    assert_eq!(code_of(a.invite("alice", "design", "team")), "invalid");
+    assert_eq!(code_of(a.invite("bob", "bad room", "team")), "invalid");
     assert_eq!(
-        api(a.invite("alice", "design", "team").unwrap_err()).code,
-        "invalid"
-    );
-    assert_eq!(
-        api(a.invite("bob", "bad room", "team").unwrap_err()).code,
-        "invalid"
-    );
-    assert_eq!(
-        api(a
-            .request("invite", serde_json::json!({"member": "bob"}))
-            .unwrap_err())
-        .code,
+        code_of(a.request("invite", serde_json::json!({"member": "bob"}))),
         "invalid_params"
     );
 }
@@ -360,21 +326,15 @@ fn a_member_declares_its_scope_its_kind_and_its_status() {
         vec![Some("git:demo-1")]
     );
     assert_eq!(a.claim_owners("r").unwrap(), vec!["alice".to_string()]);
-    assert_eq!(
-        api(a.set_scope("not a scope!").unwrap_err()).code,
-        "invalid"
-    );
+    assert_eq!(code_of(a.set_scope("not a scope!")), "invalid");
     a.set_kind(Some("bot")).unwrap();
     assert_eq!(a.who("r").unwrap()[0].kind.as_deref(), Some("bot"));
     a.set_kind(None).unwrap();
     assert_eq!(a.who("r").unwrap()[0].kind, None);
-    assert_eq!(
-        api(a.set_kind(Some("session")).unwrap_err()).code,
-        "invalid"
-    );
+    assert_eq!(code_of(a.set_kind(Some("session"))), "invalid");
     a.set_status("r", "done").unwrap();
     assert_eq!(a.who("r").unwrap()[0].status.as_deref(), Some("done"));
-    assert_eq!(api(a.set_status("r", "").unwrap_err()).code, "invalid");
+    assert_eq!(code_of(a.set_status("r", "")), "invalid");
     a.unsubscribe("r").unwrap();
 }
 
@@ -385,15 +345,9 @@ fn a_member_that_is_not_the_reviewer_is_refused_both_review_methods() {
     let e = api(a.review_next().unwrap_err());
     assert_eq!(e.code, "refused");
     assert!(e.refusals.iter().any(|r| r.0 == "reviewer"), "{e:?}");
+    assert_eq!(code_of(a.review_verdict(1, Verdict::Allow)), "refused");
     assert_eq!(
-        api(a.review_verdict(1, Verdict::Allow).unwrap_err()).code,
-        "refused"
-    );
-    assert_eq!(
-        api(a
-            .request("review_verdict", serde_json::json!({"id": 1}))
-            .unwrap_err())
-        .code,
+        code_of(a.request("review_verdict", serde_json::json!({"id": 1}))),
         "invalid_params"
     );
 }
@@ -429,8 +383,5 @@ fn history_looks_back_without_moving_the_cursor_and_pages_with_since() {
     let own = a.history("r", Some(1), None).unwrap();
     assert_eq!(bodies(&own.messages), vec!["m5"]);
     assert_eq!(b.read("r", false).unwrap().len(), 5);
-    assert_eq!(
-        api(b.history("r", Some(0), None).unwrap_err()).code,
-        "invalid"
-    );
+    assert_eq!(code_of(b.history("r", Some(0), None)), "invalid");
 }

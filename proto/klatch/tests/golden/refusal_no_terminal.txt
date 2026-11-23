@@ -1,0 +1,252 @@
+### $ klatch admin pause
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin resume
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin close r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin reopen r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin remove m --room r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin allow m --room r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin label r private
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin clear m internal
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin grantor r m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin ssh-key laptop m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin room-clear r m internal
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin librarian m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin reviewer m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin facilitator m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin integrator m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin admin-agent m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin room-creation granted
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin grant-rooms m
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin rate-limit 30 60
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin lease-cap 100
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin lease-grace 60
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin room-stale r 120
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin room-ask-lease r 100
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin room-require r --off
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin cap internal
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin chain a,b
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin canary r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin canary-retire r
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin scrub-add n quokka
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin scrub-remove n
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin scrub-list
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin recovery
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin recover KLATCH-AAAA
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin seal-label private
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin rotate-key
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin rotate-label-key private
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin backup backup.db
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin restore backup.db
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin run-archive a.jsonl --run r
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin retention r 30
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin archive --all-rooms
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin restore-archive x.db
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin archives
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin export r
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin stats --room lobby --since 2026-01-01
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin init-passphrase
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin reset-passphrase
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin unlock-window 60
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch admin shell
+Error: the admin shell reads its commands from the terminal and shows its answers there; standard input and output are not your terminal (run `klatch admin shell` yourself in a terminal)
+(ended: refused)
+
+### $ klatch admin refusals
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin review-queue
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch admin audit
+Error: this command prints stored text or a secret, and standard output (and standard error) must be your own terminal: a pipe, a file, another pty, or a redirected standard error is refused, so nothing was asked or done; run it yourself in a terminal with standard output and standard error not redirected
+(ended: refused)
+
+### $ klatch worker issue w-1 --clearance internal --out w.bundle
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch worker revoke w-1
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch worker list
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch anchor done a
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch anchor reap --dir /nonexistent-klatch-dir
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch anchor github --file /dev/null
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch run create r1
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch run end r1
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch run list
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### $ klatch judge run --once
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
+### a passphrase piped to a command with no terminal is not read
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+

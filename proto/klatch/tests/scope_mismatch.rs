@@ -13,7 +13,8 @@ fn repo(h: &Home) -> String {
     dir.to_string_lossy().into_owned()
 }
 
-fn hook(h: &Home, scope: Option<&str>, event: &str, sid: &str, cwd: &str) -> Output {
+fn hook(h: &Home, scope: Option<&str>, event: &str, cwd: &str) -> Output {
+    let sid = SID;
     let payload = format!(
         r#"{{"session_id":"{sid}","cwd":"{cwd}","hook_event_name":"{event}","transcript_path":"/x"}}"#
     );
@@ -49,26 +50,17 @@ const LINE: &str = "your declared scope differs from the repository you run in";
 fn a_declared_scope_that_differs_is_marked_in_who_and_said_once_at_session_start() {
     let h = Home::new();
     let cwd = repo(&h);
-    let start = hook(
-        &h,
-        Some("git:elsewhere-00000001"),
-        "SessionStart",
-        SID,
-        &cwd,
-    );
+    let start = hook(&h, Some("git:elsewhere-00000001"), "SessionStart", &cwd);
     let text = out(&start);
-    assert!(text.contains(LINE), "{text}");
-    assert!(
-        !text.contains("elsewhere"),
-        "no foreign name echoed: {text}"
-    );
-    assert!(!text.contains(&cwd), "no path: {text}");
+    assert_has(&text, &[LINE]);
+    // no foreign name echoed, no path
+    assert_lacks(&text, &["elsewhere", &cwd]);
     let who = h.ok("observer", &["who", "lobby", "--all"]);
     let line = who.lines().find(|l| l.contains("codex-proj")).unwrap();
-    assert!(line.contains("scope!=repo"), "{who}");
-    assert!(!line.contains("elsewhere"), "{who}");
+    assert_has(line, &["scope!=repo"]);
+    assert_lacks(line, &["elsewhere"]);
     // not on every hook: a later prompt hook does not repeat the line
-    let later = hook(&h, None, "UserPromptSubmit", SID, &cwd);
+    let later = hook(&h, None, "UserPromptSubmit", &cwd);
     assert!(!out(&later).contains(LINE), "{}", out(&later));
 }
 
@@ -76,7 +68,7 @@ fn a_declared_scope_that_differs_is_marked_in_who_and_said_once_at_session_start
 fn no_mismatch_no_marker_and_no_line() {
     let h = Home::new();
     let cwd = repo(&h);
-    let start = hook(&h, None, "SessionStart", SID, &cwd);
+    let start = hook(&h, None, "SessionStart", &cwd);
     assert!(!out(&start).contains(LINE), "{}", out(&start));
     let who = h.ok("observer", &["who", "lobby", "--all"]);
     assert!(!who.contains("scope!=repo"), "{who}");

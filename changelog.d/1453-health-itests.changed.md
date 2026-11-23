@@ -1,0 +1,1 @@
+- Code health K12 (#1453): the klatch integration tests are cleaner (admin_proof split into three files over a shared `common/admin.rs`, small helpers instead of long assertion blocks and deep loops, a typed layout for the pty runner); the same behaviours are pinned and no production code changed.

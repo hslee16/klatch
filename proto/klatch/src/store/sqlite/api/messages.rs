@@ -1,5 +1,6 @@
 //! The SQLite side of the `MessageStore` area.
 
+use super::super::messaging::View;
 use super::super::schema::POSTS_SINCE_SQL;
 use super::super::{MESSAGE_COLUMNS, SqliteStore, be};
 use crate::domain::{Message, Posted, Result};
@@ -102,7 +103,7 @@ impl MessageStore for SqliteStore {
     }
 
     fn mark_shown(&self, at: Seat, channel: Shown, seqs: &[Seq], now: i64) -> Result<()> {
-        self.do_mark_shown(at, channel, seqs, now)
+        self.do_mark_shown(at, View { channel, seqs }, now)
     }
 
     fn advance_cursor(&self, at: Seat, seq: Seq, now: i64) -> Result<()> {

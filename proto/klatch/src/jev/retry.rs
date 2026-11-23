@@ -208,6 +208,18 @@ pub fn parse_retry_after(h: &RetryHeaders) -> Option<Duration> {
         .or_else(|| h.retry_after.as_deref().and_then(|t| secs(t, 1.0)))
 }
 
+/// How long to wait before the next retry, or `None` when that wait would use up the budget.
+fn wait_within_budget(
+    policy: &RetryPolicy,
+    timing: &Timing<'_>,
+    start: Duration,
+    (retry, headers): (u32, &RetryHeaders),
+) -> Option<Duration> {
+    let wait = policy.delay(retry, headers, timing.jitter.unit());
+    let spent = timing.clock.now().saturating_sub(start);
+    (spent.saturating_add(wait) < policy.budget).then_some(wait)
+}
+
 /// Run `op`, retrying a 429 or 529 as the policy says. Anything else, and the last error when the retries or the budget
 /// run out, is returned as it came.
 pub fn run_with_retry<T>(
@@ -224,15 +236,14 @@ pub fn run_with_retry<T>(
                 body,
                 headers,
             }) if retryable_status(status) && retry < policy.max_retries => {
-                let wait = policy.delay(retry, &headers, timing.jitter.unit());
-                let spent = timing.clock.now().saturating_sub(start);
-                if spent.saturating_add(wait) >= policy.budget {
+                let Some(wait) = wait_within_budget(policy, timing, start, (retry, &headers))
+                else {
                     return Err(JevTransportError::Status {
                         status,
                         body,
                         headers,
                     });
-                }
+                };
                 timing.sleeper.sleep(wait);
                 retry += 1;
             }

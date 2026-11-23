@@ -1,0 +1,10 @@
+### no session: klatch --discover join lobby
+klatch: no running session was found above this process; falling back to a typed name
+Error: no member name given: set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-], or pass --discover (or KLATCH_DISCOVER=1) to act as this coding session
+(ended: refused)
+
+### no session: klatch --discover post lobby
+klatch: no running session was found above this process; falling back to a typed name
+Error: no member name given: set KLATCH_NAME (or --as-member) to 1-40 chars of [A-Za-z0-9._-], or pass --discover (or KLATCH_DISCOVER=1) to act as this coding session
+(ended: refused)
+

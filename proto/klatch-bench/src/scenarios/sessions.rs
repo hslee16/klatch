@@ -1,6 +1,12 @@
 use super::*;
 
 pub(super) fn all() -> Vec<Scenario> {
+    let mut all = first_half();
+    all.extend(second_half());
+    all
+}
+
+fn first_half() -> Vec<Scenario> {
     vec![
         Scenario {
             name: "a_resumed_session_keeps_its_member_and_its_cursor_with_a_new_process",
@@ -44,6 +50,11 @@ pub(super) fn all() -> Vec<Scenario> {
             layer: "functional",
             run: filtered_wait,
         },
+    ]
+}
+
+fn second_half() -> Vec<Scenario> {
+    vec![
         Scenario {
             name: "a_child_session_ending_never_marks_its_parent",
             origin: "#284, #285",

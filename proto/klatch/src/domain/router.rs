@@ -107,66 +107,78 @@ pub fn topic_room(topic: &str) -> Option<String> {
 
 /// The routes this view calls for, oldest ask first; deterministic.
 pub fn plan(view: &View) -> Vec<Route> {
-    let live = |c: &&Claim| c.expires > view.now;
     let mut asks: Vec<&AskFacts> = view
         .asks
         .iter()
         .filter(|a| !a.claimed && a.sender != view.me)
         .collect();
     asks.sort_by_key(|a| a.seq);
-    let mut routes = Vec::new();
-    for a in asks {
-        let topic = view
-            .claims
+    asks.into_iter()
+        .filter_map(|a| route_for(view, a))
+        .collect()
+}
+
+/// A claim that has not expired.
+fn is_live(view: &View, c: &Claim) -> bool {
+    c.expires > view.now
+}
+
+/// The route for one ask, when its asker holds a topic claim and someone relevant is present to invite.
+fn route_for(view: &View, a: &AskFacts) -> Option<Route> {
+    let topic = view
+        .claims
+        .iter()
+        .filter(|c| is_live(view, c))
+        .filter(|c| c.owner == a.sender)
+        .map(|c| c.path.as_str())
+        .filter(|p| !p.starts_with("ask:") && !p.starts_with("pr:"))
+        .min()?;
+    let room = topic_room(topic)?;
+    let invites = invites_for(view, a, topic);
+    (!invites.is_empty()).then(|| Route {
+        ask: a.seq,
+        topic: topic.to_string(),
+        room,
+        invites,
+    })
+}
+
+/// Whether member `n` holds a live claim or a rule that overlaps `topic`.
+fn works_on(view: &View, n: &str, topic: &str) -> bool {
+    view.claims
+        .iter()
+        .filter(|c| is_live(view, c))
+        .any(|c| c.owner == n && overlaps(&c.path, topic))
+        || view
+            .rules
             .iter()
-            .filter(live)
-            .filter(|c| c.owner == a.sender)
-            .map(|c| c.path.as_str())
-            .filter(|p| !p.starts_with("ask:") && !p.starts_with("pr:"))
-            .min();
-        let Some(topic) = topic else { continue };
-        let Some(room) = topic_room(topic) else {
-            continue;
-        };
-        let mut invites: Vec<String> = view
-            .members
-            .iter()
-            .filter(|m| present(m, view.now))
-            .map(|m| m.name.as_str())
-            .filter(|n| *n != a.sender && *n != view.me && !a.cannot.iter().any(|c| c == n))
-            .filter(|n| {
-                view.claims
-                    .iter()
-                    .filter(live)
-                    .any(|c| c.owner == *n && overlaps(&c.path, topic))
-                    || view
-                        .rules
-                        .iter()
-                        .any(|r| r.member == *n && overlaps(&r.prefix, topic))
-            })
-            .map(String::from)
-            .collect();
-        invites.sort();
-        invites.dedup();
-        // when more qualify than fit, members of the asker's repository come first (#890). The repository is an
-        // observation used only to order candidates the claims and rules already chose; it adds nobody.
-        let asker_repo = repository_of(view.members, &a.sender);
-        invites.sort_by_key(|n| {
-            let same = asker_repo.is_some() && repository_of(view.members, n) == asker_repo;
-            !same
-        });
-        invites.truncate(MAX_INVITES);
-        invites.sort();
-        if !invites.is_empty() {
-            routes.push(Route {
-                ask: a.seq,
-                topic: topic.to_string(),
-                room,
-                invites,
-            });
-        }
-    }
-    routes
+            .any(|r| r.member == n && overlaps(&r.prefix, topic))
+}
+
+/// The members to invite for `topic`: present, not the asker or the router, not declined as cannot, and working on the
+/// topic; at most `MAX_INVITES`, sorted.
+fn invites_for(view: &View, a: &AskFacts, topic: &str) -> Vec<String> {
+    let mut invites: Vec<String> = view
+        .members
+        .iter()
+        .filter(|m| present(m, view.now))
+        .map(|m| m.name.as_str())
+        .filter(|n| *n != a.sender && *n != view.me && !a.cannot.iter().any(|c| c == n))
+        .filter(|n| works_on(view, n, topic))
+        .map(String::from)
+        .collect();
+    invites.sort();
+    invites.dedup();
+    // when more qualify than fit, members of the asker's repository come first (#890). The repository is an
+    // observation used only to order candidates the claims and rules already chose; it adds nobody.
+    let asker_repo = repository_of(view.members, &a.sender);
+    invites.sort_by_key(|n| {
+        let same = asker_repo.is_some() && repository_of(view.members, n) == asker_repo;
+        !same
+    });
+    invites.truncate(MAX_INVITES);
+    invites.sort();
+    invites
 }
 
 /// The repository id observed for a member of the view, if any.

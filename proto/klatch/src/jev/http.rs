@@ -71,24 +71,7 @@ impl Target {
             .ok_or(TargetError::NotHttps)?;
         let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
         let (authority, tail) = rest.split_at(end);
-        if authority.contains('@') {
-            // `https://api.typesafe.ai@evil` has the host after the `@`; either way it is not the bare host
-            return if authority.rsplit('@').next().is_some_and(is_host) {
-                Err(TargetError::Userinfo)
-            } else {
-                Err(TargetError::WrongHost)
-            };
-        }
-        if let Some((host, _port)) = authority.split_once(':') {
-            return if is_host(host) {
-                Err(TargetError::Port)
-            } else {
-                Err(TargetError::WrongHost)
-            };
-        }
-        if !is_host(authority) {
-            return Err(TargetError::WrongHost);
-        }
+        check_authority(authority)?;
         if !(tail.is_empty() || tail == "/") {
             return Err(TargetError::Path);
         }
@@ -101,6 +84,34 @@ impl Target {
 
     pub fn base(&self) -> &str {
         &self.0
+    }
+}
+
+/// The authority must be exactly the host: no userinfo, no port. A wrong host is named as such even then.
+fn check_authority(authority: &str) -> Result<(), TargetError> {
+    if authority.contains('@') {
+        // `https://api.typesafe.ai@evil` has the host after the `@`; either way it is not the bare host
+        let host = authority.rsplit('@').next();
+        return Err(host_or_wrong(
+            host.is_some_and(is_host),
+            TargetError::Userinfo,
+        ));
+    }
+    if let Some((host, _port)) = authority.split_once(':') {
+        return Err(host_or_wrong(is_host(host), TargetError::Port));
+    }
+    if !is_host(authority) {
+        return Err(TargetError::WrongHost);
+    }
+    Ok(())
+}
+
+/// The named fault when the host part is the pinned host, otherwise the wrong host.
+fn host_or_wrong(host_ok: bool, fault: TargetError) -> TargetError {
+    if host_ok {
+        fault
+    } else {
+        TargetError::WrongHost
     }
 }
 
@@ -222,6 +233,11 @@ fn read_bounded(resp: &mut ureq::http::Response<ureq::Body>, max: usize) -> Opti
         .ok()
 }
 
+/// A reply with a content encoding other than identity is refused.
+fn is_encoded(resp: &ureq::http::Response<ureq::Body>) -> bool {
+    header_text(resp, "content-encoding").is_some_and(|enc| !enc.eq_ignore_ascii_case("identity"))
+}
+
 fn header_text(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
     resp.headers()
         .get(name)
@@ -229,19 +245,17 @@ fn header_text(resp: &ureq::http::Response<ureq::Body>, name: &str) -> Option<St
         .map(|s| s.trim().to_string())
 }
 
-impl JevTransport for HttpTransport {
-    fn send(&self, key: &ApiKey, request: &JevRequest) -> Result<String, JevTransportError> {
-        if !header_safe(key.expose()) || !request.path.starts_with('/') {
-            return Err(JevTransportError::Network);
-        }
-        // Defence in depth: the agent is https only too, but refuse here so that nothing is even attempted.
-        if self.https_only && !self.base.starts_with("https://") {
-            return Err(JevTransportError::Network);
-        }
+impl HttpTransport {
+    /// Make the call with the key in the `Authorization` header only; the body is the multipart form when there is one.
+    fn call(
+        &self,
+        key: &ApiKey,
+        request: &JevRequest,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         let url = format!("{}{}", self.base, request.path);
         let auth = format!("Bearer {}", key.expose());
         let multipart = request.multipart();
-        let result = match request.method {
+        match request.method {
             Method::Get => {
                 let mut b = self.agent.get(&url).header("Authorization", &auth);
                 for (k, v) in request.headers() {
@@ -261,12 +275,23 @@ impl JevTransport for HttpTransport {
                     None => b.send(request.body.as_deref().unwrap_or("").as_bytes()),
                 }
             }
-        };
+        }
+    }
+}
+
+impl JevTransport for HttpTransport {
+    fn send(&self, key: &ApiKey, request: &JevRequest) -> Result<String, JevTransportError> {
+        if !header_safe(key.expose()) || !request.path.starts_with('/') {
+            return Err(JevTransportError::Network);
+        }
+        // Defence in depth: the agent is https only too, but refuse here so that nothing is even attempted.
+        if self.https_only && !self.base.starts_with("https://") {
+            return Err(JevTransportError::Network);
+        }
+        let result = self.call(key, request);
         // Any failure below (connect, TLS, timeout, an oversized or unreadable reply) carries no detail.
         let mut resp = result.map_err(|_| JevTransportError::Network)?;
-        if let Some(enc) = header_text(&resp, "content-encoding")
-            && !enc.eq_ignore_ascii_case("identity")
-        {
+        if is_encoded(&resp) {
             return Err(JevTransportError::Network);
         }
         let status = resp.status().as_u16();

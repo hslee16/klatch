@@ -22,6 +22,14 @@ fn refuse_claude_only(options: &Options) -> anyhow::Result<()> {
         (options.enforce != init::Switch::Keep, "--enforce"),
         (options.wake != init::Switch::Keep, "--wake"),
         (options.checkpoint != init::Switch::Keep, "--checkpoint"),
+        (
+            options.passive_claims != init::Switch::Keep,
+            "--passive-claims",
+        ),
+        (
+            options.machine_status != init::Switch::Keep,
+            "--machine-status",
+        ),
     ];
     if let Some((_, flag)) = claude_only.iter().find(|(set, _)| *set) {
         bail!(

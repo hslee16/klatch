@@ -461,35 +461,36 @@ fn a_key_bundle_reads_back_what_was_written(tc: TestCase) {
     assert!(back.label_keys[0].1 == bundle.label_keys[0].1);
 }
 
+/// Whether a bundle read back is the same bundle, in everything that matters.
+fn same_bundle(a: &Bundle, b: &Bundle) -> bool {
+    a.member == b.member
+        && a.token.hash() == b.token.hash()
+        && a.store_key == b.store_key
+        && a.label_keys == b.label_keys
+}
+
+/// A hex number is read in either case, so a case flip of a-f is the same key (not an integrity gap: a bundle is a
+/// plain 0600 file with no checksum, and what it holds is the keys themselves).
+fn is_hex_case_flip(text: &[u8], at: usize, bit: u32) -> bool {
+    bit == 5 && matches!(text[at], b'a'..=b'f') && at > 100
+}
+
 #[test]
 fn any_one_bit_flipped_in_a_key_bundle_is_refused_or_reads_as_a_different_bundle() {
     let dir = scratch("bundle-flip");
     let original = Bundle::read(&bundle_file(&dir, "orig", BUNDLE_TEXT.as_bytes())).unwrap();
     let mut silent = 0;
-    for at in 0..BUNDLE_TEXT.len() {
-        for bit in 0..8 {
-            let mut text = BUNDLE_TEXT.as_bytes().to_vec();
-            // a hex number is read in either case, so a case flip of a-f is the same key (not an integrity gap: a
-            // bundle is a plain 0600 file with no checksum, and what it holds is the keys themselves)
-            if bit == 5 && matches!(text[at], b'a'..=b'f') && at > 100 {
-                continue;
-            }
-            text[at] ^= 1 << bit;
-            let path = bundle_file(&dir, &format!("f{at}-{bit}"), &text);
-            let same = match Bundle::read(&path) {
-                Err(_) => false,
-                Ok(b) => {
-                    b.member == original.member
-                        && b.token.hash() == original.token.hash()
-                        && b.store_key == original.store_key
-                        && b.label_keys == original.label_keys
-                }
-            };
-            if same {
-                silent += 1;
-            }
-            std::fs::remove_file(path).unwrap();
+    for (at, bit) in (0..BUNDLE_TEXT.len()).flat_map(|at| (0..8).map(move |bit| (at, bit))) {
+        let mut text = BUNDLE_TEXT.as_bytes().to_vec();
+        if is_hex_case_flip(&text, at, bit) {
+            continue;
         }
+        text[at] ^= 1 << bit;
+        let path = bundle_file(&dir, &format!("f{at}-{bit}"), &text);
+        if Bundle::read(&path).is_ok_and(|b| same_bundle(&b, &original)) {
+            silent += 1;
+        }
+        std::fs::remove_file(path).unwrap();
     }
     assert_eq!(silent, 0, "{silent} flips read back as the original bundle");
 }

@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""CodeScene architectural components for klatch (#1457). Standard library only.
+
+The one source of truth is .codescene/components.json (the REST API payload shape: a list of {name, patterns}).
+
+  codescene-components csv     print the CSV for the UI import (no header; name,glob; one line per glob)
+  codescene-components json    print the API payload (--leading-slash prefixes every pattern with /)
+  codescene-components check   verify the exact partition against `git ls-files` (exit 1 and name the offending files)
+  codescene-components apply   GET the current components, show the diff, and with --yes PUT the new ones (the PUT
+                               REPLACES all components); the human runs this, an agent never does
+
+Overlap rule assumed: CodeScene's behaviour for a file that matches two components is not documented, so the check
+refuses any overlap. A "source file" is *.rs, *.py, *.ts, *.sh or an extensionless file that starts with a shebang; every
+one must be in exactly one component. Any tracked file in two components is refused too. Glob semantics used by the check:
+** matches anything including /, * matches anything except /, ? one character except /.
+
+The token is read ONLY from the environment variable CODESCENE_TOKEN or from a mode-0600 file given by --token-file. It is
+never an argument and is never printed (the Authorization header is shown as redacted in --dry-run).
+"""
+import argparse
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
+SOURCE_SUFFIXES = (".rs", ".py", ".ts", ".sh")
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def glob_regex(pattern):
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def glob_match(pattern, path):
+    return glob_regex(pattern.lstrip("/")).match(path) is not None
+
+
+def load_components(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise Fail("cannot read components file %s: %s" % (path, e), 2)
+    ok = isinstance(data, list) and all(
+        isinstance(c, dict) and isinstance(c.get("name"), str) and isinstance(c.get("patterns"), list)
+        and all(isinstance(p, str) for p in c["patterns"]) for c in data)
+    if not ok:
+        raise Fail("%s must be a list of {name, patterns} objects" % path, 2)
+    return data
+
+
+def tracked_files(root):
+    try:
+        out = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise Fail("git ls-files failed in %s: %s" % (root, e), 2)
+    return [p for p in out.decode().split("\0") if p]
+
+
+def is_source(root, rel):
+    base = os.path.basename(rel)
+    if rel.endswith(SOURCE_SUFFIXES):
+        return True
+    if "." in base:
+        return False
+    try:
+        with open(os.path.join(root, rel), "rb") as f:
+            return f.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def check(root, components):
+    """Returns (problems, per-component source file counts)."""
+    files = tracked_files(root)
+    sources = [f for f in files if is_source(root, f)]
+    problems, counts = [], {}
+    seen_names = set()
+    regexes = []
+    for c in components:
+        if c["name"] in seen_names:
+            problems.append("duplicate component name: %s" % c["name"])
+        seen_names.add(c["name"])
+        if not c["patterns"]:
+            problems.append("empty component (no patterns): %s" % c["name"])
+        regexes.append((c, [(p, glob_regex(p.lstrip("/"))) for p in c["patterns"]]))
+    owners = {f: [] for f in files}
+    for c, pats in regexes:
+        matched_any = False
+        for p, rx in pats:
+            hit = [f for f in files if rx.match(f)]
+            if not hit:
+                problems.append("glob matches no tracked file: %s (component %s)" % (p, c["name"]))
+            matched_any = matched_any or bool(hit)
+        for f in files:
+            if any(rx.match(f) for _, rx in pats):
+                owners[f].append(c["name"])
+        if c["patterns"] and not matched_any:
+            problems.append("empty component (matches no tracked file): %s" % c["name"])
+    for f in files:
+        if len(owners[f]) > 1:
+            problems.append("file in more than one component: %s (%s)" % (f, ", ".join(owners[f])))
+    for f in sources:
+        if not owners[f]:
+            problems.append("source file in no component: %s" % f)
+    for c in components:
+        counts[c["name"]] = sum(1 for f in sources if c["name"] in owners[f])
+    for c in components:
+        if c["patterns"] and counts[c["name"]] == 0 and not any("empty component" in p and c["name"] in p for p in problems):
+            problems.append("empty component (no source file): %s" % c["name"])
+    return problems, counts
+
+
+def payload(components, leading_slash):
+    pre = "/" if leading_slash else ""
+    return [{"name": c["name"], "patterns": [pre + p.lstrip("/") for p in c["patterns"]]} for c in components]
+
+
+def cmd_csv(args):
+    lines = []
+    for c in load_components(args.components):
+        for p in c["patterns"]:
+            for what, v in (("name", c["name"]), ("glob", p)):
+                if "," in v or "\n" in v or '"' in v:
+                    raise Fail("refusing a comma, quote or newline in a component %s: %r" % (what, v), 2)
+            lines.append("%s,%s" % (c["name"], p))
+    sys.stdout.write("".join(l + "\n" for l in lines))
+    return 0
+
+
+def cmd_json(args):
+    json.dump(payload(load_components(args.components), args.leading_slash), sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_check(args):
+    comps = load_components(args.components)
+    problems, counts = check(args.root, comps)
+    if problems:
+        for p in problems:
+            print("FAIL  " + p, file=sys.stderr)
+        print("codescene-components: %d problem(s); assign every new source file to exactly one component in %s"
+              % (len(problems), args.components), file=sys.stderr)
+        return 1
+    print("codescene-components: ok, %d components, %d source files, exact partition" % (len(comps), sum(counts.values())))
+    if args.verbose:
+        for n, k in counts.items():
+            print("  %-26s %d" % (n, k))
+    return 0
+
+
+# ---- apply ----
+
+def read_token(token_file):
+    if token_file:
+        try:
+            mode = stat.S_IMODE(os.stat(token_file).st_mode)
+        except OSError as e:
+            raise Fail("cannot read the token file: %s" % e, 2)
+        if mode & 0o077:
+            raise Fail("refusing the token file %s: mode is %o and it must be 0600 (group and world must have no access); "
+                       "run chmod 600 on it" % (token_file, mode), 2)
+        with open(token_file) as f:
+            tok = f.read().strip()
+    else:
+        tok = os.environ.get("CODESCENE_TOKEN", "").strip()
+    if not tok:
+        raise Fail("no token: set the environment variable CODESCENE_TOKEN or pass --token-file FILE (mode 0600); "
+                   "a token is never taken from an argument", 2)
+    return tok
+
+
+def check_base_url(url):
+    p = urllib.parse.urlparse(url)
+    loopback = p.hostname in ("127.0.0.1", "localhost", "::1")
+    if p.scheme != "https" and not (p.scheme == "http" and loopback):
+        raise Fail("refusing %s: the token is only sent over https (plain http only to a loopback host)" % url, 2)
+    return url.rstrip("/"), loopback
+
+
+def request(method, url, token, loopback, body=None):
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if loopback else urllib.request.build_opener()
+    try:
+        with opener.open(req, timeout=60) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = e.read(500).decode("utf-8", "replace").strip()
+        msgs = {
+            401: "401 unauthorized: the token was not accepted (create a new API token in the CodeScene UI; the cs OAuth login is not a token)",
+            403: "403 forbidden: the token has no permission for this project or this call (it needs rights to edit the project)",
+            404: "404 not found: no such project id (list yours with GET /v2/projects) or this base URL has no such endpoint",
+            422: "422 rejected: CodeScene did not accept the components (check the glob format, try the other --leading-slash setting)",
+        }
+        raise Fail("%s %s: %s%s" % (method, urllib.parse.urlparse(url).path,
+                                   msgs.get(e.code, "HTTP %d" % e.code), (" [server said: %s]" % detail) if detail else ""))
+    except urllib.error.URLError as e:
+        raise Fail("%s %s failed: %s" % (method, url, e.reason))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def existing_list(resp):
+    if isinstance(resp, dict):
+        resp = resp.get("components", resp.get("data", []))
+    out = []
+    for c in resp if isinstance(resp, list) else []:
+        if isinstance(c, dict):
+            out.append({"name": c.get("name"), "patterns": c.get("patterns", c.get("globs", []))})
+    return out
+
+
+def show(title, comps):
+    print(title)
+    if not comps:
+        print("  (none)")
+    for c in comps:
+        print("  %s" % c["name"])
+        for p in c["patterns"] or []:
+            print("    %s" % p)
+
+
+def diff(old, new):
+    o = {c["name"]: c["patterns"] for c in old}
+    n = {c["name"]: c["patterns"] for c in new}
+    lines = []
+    for name in sorted(set(o) | set(n)):
+        if name not in n:
+            lines.append("  - removed:  %s" % name)
+        elif name not in o:
+            lines.append("  + added:    %s (%d patterns)" % (name, len(n[name])))
+        elif o[name] != n[name]:
+            lines.append("  ~ changed:  %s (patterns differ)" % name)
+    return lines or ["  (no differences)"]
+
+
+def cmd_apply(args):
+    comps = load_components(args.components)
+    problems, _ = check(args.root, comps)
+    if problems:
+        for p in problems:
+            print("FAIL  " + p, file=sys.stderr)
+        raise Fail("refusing to apply: the components are not an exact partition of this tree (run: check)")
+    new = payload(comps, args.leading_slash)
+    base, loopback = check_base_url(args.base_url)
+    pid = urllib.parse.quote(str(args.project_id), safe="")
+    comp_url = "%s/v2/projects/%s/components" % (base, pid)
+    if args.dry_run:
+        print("dry run: nothing is sent. It would send:")
+        print("  GET  %s" % comp_url)
+        print("  PUT  %s   (replaces ALL current components)" % comp_url)
+        print("  Authorization: Bearer <redacted>")
+        print("  body: %d components, %d patterns, leading slash: %s"
+              % (len(new), sum(len(c["patterns"]) for c in new), "yes" if args.leading_slash else "no"))
+        print(json.dumps(new, indent=2))
+        if args.run_analysis:
+            print("  POST %s/v2/projects/%s/run-analysis" % (base, pid))
+        return 0
+    token = read_token(args.token_file)
+    old = existing_list(request("GET", comp_url, token, loopback))
+    show("Existing components in CodeScene (names and patterns):", old)
+    old_patterns = [p for c in old for p in (c["patterns"] or [])]
+    if old_patterns:
+        slash = sum(1 for p in old_patterns if p.startswith("/"))
+        if slash == len(old_patterns) and not args.leading_slash:
+            print("note: every existing pattern has a leading slash; consider --leading-slash", file=sys.stderr)
+        if slash == 0 and args.leading_slash:
+            print("note: no existing pattern has a leading slash; consider dropping --leading-slash", file=sys.stderr)
+    print("\nDifference to the new definitions (%d components):" % len(new))
+    print("\n".join(diff(old, new)))
+    if not args.yes:
+        print("\nNot applied. The PUT REPLACES every existing component; re-run with --yes to do it.", file=sys.stderr)
+        return 1
+    request("PUT", comp_url, token, loopback, new)
+    print("\napplied: %d components" % len(new))
+    if args.run_analysis:
+        request("POST", "%s/v2/projects/%s/run-analysis" % (base, pid), token, loopback)
+        print("analysis started")
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="codescene-components", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def common(p):
+        p.add_argument("--root", default=DEFAULT_ROOT, help="repository root (default: this checkout)")
+        p.add_argument("--components", default=None, help="components file (default: ROOT/.codescene/components.json)")
+
+    p = sub.add_parser("csv", help="CSV for the UI import")
+    common(p)
+    p.set_defaults(fn=cmd_csv)
+    p = sub.add_parser("json", help="the API payload")
+    common(p)
+    p.add_argument("--leading-slash", action="store_true", help="prefix every pattern with /")
+    p.set_defaults(fn=cmd_json)
+    p = sub.add_parser("check", help="verify the exact partition")
+    common(p)
+    p.add_argument("-v", "--verbose", action="store_true", help="print the source file count per component")
+    p.set_defaults(fn=cmd_check)
+    p = sub.add_parser("apply", help="PUT the components to CodeScene (the human runs this)")
+    common(p)
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--base-url", default="https://api.codescene.io")
+    p.add_argument("--leading-slash", action="store_true")
+    p.add_argument("--run-analysis", action="store_true", help="start a new analysis after the PUT")
+    p.add_argument("--token-file", help="file holding the token, mode 0600 (else the CODESCENE_TOKEN variable)")
+    p.add_argument("--yes", action="store_true", help="really PUT (it replaces all existing components)")
+    p.add_argument("--dry-run", action="store_true", help="print what would be sent, token redacted; sends nothing")
+    p.set_defaults(fn=cmd_apply)
+    args = ap.parse_args(argv)
+    args.root = os.path.abspath(args.root)
+    if args.components is None:
+        args.components = os.path.join(args.root, ".codescene", "components.json")
+    try:
+        return args.fn(args)
+    except Fail as e:
+        print("codescene-components: %s" % e, file=sys.stderr)
+        return e.code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -218,22 +218,32 @@ fn killed_poster(w: &World) -> Res {
     Ok(vec![("messages_before_kill".into(), seqs.len() as f64)])
 }
 
-fn read_only_store(w: &World) -> Res {
+/// Give every file of the world's store the mode `file` and the store directory the mode `dir`.
+fn set_store_modes(w: &World, dir: u32, file: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    w.ok("alice", &["join", "r"])?;
-    w.ok("alice", &["post", "r", "written before"])?;
-    let set = |dir: u32, file: u32| -> Result<(), String> {
-        for entry in std::fs::read_dir(&w.home).map_err(|e| e.to_string())? {
-            let p = entry.map_err(|e| e.to_string())?.path();
-            if p.is_file() {
-                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(file))
-                    .map_err(|e| e.to_string())?;
-            }
+    for entry in std::fs::read_dir(&w.home).map_err(|e| e.to_string())? {
+        let p = entry.map_err(|e| e.to_string())?.path();
+        if p.is_file() {
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(file))
+                .map_err(|e| e.to_string())?;
         }
-        std::fs::set_permissions(&w.home, std::fs::Permissions::from_mode(dir))
-            .map_err(|e| e.to_string())
-    };
-    set(0o555, 0o444)?;
+    }
+    std::fs::set_permissions(&w.home, std::fs::Permissions::from_mode(dir))
+        .map_err(|e| e.to_string())
+}
+
+/// The hook on a read-only store succeeds and says the lobby is unavailable.
+fn hook_on_read_only_store(r: &crate::world::Run) -> Result<(), String> {
+    check(r.ok, "the hook failed on a read-only store")?;
+    check(
+        r.stdout
+            .contains("the store is read-only, so the lobby is unavailable"),
+        format!("the hook did not say the store is read-only: {}", r.stdout),
+    )
+}
+
+/// Each command on the read-only store ends without a panic, and the hook says what is wrong.
+fn commands_on_read_only_store(w: &World) -> Result<(), String> {
     for args in [
         vec!["post", "r", "to a read-only store"],
         vec!["read", "r"],
@@ -241,31 +251,21 @@ fn read_only_store(w: &World) -> Res {
     ] {
         let r = w.run("alice", &args);
         let both = format!("{}{}", r.stdout, r.stderr);
-        if let Err(e) = no_panic(&both, &format!("klatch {args:?} on a read-only store")) {
-            set(0o755, 0o644)?;
-            return Err(e);
-        }
+        no_panic(&both, &format!("klatch {args:?} on a read-only store"))?;
         if args[0] == "hook" {
-            let failed = if !r.ok {
-                Some("the hook failed on a read-only store".to_string())
-            } else if !r
-                .stdout
-                .contains("the store is read-only, so the lobby is unavailable")
-            {
-                Some(format!(
-                    "the hook did not say the store is read-only: {}",
-                    r.stdout
-                ))
-            } else {
-                None
-            };
-            if let Some(e) = failed {
-                set(0o755, 0o644)?;
-                return Err(e);
-            }
+            hook_on_read_only_store(&r)?;
         }
     }
-    set(0o755, 0o644)?;
+    Ok(())
+}
+
+fn read_only_store(w: &World) -> Res {
+    w.ok("alice", &["join", "r"])?;
+    w.ok("alice", &["post", "r", "written before"])?;
+    set_store_modes(w, 0o555, 0o444)?;
+    let checked = commands_on_read_only_store(w);
+    set_store_modes(w, 0o755, 0o644)?;
+    checked?;
     // Another member reads: a member never reads its own messages back.
     has(
         &w.ok("bob", &["read", "r", "--peek"])?,

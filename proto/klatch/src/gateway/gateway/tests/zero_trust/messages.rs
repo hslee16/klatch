@@ -29,6 +29,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("board", |g, w| refused(g.board(w, "r"))),
     ("open_asks", |g, w| refused(g.open_asks(w, "r"))),
     ("stuck", |g, w| refused(g.stuck(w, "r"))),
+    ("ask_routes", |g, w| refused(g.ask_routes(w, "r"))),
     ("member_card", |g, w| refused(g.member_card(w, "r", "bob"))),
     // another member's data
     ("hook_runs", |g, w| refused(g.hook_runs(w, "bob"))),

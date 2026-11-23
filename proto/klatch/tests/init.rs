@@ -233,19 +233,13 @@ const OTHERS: &str = r#"{"zeta":1,"permissions":{"allow":["Bash(ls)"]},"hooks":{
   "Stop":[{"hooks":[{"type":"command","command":"/usr/local/bin/notify-done"}]}]}}"#;
 
 fn commands_anywhere(v: &serde_json::Value) -> Vec<String> {
-    let mut found = Vec::new();
-    if let Some(hooks) = v["hooks"].as_object() {
-        for list in hooks.values() {
-            for m in list.as_array().into_iter().flatten() {
-                for h in m["hooks"].as_array().into_iter().flatten() {
-                    if let Some(c) = h["command"].as_str() {
-                        found.push(c.to_string());
-                    }
-                }
-            }
-        }
-    }
-    found
+    let lists = v["hooks"].as_object().into_iter().flat_map(|h| h.values());
+    let groups = lists.flat_map(|list| list.as_array().into_iter().flatten());
+    let hooks = groups.flat_map(|m| m["hooks"].as_array().into_iter().flatten());
+    hooks
+        .filter_map(|h| h["command"].as_str())
+        .map(str::to_string)
+        .collect()
 }
 
 fn install_everything(s: &Setup) {

@@ -1,5 +1,6 @@
 //! The SQLite side of the `MemberStore` area.
 
+use super::super::machine_checkpoint::{CheckpointWrite, StatusWrite};
 use super::super::{SqliteStore, be};
 use crate::domain::{HookRun, MemberAttrs, MemberInfo, Parked, Result};
 use crate::store::MemberStore;
@@ -182,7 +183,25 @@ impl MemberStore for SqliteStore {
         last: bool,
         now: i64,
     ) -> Result<bool> {
-        self.do_put_machine_checkpoint(at, body, last, now)
+        let (room, member) = at;
+        let cp = CheckpointWrite {
+            room,
+            member,
+            body,
+            last,
+        };
+        self.do_put_machine_checkpoint(&cp, now)
+    }
+
+    fn put_machine_status(
+        &self,
+        at: Seat,
+        status: (&str, &str),
+        owned: &[&str],
+        when: (i64, i64),
+    ) -> Result<bool> {
+        let (text, class) = status;
+        self.do_put_machine_status(at, &StatusWrite { text, class, owned }, when)
     }
 
     fn machine_checkpoints(&self, room: &str) -> Result<Vec<crate::domain::MachineCheckpoint>> {

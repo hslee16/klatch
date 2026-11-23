@@ -4,18 +4,16 @@
 use crate::keys::{Error, Key, KeySource};
 use std::collections::HashMap;
 
+fn is_key_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
 /// The keystore name of `label`'s key for the store whose key is named `store_name`.
 pub fn label_key_name(store_name: &str, label: &str) -> String {
     // label names are short words; anything outside the key-name alphabet is folded so the name stays safe
     let safe: String = label
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if is_key_name_char(c) { c } else { '_' })
         .collect();
     format!("{store_name}.label.{safe}")
 }

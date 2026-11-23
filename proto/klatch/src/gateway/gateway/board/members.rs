@@ -39,14 +39,26 @@ impl<S: Store> Gateway<S> {
         let absent: Vec<String> = gone.iter().map(|m| m.name.clone()).collect();
         let members = recent
             .into_iter()
-            .map(|m| crate::domain::BoardMember {
-                status_ts: m.status_ts,
-                status: m.status.clone().or_else(|| {
-                    statuses
-                        .iter()
-                        .find(|s| s.member == m.name)
-                        .map(|s| s.status.clone())
-                }),
+            .map(|m| {
+                let announced = statuses
+                    .iter()
+                    .find(|s| s.member == m.name)
+                    .map(|s| s.status.clone());
+                // a machine-derived status (#1403) never hides what the member announced itself
+                let machine = m
+                    .status
+                    .as_deref()
+                    .is_some_and(crate::domain::is_machine_status);
+                let (status, status_ts) = match (m.status.clone(), announced) {
+                    (Some(_), Some(said)) if machine => (Some(said), 0),
+                    (Some(set), _) => (Some(set), m.status_ts),
+                    (None, said) => (said, m.status_ts),
+                };
+                (m, status, status_ts)
+            })
+            .map(|(m, status, status_ts)| crate::domain::BoardMember {
+                status_ts,
+                status,
                 name: m.name,
                 last_seen: m.last_seen,
                 parent: m.parent,

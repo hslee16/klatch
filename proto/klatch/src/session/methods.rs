@@ -242,34 +242,39 @@ fn cut_body(row: &mut Value, size: usize, max: usize) {
 }
 
 fn members_json(ms: &[MemberInfo]) -> Value {
-    let one = |m: &MemberInfo| {
-        let mut v = json!({"name": m.name, "last_seen": m.last_seen});
-        if let Some(status) = &m.status {
-            v["status"] = json!(status);
-            if m.status_ts > 0 {
-                v["status_ts"] = json!(m.status_ts);
-            }
+    json!({ "members": ms.iter().map(member_json).collect::<Vec<_>>() })
+}
+
+fn member_json(m: &MemberInfo) -> Value {
+    let mut v = json!({"name": m.name, "last_seen": m.last_seen});
+    if let Some(status) = &m.status {
+        v["status"] = json!(status);
+        if m.status_ts > 0 {
+            v["status_ts"] = json!(m.status_ts);
         }
-        if let Some(kind) = m.kind {
-            v["kind"] = json!(kind.word());
-        }
-        if let Some(mode) = &m.mode {
-            v["mode"] = json!(mode);
-        }
-        if let Some(place) = &m.place {
-            if let Some(r) = &place.repository {
-                v["repository"] = json!(r);
-            }
-            if let Some(d) = &place.directory {
-                v["directory"] = json!(d);
-            }
-            if place.scope_differs {
-                v["scope_differs"] = json!(true);
-            }
-        }
-        v
-    };
-    json!({ "members": ms.iter().map(one).collect::<Vec<_>>() })
+    }
+    if let Some(kind) = m.kind {
+        v["kind"] = json!(kind.word());
+    }
+    if let Some(mode) = &m.mode {
+        v["mode"] = json!(mode);
+    }
+    if let Some(place) = &m.place {
+        place_json(&mut v, place);
+    }
+    v
+}
+
+fn place_json(v: &mut Value, place: &crate::domain::MemberPlace) {
+    if let Some(r) = &place.repository {
+        v["repository"] = json!(r);
+    }
+    if let Some(d) = &place.directory {
+        v["directory"] = json!(d);
+    }
+    if place.scope_differs {
+        v["scope_differs"] = json!(true);
+    }
 }
 
 /// The wire `kind` method: a word of the closed vocabulary, or none to withdraw the declaration.
@@ -425,39 +430,94 @@ pub(crate) fn handle<S: Store>(
     call: Call,
     harness: Option<&dyn crate::harness::Harness>,
 ) -> Vec<ServerFrame> {
-    let empty = |()| json!({});
+    match call.method.clone().as_str() {
+        "post" | "dm" | "read" | "history" | "asks" | "board" | "receipt" | "scrub_check" => {
+            handle_talk(g, who, call)
+        }
+        "join"
+        | "my_rooms"
+        | "my_crossings"
+        | "my_role"
+        | "invite"
+        | "grant_room_clearance"
+        | "who"
+        | "status"
+        | "mute"
+        | "scope"
+        | "kind"
+        | "label_order"
+        | "prune" => handle_rooms(g, who, call, harness),
+        "claim" | "release" | "claims" | "stuck" | "could_answer" => handle_claims(g, who, call),
+        "role_act" | "review_next" | "review_verdict" => {
+            crate::session::role_methods::handle(g, who, call)
+        }
+        other => unknown_method(call.id, other),
+    }
+}
+
+fn unknown_method(id: String, method: &str) -> Vec<ServerFrame> {
+    vec![fail_with(
+        id,
+        "unknown_method",
+        format!("unknown method {method}"),
+    )]
+}
+
+/// The answer of a bounded or unbounded `read`.
+fn read_json(ms: Vec<Value>, omitted: Option<usize>, by_importance: bool) -> Value {
+    let mut v = json!({ "messages": ms });
+    // the key is there only when the caller asked for a bound, so an unbounded read looks as it always did
+    if let Some(n) = omitted {
+        v["omitted"] = json!(n);
+    }
+    // a bounded read puts what is for the caller first (#1405); the key is there only when that changed the
+    // order, so a client that reads rows in sequence knows this page is not
+    if by_importance {
+        v["by_importance"] = json!(true);
+    }
+    v
+}
+
+/// A `post` is an ask, a handoff or a plain message by the fields it carries.
+fn post_by_shape<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    p: &PostParams,
+) -> Result<Posted, crate::domain::Error> {
+    let target = (p.room.as_str(), p.body.as_str(), p.label.as_deref());
+    let asking = p.scope.is_some() || !p.refs.is_empty();
+    match (p.kind.as_deref(), p.payload.as_deref()) {
+        (None, None) if asking => {
+            let refs: Vec<crate::domain::AskRef> = p
+                .refs
+                .iter()
+                .map(|r| crate::domain::AskRef {
+                    kind: r.kind.clone(),
+                    value: r.value.clone(),
+                    label: r.label.clone(),
+                    snippet: r.snippet.clone(),
+                })
+                .collect();
+            g.post_ask(who, target, p.scope.as_deref(), &refs)
+        }
+        (_, _) if asking => Err(crate::domain::Error::Invalid(
+            "a scope or refs belong to an ask and cannot go with a kind or payload".into(),
+        )),
+        (None, None) => g.post_labeled(who, target),
+        (None, Some(_)) => Err(crate::domain::Error::Invalid(
+            "a payload needs a kind".into(),
+        )),
+        (Some(kind), payload) => {
+            g.post_handoff(who, target, &crate::gateway::Handoff { kind, payload })
+        }
+    }
+}
+
+/// The methods that carry words: posts, reads and what a room shows.
+fn handle_talk<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame> {
     match call.method.clone().as_str() {
         "post" => call.run(
-            |p: PostParams| match (p.kind.as_deref(), p.payload.as_deref()) {
-                (None, None) if p.scope.is_some() || !p.refs.is_empty() => {
-                    let refs: Vec<crate::domain::AskRef> = p
-                        .refs
-                        .iter()
-                        .map(|r| crate::domain::AskRef {
-                            kind: r.kind.clone(),
-                            value: r.value.clone(),
-                            label: r.label.clone(),
-                            snippet: r.snippet.clone(),
-                        })
-                        .collect();
-                    g.post_ask(
-                        who,
-                        (&p.room, &p.body, p.label.as_deref()),
-                        p.scope.as_deref(),
-                        &refs,
-                    )
-                }
-                (_, _) if p.scope.is_some() || !p.refs.is_empty() => {
-                    Err(crate::domain::Error::Invalid(
-                        "a scope or refs belong to an ask and cannot go with a kind or payload".into(),
-                    ))
-                }
-                (None, None) => g.post_labeled(who, (&p.room, &p.body, p.label.as_deref())),
-                (None, Some(_)) => Err(crate::domain::Error::Invalid(
-                    "a payload needs a kind".into(),
-                )),
-                (Some(kind), payload) => g.post_handoff(who, (&p.room, &p.body, p.label.as_deref()), &crate::gateway::Handoff { kind, payload }),
-            },
+            |p: PostParams| post_by_shape(g, who, &p),
             |x: Posted| json!({ "seq": x.seq, "id": x.id }),
         ),
         "dm" => call.run(
@@ -467,17 +527,7 @@ pub(crate) fn handle<S: Store>(
         "read" => call.run(
             |p: ReadParams| read_bounded(g, who, &p),
             |(ms, omitted, by_importance): (Vec<Value>, Option<usize>, bool)| {
-                let mut v = json!({ "messages": ms });
-                // the key is there only when the caller asked for a bound, so an unbounded read looks as it always did
-                if let Some(n) = omitted {
-                    v["omitted"] = json!(n);
-                }
-                // a bounded read puts what is for the caller first (#1405); the key is there only when that changed the
-                // order, so a client that reads rows in sequence knows this page is not
-                if by_importance {
-                    v["by_importance"] = json!(true);
-                }
-                v
+                read_json(ms, omitted, by_importance)
             },
         ),
         "history" => call.run(
@@ -492,19 +542,7 @@ pub(crate) fn handle<S: Store>(
                 json!({ "messages": h.messages.iter().map(message_json).collect::<Vec<_>>(), "more": h.more })
             },
         ),
-        "join" => call.run(
-            |p: RoomParams| match harness {
-                Some(h) => g.join_with_harness(who, &p.room, h).map(|_| ()),
-                None => g.join(who, &p.room),
-            },
-            empty,
-        ),
         "asks" => call.run(|p: RoomParams| g.open_asks(who, &p.room), |a| asks_json(&a)),
-        "my_crossings" => call.run(
-            |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
-            |l| crossings_json(&l),
-        ),
-        "my_rooms" => call.run(|_: NoParams| g.rooms(who), |r| json!({ "rooms": r })),
         "board" => call.run(
             |p: RoomParams| g.board(who, &p.room),
             |b: crate::domain::Board| {
@@ -514,6 +552,35 @@ pub(crate) fn handle<S: Store>(
         "receipt" => call.run(
             |p: ReceiptParams| g.receipt(who, &p.room, p.seq),
             |r| receipts_json(&r, g.now()),
+        ),
+        "scrub_check" => call.run(
+            |p: ScrubCheckParams| g.scrub_check(who, &p.text),
+            |scrubbed: bool| json!({ "scrubbed": scrubbed }),
+        ),
+        other => unknown_method(call.id, other),
+    }
+}
+
+/// The methods about rooms and members.
+fn handle_rooms<S: Store>(
+    g: &Gateway<S>,
+    who: &Principal,
+    call: Call,
+    harness: Option<&dyn crate::harness::Harness>,
+) -> Vec<ServerFrame> {
+    let empty = |()| json!({});
+    match call.method.clone().as_str() {
+        "join" => call.run(
+            |p: RoomParams| match harness {
+                Some(h) => g.join_with_harness(who, &p.room, h).map(|_| ()),
+                None => g.join(who, &p.room),
+            },
+            empty,
+        ),
+        "my_rooms" => call.run(|_: NoParams| g.rooms(who), |r| json!({ "rooms": r })),
+        "my_crossings" => call.run(
+            |p: CrossingsParams| g.my_crossings(who, p.limit.unwrap_or(20).min(200)),
+            |l| crossings_json(&l),
         ),
         "my_role" => call.run(|_: NoParams| g.my_role(who), |r| json!({ "role": r })),
         "invite" => call.run(
@@ -525,7 +592,29 @@ pub(crate) fn handle<S: Store>(
             empty,
         ),
         "who" => call.run(|p: RoomParams| g.who(who, &p.room), |ms| members_json(&ms)),
-        "status" => call.run(|p: StatusParams| g.set_status(who, &p.room, &p.status), empty),
+        "status" => call.run(
+            |p: StatusParams| g.set_status(who, &p.room, &p.status),
+            empty,
+        ),
+        "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
+        "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
+        "kind" => call.run(
+            |p: KindParams| declare_kind(g, who, p.kind.as_deref()),
+            empty,
+        ),
+        "label_order" => call.run(
+            |_: NoParams| g.label_order(who),
+            |(chain, cap): (Vec<String>, String)| json!({ "chain": chain, "cap": cap }),
+        ),
+        "prune" => prune(g, who, call.id),
+        other => unknown_method(call.id, other),
+    }
+}
+
+/// The methods about claims.
+fn handle_claims<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame> {
+    let empty = |()| json!({});
+    match call.method.clone().as_str() {
         "claim" => call.run(
             |p: ClaimParams| {
                 let ttl = g.claim_ttl_for(who, (&p.room, &p.path), p.ttl)?;
@@ -533,9 +622,6 @@ pub(crate) fn handle<S: Store>(
             },
             empty,
         ),
-        "mute" => call.run(|p: MuteParams| g.set_muted(who, &p.room, p.muted), empty),
-        "scope" => call.run(|p: ScopeParams| g.set_scope(who, &p.scope), empty),
-        "kind" => call.run(|p: KindParams| declare_kind(g, who, p.kind.as_deref()), empty),
         "release" => call.run(
             |p: ReleaseParams| match p.note.as_deref() {
                 Some(n) => g.release_with_note(who, (&p.room, &p.path), n),
@@ -561,22 +647,6 @@ pub(crate) fn handle<S: Store>(
                 v
             },
         ),
-        "label_order" => call.run(
-            |_: NoParams| g.label_order(who),
-            |(chain, cap): (Vec<String>, String)| json!({ "chain": chain, "cap": cap }),
-        ),
-        "scrub_check" => call.run(
-            |p: ScrubCheckParams| g.scrub_check(who, &p.text),
-            |scrubbed: bool| json!({ "scrubbed": scrubbed }),
-        ),
-        "prune" => prune(g, who, call.id),
-        "role_act" | "review_next" | "review_verdict" => {
-            crate::session::role_methods::handle(g, who, call)
-        }
-        other => vec![fail_with(
-            call.id,
-            "unknown_method",
-            format!("unknown method {other}"),
-        )],
+        other => unknown_method(call.id, other),
     }
 }

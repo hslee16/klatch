@@ -30,6 +30,12 @@ pub struct Options {
     /// The machine checkpoint (#1408): the Stop hook, and a flag on the PostToolUse and SessionEnd hooks that records
     /// tool classes and edited paths and writes the checkpoint. Opt in, opt out, or leave as is.
     pub checkpoint: Switch,
+    /// Passive claims (#1401): a flag on the PostToolUse, SessionEnd and Stop hooks that claims the path of each file a
+    /// member edits and releases it at the end of the turn. Opt in, opt out, or leave as is.
+    pub passive_claims: Switch,
+    /// The machine status (#1403): the same flag on the PostToolUse and SessionEnd hooks and the shared Stop hook, which
+    /// set `working (auto)`, `idle (auto)` or `parked (auto)` from activity. Opt in, opt out, or leave as is.
+    pub machine_status: Switch,
     /// Remove every hook klatch wrote instead of installing (#436); nothing else in the settings is touched.
     pub uninstall: bool,
     /// Install into Codex's hooks.json instead of Claude Code's settings (#782).
@@ -60,6 +66,8 @@ struct Choices {
     enforce: Switch,
     wake: Switch,
     checkpoint: Switch,
+    passive_claims: Switch,
+    machine_status: Switch,
 }
 
 /// A settings file and what it would become.
@@ -161,6 +169,11 @@ impl Io<'_> {
         if options.checkpoint == Switch::On && !session_end {
             bail!("--checkpoint needs the SessionEnd hook, which --no-session-end leaves out");
         }
+        if options.machine_status == Switch::On && !session_end {
+            bail!(
+                "--machine-status needs the SessionEnd hook (it marks the session done), which --no-session-end leaves out"
+            );
+        }
         Ok(Choices {
             scope,
             board,
@@ -169,6 +182,8 @@ impl Io<'_> {
             enforce: options.enforce,
             wake: options.wake,
             checkpoint: options.checkpoint,
+            passive_claims: options.passive_claims,
+            machine_status: options.machine_status,
         })
     }
 }
@@ -224,6 +239,8 @@ fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> any
     set_enforce(&mut merged, bin, choices.enforce).map_err(refuse)?;
     set_wake(&mut merged, bin, choices.wake).map_err(refuse)?;
     set_checkpoint(&mut merged, bin, choices.checkpoint).map_err(refuse)?;
+    set_passive_claims(&mut merged, bin, choices.passive_claims).map_err(refuse)?;
+    set_machine_status(&mut merged, bin, choices.machine_status).map_err(refuse)?;
     Ok(Plan {
         label,
         path,
@@ -699,9 +716,10 @@ pub(crate) fn merge_commands(
     for event in EVENTS {
         let mut cmd = command(event)?;
         let list = event_list(hooks, event)?;
-        // a re-run of init without --checkpoint keeps the consent the hook already carries (#1408)
-        if event == "PostToolUse" && carries_checkpoint(list) {
-            cmd.push_str(CHECKPOINT_FLAG);
+        // a re-run of init without --checkpoint, --passive-claims or --machine-status keeps the consents the hook
+        // already carries (#1408, #1401, #1403)
+        if event == "PostToolUse" {
+            cmd = with_flags(&cmd, carried_flags(list));
         }
         if !sync_entries(list, &cmd, true) {
             list.push(new_entry(&cmd));
@@ -726,10 +744,15 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
     if !on && !hooks.contains_key(EVENT) {
         return Ok(());
     }
+    // a SessionEnd hook put back later carries the consents PostToolUse still carries, so switching session-end off
+    // and on never drops the checkpoint, the passive claims release or the machine status consent
+    let post = hooks
+        .get("PostToolUse")
+        .and_then(Value::as_array)
+        .map_or((false, false, false), |l| carried_flags(l));
     let list = event_list(hooks, EVENT)?;
-    if carries_checkpoint(list) {
-        cmd.push_str(CHECKPOINT_FLAG);
-    }
+    let own = carried_flags(list);
+    cmd = with_flags(&cmd, (own.0 || post.0, own.1 || post.1, own.2 || post.2));
     if !sync_entries(list, &cmd, on) && on {
         list.push(new_entry(&cmd));
     }
@@ -743,38 +766,103 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
 /// The flag that is the machine checkpoint consent (#1408): a hook command carries it, or records nothing.
 const CHECKPOINT_FLAG: &str = " --checkpoint";
 
-/// Whether a klatch hook in `list` carries the checkpoint consent.
-fn carries_checkpoint(list: &[Value]) -> bool {
+/// The flag that is the passive claims consent (#1401): a hook command carries it, or claims nothing.
+const PASSIVE_FLAG: &str = " --passive-claims";
+/// The flag that is the machine status consent (#1403): a hook command carries it, or writes no status.
+const MACHINE_STATUS_FLAG: &str = " --machine-status";
+
+/// The consents a hook command carries, as `(passive claims, checkpoint, machine status)`. Read word by word, so the
+/// order they are written in does not matter.
+type Flags = (bool, bool, bool);
+
+fn flags_of(cmd: &str) -> Flags {
+    let has = |flag: &str| cmd.split(' ').any(|w| w == flag.trim_start());
+    (
+        has(PASSIVE_FLAG),
+        has(CHECKPOINT_FLAG),
+        has(MACHINE_STATUS_FLAG),
+    )
+}
+
+/// `cmd` without either consent flag.
+fn bare(cmd: &str) -> String {
+    cmd.split(' ')
+        .filter(|w| {
+            ![PASSIVE_FLAG, CHECKPOINT_FLAG, MACHINE_STATUS_FLAG]
+                .iter()
+                .any(|f| *w == f.trim_start())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `cmd` carrying exactly the flags given, in one fixed order (passive claims, checkpoint, machine status), so a command always
+/// reads the same for the same consents.
+fn with_flags(cmd: &str, (passive, checkpoint, status): Flags) -> String {
+    let mut out = bare(cmd);
+    if passive {
+        out.push_str(PASSIVE_FLAG);
+    }
+    if checkpoint {
+        out.push_str(CHECKPOINT_FLAG);
+    }
+    if status {
+        out.push_str(MACHINE_STATUS_FLAG);
+    }
+    out
+}
+
+/// The consents any klatch hook in `list` carries.
+fn carried_flags(list: &[Value]) -> Flags {
     list.iter()
         .filter_map(|m| m.get("hooks").and_then(Value::as_array))
         .flatten()
         .filter(|h| is_ours(h))
-        .any(|h| {
-            h.get("command")
-                .and_then(Value::as_str)
-                .is_some_and(|c| c.ends_with(CHECKPOINT_FLAG))
+        .filter_map(|h| h.get("command").and_then(Value::as_str))
+        .map(flags_of)
+        .fold((false, false, false), |a, b| {
+            (a.0 || b.0, a.1 || b.1, a.2 || b.2)
         })
 }
 
-/// The Stop entry of the checkpoint hook: klatch's own Stop hook, never the wake watcher.
-fn is_checkpoint_stop(hook: &Value) -> bool {
+/// The Stop entry that carries the consents: klatch's own Stop hook, never the wake watcher.
+fn is_flag_stop(hook: &Value) -> bool {
     is_ours(hook)
         && hook
             .get("command")
             .and_then(Value::as_str)
-            .is_some_and(|c| c.contains(" hook --event Stop") && c.ends_with(CHECKPOINT_FLAG))
+            .is_some_and(|c| c.contains(" hook --event Stop"))
 }
 
-fn checkpoint_stop_entry(bin: &str) -> Result<Value, String> {
-    let cmd = format!(
-        "{}{CHECKPOINT_FLAG}",
-        hook_command(bin, "Stop", None, true)?
-    );
-    Ok(json!({"hooks": [{"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS}]}))
+/// Make the Stop entry match the consents the PostToolUse hook carries: one entry that carries them, or none when
+/// neither is on. Everything else under Stop (the wake watcher, other tools' hooks) is left as it was.
+fn sync_stop(settings: &mut Value, bin: &str) -> Result<(), String> {
+    let flags = if event_absent(settings, "PostToolUse") {
+        (false, false, false)
+    } else {
+        carried_flags(event_list(hooks_of(settings)?, "PostToolUse")?)
+    };
+    let on = flags.0 || flags.1 || flags.2;
+    if !on && event_absent(settings, "Stop") {
+        return Ok(());
+    }
+    let cmd = with_flags(&hook_command(bin, "Stop", None, true)?, flags);
+    let entry = json!({"type": "command", "command": cmd, "timeout": HOOK_TIMEOUT_SECS});
+    let hooks = hooks_of(settings)?;
+    let list = event_list(hooks, "Stop")?;
+    if !sync_owned(list, &cmd, on, is_flag_stop) && on {
+        list.push(json!({"hooks": [entry]}));
+    } else if on {
+        refresh_owned(list, is_flag_stop, &entry);
+    }
+    if list.is_empty() {
+        hooks.remove("Stop");
+    }
+    Ok(())
 }
 
-/// Put the checkpoint flag on, or take it off, every klatch command of `event` in the settings.
-fn flag_event(settings: &mut Value, event: &str, on: bool) -> Result<(), String> {
+/// Put one consent flag on, or take it off, every klatch command of `event` in the settings.
+fn flag_event(settings: &mut Value, event: &str, flag: &str, on: bool) -> Result<(), String> {
     if event_absent(settings, event) {
         return Ok(());
     }
@@ -788,36 +876,48 @@ fn flag_event(settings: &mut Value, event: &str, on: bool) -> Result<(), String>
         let Some(cmd) = hook.get("command").and_then(Value::as_str) else {
             continue;
         };
-        let bare = cmd.strip_suffix(CHECKPOINT_FLAG).unwrap_or(cmd);
-        hook["command"] = json!(if on {
-            format!("{bare}{CHECKPOINT_FLAG}")
-        } else {
-            bare.to_string()
-        });
+        let (passive, checkpoint, status) = flags_of(cmd);
+        let flags = match flag {
+            PASSIVE_FLAG => (on, checkpoint, status),
+            CHECKPOINT_FLAG => (passive, on, status),
+            _ => (passive, checkpoint, on),
+        };
+        hook["command"] = json!(with_flags(cmd, flags));
     }
     Ok(())
 }
 
-/// The machine checkpoint (#1408): a Stop hook that carries `--checkpoint`, and the same flag on klatch's PostToolUse
-/// and SessionEnd commands, so the trail is kept, the checkpoint is written at each turn's end and a last one at the
-/// end of the session. `Switch::Keep` leaves things as they are. The flag is the consent: a hook command without it
-/// records nothing.
+/// The machine checkpoint (#1408): the same flag on klatch's PostToolUse and SessionEnd commands and on its Stop hook,
+/// so the trail is kept, the checkpoint is written at each turn's end and a last one at the end of the session.
+/// `Switch::Keep` leaves things as they are. The flag is the consent: a hook command without it records nothing.
 pub fn set_checkpoint(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    set_flag(settings, bin, CHECKPOINT_FLAG, how)
+}
+
+/// Passive claims (#1401): the `--passive-claims` flag on klatch's PostToolUse and SessionEnd commands and on its Stop
+/// hook, so a file a member edits is claimed for a short lease and released when the turn or session ends. The flag is
+/// the consent: a hook command without it claims nothing. `Switch::Keep` leaves things as they are.
+pub fn set_passive_claims(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    set_flag(settings, bin, PASSIVE_FLAG, how)
+}
+
+/// The machine status (#1403): the `--machine-status` flag on klatch's PostToolUse and SessionEnd commands and on its
+/// Stop hook, so the member's status follows its activity (working at the first tool call after idle, idle or parked
+/// at a turn's end). The flag is the consent: a hook command without it writes no status. SessionEnd carries it as a
+/// record of the consent only (it marks the session done as it always did). `Switch::Keep` leaves things as they are.
+pub fn set_machine_status(settings: &mut Value, bin: &str, how: Switch) -> Result<(), String> {
+    set_flag(settings, bin, MACHINE_STATUS_FLAG, how)
+}
+
+fn set_flag(settings: &mut Value, bin: &str, flag: &str, how: Switch) -> Result<(), String> {
     if how == Switch::Keep {
         return Ok(());
     }
     let on = how == Switch::On;
-    let spec = Optional {
-        event: "Stop",
-        entry: checkpoint_stop_entry,
-        owns: is_checkpoint_stop,
-        refresh: true,
-    };
-    set_optional(settings, bin, (&spec, how))?;
     for event in ["PostToolUse", "SessionEnd"] {
-        flag_event(settings, event, on)?;
+        flag_event(settings, event, flag, on)?;
     }
-    Ok(())
+    sync_stop(settings, bin)
 }
 
 /// What to do with an optional hook: add it, remove it, or leave things as they are (update an entry already there,

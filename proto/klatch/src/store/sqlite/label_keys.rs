@@ -163,7 +163,7 @@ impl SqliteStore {
     /// with the new key is skipped. All or nothing: a text that opens with neither refuses the whole move. Returns
     /// how many texts were moved.
     pub fn reseal_label(&self, label: &str, old: &Key, new: &Key) -> Result<usize> {
-        self.reseal_label_hooked(label, old, new, &|_| Ok(()))
+        self.reseal_label_hooked(label, (old, new), &|_| Ok(()))
     }
 
     /// `reseal_label` with a hook called after each row is rewritten, with the count so far; an error from it rolls
@@ -171,12 +171,11 @@ impl SqliteStore {
     pub(crate) fn reseal_label_hooked(
         &self,
         label: &str,
-        old: &Key,
-        new: &Key,
+        keys: (&Key, &Key),
         after_each: &dyn Fn(usize) -> Result<()>,
     ) -> Result<usize> {
         self.immediate(|| {
-            let (plan, texts) = self.plan_reseal(label, (old, new))?;
+            let (plan, texts) = self.plan_reseal(label, keys)?;
             for (done, (id, body, payload)) in plan.into_iter().enumerate() {
                 self.conn
                     .execute(

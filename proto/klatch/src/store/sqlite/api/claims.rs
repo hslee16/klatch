@@ -1,7 +1,8 @@
 //! The SQLite side of the `ClaimStore` area.
 
 use super::super::SqliteStore;
-use crate::domain::{Claim, ClaimChanges, ReleaseNote, Result};
+use super::super::claim_events::ClaimKey;
+use crate::domain::{Claim, ClaimChanges, PassiveTaken, ReleaseNote, Result};
 use crate::store::ClaimStore;
 use crate::store::{ClaimRequest, Release};
 use rusqlite::params;
@@ -23,12 +24,34 @@ impl ClaimStore for SqliteStore {
         self.take_claim(request, now)
     }
 
+    fn take_passive_claim(&self, request: &ClaimRequest, now: i64) -> Result<PassiveTaken> {
+        self.do_passive_claim(request, now)
+    }
+
+    fn release_passive_claims(&self, member: &str, now: i64) -> Result<usize> {
+        self.do_release_passive(member, now)
+    }
+
+    fn note_passive_failure(&self, now: i64) {
+        self.record_claim_event(
+            now,
+            &super::super::claim_events::ClaimEvent {
+                room: "",
+                path: "",
+                event: "passive_error",
+                reason: "",
+                held: 0,
+                waited: None,
+            },
+        );
+    }
+
     fn release(&self, room: &str, owner: &str, path: &str) -> Result<()> {
-        self.do_release(room, owner, path, None)
+        self.do_release(ClaimKey { room, owner, path }, None)
     }
 
     fn release_at(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
-        self.do_release(room, owner, path, Some(now))
+        self.do_release(ClaimKey { room, owner, path }, Some(now))
     }
 
     fn release_with(&self, release: &Release, now: i64) -> Result<()> {
@@ -87,7 +110,7 @@ impl ClaimStore for SqliteStore {
     }
 
     fn note_yield_release(&self, room: &str, owner: &str, path: &str, now: i64) -> Result<()> {
-        self.do_note_yield_release(room, owner, path, now)
+        self.do_note_yield_release(ClaimKey { room, owner, path }, now)
     }
 
     fn claim_overwrites(&self, room: &str, now: i64) -> Result<Vec<(String, String, String)>> {
