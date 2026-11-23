@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 /// The one revision of the Model Context Protocol this server was written against and tested with.
 pub const MCP_VERSION: &str = "2025-06-18";
+use crate::domain::budget::{READ_MAX_BYTES, READ_MAX_MESSAGES, WAIT_MAX_BYTES, WAIT_MAX_MESSAGES};
 const DEFAULT_WAIT_SECS: i64 = 30;
 const MAX_WAIT_SECS: i64 = 55;
 const WAIT_POLL: Duration = Duration::from_millis(100);
@@ -190,8 +191,19 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             }
             "klatch_read" => {
                 let a: ReadArgs = parse(args)?;
-                self.wire("read", json!({"room": a.room, "peek": a.peek}))
-                    .map(with_notice)
+                // bounded (#1390): whole messages up to the cap, the rest stay unread and are counted
+                let params = json!({"room": a.room, "peek": a.peek,
+                    "max_messages": READ_MAX_MESSAGES, "max_bytes": READ_MAX_BYTES});
+                self.wire("read", params).map(|mut r| {
+                    if r["omitted"].as_u64().unwrap_or(0) > 0 {
+                        r["next"] = json!(if a.peek {
+                            "klatch_read without peek reads these and marks them read; call it again for the rest"
+                        } else {
+                            "call klatch_read again for the next unread messages"
+                        });
+                    }
+                    with_notice(r)
+                })
             }
             "klatch_claim" => {
                 let a: ClaimArgs = parse(args)?;
@@ -278,8 +290,13 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
                 Ok(got) => got,
                 Err(failure) => return Ok(Err(failure)),
             };
-            if !got.is_empty() {
-                return Ok(Ok(with_notice(json!({"messages": got, "timeout": false}))));
+            if !got.messages.is_empty() {
+                let mut r = json!({"messages": got.messages, "timeout": false});
+                if got.omitted > 0 {
+                    r["omitted"] = json!(got.omitted);
+                    r["next"] = json!("call klatch_wait again for the next unread messages");
+                }
+                return Ok(Ok(with_notice(r)));
             }
             if Instant::now() >= deadline || self.cancel.is_some_and(|c| c()) {
                 return Ok(Ok(json!({"messages": [], "timeout": true})));
@@ -288,25 +305,42 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
         }
     }
 
-    /// Read every room once; the messages that came, each with its room. A failure after some messages were already
-    /// taken returns those messages (they have been marked read) and not the failure.
-    fn poll_rooms(&self, rooms: &[String]) -> Result<Vec<Value>, ToolFailure> {
-        let mut got = Vec::new();
+    /// Read every room once; the messages that came, each with its room, and how many more are unread (#1390). The
+    /// result is bounded as a whole: each room reads at most its share of `WAIT_MAX_MESSAGES` and `WAIT_MAX_BYTES`, and
+    /// what is over stays unread for the next call. A failure after some messages were already taken returns those
+    /// messages (they have been marked read) and not the failure.
+    fn poll_rooms(&self, rooms: &[String]) -> Result<Polled, ToolFailure> {
+        let mut got = Polled {
+            messages: Vec::new(),
+            omitted: 0,
+        };
+        let share = rooms.len().max(1);
+        let params = |room: &String| {
+            json!({"room": room, "max_messages": (WAIT_MAX_MESSAGES / share).max(1),
+                   "max_bytes": WAIT_MAX_BYTES / share})
+        };
         for room in rooms {
-            match self.wire("read", json!({"room": room})) {
+            match self.wire("read", params(room)) {
                 Ok(r) => {
+                    got.omitted += r["omitted"].as_u64().unwrap_or(0) as usize;
                     for m in r["messages"].as_array().into_iter().flatten() {
                         let mut m = m.clone();
                         m["room"] = json!(room);
-                        got.push(m);
+                        got.messages.push(m);
                     }
                 }
-                Err(failure) if got.is_empty() => return Err(failure),
+                Err(failure) if got.messages.is_empty() => return Err(failure),
                 Err(_) => break,
             }
         }
         Ok(got)
     }
+}
+
+/// What one pass over the rooms of a `klatch_wait` took: the messages, and how many were left unread.
+struct Polled {
+    messages: Vec<Value>,
+    omitted: usize,
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, RpcError> {

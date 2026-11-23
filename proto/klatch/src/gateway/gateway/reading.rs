@@ -31,6 +31,26 @@ impl<S: Store> Gateway<S> {
         self.mark_advisory(room, seen)
     }
 
+    /// Read the unread messages with `seq` up to `through` and move the read cursor to the last of them, never past it
+    /// (#1390): what a bounded `read` or `wait` marks read is exactly what it showed. The admission is the one of a
+    /// read that advances. A librarian's peek writes nothing, as in `read`.
+    pub fn read_through(&self, who: &Principal, room: &str, through: i64) -> Result<Vec<Message>> {
+        self.admit(who, room, Operation::read(room, true))?;
+        let at = Seat::new(room, &who.member);
+        let now = self.now();
+        let unread: Vec<Message> = self
+            .store
+            .read(at, false, now)?
+            .into_iter()
+            .filter(|m| m.seq <= through)
+            .collect();
+        // the cursor follows the last row taken, a canary included, as an advancing read does
+        if let Some(last) = unread.last() {
+            self.store.advance_cursor(at, Seq(last.seq), now)?;
+        }
+        self.mark_advisory(room, Self::without_canary(unread))
+    }
+
     /// The count of other members' messages the caller has not been shown, when the post it just made is its first
     /// in `room` and nothing of the room was ever shown to it (#1411): no read, no hook digest, no wait or wake.
     /// Zero in every other case, so the CLI prints its one-time notice exactly once and never to a member that has

@@ -475,3 +475,90 @@ fn join_asks_and_invite_let_an_mcp_only_member_route() {
     let r = a.call("klatch_join", json!({}));
     assert_eq!(r["error"]["code"], -32602, "{r}");
 }
+
+/// 90 posts of about 400 bytes from alice in lobby (under the 100 a minute a member may post); bob has joined first.
+fn flooded(h: &Home) -> (Mcp, Mcp) {
+    let (mut a, mut b) = (started(h, "alice"), started(h, "bob"));
+    b.call("klatch_join", json!({"room": "lobby"}));
+    for i in 0..90 {
+        let body = format!("flood {i:03} {}", "z".repeat(390));
+        let r = a.call("klatch_post", json!({"room": "lobby", "body": body}));
+        assert!(!is_error(&r), "{r}");
+    }
+    (a, b)
+}
+
+fn flood_seqs(r: &Value) -> Vec<u64> {
+    r["result"]["structuredContent"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["seq"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_read_and_a_wait_result_are_bounded_say_what_was_left_and_continue_in_order() {
+    let h = Home::new();
+    let (_a, mut b) = flooded(&h);
+    let r = b.call("klatch_read", json!({"room": "lobby"}));
+    assert!(
+        r.to_string().len() <= 40_000,
+        "{} bytes",
+        r.to_string().len()
+    );
+    let s = &r["result"]["structuredContent"];
+    let first = flood_seqs(&r);
+    assert!(!first.is_empty() && first.len() <= 40, "{}", first.len());
+    assert_eq!(s["omitted"], json!(90 - first.len()), "{s}");
+    assert!(s["notice"].as_str().unwrap().contains("data"), "{s}");
+    assert!(s["next"].as_str().unwrap().contains("klatch_read"), "{s}");
+    let w = b.call("klatch_wait", json!({"rooms": ["lobby"], "timeout": 5}));
+    assert!(
+        w.to_string().len() <= 40_000,
+        "{} bytes",
+        w.to_string().len()
+    );
+    let second = flood_seqs(&w);
+    assert!(!second.is_empty() && second.len() <= 20, "{}", second.len());
+    assert_eq!(
+        second[0],
+        first[first.len() - 1] + 1,
+        "wait continues where read stopped"
+    );
+    assert!(
+        w["result"]["structuredContent"]["omitted"]
+            .as_u64()
+            .unwrap()
+            > 0,
+        "{w}"
+    );
+    let rest = flood_seqs(&b.call("klatch_read", json!({"room": "lobby"})));
+    assert_eq!(rest[0], second[second.len() - 1] + 1);
+}
+
+#[test]
+fn one_huge_message_in_a_read_result_is_cut_with_a_marker() {
+    let h = Home::new();
+    let (mut a, mut b) = (started(&h, "alice"), started(&h, "bob"));
+    b.call("klatch_join", json!({"room": "lobby"}));
+    a.call(
+        "klatch_post",
+        json!({"room": "lobby", "body": "y".repeat(30_000)}),
+    );
+    a.call("klatch_post", json!({"room": "lobby", "body": "after"}));
+    let r = b.call("klatch_read", json!({"room": "lobby"}));
+    assert!(
+        r.to_string().len() <= 40_000,
+        "{} bytes",
+        r.to_string().len()
+    );
+    let m = &r["result"]["structuredContent"]["messages"][0];
+    assert!(m["body"].as_str().unwrap().contains("[truncated"), "{m}");
+    assert_eq!(m["truncated"], json!(true));
+    let again = b.call("klatch_read", json!({"room": "lobby"}));
+    assert_eq!(
+        again["result"]["structuredContent"]["messages"][0]["body"],
+        "after"
+    );
+}

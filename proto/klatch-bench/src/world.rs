@@ -429,6 +429,44 @@ impl World {
             .collect())
     }
 
+    /// Everything unread in `room` for `who`, by reading again for as long as the output says more messages were not
+    /// shown (a single `read` shows at most a bounded part, #1390). The rows of every call joined, the notices left
+    /// out. It fails when a call repeats or reorders a message (the seqs must rise strictly across all the calls) or
+    /// when a call that says more is left shows nothing, so a scenario that drains a room also checks the cursor.
+    /// It consumes: `read` marks what it showed read (a peek would show the same part every time).
+    pub fn read_all(&self, who: &str, room: &str) -> Result<String, String> {
+        let row_seq =
+            |l: &str| -> Option<u64> { l.strip_prefix('[')?.split(' ').next()?.parse().ok() };
+        let mut rows = Vec::new();
+        let mut last = 0;
+        for _ in 0..100_000 {
+            let page = self.ok(who, &["read", room])?;
+            let mut more = false;
+            let mut shown = 0;
+            for l in page.lines() {
+                if l.starts_with('[') && l.contains(" more messages not shown;") {
+                    more = true;
+                    continue;
+                }
+                if let Some(seq) = row_seq(l) {
+                    if seq <= last {
+                        return Err(format!("read repeated or reordered seq {seq} after {last}"));
+                    }
+                    last = seq;
+                    shown += 1;
+                }
+                rows.push(l.to_string());
+            }
+            if !more {
+                return Ok(rows.join("\n"));
+            }
+            if shown == 0 {
+                return Err("read said more messages were not shown but showed none".into());
+            }
+        }
+        Err("read never ran out of messages".into())
+    }
+
     /// A `post` request line for the wire protocol.
     pub fn post_request(id: usize, room: &str, body: &str) -> String {
         serde_json::json!({"v": 1, "type": "request", "id": id.to_string(), "method": "post",

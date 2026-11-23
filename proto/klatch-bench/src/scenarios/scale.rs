@@ -176,11 +176,21 @@ fn long_history(w: &World) -> Res {
     }
     w.ok("reader", &["join", "r"])?;
     let t = Instant::now();
-    let read = w.ok("reader", &["read", "r", "--peek"])?;
+    // a read shows a bounded part (#1390): the whole history is read by reading on, and no call may repeat,
+    // reorder or skip a message
+    let read = w.read_all("reader", "r")?;
     let read_ms = ms(t);
     check(
         read.lines().count() == total,
         format!("read returned {} of {total} lines", read.lines().count()),
+    )?;
+    let seqs: Vec<u64> = read
+        .lines()
+        .filter_map(|l| l.strip_prefix('[')?.split(' ').next()?.parse().ok())
+        .collect();
+    check(
+        seqs == (1..=total as u64).collect::<Vec<_>>(),
+        "the history read in calls is not 1 to the total in order",
     )?;
     let t = Instant::now();
     let stream = w.ok("reader", &["stream", "r"])?;
