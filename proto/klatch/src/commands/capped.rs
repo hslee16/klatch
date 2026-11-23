@@ -45,7 +45,7 @@ pub(super) fn read(
         for line in dm_help_lines(t, me, room, &messages[..shown]) {
             println!("{line}");
         }
-        for line in asks_note_lines(t, (me, now), room, shown > 0, true) {
+        for line in asks_note_lines(t, (me, now), (room, shown > 0), true) {
             println!("{line}");
         }
     }
@@ -221,7 +221,7 @@ pub(super) fn print_woken(t: &dyn Transport, a: &WaitArgs, waited: u64) -> Resul
         }
         // the cycle was said before the wait began (#273); the rest is derived from the room now (#789)
         let now = a.caller.1 + waited as i64;
-        for line in asks_note_lines(t, (a.caller.0, now), room, true, false) {
+        for line in asks_note_lines(t, (a.caller.0, now), (room, true), false) {
             println!("{line}");
         }
     }
