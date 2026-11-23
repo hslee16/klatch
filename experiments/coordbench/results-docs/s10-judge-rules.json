@@ -1,0 +1,144 @@
+{
+ "schema": 1,
+ "kind": "judge-measurement",
+ "scenario": "S10 part 2",
+ "judge": "rules",
+ "date": "2026-11-23T14:08:22Z",
+ "klatch_commit": "33bff7e8bc328ad0af33997de281dde83587461b",
+ "klatch_tree_dirty": false,
+ "bench_binary_sha256": "45c10f51cf9fbafa418fbc9594074ef3721e6505a7b5049bff6a0749b7d58a9b",
+ "model_calls": 0,
+ "cost_usd": 0.0,
+ "corpus": {
+  "path": "proto/klatch-bench/judge-eval/corpus.jsonl",
+  "sha256": "6f2f9d99dc2e4a1739b2fa30462d972f535d84a23c0cce40a99f9e1b8075ff92",
+  "items": 333
+ },
+ "splits": {
+  "dev": {
+   "n": 197,
+   "should_not_cross": 79,
+   "clean": 118,
+   "misses": 41,
+   "miss_rate": 0.5189873417721519,
+   "miss_rate_ci95": [
+    0.4105,
+    0.6257
+   ],
+   "data_leaks": 41,
+   "false_positives": 0,
+   "false_positive_rate": 0.0,
+   "false_positive_rate_ci95": [
+    0.0,
+    0.0315
+   ],
+   "defers": 0,
+   "errors": 0,
+   "incomplete": false,
+   "contested_excluded": 1,
+   "by_category": {
+    "business-private": {
+     "n": 13,
+     "misses": 11,
+     "false_positives": 0
+    },
+    "injection-hidden": {
+     "n": 7,
+     "misses": 6,
+     "false_positives": 0
+    },
+    "injection-overt": {
+     "n": 7,
+     "misses": 7,
+     "false_positives": 0
+    },
+    "long": {
+     "n": 5,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "multilingual": {
+     "n": 11,
+     "misses": 2,
+     "false_positives": 0
+    },
+    "personal-data": {
+     "n": 15,
+     "misses": 14,
+     "false_positives": 0
+    },
+    "injection (all)": {
+     "n": 18,
+     "misses": 13,
+     "false_positives": 0
+    }
+   }
+  },
+  "test": {
+   "n": 134,
+   "should_not_cross": 55,
+   "clean": 79,
+   "misses": 30,
+   "miss_rate": 0.5454545454545454,
+   "miss_rate_ci95": [
+    0.4152,
+    0.6697
+   ],
+   "data_leaks": 30,
+   "false_positives": 0,
+   "false_positive_rate": 0.0,
+   "false_positive_rate_ci95": [
+    0.0,
+    0.0464
+   ],
+   "defers": 0,
+   "errors": 0,
+   "incomplete": false,
+   "contested_excluded": 1,
+   "by_category": {
+    "business-private": {
+     "n": 9,
+     "misses": 6,
+     "false_positives": 0
+    },
+    "injection-hidden": {
+     "n": 5,
+     "misses": 5,
+     "false_positives": 0
+    },
+    "injection-overt": {
+     "n": 5,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "long": {
+     "n": 4,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "multilingual": {
+     "n": 8,
+     "misses": 4,
+     "false_positives": 0
+    },
+    "personal-data": {
+     "n": 10,
+     "misses": 9,
+     "false_positives": 0
+    },
+    "short": {
+     "n": 4,
+     "misses": 1,
+     "false_positives": 0
+    },
+    "injection (all)": {
+     "n": 13,
+     "misses": 9,
+     "false_positives": 0
+    }
+   }
+  }
+ },
+ "scrub_sha256": "602a61e907bc92c4fb65405b597af8ba5c09cfcd5417b31890f424d22821795d",
+ "command": "klatch-bench judge-eval --judge rules --split dev --corpus proto/klatch-bench/judge-eval/corpus.jsonl --out <out> --scrub proto/klatch-bench/judge-eval/scrub.txt"
+}

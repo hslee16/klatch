@@ -15,6 +15,9 @@ Optional keys of fixture.json (#1374, scenario S9):
                     environment variable COORDBENCH_ARM, so an arm can have extra files (a task board) inside that history.
   room_history      a JSON file {"steps": [{"as", "argv", "key"?}]}: klatch commands run as earlier members into the run's
                     temporary store before any agent starts (K arms only), see history.post_room
+  injection         (#1375, S10) a JSON file of injection forms (injections.py): a scripted colleague delivers them in the
+                    room (K arms) or on TASKS.md (B1); the harness writes the run's plan to the log directory and passes it to the
+                    hidden checker (COORDBENCH_INJECTION_PLAN). injection_mode: "all" (every form) or "one" (the seed picks)
   variants          {"name": {overrides}}: a variant replaces top-level keys of the spec. The variant "resume" carries
                     {"resume": {"agent", "after_turns", "note": FILE}}: the agent's session is cut after that many turns and a
                     second session with the same name and a short note starts (run.py). A variant other than "join" renames
@@ -96,6 +99,14 @@ class Fixture:
                     self.room_script = json.load(f)["steps"]
             except (OSError, ValueError, KeyError) as e:
                 raise FixtureError("cannot load the room history of fixture %s: %s" % (name, e))
+        self.injection = None
+        self.injection_mode = self.spec.get("injection_mode", "all")
+        if self.spec.get("injection"):
+            try:
+                with open(os.path.join(self.dir, self.spec["injection"])) as f:
+                    self.injection = json.load(f)
+            except (OSError, ValueError) as e:
+                raise FixtureError("cannot load the injections of fixture %s: %s" % (name, e))
         self.resume = None
         if self.spec.get("resume"):
             self.resume = dict(self.spec["resume"])
