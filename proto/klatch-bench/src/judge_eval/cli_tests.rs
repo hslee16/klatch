@@ -7,12 +7,17 @@ fn parse(args: &[&str]) -> Result<Options, String> {
 #[test]
 fn the_defaults_are_the_dev_split_all_items_and_a_one_percent_leak_target() {
     let o = parse(&["--judge", "null"]).unwrap();
-    assert_eq!(o.judge, JudgeSpec::Null);
-    assert_eq!(o.split, Split::Dev);
-    assert_eq!(o.limit, None);
-    assert_eq!(o.out, None);
-    assert_eq!(o.target_leak, 0.01);
-    assert_eq!(o.ceiling, "secret");
+    assert_eq!(
+        (o.judge, o.split, o.limit, o.out, o.target_leak, o.ceiling),
+        (
+            JudgeSpec::Null,
+            Split::Dev,
+            None,
+            None,
+            0.01,
+            "secret".to_string()
+        )
+    );
 }
 
 #[test]
@@ -40,16 +45,23 @@ fn every_option_is_read() {
         "/opt/claude",
     ])
     .unwrap();
-    assert_eq!(o.judge, JudgeSpec::Claude("opus".into()));
-    assert_eq!(o.split, Split::Test);
-    assert_eq!(o.limit, Some(20));
-    assert_eq!(o.out.as_deref(), Some("r.json"));
-    assert_eq!(o.target_leak, 0.05);
-    assert_eq!(o.ceiling, "internal");
-    assert_eq!(o.budget_usd, 0.5);
-    assert_eq!(o.corpus.as_deref(), Some("c.jsonl"));
-    assert_eq!(o.scrub.as_deref(), Some("s.txt"));
-    assert_eq!(o.claude, "/opt/claude");
+    assert_eq!(
+        (o.judge.clone(), o.split, o.limit, o.out.as_deref()),
+        (
+            JudgeSpec::Claude("opus".into()),
+            Split::Test,
+            Some(20),
+            Some("r.json")
+        )
+    );
+    assert_eq!(
+        (o.target_leak, o.ceiling.as_str(), o.budget_usd),
+        (0.05, "internal", 0.5)
+    );
+    assert_eq!(
+        (o.corpus.as_deref(), o.scrub.as_deref(), o.claude.as_str()),
+        (Some("c.jsonl"), Some("s.txt"), "/opt/claude")
+    );
 }
 
 #[test]
@@ -82,12 +94,17 @@ fn the_judge_is_required_and_each_spelling_is_checked() {
     ] {
         assert!(parse(&["--judge", bad]).is_err(), "{bad}");
     }
-    assert!(parse(&["--judge", "null", "--split", "train"]).is_err());
-    assert!(parse(&["--judge", "null", "--limit", "x"]).is_err());
-    assert!(parse(&["--judge", "null", "--limit", "0"]).is_err());
-    assert!(parse(&["--judge", "null", "--target-leak", "2"]).is_err());
-    assert!(parse(&["--judge", "null", "--bogus"]).is_err());
-    assert!(parse(&["--judge"]).is_err());
+    let bad_options: [&[&str]; 6] = [
+        &["--judge", "null", "--split", "train"],
+        &["--judge", "null", "--limit", "x"],
+        &["--judge", "null", "--limit", "0"],
+        &["--judge", "null", "--target-leak", "2"],
+        &["--judge", "null", "--bogus"],
+        &["--judge"],
+    ];
+    for args in bad_options {
+        assert!(parse(args).is_err(), "{args:?}");
+    }
 }
 
 #[test]
@@ -130,18 +147,18 @@ fn the_null_and_rules_judges_run_end_to_end_on_the_committed_corpus() {
 
 #[test]
 fn origin_selects_design_or_search_items_and_is_checked() {
-    assert_eq!(parse(&["--judge", "null"]).unwrap().origin, None);
+    let origin = |args: &[&str]| parse(args).unwrap().origin;
     assert_eq!(
-        parse(&["--judge", "null", "--origin", "design"])
-            .unwrap()
-            .origin,
-        Some(corpus::Origin::Design)
-    );
-    assert_eq!(
-        parse(&["--judge", "null", "--origin", "search"])
-            .unwrap()
-            .origin,
-        Some(corpus::Origin::Search)
+        [
+            origin(&["--judge", "null"]),
+            origin(&["--judge", "null", "--origin", "design"]),
+            origin(&["--judge", "null", "--origin", "search"]),
+        ],
+        [
+            None,
+            Some(corpus::Origin::Design),
+            Some(corpus::Origin::Search)
+        ]
     );
     assert!(
         parse(&["--judge", "null", "--origin", "all"])
@@ -163,13 +180,14 @@ fn the_rules_judge_runs_on_the_hard_corpus_by_origin() {
             .unwrap();
     assert!(design.0.n > 0 && search.0.n > 0);
     assert_eq!(design.0.n + search.0.n, all.0.n);
-    assert!(
-        search.1.iter().all(|r| r.id.starts_with('x')),
-        "search ids start with x"
-    );
-    assert!(
-        design.1.iter().all(|r| r.id.starts_with('h')),
-        "design ids start with h"
+    let all_start_with = |rs: &[Record], c: char| rs.iter().all(|r| r.id.starts_with(c));
+    assert_eq!(
+        (
+            all_start_with(&search.1, 'x'),
+            all_start_with(&design.1, 'h')
+        ),
+        (true, true),
+        "search ids start with x, design ids with h"
     );
 }
 
@@ -305,25 +323,28 @@ fn a_cascade_runs_end_to_end_with_a_fake_claude_and_records_the_stage_and_the_su
         script.to_str().unwrap(),
     ])
     .unwrap();
+    let all_staged =
+        |rs: &[Record], stage: &str| rs.iter().all(|r| r.stage.as_deref() == Some(stage));
+    let cost_is = |s: &Summary, want: f64| (s.cost_usd.unwrap() - want).abs() < 1e-9;
     let (summary, records) = run(&o).unwrap();
-    assert_eq!(summary.n, 5);
     // the fake denies with 0.97 every time, which the default policy takes at the first stage
-    assert!(records.iter().all(|r| r.stage.as_deref() == Some("first")));
-    assert_eq!((summary.staged, summary.escalated), (5, 0));
-    assert!(
-        (summary.cost_usd.unwrap() - 0.05).abs() < 1e-9,
-        "{:?}",
-        summary.cost_usd
+    assert_eq!(
+        (
+            summary.n,
+            summary.staged,
+            summary.escalated,
+            all_staged(&records, "first")
+        ),
+        (5, 5, 0, true)
     );
+    assert!(cost_is(&summary, 0.05), "{:?}", summary.cost_usd);
     // with a deny threshold above 0.97 every item is escalated and both stages are paid for
     let mut o2 = o.clone();
     o2.deny_threshold = Some(0.99);
     let (summary, records) = run(&o2).unwrap();
-    assert!(records.iter().all(|r| r.stage.as_deref() == Some("second")));
-    assert_eq!(summary.escalated, 5);
-    assert!(
-        (summary.cost_usd.unwrap() - 0.10).abs() < 1e-9,
-        "{:?}",
-        summary.cost_usd
+    assert_eq!(
+        (summary.escalated, all_staged(&records, "second")),
+        (5, true)
     );
+    assert!(cost_is(&summary, 0.10), "{:?}", summary.cost_usd);
 }
