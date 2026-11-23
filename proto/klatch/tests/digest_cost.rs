@@ -167,3 +167,16 @@ fn a_session_near_its_budget_gets_shorter_digests_then_only_a_count_and_never_lo
         "{out}"
     );
 }
+
+#[test]
+fn a_paused_room_is_explained_at_a_prompt_and_costs_nothing_at_a_tool_call() {
+    let h = Home::new();
+    h.set_passphrase();
+    h.ok("alice", &["join", "r"]);
+    let r = h.admin(&["pause"], &["pause"]);
+    assert!(r.ok(), "{}", r.text);
+    let prompt = hook(&h, "alice", "UserPromptSubmit");
+    assert!(prompt.contains("paused by the admin"), "{prompt}");
+    assert_eq!(hook(&h, "alice", "PostToolUse"), "");
+    assert_eq!(hook(&h, "alice", "PostToolUse"), "");
+}

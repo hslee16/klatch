@@ -183,13 +183,22 @@ pub(super) fn join_lobby(ctx: &Ctx) -> Result<Start> {
 }
 
 /// What the rooms have to say to a session that has had `level` of its byte budget spent (#1406). The notes on rooms
-/// the guard would not show are left to the session start: they would repeat, the same fixed lines, at every prompt
-/// and tool call for as long as the room stays refused, and a hook with nothing new prints nothing.
+/// the guard would not show (a room paused by the admin, one the member may not read) are a standing condition, not
+/// news: they are printed at the session start and at a prompt, where the agent decides what to do next, and not at
+/// every tool call, where the same fixed lines would be paid for thousands of times. A hook with nothing new prints
+/// nothing.
 pub(super) fn digest_text(
     d: &klatch::gateway::Digest,
     level: klatch::domain::BudgetLevel,
+    prompt: bool,
 ) -> String {
-    klatch::domain::render_hook_at(&d.rooms, d.now, level)
+    let mut text = if prompt {
+        refused_text(d).0
+    } else {
+        String::new()
+    };
+    text.push_str(&klatch::domain::render_hook_at(&d.rooms, d.now, level));
+    text
 }
 
 /// How much of its byte budget this member's session has spent: the bytes its hooks injected since its latest
@@ -376,7 +385,11 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
         session_start(ctx, args)?
     } else {
         (
-            digest_text(&t.digest_with(false)?, session_level(t, ctx.me)),
+            digest_text(
+                &t.digest_with(false)?,
+                session_level(t, ctx.me),
+                args.is("UserPromptSubmit"),
+            ),
             None,
         )
     };
@@ -566,14 +579,16 @@ mod digest_cost_tests {
     }
 
     #[test]
-    fn a_refused_room_alone_prints_nothing_at_a_prompt_at_any_level() {
+    fn a_refused_room_alone_prints_nothing_at_a_tool_call_at_any_level_but_is_told_at_a_prompt() {
         for level in [
             BudgetLevel::Full,
             BudgetLevel::Short,
             BudgetLevel::Few,
             BudgetLevel::CountOnly,
         ] {
-            assert_eq!(digest_text(&refused_only(), level), "");
+            assert_eq!(digest_text(&refused_only(), level, false), "");
+            let said = digest_text(&refused_only(), level, true);
+            assert!(said.contains("room vault not shown: clearance"), "{said}");
         }
     }
 
