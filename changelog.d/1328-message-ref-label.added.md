@@ -1,0 +1,1 @@
+- An ask ref of kind `message` is now checked against the label: the store answers a message id with its room (a read only), and the ask label must cover that room, as for `room` and `ask` refs (#1328). An unknown id is accepted like a missing room; a `run` ref has no room and stays shape only.

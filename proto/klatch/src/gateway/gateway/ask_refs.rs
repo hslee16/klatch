@@ -63,7 +63,13 @@ impl<S: Store> Gateway<S> {
             )));
         }
         for r in refs {
-            let Some(target) = crate::domain::named_room(&r.kind, &r.value) else {
+            // a `message` ref is judged by the room that holds the message; an id no message has counts as a room
+            // that does not exist, which is the lowest label (as a `room` ref to one does), so a refusal never
+            // tells an asker which ids exist (#1328). A `run` has no room and stays a shape-only check.
+            let Some(target) = (match r.kind.as_str() {
+                "message" => self.store.message_room(&r.value)?,
+                _ => crate::domain::named_room(&r.kind, &r.value),
+            }) else {
                 continue;
             };
             if target == room {

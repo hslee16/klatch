@@ -227,3 +227,57 @@ fn a_non_member_cannot_post_an_ask_with_refs() {
         &[r("pr", "#1")]
     )));
 }
+
+#[test]
+fn a_message_ref_must_name_a_message_in_a_room_the_ask_label_covers() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    let high = g.post(&alice(), "vault", "hidden").unwrap().id;
+    let low = g.post(&alice(), "r", "visible").unwrap().id;
+    // a public ask may not point at a message above its own label, and the refusal is the room ref's
+    let e = ask(&g, &[r("message", &high)]).unwrap_err();
+    assert_eq!(rule_of(e), "label");
+    assert!(nothing_posted_after(&g, 1));
+    // a message at or below the label is fine
+    ask(&g, &[r("message", &low)]).unwrap();
+    // an ask in the vault may point at a vault message
+    g.post_ask(
+        &alice(),
+        ("vault", "seeking: x", None),
+        None,
+        &[r("message", &high)],
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_message_ref_to_an_unknown_id_behaves_as_a_ref_to_an_unknown_room() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    // accepted, exactly as a room that does not exist is (it counts as the lowest label), so a refusal never
+    // tells an asker which ids exist
+    ask(&g, &[r("message", "no-such-id"), r("room", "no-such-room")]).unwrap();
+}
+
+#[test]
+fn a_message_ref_refusal_is_the_same_whether_the_message_is_above_the_label_or_the_room_is() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    let high = g.post(&alice(), "vault", "hidden").unwrap().id;
+    let by_message = ask(&g, &[r("message", &high)]).unwrap_err();
+    let by_room = ask(&g, &[r("room", "vault")]).unwrap_err();
+    assert_eq!(format!("{by_message:?}"), format!("{by_room:?}"));
+    assert!(!format!("{by_message:?}").contains(&high));
+}
+
+fn nothing_posted_after(g: &Gateway<SpyStore>, n: usize) -> bool {
+    g.read(&bob(), "r", false).unwrap().len() < n + 1 && g.open_asks(&alice(), "r").unwrap().is_empty()
+}
