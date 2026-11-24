@@ -1,7 +1,7 @@
 """The per-run record schema of SPEC section 7.1 and its validation. Fields that do not apply are null, never omitted."""
 
 SCHEMA_VERSION = 1
-OUTCOMES = ("ok", "timeout", "spend-cap", "crash", "error")
+OUTCOMES = ("ok", "timeout", "spend-cap", "crash", "error", "trigger-not-fired")
 REQUIRED_KEYS = ("schema", "run_id", "milestone", "scenario", "topology", "arm", "arm_text_version", "fixture", "seed",
                  "valid", "supersedes", "models", "claude_code_version", "klatch", "temperature", "caps", "start",
                  "end", "wall_s", "time_to_first_pass_s", "outcome", "spend", "turns", "tokens", "tool_calls",

@@ -259,6 +259,105 @@ class TestOrderAndInterfaces(unittest.TestCase):
         self.assertFalse(ids(r)["report"])
 
 
+LOADER_SLICES = '''"""Loader with precomputed slices."""
+import json, os
+_HERE = os.path.dirname(os.path.abspath(__file__))
+def load(data_path=None, schema_path=None):
+    schema_path = schema_path or os.path.join(_HERE, "schema.json")
+    data_path = data_path or os.path.join(os.path.dirname(_HERE), "data", "inventory.dat")
+    with open(schema_path) as f:
+        spans = [(fd["name"], slice(fd["start"], fd["end"])) for fd in json.load(f)["fields"]]
+    out = []
+    with open(data_path) as f:
+        for raw in f.read().splitlines():
+            if raw.strip():
+                rec = {name: raw[s].strip() for name, s in spans}
+                rec["qty"] = int(rec["qty"])
+                out.append(rec)
+    return out
+'''
+BINS_DICT = '''import collections, re
+Bin = collections.namedtuple("Bin", "pfx num")
+LEGACY = {"%(legacy)s": ("%(new)s", %(offset)d)}
+def parse_bin(raw):
+    m = re.fullmatch(r"([A-Z]{2})[-/]?(\\d+)", raw.strip())
+    if not m:
+        raise ValueError(raw)
+    return Bin(m.group(1), int(m.group(2)))
+def canonical_bin(raw):
+    b = parse_bin(raw)
+    pfx, off = LEGACY.get(b.pfx, (b.pfx, 0))
+    return "%%s-%%05d" %% (pfx, b.num + off)
+'''
+REPORT_COUNTER = '''import collections
+from chainkit.loader import load
+from chainkit.bins import canonical_bin
+def bin_totals(data_path=None):
+    c = collections.Counter()
+    for r in load(data_path):
+        c[canonical_bin(r["bin"])] += r["qty"]
+    return dict(c)
+'''
+
+
+class TestAlternativeCorrectSolutions(unittest.TestCase):
+    """The independent review's variants V1 to V6 (#1461), kept as regression tests (#1525): structurally different correct
+    solutions are all accepted, in full, with the order right."""
+
+    def check_full(self, cs):
+        r = run_check(cs)
+        self.assertTrue(r["correct"], (ids(r), r["order"], r["lost_at_handoff"]))
+        self.assertEqual(r["units_completed"], 4)
+        self.assertEqual(r["order"], {"loader_after_schema": True, "report_after_loader": True})
+        return r
+
+    def test_v1_the_reference_in_the_normal_order(self):
+        self.check_full(reference_commits())
+
+    def test_v2_a_loader_with_slices(self):
+        self.check_full(with_change(1, "chainkit/loader.py", lambda t: LOADER_SLICES))
+
+    def test_v3_bins_with_a_legacy_table(self):
+        self.check_full(with_change(2, "chainkit/bins.py", lambda t: BINS_DICT % quirk()))
+
+    def test_v4_parse_bin_without_strip(self):
+        self.check_full(with_change(2, "chainkit/bins.py", lambda t: t.replace("_BIN.fullmatch(raw.strip())", "_BIN.fullmatch(raw)")))
+
+    def test_v5_a_report_with_a_counter(self):
+        self.check_full(with_change(3, "chainkit/report.py", lambda t: REPORT_COUNTER))
+
+    def test_v6_a_report_that_passes_the_arguments_by_keyword(self):
+        self.check_full(with_change(3, "chainkit/report.py",
+                                    lambda t: t.replace("loader.load(data_path)", "loader.load(data_path=data_path, schema_path=None)")))
+
+    def test_b_pulls_a_schema_then_commits_the_loader_is_in_order(self):
+        cs = reference_commits()
+        cs.insert(1, ("a", {"chainkit/bins.py": ref("bins_partial.py")}))  # an unrelated commit between: still in order
+        cs.pop(0)
+        cs.insert(0, ("a", {"chainkit/schema.json": ref("schema.json")}))
+        self.check_full(cs)
+
+
+class TestTheSchemaBypass(unittest.TestCase):
+    """#1525 (I5): a loader committed together with a schema file the loader's own author made does not follow a's step."""
+
+    def test_the_loader_and_its_own_schema_in_one_commit_are_out_of_order(self):
+        cs = reference_commits()
+        cs[0] = ("a", {"chainkit/bins.py": ref("bins_partial.py")})
+        cs[1] = ("b", {"chainkit/schema.json": ref("schema.json"), "chainkit/loader.py": ref("loader.py")})
+        r = run_check(cs)
+        self.assertFalse(r["order"]["loader_after_schema"])
+        self.assertFalse(ids(r)["order-loader-after-schema"])
+        self.assertFalse(r["correct"])
+
+    def test_the_loader_committed_first_with_a_schema_then_a_schema_later_is_out_of_order(self):
+        cs = reference_commits()
+        cs[0], cs[1] = ("b", {"chainkit/loader.py": ref("loader.py"), "chainkit/schema.json": ref("schema.json")}), \
+            ("a", {"chainkit/bins.py": ref("bins_partial.py")})
+        r = run_check(cs)
+        self.assertFalse(r["order"]["loader_after_schema"])
+
+
 class TestMergeState(unittest.TestCase):
     def test_conflict_markers_are_a_conflicts_left_state(self):
         cs = with_change(2, "chainkit/bins.py", lambda t: t + "\n<<<<<<< HEAD\nx = 1\n=======\nx = 2\n>>>>>>> origin/main\n")

@@ -139,10 +139,12 @@ on; the others are secondary.
 
 - Task text: "Four tickets are open on the tallykit repository. You own the ticket named {{TICKET}}. Implement it so that
   its tests pass, publish it to main, and make sure main passes the full test run when you finish." Ticket A to D each
-  implement one stub module (parser, formatter, scheduler, exporter) of a 10-module package; every ticket also needs one
-  line added to a shared registry file and one line in a shared changelog, which are the only collisions.
-- Fixture: F1 `tallykit`, a Python package with 10 modules, 4 of them stubs raising `NotImplementedError`, each with a
-  visible test file, a registry file `tallykit/registry.py` and `CHANGELOG.md`.
+  implement two stub modules (A: units, tokenizer; B: dates, checksum; C: slug, roman; D: rle, matrix) of an eight-module
+  package; every ticket also needs one line added to a shared registry file and one line in a shared changelog, which are
+  the only collisions.
+- Fixture: F1 `tallykit`, a Python package with eight modules, all of them stubs raising `NotImplementedError`, each with a
+  visible test file, a registry `tallykit/__init__.py` and `CHANGELOG.md` (the fixture's own README says the same; the
+  first draft of this section named ten modules and a `registry.py`).
 - Success: main contains all four implementations, no conflict markers, the visible tests pass, and the hidden check passes:
   hidden property tests per module on seeded inputs (the visible tests are weaker), the registry has exactly four new
   entries, the changelog has four new lines. Per ticket a pass or fail.
@@ -366,7 +368,8 @@ bug.
 ### 6.4 Ties, aborted runs and invalid runs
 
 - Ties in rank tests use average ranks. Exact tied values (for example every run completed 4 of 4) are reported as a rate.
-- Every run stays in the ledger. A run with outcome `timeout`, `spend-cap`, `crash` or `error` counts as a run in the
+- Every run stays in the ledger. A run with outcome `timeout`, `spend-cap`, `crash`, `error` or `trigger-not-fired` (S6: the
+  kill never fired) counts as a run in the
   denominator and is scored on what its hidden checker found (usually zero units), not dropped. A censored measure
   (a wall time that hit the cap) is entered at the cap value and marked censored; the report gives the count of censored
   runs next to the median and the test is repeated with the censored values removed as a sensitivity line.
@@ -438,7 +441,8 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
 }
 ```
 
-`outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`. The scenario's checks are listed in
+`outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`, or `trigger-not-fired` (S6 only: the
+kill trigger never fired, so the run did not test recovery; it is valid and stays in the ledger, #1525). The scenario's checks are listed in
 `outcome_checks` with their ids; `units_completed` is derived from them. Fields that do not apply are `null`, never
 omitted. A run in an arm that cannot take part is not recorded at all; the scenario list says which.
 

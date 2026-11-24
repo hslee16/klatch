@@ -114,25 +114,64 @@ class TestKiller(unittest.TestCase):
     def killer(self, arm, probe=None, spec=None):
         return recovery.Killer(spec or SCN["kill_agent"], arm, ["recoverkit/bits.py"], probe or StubProbe(), git_every_s=0)
 
-    def test_k_arm_conditions_all_hold(self):
+    def test_k_arm_conditions_all_hold_and_the_claim_and_the_ask_are_only_observed(self):
         s = Stream().klatch("claim lobby recoverkit/bits.py").hook(ASKTEXT).write("recoverkit/bits.py")
         due = self.killer("K2").poll(s.lines)
         self.assertEqual(due["trigger"], "conditions")
-        self.assertEqual(sorted(due["conditions"]), ["ask_open", "claimed", "edited", "no_commit"])
+        self.assertEqual(sorted(due["conditions"]), ["edited", "no_commit"])
+        self.assertTrue(due["observed"]["claim_held"])
+        self.assertTrue(due["observed"]["ask_open"])
 
-    def test_nothing_fires_while_one_condition_is_missing(self):
+    def test_nothing_fires_before_the_module_is_edited(self):
         base = Stream().klatch("claim lobby recoverkit/bits.py").hook(ASKTEXT)
         self.assertIsNone(self.killer("K2").poll(base.lines), "not edited yet")
-        s = Stream().hook(ASKTEXT).write("recoverkit/bits.py")
-        self.assertIsNone(self.killer("K2").poll(s.lines), "no claim yet")
-        s = Stream().klatch("claim lobby recoverkit/bits.py").write("recoverkit/bits.py")
-        self.assertIsNone(self.killer("K2").poll(s.lines), "the ask has not arrived")
 
-    def test_b1_needs_the_board_line_on_origin_and_no_commit_of_the_module(self):
+    def test_an_arm_neutral_trigger_fires_without_a_claim_or_an_ask(self):
+        """#1525 (I6): the trigger no longer depends on what only some arms can do."""
+        s = Stream().write("recoverkit/bits.py")
+        due = self.killer("K2").poll(s.lines)
+        self.assertEqual(due["trigger"], "conditions")
+        self.assertFalse(due["observed"]["claim_held"])
+        self.assertFalse(due["observed"]["ask_open"])
+
+    def test_b1_needs_no_commit_of_the_module_and_the_board_line_is_only_observed(self):
         s = Stream().hook(ASKTEXT).write("recoverkit/bits.py")
-        self.assertIsNone(self.killer("B1", StubProbe(board=False)).poll(s.lines))
         self.assertIsNone(self.killer("B1", StubProbe(committed=True)).poll(s.lines), "it already committed the module")
-        self.assertEqual(self.killer("B1", StubProbe()).poll(s.lines)["trigger"], "conditions")
+        due = self.killer("B1", StubProbe(board=False)).poll(s.lines)
+        self.assertEqual(due["trigger"], "conditions")
+        self.assertFalse(due["observed"]["board_working"])
+        self.assertTrue(self.killer("B1", StubProbe()).poll(s.lines)["observed"]["board_working"])
+
+    def test_every_arm_has_the_same_conditions_in_every_variant(self):
+        for variant in (None, "claim", "ask"):
+            spec = recovery.kill_spec(SCN, variant)
+            self.assertFalse([c for c in spec["after"] if c.get("arms")], "a condition for some arms only: %s" % variant)
+            seen = set()
+            for arm in ("B0", "B1", "K1", "K2", "K3", "B1-roles"):
+                k = recovery.Killer(spec, arm, ["recoverkit/bits.py"], StubProbe(), git_every_s=0)
+                seen.add(tuple(sorted(k.conditions(recovery.victim_state([], ["recoverkit/bits.py"], "")))))
+            self.assertEqual(len(seen), 1, (variant, seen))
+
+    def test_the_ask_variant_waits_for_turns_in_every_arm(self):
+        spec = recovery.kill_spec(SCN, "ask")
+        for arm in ("B0", "B1", "K2"):
+            k = recovery.Killer(spec, arm, ["recoverkit/bits.py"], StubProbe(), git_every_s=0)
+            s = Stream()
+            for _ in range(5):
+                s.bash("ls")
+            self.assertIsNone(k.poll(s.lines), arm)
+            self.assertEqual(k.poll(s.bash("ls").lines)["trigger"], "conditions", arm)
+
+    def test_an_unfired_trigger_is_its_own_outcome_and_the_run_stays_valid(self):
+        self.assertEqual(recovery.NOT_FIRED, "trigger-not-fired")
+        fired, unfired = {"fired": True}, {"fired": False, "reason": "x"}
+        self.assertEqual(recovery.outcome_when_unfired(fired, "ok"), "ok")
+        self.assertEqual(recovery.outcome_when_unfired(unfired, None), "trigger-not-fired")
+        self.assertEqual(recovery.outcome_when_unfired(unfired, "ok"), "trigger-not-fired")
+        self.assertEqual(recovery.outcome_when_unfired(unfired, "crash"), "trigger-not-fired")
+        self.assertEqual(recovery.outcome_when_unfired(unfired, "timeout"), "timeout", "a cap that ended the run stays")
+        self.assertEqual(recovery.outcome_when_unfired(unfired, "spend-cap"), "spend-cap")
+        self.assertEqual(recovery.outcome_when_unfired(None, "ok"), "ok", "no kill option, nothing to settle")
 
     def test_b0_has_only_the_edit_and_the_git_condition(self):
         s = Stream().write("recoverkit/bits.py")

@@ -248,12 +248,37 @@ class Killer:
         st = victim_state(lines, self.unit_paths, self.spec.get("ask_pattern", ""))
         conds = self.conditions(st)
         self._last_git = time.monotonic()
+        due = None
         if conds and all(conds.values()):
-            return {"trigger": "conditions", "turns": st["turns"], "conditions": conds}
-        fb = self.spec.get("fallback_turns")
-        if fb and st["turns"] >= fb:
-            return {"trigger": "fallback", "turns": st["turns"], "conditions": conds}
-        return None
+            due = {"trigger": "conditions", "turns": st["turns"], "conditions": conds}
+        else:
+            fb = self.spec.get("fallback_turns")
+            if fb and st["turns"] >= fb:
+                due = {"trigger": "fallback", "turns": st["turns"], "conditions": conds}
+        if due is not None:
+            due["observed"] = self.observed(st)
+        return due
+
+    def observed(self, st):
+        """What the victim held or had been asked when the kill fell due: recorded, never part of the trigger, so the trigger
+        is the same in every arm (#1525). board_working is read from git for the B1 arms only (B0 has no board)."""
+        out = {"claim_held": bool(st["claims"]), "ask_claim_held": bool(st["ask_claims"]), "ask_open": st["ask_open"]}
+        if self.arm in ("B1", "B1-roles"):
+            out["board_working"] = bool(self.probe.board_working(self.victim))
+        return out
+
+
+NOT_FIRED = "trigger-not-fired"
+
+
+def outcome_when_unfired(kill_rec, outcome):
+    """The run's outcome once the kill record is known (#1525, SPEC 6.4). A run whose kill trigger never fired (the victim
+    exited first, or the run ended first) is its own outcome, trigger-not-fired, and stays valid: it is not the harness or
+    the environment that broke, and what the agents did is not a reason to drop a run. A cap that ended the run (timeout,
+    spend-cap) stays the outcome. A fired kill, or no kill record at all, leaves the outcome alone."""
+    if not kill_rec or kill_rec.get("fired"):
+        return outcome
+    return outcome if outcome in ("timeout", "spend-cap") else NOT_FIRED
 
 
 def kill_spec(scn, variant=None):

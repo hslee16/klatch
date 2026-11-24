@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Make chainkit/schema.json from data/ruler.txt: the column spans of the fixed-width inventory file.
+"""Make chainkit/schema.json from a ruler: the column spans of the fixed-width inventory file.
 
-Run from the repository root: python3 tools/make_schema.py
-The ruler is one line, name=width pairs separated by commas, in column order.
+Run from the repository root: python3 tools/make_schema.py RULER
+The ruler is one argument, name=width pairs separated by commas, in column order. It is not kept in the repository (it
+comes from the vendor of the data file), so whoever makes the schema has to be given it.
 """
 import json
 import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main():
-    with open(os.path.join(ROOT, "data", "ruler.txt")) as f:
-        pairs = [p.split("=") for p in f.read().strip().split(",")]
+    if len(sys.argv) != 2:
+        sys.exit("usage: python3 tools/make_schema.py RULER   (name=width pairs, comma separated, in column order)")
+    pairs = [p.split("=") for p in sys.argv[1].strip().split(",")]
     fields, pos = [], 0
     for name, width in pairs:
         fields.append({"name": name, "start": pos, "end": pos + int(width)})

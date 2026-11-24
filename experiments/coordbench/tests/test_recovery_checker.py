@@ -253,6 +253,96 @@ class TestChecker(unittest.TestCase):
         self.assertEqual(out["units_completed"], 3)
 
 
+BITS_REF = open(os.path.join(REF, "bits.py")).read()
+
+BITS_SHIFT = '''"""Bit operations by shifting; test_bit returns the 0 or 1 of the shift, not a bool."""
+
+
+def _chk(index):
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index <= 15:
+        raise ValueError(index)
+    return index
+
+
+def set_bit(mask, index):
+    return mask | (1 << _chk(index))
+
+
+def clear_bit(mask, index):
+    return (mask & ~(1 << _chk(index))) & 0xFFFF
+
+
+def test_bit(mask, index):
+    return (mask >> _chk(index)) & 1
+
+
+def popcount(mask):
+    n = 0
+    mask &= 0xFFFF
+    while mask:
+        mask &= mask - 1
+        n += 1
+    return n
+
+
+def bit_indexes(mask):
+    return [i for i in range(16) if (mask >> i) & 1]
+'''
+
+
+class TestBitsAlternatives(unittest.TestCase):
+    """Structurally different correct bits modules and gaming attempts (the independent review of #1461, kept as regression
+    tests, #1525). The module is the victim's unit and is tested on its own."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="recovery-alt-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def bits(self, text):
+        out = run_check(build(self.tmp, [("a", {"ranges": "ref"}), ("b", {"wrap": "ref", "pairs": "ref"}), ("b", {"bits": text})]))
+        return out, passed(out)
+
+    def test_a_test_bit_that_returns_the_masked_int_passes_and_recovers(self):
+        out, p = self.bits(BITS_REF.replace("return bool(mask & _bit(index))", "return mask & _bit(index)"))
+        self.assertTrue(p["bits"], "a truthy int is a right answer for test_bit")
+        self.assertTrue(p["recovered"])
+        self.assertEqual(out["units_completed"], 4)
+        self.assertTrue(out["correct"])
+
+    def test_a_test_bit_that_returns_zero_or_one_passes(self):
+        out, p = self.bits(BITS_SHIFT)
+        self.assertTrue(p["bits"])
+        self.assertTrue(out["correct"])
+
+    def test_a_test_bit_that_returns_a_bool_still_passes(self):
+        out, p = self.bits(BITS_REF)
+        self.assertTrue(p["bits"])
+
+    def test_a_loop_based_popcount_and_a_comprehension_for_bit_indexes_pass(self):
+        out, p = self.bits(BITS_SHIFT.replace("return (mask >> _chk(index)) & 1", "return bool((mask >> _chk(index)) & 1)"))
+        self.assertTrue(p["bits"])
+
+    def test_a_test_bit_with_the_wrong_sense_fails(self):
+        out, p = self.bits(BITS_SHIFT.replace("& 1\n\n\ndef popcount", "^ 1\n\n\ndef popcount"))
+        self.assertFalse(p["bits"], "the inverted answer is wrong whatever its type")
+        self.assertFalse(out["correct"])
+
+    def test_a_test_bit_that_is_always_true_fails(self):
+        out, p = self.bits(BITS_REF.replace("return bool(mask & _bit(index))", "_bit(index)\n    return True"))
+        self.assertFalse(p["bits"])
+
+    def test_a_test_bit_that_accepts_an_out_of_range_position_fails(self):
+        out, p = self.bits(BITS_REF.replace("return bool(mask & _bit(index))", "return bool(mask & (1 << index))"))
+        self.assertFalse(p["bits"], "the contract raises ValueError outside 0 to 15")
+
+    def test_hard_coded_answers_for_the_visible_examples_fail(self):
+        stub = ("def set_bit(mask, index):\n    return {(0, 0): 1, (0, 15): 0x8000}.get((mask, index), mask)\n"
+                "def clear_bit(mask, index):\n    return mask\n\ndef test_bit(mask, index):\n    return True\n"
+                "def popcount(mask):\n    return 0\n\ndef bit_indexes(mask):\n    return []\n")
+        out, p = self.bits(stub)
+        self.assertFalse(p["bits"])
+
+
 class TestFixture(unittest.TestCase):
     def test_setup_copies_the_template_and_never_the_reference_or_the_checker(self):
         with tempfile.TemporaryDirectory() as d:

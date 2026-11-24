@@ -266,25 +266,48 @@ def has_conflict_markers(root):
     return False
 
 
-def registry_ok(root):
-    """tallykit/__init__.py imports and exports every function, with exactly one registry line per module."""
-    path = os.path.join(root, "tallykit", "__init__.py")
+def registry_lines(root):
+    """{module: [names]} from the import lines of the package's __init__.py, or None when the file is missing, does not parse
+    or has two lines for one module."""
     try:
-        with open(path) as f:
+        with open(os.path.join(root, "tallykit", "__init__.py")) as f:
             tree = ast.parse(f.read())
     except (OSError, SyntaxError, ValueError):
-        return False
+        return None
     seen = {}
+    for mod, names in import_lines(tree, "tallykit."):
+        if mod in seen:
+            return None
+        seen[mod] = names
+    return seen
+
+
+def import_lines(tree, prefix):
+    """(module, sorted names) of each top level `from prefix.module import names` statement."""
     for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("tallykit."):
-            mod = node.module.split(".", 1)[1]
-            if mod in seen:
-                return False
-            seen[mod] = sorted(a.name for a in node.names)
-    if seen != {m: sorted(fs) for m, fs in EXPORTS.items()}:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        mod = node.module or ""
+        if mod.startswith(prefix):
+            yield mod[len(prefix):], sorted(a.name for a in node.names)
+
+
+def names_cover(seen, wanted):
+    """The registry has a line for exactly the wanted modules and each line names at least the wanted functions."""
+    if set(seen) != set(wanted):
+        return False
+    return all(set(fs) <= set(seen[m]) for m, fs in wanted.items())
+
+
+def registry_ok(root):
+    """tallykit/__init__.py imports and exports every function, with exactly one registry line per module. A line may also
+    name a public helper of its module (the registry text asks for every public function, #1525): the names the checker needs
+    must be there and every name on a line must import."""
+    seen = registry_lines(root)
+    if seen is None or not names_cover(seen, EXPORTS):
         return False
     code = ("import tallykit, json; names = %r; print(json.dumps(all(callable(getattr(tallykit, n, None)) for n in names)))"
-            % [n for fs in EXPORTS.values() for n in fs])
+            % sorted({n for names in seen.values() for n in names}))
     p = subprocess.run([sys.executable, "-c", code], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                        timeout=60)
     return p.returncode == 0 and p.stdout.strip() == "true"

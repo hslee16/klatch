@@ -145,6 +145,57 @@ class TestCheckerOnReference(Base):
         self.assertNotIn("bench", pa)
 
 
+class TestRegistryAlternatives(Base):
+    """The independent review (#1461, M1): the registry text asks for every public function of a module, so a registered
+    public helper is right; the checker used to want the exact names. Kept as regression tests (#1525)."""
+
+    HELPER = "\n\ndef known_units():\n    return ['mm', 'cm', 'm', 'km']\n"
+
+    def registry(self, edit, module_edit=None):
+        def mutate(dest):
+            p = os.path.join(dest, "tallykit", "__init__.py")
+            write(p, edit(read(p)))
+            if module_edit:
+                mp = os.path.join(dest, "tallykit", "units.py")
+                write(mp, read(mp) + module_edit)
+        return by_id(self.run_variant(mutate))["registry"]["pass"]
+
+    def test_a_registered_public_helper_is_accepted(self):
+        self.assertTrue(self.registry(lambda t: t.replace("import convert_length, convert_temperature",
+                                                          "import convert_length, convert_temperature, known_units"),
+                                      self.HELPER))
+
+    def test_a_helper_defined_but_not_registered_is_still_accepted(self):
+        self.assertTrue(self.registry(lambda t: t, self.HELPER))
+
+    def test_a_registered_name_the_module_does_not_define_is_rejected(self):
+        self.assertFalse(self.registry(lambda t: t.replace("import convert_length, convert_temperature",
+                                                           "import convert_length, convert_temperature, known_units")))
+
+    def test_a_helper_registered_in_place_of_a_required_function_is_rejected(self):
+        self.assertFalse(self.registry(lambda t: t.replace("import convert_length, convert_temperature", "import convert_length, known_units"),
+                                       self.HELPER))
+
+    def test_the_registry_as_parenthesised_multi_line_imports_is_accepted(self):
+        def paren(t):
+            out = []
+            for line in t.splitlines():
+                if line.startswith("from tallykit.") and " import " in line:
+                    head, names = line.split(" import ")
+                    out.append("%s import (\n    %s,\n)" % (head, ",\n    ".join(n.strip() for n in names.split(","))))
+                else:
+                    out.append(line)
+            return "\n".join(out) + "\n"
+        self.assertTrue(self.registry(paren))
+
+    def test_a_module_registered_twice_is_rejected(self):
+        self.assertFalse(self.registry(lambda t: t + "from tallykit.slug import slugify\n"))
+
+    def test_a_star_import_is_not_a_registry_line(self):
+        self.assertFalse(self.registry(lambda t: t.replace("from tallykit.units import convert_length, convert_temperature",
+                                                           "from tallykit.units import *")))
+
+
 class TestCheckerOnBrokenVariants(Base):
     def test_a_module_missing(self):
         r = self.run_variant(done=[m for m in MODULES if m != "roman"])

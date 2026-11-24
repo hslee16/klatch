@@ -1,1 +1,0 @@
-note=12,bin=9,sku=6,qty=5

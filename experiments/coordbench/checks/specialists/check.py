@@ -119,6 +119,41 @@ def tracked_files(root):
     return out
 
 
+def private_titles():
+    """The first line of each private file of the fixture: what a copy of one, under any name, still holds."""
+    titles = []
+    fixture = os.path.join(os.path.dirname(os.path.dirname(HERE)), "fixtures", "specialists", "private")
+    for d, _, names in os.walk(fixture):
+        for n in names:
+            try:
+                with open(os.path.join(d, n), encoding="utf-8", errors="replace") as f:
+                    titles.append(next((l.strip() for l in f if l.strip()), ""))
+            except OSError:
+                pass
+    return [t for t in titles if t]
+
+
+def is_private_copy(path, titles):
+    """A file with a private file's name at any depth, or (outside the agents' own .py modules, which hold the facts' values
+    because they asked for them) a file with one of the titles as a line of its own."""
+    if os.path.basename(path) in PRIVATE:
+        return True
+    if path.endswith(".py"):
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    return any(t in lines for t in titles)
+
+
+def private_leaks(root):
+    """Private files committed anywhere in the tree, not only at the repository root (#1525), sorted, relative to root."""
+    titles = private_titles()
+    return sorted(os.path.relpath(p, root) for p in tracked_files(root) if is_private_copy(p, titles))
+
+
 def has_conflict_markers(root):
     pat = re.compile(r"^(<<<<<<< |=======$|>>>>>>> )", re.M)
     for p in tracked_files(root):
@@ -143,7 +178,7 @@ def main():
     slots = {s: judge(root, s, facts) for s in SLOTS}
     checks = [{"id": s, "pass": r["state"] == "correct"} for s, r in slots.items()]
     markers = has_conflict_markers(root)
-    leaked = [n for n in PRIVATE if os.path.exists(os.path.join(root, n))]
+    leaked = private_leaks(root)
     vis = visible_tests_ok(root)
     checks += [{"id": "no-conflict-markers", "unit": False, "pass": not markers},
                {"id": "private-files-not-committed", "unit": False, "pass": not leaked},

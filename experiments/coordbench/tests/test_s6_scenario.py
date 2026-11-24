@@ -86,11 +86,11 @@ class TestScenarioFile(unittest.TestCase):
         claim = recovery.kill_spec(self.scn, "claim")
         ask = recovery.kill_spec(self.scn, "ask")
         kinds = lambda spec: [c["kind"] for c in spec["after"]]  # noqa: E731
-        self.assertEqual(kinds(default), ["edited", "claimed", "board_working", "ask_open", "no_commit"])
-        self.assertNotIn("ask_open", kinds(claim))
-        self.assertIn("edited", kinds(claim))
-        self.assertNotIn("edited", kinds(ask))
-        self.assertIn("ask_open", kinds(ask))
+        self.assertEqual(kinds(default), ["edited", "no_commit"], "arm-neutral: nothing only some arms can do (#1525)")
+        self.assertEqual(kinds(claim), ["edited", "no_commit"])
+        self.assertEqual(kinds(ask), ["turns"])
+        for spec in (default, claim, ask):
+            self.assertFalse([c for c in spec["after"] if "arms" in c], spec)
         self.assertEqual(recovery.kill_spec({"id": "x"}), None)
 
     def test_the_reference_checker_names_the_victim_the_scenario_names(self):
@@ -201,9 +201,10 @@ class TestReferenceRecovery(S6Base):
         self.assertTrue(sm["correct"], sm)
         k = sm["kill"]
         self.assertEqual(k["trigger"], "conditions")
-        for c in ("edited", "board_working", "ask_open", "no_commit"):
-            self.assertTrue(k["conditions"][c], c)
-        self.assertNotIn("claimed", k["conditions"])
+        self.assertEqual(sorted(k["conditions"]), ["edited", "no_commit"])
+        for c in ("board_working", "ask_open"):
+            self.assertTrue(k["observed"][c], c)
+        self.assertFalse(k["observed"]["claim_held"])
         self.assertIsNotNone(sm["time_to_ask_answer_s"])
         self.assertEqual(sm["first_survivor_action"]["kind"] in ("edit", "answer"), True)
         self.assertEqual(sm["false_alarms"], 0)
@@ -214,9 +215,9 @@ class TestReferenceRecovery(S6Base):
         self.assertTrue(r["valid"], r["notes"])
         k = sm["kill"]
         self.assertEqual(k["trigger"], "conditions")
-        for c in ("edited", "claimed", "ask_open", "no_commit"):
-            self.assertTrue(k["conditions"][c], c)
-        self.assertNotIn("board_working", k["conditions"])
+        self.assertEqual(sorted(k["conditions"]), ["edited", "no_commit"])
+        for c in ("claim_held", "ask_open"):
+            self.assertTrue(k["observed"][c], c)
         self.assertTrue(sm["correct"] and sm["recovered"], sm)
         self.assertIsInstance(sm["noticed_by"], list)
         self.assertIn("claim_ops", dir(recovery))
@@ -258,6 +259,7 @@ class TestFailureModes(S6Base):
         b = B_BASE + [KILLED, cp("bits"), SYNC("bits, taken over"), {"op": "final", "text": "DONE b"}]
         r, sm = self.one({"a": a, "b": b, "c": c}, arm="B1", variant="claim")
         self.assertNotIn("ask_open", sm["kill"]["conditions"])
+        self.assertFalse(sm["kill"]["observed"]["ask_open"], "c had answered before the kill")
         self.assertTrue(sm["recovered"])
         self.assertTrue(sm["ask_answered"])
         self.assertTrue(sm["correct"], sm)
@@ -314,9 +316,9 @@ class TestFailureModes(S6Base):
         b = [{"op": "final", "text": "DONE b"}]
         r, sm = self.one({"a": a, "b": b, "c": quiet})
         self.assertFalse(sm["kill"]["fired"])
-        self.assertFalse(r["valid"])
+        self.assertTrue(r["valid"], "SPEC 6.4: a run is never invalid because of what the agents did (#1525)")
         self.assertIn("kill", r["notes"])
-        self.assertEqual(r["outcome"], "ok")
+        self.assertEqual(r["outcome"], "trigger-not-fired")
 
     def test_the_fallback_kills_a_victim_that_never_meets_the_conditions(self):
         c = [{"op": "poll", "n": 30, "command": "ls"}, {"op": "hang"}]
@@ -330,27 +332,29 @@ class TestFailureModes(S6Base):
 
 
 class TestVariants(S6Base):
-    def test_variant_claim_drops_the_ask_from_the_trigger_and_is_never_pooled(self):
+    def test_variant_claim_has_the_arm_neutral_trigger_and_is_never_pooled(self):
         r, sm = self.one(arm="B1", variant="claim")
         self.assertEqual(r["scenario"], "recovery-claim")
-        self.assertNotIn("ask_open", sm["kill"]["conditions"])
+        self.assertEqual(sorted(sm["kill"]["conditions"]), ["edited", "no_commit"])
         self.assertEqual(sm["kill"]["trigger"], "conditions")
-        self.assertTrue(sm["kill"]["conditions"]["board_working"])
+        self.assertTrue(sm["kill"]["observed"]["board_working"])
 
-    def test_variant_ask_kills_once_the_question_has_arrived_unanswered(self):
-        c = [ASK, {"op": "hang"}]
+    def test_variant_ask_kills_at_the_same_turn_count_in_every_arm_and_records_whether_the_question_arrived(self):
+        c = [ASK, {"op": "poll", "n": 8, "command": "ls"}, {"op": "hang"}]
         r, sm = self.one({"a": [KILLED, {"op": "final", "text": "DONE a"}], "b": [KILLED, {"op": "final", "text": "DONE b"}],
                           "c": c}, arm="B1", variant="ask")
         self.assertEqual(r["scenario"], "recovery-ask")
         self.assertEqual(sm["kill"]["trigger"], "conditions")
-        self.assertEqual(list(sm["kill"]["conditions"]), ["ask_open"])
+        self.assertEqual(list(sm["kill"]["conditions"]), ["turns"])
+        self.assertTrue(sm["kill"]["observed"]["ask_open"])
 
-    def test_variant_ask_on_b0_uses_turns_because_b0_cannot_ask(self):
+    def test_variant_ask_on_b0_is_the_same_trigger(self):
         c = [{"op": "poll", "n": 8, "command": "ls"}, {"op": "hang"}]
         r, sm = self.one({"a": [KILLED, {"op": "final", "text": "DONE a"}], "b": [KILLED, {"op": "final", "text": "DONE b"}],
                           "c": c}, arm="B0", variant="ask")
         self.assertEqual(sm["kill"]["trigger"], "conditions")
         self.assertEqual(list(sm["kill"]["conditions"]), ["turns"])
+        self.assertFalse(sm["kill"]["observed"]["ask_open"], "B0 cannot be asked, recorded not required")
 
 
 if __name__ == "__main__":

@@ -146,6 +146,47 @@ class TestChecker(unittest.TestCase):
         self.assertFalse(ids["private-files-not-committed"])
         self.assertFalse(ids["no-conflict-markers"])
 
+    def leaked(self, co):
+        r = co.check()
+        return r["private_files_committed"], {c["id"]: c["pass"] for c in r["checks"]}["private-files-not-committed"], r["correct"]
+
+    def test_a_private_file_committed_below_the_root_is_found(self):
+        """The independent review (#1461, M4, kept as regression tests, #1525): only the repository root was looked at."""
+        co = Checkout(self).reference()
+        os.makedirs(os.path.join(co.dir, "docs"))
+        shutil.copy(os.path.join(FIX, "private", "c", "SPEC-LEDGER.md"), os.path.join(co.dir, "docs", "SPEC-LEDGER.md"))
+        files, ok, correct = self.leaked(co)
+        self.assertEqual(files, ["docs/SPEC-LEDGER.md"])
+        self.assertFalse(ok)
+        self.assertFalse(correct)
+
+    def test_a_private_file_renamed_or_copied_under_another_name_is_found(self):
+        co = Checkout(self).reference()
+        os.makedirs(os.path.join(co.dir, "notes", "deep"))
+        shutil.copy(os.path.join(FIX, "private", "a", "SPEC-FRAMING.md"), os.path.join(co.dir, "notes", "deep", "framing-copy.txt"))
+        files, ok, _ = self.leaked(co)
+        self.assertEqual(files, ["notes/deep/framing-copy.txt"])
+        self.assertFalse(ok)
+
+    def test_a_private_file_at_the_root_is_still_found(self):
+        co = Checkout(self).reference()
+        shutil.copy(os.path.join(FIX, "private", "b", "SPEC-ROUTING.md"), os.path.join(co.dir, "SPEC-ROUTING.md"))
+        self.assertEqual(self.leaked(co)[0], ["SPEC-ROUTING.md"])
+
+    def test_the_reference_and_a_note_that_only_states_a_value_leak_nothing(self):
+        co = Checkout(self).reference()
+        os.makedirs(os.path.join(co.dir, "docs"))
+        with open(os.path.join(co.dir, "docs", "constants.md"), "w") as f:
+            f.write("# Constants\n\nFRAME_MAGIC is what the framing owner told us.\n")
+        files, ok, correct = self.leaked(co)
+        self.assertEqual(files, [])
+        self.assertTrue(ok)
+        self.assertTrue(correct)
+
+    def test_a_module_that_asks_and_uses_the_value_is_not_a_leak(self):
+        co = Checkout(self).reference()
+        self.assertEqual(self.leaked(co)[0], [])
+
     def test_structural_checks_are_not_units(self):
         r = Checkout(self).reference().check()
         units = [c for c in r["checks"] if c.get("unit") is not False]
