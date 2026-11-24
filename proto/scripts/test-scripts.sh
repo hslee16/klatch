@@ -24,7 +24,7 @@ echo "$* | seed=${HEGEL_SEED:-} cases=${HEGEL_TEST_CASES:-}" >> "$FAKE_LOG"
 case "$*" in "build -p klatch --locked --manifest-path "*) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" > /dev/null 2>&1 ;; esac
 # the licence notices check (#1034) reads the real dependency tree, so metadata, about and tree go to the real cargo (#1306)
 case "$1" in metadata | about | tree) [ -n "$REAL_CARGO" ] && exec "$REAL_CARGO" "$@" ;; esac
-case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"; exit 1; } ;; esac
+case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"; [ -n "$FAKE_NOISE" ] && { echo '#[hegel::reproduce_failure("BLOBEARLY")]'; i=0; while [ $i -lt 120 ]; do echo "note line $i"; i=$((i + 1)); done; }; exit 1; } ;; esac
 exit 0
 SH
 chmod +x "$shim/cargo"
@@ -32,7 +32,7 @@ run_gate() { # fail-pattern, args...
   FAKE_LOG="$work/log"; : > "$FAKE_LOG"
   FAKE_FAIL="$1"; shift
   # --allow-dirty: these tests run in whatever checkout they are in, which may have uncommitted changes (#763)
-  env PATH="$shim:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" REAL_CARGO="$real_cargo" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
+  env PATH="$shim:$PATH" FAKE_NOISE="${FAKE_NOISE:-}" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" REAL_CARGO="$real_cargo" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
 }
 
 # the seed the gate must derive from this commit
@@ -48,6 +48,14 @@ fi
 
 if run_gate "--test properties"; then bad "the gate passed although a property failed"; else
   if grep -q "FAILED at step" "$work/out" && grep -q "HEGEL_SEED=$want_seed" "$work/out" && grep -q "reproduce_failure" "$work/out"; then ok "a failing property prints the seed to replay it (derived from the commit) and mentions the blob"; else bad "replay hint: $(cat "$work/out")"; fi
+fi
+
+# #829: a long failing output (a model's note trace) pushes the blob out of the last 50 lines the gate shows; the gate
+# must still print the blob line and keep the full output in a file it names, so the failure can be replayed later
+if FAKE_NOISE=1 run_gate "--test properties"; then bad "the gate passed although a property failed (noisy)"; else
+  kept="$(sed -n 's/^Full output of the failed step kept in: //p' "$work/out" | sed -n 1p)"
+  if grep -q 'BLOBEARLY' "$work/out" && [ -n "$kept" ] && [ -f "$kept" ] && grep -q 'note line 0' "$kept" && grep -q 'BLOBEARLY' "$kept"; then ok "a long failing property output still shows the blob line and keeps the full output in a named file"; else bad "blob/kept log: kept='$kept' $(tail -n 12 "$work/out")"; fi
+  rm -f "${kept:-/nonexistent}"
 fi
 
 run_gate ""

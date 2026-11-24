@@ -857,7 +857,8 @@ fn mcp_stdio(
         Some(commands::DEFAULT_ROOM),
     );
     klatch::session::mcp::McpServer::new(&session, instructions)
-        .serve(std::io::stdin().lock(), std::io::stdout())?;
+        // The reader runs on its own thread, so it takes the process's stdin by value, not a lock borrowed from a temporary.
+        .serve(std::io::BufReader::new(std::io::stdin()), std::io::stdout())?;
     Ok(())
 }
 
@@ -883,7 +884,8 @@ fn acp_stdio(
         session
     };
     klatch::session::acp::AcpServer::new(&session)
-        .serve(std::io::stdin().lock(), std::io::stdout())?;
+        // The reader runs on its own thread, so it takes the process's stdin by value, not a lock borrowed from a temporary.
+        .serve(std::io::BufReader::new(std::io::stdin()), std::io::stdout())?;
     Ok(())
 }
 
