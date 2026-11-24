@@ -24,59 +24,68 @@ SEPS = ["-", "/", ""]
 N_RECORDS = 48
 
 
-def build():
-    rng = random.Random(SEED)
+def _draw_layout(rng):
+    """The field order and the width of each field."""
     order = FIELDS[:]
     rng.shuffle(order)
     width = {"sku": rng.randint(6, 8), "qty": rng.randint(4, 5), "bin": rng.randint(8, 10), "note": rng.randint(10, 14)}
+    return order, width
+
+
+def _draw_codes(rng):
+    """(the six normal prefixes, the legacy prefix, the prefix it moves to)."""
     letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
     codes = []
     while len(codes) < 8:
         c = rng.choice(letters) + rng.choice(letters)
         if c not in codes:
             codes.append(c)
-    normal, legacy, new = codes[:6], codes[6], codes[7]
-    offset = rng.randint(101, 899)
-    records = []
+    return codes[:6], codes[6], codes[7]
+
+
+def _draw_record(rng, width, legacy, normal):
+    pfx = legacy if rng.random() < 0.2 else rng.choice(normal)
+    num = rng.randint(1, 999)
+    digits = str(num).zfill(rng.choice([1, 3, 4]))
+    raw = pfx + rng.choice(SEPS) + digits
+    note = rng.choice(WORDS)
+    return {"sku": "S%05d" % (10000 + rng.randint(0, 8999)), "qty": rng.randint(1, 999), "bin": raw,
+            "note": note[:width["note"]].strip()}
+
+
+def _draw_records(rng, width, legacy, normal):
+    """N_RECORDS records, drawn again until 6 to 14 of them use the legacy prefix."""
     while True:
-        records = []
-        for i in range(N_RECORDS):
-            pfx = legacy if rng.random() < 0.2 else rng.choice(normal)
-            num = rng.randint(1, 999)
-            digits = str(num).zfill(rng.choice([1, 3, 4]))
-            raw = pfx + rng.choice(SEPS) + digits
-            note = rng.choice(WORDS)
-            records.append({"sku": "S%05d" % (10000 + rng.randint(0, 8999)), "qty": rng.randint(1, 999), "bin": raw,
-                            "note": note[:width["note"]].strip()})
+        records = [_draw_record(rng, width, legacy, normal) for _ in range(N_RECORDS)]
         if 6 <= sum(1 for r in records if r["bin"].startswith(legacy)) <= 14:
-            break
+            return records
 
-    def line(rec, order, width):
-        parts = []
-        for f in order:
-            v = ("%0*d" % (width[f], rec[f])) if f == "qty" else str(rec[f]).ljust(width[f])
-            parts.append(v)
-        return "".join(parts)
 
-    def schema(order, width):
-        pos, fields = 0, []
-        for f in order:
-            fields.append({"name": f, "start": pos, "end": pos + width[f]})
-            pos += width[f]
-        return {"fields": fields, "record_length": pos}
+def _line(rec, order, width):
+    parts = []
+    for f in order:
+        parts.append(("%0*d" % (width[f], rec[f])) if f == "qty" else str(rec[f]).ljust(width[f]))
+    return "".join(parts)
 
-    def canon(raw):
-        pfx, num = raw[:2], int(raw[2:].lstrip("-/"))
-        if pfx == legacy:
-            return "%s-%05d" % (new, num + offset)
-        return "%s-%05d" % (pfx, num)
 
-    totals = {}
-    for r in records:
-        totals[canon(r["bin"])] = totals.get(canon(r["bin"]), 0) + r["qty"]
-    alt_order = list(reversed(order))
-    alt_width = {k: v + 2 for k, v in width.items()}
-    alt_records = records[:6]
+def _schema(order, width):
+    pos, fields = 0, []
+    for f in order:
+        fields.append({"name": f, "start": pos, "end": pos + width[f]})
+        pos += width[f]
+    return {"fields": fields, "record_length": pos}
+
+
+def _canon(raw, legacy, new, offset):
+    pfx, num = raw[:2], int(raw[2:].lstrip("-/"))
+    if pfx == legacy:
+        return "%s-%05d" % (new, num + offset)
+    return "%s-%05d" % (pfx, num)
+
+
+def _draw_cases(rng, normal, quirk):
+    """(parse cases, canonical cases, quirk cases) of the visible and hidden tests."""
+    legacy, new, offset = quirk["legacy"], quirk["new"], quirk["offset"]
     parse_cases, canon_cases, quirk_cases = [], [], []
     for pfx in normal[:4]:
         for sep in SEPS:
@@ -90,10 +99,27 @@ def build():
         parse_cases.append([raw, legacy, n])
         quirk_cases.append([raw, "%s-%05d" % (new, n + offset)])
     quirk_cases.append(["%s-%04d" % (legacy, 7), "%s-%05d" % (new, 7 + offset)])
+    return parse_cases, canon_cases, quirk_cases
+
+
+def build():
+    rng = random.Random(SEED)
+    order, width = _draw_layout(rng)
+    normal, legacy, new = _draw_codes(rng)
+    offset = rng.randint(101, 899)
+    records = _draw_records(rng, width, legacy, normal)
+    totals = {}
+    for r in records:
+        canon = _canon(r["bin"], legacy, new, offset)
+        totals[canon] = totals.get(canon, 0) + r["qty"]
+    alt_order = list(reversed(order))
+    alt_width = {k: v + 2 for k, v in width.items()}
+    alt_records = records[:6]
+    parse_cases, canon_cases, quirk_cases = _draw_cases(rng, normal, {"legacy": legacy, "new": new, "offset": offset})
     return {
         "seed": SEED, "order": order, "width": width, "ruler": ",".join("%s=%d" % (f, width[f]) for f in order),
-        "lines": [line(r, order, width) for r in records], "records": records, "schema": schema(order, width),
-        "alt_schema": schema(alt_order, alt_width), "alt_lines": [line(r, alt_order, alt_width) for r in alt_records],
+        "lines": [_line(r, order, width) for r in records], "records": records, "schema": _schema(order, width),
+        "alt_schema": _schema(alt_order, alt_width), "alt_lines": [_line(r, alt_order, alt_width) for r in alt_records],
         "alt_records": alt_records, "totals": totals,
         "quirk": {"legacy": legacy, "new": new, "offset": offset},
         "parse_cases": parse_cases, "canon_cases": canon_cases, "quirk_cases": quirk_cases,

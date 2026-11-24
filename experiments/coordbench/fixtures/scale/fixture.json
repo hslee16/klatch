@@ -7,6 +7,7 @@
   "generated": {"module": "gen.py", "modules": 16, "seed": 20261123},
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "scale",
+  "generator_sources": ["gen.py"],
   "variants": {
     "n2": {"generated": {"module": "gen.py", "modules": 4, "seed": 20261123}, "est_cost_usd_haiku": 1.0,
            "note": "a two-agent smoke size for tests and a first look; not a size of scenario S7"},

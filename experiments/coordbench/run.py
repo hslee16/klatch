@@ -44,6 +44,7 @@ from runcli import DEFAULT_ARMS, DEFAULT_RUN_USD, DEFAULT_SUITE_USD, dry_run, es
 from runenv import GuardError, commit_of, git, guard_paths, inside, kill_group, klatch_facts, minimal_env, now_iso, sha256_file  # noqa: F401
 from runexec import RunExecution, RunSpot
 from runprompt import TASK_BOARD, build_prompt  # noqa: F401
+import runidentity
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -125,7 +126,7 @@ class Suite:
         return {
             "schema": schema.SCHEMA_VERSION, "run_id": run_id, "milestone": a.suite_id, "scenario": self.fx.name,
             "topology": self.fx.topology, "arm": arm, "arm_text_version": a.arm_text_version,
-            "fixture": {"name": self.fx.name, "sha256": self.fx.sha256()}, "seed": seed, "valid": True,
+            **runidentity.identity(a, self.fx, arm), "seed": seed, "valid": True,
             "supersedes": None,
             "models": {"agent": a.model or self.driver.name, "roles": a.roles_model if roles_mod.is_role_arm(arm) else None,
                        "resolved_ids": []},

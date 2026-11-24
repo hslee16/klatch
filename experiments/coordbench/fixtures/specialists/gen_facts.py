@@ -56,24 +56,23 @@ def is_prime(n):
     return True
 
 
+_DRAWS = {
+    "hex16": lambda rng: rng.randrange(0x1000, 0xF000),
+    "size": lambda rng: rng.randrange(600, 4000),
+    "word": lambda rng: "".join(rng.choice(LETTERS) for _ in range(3)) + str(rng.randrange(2, 10)),
+    "count": lambda rng: rng.randrange(11, 98),
+    "seed": lambda rng: rng.randrange(1000, 1000000),
+    "prime": lambda rng: rng.randrange(20011, 99991),
+}
+
+
 def draw(rng, kind, avoid):
+    if kind not in _DRAWS:
+        raise ValueError(kind)
     while True:
-        if kind == "hex16":
-            v = rng.randrange(0x1000, 0xF000)
-        elif kind == "size":
-            v = rng.randrange(600, 4000)
-        elif kind == "word":
-            v = "".join(rng.choice(LETTERS) for _ in range(3)) + str(rng.randrange(2, 10))
-        elif kind == "count":
-            v = rng.randrange(11, 98)
-        elif kind == "seed":
-            v = rng.randrange(1000, 1000000)
-        elif kind == "prime":
-            v = rng.randrange(20011, 99991)
-            if not is_prime(v):
-                continue
-        else:
-            raise ValueError(kind)
+        v = _DRAWS[kind](rng)
+        if kind == "prime" and not is_prime(v):
+            continue
         if v not in avoid:
             return v
 
@@ -82,48 +81,19 @@ def show(kind, v):
     return "0x%04x" % v if kind == "hex16" else str(v)
 
 
-def generate():
-    """{path relative to experiments/coordbench: text}"""
-    rng = random.Random(SEED)
-    facts = {}
-    for key, holder, kind, plausible in FACTS:
-        value = draw(rng, kind, plausible)
-        stale = draw(rng, kind, plausible + [value])
-        facts[key] = {"holder": holder, "kind": kind, "value": value, "stale": stale, "plausible": plausible}
-    extras = {}
-    for holder, items in DISTRACTORS.items():
-        for key, kind, _ in items:
-            extras[key] = draw(rng, "count" if kind == "count" else kind if kind != "word" else "word", [])
-    out = {}
-    notes = {
-        "FRAME_MAGIC": "the 16-bit marker that starts every frame",
-        "MAX_PAYLOAD": "the largest payload in one frame, in bytes",
-        "TOPIC_PREFIX": "the prefix of every stream topic name",
-        "PARTITIONS": "the number of shards keys are spread over",
-        "CHECKSUM_SEED": "the starting value of the payload digest",
-        "LEDGER_MODULUS": "the modulus of every ledger slot number",
-    }
-    for holder, (fname, title, module) in SPECS.items():
-        own = [k for k in facts if facts[k]["holder"] == holder]
-        lines = ["# %s (internal, revision 3)" % title, "",
-                 "Held by agent %s only. This file is not in the repository and no colleague's checkout has it; do not "
-                 "commit it. A colleague who needs a value from it asks you, and you may answer from it." % holder, "",
-                 "## Current constants (revision 3)", ""]
-        for k in own:
-            f = facts[k]
-            lines.append("- %s = %s (%s)" % (k, show(f["kind"], f["value"]), notes[k]))
-        for k, kind, _ in DISTRACTORS[holder]:
-            lines.append("- %s = %s (not used by any module of this repository)" % (k, extras[k] if kind != "word" else extras[k]))
-        lines += ["", "## Superseded in revision 3 (do not use)", ""]
-        for k in own:
-            f = facts[k]
-            lines.append("- %s was %s in revision 2" % (k, show(f["kind"], f["stale"])))
-        lines += ["", "The module you own, %s, is yours to write; the constants above are used by other modules." % module, ""]
-        out["fixtures/specialists/private/%s/%s" % (holder, fname)] = "\n".join(lines)
-    v = {k: facts[k]["value"] for k in facts}
-    ref = {
-        "linkkit/__init__.py": '"""linkkit: framing, routing and ledger helpers (reference solution)."""\n',
-        "linkkit/framing.py": '''"""Framing helpers."""
+NOTES = {
+    "FRAME_MAGIC": "the 16-bit marker that starts every frame",
+    "MAX_PAYLOAD": "the largest payload in one frame, in bytes",
+    "TOPIC_PREFIX": "the prefix of every stream topic name",
+    "PARTITIONS": "the number of shards keys are spread over",
+    "CHECKSUM_SEED": "the starting value of the payload digest",
+    "LEDGER_MODULUS": "the modulus of every ledger slot number",
+}
+
+# the reference solution; %(NAME)r and %(NAME)d are filled with the drawn values
+REFERENCE = {
+    "linkkit/__init__.py": '"""linkkit: framing, routing and ledger helpers (reference solution)."""\n',
+    "linkkit/framing.py": '''"""Framing helpers."""
 
 TOPIC_PREFIX = %(TOPIC_PREFIX)r
 CHECKSUM_SEED = %(CHECKSUM_SEED)d
@@ -138,16 +108,16 @@ def payload_digest(data):
     for byte in data:
         acc = (acc * 33 + byte) & 0xFFFFFFFF
     return acc
-''' % v,
-        "linkkit/retry.py": '''"""Retry slots."""
+''',
+    "linkkit/retry.py": '''"""Retry slots."""
 
 LEDGER_MODULUS = %(LEDGER_MODULUS)d
 
 
 def retry_slot(attempt):
     return (attempt * 7919 + 1) %% LEDGER_MODULUS
-''' % v,
-        "linkkit/routing.py": '''"""Routing helpers."""
+''',
+    "linkkit/routing.py": '''"""Routing helpers."""
 
 LEDGER_MODULUS = %(LEDGER_MODULUS)d
 FRAME_MAGIC = %(FRAME_MAGIC)d
@@ -159,8 +129,8 @@ def ledger_slot(n):
 
 def frame_tag(kind):
     return (FRAME_MAGIC << 4) | (kind & 15)
-''' % v,
-        "linkkit/ledger.py": '''"""Ledger helpers."""
+''',
+    "linkkit/ledger.py": '''"""Ledger helpers."""
 import zlib
 
 MAX_PAYLOAD = %(MAX_PAYLOAD)d
@@ -175,12 +145,49 @@ def chunk_count(total_bytes):
 
 def shard_for(key):
     return zlib.crc32(key.encode()) %% PARTITIONS
-''' % v,
-    }
-    for path, text in ref.items():
-        out["fixtures/specialists/reference/" + path] = text
+''',
+}
+
+
+def draw_facts():
+    """(facts, extras): every fact with its value, stale value and plausible defaults, then the distractor values. The order
+    of the draws is the order of the file: do not reorder."""
+    rng = random.Random(SEED)
+    facts = {}
+    for key, holder, kind, plausible in FACTS:
+        value = draw(rng, kind, plausible)
+        stale = draw(rng, kind, plausible + [value])
+        facts[key] = {"holder": holder, "kind": kind, "value": value, "stale": stale, "plausible": plausible}
+    extras = {}
+    for items in DISTRACTORS.values():
+        for key, kind, _ in items:
+            extras[key] = draw(rng, kind, [])
+    return facts, extras
+
+
+def spec_text(holder, facts, extras):
+    """The private knowledge file of one agent."""
+    fname, title, module = SPECS[holder]
+    own = [k for k in facts if facts[k]["holder"] == holder]
+    lines = ["# %s (internal, revision 3)" % title, "",
+             "Held by agent %s only. This file is not in the repository and no colleague's checkout has it; do not "
+             "commit it. A colleague who needs a value from it asks you, and you may answer from it." % holder, "",
+             "## Current constants (revision 3)", ""]
+    for k in own:
+        lines.append("- %s = %s (%s)" % (k, show(facts[k]["kind"], facts[k]["value"]), NOTES[k]))
+    for k, _, _ in DISTRACTORS[holder]:
+        lines.append("- %s = %s (not used by any module of this repository)" % (k, extras[k]))
+    lines += ["", "## Superseded in revision 3 (do not use)", ""]
+    for k in own:
+        lines.append("- %s was %s in revision 2" % (k, show(facts[k]["kind"], facts[k]["stale"])))
+    lines += ["", "The module you own, %s, is yours to write; the constants above are used by other modules." % module, ""]
+    return "\n".join(lines)
+
+
+def seed_document(facts):
+    """The seeded earlier exchange: MAX_PAYLOAD was asked and answered before the run started."""
     mp = facts["MAX_PAYLOAD"]["value"]
-    seed = {
+    return {
         "comment": "The seeded earlier exchange (SPEC S4): MAX_PAYLOAD was asked and answered before the run started, so "
                    "agent c asking for it again is a repeat. K arms: posted into the room by two seed members before any "
                    "agent starts. B1: one line appended to TASKS.md.",
@@ -192,7 +199,18 @@ def shard_for(key):
         ],
         "board": ["- seed-q | done | - | answered seed-p: MAX_PAYLOAD is %d bytes (framing spec revision 3, held by a)" % mp],
     }
-    out["fixtures/specialists/seed.json"] = json.dumps(seed, indent=2, sort_keys=True) + "\n"
+
+
+def generate():
+    """{path relative to experiments/coordbench: text}"""
+    facts, extras = draw_facts()
+    out = {}
+    for holder, (fname, _, _) in SPECS.items():
+        out["fixtures/specialists/private/%s/%s" % (holder, fname)] = spec_text(holder, facts, extras)
+    values = {k: facts[k]["value"] for k in facts}
+    for path, text in REFERENCE.items():
+        out["fixtures/specialists/reference/" + path] = text % values
+    out["fixtures/specialists/seed.json"] = json.dumps(seed_document(facts), indent=2, sort_keys=True) + "\n"
     hidden = {"comment": "Hidden checker data for F4 (#1369). Never in a checkout. Generated by fixtures/specialists/gen_facts.py.",
               "seed": SEED, "facts": facts}
     out["checks/specialists/facts.json"] = json.dumps(hidden, indent=2, sort_keys=True) + "\n"

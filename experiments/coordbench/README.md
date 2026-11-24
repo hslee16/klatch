@@ -26,6 +26,8 @@ work (#1366 to #1380), and the arm prompts are PROPOSED by #1365 and stay unused
 - `asks.py`: the S4 ask and answer metrics from the agents' message events, and the ask counts of the streams for the store cross-check (#1433).
 - `storeexport.py`: the K arms' run store as counts, from `klatch-bench store-stats` (#1433).
 - `fixture.py`, `fixtures/`, `checks/`: the fixture interface, the test fixture `trivial`, F1 `tallykit` (see Scenario S1) and F2 `onefile` (see Scenario S2) and F3 `chain` (see Scenario S3) and F6 `recovery` (see Scenario S6).
+- `fixhash.py`, `runidentity.py`: what the fixture hash covers and the record's identity fields (`fixture_hash_version`, `fixture.checker_sha256`,
+  `prompt_sha256`; see Fixtures, #1516), and how the report keeps hash versions apart.
 - `scale.py`, `fixtures/scale/gen.py`, `checks/scale/`: Scenario S7 (see below): the per-member scale metrics, the scaling table,
   the generator of fixture F7 and its hidden checker and oracles.
 - `chain.py`: the stream metrics of S3 (a blocked agent's idle and wasted turns, the handoff claim record).
@@ -153,8 +155,34 @@ A fixture is `fixtures/<name>/` with `fixture.json` (agents and their task files
 `est_cost_usd_haiku` and `fake` script), `setup.sh DEST SEED` (writes the initial tree; the harness does the git work) and the
 task texts. The hidden checker is `checks/<checker>/check.sh CHECKOUT`: it lives outside the fixture so no checkout contains
 it, prints `{"checks": [{"id": ..., "pass": true, "unit": false}]}` and exits 0 when it could run. A check counts as a unit of
-work (tasks completed) unless it says `"unit": false` (a structural check, reported under correctness). The fixture's sha256
-goes into every record. `trivial` has two independent files and exists only to test the harness.
+work (tasks completed) unless it says `"unit": false` (a structural check, reported under correctness). `trivial` has two
+independent files and exists only to test the harness.
+
+### What the fixture hash covers (fixture hash version 2, #1516, #1510)
+
+Every record carries `fixture_hash_version: 2`, `fixture.sha256`, `fixture.checker_sha256` and `prompt_sha256` (an object, one
+hash per agent). `fixhash.py` has the definition; the hash is computed once per suite from one `Fixture` object, so the records of
+a suite agree.
+
+- Covered by `fixture.sha256`: every file of the fixture directory an agent can receive or that decides the outcome (`setup.sh`,
+  `template/`, the task texts, `private/`, `seed.json` and the history files, `fixture.json`, and `reference/`, which no agent
+  gets but which the checker is validated against and the fake agents replay, so a change of it is a change of the oracle).
+  For a generated fixture (`scale`) the generator's output as well: the template `setup.sh` writes, the reference, the tasks and
+  the scenario map. For a prebuilt history (`history`) the commit id `setup.sh` makes in arm B0 and in arm B1.
+- Not covered: the generator sources named in `fixture.json` under `generator_sources` (`gen.py`, `gen_facts.py`, the modules
+  they import, `build_history.py`), because their output is committed and `gen_facts.py --check` or `gen.py --check` proves
+  it, or is hashed as above; `__pycache__`, `*.pyc` and editor leftovers. Refactoring a generator so that it makes the same bytes
+  changes no hash; changing what it makes does. A new file named `gen*.py` or `build_*.py` in a fixture must be declared
+  (`tests/test_fixture_hash.py` fails otherwise).
+- `fixture.checker_sha256` is the hash of the hidden checker directory `checks/<name>/` (same skip rules), so a changed checker
+  or oracle shows in the record. It is `null` when the checker does not exist.
+- `prompt_sha256` is the hash of the prompt each agent was given, built with the run's own working directory, binary path, room
+  and restart command left as placeholders, so two runs of one arm, task and team give one hash and another arm text gives
+  another. It is `null` for an arm whose prompt cannot be built.
+- Records made before this definition have no `fixture_hash_version` (version 1: the whole directory was hashed, generator
+  sources and bytecode included, and no checker hash). `report.py` never pools versions: older records appear as
+  `SCENARIO [fixture hash vN]` (next to `[metric vN]`), the scaling table uses the newest only, and a comparison of analyses of
+  different versions says so. Tests: `tests/test_fixture_hash.py`.
 
 ## Scenario S1: four agents, four tickets (`scenarios/s1.json`, fixture `tallykit`)
 
