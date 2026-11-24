@@ -86,6 +86,7 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    use super::{Report, Status, store};
     use klatch::sync::within;
     use std::time::{Duration, Instant};
 
@@ -107,5 +108,30 @@ mod tests {
             "waited {:?}",
             started.elapsed()
         );
+    }
+
+    fn warnings_for(census: Option<(u64, u64)>) -> Vec<String> {
+        let mut r = Report { lines: Vec::new() };
+        store::report_proof_failures(&mut r, census);
+        r.lines
+            .into_iter()
+            .inspect(|l| assert_eq!(l.0, Status::Warn))
+            .map(|l| l.1)
+            .collect()
+    }
+
+    #[test]
+    fn the_proof_failure_warning_is_quiet_when_the_census_could_not_be_read_or_is_below_the_level()
+    {
+        let level = klatch::proof::alarm::CEILING;
+        assert!(warnings_for(None).is_empty());
+        assert!(warnings_for(Some((level - 1, 9))).is_empty());
+        let at_level = warnings_for(Some((level, 9)));
+        assert_eq!(at_level.len(), 1);
+        assert!(
+            at_level[0].contains(&format!("{level} wrong")),
+            "{at_level:?}"
+        );
+        assert!(at_level[0].contains("from 9 terminals"), "{at_level:?}");
     }
 }

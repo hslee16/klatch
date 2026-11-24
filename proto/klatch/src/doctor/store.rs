@@ -232,21 +232,20 @@ pub(super) fn check_proof_failures(r: &mut Report, home: Option<&Path>) {
     if klatch::store::encrypt::is_plaintext(&db) {
         return;
     }
-    let since = klatch::proof::alarm::since(klatch::member::now());
+    let now = klatch::member::now();
     let asked = db.clone();
     let census = within(KEYSTORE_PATIENCE, move || {
         let key = klatch::member::custody::current_key(&asked)
             .ok()
             .flatten()?;
-        klatch::store::SqliteStore::read_audit_census(
-            &asked,
-            &key,
-            klatch::proof::alarm::FAILED,
-            since,
-        )
-        .ok()
+        klatch::proof::alarm::read_recent(&asked, &key, now).ok()
     })
     .flatten();
+    report_proof_failures(r, census);
+}
+
+/// The warning for `census` (failures, distinct terminals): nothing when the store could not be read, or below the level.
+pub(super) fn report_proof_failures(r: &mut Report, census: Option<(u64, u64)>) {
     let Some((failures, terminals)) = census else {
         return;
     };
@@ -254,7 +253,7 @@ pub(super) fn check_proof_failures(r: &mut Report, home: Option<&Path>) {
         r.add(
             Status::Warn,
             format!("proof failures: {failures} wrong admin passphrases or recovery codes in the last 24 hours, from {terminals} terminals (the alarm level is {}); nothing is locked by this, the wait of each terminal is unchanged", klatch::proof::alarm::CEILING),
-            Some("if these were not you, someone is guessing: see the `proof-failed` rows in `klatch admin audit`, find what is opening terminals, and consider a longer passphrase (`klatch admin init-passphrase`)"),
+            Some("if these were not you, someone is guessing: see the failed proofs in `klatch admin audit`, find what is opening terminals, and consider a longer passphrase (`klatch admin init-passphrase`)"),
         );
     }
 }

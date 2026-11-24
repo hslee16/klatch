@@ -78,3 +78,18 @@ fn doctor_is_quiet_below_the_level_warns_at_it_and_says_counts_only() {
         "{t}"
     );
 }
+
+#[test]
+fn doctor_says_nothing_about_failures_when_the_store_key_cannot_be_read() {
+    let h = Home::new();
+    h.set_passphrase();
+    for _ in 0..LEVEL {
+        fail_once(&h);
+    }
+    assert_eq!(alarm_lines(&doctor(&h)).len(), 1);
+    // without the key the store cannot be read: the store line says so and the failure line is not guessed at
+    std::fs::remove_dir_all(h.0.join("keys")).unwrap();
+    let t = doctor(&h);
+    assert!(alarm_lines(&t).is_empty(), "{t}");
+    assert!(t.contains("store:"), "{t}");
+}

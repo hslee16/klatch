@@ -18,6 +18,7 @@
 //! 900 each), a program with a new terminal per three guesses is limited only by how fast it verifies, and a person
 //! mistypes a handful of times a day. See the design item for #1310.
 
+use crate::store::Census;
 use crate::store::NewAudit;
 use crate::store::areas::PolicyStore;
 
@@ -29,15 +30,39 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 pub const ACTION: &str = "proof-failed-many";
 /// The audit action of a failed proof.
 pub const FAILED: &str = "proof-failed";
+/// The targets a `proof-failed` row has: the passphrase ("") and the recovery code ("recovery").
+const TARGETS: [&str; 2] = ["", "recovery"];
 
 /// The first moment that still counts at `now`.
 pub fn since(now: i64) -> i64 {
     now - WINDOW_SECS + 1
 }
 
-/// Failed proofs in the last 24 hours at `now` and the distinct terminals among them. Counts only.
+/// Failed proofs in the last 24 hours at `now` and the distinct terminals among them, exact. Counts only. This reads
+/// every failure of the window, so it is for readers that hold no write lock (`klatch doctor`, tests); the failure
+/// path itself reads at most `CEILING + 1` rows.
 pub fn recent<S: PolicyStore + ?Sized>(store: &S, now: i64) -> crate::domain::Result<(u64, u64)> {
-    store.audit_census(FAILED, since(now))
+    store.audit_census(&query(now, u64::MAX))
+}
+
+/// The same, read from the store file with a read-only connection (`klatch doctor`): no write lock is taken. Its
+/// cost grows with the failures inside the window, which is at worst what an attacker made, and is spent by a person
+/// who asked for a report.
+pub fn read_recent(
+    db: &std::path::Path,
+    key: &crate::keys::Key,
+    now: i64,
+) -> crate::domain::Result<(u64, u64)> {
+    crate::store::SqliteStore::read_audit_census(db, key, &query(now, u64::MAX))
+}
+
+fn query(now: i64, cap: u64) -> Census<'static> {
+    Census {
+        action: FAILED,
+        targets: &TARGETS,
+        since: since(now),
+        cap,
+    }
 }
 
 /// The text of the alarm row's detail.
@@ -52,7 +77,7 @@ pub(super) fn failed<S: PolicyStore + ?Sized>(store: &S, target: &str, text: &st
     let row = NewAudit::new(FAILED, target, text);
     let done = store.atomically(&mut || {
         store.record_audit(&row, at)?;
-        if let Ok((n, terminals)) = recent(store, at)
+        if let Ok((n, terminals)) = store.audit_census(&query(at, CEILING + 1))
             && n == CEILING
         {
             store.record_audit(&NewAudit::new(ACTION, "alarm", &detail(n, terminals)), at)?;

@@ -529,6 +529,8 @@ pub fn set_window<S: PolicyStore + ?Sized>(
 }
 
 #[cfg(test)]
+mod alarm_faults;
+#[cfg(test)]
 mod alarm_tests;
 #[cfg(test)]
 mod tests;

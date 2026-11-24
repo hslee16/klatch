@@ -195,22 +195,36 @@ fn nothing_typed_is_in_the_audit_after_a_crossing() {
 }
 
 #[test]
-fn only_the_proof_path_writes_the_alarm_action() {
-    // An agent reaches the audit only through commands that name their own actions; the alarm row is written by
-    // `alarm.rs` and by nothing else in the source, so no other path can forge or replace it.
+fn only_the_proof_path_names_the_alarm_action_or_the_failure_action() {
+    // An agent reaches the audit only through commands that name their own actions. The alarm row is written by
+    // `alarm.rs`, and its input, the `proof-failed` rows, by the proof path: no other source may name either (as the
+    // text or through the constants), or it could forge the alarm or, with 50 forged failures, suppress it for 24
+    // hours. The doctor reads the count through `alarm::read_recent` and names neither.
+    const NAMES: [&str; 5] = [
+        "proof-failed",
+        "alarm::ACTION",
+        "alarm::FAILED",
+        "alarm::{",
+        "alarm::*",
+    ];
+    const ALLOWED: [&str; 4] = [
+        "proof/alarm.rs",
+        "proof/alarm_tests.rs",
+        "proof/alarm_faults.rs",
+        "proof/tests.rs",
+    ];
     fn scan(dir: &std::path::Path, hits: &mut Vec<String>) {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
             if p.is_dir() {
                 scan(&p, hits);
             } else if p.extension().is_some_and(|x| x == "rs")
-                && !p.ends_with("proof/alarm.rs")
-                && !p.ends_with("proof/alarm_tests.rs")
-                && std::fs::read_to_string(&p)
-                    .unwrap()
-                    .contains("proof-failed-many")
+                && !ALLOWED.iter().any(|a| p.ends_with(a))
             {
-                hits.push(p.display().to_string());
+                let text = std::fs::read_to_string(&p).unwrap();
+                if NAMES.iter().any(|n| text.contains(n)) {
+                    hits.push(p.display().to_string());
+                }
             }
         }
     }
@@ -219,8 +233,5 @@ fn only_the_proof_path_writes_the_alarm_action() {
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
         &mut hits,
     );
-    assert!(
-        hits.is_empty(),
-        "the action is written outside the proof path: {hits:?}"
-    );
+    assert!(hits.is_empty(), "named outside the proof path: {hits:?}");
 }
