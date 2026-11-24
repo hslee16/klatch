@@ -50,7 +50,8 @@
 + }
 wrote <PROJECT>/.claude/settings.local.json
 klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
-Next: run `klatch doctor` to check the install; it only reads.
+Next: run `klatch doctor` to check the install; it only reads, and it warns while no admin passphrase is set.
+Set that passphrase yourself, in a terminal: `klatch admin init-passphrase` (init never sets it).
 (ended: ok)
 
 ### no consent beyond the default: the settings file
@@ -235,7 +236,8 @@ A change takes effect at the next session; one already running keeps the hooks i
 + }
 wrote <PROJECT>/.claude/settings.local.json
 klatch keeps its data in <HOME>/.klatch (set KLATCH_HOME to move it; init neither creates nor changes it).
-Next: run `klatch doctor` to check the install; it only reads.
+Next: run `klatch doctor` to check the install; it only reads, and it warns while no admin passphrase is set.
+Set that passphrase yourself, in a terminal: `klatch admin init-passphrase` (init never sets it).
 (ended: ok)
 
 ### board, enforce and wake only: the settings file
