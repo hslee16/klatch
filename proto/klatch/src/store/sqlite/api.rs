@@ -4,6 +4,7 @@
 mod asks;
 mod claims;
 mod credentials;
+mod import;
 mod members;
 mod messages;
 pub(in crate::store::sqlite) mod policy;
