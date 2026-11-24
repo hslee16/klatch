@@ -73,6 +73,50 @@ class TestReference(Base):
         self.assertTrue(r["correct"])
 
 
+class TestAlternativeSolutions(Base):
+    """The independent review's variants (#1461), kept as regression tests (#1525): structurally different right solutions are
+    accepted in full; the stale values are not."""
+
+    def manifest(self, edit):
+        ref = read(os.path.join(FIXTURE, "reference", "parcelkit", "manifest.py"))
+        text = edit(ref)
+        self.assertNotEqual(text, ref, "the variant must change the reference")
+        d = self.tree(os.path.join(FIXTURE, "reference"))
+        with open(os.path.join(d, "parcelkit", "manifest.py"), "w") as f:
+            f.write(text)
+        return check(d)
+
+    def slicing(self, tail):
+        return lambda t: t.replace("paginate(rows, PAGE_ROWS)", "[rows[i:i + PAGE_ROWS] for i in range(0, len(rows), PAGE_ROWS)]" + tail)
+
+    def test_v2_own_slicing_with_one_empty_page_for_empty_input_is_accepted(self):
+        """M4: the task text does not say what pages is for no parcels; [[]] (one empty page) is as right as []."""
+        r = self.manifest(self.slicing(" or [[]]"))
+        self.assertTrue(self.ids(r)["ticket-7-works"], r)
+        self.assertTrue(r["correct"], r)
+
+    def test_v3_own_slicing_with_no_page_for_empty_input_is_accepted(self):
+        r = self.manifest(self.slicing(""))
+        self.assertTrue(r["correct"], r)
+
+    def test_v4_the_date_written_through_isoformat(self):
+        r = self.manifest(lambda t: t.replace('date.strftime("%Y%m%d")', 'date.isoformat().replace("-", "")'))
+        self.assertTrue(r["correct"], r)
+
+    def test_v5_the_total_by_sum(self):
+        r = self.manifest(lambda t: t.replace('total_cents([r["cents"] for r in rows])', 'sum(r["cents"] for r in rows)'))
+        self.assertTrue(r["correct"], r)
+
+    def test_v6_the_stale_values_are_stale_not_accepted(self):
+        r = self.manifest(lambda t: t.replace("'%s'" % F["TAG"]["value"], "'%s'" % F["TAG"]["stale"]))
+        self.assertEqual(r["facts"]["TAG"], "stale")
+        self.assertFalse(r["correct"])
+
+    def test_an_empty_input_that_still_counts_a_parcel_is_rejected(self):
+        r = self.manifest(lambda t: self.slicing(" or [[]]")(t).replace('"count": len(rows)', '"count": len(rows) + 1'))
+        self.assertFalse(self.ids(r)["ticket-7-works"])
+
+
 class TestFailingVariants(Base):
     def test_no_manifest_at_all_is_missing_not_stale(self):
         r = check(self.tree())

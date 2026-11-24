@@ -379,7 +379,7 @@ class RunExecution(RunMetrics, RoleSupport):
         proc.wait()
         self.pump()
         rec_ = {"fired": True, "agent": self.victim_name, "trigger": due["trigger"], "turns": due["turns"],
-                "conditions": due["conditions"], "t": round(elapsed, 3), "epoch": time.time(),
+                "conditions": due["conditions"], "observed": due.get("observed"), "t": round(elapsed, 3), "epoch": time.time(),
                 "lines": {k: len(v) for k, v in self.stamps.items()}}
         tmp = os.path.join(self.log_dir, "kill.json.tmp")
         with open(tmp, "w") as f:
@@ -473,7 +473,7 @@ class RunExecution(RunMetrics, RoleSupport):
         if self.kill_rec is None:
             self.kill_rec = {"fired": False, "agent": self.victim_name, "reason": "the run ended before the trigger fired"}
         if not self.kill_rec["fired"]:
-            self.rec["valid"] = False
+            self.outcome = recovery.outcome_when_unfired(self.kill_rec, self.outcome)
             self.notes.append("the kill never fired: %s" % self.kill_rec["reason"])
         with open(os.path.join(self.log_dir, "timeline.json"), "w") as f:
             json.dump(self.stamps, f, sort_keys=True)

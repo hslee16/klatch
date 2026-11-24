@@ -5,7 +5,7 @@ report. Agent a does step 1 and starts step 2, then stops; agent c finishes step
 Step 3: write `chainkit/loader.py` with `load(data_path=None, schema_path=None)`. It returns a list of dicts, one per record of
 the data file (default `data/inventory.dat` in the repository), with the keys `sku`, `bin` and `note` as stripped strings and
 `qty` as an int. Where each column sits comes from the schema file (default `chainkit/schema.json` next to the module), which
-agent a is making with `tools/make_schema.py`: do not write the columns into the loader, and do not publish the loader
+agent a is making (the column widths are known only to a, not in the repository): do not write the columns into the loader, and do not publish the loader
 until you have run it against the real schema file and the real data. The loader has to work with any layout the schema
 file describes.
 

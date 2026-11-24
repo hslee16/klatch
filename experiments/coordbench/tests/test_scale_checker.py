@@ -178,6 +178,59 @@ class TestFailingVariants(Scale):
         _, ids = self.check(self.build(self.M, mutate), self.M)
         self.assertFalse(ids["registry"])
 
+    def registry_variant(self, edit_registry, module_suffix=""):
+        """The registry and, for the first module, its file changed; returns the checker's registry result."""
+        def mutate(dest, b):
+            first = b["modules"][0]
+            p = os.path.join(dest, "scalekit", "__init__.py")
+            write(p, edit_registry(read(p), first))
+            if module_suffix:
+                mp = os.path.join(dest, "scalekit", first["name"] + ".py")
+                write(mp, read(mp) + module_suffix)
+        return self.check(self.build(self.M, mutate), self.M)
+
+    HELPER = "\n\ndef public_helper():\n    return 1\n"
+
+    def test_a_registered_public_helper_is_accepted(self):
+        """The independent review (#1461, M1, kept as a regression test, #1525)."""
+        def reg(t, first):
+            line = [l for l in t.splitlines() if l.startswith("from scalekit.%s " % first["name"])][0]
+            return t.replace(line, line + ", public_helper")
+        obj, ids = self.registry_variant(reg, self.HELPER)
+        self.assertTrue(ids["registry"])
+        self.assertTrue(obj["correct"], ids)
+
+    def test_a_helper_defined_but_not_registered_is_accepted(self):
+        _, ids = self.registry_variant(lambda t, first: t, self.HELPER)
+        self.assertTrue(ids["registry"])
+
+    def test_a_registered_name_the_module_does_not_define_is_rejected(self):
+        def reg(t, first):
+            line = [l for l in t.splitlines() if l.startswith("from scalekit.%s " % first["name"])][0]
+            return t.replace(line, line + ", nothing_here")
+        _, ids = self.registry_variant(reg)
+        self.assertFalse(ids["registry"])
+
+    def test_a_helper_registered_instead_of_the_function_is_rejected(self):
+        def reg(t, first):
+            line = [l for l in t.splitlines() if l.startswith("from scalekit.%s " % first["name"])][0]
+            return t.replace(line, "from scalekit.%s import public_helper" % first["name"])
+        _, ids = self.registry_variant(reg, self.HELPER)
+        self.assertFalse(ids["registry"])
+
+    def test_the_registry_as_parenthesised_multi_line_imports_is_accepted(self):
+        def reg(t, first):
+            out = []
+            for line in t.splitlines():
+                if line.startswith("from scalekit.") and " import " in line:
+                    head, names = line.split(" import ")
+                    out.append("%s import (\n    %s,\n)" % (head, ",\n    ".join(n.strip() for n in names.split(","))))
+                else:
+                    out.append(line)
+            return "\n".join(out) + "\n"
+        _, ids = self.registry_variant(reg)
+        self.assertTrue(ids["registry"])
+
     def test_a_lost_changelog_line_fails_the_changelog(self):
         def mutate(dest, b):
             p = os.path.join(dest, "CHANGELOG.md")

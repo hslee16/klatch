@@ -11,7 +11,6 @@
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "specialists",
   "est_cost_usd_haiku": 0.6,
-  "fake": "fake.json",
   "private": "private",
   "seed_history": "seed.json"
 }

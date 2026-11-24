@@ -3,8 +3,9 @@ standard library only; see README.md). The job has four steps: 1 the schema file
 report. Step 1 is yours, step 2 you start, and then you are reassigned, so you stop. Agent b does step 3 and cannot start it
 until your step 1 is on main. Agent c finishes step 2 and does step 4.
 
-Step 1: run `python3 tools/make_schema.py` to make `chainkit/schema.json` from `data/ruler.txt`, and publish it to main as
-soon as it exists.
+Step 1: run `python3 tools/make_schema.py "note=12,bin=9,sku=6,qty=5"` to make `chainkit/schema.json`, and publish it to main as soon as it
+exists. The ruler in that command (column name=width, in column order) is from the data vendor and is in no file of the
+repository.
 
 Step 2, your part: in `chainkit/bins.py` write
 - `parse_bin(raw)`: raw is a bin code as the bin column of the data has it, two capital letters, an optional separator (`-` or
