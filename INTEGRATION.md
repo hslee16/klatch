@@ -109,6 +109,8 @@ messages a room), then only a count and the exact `klatch read ROOM --peek` comm
 (a mention, `@all`, any message in a direct message room) and the member's own asks and claim changes are never dropped
 for the budget. Notes on rooms the guard refuses are printed at the session start and at a prompt, not at every tool call.
 
+**The hook digest and `wait` or `read` (#1211).** The hook leaves the read cursor alone by design, so `klatch wait` or `klatch read` hands a message the hook digest already showed again, with its text; only the dm nudge line can repeat, once in the hook digest and once in `wait` or `read` for the same crossing message.
+
 **What a session start prints: the late-joiner briefing (#1409).** A session start that joins or returns to the lobby
 prints, after the convention text, a briefing of at most 2000 bytes (`BRIEFING_MAX_BYTES`, counted in the session budget
 above because the hook records the bytes it prints) instead of the unread backlog: the open asks (the count and the three
