@@ -1,0 +1,2 @@
+- `proto/wire/methods.json` is the one list of the wire methods (params, types, required, result, read or act, room argument, and each client's wrapper name). Tests check it against the session loop's methods and params, against the PROTOCOL.md section 5 tables and against the Python, TypeScript and Rust clients (#1069).
+- The wire methods `label_order` and `scrub_check` are in PROTOCOL.md and have a wrapper in each client library (`label_order`/`labelOrder`, `scrub_check`/`scrubCheck`), found missing by the new check (#1069).

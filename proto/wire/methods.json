@@ -1,0 +1,197 @@
+{
+  "schema": 1,
+  "methods": [
+    {"name": "asks", "mode": "read", "room_arg": "room", "result": "{asks: [...]}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "asks", "typescript": "asks", "rust": "asks"}},
+    {"name": "board", "mode": "read", "room_arg": "room", "result": "{room, board}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "board", "typescript": "board", "rust": "board"}},
+    {"name": "claim", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "path", "type": "string", "required": true},
+       {"name": "ttl", "type": "integer", "required": false},
+       {"name": "reason", "type": "string", "required": false},
+       {"name": "shared", "type": "boolean", "required": false}
+     ],
+     "clients": {"rust": {"gaps": ["shared"]}},
+     "wrappers": {"python": "claim", "typescript": "claim", "rust": "claim"}},
+    {"name": "claims", "mode": "read", "room_arg": "room", "result": "{claims: [...]}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "claims", "typescript": "claims", "rust": "claims"}},
+    {"name": "could_answer", "mode": "read", "room_arg": "room", "result": "{member, ask, could, blockers}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "member", "type": "string", "required": true},
+       {"name": "ask", "type": "integer", "required": true}
+     ],
+     "wrappers": {"python": "could_answer", "typescript": "couldAnswer", "rust": "could_answer"}},
+    {"name": "dm", "mode": "act", "room_arg": "to", "result": "{room, seq, id}",
+     "params": [
+       {"name": "to", "type": "string", "required": true},
+       {"name": "body", "type": "string", "required": true},
+       {"name": "label", "type": "string", "required": false}
+     ],
+     "wrappers": {"python": "dm", "typescript": "dm", "rust": "dm"}},
+    {"name": "grant_room_clearance", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "member", "type": "string", "required": true},
+       {"name": "label", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "grant_room_clearance", "typescript": "grantRoomClearance", "rust": "grant_room_clearance"}},
+    {"name": "history", "mode": "read", "room_arg": "room", "result": "{messages, more}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "since", "type": "integer", "required": false},
+       {"name": "last", "type": "integer", "required": false}
+     ],
+     "wrappers": {"python": "history", "typescript": "history", "rust": "history"}},
+    {"name": "invite", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "member", "type": "string", "required": true},
+       {"name": "room", "type": "string", "required": true},
+       {"name": "via", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "invite", "typescript": "invite", "rust": "invite"}},
+    {"name": "join", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "join", "typescript": "join", "rust": "join"}},
+    {"name": "kind", "mode": "act", "room_arg": null, "result": "{}", "note": "null or absent withdraws the declaration",
+     "params": [
+       {"name": "kind", "type": "string", "required": false}
+     ],
+     "wrappers": {"python": "set_kind", "typescript": "setKind", "rust": "set_kind"}},
+    {"name": "label_order", "mode": "read", "room_arg": null, "result": "{chain, cap}",
+     "params": [
+     ],
+     "wrappers": {"python": "label_order", "typescript": "labelOrder", "rust": "label_order"}},
+    {"name": "mute", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "muted", "type": "boolean", "required": true}
+     ],
+     "wrappers": {"python": "mute", "typescript": "mute", "rust": "mute"}},
+    {"name": "my_crossings", "mode": "read", "room_arg": null, "result": "{crossings: [...]}",
+     "params": [
+       {"name": "limit", "type": "integer", "required": false}
+     ],
+     "wrappers": {"python": "my_crossings", "typescript": "myCrossings", "rust": "my_crossings"}},
+    {"name": "my_role", "mode": "read", "room_arg": null, "result": "{role}",
+     "params": [
+     ],
+     "wrappers": {"python": "my_role", "typescript": "myRole", "rust": "my_role"}},
+    {"name": "my_rooms", "mode": "read", "room_arg": null, "result": "{rooms: [...]}",
+     "params": [
+     ],
+     "wrappers": {"python": "my_rooms", "typescript": "myRooms", "rust": "my_rooms"}},
+    {"name": "post", "mode": "act", "room_arg": "room", "result": "{seq, id}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "body", "type": "string", "required": true},
+       {"name": "label", "type": "string", "required": false},
+       {"name": "kind", "type": "string", "required": false},
+       {"name": "payload", "type": "string", "required": false},
+       {"name": "scope", "type": "string", "required": false},
+       {"name": "refs", "type": "array", "required": false}
+     ],
+     "clients": {"rust": {"aliases": {"kind": "handoff", "payload": "handoff"}}},
+     "wrappers": {"python": "post", "typescript": "post", "rust": "post"}},
+    {"name": "prune", "mode": "act", "room_arg": null, "result": "{removed}",
+     "params": [
+     ],
+     "wrappers": {"python": "prune", "typescript": "prune", "rust": "prune"}},
+    {"name": "read", "mode": "act", "room_arg": "room", "result": "{messages, omitted?, by_importance?}", "note": "advances the read cursor unless peek",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "peek", "type": "boolean", "required": false},
+       {"name": "max_messages", "type": "integer", "required": false},
+       {"name": "max_bytes", "type": "integer", "required": false}
+     ],
+     "clients": {"python": {"gaps": ["max_messages", "max_bytes"]}, "typescript": {"gaps": ["max_messages", "max_bytes"]}, "rust": {"gaps": ["max_messages", "max_bytes"]}},
+     "wrappers": {"python": "read", "typescript": "read", "rust": "read"}},
+    {"name": "receipt", "mode": "read", "room_arg": "room", "result": "{seq, posted, recipients}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "seq", "type": "integer", "required": true}
+     ],
+     "wrappers": {"python": "receipt", "typescript": "receipt", "rust": "receipt"}},
+    {"name": "release", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "path", "type": "string", "required": true},
+       {"name": "note", "type": "string", "required": false}
+     ],
+     "wrappers": {"python": "release", "typescript": "release", "rust": "release"}},
+    {"name": "review_next", "mode": "read", "room_arg": null, "result": "{item}", "role": "reviewer",
+     "params": [
+     ],
+     "wrappers": {"python": "review_next", "typescript": "reviewNext", "rust": "review_next"}},
+    {"name": "review_verdict", "mode": "act", "room_arg": null, "result": "{}", "role": "reviewer",
+     "params": [
+       {"name": "id", "type": "integer", "required": true},
+       {"name": "verdict", "type": "string", "required": true},
+       {"name": "text", "type": "string", "required": false},
+       {"name": "reason", "type": "string", "required": false}
+     ],
+     "clients": {"python": {"aliases": {"id": "item_id"}}, "rust": {"aliases": {"text": "verdict", "reason": "verdict"}}},
+     "wrappers": {"python": "review_verdict", "typescript": "reviewVerdict", "rust": "review_verdict"}},
+    {"name": "role_act", "mode": "act", "room_arg": "room", "result": "{} or {records} or {rooms, messages} or {released}", "role": "admin", "open_params": true, "note": "the wrappers pass any further param of the act through",
+     "params": [
+       {"name": "act", "type": "string", "required": true},
+       {"name": "room", "type": "string", "required": false},
+       {"name": "member", "type": "string", "required": false},
+       {"name": "label", "type": "string", "required": false},
+       {"name": "limit", "type": "integer", "required": false},
+       {"name": "run", "type": "string", "required": false},
+       {"name": "anchor", "type": "string", "required": false}
+     ],
+     "wrappers": {"python": "role_act", "typescript": "roleAct", "rust": "role_act"}},
+    {"name": "scope", "mode": "act", "room_arg": null, "result": "{}",
+     "params": [
+       {"name": "scope", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "set_scope", "typescript": "setScope", "rust": "set_scope"}},
+    {"name": "scrub_check", "mode": "read", "room_arg": null, "result": "{scrubbed}",
+     "params": [
+       {"name": "text", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "scrub_check", "typescript": "scrubCheck", "rust": "scrub_check"}},
+    {"name": "status", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "status", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "set_status", "typescript": "setStatus", "rust": "set_status"}},
+    {"name": "stuck", "mode": "read", "room_arg": "room", "result": "{events: [...]}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "stuck", "typescript": "stuck", "rust": "stuck"}},
+    {"name": "subscribe", "mode": "act", "room_arg": "room", "result": "{head}",
+     "params": [
+       {"name": "room", "type": "string", "required": true},
+       {"name": "from_seq", "type": "integer", "required": true}
+     ],
+     "wrappers": {"python": "subscribe", "typescript": "subscribe", "rust": "subscribe"}},
+    {"name": "unsubscribe", "mode": "act", "room_arg": "room", "result": "{}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "unsubscribe", "typescript": "unsubscribe", "rust": "unsubscribe"}},
+    {"name": "who", "mode": "read", "room_arg": "room", "result": "{members: [...]}",
+     "params": [
+       {"name": "room", "type": "string", "required": true}
+     ],
+     "wrappers": {"python": "who", "typescript": "who", "rust": "who"}}
+  ]
+}
