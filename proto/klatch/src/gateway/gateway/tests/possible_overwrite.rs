@@ -138,14 +138,21 @@ fn a_path_that_is_not_plain_is_shown_as_unnamed() {
 }
 
 /// As `deadlocked`, but each claim lives `ttl` seconds and may be anchored to `anchor` (#1224).
-fn deadlocked_with(ttl: i64, anchor: &'static str) -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
+fn deadlocked_with(
+    ttl: i64,
+    anchor: &'static str,
+) -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
     let (g, t) = timed();
     for p in [alice(), bob(), carol()] {
         g.join(&p, "r").unwrap();
     }
     let spec = |path| {
         let s = ClaimSpec::new(path, ttl, "");
-        if anchor.is_empty() { s } else { s.anchored(anchor) }
+        if anchor.is_empty() {
+            s
+        } else {
+            s.anchored(anchor)
+        }
     };
     g.claim(&alice(), "r", &spec("p")).unwrap();
     g.claim(&bob(), "r", &spec("q")).unwrap();
