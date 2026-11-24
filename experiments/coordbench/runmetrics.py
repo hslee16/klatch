@@ -7,9 +7,12 @@ import os
 import subprocess
 
 import asks as asks_mod
+import board as board_mod
 import chain
+import ctxcount
 import history as history_mod
 import injmetrics
+import metricver
 import recovery
 import scale as scale_mod
 import scenario as scenario_mod
@@ -49,6 +52,32 @@ def team_metrics(sums):
 
 
 class RunMetrics:
+    # metric version, coordination context and the board (#1521, #1524) ---------------------------------------------
+
+    def stamp_metrics(self):
+        """metric_version (metricver.py), the coordination context record (ctxcount.context_record) and, in a B1 arm, the
+        board metrics. Called first by store_metrics, which runs for every run; a failure is a note, never a lost run."""
+        rec = self.rec
+        rec["metric_version"] = metricver.METRIC_VERSION
+        workers = {n: v for n, v in self.allsums.items() if n not in self.role_keys and n not in self.repl_keys}
+        rec["coordination_context"] = ctxcount.context_record(workers)
+        if self.arm.startswith("B1"):
+            self.board_metrics()
+
+    def board_metrics(self):
+        """B1's claim_conflicts from the board's history (board.py) and where it came from; a B0 run has no board."""
+        origin, clones = (self.shared_tree, []) if self.is_shared else (self.origin, list(self.clones.values()))
+        sm = self.rec.setdefault("scenario_metrics", {})
+        try:
+            bm = board_mod.claim_conflicts([origin] + clones, self.henv)
+        except (RuntimeError, OSError) as e:
+            self.notes.append("board metrics failed: %s" % e)
+            sm["board"] = {"reason": str(e)}
+            return
+        self.rec["metrics"]["claim_conflicts"] = bm["claim_conflicts"]
+        sm["board"] = {"claim_conflict_detail": bm["detail"], "versions_read": bm["versions"],
+                       "definition": "files two agents both had a working line for in one version of TASKS.md (board.py)"}
+
     # roles ---------------------------------------------------------------------------------------------------
 
     # the run store -------------------------------------------------------------------------------------------
@@ -58,6 +87,7 @@ class RunMetrics:
         ask counts cross-checked against the streams (scenario_metrics.store). A B arm has no store: null with a reason. A
         missing tool or an unreadable store leaves null and a note; the run is never invalidated for it."""
         rec = self.rec
+        self.stamp_metrics()
         store = rec.setdefault("scenario_metrics", {}).setdefault("store", {})
         if not self.arm.startswith("K"):
             store["reason"] = "no klatch store in a %s arm (the arm has no klatch)" % self.arm
@@ -123,11 +153,19 @@ class RunMetrics:
         rec["metrics"]["duplicate_work"] = gm["duplicate_work"]
         rec["metrics"]["overwrites"] = gm["overwrites"]
         rec["scenario_metrics"] = dict(gm["details"], **scenario_mod.checker_extras(self.raw))
+        self.note_integration(scn)
         self.stream_metrics(scn, origin, clone_dirs)
         if scn.get("history_check") and self.fx.topology == "T-shared":
             self.shared_metrics(scn, origin)
         elif scn.get("history_check"):
             self.single_file_overwrites(scn, origin, clone_dirs)
+
+    def note_integration(self, scn):
+        """metrics.integration_ok for a scenario that names integration_checks (S1, #1522); units_completed stays as it was."""
+        integ = scenario_mod.integration_ok(scn, self.checks)
+        if integ is not None:
+            self.rec["metrics"]["integration_ok"] = integ
+            self.rec["scenario_metrics"]["integration_ok"] = integ
 
     def stream_metrics(self, scn, origin, clone_dirs):
         """The metrics a scenario reads from the streams: S10 injections, S4 asks, S7 scale, S3 chain, S6 recovery."""

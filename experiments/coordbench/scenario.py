@@ -130,6 +130,18 @@ def git_metrics(scn, origin, clones, env, branch="main"):
             "details": {"duplicated_units": duplicated, "foreign_edits": foreign, "lost_lines": lost}}
 
 
+def integration_ok(scn, checks):
+    """The integration outcome of one run (#1522): True when every check the scenario lists under integration_checks passed,
+    False when one failed, None when the scenario lists none or the checker did not report one of them (never False for a
+    check that is missing). For S1 these are the structural checks (registry, changelog, no conflict markers, visible tests),
+    none of which is a module's hidden behaviour test: units_completed carries those."""
+    ids = scn.get("integration_checks")
+    by = {c.get("id"): c.get("pass") for c in checks if isinstance(c, dict)}
+    if not ids or any(i not in by for i in ids):
+        return None
+    return all(by[i] is True for i in ids)
+
+
 def checker_extras(raw):
     """The fields the checker printed besides "checks" (merge_state, correct, per_agent, ...), or {}."""
     try:
