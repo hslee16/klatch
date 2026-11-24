@@ -42,16 +42,14 @@ pub fn find_session(
     registry: &dyn Registry,
     domain: &str,
 ) -> Result<Found, Miss> {
-    find_session_with(start, procs, registry, domain, is_claude_code)
+    find_session_with(start, (procs, registry, domain), is_claude_code)
 }
 
 /// `find_session` for a harness whose program is told by `is_program` (Codex, #884). The walk, the bound and every
 /// refusal are the same; only the program test differs.
 pub(crate) fn find_session_with(
     start: u32,
-    procs: &dyn ProcessTable,
-    registry: &dyn Registry,
-    domain: &str,
+    (procs, registry, domain): (&dyn ProcessTable, &dyn Registry, &str),
     is_program: fn(&str) -> bool,
 ) -> Result<Found, Miss> {
     let mut stale = None;

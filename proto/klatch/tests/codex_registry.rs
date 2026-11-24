@@ -11,7 +11,7 @@ use klatch::store::SqliteStore;
 use klatch::store::areas::*;
 use std::process::{Command, Stdio};
 
-fn require(h: &Home, room: &str, spec: &str) {
+fn require(h: &Home, (room, spec): (&str, &str)) {
     assert!(h.run("seed", &["join", "seed-room"]).status.success());
     let key = klatch::keys::FileKeys::new(&h.0.join("keys"))
         .get(&klatch::keys::store_key_name(&h.0))
@@ -28,7 +28,7 @@ fn registry(h: &Home) -> std::path::PathBuf {
 }
 
 /// The klatch command line as a script inside a session runs it: a home of its own, no typed name, the thread id.
-fn klatch(h: &Home, thread: &str, args: &str) -> String {
+fn klatch(h: &Home, (thread, args): (&str, &str)) -> String {
     format!(
         "/usr/bin/env -u KLATCH_IDENTITY_FILE -u KLATCH_NAME HOME='{}' KLATCH_HOME='{}' KLATCH_KEY_DIR='{}' CODEX_THREAD_ID='{thread}' '{}' {args}",
         h.0.join("home").display(),
@@ -44,12 +44,12 @@ fn hook(h: &Home, sid: &str) -> String {
     );
     format!(
         "printf '%s' '{json}' | {}",
-        klatch(h, sid, "--codex hook --event SessionStart")
+        klatch(h, (sid, "--codex hook --event SessionStart"))
     )
 }
 
 /// Run `script` as a program called `program` (a copy of the shell, so `ps` names it that); its output and success.
-fn run_as(h: &Home, program: &str, script: &str) -> (bool, String) {
+fn run_as(h: &Home, (program, script): (&str, &str)) -> (bool, String) {
     let dir = h.0.join(format!("bin-{program}"));
     std::fs::create_dir_all(&dir).unwrap();
     let bin = dir.join(program);
@@ -67,10 +67,15 @@ fn run_as(h: &Home, program: &str, script: &str) -> (bool, String) {
     )
 }
 
+/// The join failed and was judged as the floor (shown as `generic`, which lacks `wake`).
+fn assert_floor((ok, text): &(bool, String)) {
+    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+}
+
 const SID: &str = "019a1b2c-3d4e-7f80-9a0b-1c2d3e4f5a6b";
 
 fn gated(h: &Home, spec: &str) {
-    require(h, "gated", spec);
+    require(h, ("gated", spec));
     std::fs::create_dir_all(h.0.join("home")).unwrap();
 }
 
@@ -93,9 +98,9 @@ fn the_session_start_hook_in_a_codex_process_writes_a_record_and_the_join_is_sho
     let script = format!(
         "{}; {}",
         hook(&h, SID),
-        klatch(&h, SID, "--codex join gated")
+        klatch(&h, (SID, "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "codex", &script);
+    let (ok, text) = run_as(&h, ("codex", &script));
     assert!(
         !ok,
         "a verified Codex must not satisfy a capability room: {text}"
@@ -119,17 +124,26 @@ fn a_verified_codex_session_is_granted_no_capability() {
         ("g2", "session-identity"),
         ("g3", "pre-action-enforcement"),
     ] {
-        require(&h, room, &format!("refuse:{cap}"));
+        require(&h, (room, &format!("refuse:{cap}")));
     }
     std::fs::create_dir_all(h.0.join("home")).unwrap();
     let script = [
         hook(&h, SID),
-        format!("{} || echo REFUSED-g1", klatch(&h, SID, "--codex join g1")),
-        format!("{} || echo REFUSED-g2", klatch(&h, SID, "--codex join g2")),
-        format!("{} || echo REFUSED-g3", klatch(&h, SID, "--codex join g3")),
+        format!(
+            "{} || echo REFUSED-g1",
+            klatch(&h, (SID, "--codex join g1"))
+        ),
+        format!(
+            "{} || echo REFUSED-g2",
+            klatch(&h, (SID, "--codex join g2"))
+        ),
+        format!(
+            "{} || echo REFUSED-g3",
+            klatch(&h, (SID, "--codex join g3"))
+        ),
     ]
     .join("; ");
-    let (_, text) = run_as(&h, "codex", &script);
+    let (_, text) = run_as(&h, ("codex", &script));
     for room in ["g1", "g2", "g3"] {
         assert!(text.contains(&format!("REFUSED-{room}")), "{room}: {text}");
     }
@@ -143,9 +157,9 @@ fn a_capability_the_floor_has_is_still_met_and_nothing_else_changes() {
     let script = format!(
         "{}; {}",
         hook(&h, SID),
-        klatch(&h, SID, "--codex join gated")
+        klatch(&h, (SID, "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "codex", &script);
+    let (ok, text) = run_as(&h, ("codex", &script));
     assert!(ok, "{text}");
     assert!(text.contains("joined gated"), "{text}");
 }
@@ -154,8 +168,8 @@ fn a_capability_the_floor_has_is_still_met_and_nothing_else_changes() {
 fn a_codex_thread_id_alone_is_the_generic_floor() {
     let h = Home::new();
     gated(&h, "refuse:wake");
-    let (ok, text) = run_as(&h, "codex", &klatch(&h, SID, "--codex join gated"));
-    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+    let (ok, text) = run_as(&h, ("codex", &klatch(&h, (SID, "--codex join gated"))));
+    assert_floor(&(ok, text));
     assert!(records(&h).is_empty());
 }
 
@@ -167,9 +181,9 @@ fn the_hook_outside_a_codex_process_writes_no_record_and_the_join_is_the_floor()
         let script = format!(
             "{}; {}",
             hook(&h, SID),
-            klatch(&h, SID, "--codex join gated")
+            klatch(&h, (SID, "--codex join gated"))
         );
-        let (ok, text) = run_as(&h, program, &script);
+        let (ok, text) = run_as(&h, (program, &script));
         assert!(
             !ok && text.contains("generic lacks wake"),
             "{program}: {text}"
@@ -199,10 +213,10 @@ fn a_forged_record_for_a_process_that_is_not_codex_is_not_enough() {
     let script = format!(
         "{}; {}",
         forge(&h, SID),
-        klatch(&h, SID, "--codex join gated")
+        klatch(&h, (SID, "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "node", &script);
-    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+    let (ok, text) = run_as(&h, ("node", &script));
+    assert_floor(&(ok, text));
     assert!(!records(&h).is_empty(), "the forgery was written");
 }
 
@@ -214,9 +228,9 @@ fn a_forged_record_for_a_codex_process_is_believed_as_the_claude_registry_believ
     let script = format!(
         "{}; {}",
         forge(&h, SID),
-        klatch(&h, SID, "--codex join gated")
+        klatch(&h, (SID, "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "codex", &script);
+    let (ok, text) = run_as(&h, ("codex", &script));
     assert!(!ok && text.contains("codex lacks wake"), "{text}");
 }
 
@@ -227,10 +241,10 @@ fn a_record_of_another_session_is_not_enough() {
     let script = format!(
         "{}; {}",
         hook(&h, SID),
-        klatch(&h, "another-session", "--codex join gated")
+        klatch(&h, ("another-session", "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "codex", &script);
-    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+    let (ok, text) = run_as(&h, ("codex", &script));
+    assert_floor(&(ok, text));
 }
 
 #[test]
@@ -242,9 +256,9 @@ fn a_hook_whose_input_id_is_not_plain_writes_no_record() {
     let json = r#"{"session_id":"bad id!","cwd":"/w","hook_event_name":"SessionStart"}"#;
     let script = format!(
         "printf '%s' '{json}' | {}",
-        klatch(&h, SID, "--codex hook --event SessionStart")
+        klatch(&h, (SID, "--codex hook --event SessionStart"))
     );
-    let _ = run_as(&h, "codex", &script);
+    let _ = run_as(&h, ("codex", &script));
     assert!(records(&h).is_empty(), "{:?}", records(&h));
 }
 
@@ -256,17 +270,17 @@ fn a_record_that_others_can_write_is_not_believed() {
         "{}; chmod 666 '{}'/*.json; {}",
         hook(&h, SID),
         registry(&h).display(),
-        klatch(&h, SID, "--codex join gated")
+        klatch(&h, (SID, "--codex join gated"))
     );
-    let (ok, text) = run_as(&h, "codex", &script);
-    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+    let (ok, text) = run_as(&h, ("codex", &script));
+    assert_floor(&(ok, text));
 }
 
 #[test]
 fn a_missing_registry_is_the_floor_and_is_not_made_by_a_join() {
     let h = Home::new();
     gated(&h, "refuse:wake");
-    let (ok, text) = run_as(&h, "codex", &klatch(&h, SID, "--codex join gated"));
-    assert!(!ok && text.contains("generic lacks wake"), "{text}");
+    let (ok, text) = run_as(&h, ("codex", &klatch(&h, (SID, "--codex join gated"))));
+    assert_floor(&(ok, text));
     assert!(!registry(&h).exists());
 }

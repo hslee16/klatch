@@ -30,7 +30,7 @@ fn facts() -> SessionFacts<'static> {
     }
 }
 
-fn record_text(pid: u32, session: &str, start: &str, domain: &str) -> String {
+fn record_text(pid: u32, (session, start, domain): (&str, &str, &str)) -> String {
     format!(
         r#"{{"pid":{pid},"sessionId":"{session}","cwd":"/w","procStart":"{start}","pidDomain":"{domain}"}}"#
     )
@@ -47,7 +47,7 @@ fn reg(d: &Path) -> FsRegistry {
 }
 
 fn verified_in(d: &Path, t: &dyn ProcessTable, session: &str) -> bool {
-    verified_session(30, session, t, &reg(d), D)
+    verified_session(30, session, (t, &reg(d), D))
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn the_record_goes_under_klatchs_home_and_never_under_a_codex_directory() {
 fn a_hook_under_a_live_codex_process_writes_a_record_of_the_claude_shape() {
     let d = dir("write");
     let r = d.join("reg");
-    assert_eq!(write_session_record(&r, 30, &facts(), &tree(), D), Ok(10));
+    assert_eq!(write_session_record(&r, 30, &facts(), (&tree(), D)), Ok(10));
     let text = std::fs::read_to_string(r.join("10.json")).unwrap();
     let rec = parse_record(&text).expect("a record the Claude reader parses");
     assert_eq!(
@@ -122,7 +122,7 @@ fn the_nearest_codex_ancestor_is_the_one_recorded() {
         .with((20, 15), "Sat Nov 7 09:59:59 2026", "zsh")
         .with((15, 10), "Sat Nov 7 09:59:58 2026", "codex");
     assert_eq!(
-        write_session_record(&d.join("r"), 30, &facts(), &t, D),
+        write_session_record(&d.join("r"), 30, &facts(), (&t, D)),
         Ok(15)
     );
 }
@@ -133,7 +133,7 @@ fn no_codex_above_the_hook_writes_nothing() {
     let t = tree().with((10, 5), T, "claude");
     let r = d.join("r");
     assert_eq!(
-        write_session_record(&r, 30, &facts(), &t, D),
+        write_session_record(&r, 30, &facts(), (&t, D)),
         Err(NotRecorded::NoCodex)
     );
     assert!(!r.exists(), "not even the directory");
@@ -144,7 +144,7 @@ fn an_unreadable_table_writes_nothing_and_says_so() {
     let d = dir("unreadable");
     let r = d.join("r");
     assert_eq!(
-        write_session_record(&r, 30, &facts(), &UnreadableTable, D),
+        write_session_record(&r, 30, &facts(), (&UnreadableTable, D)),
         Err(NotRecorded::TableUnreadable)
     );
     assert!(!r.exists());
@@ -164,7 +164,7 @@ fn a_table_that_fails_partway_up_writes_nothing() {
     }
     let d = dir("flaky");
     assert_eq!(
-        write_session_record(&d.join("r"), 30, &facts(), &Flaky(tree()), D),
+        write_session_record(&d.join("r"), 30, &facts(), (&Flaky(tree()), D)),
         Err(NotRecorded::TableUnreadable)
     );
 }
@@ -176,7 +176,7 @@ fn a_parent_loop_ends_instead_of_spinning() {
         .with((2, 3), T, "a")
         .with((3, 2), T, "b");
     assert_eq!(
-        write_session_record(&d.join("r"), 2, &facts(), &t, D),
+        write_session_record(&d.join("r"), 2, &facts(), (&t, D)),
         Err(NotRecorded::NoCodex)
     );
 }
@@ -186,7 +186,7 @@ fn a_directory_that_cannot_be_made_is_unwritable_not_a_panic() {
     let d = dir("blocked");
     std::fs::write(d.join("file"), "x").unwrap();
     assert_eq!(
-        write_session_record(&d.join("file").join("r"), 30, &facts(), &tree(), D),
+        write_session_record(&d.join("file").join("r"), 30, &facts(), (&tree(), D)),
         Err(NotRecorded::Unwritable)
     );
 }
@@ -198,7 +198,7 @@ fn a_registry_directory_that_is_a_symlink_is_refused() {
     std::fs::create_dir(&elsewhere).unwrap();
     std::os::unix::fs::symlink(&elsewhere, d.join("r")).unwrap();
     assert_eq!(
-        write_session_record(&d.join("r"), 30, &facts(), &tree(), D),
+        write_session_record(&d.join("r"), 30, &facts(), (&tree(), D)),
         Err(NotRecorded::Unwritable)
     );
     assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
@@ -213,7 +213,7 @@ fn a_record_that_is_a_symlink_is_not_followed_on_write() {
     let target = d.join("victim");
     std::fs::write(&target, "keep").unwrap();
     std::os::unix::fs::symlink(&target, r.join("10.json")).unwrap();
-    let _ = write_session_record(&r, 30, &facts(), &tree(), D);
+    let _ = write_session_record(&r, 30, &facts(), (&tree(), D));
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
 }
 
@@ -223,16 +223,16 @@ fn writing_removes_records_of_processes_that_are_gone_and_keeps_the_rest() {
     let r = d.join("r");
     std::fs::create_dir(&r).unwrap();
     std::fs::set_permissions(&r, std::fs::Permissions::from_mode(0o700)).unwrap();
-    put(&r, 99, &record_text(99, "dead", T, D)); // no such process
-    put(&r, 5, &record_text(5, "reused", T, D)); // pid exists, other start time
+    put(&r, 99, &record_text(99, ("dead", T, D))); // no such process
+    put(&r, 5, &record_text(5, ("reused", T, D))); // pid exists, other start time
     let other = tree().with((77, 1), "Sat Nov 7 08:00:00 2026", "codex");
     put(
         &r,
         77,
-        &record_text(77, "live-other", "Sat Nov 7 08:00:00 2026", D),
+        &record_text(77, ("live-other", "Sat Nov 7 08:00:00 2026", D)),
     );
     std::fs::write(r.join("notes.txt"), "mine").unwrap();
-    write_session_record(&r, 30, &facts(), &other, D).unwrap();
+    write_session_record(&r, 30, &facts(), (&other, D)).unwrap();
     assert!(!r.join("99.json").exists() && !r.join("5.json").exists());
     assert!(r.join("77.json").exists() && r.join("10.json").exists());
     assert!(r.join("notes.txt").exists());
@@ -244,29 +244,29 @@ fn a_record_from_an_unreadable_table_or_another_machine_is_never_pruned() {
     let r = d.join("r");
     std::fs::create_dir(&r).unwrap();
     std::fs::set_permissions(&r, std::fs::Permissions::from_mode(0o700)).unwrap();
-    put(&r, 88, &record_text(88, "elsewhere", T, "linux"));
-    write_session_record(&r, 30, &facts(), &tree(), D).unwrap();
+    put(&r, 88, &record_text(88, ("elsewhere", T, "linux")));
+    write_session_record(&r, 30, &facts(), (&tree(), D)).unwrap();
     assert!(r.join("88.json").exists());
 }
 
 #[test]
 fn a_live_record_above_the_caller_is_verified_for_its_own_session() {
     let d = dir("live");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     assert!(verified_in(&d, &tree(), "sess-A"));
 }
 
 #[test]
 fn a_record_of_another_session_is_not_verified() {
     let d = dir("othersession");
-    put(&d, 10, &record_text(10, "sess-B", T, D));
+    put(&d, 10, &record_text(10, ("sess-B", T, D)));
     assert!(!verified_in(&d, &tree(), "sess-A"));
 }
 
 #[test]
 fn a_dead_process_is_not_verified() {
     let d = dir("dead");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     let t = tree();
     let mut gone = FakeTable::default();
     gone.0 =
@@ -284,7 +284,7 @@ fn a_reused_pid_is_not_verified() {
     put(
         &d,
         10,
-        &record_text(10, "sess-A", "Mon Nov 2 08:00:00 2026", D),
+        &record_text(10, ("sess-A", "Mon Nov 2 08:00:00 2026", D)),
     );
     assert!(!verified_in(&d, &tree(), "sess-A"));
 }
@@ -292,7 +292,7 @@ fn a_reused_pid_is_not_verified() {
 #[test]
 fn the_right_pid_and_start_running_another_program_is_not_verified() {
     let d = dir("program");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     for program in ["claude", "bash", "codex-helper", "node"] {
         let t = tree().with((10, 5), T, program);
         assert!(!verified_in(&d, &t, "sess-A"), "{program}");
@@ -302,7 +302,7 @@ fn the_right_pid_and_start_running_another_program_is_not_verified() {
 #[test]
 fn a_record_of_another_pid_domain_is_not_verified() {
     let d = dir("domain");
-    put(&d, 10, &record_text(10, "sess-A", T, "linux"));
+    put(&d, 10, &record_text(10, ("sess-A", T, "linux")));
     assert!(!verified_in(&d, &tree(), "sess-A"));
 }
 
@@ -311,14 +311,14 @@ fn a_record_naming_a_process_that_is_not_above_the_caller_is_not_verified() {
     // another user's (or another session's) live codex process, with a perfect record, beside the caller's tree
     let d = dir("beside");
     let t = tree().with((50, 1), T, "codex");
-    put(&d, 50, &record_text(50, "sess-A", T, D));
+    put(&d, 50, &record_text(50, ("sess-A", T, D)));
     assert!(!verified_in(&d, &t, "sess-A"));
 }
 
 #[test]
 fn a_record_filed_under_another_pid_is_not_believed() {
     let d = dir("misfiled");
-    put(&d, 10, &record_text(11, "sess-A", T, D));
+    put(&d, 10, &record_text(11, ("sess-A", T, D)));
     assert!(!verified_in(&d, &tree(), "sess-A"));
 }
 
@@ -328,13 +328,11 @@ fn a_malformed_record_a_missing_registry_and_an_unreadable_table_are_not_verifie
     put(&d, 10, "not json");
     assert!(!verified_in(&d, &tree(), "sess-A"));
     assert!(!verified_in(&d.join("nope"), &tree(), "sess-A"));
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     assert!(!verified_session(
         30,
         "sess-A",
-        &UnreadableTable,
-        &reg(&d),
-        D
+        (&UnreadableTable, &reg(&d), D)
     ));
 }
 
@@ -342,7 +340,7 @@ fn a_malformed_record_a_missing_registry_and_an_unreadable_table_are_not_verifie
 fn a_claude_record_in_the_claude_registry_is_not_a_codex_record() {
     // the Codex walk reads only the directory it is given, and a claude process never passes the program test
     let d = dir("claudeproc");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     let t = tree().with((10, 5), T, "claude");
     assert!(!verified_in(&d, &t, "sess-A"));
 }
@@ -351,19 +349,19 @@ fn a_claude_record_in_the_claude_registry_is_not_a_codex_record() {
 fn a_forged_record_for_the_real_codex_ancestor_is_believed_as_the_claude_registry_believes_it() {
     // the documented grade: same-user evidence. The forger needs a live codex ancestor at that pid and start time.
     let d = dir("forged");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     assert!(verified_in(&d, &tree(), "sess-A"));
     // but not for a pid of its own invention, and not with a guessed start time
     let d2 = dir("forged2");
     put(
         &d2,
         10,
-        &record_text(10, "sess-A", "Sun Nov 8 00:00:00 2026", D),
+        &record_text(10, ("sess-A", "Sun Nov 8 00:00:00 2026", D)),
     );
     put(
         &d2,
         20,
-        &record_text(20, "sess-A", "Sat Nov 7 09:59:59 2026", D),
+        &record_text(20, ("sess-A", "Sat Nov 7 09:59:59 2026", D)),
     );
     assert!(!verified_in(&d2, &tree(), "sess-A"), "a shell is not codex");
 }
@@ -382,22 +380,22 @@ pub(super) fn me() -> u32 {
 #[test]
 fn an_owned_registry_reads_a_plain_file_of_its_own_user() {
     let d = dir("own-ok");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     assert!(own(&d, me()).record_for(10).is_some());
-    assert!(verified_session(30, "sess-A", &tree(), &own(&d, me()), D));
+    assert!(verified_session(30, "sess-A", (&tree(), &own(&d, me()), D)));
 }
 
 #[test]
 fn a_record_owned_by_another_user_is_not_read() {
     let d = dir("own-foreign");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     assert!(own(&d, me().wrapping_add(1)).record_for(10).is_none());
 }
 
 #[test]
 fn a_record_others_can_write_is_not_read() {
     let d = dir("own-open");
-    put(&d, 10, &record_text(10, "sess-A", T, D));
+    put(&d, 10, &record_text(10, ("sess-A", T, D)));
     for mode in [0o666, 0o620, 0o602] {
         std::fs::set_permissions(d.join("10.json"), std::fs::Permissions::from_mode(mode)).unwrap();
         assert!(own(&d, me()).record_for(10).is_none(), "{mode:o}");
@@ -407,7 +405,7 @@ fn a_record_others_can_write_is_not_read() {
 #[test]
 fn a_record_that_is_a_symlink_is_not_read() {
     let d = dir("own-link");
-    std::fs::write(d.join("real"), record_text(10, "sess-A", T, D)).unwrap();
+    std::fs::write(d.join("real"), record_text(10, ("sess-A", T, D))).unwrap();
     std::os::unix::fs::symlink(d.join("real"), d.join("10.json")).unwrap();
     assert!(own(&d, me()).record_for(10).is_none());
 }
@@ -461,7 +459,7 @@ fn a_record_that_cannot_be_put_in_place_leaves_no_temporary_file() {
     std::fs::create_dir_all(r.join("10.json")).unwrap(); // a directory where the record goes
     std::fs::set_permissions(&r, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!(
-        write_session_record(&r, 30, &facts(), &tree(), D),
+        write_session_record(&r, 30, &facts(), (&tree(), D)),
         Err(NotRecorded::Unwritable)
     );
     let names: Vec<_> = std::fs::read_dir(&r)

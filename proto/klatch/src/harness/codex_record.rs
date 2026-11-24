@@ -114,8 +114,7 @@ pub fn write_session_record(
     dir: &Path,
     from: u32,
     facts: &SessionFacts,
-    procs: &dyn ProcessTable,
-    domain: &str,
+    (procs, domain): (&dyn ProcessTable, &str),
 ) -> Result<u32, NotRecorded> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -145,11 +144,9 @@ pub fn write_session_record(
 pub fn verified_session(
     start: u32,
     session_id: &str,
-    procs: &dyn ProcessTable,
-    registry: &dyn Registry,
-    domain: &str,
+    (procs, registry, domain): (&dyn ProcessTable, &dyn Registry, &str),
 ) -> bool {
-    find_session_with(start, procs, registry, domain, is_codex)
+    find_session_with(start, (procs, registry, domain), is_codex)
         .is_ok_and(|found| found.session_id == session_id)
 }
 

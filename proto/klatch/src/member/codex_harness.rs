@@ -21,11 +21,14 @@ fn klatch_home() -> Option<PathBuf> {
     }
 }
 
-/// The harness a join from this caller is judged by when it runs in a Codex session, else `None` (a Claude Code
+/// The SessionStart hook's extra step runs here, before anything joins. The harness a join from this caller is judged by when it runs in a Codex session, else `None` (a Claude Code
 /// session, a typed name and a key bundle keep the harness they had). It has the levels of the generic floor whatever
 /// the walk finds; the walk, run on the first time the name is asked for, only decides whether the join is shown as
 /// `codex`. Any doubt is `generic`.
-pub fn codex_harness(caller: &Caller) -> Option<CodexRecorded> {
+pub fn codex_harness(caller: &Caller, hook_event: Option<&str>) -> Option<CodexRecorded> {
+    if hook_event == Some("SessionStart") {
+        record_codex_session(caller);
+    }
     let session = caller.codex_session.clone()?;
     Some(CodexRecorded::new(Box::new(move || {
         let Some(home) = klatch_home() else {
@@ -38,9 +41,7 @@ pub fn codex_harness(caller: &Caller) -> Option<CodexRecorded> {
         verified_session(
             std::process::id(),
             &session,
-            &PsTable,
-            &registry,
-            this_pid_domain(),
+            (&PsTable, &registry, this_pid_domain()),
         )
     })))
 }
@@ -54,7 +55,7 @@ fn recordable<'a>(session: Option<&'a str>, stdin: Option<&str>) -> Option<&'a s
 /// The SessionStart hook's extra step: record the Codex process above this hook. Only for a hook whose own standard
 /// input names the session the call acts for; never an error (a hook must not fail a session), and nothing is
 /// written when no `codex` process is found above it.
-pub fn record_codex_session(caller: &Caller) {
+fn record_codex_session(caller: &Caller) {
     let (Some(session), Some(home)) = (
         recordable(
             caller.codex_session.as_deref(),
@@ -73,8 +74,7 @@ pub fn record_codex_session(caller: &Caller) {
         &codex_registry_dir(&home),
         std::process::id(),
         &facts,
-        &PsTable,
-        this_pid_domain(),
+        (&PsTable, this_pid_domain()),
     );
 }
 
