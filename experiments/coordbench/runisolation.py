@@ -73,7 +73,8 @@ class IsolationSupport:
         """While agents run nobody can list the scratch directory or the log directory (the harness opens what it needs by
         name)."""
         isolation.hide(self.scratch)
-        isolation.hide(self.log_dir)
+        if not self.driver.lists_logs:
+            isolation.hide(self.log_dir)
 
     def show_run(self):
         isolation.restore(self.scratch)

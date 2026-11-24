@@ -33,6 +33,7 @@ def parse_claude_version(text):
 
 class Driver:
     name = "driver"
+    lists_logs = False
     passthrough = ()
     extra_env = {}
 
@@ -64,6 +65,7 @@ class Driver:
 
 class FakeDriver(Driver):
     name = "fake"
+    lists_logs = True  # fake agents signal each other by listing the log directory, so it is not hidden from them (#1519)
 
     def __init__(self, script_path, klatch_bin=None, room="lobby"):
         self.script_path = script_path

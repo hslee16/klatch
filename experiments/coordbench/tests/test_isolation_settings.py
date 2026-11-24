@@ -86,6 +86,10 @@ class Settings(unittest.TestCase):
         argv, _ = self.d.command("a", "B0", "P", "/c", "/o")
         self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), self.d.settings_for("B0"))
 
+    def test_the_log_directory_is_hidden_from_real_agents_and_not_from_fake_ones_that_poll_it(self):
+        self.assertFalse(self.d.lists_logs)
+        self.assertTrue(drivers.FakeDriver("x").lists_logs)
+
     def test_every_arm_gets_the_same_sandbox_keys(self):
         keys = {arm: self.loaded(arm)[0]["sandbox"] for arm in ("B0", "B1", "K1", "K2")}
         self.assertEqual(len({json.dumps(v, sort_keys=True) for v in keys.values()}), 1)

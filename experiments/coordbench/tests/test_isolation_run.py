@@ -26,6 +26,7 @@ FAKE = os.path.join(BENCH, "fixtures", "trivial", "fake.json")
 class EscapeDriver(drivers.FakeDriver):
     """Starts the escape agent and tells it the leaked paths: the other agents' directories and the guarded ones."""
     name = "fake"
+    lists_logs = False  # this agent does not poll the log directory, so it is hidden as for a real agent
 
     def __init__(self):
         super().__init__(FAKE)
