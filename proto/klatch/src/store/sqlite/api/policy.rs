@@ -2,6 +2,7 @@
 
 use super::super::SqliteStore;
 use crate::domain::{AuditRecord, RefusalRecord, Result};
+use crate::store::Census;
 use crate::store::PolicyStore;
 use crate::store::{NewAudit, NewRefusal};
 use rusqlite::{Row, params};
@@ -39,6 +40,18 @@ impl PolicyStore for SqliteStore {
             |r| r.get::<_, Option<i64>>(0),
         )
         .map(Option::flatten)
+    }
+
+    fn audit_census(&self, q: &Census) -> Result<(u64, u64)> {
+        if q.targets.is_empty() || q.cap == 0 {
+            return Ok((0, 0));
+        }
+        self.optional(
+            &census_sql(q.targets.len()),
+            rusqlite::params_from_iter(census_params(q)),
+            census_from_row,
+        )
+        .map(|c| c.unwrap_or((0, 0)))
     }
 
     fn policy_get(&self, key: &str) -> Result<Option<String>> {
@@ -125,4 +138,43 @@ fn refusal_from_row(r: &Row<'_>) -> rusqlite::Result<RefusalRecord> {
         operation: r.get(3)?,
         rule: r.get(4)?,
     })
+}
+
+/// The census query (#1310) for `n` targets: `?1` the action, `?2` the first moment that counts, `?3` the cap, `?4`
+/// and on the targets. Each target is a range of the `(action, target, ts)` index read for at most `?3` rows, and the
+/// union is cut at `?3` too, so no more than `n * cap` rows are touched however large the audit is. The outer query
+/// counts them and the distinct `terminal=` labels among them.
+pub(in crate::store::sqlite) fn census_sql(n: usize) -> String {
+    let each: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "SELECT detail FROM (SELECT detail FROM admin_audit \
+                 WHERE action=?1 AND target=?{} AND ts>=?2 LIMIT ?3)",
+                4 + i
+            )
+        })
+        .collect();
+    format!(
+        "SELECT COUNT(*), COUNT(DISTINCT CASE WHEN instr(detail,'terminal=')>0 \
+         THEN substr(detail, instr(detail,'terminal=')+9) END) \
+         FROM ({} LIMIT ?3)",
+        each.join(" UNION ALL ")
+    )
+}
+
+pub(in crate::store::sqlite) fn census_params(q: &Census) -> Vec<rusqlite::types::Value> {
+    use rusqlite::types::Value;
+    let mut p = vec![
+        Value::Text(q.action.to_string()),
+        Value::Integer(q.since),
+        Value::Integer(q.cap.min(i64::MAX as u64) as i64),
+    ];
+    p.extend(q.targets.iter().map(|t| Value::Text((*t).to_string())));
+    p
+}
+
+pub(in crate::store::sqlite) fn census_from_row(
+    r: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(u64, u64)> {
+    Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
 }

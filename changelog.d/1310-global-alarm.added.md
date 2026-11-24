@@ -1,0 +1,1 @@
+- A loud audit row `proof-failed-many` (counts only) is written once when 50 admin passphrase or recovery code failures happen inside a rolling 24 hours across all terminals, and `klatch doctor` warns while the count is at or above 50. It is an alarm only: no lockout and no extra delay, so a program cannot use it to lock the human out (#1310).

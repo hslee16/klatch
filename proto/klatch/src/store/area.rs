@@ -28,6 +28,6 @@ pub use claims::ClaimStore;
 pub use credentials::CredentialStore;
 pub use members::MemberStore;
 pub use messages::{MessageStore, Shown};
-pub use policy::PolicyStore;
+pub use policy::{Census, PolicyStore};
 pub use reviews::ReviewStore;
 pub use rooms::RoomStore;

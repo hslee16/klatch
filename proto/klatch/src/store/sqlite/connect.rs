@@ -4,6 +4,7 @@ use super::schema::{SCHEMA, has_table, user_version};
 use super::{SCHEMA_VERSION, SqliteStore, schema};
 use crate::domain::{Error, Result};
 use crate::keys::Key;
+use crate::store::Census;
 use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
@@ -84,6 +85,34 @@ impl SqliteStore {
             out.push((label, n));
         }
         Ok(out)
+    }
+
+    /// The count of `action` entries of the audit since `since`, and of the distinct terminals among them (#1310), for
+    /// `klatch doctor`. Read-only; counts only.
+    pub fn read_audit_census(path: &Path, key: &Key, q: &Census) -> Result<(u64, u64)> {
+        use super::api::policy::{census_from_row, census_params, census_sql};
+        if q.targets.is_empty() {
+            return Ok((0, 0));
+        }
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(be)?;
+        Self::unlock(&conn, key)?;
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='admin_audit'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        if has == 0 {
+            return Ok((0, 0));
+        }
+        conn.query_row(
+            &census_sql(q.targets.len()),
+            rusqlite::params_from_iter(census_params(q)),
+            census_from_row,
+        )
+        .map_err(be)
     }
 
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
