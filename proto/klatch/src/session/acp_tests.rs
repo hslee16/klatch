@@ -16,7 +16,7 @@ fn who(name: &str) -> Principal {
 
 /// Room `r` (public) with one message from alice, room `vault` (private) with one, and `lib` the librarian at the lowest
 /// clearance.
-fn gateway() -> Gateway<SqliteStore> {
+pub(super) fn gateway() -> Gateway<SqliteStore> {
     gateway_cleared("public")
 }
 
@@ -55,13 +55,13 @@ fn drive(g: &Gateway<SqliteStore>, member: &str, lines: &[Value]) -> Vec<Value> 
         .collect()
 }
 
-fn init() -> Value {
+pub(super) fn init() -> Value {
     json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}})
 }
-fn new_session() -> Value {
+pub(super) fn new_session() -> Value {
     json!({"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}})
 }
-fn prompt(id: u64, text: &str) -> Value {
+pub(super) fn prompt(id: u64, text: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":"session/prompt","params":{
         "sessionId":"klatch-librarian-1","prompt":[{"type":"text","text":text}]}})
 }
