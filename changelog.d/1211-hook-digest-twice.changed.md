@@ -1,0 +1,1 @@
+- The hook digest leaves the read cursor alone by design, so `wait` and `read` hand a message it showed again; only the dm nudge line can repeat, once in the hook digest and once in `wait` or `read` (#1211). Documented in INTEGRATION.md; no behaviour changed.
