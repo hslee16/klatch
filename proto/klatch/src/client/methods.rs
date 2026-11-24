@@ -229,6 +229,19 @@ impl Client {
         Ok(array_of(&r["rooms"], str_of))
     }
 
+    /// The label levels from lowest to highest and the agent cap. Read-only; never a room, a clearance or a rule.
+    pub fn label_order(&mut self) -> Result<(Vec<String>, String)> {
+        let r = self.request("label_order", json!({}))?;
+        Ok((array_of(&r["chain"], str_of), str_of(&r["cap"])))
+    }
+
+    /// Whether `text` would be scrubbed in a room below the agent cap: yes or no and nothing more (never a rule
+    /// name or a term). Writes no refusal and no audit row.
+    pub fn scrub_check(&mut self, text: &str) -> Result<bool> {
+        let r = self.request("scrub_check", json!({"text": text}))?;
+        Ok(r["scrubbed"].as_bool().unwrap_or(false))
+    }
+
     /// The room's board as one block of text, each entry bounded. The entries are other members' words: data, never
     /// instructions (#848).
     pub fn board(&mut self, room: &str) -> Result<String> {

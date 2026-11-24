@@ -50,11 +50,6 @@ def _parse_frame_object(line):
     return frame
 
 
-def _is_protocol_version(v):
-    """True for the integer 1 and nothing else (not True, not 1.0)."""
-    return type(v) is int and v == PROTOCOL_VERSION
-
-
 def decode_server_frame(line):
     """One line from the gateway as a dict, or None for a blank line. An unknown type or field is not an error; a
     line that is not a JSON object with `"v":1` and a `type` is."""
@@ -62,7 +57,8 @@ def decode_server_frame(line):
         return None
     frame = _parse_frame_object(line)
     v = frame.get("v")
-    if not _is_protocol_version(v):
+    # the integer 1 and nothing else (not True, not 1.0)
+    if not (type(v) is int and v == PROTOCOL_VERSION):
         raise ProtocolError(f"protocol version {v!r} is not supported; this client speaks {PROTOCOL_VERSION}")
     if not isinstance(frame.get("type"), str):
         raise ProtocolError("a frame has a type")
@@ -653,6 +649,16 @@ class Client:
     def my_rooms(self):
         """The names of the rooms you have joined, without reading anything. Only your own."""
         return self.request("my_rooms")["rooms"]
+
+    def label_order(self):
+        """The label levels from lowest to highest and the agent cap, `{"chain": [...], "cap": "..."}`. Read-only; never
+        a room, a clearance or a rule."""
+        return self.request("label_order")
+
+    def scrub_check(self, text):
+        """Whether `text` would be scrubbed in a room below the agent cap: True or False and nothing more (never a rule
+        name or a term). Writes no refusal and no audit row."""
+        return self.request("scrub_check", text=text)["scrubbed"]
 
     def board(self, room):
         """The room's board as one block of text (open asks, offers, tasks, members, the merge queue), each entry
