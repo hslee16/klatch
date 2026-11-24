@@ -100,11 +100,27 @@ class Rule(unittest.TestCase):
         self.assertEqual(r["status"], "failed")
         self.assertIs(r["listagents_named_peer"], False)
         self.assertIn("No reachable agents", r["reason"])  # the reason says what ListAgents showed
+        self.assertEqual(r["clock"]["last_agent_start"], 0.0)
+        self.assertEqual(r["first_listagents_after_all_started"], {"agent": "a", "t": 30.0, "seconds_after_last_start": 30.0, "named_peer": False})
         self.assertIn("ListAgents", r["reason"])
 
-    def test_a_colleague_that_had_only_just_started_is_no_evidence(self):
-        r = self.two(lister(NONE, 3.0), [(0.0, init())], alive=((0.0, 100.0), (0.0, 100.0)))
+    def test_a_result_before_every_agent_had_been_up_for_the_settle_time_is_no_evidence(self):
+        r = self.two(lister(NONE, 3.6), [(0.0, init())], alive=((0.0, 100.0), (0.0, 100.0)))
         self.assertEqual(r["status"], "unknown")
+        self.assertIn("3.6", r["reason"])  # says when the first ListAgents came
+        r = self.two(lister(NONE, 8.5), [(0.0, init())])
+        self.assertEqual(r["status"], "failed")
+
+    def test_the_settle_time_counts_from_the_latest_agent_start(self):
+        late = ((0.0, 100.0), (20.0, 100.0))
+        self.assertEqual(self.two(lister(NONE, 25.0), [(0.0, init())], alive=late)["status"], "unknown")
+        self.assertEqual(self.two(lister(NONE, 28.5), [(0.0, init())], alive=late)["status"], "failed")
+
+    def test_a_failed_send_to_a_name_that_is_running_is_evidence_too(self):
+        bad = '{"success":false,"message":"No agent named \'b\' is reachable.\\nUse ListAgents to see everyone you can message."}'
+        r = self.two(lister(NONE, 3.0) + sender(bad, 12.0), [(0.0, init())])
+        self.assertEqual(r["status"], "failed")
+        self.assertIn("No agent named", r["reason"])
 
     def test_agents_that_never_overlapped_are_not_evidence_of_failure(self):
         r = self.two(lister(NONE, 8.0), [(0.0, init())], alive=((0.0, 10.0), (12.0, 40.0)))
@@ -241,7 +257,7 @@ class Harness(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"HOME": self.home})
         p.start()
         self.addCleanup(p.stop)
-        g = mock.patch.object(messaging, "ALIVE_GRACE_S", 0.2)
+        g = mock.patch.object(messaging, "SETTLE_S", 0.2)
         g.start()
         self.addCleanup(g.stop)
         self.results, self.logs, self.scratch = (os.path.join(self.tmp, d) for d in ("results", "logs", "scratch"))
@@ -275,7 +291,9 @@ class EndToEnd(Harness):
     def test_the_record_lists_what_the_run_left_in_the_shared_config_directory(self):
         rec = self.go(ProbeDriver())
         left = rec["messaging_verified"]["config_dir_entries"]
-        self.assertEqual(left, {"count": 2, "files": [{"path": "sessions/a.json", "bytes": 2}, {"path": "sessions/b.json", "bytes": 2}]})
+        digest = __import__("hashlib").sha256(b"{}").hexdigest()
+        self.assertEqual(left, {"count": 2, "files": [{"path": "sessions/a.json", "bytes": 2, "sha256": digest},
+                                                      {"path": "sessions/b.json", "bytes": 2, "sha256": digest}]})
 
     def test_a_b1_run_with_an_agent_that_lacks_a_messaging_tool_is_invalid_with_the_reason(self):
         rec = self.go(ProbeDriver(tools_of={"b": ["Bash", "Edit", "SendMessage"]}))

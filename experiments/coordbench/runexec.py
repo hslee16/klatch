@@ -27,7 +27,7 @@ from runmetrics import RunMetrics, resolved_models, team_metrics, tool_calls_of
 from runisolation import IsolationSupport
 from runpoll import PollSupport
 from runroles import RoleSupport
-from runprompt import BOARD_ATTRIBUTES, TASK_BOARD, build_prompt
+from runprompt import TASK_BOARD, build_prompt, seed_board_attributes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RunSpot = collections.namedtuple("RunSpot", "arm seed scratch log_dir")  # which arm, with which seed, where it runs and logs
@@ -116,8 +116,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
             board = (self.fx.seed_history or {}).get("board", []) + (self.inj["board"] if self.inj else [])
             with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
                 f.write(TASK_BOARD + "".join(l + "\n" for l in board))
-            with open(os.path.join(seedtree, ".gitattributes"), "w") as f:
-                f.write(BOARD_ATTRIBUTES)
+            seed_board_attributes(seedtree)
         git(["init", "-q", "-b", "main"], seedtree, henv)
         git(["add", "-A"], seedtree, henv)
         git(["commit", "-q", "-m", "initial"], seedtree, henv)

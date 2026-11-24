@@ -126,11 +126,11 @@ make an escape unlikely and visible; they are not a security boundary against a 
 B1 and B1-roles share one Claude config directory (#1520): native messaging finds peers through `CLAUDE_CONFIG_DIR` (measured 2026-11-23: one per agent leaves
 `ListAgents` empty), so a B1 run's agents share `<scratch>/agents/cfg-<token>` (mode 0700, never `~/.claude`); HOME, TMPDIR and clones stay per agent, B0 and the K
 arms keep one config directory per agent. The sandbox and the scan treat it as the agent's own in B1 only (a K or B0 agent is denied it). Tradeoff: B1 agents share
-config-directory state, the price of native messaging; `messaging_verified.config_dir_entries` shows what a run left there.
+config-directory state, the price of native messaging; `messaging_verified.config_dir_entries` (path, size, sha256) shows what a run left there. `verified` means a teammate was found, not that a message was read.
 
 In layout mode the published log directories of earlier runs are listable and readable by later runs of the same user (the sandbox
 denies the logs root; layout mode cannot). In sandbox mode a `--logs-dir` or `--tmp-root` under `/Users`, `/home`, `/root` or the real
-home is refused (the file-tool deny rules cannot cover a user root that holds the run), use the system temp directory. The
+home is refused (the file-tool deny rules cannot cover a user root that holds the run; the refusal prints an example): `--logs-dir /tmp/coordbench-logs --tmp-root /tmp/coordbench-tmp`. The
 harness also refuses a `--logs-dir` or `--tmp-root` that is your home directory, is owned by someone else or is writable by
 group or others (a sticky world-writable `/tmp` is accepted). SIGTERM and SIGINT restore the modes of every directory the run
 hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch directories of dead runs (an `.owner` file names

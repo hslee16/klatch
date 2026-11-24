@@ -10,14 +10,23 @@ Layout of the run scratch directory (mode 0300 while agents run, see isolation.p
 """
 import os
 import shutil
+import stat
 
 import isolation
 import messaging
-from runenv import EXCLUDE, append_exclude
+from runenv import EXCLUDE, append_exclude, sha256_file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 STREAM_SUFFIX = ".stream.jsonl"
+
+
+def _digest(path):
+    """sha256 of a regular file (a socket or a vanished file has none: null)."""
+    try:
+        return sha256_file(path) if stat.S_ISREG(os.lstat(path).st_mode) else None
+    except OSError:
+        return None
 
 
 class IsolationSupport:
@@ -195,13 +204,14 @@ class IsolationSupport:
         return found
 
     def config_dir_entries(self, limit=50):
-        """What the run left in the shared config directory: {"count", "files": [{"path", "bytes"}]} (the first `limit`, sorted).
+        """What the run left in the shared config directory: {"count", "files": [{"path", "bytes", "sha256"}]} (the first `limit`, sorted),
+        a snapshot at the end of the run so a change by one agent that another could read is visible.
         The record is how anyone learns how much state B1 agents share through it (README, "Isolation")."""
         base, found = self.shared_config(), []
         for root, _, files in os.walk(base):
             for f in files:
                 p = os.path.join(root, f)
-                found.append({"path": os.path.relpath(p, base), "bytes": os.lstat(p).st_size})
+                found.append({"path": os.path.relpath(p, base), "bytes": os.lstat(p).st_size, "sha256": _digest(p)})
         found.sort(key=lambda x: x["path"])
         return {"count": len(found), "files": found[:limit]}
 

@@ -10,6 +10,7 @@ import re
 
 import asks
 import cmdkinds
+import boardmsgs
 import ctxcount
 import messaging
 import streamshape
@@ -88,6 +89,7 @@ class StreamState:
         # what the run needs to show that native messaging worked (messaging.py): the init tools, every ListAgents and SendMessage
         # result with the harness clock when it was read
         self.msg_tools = None
+        self.sent_texts, self.board_texts = {}, {}  # normalised message text -> times, for SendMessage and for board lines
         self.msg_calls = {"listagents": [], "sends": []}
 
     @property
@@ -200,6 +202,23 @@ class StreamState:
     def _is_message(self, name, cmd):
         return name == "SendMessage" or bool(cmd and self.msg_re.search(cmd))
 
+    def _messages_of(self, name, inp, edit):
+        """How many messages one tool call is: a klatch post, DM, ask or answer, a SendMessage, or the message-prefix lines a board
+        edit adds (boardmsgs.py). A SendMessage and a board line with the same text within 30 s are one message."""
+        if name == "SendMessage":
+            text = boardmsgs.normalise(inp.get("message"))
+            dup = boardmsgs.same_recently(self._t, self.board_texts.get(text, []))
+            self.sent_texts.setdefault(text, []).append(self._t)
+            return 0 if dup else 1
+        if edit:
+            n = 0
+            for text in boardmsgs.message_texts(name, inp):
+                dup = boardmsgs.same_recently(self._t, self.sent_texts.get(text, []))
+                self.board_texts.setdefault(text, []).append(self._t)
+                n += 0 if dup else 1
+            return n
+        return 1 if self._is_message(name, inp.get("command", "") if name == "Bash" else "") else 0
+
     def _on_tool_use(self, m, b):
         tu = streamshape.tool_use(b)
         name, raw = tu["name"], tu["input"]
@@ -215,8 +234,7 @@ class StreamState:
             self._enter("tool_calls", len(json.dumps(raw)))
         edit = cmdkinds.is_board_edit(name, inp)
         self.board_edits += edit
-        if edit or self._is_message(name, inp.get("command", "") if name == "Bash" else ""):
-            self.messages += 1
+        self.messages += self._messages_of(name, inp, edit)
         for ev in asks.extract(name, inp, self.klatch_bin):
             self.msg_events.append(dict(ev, t=self._t))
 

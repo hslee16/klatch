@@ -56,8 +56,10 @@ So since #1520 the agents of one B1 or B1-roles run share ONE config directory (
 `~/.claude`) and keep their own HOME, TMPDIR and clone; every other arm keeps one config directory per agent. A reply by raw socket
 path (`uds:/tmp/cc-socks/N.sock`) exists, but the sockets are per process and nothing here uses it.
 
-Result texts seen: `Peer sessions (1): b [eab75d] ... busy` and `No reachable agents`; a failed send says `No agent named b is
-reachable`. To repeat the probe (shared config directory, separate homes), from an empty scratch directory:
+Result texts seen: a `ListAgents` result has `Peer sessions (1):` and one line per peer (`  b [eab75d]  .  interactive  .  busy  .
+started 16s ago`) or says `No reachable agents`; a `SendMessage` result is JSON, `{"success":true,...}` or
+`{"success":false,"message":"No agent named 'b' is reachable..."}` (or `Failed to send to uds:...`), with is_error NOT set on a
+failure. The probe streams are in `tests/fixtures/msgprobe/` (home path stripped) and the tests replay them. To repeat the probe (shared config directory, separate homes), from an empty scratch directory:
 
     P=$(mktemp -d) && cd "$P" && mkdir home-a home-b cfg
     FLAGS=(--model claude-haiku-4-5-20251001 --setting-sources local --no-session-persistence
@@ -74,20 +76,22 @@ reachable`. To repeat the probe (shared config directory, separate homes), from 
 
 The harness now judges this itself in every B1 and B1-roles run (`messaging.py`), and the record has a `messaging_verified` object:
 `{"tools_present", "listagents_named_peer", "messages_sent", "messages_delivered", "listagents_calls", "status", "reason",
-"config_dir_entries"}`. `status` is `failed` (the run is INVALID, the reason is in `notes`) when an init event that carries a tools
-list lacks `SendMessage` or `ListAgents`, or when a `ListAgents` result came back while a colleague had been alive for at least 15 s
-(a session binds its inbox a few seconds after it starts) and no `ListAgents` result of the run ever named a teammate; `verified`
-when some result named a teammate; `unknown` (the run stays valid) when no `ListAgents` ran while a colleague had been alive that
-long, for instance because every agent finished before the next started, or the run has one agent. `config_dir_entries` lists what the
-run left in the shared config directory, so the state B1 agents share through it can be read off a real run.
+"config_dir_entries"}`. `status` is `failed` (the run is INVALID, the reason is in `notes`) when an init event that carries a tools list lacks
+`SendMessage` or `ListAgents`, or when, at least 8 s after EVERY agent had started, a `ListAgents` result named no teammate (or a
+`SendMessage` failed with `No agent named`) while another agent's stream shows it still running, and no `ListAgents` result of the
+run ever named a teammate (a real agent's first `ListAgents` comes 3.6 to 4 s after it starts, so earlier ones are no test); `verified`
+when some result named a teammate (found and a message accepted; not that it was read); `unknown` (the run stays valid but proves
+nothing, and the report labels a B1 group that holds one 'messaging unverified') when no `ListAgents` ran 8 s after the last start
+with a colleague still running, or the run has one agent. `first_listagents_after_all_started` and `clock` show why. `config_dir_entries`
+lists what the run left in the shared config directory (path, bytes, sha256), so the state B1 agents share through it can be read off.
 
-## Part 1b: the B1 trivial run is the harness's proof
+## Part 1b: a B1 run of dependent agents is the harness's proof
 
-The coordinator runs the B1 arm of the trivial pilot (part 2, `--arm B1`) so that the harness proves messaging in a real run. The two
-trivial tasks are independent, so an agent may never call `ListAgents`; read `messaging_verified.status` of that record. `verified`
-is the proof. `unknown` means the run proved nothing (no `ListAgents` call while the colleague was alive): repeat it, or run the
-probe above. `failed` means the shared config directory did not let the sessions see each other: stop and report. Read
-`config_dir_entries` as well, and record what the first real run left there.
+The real B1 pilot on the trivial fixture came out `unknown`: its two tasks are independent and no agent called `ListAgents` or
+`SendMessage`, and the B1 prompt must not tell agents to (prompt parity). The proof is a B1 run of a fixture whose agents depend on
+each other (S3 chain, run by the coordinator), where an agent has a reason to list agents and ask. Read `messaging_verified.status` of
+that record. `verified` is the proof. `unknown` proves nothing: repeat it, or run the probe above. `failed` means the shared config
+directory did not let the sessions see each other: stop and report. Read `config_dir_entries` as well.
 
 ## Part 2: one run per arm on the trivial fixture
 

@@ -70,6 +70,15 @@ class Answers(unittest.TestCase):
             i = text.index("answer: FACT (from NAME)")
             self.assertIn("`TASKS.md`", text[i:i + 80], arm)
 
+    def test_b1_changes_status_by_adding_a_line_not_by_editing_an_old_one(self):
+        # with merge=union an edited line meets another agent's append as two lines; the metric reads the last (#1520 review)
+        text = " ".join(stripped("B1").split())
+        self.assertNotIn("change `working` to `done`", text)
+        self.assertIn("add the same line with `done`", text)
+        self.assertIn("add its line with `handoff`", text)
+        self.assertIn("add `done` lines", text)
+        self.assertIn("add `done` lines", " ".join(stripped("B1-roles").split()))
+
     def test_no_other_arm_mentions_the_board_answer_line(self):
         for arm in ("B0", "K1", "K2", "K1-shared", "K2-shared", "B0-shared"):
             self.assertNotIn("FACT (from NAME)", stripped(arm), arm)
@@ -144,6 +153,49 @@ class Seeded(Harness):
             if has:
                 self.assertEqual(read(os.path.join(dest, ".gitattributes")), UNION + "\n")
                 self.assertIn(".gitattributes", git(dest, "ls-files")[1])
+
+
+class AttributesFile(unittest.TestCase):
+    """#1520 review item 7: an existing .gitattributes is appended to, never replaced."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="coordbench-attr-")
+        self.addCleanup(lambda: shutil.rmtree(self.d, ignore_errors=True))
+        self.path = os.path.join(self.d, ".gitattributes")
+        spec = importlib.util.spec_from_file_location("bh", os.path.join(BENCH, "fixtures", "history", "build_history.py"))
+        self.bh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.bh)
+
+    def seeders(self):
+        return (runprompt.seed_board_attributes, lambda d: self.bh.Repo(d).add_board_attributes())
+
+    def test_a_missing_file_is_created(self):
+        for seed in self.seeders():
+            if os.path.exists(self.path):
+                os.remove(self.path)
+            seed(self.d)
+            self.assertEqual(read(self.path), UNION + "\n")
+
+    def test_an_existing_file_keeps_its_lines_and_gets_the_rule_once(self):
+        for seed in self.seeders():
+            write(self.path, "*.png binary")  # no trailing newline
+            seed(self.d)
+            seed(self.d)
+            self.assertEqual(read(self.path), "*.png binary\n" + UNION + "\n")
+
+    def test_the_rule_already_there_is_not_repeated(self):
+        for seed in self.seeders():
+            write(self.path, "* text=auto\n" + UNION + "\n")
+            seed(self.d)
+            self.assertEqual(read(self.path).count(UNION), 1)
+
+
+class StrictDirs(unittest.TestCase):
+    def test_the_refusal_under_a_user_root_prints_an_example_path_for_both_options(self):
+        import isolation
+        msg = isolation.validate_dir(os.path.expanduser("~/cb-logs-test"), "--logs-dir", strict=True)
+        self.assertIn("--logs-dir " + os.path.join(os.path.realpath(tempfile.gettempdir()), "coordbench-logs"), msg)
+        self.assertIn("--tmp-root " + os.path.join(os.path.realpath(tempfile.gettempdir()), "coordbench-tmp"), msg)
 
 
 def load_checker(name):

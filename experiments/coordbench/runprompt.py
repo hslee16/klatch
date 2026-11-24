@@ -12,6 +12,16 @@ TASK_BOARD = ("# Task board\n\nOne line per piece of work: `- WHO | STATUS | FIL
 BOARD_ATTRIBUTES = "TASKS.md merge=union\n"
 
 
+def seed_board_attributes(directory):
+    """Add the union rule to .gitattributes of `directory`: create the file, or append to an existing one (once, and on a line of
+    its own); an existing file's other rules stay."""
+    path = os.path.join(directory, ".gitattributes")
+    have = open(path).read() if os.path.exists(path) else ""
+    if BOARD_ATTRIBUTES.strip() not in have.split("\n"):
+        with open(path, "a") as f:
+            f.write(("" if have == "" or have.endswith("\n") else "\n") + BOARD_ATTRIBUTES)
+
+
 def _load(arms_dir, fn):
     """The arm file with its draft comments removed."""
     with open(os.path.join(arms_dir, fn)) as f:
