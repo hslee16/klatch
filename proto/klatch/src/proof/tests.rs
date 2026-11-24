@@ -6,7 +6,7 @@ use crate::store::SqliteStore;
 use crate::store::areas::PolicyStore;
 use std::collections::VecDeque;
 
-const PASS: &str = "correct horse battery";
+pub(super) const PASS: &str = "correct horse battery";
 const CHEAP: Cost = Cost {
     m_kib: 64,
     t: 1,
@@ -14,21 +14,21 @@ const CHEAP: Cost = Cost {
 };
 
 /// What a person would type, in order; running out is a read that stopped.
-struct Typed {
+pub(super) struct Typed {
     lines: VecDeque<Result<String, ProofError>>,
-    asked: usize,
+    pub(super) asked: usize,
     tty: &'static str,
 }
 
 impl Typed {
-    fn new(lines: &[&str]) -> Self {
+    pub(super) fn new(lines: &[&str]) -> Self {
         Self {
             lines: lines.iter().map(|l| Ok(l.to_string())).collect(),
             asked: 0,
             tty: "ttys001/s1",
         }
     }
-    fn on(mut self, tty: &'static str) -> Self {
+    pub(super) fn on(mut self, tty: &'static str) -> Self {
         self.tty = tty;
         self
     }
@@ -54,22 +54,22 @@ impl Prompt for Typed {
     }
 }
 
-fn store() -> SqliteStore {
+pub(super) fn store() -> SqliteStore {
     SqliteStore::open_in_memory().unwrap()
 }
 
-fn with_pass(s: &SqliteStore) {
+pub(super) fn with_pass(s: &SqliteStore) {
     store_verifier(s, &Verifier::create(PASS, CHEAP).unwrap(), 1).unwrap();
 }
 
-fn at(unix: i64) -> At {
+pub(super) fn at(unix: i64) -> At {
     At {
         unix,
         mono: Instant::now(),
     }
 }
 
-fn actions(s: &SqliteStore) -> Vec<String> {
+pub(super) fn actions(s: &SqliteStore) -> Vec<String> {
     s.audit_log(100)
         .unwrap()
         .into_iter()
@@ -78,7 +78,7 @@ fn actions(s: &SqliteStore) -> Vec<String> {
 }
 
 /// Every byte the store holds about the passphrase flow: the audit rows (all fields) and every policy entry.
-fn everything_kept(s: &SqliteStore) -> String {
+pub(super) fn everything_kept(s: &SqliteStore) -> String {
     let mut all = format!("{:?}", s.audit_log(1000).unwrap());
     for (k, v) in s.policy_list("").unwrap() {
         if k != VERIFIER_KEY {

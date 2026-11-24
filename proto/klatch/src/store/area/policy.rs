@@ -8,6 +8,14 @@ use super::unsupported;
 use crate::domain::{AuditRecord, Result};
 use crate::store::{NewAudit, NewRefusal};
 
+/// What `PolicyStore::audit_census` counts.
+pub struct Census<'a> {
+    pub action: &'a str,
+    pub targets: &'a [&'a str],
+    pub since: i64,
+    pub cap: u64,
+}
+
 pub trait PolicyStore {
     /// Keep a record of an administrative act, and read the latest ones, newest first.
     fn record_audit(&self, _entry: &NewAudit, _now: i64) -> Result<()> {
@@ -21,6 +29,14 @@ pub trait PolicyStore {
     /// The time of the newest audit entry of one action on one target at or after `since`, however far back it is
     /// (#1007): a filtered read, so a busy audit does not hide an old entry.
     fn last_audit_ts(&self, _action: &str, _target: &str, _since: i64) -> Result<Option<i64>> {
+        unsupported("an audit")
+    }
+
+    /// How many entries of `q.action`, on any of `q.targets`, are at or after `q.since`, counting no further than
+    /// `q.cap`, and across how many distinct `terminal=` labels in the details of those counted (#1310): two numbers,
+    /// never a label. It reads at most `q.cap` rows of each target through the `(action, target, ts)` index, so what
+    /// it costs does not grow with the audit; `u64::MAX` is an exact count (a read that holds no write lock).
+    fn audit_census(&self, _q: &Census) -> Result<(u64, u64)> {
         unsupported("an audit")
     }
 

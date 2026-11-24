@@ -15,6 +15,7 @@ pub(crate) mod test_dir;
 mod test_dir_tests;
 
 mod features;
+pub use area::Census;
 pub use area::{
     AskStore, ClaimStore, CredentialStore, MemberStore, MessageStore, PolicyStore, ReviewStore,
     RoomStore, Shown,

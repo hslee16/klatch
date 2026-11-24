@@ -10,6 +10,7 @@ mod archive;
 mod archive_files;
 mod archive_rekey;
 mod ask_routing;
+mod audit_census;
 mod change_token;
 mod claim_age;
 mod claim_events;
