@@ -973,3 +973,51 @@ fn an_ordinary_key_is_not_caught_by_the_reserved_check() {
         .unwrap();
     assert!(s.reserved_policy_set("label:r", Some("x"), 1).is_err());
 }
+
+#[test]
+fn the_refusal_is_a_refused_error_with_its_rule_and_never_the_value() {
+    let s = store();
+    match s.policy_set(VERIFIER_KEY, Some("PLANTED-SECRET-VALUE"), 5) {
+        Err(crate::domain::Error::Refused { rule, reason }) => {
+            assert_eq!(rule, "admin-passphrase-rows");
+            assert!(!reason.contains("PLANTED-SECRET-VALUE"));
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_refusal_inside_a_transaction_is_audited_after_it_rolls_back() {
+    for key in OWNED {
+        let s = store();
+        with_pass(&s);
+        let before = s.policy_list("").unwrap();
+        let r = s.atomically(&mut || s.policy_set(key, Some("PLANTED-SECRET-VALUE"), 5));
+        assert!(r.is_err());
+        let log = s.audit_log(10).unwrap();
+        let rows: Vec<_> = log
+            .iter()
+            .filter(|a| a.action == "policy-reserved-refused" && a.target == key)
+            .collect();
+        assert_eq!(rows.len(), 1, "{key}: {log:?}");
+        assert!(!format!("{log:?}").contains("PLANTED-SECRET-VALUE"));
+        assert_eq!(s.policy_list("").unwrap(), before);
+    }
+}
+
+#[test]
+fn a_refusal_in_a_transaction_that_commits_anyway_is_audited_once() {
+    let s = store();
+    let r = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        Ok(())
+    });
+    assert!(r.is_ok());
+    let n = s
+        .audit_log(10)
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 1);
+}

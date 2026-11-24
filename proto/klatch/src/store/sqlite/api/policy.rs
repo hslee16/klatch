@@ -64,7 +64,7 @@ impl PolicyStore for SqliteStore {
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
         if is_proof_key(key) {
             // key name only, never the value; the audit row is kept even though the write is refused
-            let _ = self.record_audit(&NewAudit::new("policy-reserved-refused", key, ""), now);
+            self.audit_refusal("policy-reserved-refused", key, now);
             return Err(Error::Refused {
                 rule: "admin-passphrase-rows".into(),
                 reason: format!(

@@ -234,6 +234,7 @@ impl SqliteStore {
             conn,
             labels: std::cell::RefCell::default(),
             claim_record_errors: std::cell::Cell::default(),
+            deferred_audit: std::cell::RefCell::default(),
         })
     }
 }
