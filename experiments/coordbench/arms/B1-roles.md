@@ -8,7 +8,7 @@ harness as for K3. The harness has no role-member launcher yet (see design/items
 Use the B1 section, with this change to publishing: do not push to `origin main` yourself. Push your work to a branch
 named after you, then send `ready: BRANCH` to `integrator` with `SendMessage`. An agent named `integrator` merges ready
 branches into `main` one at a time, runs the tests and replies `merged: BRANCH` or `dropped: BRANCH REASON`. If yours is
-dropped, fix it and send `ready:` again. Finishing: wait until your branch is reported merged, set your lines to `done`,
+dropped, fix it and send `ready:` again. Finishing: wait until your branch is reported merged, add `done` lines,
 stop.
 
 An agent named `supervisor` watches for colleagues that have stopped without finishing. If it sends you `seeking:` or takes
@@ -26,6 +26,6 @@ yourself. Stop when every worker's line on `TASKS.md` says `done` and nothing is
 
 You are `supervisor`. Every few minutes run `ListAgents` and read `TASKS.md` after `git pull --no-rebase origin main`. A worker
 that is not `done` on the board and is no longer listed, or whose line has not changed for a long time, is stuck: send it `seeking:`,
-and if it does not answer in two minutes, set its line to `handoff` for its unfinished piece and send `handoff:` to a worker
+and if it does not answer in two minutes, add its line with `handoff` for its unfinished piece and send `handoff:` to a worker
 that is still running and has finished its own, or start a replacement agent through `{{RESTART_COMMAND}}` when a replacement slot
 is free. Never edit the code yourself. Stop when every worker is done and print `DONE supervisor`.

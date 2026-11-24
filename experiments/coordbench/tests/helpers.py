@@ -29,4 +29,6 @@ def make_record(scenario="trivial", arm="B0", run="r01", suite="s", units=(2, 2)
                     "coordination_context_tokens": 0, "idle_turns": 0},
         "outcome_checks": [{"id": "u%d" % i, "pass": i < done} for i in range(total)],
         "artifacts": {"streams": None, "store_export": None, "checker_report": None}, "notes": "",
+        "messaging_verified": ({"tools_present": True, "listagents_named_peer": True, "messages_sent": 1, "messages_delivered": 1,
+                                "status": "verified"} if arm in ("B1", "B1-roles") else None),
     }

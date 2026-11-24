@@ -192,10 +192,10 @@ class HarnessRecord(S1Base):
             agents[n] = s + steps(n, "union")
         return agents
 
-    def test_b1_claim_conflicts_come_from_the_board_and_board_edits_are_messages(self):
+    def test_b1_claim_conflicts_come_from_the_board_and_claim_lines_are_not_messages(self):
         r = self.run_arm("B1", self.b1_chain(same_file=True))
         self.assertGreaterEqual(r["metrics"]["claim_conflicts"], 1)
-        self.assertGreaterEqual(r["metrics"]["messages"], 4)  # one board edit per agent
+        self.assertEqual(r["metrics"]["messages"], 0)  # a claim line is a board edit, not a message (#1520 review)
         self.assertIsNotNone(r["scenario_metrics"]["board"]["claim_conflict_detail"])
 
     def test_b1_with_distinct_files_has_zero_claim_conflicts(self):

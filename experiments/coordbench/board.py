@@ -4,7 +4,7 @@ The board TASKS.md has one line per piece of work, `- NAME | STATUS | FILES | TI
 different agents have a `working` line for in the same version of the board. Every version of TASKS.md that any commit of
 the origin or an agent's clone has is read (git history of every ref), so a conflict that only exists after a merge, and one
 that was seen by the second agent and ignored, are both found; a claim the first agent had already set to `done`, `blocked`
-or `handoff` is no conflict. Each (file, pair of agents) counts once however many versions show it. Limits: the unit is a
+or `handoff` is no conflict (a later line of the same agent and title supersedes an earlier one, see _working_by_file). Each (file, pair of agents) counts once however many versions show it. Limits: the unit is a
 file name as written in the FILES field (a directory claim does not conflict with a file under it); the order of claims is not
 used, so a claim made while the other's was visible and one made blind are counted alike; a board edited through a
 different path than TASKS.md at the repository root is not read. Standard library only; one `git` process per commit."""
@@ -31,9 +31,15 @@ def parse_board(text):
 
 
 def _working_by_file(text):
-    """{file: set of agents with a working line for it} in one version of the board."""
-    claims = {}
+    """{file: set of agents with a working line for it} in one version of the board. With merge=union (B1 repositories, #1523) a
+    status change that meets another agent's append leaves the old line beside the new one, and two agents editing one line keep
+    both versions; so the LAST line per (agent, title) in file order is the current state, and an earlier `working` line that a
+    later `done`, `blocked` or `handoff` line of the same agent and title supersedes is not a claim."""
+    last = {}
     for r in parse_board(text):
+        last[(r["name"], r["title"])] = r
+    claims = {}
+    for r in last.values():
         for f in (r["files"] if r["status"] == "working" else []):
             claims.setdefault(f, set()).add(r["name"])
     return claims

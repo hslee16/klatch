@@ -92,7 +92,7 @@ unverified until someone runs `isolation_probe.py` on the machine (the builder n
 make an escape unlikely and visible; they are not a security boundary against a process of the same user.
 
 - Layout (obscurity and a detective aid, every OS, every tool): each agent has `<scratch>/agents/<random token>/{clone,home,
-  tmp,claude-config}` and its HOME, TMPDIR and Claude config directory are inside it. `<scratch>/agents` and the log directory
+  tmp,claude-config}` and its HOME, TMPDIR and Claude config directory are inside it (B1 and B1-roles: see the next paragraph). `<scratch>/agents` and the log directory
   have mode 0300 while real agents run, so an agent cannot list its way to another clone or the logs; the logs are staged in
   a random-named directory inside `--logs-dir` with random file names (a.stream.jsonl and the like exist only after the run),
   renamed `<logs-dir>/<run id>` when the run ends and left unlistable if another process has a run live under the same logs
@@ -123,9 +123,14 @@ make an escape unlikely and visible; they are not a security boundary against a 
   front, a variable that holds the root (`F=/; find $F`), and a `cd ..` followed by a bare read of the agent's own settings file.
   `git log origin/main` (pushed work) is allowed.
 
+B1 and B1-roles share one Claude config directory (#1520): native messaging finds peers through `CLAUDE_CONFIG_DIR` (measured 2026-11-23: one per agent leaves
+`ListAgents` empty), so a B1 run's agents share `<scratch>/agents/cfg-<token>` (mode 0700, never `~/.claude`); HOME, TMPDIR and clones stay per agent, B0 and the K
+arms keep one config directory per agent. The sandbox and the scan treat it as the agent's own in B1 only (a K or B0 agent is denied it). Tradeoff: B1 agents share
+config-directory state, the price of native messaging; `messaging_verified.config_dir_entries` (path, size, sha256) shows what a run left there. `verified` means a teammate was found, not that a message was read.
+
 In layout mode the published log directories of earlier runs are listable and readable by later runs of the same user (the sandbox
 denies the logs root; layout mode cannot). In sandbox mode a `--logs-dir` or `--tmp-root` under `/Users`, `/home`, `/root` or the real
-home is refused (the file-tool deny rules cannot cover a user root that holds the run), use the system temp directory. The
+home is refused (the file-tool deny rules cannot cover a user root that holds the run; the refusal prints an example): `--logs-dir /tmp/coordbench-logs --tmp-root /tmp/coordbench-tmp`. The
 harness also refuses a `--logs-dir` or `--tmp-root` that is your home directory, is owned by someone else or is writable by
 group or others (a sticky world-writable `/tmp` is accepted). SIGTERM and SIGINT restore the modes of every directory the run
 hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch directories of dead runs (an `.owner` file names
