@@ -22,7 +22,7 @@ fn text(o: &Output) -> String {
     out(o) + &String::from_utf8_lossy(&o.stderr)
 }
 
-fn lines<'a>(t: &'a str) -> Vec<&'a str> {
+fn lines(t: &str) -> Vec<&str> {
     t.lines()
         .filter(|l| l.contains("admin passphrase"))
         .collect()
