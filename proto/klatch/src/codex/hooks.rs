@@ -10,8 +10,14 @@
 //!   record has another hash as modified (skipped until reviewed again);
 //! - Codex skips an `async` hook ("async hooks are not supported yet").
 //!
+//! - a project `.codex/hooks.json` is loaded only when the project is recorded `trust_level = "trusted"` in
+//!   `[projects."<dir>"]` of the Codex `config.toml` (an untrusted project lists no hook at all); its hooks are then
+//!   keyed `<dir>/.codex/hooks.json:<event_snake>:<n>:<m>` with the directory spelled as Codex was started in it
+//!   (a symlink is not resolved), the record is the same `[hooks.state."<key>"]` `trusted_hash` as for the user hooks,
+//!   and the hash rule is the same (RESEARCH-NOTES 49.9).
+//!
 //! The hash is recomputed here only to compare with the record. It is never written: klatch never writes a trust
-//! record. Where Codex keys a project `.codex/hooks.json` hook is not verified, so that layer is reported unchecked.
+//! record. A project that is not recorded as trusted is reported unchecked, since Codex then loads none of its hooks.
 
 use super::{Finding, finding};
 use serde_json::{Map, Value};
@@ -320,7 +326,7 @@ const FIX: &str = "open Codex and review the hooks in /hooks to trust them; klat
 
 /// The finding for one hooks source: ok when every klatch hook is trusted at its current definition, else what
 /// Codex will skip and why.
-fn source_finding(file: &Path, config: &Path, judged: &[(String, Trust)]) -> Finding {
+fn source_finding(label: &str, file: &Path, config: &Path, judged: &[(String, Trust)]) -> Finding {
     let problems: Vec<String> = [
         (Trust::Untrusted, "not trusted by Codex"),
         (
@@ -339,7 +345,7 @@ fn source_finding(file: &Path, config: &Path, judged: &[(String, Trust)]) -> Fin
         return finding(
             true,
             format!(
-                "codex hooks: klatch's hooks in {} have a trust record in {} that matches their current definition",
+                "{label}: klatch's hooks in {} have a trust record in {} that matches their current definition",
                 file.display(),
                 config.display()
             ),
@@ -349,7 +355,7 @@ fn source_finding(file: &Path, config: &Path, judged: &[(String, Trust)]) -> Fin
     finding(
         false,
         format!(
-            "codex hooks: klatch hook(s) in {} will be skipped silently in `codex exec`: {}",
+            "{label}: klatch hook(s) in {} will be skipped silently in `codex exec`: {}",
             file.display(),
             problems.join("; ")
         ),
@@ -357,26 +363,82 @@ fn source_finding(file: &Path, config: &Path, judged: &[(String, Trust)]) -> Fin
     )
 }
 
-/// The finding about a project `.codex/hooks.json`, or none when it has no klatch hook. Where Codex keys a project
-/// hook was not verified, so this says it cannot be checked.
-fn project_finding(project_dir: &Path) -> Option<Finding> {
+/// The directory spellings Codex may have been started in: as given and with symlinks resolved.
+fn spellings(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut all = vec![dir.to_path_buf()];
+    all.extend(dir.canonicalize().ok().filter(|c| c != dir));
+    all
+}
+
+/// Whether a line is `trust_level = "trusted"`.
+fn says_trusted(line: &str) -> bool {
+    line.strip_prefix("trust_level")
+        .is_some_and(|v| toml_value(v.trim_start().trim_start_matches('=')) == "trusted")
+}
+
+/// Whether `config` marks one of `dirs` as `trust_level = "trusted"` (`[projects."<dir>"]`).
+fn project_is_trusted(config: &str, dirs: &[std::path::PathBuf]) -> bool {
+    let mut section: Option<String> = None;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            section = line
+                .strip_prefix("[projects.\"")
+                .and_then(|r| r.strip_suffix("\"]"))
+                .map(String::from);
+        } else if section.as_ref().is_some_and(|dir| is_one_of(dirs, dir)) && says_trusted(line) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_one_of(dirs: &[std::path::PathBuf], dir: &str) -> bool {
+    dirs.iter().any(|d| d.to_string_lossy() == dir)
+}
+
+/// The finding about a project `.codex/hooks.json`, or none when it has no klatch hook. Codex loads the file only
+/// when the project is recorded as trusted; then each klatch hook is judged by its record like the user hooks.
+fn project_finding(
+    project_dir: &Path,
+    config: &Path,
+    config_text: &str,
+    trusted: &HashMap<String, String>,
+) -> Option<Finding> {
+    let dirs = spellings(project_dir);
     let file = project_dir.join(".codex").join("hooks.json");
     let value: Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
-    let has_klatch = events_of_json(&value)
+    let events = events_of_json(&value);
+    // the key holds the directory as Codex was started in it: use the spelling that has a record, else as given
+    let keyed = dirs
         .iter()
-        .flat_map(|(_, groups)| groups)
-        .flat_map(|g| &g.handlers)
-        .any(|h| crate::init::is_klatch_command(&h.command));
-    has_klatch.then(|| {
-        finding(
+        .map(|d| d.join(".codex").join("hooks.json"))
+        .find(|f| {
+            trusted
+                .keys()
+                .any(|k| k.starts_with(&format!("{}:", f.display())))
+        })
+        .unwrap_or_else(|| file.clone());
+    let judged = judge(&keyed, &events, trusted);
+    if judged.is_empty() {
+        return None;
+    }
+    if !project_is_trusted(config_text, &dirs) {
+        return Some(finding(
             false,
             format!(
-                "codex hooks (project): klatch hooks in {} cannot be checked: Codex loads a project .codex layer only when the project is trusted, and where it records trust for these hooks is not verified",
-                file.display()
+                "codex hooks (project): klatch hooks in {} cannot be checked: Codex loads a project .codex layer only when the project is trusted, and this project is not recorded as trusted in {}",
+                file.display(),
+                config.display()
             ),
             Some("open Codex in this project and review the hooks in /hooks"),
-        )
-    })
+        ));
+    }
+    Some(source_finding(
+        "codex hooks (project)",
+        &file,
+        config,
+        &judged,
+    ))
 }
 
 /// The findings about klatch's hooks in the Codex files: the user `hooks.json`, hooks written inline in
@@ -406,7 +468,7 @@ pub fn hook_findings(codex_home: &Path, project_dir: Option<&Path>) -> Vec<Findi
         &events_of_toml(&config_text),
         &trusted,
     ));
-    found.extend(project_dir.and_then(project_finding));
+    found.extend(project_dir.and_then(|d| project_finding(d, &config, &config_text, &trusted)));
     found
 }
 
@@ -418,7 +480,7 @@ fn sourced(
     trusted: &HashMap<String, String>,
 ) -> Option<Finding> {
     let judged = judge(file, events, trusted);
-    (!judged.is_empty()).then(|| source_finding(file, config, &judged))
+    (!judged.is_empty()).then(|| source_finding("codex hooks", file, config, &judged))
 }
 
 #[cfg(test)]
