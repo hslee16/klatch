@@ -19,6 +19,7 @@ Handing work over: if you must stop before a piece is finished, commit what you 
 what is not and the exact next step, so that whoever reads the log can continue from it.
 
 Waiting: if you need another agent's result, run `git log` and read the files; to wait, run `sleep 20` and look again. Do
-not wait more than a few minutes; if the result does not appear, do the part that you can do without it.
+not wait more than 5 minutes in total for any one result; if it has not come by then, do the part that you can do without
+it and go on.
 
 Finishing: when your part is saved and the tests pass, make sure the last commit message says so, and stop.

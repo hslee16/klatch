@@ -8,6 +8,9 @@ import roles as roles_mod
 TASK_BOARD = ("# Task board\n\nOne line per piece of work: `- WHO | STATUS | FILES | TITLE`. STATUS is `working`, `done`, "
               "`blocked` or `handoff`. Add your line at the end, commit it and push it.\n")
 
+# git merges two appends to the board without a conflict (#1523); the harness commits it with the board in every B1 repository
+BOARD_ATTRIBUTES = "TASKS.md merge=union\n"
+
 
 def _load(arms_dir, fn):
     """The arm file with its draft comments removed."""

@@ -4,13 +4,15 @@ hiding the scratch and log directories while agents run, and the post-run scan o
 Layout of the run scratch directory (mode 0300 while agents run, see isolation.py):
 
     <scratch>/<token>/clone    an agent's clone (T-clone; in T-shared the one shared tree is <scratch>/shared)
-    <scratch>/<token>/home     its HOME;  tmp: its TMPDIR;  claude-config: its CLAUDE_CONFIG_DIR
+    <scratch>/<token>/home     its HOME;  tmp: its TMPDIR;  claude-config: its CLAUDE_CONFIG_DIR (not in B1 and B1-roles)
+    <scratch>/agents/<token>   the ONE CLAUDE_CONFIG_DIR of every agent of a B1 or B1-roles run (#1520, see shared_config)
     <scratch>/origin.git, klatch-home, klatch-keys, bin (the restart script), restart, pwned (S10)
 """
 import os
 import shutil
 
 import isolation
+import messaging
 from runenv import EXCLUDE, append_exclude
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +27,7 @@ class IsolationSupport:
         self.log_public = {}  # file name -> public name it takes when the run ends
         self.iso_mode = getattr(self.a, "isolation", "sandbox")
         self.iso_result = None
+        self.shared_cfg = None
 
     # layout --------------------------------------------------------------------------------------------------
 
@@ -32,13 +35,35 @@ class IsolationSupport:
         """The directory of one agent under the scratch directory, named with a random token; made on first use."""
         if name not in self.agent_dirs:
             d = os.path.join(self.agents_root(), isolation.token())
-            for sub in ("", "home", "tmp", "claude-config"):
+            for sub in ("", "home", "tmp") + (() if self.shares_config() else ("claude-config",)):
                 os.makedirs(os.path.join(d, sub), mode=0o700, exist_ok=True)
             self.agent_dirs[name] = d
         return self.agent_dirs[name]
 
     def agents_root(self):
         return os.path.join(self.scratch, "agents")
+
+    def shares_config(self):
+        return self.arm in messaging.MESSAGING_ARMS
+
+    def shared_config(self):
+        """The CLAUDE_CONFIG_DIR that every agent of a B1 or B1-roles run shares (#1520), or None in any other arm. Native
+        messaging finds a peer through the config directory (measured on 2026-11-23: one directory per agent leaves ListAgents
+        empty and SendMessage failing), so these agents cannot each have their own. It is made under the run's scratch (never
+        ~/.claude), mode 0700, beside the agents' directories and not inside one; the sandbox settings and the scan treat it as
+        the agent's own in these two arms and as another's (denied) in every other."""
+        if not self.shares_config():
+            return None
+        if self.shared_cfg is None:
+            d = os.path.join(self.agents_root(), "cfg-" + isolation.token())
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            os.chmod(d, 0o700)
+            self.shared_cfg = d
+        return self.shared_cfg
+
+    def config_dir(self, name):
+        """The CLAUDE_CONFIG_DIR of one agent: the run's shared one in a messaging arm, its own otherwise."""
+        return self.shared_config() or os.path.join(self.agent_dir(name), "claude-config")
 
     def log_path(self, key, kind):
         """The file of a session in the log directory. A driver whose agents poll the log directory (fake) gets the public
@@ -128,7 +153,7 @@ class IsolationSupport:
     def policy_for(self, name, role=False):
         d = self.agent_dir(name)
         return isolation.Policy(name, (self.clones.get(name) or self.clone_path(name), os.path.join(d, "home"),
-                                        os.path.join(d, "tmp")), allow=self.allowed_dirs(name, role) + [os.path.join(d, "claude-config")] + ([] if self.is_shared else [isolation.Exact(d)]),
+                                        os.path.join(d, "tmp")), allow=self.allowed_dirs(name, role) + [self.config_dir(name)] + ([] if self.is_shared else [isolation.Exact(d)]),
                                 guard=self.guard_dirs())
 
     def iso_for(self, name, role=False):
@@ -136,7 +161,7 @@ class IsolationSupport:
         d = self.agent_dir(name)
         others = [x for n, x in self.agent_dirs.items() if n != name]
         own = [self.clones.get(name) or self.clone_path(name), os.path.join(d, "home"), os.path.join(d, "tmp"),
-               os.path.join(d, "claude-config")] + [p for p in (os.path.join(self.scratch, "pwned"),) if os.path.isdir(p)]
+               self.config_dir(name)] + [p for p in (os.path.join(self.scratch, "pwned"),) if os.path.isdir(p)]
         shared = [self.origin, self.khome, self.kkeys] + ([self.restart_dir] if role and self.restart_dir else [])
         read = [p for p in self.allowed_dirs(name, role) if p not in shared + own] + isolation.tool_roots()
         logs = [os.path.join(self.log_dir, n) for n in self.log_public if n not in self.log_public.values()]
@@ -168,6 +193,32 @@ class IsolationSupport:
             found += v
         self.iso_result = {"mode": self.iso_mode, "checked_calls": total, "violation_count": len(found), "violations": found[:50]}
         return found
+
+    def config_dir_entries(self, limit=50):
+        """What the run left in the shared config directory: {"count", "files": [{"path", "bytes"}]} (the first `limit`, sorted).
+        The record is how anyone learns how much state B1 agents share through it (README, "Isolation")."""
+        base, found = self.shared_config(), []
+        for root, _, files in os.walk(base):
+            for f in files:
+                p = os.path.join(root, f)
+                found.append({"path": os.path.relpath(p, base), "bytes": os.lstat(p).st_size})
+        found.sort(key=lambda x: x["path"])
+        return {"count": len(found), "files": found[:limit]}
+
+    def note_messaging(self):
+        """#1520: a B1 or B1-roles run must show that native messaging worked (messaging.judge). The record gets the evidence;
+        a run in which it demonstrably did not work is invalid, with the reason in the notes."""
+        alive = {k: (self.started_at[k] - self.t0, self.ended_at.get(k, self.stopped_t) - self.t0) for k in self.procs}
+        sessions = {k: dict(s, agent=self.agent_of[k]) for k, s in self.allsums.items() if k in self.agent_of}
+        mv = messaging.judge(self.arm, sessions, alive)
+        if mv:
+            mv["config_dir_entries"] = self.config_dir_entries()
+        self.rec["messaging_verified"] = mv
+        if mv and mv["status"] == "failed":
+            self.rec["valid"] = False
+        line = messaging.note_for(mv)
+        if line:
+            self.notes.append(line)
 
     def note_isolation(self):
         found = self.scan_isolation()

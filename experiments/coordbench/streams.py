@@ -11,6 +11,7 @@ import re
 import asks
 import cmdkinds
 import ctxcount
+import messaging
 import streamshape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +85,10 @@ class StreamState:
         self.done_t = None    # the harness clock when the result event was read
         self._t = None
         self.klatch_bin = klatch_bin
+        # what the run needs to show that native messaging worked (messaging.py): the init tools, every ListAgents and SendMessage
+        # result with the harness clock when it was read
+        self.msg_tools = None
+        self.msg_calls = {"listagents": [], "sends": []}
 
     @property
     def coord_chars(self):
@@ -140,6 +145,8 @@ class StreamState:
 
     def _on_init(self, e):
         self._note_model(streamshape.text(e.get("model")))
+        if self.msg_tools is None:
+            self.msg_tools = messaging.tool_names(e.get("tools"))
         if not self._init_seen:  # the schemas are carried once per agent, however many init events a stream repeats
             self._init_seen = True
             self.parts["schema"], self.schema_source = ctxcount.schema_chars(e.get("tools"))
@@ -231,12 +238,19 @@ class StreamState:
         self.last_read[key] = cmdkinds.normalize(text)
         return tu["new"]
 
+    def _note_messaging(self, name, text, error):
+        """Keep the result of a ListAgents or SendMessage call with the clock reading (messaging.py)."""
+        kind = {"ListAgents": "listagents", "SendMessage": "sends"}.get(name)
+        if kind:
+            self.msg_calls[kind].append({"t": self._t, "text": text, "error": error})
+
     def _on_tool_result(self, b):
         text = _text_of(b.get("content"))
         tu = self.tools.get(streamshape.ident(b.get("tool_use_id")))
         if tu is None:
             return
         new = self._note_new(tu, text)
+        self._note_messaging(tu["name"], text, bool(b.get("is_error")))
         if tu["coord"]:
             self._enter("tool_results", len(text), new)
             self.max_coord_result = max(self.max_coord_result, len(text))
@@ -305,6 +319,7 @@ class StreamState:
             "read_context_chars": self.read_chars,
             "hook_context_chars": self.hook_chars,
             "max_coord_result_chars": self.max_coord_result,
+            "messaging": dict(self.msg_calls, tools=self.msg_tools),
             "final_text": final or "",
             "is_error": bool(r.get("is_error")),
             "result_seen": self.result is not None,

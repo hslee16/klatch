@@ -33,6 +33,8 @@ def main(dest, arm):
     if board:
         with open(os.path.join(dest, "TASKS.md"), "w") as f:
             f.write(hist["board_header"])
+        with open(os.path.join(dest, ".gitattributes"), "w") as f:  # two appends to the board merge without a conflict (#1523)
+            f.write("TASKS.md merge=union\n")
         with open(os.path.join(dest, "DECISIONS.md"), "w") as f:
             f.write(hist["decisions_header"])
     for i, c in enumerate(hist["commits"]):

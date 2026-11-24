@@ -84,6 +84,7 @@ def _checks_errors(rec):
     return []
 
 
+MESSAGING_KEYS = ("tools_present", "listagents_named_peer", "messages_sent", "messages_delivered")
 ISOLATION_KEYS = ("mode", "checked_calls", "violation_count", "violations")
 
 
@@ -99,6 +100,15 @@ def _isolation_errors(iso):
     return errs
 
 
+def _messaging_errors(mv):
+    """messaging_verified (#1520) is optional: null for an arm without messaging, else the object messaging.judge builds."""
+    if mv is None:
+        return []
+    if not isinstance(mv, dict):
+        return ["messaging_verified must be null or an object"]
+    return ["messaging_verified misses %s" % k for k in MESSAGING_KEYS if k not in mv]
+
+
 def validate_record(rec):
     """A list of problems with the record (empty when it is valid)."""
     if not isinstance(rec, dict):
@@ -109,4 +119,4 @@ def validate_record(rec):
         errs.append("schema must be %d" % SCHEMA_VERSION)
     if rec.get("outcome") not in OUTCOMES:
         errs.append("outcome %r is not one of %s" % (rec.get("outcome"), ", ".join(OUTCOMES)))
-    return errs + validate_roles(rec.get("roles")) + _checks_errors(rec) + _isolation_errors(rec.get("isolation"))
+    return errs + validate_roles(rec.get("roles")) + _checks_errors(rec) + _isolation_errors(rec.get("isolation")) + _messaging_errors(rec.get("messaging_verified"))
