@@ -8,6 +8,8 @@
 # each file has a check that catches the duplicate:
 #   - a duplicate `mod`, `pub use` or scenario entry does not compile or fails the unique-name test
 #     (proto/klatch-bench/src/lib.rs, every_scenario_has_a_unique_name_an_origin_and_a_known_layer)
+#   - release/check-union-duplicates.sh (run by the gate) reports a line that appears twice in any file marked here, per
+#     file type; a legitimate repeat is listed with a reason in release/union-duplicates.allow (#1064)
 # proto/scripts/test-merge-union.sh proves both halves. Add a file here only with its conflict history in the
 # commit message and its duplicate check.
 
