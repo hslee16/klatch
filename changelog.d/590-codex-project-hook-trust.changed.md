@@ -1,0 +1,1 @@
+- `klatch doctor` now checks a klatch hook in a project `.codex/hooks.json` against the trust record in the Codex config (ok, not trusted, or changed since trusted), using the key format observed in Codex itself (RESEARCH-NOTES 49.9); a project not recorded as trusted is still reported as unchecked, with the reason (#590).
