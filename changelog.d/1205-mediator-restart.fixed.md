@@ -1,0 +1,1 @@
+- A restarted mediator no longer repeats its dm proposal for a long exchange that is still going: the count in the line grows, so it now recognises its own earlier post by the fixed start of the line (the pair), still only among its own posts (#1205).
