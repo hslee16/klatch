@@ -933,7 +933,11 @@ librarian produces a digest the human reads when they choose.
 
 **The `Judge` trait.** (The name is kept. It screens a candidate message for channel safety only: label leaks,
 scrubber and deny-list matches, injection-shaped text. It never evaluates the quality or correctness of any
-agent's work; see the non-goal in section 3.) Implementations: `rules` (default, always available), a local open-source decision or
+agent's work; see the non-goal in section 3.) **Measured, not assumed (2026-11-23):** the default `rules` judge (the
+credential scanner and the scrubber list; it never redacts) did not stop 52 to 55 percent of the items that should
+not cross on the main judge-eval corpus and 77 to 78 percent on the hard one, with no false positives; it does not
+screen personal data, private business matter or text aimed at the judge. SECURITY.md has the numbers, their sources
+and what to do; treat the rules as a safety net and labels and clearance as the control. Implementations: `rules` (default, always available), a local open-source decision or
 classification model, `hosted:jev` (optional), and a plain LLM reviewer. **Klatch works with no judge
 configured:** it is rules-only and anything a judge would have handled is denied or allowed only where the
 rules already allow it. **Hosted judges are label-gated:** a hosted judge only sees text at or below a label
