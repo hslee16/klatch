@@ -154,6 +154,10 @@ impl SqliteStore {
     }
 
     fn flush_deferred_audit(&self) {
+        // a COMMIT that failed leaves the transaction open: the rows stay queued for the one that closes it
+        if !self.conn.is_autocommit() {
+            return;
+        }
         let rows = std::mem::take(&mut *self.deferred_audit.borrow_mut());
         for (action, target, ts) in rows {
             let _ = self.exec(AUDIT_SQL, params![ts, action, target, ""]);

@@ -1021,3 +1021,57 @@ fn a_refusal_in_a_transaction_that_commits_anyway_is_audited_once() {
         .count();
     assert_eq!(n, 1);
 }
+
+#[test]
+fn a_refusal_then_an_ordinary_nested_write_then_an_error_keeps_exactly_one_audit_row() {
+    let s = store();
+    let r = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        s.policy_set("label:r", Some("secret"), 6)?;
+        Err(crate::domain::Error::Invalid("stop".into()))
+    });
+    assert!(r.is_err());
+    let log = s.audit_log(10).unwrap();
+    let n = log
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 1, "{log:?}");
+    assert_eq!(s.policy_get("label:r").unwrap(), None, "rolled back");
+}
+
+#[test]
+fn flushed_refusals_are_written_once_and_never_again() {
+    let s = store();
+    s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        let _ = s.policy_set(limit::KEY, Some("x"), 6);
+        Ok(())
+    })
+    .unwrap();
+    s.policy_set("label:a", Some("1"), 7).unwrap();
+    s.atomically(&mut || s.policy_set("label:b", Some("2"), 8))
+        .unwrap();
+    let n = s
+        .audit_log(20)
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn a_flushed_refusal_carries_the_time_of_the_refusal() {
+    let s = store();
+    let _ = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 4242);
+        Err(crate::domain::Error::Invalid("stop".into()))
+    });
+    let log = s.audit_log(10).unwrap();
+    let row = log
+        .iter()
+        .find(|a| a.action == "policy-reserved-refused")
+        .unwrap();
+    assert_eq!(row.ts, 4242);
+}
