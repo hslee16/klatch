@@ -3,8 +3,8 @@
 use super::super::SqliteStore;
 use crate::domain::{AuditRecord, Error, RefusalRecord, Result};
 use crate::store::Census;
-use crate::store::area::is_proof_key;
 use crate::store::PolicyStore;
+use crate::store::area::is_proof_key;
 use crate::store::{NewAudit, NewRefusal};
 use rusqlite::{Row, params};
 

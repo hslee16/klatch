@@ -226,7 +226,8 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
 fn a_damaged_failure_count_reads_as_locked_not_as_free() {
     let s = store();
     with_pass(&s);
-    s.reserved_policy_set(limit::KEY, Some("garbage"), 1).unwrap();
+    s.reserved_policy_set(limit::KEY, Some("garbage"), 1)
+        .unwrap();
     let e = prove(
         &s,
         &mut Typed::new(&[PASS]),
@@ -968,6 +969,7 @@ fn the_proof_commands_still_write_their_own_rows() {
 fn an_ordinary_key_is_not_caught_by_the_reserved_check() {
     let s = store();
     s.policy_set("admin:note", Some("x"), 1).unwrap();
-    s.policy_set("label:admin-passphrase-room", Some("x"), 1).unwrap();
+    s.policy_set("label:admin-passphrase-room", Some("x"), 1)
+        .unwrap();
     assert!(s.reserved_policy_set("label:r", Some("x"), 1).is_err());
 }
