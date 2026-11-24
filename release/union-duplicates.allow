@@ -1,0 +1,3 @@
+# Known legitimate duplicate lines in files merged with merge=union (release/check-union-duplicates.sh, #1064).
+# One entry per line: <path> @@ <exact line, trimmed> @@ <reason>. An entry without a reason is an error.
+# Empty today: the check found no duplicate on main.
