@@ -1,6 +1,8 @@
 //! The real transport against a loopback server written in this file (plain sockets, 127.0.0.1 only, nothing leaves
-//! the machine). TLS itself is rustls with the bundled web PKI roots and is not re-tested here; what is tested is that
-//! the configuration never loosens it (see `the_agent_is_configured_as_strictly_as_documented`).
+//! the machine). The configuration is asserted never to loosen TLS (see
+//! `the_agent_is_configured_as_strictly_as_documented`), and the last section of this file proves the behaviour: a
+//! loopback TLS server with certificates made at test time is refused when its certificate is from an unknown CA,
+//! expired, or for another name, and accepted when it chains to a root the transport was told to trust (#927).
 
 use super::*;
 use crate::jev::fake::fixtures;
@@ -621,4 +623,330 @@ fn the_real_key_comes_from_the_environment_through_the_client_at_call_time() {
         .with_key_source(Box::new(|| None));
     assert!(matches!(client.list_models(), Err(JevError::NoKey)));
     assert_eq!(s.connections(), 0);
+}
+
+// ---- TLS verification against a loopback TLS server (#927) ----
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{ServerConfig, ServerConnection};
+use std::net::IpAddr;
+use std::sync::atomic::AtomicBool;
+use ureq::tls::{Certificate, RootCerts};
+
+/// A time `secs` from now (negative: in the past), from the system clock. Never a fixed date.
+fn from_now(secs: i64) -> time::OffsetDateTime {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    time::OffsetDateTime::from_unix_timestamp(now + secs).unwrap()
+}
+
+const DAY: i64 = 24 * 60 * 60;
+
+/// A throwaway certificate authority, valid from yesterday to tomorrow.
+struct TestCa {
+    params: rcgen::CertificateParams,
+    key: rcgen::KeyPair,
+    cert: rcgen::Certificate,
+}
+
+impl TestCa {
+    fn new(name: &str) -> TestCa {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, name);
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        params.not_before = from_now(-DAY);
+        params.not_after = from_now(DAY);
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        TestCa { params, key, cert }
+    }
+
+    /// The root the transport is told to trust.
+    fn root(&self) -> RootCerts {
+        RootCerts::new_with_certs(&[Certificate::from_der(self.cert.der().as_ref()).to_owned()])
+    }
+
+    /// A server certificate for these names (an IP address is an address name) with this validity, relative to now.
+    fn leaf(&self, names: &[&str], not_before: i64, not_after: i64) -> Leaf {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.subject_alt_names = names
+            .iter()
+            .map(|n| match n.parse::<IpAddr>() {
+                Ok(ip) => rcgen::SanType::IpAddress(ip),
+                Err(_) => rcgen::SanType::DnsName((*n).try_into().unwrap()),
+            })
+            .collect();
+        params.is_ca = rcgen::IsCa::NoCa;
+        params.not_before = from_now(not_before);
+        params.not_after = from_now(not_after);
+        let key = rcgen::KeyPair::generate().unwrap();
+        let issuer = rcgen::Issuer::new(self.params.clone(), &self.key);
+        let cert = params.signed_by(&key, &issuer).unwrap();
+        Leaf {
+            cert: cert.der().clone(),
+            key: key.serialize_der(),
+        }
+    }
+}
+
+struct Leaf {
+    cert: CertificateDer<'static>,
+    key: Vec<u8>,
+}
+
+/// What a TLS test server saw, read after it has stopped.
+#[derive(Debug, PartialEq, Eq)]
+struct TlsSeen {
+    handshakes: usize,
+    requests: usize,
+    head: String,
+}
+
+/// A TLS server on 127.0.0.1, on a free port, that answers `200` with `{}` to each request it receives. It serves one
+/// connection at a time, every socket has a timeout, and the thread is stopped and joined when [`TlsServer::finish`]
+/// runs or the value is dropped (so no thread or socket outlives the test, on any path, a panic included).
+struct TlsServer {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    seen: Arc<Mutex<TlsSeen>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// The longest the server thread lives if nothing stops it, and the longest it waits on one connection.
+const TLS_SERVER_LIFETIME: Duration = Duration::from_secs(30);
+const TLS_CONN_TIMEOUT: Duration = Duration::from_secs(3);
+
+impl TlsServer {
+    fn start(leaf: &Leaf) -> TlsServer {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![leaf.cert.clone()],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf.key.clone())),
+            )
+            .unwrap();
+        let config = Arc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let seen = Arc::new(Mutex::new(TlsSeen {
+            handshakes: 0,
+            requests: 0,
+            head: String::new(),
+        }));
+        let (stop2, seen2) = (stop.clone(), seen.clone());
+        let thread = std::thread::spawn(move || {
+            let deadline = Instant::now() + TLS_SERVER_LIFETIME;
+            while !stop2.load(Ordering::SeqCst) && Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((conn, _)) => serve_tls(conn, &config, &seen2),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        TlsServer {
+            port,
+            stop,
+            seen,
+            thread: Some(thread),
+        }
+    }
+
+    /// Stop the thread, wait for it, and report what it saw.
+    fn finish(mut self) -> TlsSeen {
+        self.shut_down();
+        let mut seen = self.seen.lock().unwrap();
+        TlsSeen {
+            handshakes: seen.handshakes,
+            requests: seen.requests,
+            head: std::mem::take(&mut seen.head),
+        }
+    }
+
+    fn shut_down(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Drop for TlsServer {
+    fn drop(&mut self) {
+        self.shut_down();
+    }
+}
+
+/// One connection: the handshake, then one request and one reply. A failed handshake (the client refused the
+/// certificate and said so) ends the connection with nothing counted as a request.
+fn serve_tls(mut sock: TcpStream, config: &Arc<ServerConfig>, seen: &Arc<Mutex<TlsSeen>>) {
+    // an accepted socket may inherit the listener's non-blocking mode
+    if sock.set_nonblocking(false).is_err()
+        || sock.set_read_timeout(Some(TLS_CONN_TIMEOUT)).is_err()
+        || sock.set_write_timeout(Some(TLS_CONN_TIMEOUT)).is_err()
+    {
+        return;
+    }
+    let Ok(mut conn) = ServerConnection::new(config.clone()) else {
+        return;
+    };
+    while conn.is_handshaking() {
+        if conn.complete_io(&mut sock).is_err() {
+            return;
+        }
+    }
+    seen.lock().unwrap().handshakes += 1;
+    let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+    let mut buf = vec![];
+    let mut chunk = [0u8; 4096];
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 64 * 1024 {
+        match tls.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => buf.extend(&chunk[..n]),
+        }
+    }
+    {
+        let mut s = seen.lock().unwrap();
+        s.requests += 1;
+        s.head = String::from_utf8_lossy(&buf).to_string();
+    }
+    let reply = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
+    let _ = tls.write_all(reply.as_bytes());
+    let _ = tls.flush();
+    tls.conn.send_close_notify();
+    let _ = tls.conn.complete_io(tls.sock);
+}
+
+/// Connect a transport that trusts `roots` to the server and make one call.
+fn call_tls(server: &TlsServer, roots: RootCerts) -> Result<String, JevTransportError> {
+    HttpTransport::tls_loopback_for_tests(server.port, roots, opts())
+        .send(&key(), &JevRequest::models())
+}
+
+#[test]
+fn a_certificate_from_a_ca_it_is_told_to_trust_is_accepted() {
+    let ca = TestCa::new("klatch test CA");
+    let server = TlsServer::start(&ca.leaf(&["127.0.0.1"], -DAY, DAY));
+    let reply = call_tls(&server, ca.root());
+    let seen = server.finish();
+    assert_eq!(reply.as_deref(), Ok("{}"));
+    assert_eq!((seen.handshakes, seen.requests), (1, 1));
+    assert!(
+        seen.head
+            .to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {KEY}").to_ascii_lowercase()),
+        "the key goes over the verified connection"
+    );
+}
+
+#[test]
+fn a_certificate_from_an_unknown_ca_is_refused_and_no_request_is_sent() {
+    let (trusted, unknown) = (TestCa::new("trusted CA"), TestCa::new("unknown CA"));
+    let server = TlsServer::start(&unknown.leaf(&["127.0.0.1"], -DAY, DAY));
+    let reply = call_tls(&server, trusted.root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!(
+        (seen.handshakes, seen.requests),
+        (0, 0),
+        "the key was not sent"
+    );
+}
+
+#[test]
+fn a_certificate_that_is_not_a_ca_and_is_not_trusted_is_refused() {
+    // the usual self signed server: its own certificate is the only one, and nothing trusts it
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.subject_alt_names = vec![rcgen::SanType::IpAddress("127.0.0.1".parse().unwrap())];
+    params.not_before = from_now(-DAY);
+    params.not_after = from_now(DAY);
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = params.self_signed(&key).unwrap();
+    let server = TlsServer::start(&Leaf {
+        cert: cert.der().clone(),
+        key: key.serialize_der(),
+    });
+    let reply = call_tls(&server, TestCa::new("some other CA").root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!(seen.requests, 0);
+}
+
+#[test]
+fn the_shipped_trust_anchors_refuse_a_private_ca() {
+    // the production transport trusts the bundled web PKI roots only, so a certificate from a CA made here is refused
+    // even though it is valid and for the right address
+    let ca = TestCa::new("private CA");
+    let server = TlsServer::start(&ca.leaf(&["127.0.0.1"], -DAY, DAY));
+    let reply = call_tls(&server, RootCerts::WebPki);
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!((seen.handshakes, seen.requests), (0, 0));
+}
+
+#[test]
+fn an_expired_certificate_from_a_trusted_ca_is_refused() {
+    let ca = TestCa::new("klatch test CA");
+    // expired by construction: it ended a day before now and began two days before now
+    let server = TlsServer::start(&ca.leaf(&["127.0.0.1"], -2 * DAY, -DAY));
+    let reply = call_tls(&server, ca.root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!((seen.handshakes, seen.requests), (0, 0));
+}
+
+#[test]
+fn a_certificate_that_is_not_yet_valid_is_refused() {
+    let ca = TestCa::new("klatch test CA");
+    let server = TlsServer::start(&ca.leaf(&["127.0.0.1"], DAY, 2 * DAY));
+    let reply = call_tls(&server, ca.root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!((seen.handshakes, seen.requests), (0, 0));
+}
+
+#[test]
+fn a_certificate_for_another_host_name_is_refused() {
+    let ca = TestCa::new("klatch test CA");
+    // valid, from the trusted CA, and for a name that is not the one the transport connected to
+    let server = TlsServer::start(&ca.leaf(&["not-this-host.invalid"], -DAY, DAY));
+    let reply = call_tls(&server, ca.root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!((seen.handshakes, seen.requests), (0, 0));
+}
+
+#[test]
+fn a_certificate_for_another_address_is_refused() {
+    let ca = TestCa::new("klatch test CA");
+    let server = TlsServer::start(&ca.leaf(&["127.0.0.2"], -DAY, DAY));
+    let reply = call_tls(&server, ca.root());
+    let seen = server.finish();
+    assert_eq!(reply, Err(JevTransportError::Network));
+    assert_eq!((seen.handshakes, seen.requests), (0, 0));
+}
+
+#[test]
+fn the_name_check_accepts_a_certificate_with_the_right_name_among_several() {
+    // guards the refusals above against passing for the wrong reason (for example a broken server certificate)
+    let ca = TestCa::new("klatch test CA");
+    let server = TlsServer::start(&ca.leaf(&["other.invalid", "127.0.0.1"], -DAY, DAY));
+    let reply = call_tls(&server, ca.root());
+    assert_eq!(server.finish().requests, 1);
+    assert_eq!(reply.as_deref(), Ok("{}"));
 }
