@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import streamshape
 
 NEGATIVE = re.compile(r"No such file|not found|does not exist|ENOENT|cannot access|fatal:|[Ee]rror", re.I)
 # One simple command that only waits or looks: sleep, klatch waits and reads of the board, git fetch and friends, a listing
@@ -57,12 +58,12 @@ def _add_block(b, turn, tools):
 
 
 def _add_assistant(e, turns, by_id, tools):
-    msg = e.get("message") or {}
+    msg = streamshape.message(e)
     mid = msg.get("id") or "anon-%d" % len(turns)
     if mid not in by_id:
         by_id[mid] = {"i": len(turns) + 1, "text": "", "tools": []}
         turns.append(by_id[mid])
-    for b in msg.get("content") or []:
+    for b in streamshape.content(e):
         _add_block(b, by_id[mid], tools)
 
 
@@ -71,7 +72,7 @@ def _is_known_result(b, tools):
 
 
 def _add_results(e, tools):
-    for b in (e.get("message") or {}).get("content") or []:
+    for b in streamshape.content(e):
         if _is_known_result(b, tools):
             tools[b["tool_use_id"]]["result"] = _text_of(b.get("content"))
 

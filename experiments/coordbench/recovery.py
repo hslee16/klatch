@@ -21,6 +21,7 @@ import shlex
 import subprocess
 import sys
 import time
+import streamshape
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 SHELL_WRITES = re.compile(r"(>|\btee\b|\bcp\s|\bmv\s|\bsed\s+-i|\binstall\s)")
@@ -50,14 +51,12 @@ def read_events(lines):
             continue
         t = e.get("type")
         if t == "assistant":
-            msg = e.get("message") or {}
+            msg = streamshape.message(e)
             mid = msg.get("id") or "anon-%d" % idx
             if mid not in ids:
                 turn += 1
                 ids[mid] = turn
-            for b in msg.get("content") or []:
-                if not isinstance(b, dict):
-                    continue
+            for b in streamshape.blocks(e):
                 if b.get("type") == "tool_use" and b.get("id") not in tools:
                     ev = {"i": idx, "turn": ids[mid], "kind": "use", "name": b.get("name", "?"), "input": b.get("input") or {}}
                     tools[b.get("id")] = ev
@@ -65,7 +64,7 @@ def read_events(lines):
                 elif b.get("type") == "text" and isinstance(b.get("text"), str):
                     evs.append({"i": idx, "turn": ids[mid], "kind": "text", "text": b["text"]})
         elif t == "user":
-            for b in (e.get("message") or {}).get("content") or []:
+            for b in streamshape.content(e):
                 if isinstance(b, dict) and b.get("type") == "tool_result":
                     evs.append({"i": idx, "turn": turn, "kind": "result", "text": _text_of(b.get("content")),
                                 "use": tools.get(b.get("tool_use_id"))})

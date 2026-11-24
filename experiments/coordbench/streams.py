@@ -11,6 +11,7 @@ import re
 import asks
 import cmdkinds
 import ctxcount
+import streamshape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 USAGE_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
@@ -171,13 +172,11 @@ class StreamState:
         return self.msgs[mid]
 
     def _on_assistant(self, e):
-        msg = e.get("message") or {}
+        msg = streamshape.message(e)
         self._assistant_seen = True
         m = self._message_slot(msg)
         self._note_usage_and_model(m, msg)
-        for b in msg.get("content") or []:
-            if not isinstance(b, dict):
-                continue
+        for b in streamshape.blocks(e):
             if b.get("type") == "tool_use":
                 self._on_tool_use(m, b)
             elif b.get("type") == "text" and isinstance(b.get("text"), str):
@@ -214,8 +213,8 @@ class StreamState:
             self.msg_events.append(dict(ev, t=self._t))
 
     def _on_user(self, e):
-        content = (e.get("message") or {}).get("content")
-        for b in content if isinstance(content, list) else []:
+        content = streamshape.message(e).get("content")
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_result":
                 self._on_tool_result(b)
         text = ctxcount.inbound_text(content, self._assistant_seen)

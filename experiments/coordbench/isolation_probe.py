@@ -7,7 +7,8 @@ coordinator to run once (about 0.05 USD on Haiku, hard cap 0.15); the builder co
 It builds a directory with an agent's own clone, a second agent's clone and a directory that is listable by nobody, writes
 the --settings file with the same code the harness uses (drivers.ClaudeDriver, mode sandbox), starts one agent in the own
 clone and asks it to try eight things with the shell, python3 and the file tools. It then prints, for each, whether
-the tool result shows the secret. The agent is told only to run the commands and report; the secrets are fake. Expected
+the tool result shows the secret. The agent is told only to run the commands and report; the secrets are fake. Raw output is saved
+to the probe directory before it is parsed, and the non-tool events are printed first. Expected
 output is in README.md, "Isolation: what to expect from isolation_probe.py". Pass the key in ANTHROPIC_API_KEY as for any real
 run; this script never reads or prints it.
 """
@@ -22,6 +23,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import drivers  # noqa: E402
+import streamshape  # noqa: E402
 import isolation  # noqa: E402
 
 TRIES = [
@@ -50,19 +52,68 @@ def build(root, klatch_bin):
     return {"own": j("agent-a/clone"), "other": j("agent-b"), "root": root, "hidden": j("hidden")}
 
 
-def tool_results(stdout):
-    """[text of each tool result] from stream-json output, in order."""
-    out = []
+def _events(stdout):
+    """The JSON objects among the lines of stream-json output; anything else is skipped."""
     for ln in stdout.splitlines():
         try:
             ev = json.loads(ln)
         except ValueError:
             continue
-        for b in ((ev.get("message") or {}).get("content") or []) if isinstance(ev, dict) else []:
-            if isinstance(b, dict) and b.get("type") == "tool_result":
+        if isinstance(ev, dict):
+            yield ev
+
+
+def tool_results(stdout):
+    """[text of each tool result] from stream-json output, in order. Any event shape is tolerated."""
+    out = []
+    for ev in _events(stdout):
+        for b in streamshape.blocks(ev):
+            if b.get("type") == "tool_result":
                 text = b.get("content")
                 out.append(text if isinstance(text, str) else json.dumps(text))
     return out
+
+
+def event_summary(stdout, limit=200):
+    """One line per event that is not tool traffic (system, result, error and the like): type/subtype, then the text it carries
+    (a message, an error, a result), cut to limit characters. A startup refusal (sandbox unavailable, version, authentication) shows
+    here."""
+    lines = []
+    for ev in _events(stdout):
+        if ev.get("type") in ("assistant", "user"):
+            continue
+        label = ev.get("type", "?") + ("/" + ev["subtype"] if isinstance(ev.get("subtype"), str) else "")
+        text = " ".join("%s=%s" % (k, str(ev[k])[:limit]) for k in ("message", "error", "result") if isinstance(ev.get(k), (str, int)) and ev[k] != "")
+        lines.append("  %s: %s" % (label, text) if text else "  %s" % label)
+    return "\n".join(lines)
+
+
+def save_raw(root, stdout, stderr):
+    """Write what the session printed before anything is parsed, so a parser bug can never lose a paid run."""
+    out, err = os.path.join(root, "probe.stream.out"), os.path.join(root, "probe.stderr.out")
+    for path, text in ((out, stdout), (err, stderr)):
+        with open(path, "w") as f:
+            f.write(text)
+    return out, err
+
+
+def report(root, stdout, stderr, returncode, tries, parse, say):
+    """Save the raw output, print the non-tool events and the table; True when the directory should be kept (the exit code is not
+    zero or the parsing failed)."""
+    out, err = save_raw(root, stdout, stderr)
+    say("raw output saved: %s (stdout), %s (stderr)" % (out, err))
+    say("exit code %s; events other than tool traffic:" % returncode)
+    say(event_summary(stdout) or "  (none)")
+    if returncode != 0:
+        say("claude exited with %s; stderr: %s" % (returncode, stderr.strip()[-400:]))
+    try:
+        results = parse(stdout)
+        say("%d tool results" % len(results))
+        print_table(tries, results)
+    except Exception as e:  # noqa: BLE001 - the run is paid for: report whatever went wrong and keep the files
+        say("parsing failed (%s: %s); the raw output above is complete" % (e.__class__.__name__, e))
+        return True
+    return returncode != 0
 
 
 def print_table(tries, results):
@@ -71,6 +122,16 @@ def print_table(tries, results):
     for text, (label, _cmd, marker) in rows:
         shows = marker in text and not any(w in text.lower() for w in refused)
         print("%-52s %s | %s" % (label, "SHOWS %s" % marker if shows else "no %s" % marker, text.replace("\n", " ")[:90]))
+
+
+def run_claude(argv, cwd, env, timeout=600):
+    """(stdout, stderr, exit code) of the session; a timeout returns what was printed so far with exit code 124."""
+    try:
+        proc = subprocess.run(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        return proc.stdout, proc.stderr, proc.returncode
+    except subprocess.TimeoutExpired as e:
+        text = lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")
+        return text(e.stdout), text(e.stderr) + "\ntimed out after %d s" % timeout, 124
 
 
 def main():
@@ -96,12 +157,9 @@ def main():
         argv, _ = d.command("a", "B0", prompt, p["own"], root, isolation=iso)
         env = {k: os.environ[k] for k in ("PATH", "HOME", "ANTHROPIC_API_KEY") if k in os.environ}
         env.update(HOME=os.path.join(root, "agent-a/home"), TMPDIR=os.path.join(root, "agent-a/tmp"))
-        proc = subprocess.run(argv, cwd=p["own"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
-        results = tool_results(proc.stdout)
-        print("exit code %s; %d tool results; settings used: %s" % (proc.returncode, len(results), argv[argv.index("--settings") + 1]))
-        print_table(tries, results)
-        if proc.returncode != 0:
-            print(proc.stderr[-400:])
+        out, err, code = run_claude(argv, p["own"], env)
+        keep = report(root, out, err, code, tries, tool_results, print)
+        a.keep = a.keep or keep
     finally:
         for dirpath, dirs, _ in os.walk(root):
             for dd in dirs:

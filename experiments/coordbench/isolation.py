@@ -25,6 +25,7 @@ import shutil
 from isodirs import (IsolationError, LIVE_PREFIX, MIN_CLAUDE, OWNER_FILE, USER_ROOTS, hide, live_marker, other_live,  # noqa: F401
                      pid_alive, real_home, restore, restore_all, stage_binary, sweep_logs, sweep_stale, token,
                      validate_dir, version_problem, write_owner)
+import streamshape
 
 VAR_PREFIX = r"(?:~|\$\{?HOME\}?|\$\{?TMPDIR\}?)"
 _TAIL = r"""(?:/[^\s'"`;,()<>|&\\*?]*)"""
@@ -166,11 +167,9 @@ def _bash_paths(command, policy, cwd):
 
 def _content_blocks(line):
     try:
-        ev = json.loads(line)
+        return streamshape.content(json.loads(line))
     except ValueError:
         return []
-    content = ((ev.get("message") or {}).get("content")) if isinstance(ev, dict) else None
-    return content if isinstance(content, list) else []
 
 
 def tool_calls(lines):

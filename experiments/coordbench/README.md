@@ -126,7 +126,9 @@ hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch 
 the pid) and restores their staging directories in the logs.
 
 `python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL --klatch-bin PATH` runs one tiny session
-(about 0.05 USD on Haiku, cap 0.15) and prints what each escape shows. Expected on macOS with the sandbox working: the control
+(about 0.05 USD on Haiku, cap 0.15). It writes the session's raw stdout and stderr to files in its directory before parsing anything
+and prints their path, keeps the directory when the exit code is not zero or parsing fails, prints the events that are not tool
+traffic (a sandbox, version or authentication refusal shows there), and then prints what each escape shows. Expected on macOS with the sandbox working: the control
 prints `OWN-SECRET`; the python3 open of the other clone, the listdir of the shared root, the git -C of the other clone and the
 open of the unlistable directory show `Operation not permitted` or `Permission denied` (no SECRET); the Read tool on the other
 clone's file is refused by the deny rule; `klatch --version` prints a version. The line the builder cannot predict is the python3

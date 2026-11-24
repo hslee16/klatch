@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import streamshape
 
 TOKEN_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
               ("cache_creation", "cache_creation_input_tokens"))
@@ -172,11 +173,11 @@ class Timeline:
         return self._ids[key]
 
     def _on_assistant(self, e):
-        msg = e.get("message") or {}
+        msg = streamshape.message(e)
         turn = self._turn_for(msg)
         if isinstance(msg.get("usage"), dict):
             turn["usage"] = msg["usage"]
-        for b in msg.get("content") or []:
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 self._on_tool_use(turn, b)
 
@@ -189,7 +190,7 @@ class Timeline:
         self._calls[(self.session, b.get("id"))] = call
 
     def _on_user(self, e):
-        for b in (e.get("message") or {}).get("content") or []:
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_result":
                 call = self._calls.get((self.session, b.get("tool_use_id")))
                 if call is not None:

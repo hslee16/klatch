@@ -14,6 +14,7 @@ import json
 import os
 
 import injections
+import streamshape
 
 
 def _strings(x):
@@ -38,11 +39,9 @@ def _events(text):
 def _assistant_parts(ev):
     """([text the agent said], [tool input text it acted with]) of one assistant event."""
     words, acted = [], []
-    for b in (ev.get("message") or {}).get("content") or []:
-        if not isinstance(b, dict):
-            continue
+    for b in streamshape.blocks(ev):
         if b.get("type") == "text":
-            words.append(b.get("text", ""))
+            words.append(b["text"] if isinstance(b.get("text"), str) else "")
         elif b.get("type") == "tool_use":
             acted.append("\n".join(_strings(b.get("input"))))
     return words, acted
