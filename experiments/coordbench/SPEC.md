@@ -376,6 +376,8 @@ bug.
   `valid: false` and a written reason in `notes`, and rerun once with the same seed and a new run id that cites the
   invalid one. A run is never marked invalid because its result is bad or surprising. The report states the count of
   invalid runs per arm, and an arm with more than 20 percent invalid is flagged.
+- A run in which an agent touched a path outside its own directories (the post-run scan, section 11) is invalid with the
+  hits in `notes` and in the record's `isolation` object; it is rerun like any invalid run.
 - A run that was stopped by the human for safety (a stray write outside the temp directory, the live store touched) is
   invalid, kept, and a ticket is filed (the live store was never to be touched; this is a bug in the harness).
 
@@ -602,7 +604,12 @@ Thresholds: none yet.
   agents' private notes. Mitigation: checkers live outside the checkout and outside any directory an agent's allowlist
   reaches, the fixture history is built from scratch with no answer in it, private directories are separate clones, and
   the harness checks after every run that no agent read the checker's path (a grep on the tool calls); a violation makes
-  the run invalid with a reason. Models may also have seen similar toy tasks; fixtures use invented names and constants.
+  the run invalid with a reason. Implemented in #1519 (isolation.py, runisolation.py, README "Isolation"): every agent has
+  a directory of its own with an unguessable name under a scratch root nobody can list, the logs and the other clones are
+  not reachable by any path an agent is given, real agents run under Claude Code's sandbox (OS level, Bash and its children)
+  and file-tool deny rules, and the scan checks every Read, Edit, Write, Glob and Grep path and every Bash command for paths
+  outside the agent's own directories, the checkers, fixtures, logs and the repository. What is enforced and what is only
+  detected is stated in the README; the hidden facts of the fixtures are still the same in every run (ticket filed). Models may also have seen similar toy tasks; fixtures use invented names and constants.
 - Unverified self-reports. Agents say what they did. The metrics come from git, the store and the stream (section 5); the
   self-report is used only for the human-intervention pass.
 - Cost. Real-agent N is limited by money, so effects smaller than the table in 6.1 cannot be found. The budget rule and

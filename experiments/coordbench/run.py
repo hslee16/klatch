@@ -32,9 +32,11 @@ import time
 
 import fixture as fixture_mod
 import drivers
+import isolation
 import approval as approval_mod
 import roles as roles_mod
 import schema
+import storeexport
 # the names below were defined here before the split (#1455); tests and callers still reach them as run.NAME
 from runcli import DEFAULT_ARMS, DEFAULT_RUN_USD, DEFAULT_SUITE_USD, dry_run, estimate, load_cost_model, model_ratio, parse_args, resolve_caps  # noqa: F401
 from runenv import GuardError, commit_of, git, guard_paths, inside, kill_group, klatch_facts, minimal_env, now_iso, sha256_file  # noqa: F401
@@ -71,8 +73,9 @@ class Suite:
         t_start = time.monotonic()
         scratch = tempfile.mkdtemp(prefix="cb-%s-" % run_id[-12:], dir=self.tmp_root)
         os.chmod(scratch, 0o700)
-        log_dir = os.path.join(self.logs_root, run_id)
-        os.makedirs(log_dir, exist_ok=True)
+        # while agents run the logs are in a directory with a random name; it takes the name logs_root/run_id afterwards
+        log_dir = os.path.join(self.logs_root, isolation.token())
+        os.makedirs(log_dir)
         rec = self.skeleton(run_id, arm, seed, started)
         notes = []
         try:
@@ -81,11 +84,21 @@ class Suite:
             rec["outcome"], rec["valid"] = "error", False
             notes.append("setup failed: %s" % e)
         finally:
+            isolation.restore(scratch)  # hidden while agents ran (isolation.hide)
+            isolation.restore(log_dir)
             shutil.rmtree(scratch, ignore_errors=True)
         rec["end"] = now_iso()
         rec["wall_s"] = round(time.monotonic() - t_start, 3) if rec["wall_s"] is None else rec["wall_s"]
         rec["notes"] = "; ".join(notes)
-        return rec
+        return self.publish_logs(log_dir, os.path.join(self.logs_root, run_id), rec)
+
+    @staticmethod
+    def publish_logs(work, final, rec):
+        """Rename the log directory to its public name (an older directory of the same run id is replaced) and make the
+        record say so."""
+        shutil.rmtree(final, ignore_errors=True)
+        os.rename(work, final)
+        return json.loads(json.dumps(rec).replace(json.dumps(work)[1:-1], json.dumps(final)[1:-1]))
 
     def skeleton(self, run_id, arm, seed, started):
         a = self.args
@@ -146,6 +159,17 @@ class Suite:
         os.makedirs(a.results_dir, exist_ok=True)
         os.makedirs(self.logs_root, exist_ok=True)
         os.makedirs(self.tmp_root, exist_ok=True)
+        shared_dir = os.path.realpath(self.logs_root) in (os.path.realpath(self.tmp_root), os.path.realpath(tempfile.gettempdir()))
+        if not shared_dir:  # never hide a directory that holds more than logs
+            isolation.hide(self.logs_root)  # agents cannot list the logs of this or earlier runs; restored when the suite ends
+        try:
+            return self.go_hidden()
+        finally:
+            if not shared_dir:
+                isolation.restore(self.logs_root)
+
+    def go_hidden(self):
+        a = self.args
         probe_home = tempfile.mkdtemp(prefix="cb-probe-", dir=self.tmp_root)
         try:
             self.klatch_facts = klatch_facts(a.klatch_bin, minimal_env(os.environ, probe_home))
@@ -250,14 +274,28 @@ def main(argv=None):
     plan = plan_runs(a.arm_list, a.runs, a.seed)
     if a.dry_run:
         return dry_run(a, fx, plan)
-    driver, problem = (_claude_driver if a.driver == "claude" else _fake_driver)(a, fx)
-    if problem:
-        return _refuse(problem)
     a.tmp_root = os.path.realpath(a.tmp_root)
     try:
         guard_paths(os.path.join(a.tmp_root, "x"), os.path.join(a.tmp_root, "y"), a.tmp_root)
     except GuardError as e:
         return _refuse(e)
+    staged = None
+    if a.klatch_bin and os.path.isfile(a.klatch_bin):
+        # the agents get a copy of the binary: no prompt names a path inside the klatch repository (#1519)
+        os.makedirs(a.tmp_root, exist_ok=True)
+        a.bench_bin = a.bench_bin or storeexport.find_tool(a.klatch_bin, os.environ)  # found beside the original, before the copy
+        a.klatch_bin, staged = isolation.stage_binary(a.klatch_bin, a.tmp_root)
+    try:
+        return _run_suite(a, fx, plan)
+    finally:
+        if staged:
+            shutil.rmtree(staged, ignore_errors=True)
+
+
+def _run_suite(a, fx, plan):
+    driver, problem = (_claude_driver if a.driver == "claude" else _fake_driver)(a, fx)
+    if problem:
+        return _refuse(problem)
     return Suite(a, fx, driver, plan).go()
 
 

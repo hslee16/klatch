@@ -83,6 +83,43 @@ Isolation: the harness refuses a store path under `~/.klatch` or `~/.claude`, ou
 symlink. It runs the klatch CLI only by the `--klatch-bin` path and builds every child environment from an allowlist, so no
 credential reaches klatch or a fake agent.
 
+### Isolation of agents from each other and from the harness (#1519)
+
+What an agent can read, from the layer that always holds to the one that depends on the platform:
+
+- Layout (every OS, every tool, enforced by file permission): each agent has `<scratch>/<random token>/{clone,home,tmp,
+  claude-config}`; its HOME, TMPDIR and Claude config directory are inside it. The run scratch directory and the log directory
+  have mode 0300 while agents run (no listing, even by the owner), the logs are written to a random-named directory under the
+  logs root (also 0300) that takes its public name `<logs-dir>/<run id>` when the run ends, the klatch binary is copied to
+  `<tmp-root>/cb-bin-*/` for the suite and agents are given that path, and the restart script of the role members is copied
+  into the run. So no path an agent is told, and no path it can list, leads to another clone, the logs, the checkers, the
+  fixtures or the repository. What this cannot stop: an agent that learns a path another way (a `ps` listing shows other agents'
+  argument lists and environments, `/proc/<pid>/environ` on Linux) can open it, because it is the same user.
+- Sandbox (`--isolation sandbox`, the default for `--driver claude`): the `--settings` of every agent (a file in its own
+  directory, a copy `<name>.settings.json` in the logs) turns on Claude Code's sandbox (Seatbelt on macOS, bubblewrap on Linux)
+  with `failIfUnavailable`, no unsandboxed retry, read denied under the scratch root, logs and repository and re-allowed for
+  the agent's own directories, write allowed only there plus the bare origin and the run's klatch store, and `Read`/`Edit`
+  deny rules for the file tools. Per the documentation the sandbox covers Bash and its child processes, python3 and git
+  included, not the file tools (those get the permission rules). It has not been run against a model by the builder:
+  `isolation_probe.py` below shows what it does on your machine. `--isolation layout` leaves the sandbox out (use it if the
+  sandbox breaks a K arm; the record says which was used).
+- Scan (always, every driver): after every run every tool call in every stream (Read, Edit, Write, Glob, Grep paths and Bash
+  command strings, `cd` followed) is checked for paths outside the agent's own clone, home and tmp, the bare origin, the
+  run store, the staged binary and the S10 directory: another agent's directory, the scratch root, the logs, the fixtures,
+  checks, scenarios, results and repository directories, `..` out of the clone, a symlink that leads out, `/Users`, `/home`,
+  and process listing (`ps`, `pgrep`, `lsof`, `/proc`). A hit makes the run invalid (`valid: false`), the first hits are in
+  `notes`, all (up to 50) in the record's new `isolation` object: `{"mode", "checked_calls", "violation_count", "violations":
+  [{"agent", "session", "call", "tool", "text", "path", "why"}]}`. It is detective: a path built at run time inside a python3
+  program is not seen. `git log origin/main` (pushed work) is allowed.
+
+`python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL --klatch-bin PATH` runs one tiny real
+session (about 0.05 USD on Haiku, cap 0.15) and prints what each escape shows. Expected on macOS with the sandbox working: the
+control prints `OWN-SECRET`; the python3 open of the other clone, the listdir of the shared root, the git -C of the other clone and
+the open of the unlistable directory show `Operation not permitted` or `Permission denied` (no SECRET); the Read tool on the
+other clone's file is refused by the deny rule; `klatch --version` prints a version. The one line the builder cannot predict
+is the python3 `ps` listing: if it shows the other agent's command line the leak above is real inside the sandbox too and
+the scan is the only control for it (see the design item for #1519).
+
 ## Fixtures
 
 A fixture is `fixtures/<name>/` with `fixture.json` (agents and their task files, test command, the checker name, optional
