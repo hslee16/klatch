@@ -314,21 +314,73 @@ fn an_async_klatch_hook_is_reported_because_codex_skips_it() {
     assert!(l.contains("async") && l.contains("skips"), "{t}");
 }
 
-#[test]
-fn a_klatch_hook_in_the_project_codex_directory_is_said_to_be_unchecked() {
+/// `config.toml` text marking `project` trusted the way Codex records it (RESEARCH-NOTES 49.9).
+fn project_trusted(project: &Path, level: &str) -> String {
+    format!(
+        "[projects.\"{}\"]\ntrust_level = \"{level}\"\n",
+        project.display()
+    )
+}
+
+/// A project `.codex/hooks.json` with one klatch hook, a Codex home that marks the project `level` and holds
+/// `record` (a trusted hash for the hook, or none); returns the doctor output.
+fn project_doctor(level: Option<&str>, record: Option<&str>, command: &str) -> String {
     let s = Setup::new();
     let codex = s.home().join("codexhome");
-    std::fs::create_dir_all(&codex).unwrap();
-    write(
-        &s.project().join(".codex/hooks.json"),
-        &hooks_json(KLATCH_HOOK),
+    write(&s.project().join(".codex/hooks.json"), &hooks_json(command));
+    // Codex is started in the real directory, so its key and its project record use the real spelling
+    let project = s.project().canonicalize().unwrap();
+    let hooks = project.join(".codex/hooks.json");
+    let mut config = level.map_or(String::new(), |l| project_trusted(&project, l));
+    if let Some(hash) = record {
+        config += &trust(&hooks, ("session_start:0:0", hash));
+    }
+    write(&codex.join("config.toml"), &config);
+    doctor(&s, None, Some(&codex))
+}
+
+#[test]
+fn a_trusted_project_hook_with_a_matching_record_is_ok() {
+    let t = project_doctor(Some("trusted"), Some(HASH_SESSION_START), KLATCH_HOOK);
+    let l = line(&t, "codex hooks (project):");
+    assert!(
+        l.starts_with("ok") && l.contains(".codex/hooks.json"),
+        "{t}"
     );
-    let t = doctor(&s, None, Some(&codex));
+}
+
+#[test]
+fn a_trusted_project_hook_with_no_record_is_reported_with_the_fix() {
+    let t = project_doctor(Some("trusted"), None, KLATCH_HOOK);
     let l = line(&t, "codex hooks (project):");
     assert!(l.starts_with("warn"), "{t}");
     assert!(
-        l.contains("cannot be checked") && l.contains(".codex/hooks.json"),
+        l.contains("not trusted by Codex") && l.contains("SessionStart"),
         "{t}"
     );
     assert!(t.contains("/hooks"), "{t}");
+}
+
+#[test]
+fn a_trusted_project_hook_changed_since_it_was_trusted_is_reported() {
+    let changed = "/opt/klatch/klatch --discover hook --event SessionStart --extra";
+    let t = project_doctor(Some("trusted"), Some(HASH_SESSION_START), changed);
+    let l = line(&t, "codex hooks (project):");
+    assert!(l.starts_with("warn") && l.contains("changed since"), "{t}");
+    assert!(t.contains("/hooks"), "{t}");
+}
+
+#[test]
+fn a_project_not_recorded_as_trusted_is_said_to_be_unchecked() {
+    // Codex does not load the project layer, so it lists no hook and keeps no record that means anything
+    for level in [None, Some("untrusted")] {
+        let t = project_doctor(level, Some(HASH_SESSION_START), KLATCH_HOOK);
+        let l = line(&t, "codex hooks (project):");
+        assert!(l.starts_with("warn"), "{t}");
+        assert!(
+            l.contains("cannot be checked") && l.contains("not recorded as trusted"),
+            "{t}"
+        );
+        assert!(t.contains("/hooks"), "{t}");
+    }
 }
