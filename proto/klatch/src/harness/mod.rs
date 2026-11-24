@@ -31,7 +31,7 @@ pub use capability::{
 };
 pub use codex_record::{
     CODEX_PROGRAM, CodexRecorded, NotRecorded, OwnRegistry, SessionFacts, codex_registry_dir,
-    is_codex, verified_session, write_session_record,
+    is_codex, this_uid, verified_session, write_session_record,
 };
 pub use host::SysHost;
 pub use liveness::{Liveness, check, pid_domain_for, this_pid_domain};

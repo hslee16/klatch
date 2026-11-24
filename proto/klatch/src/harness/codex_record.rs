@@ -21,6 +21,11 @@ pub fn is_codex(command: &str) -> bool {
     command.rsplit('/').next() == Some(CODEX_PROGRAM)
 }
 
+/// The effective user id of this process: the owner a record file and its directory must have.
+pub fn this_uid() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
 /// Where the records live under klatch's home directory.
 pub fn codex_registry_dir(home: &Path) -> PathBuf {
     home.join("harness").join("codex")
@@ -119,7 +124,7 @@ pub fn write_session_record(
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let (pid, start) = codex_above(from, procs)?;
-    safe_dir(dir, unsafe { libc::geteuid() })?;
+    safe_dir(dir, this_uid())?;
     prune(dir, procs, domain);
     let text = record_text(pid, &start, domain, facts);
     let temp = dir.join(format!(".{pid}.tmp{}", std::process::id()));

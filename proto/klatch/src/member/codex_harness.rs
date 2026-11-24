@@ -9,7 +9,7 @@
 use super::identity::Caller;
 use crate::harness::{
     CodexRecorded, OwnRegistry, PsTable, SessionFacts, codex_registry_dir, this_pid_domain,
-    verified_session, write_session_record,
+    this_uid, verified_session, write_session_record,
 };
 use std::path::PathBuf;
 
@@ -36,7 +36,7 @@ pub fn codex_harness(caller: &Caller, hook_event: Option<&str>) -> Option<CodexR
         };
         let registry = OwnRegistry {
             dir: codex_registry_dir(&home),
-            uid: unsafe { libc::geteuid() },
+            uid: this_uid(),
         };
         verified_session(
             std::process::id(),
