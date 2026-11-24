@@ -182,6 +182,8 @@ fn session_id_of(v: &serde_json::Value) -> Option<String> {
 
 /// A Codex session as klatch sees it: the evidence and the directory it works in.
 pub(crate) struct CodexSession {
+    /// The plain session id (the hook's, else `CODEX_THREAD_ID`): data that names the member, never evidence of a harness.
+    id: String,
     evidence: PeerEvidence,
     cwd: Option<String>,
 }
@@ -259,6 +261,7 @@ fn codex_session(
                 .map(|p| p.to_string_lossy().into_owned())
         });
     Some(CodexSession {
+        id: id.clone(),
         evidence: PeerEvidence::Session {
             session_id: id,
             name: Some(codex_member_base(cwd.as_deref())),
@@ -361,6 +364,9 @@ pub struct Caller {
     pub stdin: Option<serde_json::Value>,
     /// The caller is a Claude Code session the walk up the process tree verified (#877); see `runs_claude_code`.
     pub claude_code: bool,
+    /// The id of the Codex session behind this call (#884). It names the member and nothing more: whether the process
+    /// tree verifies it is asked only where a join is judged (`member::codex_harness`).
+    pub codex_session: Option<String>,
 }
 
 /// Whether the evidence shows a Claude Code session, the only harness klatch can verify today (#877). It is the session
@@ -425,6 +431,7 @@ pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Opt
         return Err(refuse_child(s, child));
     }
     let session_dir = session_dir_of(session.as_ref(), codex.as_ref());
+    let codex_session = codex.as_ref().map(|c| c.id.clone());
     let probe = Probe {
         declared,
         found,
@@ -450,6 +457,7 @@ pub(crate) fn identify(who: &Who, call: Call, store: &SqliteStore) -> Result<Opt
         stdin_session,
         stdin,
         claude_code,
+        codex_session,
     }))
 }
 
@@ -490,6 +498,7 @@ fn identify_by_credential(
         stdin_session,
         stdin,
         claude_code: false,
+        codex_session: None,
     }))
 }
 
@@ -534,6 +543,7 @@ pub(crate) fn identify_by_ssh_key(who: &Who, label: &str, store: &SqliteStore) -
         stdin_session: None,
         stdin: None,
         claude_code: false,
+        codex_session: None,
     })
 }
 
