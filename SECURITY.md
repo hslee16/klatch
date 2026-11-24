@@ -169,6 +169,12 @@ Supported versions: the newest release only, the current practice and not a poli
   under a typed or discovered name, by design (#161). A key bundle proves a member, not its harness: workers, wire joins
   and a typed name inside Claude Code are the generic floor, so a room that requires a capability refuses them (#880,
   #881, #1003).
+  A Codex session is recorded and shown as `codex` (and not `generic`) only when its process tree verifies the record the
+  SessionStart hook wrote in klatch's own `harness/codex` directory (a live `codex` process, started when the record
+  says, above the caller, for the same session, in a plain 0600 file of your own); it is granted no capability, klatch
+  never asserts Codex hook trust, and `CODEX_THREAD_ID` alone is only a name. The evidence is same-user, like Claude
+  Code's: a process of yours inside a live `codex` can write that record for itself. The real Codex process name and
+  tree are not observed (#884).
 - **Plaintext while in use.** Messages are plaintext in klatch's memory and in the context of the agent that reads
   them: delivering them is the product. A label check decides which agent may read what; encryption protects the data
   everywhere else.

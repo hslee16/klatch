@@ -658,21 +658,39 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
             &member.caller.principal,
             (*stdio, Some(label.as_str())),
             false, // a remote ssh peer: nothing about this machine's process tree speaks for it
+            None,
         );
     }
     let Some(member) = klatch::member::open_member(&who.who(), call_of(&cmd))? else {
         return Ok(());
     };
     let klatch::member::Member { gateway, caller } = member;
+    // A Codex session is shown as `codex` when its process tree verifies the record the SessionStart hook wrote (#884);
+    // this grants no capability, and the walk runs only if a join asks for the name.
+    let codex = klatch::member::codex_harness(&caller);
+    if matches!(&cmd, Cmd::Agents(AgentsCmd::Hook { event: Some(e), .. }) if e == "SessionStart") {
+        klatch::member::record_codex_session(&caller);
+    }
     match cmd {
         Cmd::Serve { stdio, .. } => serve_stdio(
             &gateway,
             &caller.principal,
             (stdio, None),
             caller.claude_code,
+            codex.as_ref(),
         ),
-        Cmd::Mcp { stdio } => mcp_stdio(&gateway, &caller.principal, stdio, caller.claude_code),
-        Cmd::Acp { stdio } => acp_stdio(&gateway, &caller.principal, stdio, caller.claude_code),
+        Cmd::Mcp { stdio } => mcp_stdio(
+            &gateway,
+            &caller.principal,
+            stdio,
+            (caller.claude_code, codex.as_ref()),
+        ),
+        Cmd::Acp { stdio } => acp_stdio(
+            &gateway,
+            &caller.principal,
+            stdio,
+            (caller.claude_code, codex.as_ref()),
+        ),
         Cmd::Stream {
             room,
             from_seq,
@@ -694,6 +712,8 @@ fn run_as_member(who: &WhoFlags, cmd: Cmd) -> Result<()> {
                 transport = transport.with_harness(Box::new(klatch::harness::ClaudeCode::probing(
                     klatch::harness::wake_support_here,
                 )));
+            } else if let Some(h) = codex {
+                transport = transport.with_harness(Box::new(h));
             }
             let ctx = Ctx {
                 t: &transport,
@@ -736,6 +756,7 @@ fn serve_stdio(
     principal: &Principal,
     (stdio, key): (bool, Option<&str>),
     claude_code: bool,
+    codex: Option<&klatch::harness::CodexRecorded>,
 ) -> Result<()> {
     if !stdio {
         bail!("serve needs --stdio, the only transport so far");
@@ -748,6 +769,8 @@ fn serve_stdio(
     let harness = verified_harness();
     let session = if claude_code {
         session.with_harness(&harness)
+    } else if let Some(h) = codex {
+        session.with_harness(h)
     } else {
         session
     };
@@ -803,7 +826,7 @@ fn mcp_stdio(
     gateway: &Gateway<SqliteStore>,
     principal: &Principal,
     stdio: bool,
-    claude_code: bool,
+    (claude_code, codex): (bool, Option<&klatch::harness::CodexRecorded>),
 ) -> Result<()> {
     if !stdio {
         bail!("mcp needs --stdio, the only transport so far");
@@ -814,6 +837,8 @@ fn mcp_stdio(
     let harness = verified_harness();
     let session = if claude_code {
         session.with_harness(&harness)
+    } else if let Some(h) = codex {
+        session.with_harness(h)
     } else {
         session
     };
@@ -833,7 +858,7 @@ fn acp_stdio(
     gateway: &Gateway<SqliteStore>,
     principal: &Principal,
     stdio: bool,
-    claude_code: bool,
+    (claude_code, codex): (bool, Option<&klatch::harness::CodexRecorded>),
 ) -> Result<()> {
     if !stdio {
         bail!("acp needs --stdio, the only transport so far");
@@ -844,6 +869,8 @@ fn acp_stdio(
     let harness = verified_harness();
     let session = if claude_code {
         session.with_harness(&harness)
+    } else if let Some(h) = codex {
+        session.with_harness(h)
     } else {
         session
     };

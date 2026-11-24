@@ -7,6 +7,7 @@
 
 mod ancestry;
 mod capability;
+mod codex_record;
 pub mod conformance;
 mod host;
 #[cfg(test)]
@@ -27,6 +28,10 @@ pub use ancestry::{Found, Miss, find_parent, find_session, unregistered_agent_be
 pub use capability::{
     ASYNC_REWAKE_FLOOR, Support, Version, parse_version, probe_claude_version, wake_support,
     wake_support_here,
+};
+pub use codex_record::{
+    CODEX_PROGRAM, CodexRecorded, NotRecorded, OwnRegistry, SessionFacts, codex_registry_dir,
+    is_codex, verified_session, write_session_record,
 };
 pub use host::SysHost;
 pub use liveness::{Liveness, check, pid_domain_for, this_pid_domain};

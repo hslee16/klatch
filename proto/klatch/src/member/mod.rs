@@ -17,11 +17,13 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod codex_harness;
 #[doc(hidden)]
 pub mod custody;
 mod identity;
 mod scope;
 
+pub use codex_harness::{codex_harness, record_codex_session};
 pub use identity::{Caller, discover_session, peer_runs_claude_code, registry_and_domain};
 
 /// The time klatch acts on. A test build (`--features test-clock`) takes it from `KLATCH_NOW` (unix seconds) when

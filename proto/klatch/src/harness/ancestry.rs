@@ -1,6 +1,6 @@
 //! Walk up from a process to the harness that started it, and say which session that is.
 
-use crate::harness::liveness::{Liveness, check};
+use crate::harness::liveness::{Liveness, check_with, is_claude_code};
 use crate::harness::process::{Lookup, ProcessTable};
 use crate::harness::record::Registry;
 
@@ -30,7 +30,7 @@ pub enum Miss {
 const MAX_DEPTH: usize = 64;
 
 /// Whether the walk goes on to `pid`: not the init process, not too deep, and not a process already visited.
-fn worth_visiting(pid: u32, seen: &[u32]) -> bool {
+pub(super) fn worth_visiting(pid: u32, seen: &[u32]) -> bool {
     pid > 1 && seen.len() < MAX_DEPTH && !seen.contains(&pid)
 }
 
@@ -42,6 +42,18 @@ pub fn find_session(
     registry: &dyn Registry,
     domain: &str,
 ) -> Result<Found, Miss> {
+    find_session_with(start, procs, registry, domain, is_claude_code)
+}
+
+/// `find_session` for a harness whose program is told by `is_program` (Codex, #884). The walk, the bound and every
+/// refusal are the same; only the program test differs.
+pub(crate) fn find_session_with(
+    start: u32,
+    procs: &dyn ProcessTable,
+    registry: &dyn Registry,
+    domain: &str,
+    is_program: fn(&str) -> bool,
+) -> Result<Found, Miss> {
     let mut stale = None;
     let mut seen = Vec::new();
     let mut pid = start;
@@ -52,7 +64,7 @@ pub fn find_session(
             Lookup::Missing => break,
             Lookup::Unreadable => return Err(Miss::TableUnreadable),
         };
-        match session_at(pid, procs, registry, domain) {
+        match session_at(pid, (procs, registry, domain), is_program) {
             Some(Ok(found)) => return Ok(found),
             Some(Err(why)) => {
                 stale.get_or_insert(why);
@@ -68,12 +80,11 @@ pub fn find_session(
 /// liveness check, and otherwise why the record is stale (it supplies nothing).
 fn session_at(
     pid: u32,
-    procs: &dyn ProcessTable,
-    registry: &dyn Registry,
-    domain: &str,
+    (procs, registry, domain): (&dyn ProcessTable, &dyn Registry, &str),
+    is_program: fn(&str) -> bool,
 ) -> Option<Result<Found, Liveness>> {
     let rec = registry.record_for(pid)?;
-    Some(match check(&rec, procs, domain) {
+    Some(match check_with(&rec, procs, domain, is_program) {
         Liveness::Live => Ok(Found {
             session_id: rec.session_id,
             name: rec.name,
