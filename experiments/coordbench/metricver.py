@@ -39,26 +39,36 @@ def condition(records):
     return {"metric version": seen} if seen else {}
 
 
-def split_scenarios(records):
-    """(records for the per-scenario analysis, counts per version {"1": n, ...} or None). When the versions are mixed an older
-    record's scenario gets the suffix ` [metric vN]`, so its cells are never pooled with the newest version's. When every
-    record has one version the records come back unchanged and counts is None, unless a record carries an explicit version."""
+def split_by(records, version_fn, field, suffix):
+    """(records for the per-scenario analysis, counts per version {"1": n, ...} or None). When the versions (version_fn of a
+    record) are mixed an older record's scenario gets the suffix (`suffix % version`), so its cells are never pooled with the
+    newest version's. When every record has one version the records come back unchanged and counts is None, unless a record
+    carries the field explicitly. Used for the metric version and the fixture hash version (fixhash.py)."""
     counts = {}
     for r in records:
-        counts[str(version_of(r))] = counts.get(str(version_of(r)), 0) + 1
-    explicit = any("metric_version" in r for r in records)
+        counts[str(version_fn(r))] = counts.get(str(version_fn(r)), 0) + 1
+    explicit = any(field in r for r in records)
     if len(counts) < 2:
         return records, (counts if explicit else None)
-    newest = max(version_of(r) for r in records)
-    out = [r if version_of(r) == newest else dict(r, scenario="%s [metric v%d]" % (r["scenario"], version_of(r)))
-           for r in records]
+    newest = max(version_fn(r) for r in records)
+    out = [r if version_fn(r) == newest else dict(r, scenario=r["scenario"] + suffix % version_fn(r)) for r in records]
     return out, counts
+
+
+def newest_by(records, version_fn):
+    """The records of the newest version (all of them when the versions are not mixed)."""
+    newest = max([version_fn(r) for r in records] or [1])
+    return [r for r in records if version_fn(r) == newest]
+
+
+def split_scenarios(records):
+    """split_by for the metric version: the older records' scenarios get ` [metric vN]`."""
+    return split_by(records, version_of, "metric_version", " [metric v%d]")
 
 
 def newest_only(records):
     """The records of the newest metric version (all of them when the versions are not mixed)."""
-    newest = max([version_of(r) for r in records] or [1])
-    return [r for r in records if version_of(r) == newest]
+    return newest_by(records, version_of)
 
 
 def header_lines(counts):

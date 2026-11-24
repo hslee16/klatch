@@ -23,6 +23,7 @@ import json
 import os
 import sys
 
+import fixhash
 import metricver
 import scale
 import stats
@@ -237,8 +238,9 @@ def _by_scenario_and_arm(records):
 
 
 def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEFAULT_RESAMPLES):
-    newest = metricver.newest_only(records)  # the scaling table never mixes metric versions
+    newest = fixhash.newest_only(metricver.newest_only(records))  # the scaling table never mixes metric or hash versions
     records, versions = metricver.split_scenarios(records)
+    records, hash_versions = fixhash.split_scenarios(records)
     by = _by_scenario_and_arm(records)
     out = {"records": len(records), "invalid_runs": sum(1 for r in records if not r.get("valid", True)),
            "primary_metric": primary, "bootstrap_seed": seed, "bootstrap_resamples": resamples, "scenarios": {},
@@ -258,6 +260,8 @@ def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEF
     out["scaling"] = scale.scaling(newest)
     if versions:
         out["metric_versions"] = versions
+    if hash_versions:
+        out["fixture_hash_versions"] = hash_versions
     return out
 
 
@@ -284,7 +288,7 @@ def conditions(records):
         "temperature": uniq(lambda r: r["temperature"]),
         "caps": uniq(lambda r: json.dumps(r["caps"], sort_keys=True)),
     }
-    return dict(out, **metricver.condition(records))
+    return dict(out, **metricver.condition(records), **fixhash.condition(records))
 
 
 def _completion_row(key, cn, co):
@@ -337,8 +341,7 @@ def compare(new, old, resamples=DEFAULT_RESAMPLES, seed=DEFAULT_SEED):
         row["p_holm"] = a
         if row["worse"]:
             row["flag"] = "REGRESSION" if (a < 0.05 and not row["small"]) else "possible regression (not confirmed)"
-    note = metricver.mismatch(new, old)
-    return dict({"rows": rows, "tests_made": len(rows)}, **({"metric_version_mismatch": note} if note else {}))
+    return dict({"rows": rows, "tests_made": len(rows)}, **fixhash.version_notes(new, old))
 
 
 def _ledger_ids(path):
@@ -422,7 +425,7 @@ def _flagged_lines(cmp_, flagged):
 def _comparison_lines(cmp_, baseline_dir):
     flagged = [r for r in cmp_["rows"] if r["flag"]]
     lines = ["## Comparison with %s" % baseline_dir, ""]
-    lines += (["**Different metric versions**: %s." % cmp_["metric_version_mismatch"], ""] if cmp_.get("metric_version_mismatch") else [])
+    lines += fixhash.comparison_lines(cmp_)
     lines += _flagged_lines(cmp_, flagged)
     rows = [(r["scenario"], r["arm"], r["metric"], f(r["old_median"]), f(r["new_median"]), f(r["change"]),
              "%d/%d" % (r["n_old"], r["n_new"]), pf(r["p_holm"]), r["flag"]) for r in cmp_["rows"]]
@@ -516,7 +519,7 @@ def render_markdown(a, cmp_=None, baseline_dir=None, source=None, comparison_onl
         return "\n".join(L + ["No runs were found.", ""])
     if not comparison_only:
         L += _conditions_lines(a)
-        L += metricver.header_lines(a.get("metric_versions"))
+        L += fixhash.mixed_version_lines(a)
     if cmp_ is not None:
         L += _comparison_lines(cmp_, baseline_dir)
     if comparison_only:

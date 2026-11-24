@@ -10,6 +10,7 @@
   ],
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "specialists",
+  "generator_sources": ["gen_facts.py"],
   "est_cost_usd_haiku": 0.6,
   "private": "private",
   "seed_history": "seed.json"
