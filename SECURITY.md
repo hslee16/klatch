@@ -171,7 +171,7 @@ Supported versions: the newest release only, the current practice and not a poli
   #881, #1003).
   A Codex session is recorded and shown as `codex` (and not `generic`) only when its process tree verifies the record the
   SessionStart hook wrote in klatch's own `harness/codex` directory (a live `codex` process, started when the record
-  says, above the caller, for the same session, in a plain 0600 file of your own); it is granted no capability, klatch
+  says, above the caller, for the same session, in a plain file of your own that group and others cannot write, read without following a symlink, in a directory that is also yours and sealed); it is granted no capability, klatch
   never asserts Codex hook trust, and `CODEX_THREAD_ID` alone is only a name. The evidence is same-user, like Claude
   Code's: a process of yours inside a live `codex` can write that record for itself. The real Codex process name and
   tree are not observed (#884).

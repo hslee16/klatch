@@ -8,8 +8,10 @@
 
 use crate::harness::ancestry::{find_session_with, worth_visiting};
 use crate::harness::liveness::{Liveness, check_with};
+pub use crate::harness::own_records::OwnRegistry;
+use crate::harness::own_records::remove_stale_temps;
 use crate::harness::process::{Lookup, ProcessTable};
-use crate::harness::record::{FsRegistry, Record, Registry};
+use crate::harness::record::Registry;
 use std::path::{Path, PathBuf};
 
 /// The program name of a Codex session. Not read from the environment: a different name is a code change.
@@ -25,6 +27,9 @@ pub fn is_codex(command: &str) -> bool {
 pub fn this_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
+
+/// How old a leftover temporary file must be before a write removes it.
+const STALE_TEMP: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Where the records live under klatch's home directory.
 pub fn codex_registry_dir(home: &Path) -> PathBuf {
@@ -97,12 +102,12 @@ fn safe_dir(dir: &Path, uid: u32) -> Result<(), NotRecorded> {
 /// Remove the records of processes that are gone (dead, or the pid reused, or no longer a `codex`). A record that
 /// cannot be judged (another pid domain, an unreadable table) is kept.
 fn prune(dir: &Path, procs: &dyn ProcessTable, domain: &str) {
-    for rec in (FsRegistry {
+    let registry = OwnRegistry {
         dir: dir.to_path_buf(),
-    })
-    .records()
-    .0
-    {
+        uid: this_uid(),
+    };
+    remove_stale_temps(dir, STALE_TEMP);
+    for rec in registry.records().0 {
         let gone = matches!(
             check_with(&rec, procs, domain, is_codex),
             Liveness::Dead | Liveness::Reused | Liveness::NotHarness
@@ -155,26 +160,6 @@ pub fn verified_session(
         .is_ok_and(|found| found.session_id == session_id)
 }
 
-/// The records of `dir`, read only when the file is a plain file owned by `uid` that no one else can write.
-pub struct OwnRegistry {
-    pub dir: PathBuf,
-    pub uid: u32,
-}
-
-impl Registry for OwnRegistry {
-    fn record_for(&self, pid: u32) -> Option<Record> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let meta = std::fs::symlink_metadata(self.dir.join(format!("{pid}.json"))).ok()?;
-        let plain = meta.is_file() && meta.uid() == self.uid;
-        let sealed = meta.permissions().mode() & 0o022 == 0;
-        (plain && sealed).then_some(())?;
-        FsRegistry {
-            dir: self.dir.clone(),
-        }
-        .record_for(pid)
-    }
-}
-
 /// The harness of a join from a session: always the generic floor's levels, named `codex` only when `verify` says the
 /// session runs in a recorded Codex process. `verify` runs at most once, and only when the name is asked for.
 pub struct CodexRecorded {
@@ -207,5 +192,7 @@ impl crate::harness::Harness for CodexRecorded {
     }
 }
 
+#[cfg(test)]
+mod hostile;
 #[cfg(test)]
 mod tests;

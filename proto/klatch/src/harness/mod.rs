@@ -17,6 +17,7 @@ mod linux_real;
 mod linux_shaped;
 mod liveness;
 mod negotiate;
+mod own_records;
 mod probe;
 mod process;
 mod pstime;
