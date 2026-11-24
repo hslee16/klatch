@@ -1,0 +1,4 @@
+A failing property step of the gate keeps its evidence (#829; no schema change; 2026-11-24).
+The gate already printed the Hegel seed, the replay command and the last 50 lines of the failing step, but a long failing output (a model's note trace) can push the `#[hegel::reproduce_failure("...")]` blob out of those 50 lines, and the log was deleted on exit, so a one-off failure (the one reported during #821) left nothing to replay.
+
+    The gate now prints the blob lines again after the tail (prefixed `blob: `) and copies the full output of a failed Hegel step to `$TMPDIR/klatch-gate-failed-seed-<seed>.log`, naming the file. Hunt result: 200 fresh seeds (3001 to 3200, 500 cases each, `properties`, `models` and `crypto`, four batches in parallel on a loaded machine) all passed on main at 10be65ba, on top of 100 earlier seeds (1001 to 1060 and 2001 to 2040); the original failure has no recorded seed and is not reproducible, so no property or code changed.
