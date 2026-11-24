@@ -1,0 +1,1 @@
+- The generic policy writer refuses the admin passphrase keys (`admin-passphrase*` and the unlock window), so no admin act or gateway method can replace the verifier, clear the failure counter or stretch the unlock window; only the passphrase commands write them, through `reserved_policy_set`. A refused write is audited as `policy-reserved-refused` with the key name only (#1275).

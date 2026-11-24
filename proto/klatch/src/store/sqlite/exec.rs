@@ -4,6 +4,8 @@ use super::{SqliteStore, be};
 use crate::domain::Result;
 use rusqlite::params;
 
+const AUDIT_SQL: &str = "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)";
+
 impl SqliteStore {
     /// Mark the member present: last-seen is a whole second, so a touch in the second already recorded changes nothing
     /// and writes nothing (#128); at most one write per member and room each second, however often it is called.
@@ -128,15 +130,37 @@ impl SqliteStore {
             return f();
         }
         self.conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
-        match f() {
-            Ok(v) => {
-                self.conn.execute_batch("COMMIT").map_err(be)?;
-                Ok(v)
-            }
+        let out = match f() {
+            Ok(v) => self.conn.execute_batch("COMMIT").map_err(be).map(|()| v),
             Err(e) => {
                 let _ = self.conn.execute_batch("ROLLBACK");
                 Err(e)
             }
+        };
+        self.flush_deferred_audit();
+        out
+    }
+
+    /// Keep an audit row of a refused write: now when no transaction is open, else once the outermost one has
+    /// closed, so a rollback cannot take it away (#1275).
+    pub(super) fn audit_refusal(&self, action: &'static str, target: &str, now: i64) {
+        if self.conn.is_autocommit() {
+            let _ = self.exec(AUDIT_SQL, params![now, action, target, ""]);
+        } else {
+            self.deferred_audit
+                .borrow_mut()
+                .push((action, target.to_string(), now));
+        }
+    }
+
+    fn flush_deferred_audit(&self) {
+        // a COMMIT that failed leaves the transaction open: the rows stay queued for the one that closes it
+        if !self.conn.is_autocommit() {
+            return;
+        }
+        let rows = std::mem::take(&mut *self.deferred_audit.borrow_mut());
+        for (action, target, ts) in rows {
+            let _ = self.exec(AUDIT_SQL, params![ts, action, target, ""]);
         }
     }
 }

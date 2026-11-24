@@ -16,6 +16,12 @@ pub struct Census<'a> {
     pub cap: u64,
 }
 
+/// The policy keys the admin passphrase proof owns (#1275): the verifier, the failure counter, the unlock window,
+/// and anything else under the `admin-passphrase` prefix. Only `PolicyStore::reserved_policy_set` writes them.
+pub fn is_proof_key(key: &str) -> bool {
+    key.starts_with("admin-passphrase") || key == "admin-unlock-secs"
+}
+
 pub trait PolicyStore {
     /// Keep a record of an administrative act, and read the latest ones, newest first.
     fn record_audit(&self, _entry: &NewAudit, _now: i64) -> Result<()> {
@@ -47,6 +53,14 @@ pub trait PolicyStore {
     }
 
     fn policy_set(&self, _key: &str, _value: Option<&str>, _now: i64) -> Result<()> {
+        unsupported("policy")
+    }
+
+    /// Write a key the admin passphrase proof owns (#1275): the verifier, the failure counter, the unlock window.
+    /// Only `crate::proof` calls this; `policy_set` refuses those keys, so no generic policy writer can replace the
+    /// verifier, clear the counter or stretch the window. Any other key is refused here, so the two writers never
+    /// overlap.
+    fn reserved_policy_set(&self, _key: &str, _value: Option<&str>, _now: i64) -> Result<()> {
         unsupported("policy")
     }
 

@@ -226,7 +226,8 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
 fn a_damaged_failure_count_reads_as_locked_not_as_free() {
     let s = store();
     with_pass(&s);
-    s.policy_set(limit::KEY, Some("garbage"), 1).unwrap();
+    s.reserved_policy_set(limit::KEY, Some("garbage"), 1)
+        .unwrap();
     let e = prove(
         &s,
         &mut Typed::new(&[PASS]),
@@ -241,7 +242,7 @@ fn a_damaged_failure_count_reads_as_locked_not_as_free() {
 #[test]
 fn a_damaged_verifier_lets_nobody_in() {
     let s = store();
-    s.policy_set(VERIFIER_KEY, Some("argon2id$m=1,t=1,p=1$00$00"), 1)
+    s.reserved_policy_set(VERIFIER_KEY, Some("argon2id$m=1,t=1,p=1$00$00"), 1)
         .unwrap();
     let mut p = Typed::new(&[PASS]);
     assert_eq!(
@@ -352,7 +353,7 @@ fn a_length_of_the_window_comes_from_policy_and_is_bounded() {
     assert_eq!(window_len(&s), Duration::from_secs(120));
     assert!(set_window(&s, &proof, Some(5), 3).is_err());
     assert!(set_window(&s, &proof, Some(100_000), 3).is_err());
-    s.policy_set(WINDOW_KEY, Some("junk"), 4).unwrap();
+    s.reserved_policy_set(WINDOW_KEY, Some("junk"), 4).unwrap();
     assert_eq!(window_len(&s), Duration::from_secs(60));
     set_window(&s, &proof, None, 5).unwrap();
     assert_eq!(s.policy_get(WINDOW_KEY).unwrap(), None);
@@ -397,7 +398,7 @@ fn non_canonical_stale_row(s: &SqliteStore) -> String {
         .unwrap();
     assert_eq!(cost, "m=64,t=1,p=1");
     let row = format!("argon2id$p=1,t=01,m=64${rest}");
-    s.policy_set(VERIFIER_KEY, Some(&row), 1).unwrap();
+    s.reserved_policy_set(VERIFIER_KEY, Some(&row), 1).unwrap();
     row
 }
 
@@ -430,7 +431,7 @@ fn a_row_with_upper_case_hex_is_corrupt_and_never_proves() {
     with_pass(&s);
     let row = s.policy_get(VERIFIER_KEY).unwrap().unwrap();
     let (head, tail) = row.rsplit_once('$').unwrap();
-    s.policy_set(
+    s.reserved_policy_set(
         VERIFIER_KEY,
         Some(&format!("{head}${}", tail.to_uppercase())),
         2,
@@ -897,7 +898,7 @@ fn old_terminals_are_pruned_and_the_table_stays_small() {
 #[test]
 fn a_row_from_before_per_terminal_counting_is_still_honoured() {
     let s = store();
-    s.policy_set(limit::KEY, Some("5,100"), 1).unwrap();
+    s.reserved_policy_set(limit::KEY, Some("5,100"), 1).unwrap();
     assert!(limit::wait_secs(&s, "ttys001/s1", 101).unwrap() > 0);
     limit::clear(&s, "ttys001/s1", 101).unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
@@ -918,4 +919,159 @@ fn the_audit_names_the_terminal_and_never_an_attempt() {
     let kept = everything_kept(&s);
     assert!(kept.contains("failures=1 terminal=ttys042/s7"), "{kept}");
     assert!(!kept.contains("hunter2"));
+}
+
+/// Every policy key the proof owns (#1275): the verifier, the failure counter, the unlock window, and anything
+/// that starts with the reserved prefix.
+const OWNED: [&str; 4] = [
+    VERIFIER_KEY,
+    limit::KEY,
+    WINDOW_KEY,
+    "admin-passphrase-future",
+];
+
+#[test]
+fn the_generic_policy_writer_refuses_every_key_the_proof_owns() {
+    for key in OWNED {
+        let s = store();
+        with_pass(&s);
+        let before = s.policy_list("").unwrap();
+        assert!(s.policy_set(key, Some("planted"), 5).is_err(), "{key} set");
+        assert!(s.policy_set(key, None, 6).is_err(), "{key} cleared");
+        assert_eq!(s.policy_list("").unwrap(), before, "{key} left unchanged");
+    }
+}
+
+#[test]
+fn a_refused_write_to_an_owned_key_is_audited_by_key_name_only() {
+    let s = store();
+    with_pass(&s);
+    let _ = s.policy_set(VERIFIER_KEY, Some("PLANTED-SECRET-VALUE"), 5);
+    let log = s.audit_log(10).unwrap();
+    let row = log
+        .iter()
+        .find(|a| a.action == "policy-reserved-refused")
+        .expect("an audit row");
+    assert_eq!(row.target, VERIFIER_KEY);
+    assert!(!format!("{log:?}").contains("PLANTED-SECRET-VALUE"));
+}
+
+#[test]
+fn the_proof_commands_still_write_their_own_rows() {
+    let s = store();
+    with_pass(&s);
+    assert!(s.policy_get(VERIFIER_KEY).unwrap().is_some());
+    s.reserved_policy_set(WINDOW_KEY, Some("60"), 7).unwrap();
+    assert_eq!(s.policy_get(WINDOW_KEY).unwrap().as_deref(), Some("60"));
+}
+
+#[test]
+fn an_ordinary_key_is_not_caught_by_the_reserved_check() {
+    let s = store();
+    s.policy_set("admin:note", Some("x"), 1).unwrap();
+    s.policy_set("label:admin-passphrase-room", Some("x"), 1)
+        .unwrap();
+    assert!(s.reserved_policy_set("label:r", Some("x"), 1).is_err());
+}
+
+#[test]
+fn the_refusal_is_a_refused_error_with_its_rule_and_never_the_value() {
+    let s = store();
+    match s.policy_set(VERIFIER_KEY, Some("PLANTED-SECRET-VALUE"), 5) {
+        Err(crate::domain::Error::Refused { rule, reason }) => {
+            assert_eq!(rule, "admin-passphrase-rows");
+            assert!(!reason.contains("PLANTED-SECRET-VALUE"));
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_refusal_inside_a_transaction_is_audited_after_it_rolls_back() {
+    for key in OWNED {
+        let s = store();
+        with_pass(&s);
+        let before = s.policy_list("").unwrap();
+        let r = s.atomically(&mut || s.policy_set(key, Some("PLANTED-SECRET-VALUE"), 5));
+        assert!(r.is_err());
+        let log = s.audit_log(10).unwrap();
+        let rows: Vec<_> = log
+            .iter()
+            .filter(|a| a.action == "policy-reserved-refused" && a.target == key)
+            .collect();
+        assert_eq!(rows.len(), 1, "{key}: {log:?}");
+        assert!(!format!("{log:?}").contains("PLANTED-SECRET-VALUE"));
+        assert_eq!(s.policy_list("").unwrap(), before);
+    }
+}
+
+#[test]
+fn a_refusal_in_a_transaction_that_commits_anyway_is_audited_once() {
+    let s = store();
+    let r = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        Ok(())
+    });
+    assert!(r.is_ok());
+    let n = s
+        .audit_log(10)
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn a_refusal_then_an_ordinary_nested_write_then_an_error_keeps_exactly_one_audit_row() {
+    let s = store();
+    let r = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        s.policy_set("label:r", Some("secret"), 6)?;
+        Err(crate::domain::Error::Invalid("stop".into()))
+    });
+    assert!(r.is_err());
+    let log = s.audit_log(10).unwrap();
+    let n = log
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 1, "{log:?}");
+    assert_eq!(s.policy_get("label:r").unwrap(), None, "rolled back");
+}
+
+#[test]
+fn flushed_refusals_are_written_once_and_never_again() {
+    let s = store();
+    s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 5);
+        let _ = s.policy_set(limit::KEY, Some("x"), 6);
+        Ok(())
+    })
+    .unwrap();
+    s.policy_set("label:a", Some("1"), 7).unwrap();
+    s.atomically(&mut || s.policy_set("label:b", Some("2"), 8))
+        .unwrap();
+    let n = s
+        .audit_log(20)
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "policy-reserved-refused")
+        .count();
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn a_flushed_refusal_carries_the_time_of_the_refusal() {
+    let s = store();
+    let _ = s.atomically(&mut || {
+        let _ = s.policy_set(VERIFIER_KEY, Some("x"), 4242);
+        Err(crate::domain::Error::Invalid("stop".into()))
+    });
+    let log = s.audit_log(10).unwrap();
+    let row = log
+        .iter()
+        .find(|a| a.action == "policy-reserved-refused")
+        .unwrap();
+    assert_eq!(row.ts, 4242);
 }
