@@ -117,10 +117,14 @@ make an escape unlikely and visible; they are not a security boundary against a 
   hits are in `notes`, all (up to 50) in the record's `isolation` object: `{"mode", "checked_calls", "violation_count",
   "violations": [{"agent", "session", "call", "tool", "text", "path", "why"}]}`. What it still misses: a path built at run time
   inside a python3 program, a symlink made in one call and followed in a later one, code written to a file and run later, a
-  directory path asked of the kernel (libproc, `fcntl F_GETPATH`, through ctypes), and a path without `./`, `../` or `/` in
-  front. `git log origin/main` (pushed work) is allowed.
+  directory path asked of the kernel (libproc, `fcntl F_GETPATH`, through ctypes), a path without `./`, `../` or `/` in
+  front, a variable that holds the root (`F=/; find $F`), and a `cd ..` followed by a bare read of the agent's own settings file.
+  `git log origin/main` (pushed work) is allowed.
 
-The harness also refuses a `--logs-dir` or `--tmp-root` that is your home directory, is owned by someone else or is writable by
+In layout mode the published log directories of earlier runs are listable and readable by later runs of the same user (the sandbox
+denies the logs root; layout mode cannot). In sandbox mode a `--logs-dir` or `--tmp-root` under `/Users`, `/home`, `/root` or the real
+home is refused (the file-tool deny rules cannot cover a user root that holds the run), use the system temp directory. The
+harness also refuses a `--logs-dir` or `--tmp-root` that is your home directory, is owned by someone else or is writable by
 group or others (a sticky world-writable `/tmp` is accepted). SIGTERM and SIGINT restore the modes of every directory the run
 hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch directories of dead runs (an `.owner` file names
 the pid) and restores their staging directories in the logs.

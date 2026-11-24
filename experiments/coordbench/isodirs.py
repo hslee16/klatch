@@ -140,31 +140,51 @@ def other_live(logs_root, tok):
 
 
 def sweep_logs(logs_root):
-    """Restore the staging directories (random names) of runs that died: the marker names no live process."""
+    """Remove the staging directories (random names, never published) and the markers of runs that died: the marker names no live
+    process."""
     for m, pid in _markers(logs_root):
         if not pid_alive(pid or 0):
             stage = os.path.join(logs_root, os.path.basename(m)[len(LIVE_PREFIX):])
             if os.path.isdir(stage):
                 _restore_tree(stage)
+                shutil.rmtree(stage, ignore_errors=True)
             _remove(m)
 
 
-def validate_dir(path, what):
-    """Why the harness refuses this directory as --logs-dir or --tmp-root (it makes directories inside it, and hides some of
-    them), or None. Not the home directory, not another user's, not writable by group or others (a sticky world-writable
-    directory such as /tmp is the usual temp root and is accepted)."""
-    p = os.path.realpath(path)
-    if p == real_home():
-        return "%s %s is your home directory: use a directory of its own" % (what, path)
-    if not os.path.exists(p):
-        return None
+def _under_user_root(p):
+    """The user root (as written or resolved, or the real home) that holds this resolved path, or None."""
+    candidates = list(USER_ROOTS) + [os.path.realpath(x) for x in USER_ROOTS] + [real_home()]
+    return next((r for r in candidates if p == r or p.startswith(r.rstrip(os.sep) + os.sep)), None)
+
+
+def _ownership_problem(p, path, what):
+    """Why an existing directory is not safe to make directories in (not yours, writable by group or others), or None."""
     st = os.stat(p)
     sticky_open = bool(st.st_mode & stat.S_ISVTX) and bool(st.st_mode & 0o002)
-    if st.st_uid != os.getuid() and not sticky_open:
+    if sticky_open:
+        return None
+    if st.st_uid != os.getuid():
         return "%s %s is not owned by you" % (what, path)
-    if st.st_mode & 0o022 and not sticky_open:
+    if st.st_mode & 0o022:
         return "%s %s is writable by group or others (mode %o): use a directory only you can write" % (what, path, stat.S_IMODE(st.st_mode))
     return None
+
+
+def validate_dir(path, what, strict=False):
+    """Why the harness refuses this directory as --logs-dir or --tmp-root (it makes directories inside it, and hides some of
+    them), or None. Not the home directory, not another user's, not writable by group or others (a sticky world-writable
+    directory such as /tmp is the usual temp root and is accepted). strict (a real run in sandbox mode): not under /Users, /home,
+    /root or the real home either, because the file-tool deny rules cannot cover a user root that holds the run (a deny beats
+    the allow of the agent's own clone), which would leave the user's other directories readable to the file tools."""
+    p = os.path.realpath(path)
+    root = _under_user_root(p) if strict else None
+    if p == real_home():
+        return "%s %s is your home directory: use a directory of its own" % (what, path)
+    if root:
+        return ("%s %s lies under %s: in sandbox mode the file-tool deny rules cannot cover a user root that holds the run; use a "
+                "directory outside the user roots, for example under the system temp directory %s (or --isolation layout, "
+                "which gives up the sandbox)" % (what, path, root, os.path.realpath(tempfile.gettempdir())))
+    return _ownership_problem(p, path, what) if os.path.exists(p) else None
 
 
 def version_problem(version):

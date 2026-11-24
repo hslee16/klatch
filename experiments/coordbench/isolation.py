@@ -21,6 +21,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 
 from isodirs import (IsolationError, LIVE_PREFIX, MIN_CLAUDE, OWNER_FILE, USER_ROOTS, hide, live_marker, other_live,  # noqa: F401
                      pid_alive, real_home, restore, restore_all, stage_binary, sweep_logs, sweep_stale, token,
@@ -33,7 +34,9 @@ PATH_RE = re.compile(r"(?<![\w./~$:-])(%s%s*|\.\.%s*|\.%s+|%s+)" % (VAR_PREFIX, 
 SEGMENT_RE = re.compile(r"&&|\|\||;|\n|\|")
 HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
 _PS = r"(?:ps|pgrep|lsof|pstree|pidof)"
-PROCESS_RE = re.compile(r"""(?:^|[;&|(\n]|\$\()\s*%s(?=\s|$)|[\[(]\s*['"]%s['"]|(?:system|popen|run|call|check_output|Popen)\(\s*['"]%s\b|/proc/""" % (_PS, _PS, _PS))
+PROCESS_RE = re.compile(r"""(?:^|[;&|(\n]|\$\()\s*(?:\S*/)?%s(?=\s|$)|[\[(]\s*['"]%s['"]|(?:system|popen|run|call|check_output|Popen)\(\s*['"]%s\b|/proc/""" % (_PS, _PS, _PS))
+# commands that search the whole disk by name
+DISK_SEARCH_RE = re.compile(r"""(?:^|[;&|(\n]|\$\()\s*(?:\S*/)?(?:mdfind|locate|plocate|slocate)(?=\s|$)""")
 # a bare / is a search root only as the argument of a search or listing command or call (not `3 / 4`)
 ROOT_ARG_RE = re.compile(r"""(?:\b(?:find|rg|grep|ag|ack|ls|du|fd|tree|locate|cd|cat)\b[^;|&\n]*?\s|\b(?:listdir|walk|scandir|glob|iglob|rglob|Path|chdir)\(\s*['"])/(?=['"\s)]|$)""")
 # a wildcard in the first segment (/U*/..., /*/...) or in the second one under a user or system root: a search from the root
@@ -123,7 +126,7 @@ class Policy:
 
 def _writes_only_a_file(line):
     before = line.split("<<")[0]
-    return bool(re.search(r"\b(cat|tee)\b", before)) and not re.search(r"\b(python3?|sh|bash)\b", before)
+    return bool(re.search(r"\b(cat|tee)\b", before)) and not re.search(r"(?<![\w./-])(python3?|sh|bash)\b(?![.\w-])", before)
 
 
 def strip_heredoc_files(command):
@@ -174,8 +177,8 @@ def _content_blocks(line):
 
 def tool_calls(lines):
     """[(name, input)] of every tool_use block in stream-json lines, in order."""
-    return [(b.get("name"), b.get("input") if isinstance(b.get("input"), dict) else {})
-            for ln in lines for b in _content_blocks(ln) if isinstance(b, dict) and b.get("type") == "tool_use"]
+    uses = [streamshape.tool_use(b) for ln in lines for b in _content_blocks(ln) if isinstance(b, dict) and b.get("type") == "tool_use"]
+    return [(u["name"], u["input"]) for u in uses]
 
 
 def _is_parent(token):
@@ -190,6 +193,7 @@ def _bash_hits(command, policy, cwd):
     if PROCESS_RE.search(command):
         hits.append((command, "", PROCESS_LISTING))
     hits += [(m.group(0), "", ROOT_SEARCH) for m in ROOT_WILD_RE.finditer(command)]
+    hits += [(command, "", ROOT_SEARCH) for _ in DISK_SEARCH_RE.finditer(command)][:1]
     return hits, cwd
 
 
@@ -287,14 +291,30 @@ def sandbox_settings(iso):
             "permissions": {"deny": _file_deny(iso)}}
 
 
+def _install_root(exe):
+    d = os.path.dirname(os.path.realpath(exe))
+    return os.path.dirname(d) if os.path.basename(d) in ("bin", "sbin") else d
+
+
+def _interpreter_dirs(exe):
+    """What a python3 on PATH says it really is (a pyenv or asdf shim runs another interpreter): its base_prefix and the install
+    root of its sys.executable. [] when it cannot be asked."""
+    try:
+        p = subprocess.run([exe, "-c", "import sys; print(sys.base_prefix); print(sys.executable)"], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    lines = p.stdout.split("\n")
+    return [os.path.realpath(lines[0])] + [_install_root(lines[1])] if p.returncode == 0 and len(lines) > 1 and lines[0] and lines[1] else []
+
+
 def tool_roots():
-    """The installation directories of python3 and git (the agents run them, they may live under a user root)."""
-    out = []
-    for cmd in ("python3", "git"):
-        exe = shutil.which(cmd)
-        if exe:
-            d = os.path.dirname(os.path.realpath(exe))
-            out.append(os.path.dirname(d) if os.path.basename(d) in ("bin", "sbin") else d)
-    return list(dict.fromkeys(r for r in out if os.path.isdir(r)))
+    """The installation directories of python3 and git (the agents run them, they may live under a user root), the directory of
+    a python3 shim, and the interpreter the shim stands for."""
+    python, git = shutil.which("python3"), shutil.which("git")
+    out = [_install_root(e) for e in (python, git) if e]
+    if python:
+        out += [os.path.dirname(python)] + _interpreter_dirs(python)
+    return list(dict.fromkeys(r for r in out if r and os.path.isdir(r)))
 
 

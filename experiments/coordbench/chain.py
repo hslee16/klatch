@@ -49,9 +49,10 @@ def _load_event(line):
 def _add_block(b, turn, tools):
     if not isinstance(b, dict):
         return
-    if b.get("type") == "tool_use" and b.get("id") not in tools:
-        t = {"name": b.get("name", "?"), "input": b.get("input") or {}, "result": ""}
-        tools[b.get("id")] = t
+    if b.get("type") == "tool_use" and streamshape.ident(b.get("id")) not in tools:
+        tu = streamshape.tool_use(b)
+        t = {"name": tu["name"], "input": tu["input"], "result": ""}
+        tools[tu["id"]] = t
         turn["tools"].append(t)
     elif b.get("type") == "text" and isinstance(b.get("text"), str):
         turn["text"] = b["text"]
@@ -59,7 +60,7 @@ def _add_block(b, turn, tools):
 
 def _add_assistant(e, turns, by_id, tools):
     msg = streamshape.message(e)
-    mid = msg.get("id") or "anon-%d" % len(turns)
+    mid = streamshape.ident(msg.get("id")) or "anon-%d" % len(turns)
     if mid not in by_id:
         by_id[mid] = {"i": len(turns) + 1, "text": "", "tools": []}
         turns.append(by_id[mid])
@@ -68,13 +69,13 @@ def _add_assistant(e, turns, by_id, tools):
 
 
 def _is_known_result(b, tools):
-    return isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in tools
+    return isinstance(b, dict) and b.get("type") == "tool_result" and streamshape.ident(b.get("tool_use_id")) in tools
 
 
 def _add_results(e, tools):
     for b in streamshape.content(e):
         if _is_known_result(b, tools):
-            tools[b["tool_use_id"]]["result"] = _text_of(b.get("content"))
+            tools[streamshape.ident(b["tool_use_id"])]["result"] = _text_of(b.get("content"))
 
 
 def parse_stream(lines):

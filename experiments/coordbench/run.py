@@ -82,22 +82,29 @@ class Suite:
         os.makedirs(log_dir)
         marker = isolation.live_marker(self.logs_root, tok)
         rec = self.skeleton(run_id, arm, seed, started)
-        notes = []
+        notes, final = [], os.path.join(self.logs_root, run_id)
+        published = False
         try:
-            self.execute(rec, RunSpot(arm, seed, scratch, log_dir), notes)
-        except (GuardError, fixture_mod.FixtureError, RuntimeError, OSError) as e:
-            rec["outcome"], rec["valid"] = "error", False
-            notes.append("setup failed: %s" % e)
-        finally:
-            isolation.restore(os.path.join(scratch, "agents"))  # hidden while agents ran (isolation.hide)
-            isolation.restore(log_dir)
-            shutil.rmtree(scratch, ignore_errors=True)
-        rec["end"] = now_iso()
-        rec["wall_s"] = round(time.monotonic() - t_start, 3) if rec["wall_s"] is None else rec["wall_s"]
-        rec["notes"] = "; ".join(notes)
-        rec = self.publish_logs(log_dir, os.path.join(self.logs_root, run_id), rec, tok)
-        os.unlink(marker)
-        return rec
+            try:
+                self.execute(rec, RunSpot(arm, seed, scratch, log_dir), notes)
+            except (GuardError, fixture_mod.FixtureError, RuntimeError, OSError) as e:
+                rec["outcome"], rec["valid"] = "error", False
+                notes.append("setup failed: %s" % e)
+            finally:
+                isolation.restore(os.path.join(scratch, "agents"))  # hidden while agents ran (isolation.hide)
+                isolation.restore(log_dir)
+                shutil.rmtree(scratch, ignore_errors=True)
+            rec["end"] = now_iso()
+            rec["wall_s"] = round(time.monotonic() - t_start, 3) if rec["wall_s"] is None else rec["wall_s"]
+            rec["notes"] = "; ".join(notes)
+            rec = self.publish_logs(log_dir, final, rec, tok)
+            published = True
+            return rec
+        finally:  # a SIGTERM or SIGINT ends the run here: the logs keep their public name, nothing random is left behind
+            if not published and os.path.isdir(log_dir):
+                self.publish_logs(log_dir, final, dict(rec, notes="interrupted"), tok)
+            if os.path.exists(marker):
+                os.unlink(marker)
 
     def publish_logs(self, work, final, rec, tok):
         """Rename the log directory to its public name (an older directory of the same run id is replaced) and make the
@@ -249,7 +256,8 @@ def _refuse(why):
 
 def _unsafe_root(a):
     """Why --logs-dir or --tmp-root is refused (the harness makes directories in them and hides some), or None."""
-    problems = [isolation.validate_dir(v, w) for v, w in ((a.logs_dir, "--logs-dir"), (a.tmp_root, "--tmp-root"))]
+    strict = a.driver == "claude" and a.isolation == "sandbox"
+    problems = [isolation.validate_dir(v, w, strict) for v, w in ((a.logs_dir, "--logs-dir"), (a.tmp_root, "--tmp-root"))]
     return next((p for p in problems if p), None)
 
 

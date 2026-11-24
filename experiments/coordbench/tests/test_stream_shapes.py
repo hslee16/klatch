@@ -1,6 +1,8 @@
-"""Every reader of a stream tolerates any event shape (#1519, found by the first real run of isolation_probe.py): a "message"
-that is a plain string (an error or retry event), a missing or string "content", blocks that are not objects, lines that are
-not JSON objects. A parser that crashes after a paid run loses the run, so none may."""
+"""Every reader of a stream tolerates the odd event shapes tried here (#1519, found by the first real run of isolation_probe.py):
+a "message" that is a plain string (an error or retry event), a missing or string "content", blocks that are not objects, lines
+that are not JSON objects, and fields of the wrong type (ids, names and inputs that are lists or strings, counts that are text,
+a model given as a list). A parser that crashes after a paid run loses the run, so none may. The list is what is covered, not
+every possible shape."""
 import json
 import os
 import sys
@@ -37,6 +39,21 @@ ODD = [
     {"type": "user", "message": {"content": ["x", None, {"type": "tool_result", "tool_use_id": "t1", "content": [None, "a", {"text": 3}]}]}},
     {"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "Sandbox is required but failed to initialize"},
     {"type": "result", "is_error": True, "result": None, "total_cost_usd": "n/a"},
+    # wrong-typed fields (second review): ids, names and inputs of the wrong type, odd counts and models
+    {"type": "assistant", "message": {"id": "m9", "model": ["a", "b"], "usage": {"input_tokens": "x", "output_tokens": None,
+                                                                                   "cache_read_input_tokens": [1]},
+                                      "content": [{"type": "tool_use", "id": ["t"], "name": ["Bash"], "input": "a string"}]}},
+    {"type": "assistant", "message": {"id": ["m"], "usage": "many", "content": [{"type": "tool_use", "id": "t2", "name": "Bash",
+                                                                                   "input": {"command": 5}}]}},
+    {"type": "assistant", "message": {"id": "m10", "content": [{"type": "tool_use", "id": "t3", "name": "Edit", "input": None},
+                                                                  {"type": "tool_use", "id": "t4", "name": "Write",
+                                                                   "input": {"file_path": ["a"], "content": 3}},
+                                                                  {"type": "tool_use", "id": "t5", "name": "Bash",
+                                                                   "input": {"command": ["git", "status"]}}]}},
+    {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": ["x"], "content": 5},
+                                             {"type": "tool_result", "tool_use_id": "t2", "content": {"a": 1}}]}},
+    {"type": "result", "num_turns": "x", "usage": "str", "total_cost_usd": [1], "modelUsage": "x", "result": 5, "is_error": "yes"},
+    {"type": "system", "subtype": "hook_response", "output": 5, "hook_event": ["x"]},
     "a string line", 5, None, [], [1, 2],
 ]
 
@@ -52,7 +69,7 @@ ALL = lines(*ODD[:3], GOOD_USE, *ODD[3:], GOOD_RESULT)
 class Readers(unittest.TestCase):
     def test_the_stream_summary_of_the_harness(self):
         s = streams.parse_stream(ALL, klatch_bin="/b/klatch")
-        self.assertEqual(s["tool_calls"]["by_tool"].get("Bash"), 1)
+        self.assertEqual(s["tool_calls"]["by_tool"].get("Bash"), 3)  # the good one and two odd ones, whose command is made a string
 
     def test_the_isolation_scan(self):
         n, v = isolation.scan_lines(ALL, isolation.Policy("a", ("/t/c", "/t/h", "/t/m"), guard=["/t"]))

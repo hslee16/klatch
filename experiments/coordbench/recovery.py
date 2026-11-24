@@ -52,14 +52,15 @@ def read_events(lines):
         t = e.get("type")
         if t == "assistant":
             msg = streamshape.message(e)
-            mid = msg.get("id") or "anon-%d" % idx
+            mid = streamshape.ident(msg.get("id")) or "anon-%d" % idx
             if mid not in ids:
                 turn += 1
                 ids[mid] = turn
             for b in streamshape.blocks(e):
-                if b.get("type") == "tool_use" and b.get("id") not in tools:
-                    ev = {"i": idx, "turn": ids[mid], "kind": "use", "name": b.get("name", "?"), "input": b.get("input") or {}}
-                    tools[b.get("id")] = ev
+                if b.get("type") == "tool_use" and streamshape.ident(b.get("id")) not in tools:
+                    tu = streamshape.tool_use(b)
+                    ev = {"i": idx, "turn": ids[mid], "kind": "use", "name": tu["name"], "input": tu["input"]}
+                    tools[tu["id"]] = ev
                     evs.append(ev)
                 elif b.get("type") == "text" and isinstance(b.get("text"), str):
                     evs.append({"i": idx, "turn": ids[mid], "kind": "text", "text": b["text"]})
@@ -67,7 +68,7 @@ def read_events(lines):
             for b in streamshape.content(e):
                 if isinstance(b, dict) and b.get("type") == "tool_result":
                     evs.append({"i": idx, "turn": turn, "kind": "result", "text": _text_of(b.get("content")),
-                                "use": tools.get(b.get("tool_use_id"))})
+                                "use": tools.get(streamshape.ident(b.get("tool_use_id")))})
         elif t == "system" and e.get("subtype") == "hook_response":
             text = e.get("output") or e.get("stdout") or ""
             if isinstance(text, str):

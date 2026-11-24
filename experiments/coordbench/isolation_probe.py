@@ -122,7 +122,7 @@ def _events(stdout):
 
 
 def tool_results(stdout):
-    """[text of each tool result] from stream-json output, in order. Any event shape is tolerated."""
+    """[text of each tool result] from stream-json output, in order. The odd shapes of tests/test_stream_shapes.py are tolerated."""
     out = []
     for ev in _events(stdout):
         for b in streamshape.blocks(ev):
