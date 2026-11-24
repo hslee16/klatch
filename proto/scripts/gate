@@ -92,7 +92,14 @@ step() {
     echo "----- last lines of its output -----"
     tail -n 50 "$log"
     echo "-------------------------------------"
-    [ "$hegel" = "hegel" ] && replay_hint
+    if [ "$hegel" = "hegel" ]; then
+      # #829: a long output (a model's note trace) can push the blob out of the last lines shown above, and the log is
+      # removed on exit, so print the blob lines again and keep the whole output in a file that is named here
+      grep -F 'reproduce_failure' "$log" | sed -n '1,5s/^/blob: /p'
+      kept="${TMPDIR:-/tmp}/klatch-gate-failed-seed-$HEGEL_SEED.log"
+      if cp "$log" "$kept" 2>/dev/null; then echo "Full output of the failed step kept in: $kept"; fi
+      replay_hint
+    fi
     exit 1
   fi
 }
