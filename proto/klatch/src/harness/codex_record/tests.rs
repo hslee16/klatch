@@ -267,14 +267,11 @@ fn a_record_of_another_session_is_not_verified() {
 fn a_dead_process_is_not_verified() {
     let d = dir("dead");
     put(&d, 10, &record_text(10, ("sess-A", T, D)));
-    let t = tree();
-    let mut gone = FakeTable::default();
-    gone.0 =
-        t.0.iter()
-            .filter(|(p, _)| **p != 10)
-            .map(|(p, i)| (*p, i.clone()))
-            .collect();
-    let gone = gone.with((20, 5), "Sat Nov 7 09:59:59 2026", "zsh");
+    // the codex process (10) has exited: its shell was re-parented to the terminal
+    let gone = FakeTable::default()
+        .with((30, 20), "Sat Nov 7 10:00:00 2026", "klatch")
+        .with((20, 5), "Sat Nov 7 09:59:59 2026", "zsh")
+        .with((5, 1), "Fri Nov 6 01:00:00 2026", "Terminal");
     assert!(!verified_in(&d, &gone, "sess-A"));
 }
 
