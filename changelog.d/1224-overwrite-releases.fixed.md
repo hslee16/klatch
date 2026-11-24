@@ -1,0 +1,1 @@
+- `possible_overwrite` now also sees a deadlock yield that ends by a lease lapse, a session end or an anchor release, not only by `klatch release` (#1224); an ask cycle still marks no one (tracked apart).
