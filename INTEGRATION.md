@@ -193,6 +193,14 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   show the `(auto)` mark, and `klatch admin stats` counts the updates by class. It is display only: liveness verdicts do
   not read it. With it on an agent can drop its `working:` and `parked:` status lines.
 
+- Stop warning (opt in, `klatch init --stop-warn`, #1344). A `Stop` command that carries `--stop-warn` (the flag also
+  rides on `PostToolUse` and `SessionEnd` as the record of the consent) prints one `systemMessage` line for the human
+  when a turn ends with `background_tasks` or `session_crons` still listed: how many remain, the task kinds (shell,
+  monitor, agent, other) and a reminder to stop them or start one wait only. Counts and kinds only; no task text is
+  echoed, nothing is stopped and nothing extra is written. It reaches the human, not the model. The entry shape is
+  not verified in the repo (#1593), so a kind that is not recognised counts as other; `SubagentStop` is not covered
+  (#1594).
+
 ## 4. Post
 
 Send a `request` frame on a `serve --stdio` session and wait for the `response` that echoes your `id`; other frames may

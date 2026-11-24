@@ -190,6 +190,7 @@ mod briefing_tests {
             no_join: false,
             checkpoint: false,
             machine_status: false,
+            stop_warn: false,
             passive_claims: false,
         };
         session_start(&ctx, &args).unwrap().0

@@ -1,6 +1,6 @@
 //! Golden text of `klatch init` and `klatch consent` (#1480): the hook commands every combination of the consents
-//! writes (the Stop hook is three-way for passive claims, the checkpoint and the machine status, the flags always in
-//! the fixed order `--passive-claims --checkpoint --machine-status`), the diff `init` shows, the `consent` listing
+//! writes (the Stop hook is four-way for passive claims, the checkpoint, the machine status and the stop warning, the
+//! flags always in the fixed order `--passive-claims --checkpoint --machine-status --stop-warn`), the diff `init` shows, the `consent` listing
 //! and the refusals. Fixture settings in a throwaway project and home only; a real settings file is never touched.
 //! Regenerate on purpose only: `KLATCH_WRITE_GOLDEN=1`.
 mod common;
@@ -8,7 +8,12 @@ mod common;
 use common::golden::*;
 use common::*;
 
-const FLAGS: [&str; 3] = ["--passive-claims", "--checkpoint", "--machine-status"];
+const FLAGS: [&str; 4] = [
+    "--passive-claims",
+    "--checkpoint",
+    "--machine-status",
+    "--stop-warn",
+];
 const BASE: [&str; 3] = ["--scope", "project", "--yes"];
 
 fn sheet(s: &Setup) -> Sheet {
@@ -63,10 +68,10 @@ fn args<'a>(extra: &[&'a str]) -> Vec<&'a str> {
 }
 
 #[test]
-fn every_combination_of_the_three_flag_consents_writes_the_same_hooks_every_time() {
+fn every_combination_of_the_four_flag_consents_writes_the_same_hooks_every_time() {
     let mut sheets = None;
-    for mask in 0..8u32 {
-        let flags: Vec<&str> = (0..3)
+    for mask in 0..16u32 {
+        let flags: Vec<&str> = (0..4)
             .filter(|i| mask & (1 << i) != 0)
             .map(|i| FLAGS[i])
             .collect();
@@ -117,6 +122,7 @@ fn the_whole_settings_file_for_no_consent_for_every_consent_and_for_the_board_en
                 "--passive-claims",
                 "--checkpoint",
                 "--machine-status",
+                "--stop-warn",
                 "--no-lobby",
                 "--no-session-end",
             ],
@@ -152,7 +158,12 @@ fn consent_switches_each_consent_off_and_on_and_says_what_it_did() {
     let s = Setup::new();
     let mut sh = sheet(&s);
     let o = s.init(
-        &args(&["--passive-claims", "--checkpoint", "--machine-status"]),
+        &args(&[
+            "--passive-claims",
+            "--checkpoint",
+            "--machine-status",
+            "--stop-warn",
+        ]),
         "",
     );
     assert!(o.status.success());
@@ -165,6 +176,7 @@ fn consent_switches_each_consent_off_and_on_and_says_what_it_did() {
         "checkpoint",
         "passive-claims",
         "machine-status",
+        "stop-warn",
     ] {
         for value in ["off", "on"] {
             let o = s.klatch("consent", &[name, value, "--scope", "project", "--yes"], "");
@@ -236,6 +248,12 @@ fn refusal_runs() -> Vec<Run> {
             "init",
             "codex with machine status",
             &["--codex", "--machine-status", "--yes"],
+            "",
+        ),
+        run(
+            "init",
+            "codex with a stop warning",
+            &["--codex", "--stop-warn", "--yes"],
             "",
         ),
         run(

@@ -84,6 +84,11 @@ pub(crate) enum AgentsCmd {
         /// hook command that carries this flag writes anything (`klatch init --machine-status`).
         #[arg(long)]
         machine_status: bool,
+        /// Warn at the end of a turn that still has background tasks or crons running (#1344): print one fixed line
+        /// with counts and kinds, never a command or description, and stop nothing. Consent lives here: only a hook
+        /// command that carries this flag prints it (`klatch init --stop-warn`).
+        #[arg(long)]
+        stop_warn: bool,
         /// Claim files as they are edited (#1401): on PostToolUse claim the repo-relative path of each file an edit or
         /// write touched, for a short lease that every further edit renews, and print one line when another member
         /// holds it (never a block); on Stop and SessionEnd release those claims. Consent lives here: only a hook

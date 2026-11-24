@@ -32,6 +32,8 @@ pub enum Setting {
     PassiveClaims(bool),
     /// The machine status (#1403).
     MachineStatus(bool),
+    /// The stop warning (#1344).
+    StopWarn(bool),
 }
 
 /// Every consent as it stands in one settings value.
@@ -45,6 +47,7 @@ pub struct State {
     pub checkpoint: bool,
     pub passive_claims: bool,
     pub machine_status: bool,
+    pub stop_warn: bool,
     /// The program klatch's hooks run, kept as it is when a consent changes.
     bin: String,
 }
@@ -59,6 +62,7 @@ const LEGEND: &str = "What each one changes (only klatch's own hook entries in t
   checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
+  stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything
 A change takes effect at the next session; one already running keeps the hooks it started with.
 ";
 
@@ -90,13 +94,14 @@ pub fn read_state(settings: &Value) -> Option<State> {
         checkpoint: stop_flags(&found).1,
         passive_claims: stop_flags(&found).0,
         machine_status: stop_flags(&found).2,
+        stop_warn: stop_flags(&found).3,
         bin: init::hook_program(first).to_string(),
     })
 }
 
-/// The consents the Stop hooks of klatch's carry, as `(passive claims, checkpoint, machine status)`.
-fn stop_flags(found: &[(String, String, HookKind)]) -> (bool, bool, bool) {
-    let mut flags = (false, false, false);
+/// The consents the Stop hooks of klatch's carry, as `(passive claims, checkpoint, machine status, stop warning)`.
+fn stop_flags(found: &[(String, String, HookKind)]) -> (bool, bool, bool, bool) {
+    let mut flags = (false, false, false, false);
     for (_, cmd, _) in found
         .iter()
         .filter(|(e, _, k)| e == "Stop" && *k == HookKind::Base)
@@ -105,6 +110,7 @@ fn stop_flags(found: &[(String, String, HookKind)]) -> (bool, bool, bool) {
         flags.0 |= w.contains(&"--passive-claims");
         flags.1 |= w.contains(&"--checkpoint");
         flags.2 |= w.contains(&"--machine-status");
+        flags.3 |= w.contains(&"--stop-warn");
     }
     flags
 }
@@ -125,6 +131,7 @@ impl State {
             format!("checkpoint: {}", on_off(self.checkpoint)),
             format!("passive-claims: {}", on_off(self.passive_claims)),
             format!("machine-status: {}", on_off(self.machine_status)),
+            format!("stop-warn: {}", on_off(self.stop_warn)),
         ]
     }
 }
@@ -148,8 +155,9 @@ impl Setting {
             "checkpoint" => switch().map(Self::Checkpoint),
             "passive-claims" => switch().map(Self::PassiveClaims),
             "machine-status" => switch().map(Self::MachineStatus),
+            "stop-warn" => switch().map(Self::StopWarn),
             other => Err(format!(
-                "unknown consent {other:?}: board, join, session-end, enforce, wake, checkpoint, passive-claims or machine-status"
+                "unknown consent {other:?}: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status or stop-warn"
             )),
         }
     }
@@ -197,6 +205,7 @@ pub fn apply(settings: &mut Value, setting: &Setting) -> Result<(), String> {
         Setting::Checkpoint(on) => init::set_checkpoint(&mut next, bin, switch_of(*on))?,
         Setting::PassiveClaims(on) => init::set_passive_claims(&mut next, bin, switch_of(*on))?,
         Setting::MachineStatus(on) => init::set_machine_status(&mut next, bin, switch_of(*on))?,
+        Setting::StopWarn(on) => init::set_stop_warn(&mut next, bin, switch_of(*on))?,
     }
     *settings = next;
     Ok(())

@@ -193,19 +193,27 @@ enum Cmd {
         /// Remove the machine status flag (and the Stop hook when nothing else needs it)
         #[arg(long)]
         no_machine_status: bool,
+        /// Warn when a turn ends with background tasks or crons still running (off by default; #1344): a flag on the
+        /// PostToolUse hook and a Stop hook print one fixed line to you with counts and kinds, never a command or
+        /// description. It stops nothing and writes nothing
+        #[arg(long, conflicts_with = "no_stop_warn")]
+        stop_warn: bool,
+        /// Remove the stop warning flag (and the Stop hook when nothing else needs it)
+        #[arg(long)]
+        no_stop_warn: bool,
         /// Remove every hook klatch installed (and nothing else) from the settings of --scope; keeps your rooms
         /// and keys
         #[arg(
             long,
-            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "passive_claims", "no_passive_claims", "machine_status", "no_machine_status"]
+            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "passive_claims", "no_passive_claims", "machine_status", "no_machine_status", "stop_warn", "no_stop_warn"]
         )]
         uninstall: bool,
     },
-    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status), or switch one on or off
+    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status, stop-warn), or switch one on or off
     /// later; edits only klatch's own hook entries, after a diff and a yes
     #[command(display_order = 35)]
     Consent {
-        /// The consent to change: board, join, session-end, enforce, wake, checkpoint, passive-claims or machine-status (none: show them all)
+        /// The consent to change: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status or stop-warn (none: show them all)
         name: Option<String>,
         /// on or off (for board: off or a room name)
         value: Option<String>,
@@ -447,6 +455,8 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_passive_claims,
             machine_status,
             no_machine_status,
+            stop_warn,
+            no_stop_warn,
             uninstall,
         } => run_init(&init::Options {
             scope,
@@ -459,6 +469,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             checkpoint: init::Switch::from_flags(checkpoint, no_checkpoint),
             passive_claims: init::Switch::from_flags(passive_claims, no_passive_claims),
             machine_status: init::Switch::from_flags(machine_status, no_machine_status),
+            stop_warn: init::Switch::from_flags(stop_warn, no_stop_warn),
             uninstall,
             codex: cli.who.codex,
         }),
