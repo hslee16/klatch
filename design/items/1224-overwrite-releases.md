@@ -1,0 +1,5 @@
+possible_overwrite sees every way a deadlock yield ends (#1224; no schema change; 2026-11-24). The record of #909 was written only when a member that was a party to a claim deadlock released a live claim with `klatch release`. It is now written wherever a claim ends: a lease that lapses (swept by the next attempt), a session end (`release_all`) and an anchor release, through one store helper, `note_yield_end`, which `release` uses too.
+
+**Time of the yield.** A release counts at the moment of release. A lapse counts at the moment the lease ended, not at the sweep, so a claim that lapsed long ago and is swept late does not open a new window; a claim already expired but not yet swept when a session end or anchor release arrives counts as a lapse. The deadlock mark must lie in the 600 s before that moment (`YIELD_WINDOW_SECS`, unchanged), so a mark made after the claim ended never counts.
+
+**Not changed.** No table or column. A passive claim that a member releases (#1401) is still not recorded. A deadlock that is a cycle of ask waits (`ask_cycle`) marks no one; whether it should is a separate decision, tracked in its own ticket.
