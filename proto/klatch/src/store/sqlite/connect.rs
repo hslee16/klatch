@@ -115,6 +115,31 @@ impl SqliteStore {
         .map_err(be)
     }
 
+    /// Whether the policy table holds `key` (#1262), for `klatch doctor`: a read-only connection, one indexed lookup,
+    /// and the value is never brought back.
+    pub fn read_policy_has(path: &Path, key: &Key, policy_key: &str) -> Result<bool> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(be)?;
+        Self::unlock(&conn, key)?;
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='policy'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        if has == 0 {
+            return Ok(false);
+        }
+        conn.query_row(
+            "SELECT COUNT(*) FROM policy WHERE key=?1",
+            [policy_key],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .map_err(be)
+    }
+
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;
