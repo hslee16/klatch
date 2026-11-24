@@ -1,0 +1,1 @@
+- The gate keeps the evidence when a property test step fails: it prints the reproduce_failure blob lines again after the output tail and saves the full output of the failed step to a file it names, so a one-off property failure can be replayed (#829).
