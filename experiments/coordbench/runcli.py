@@ -61,6 +61,11 @@ def parse_args(argv):
     p.add_argument("--klatch-commit", help="the klatch commit (default: git HEAD of this repository)")
     p.add_argument("--bench-bin", help="the klatch-bench tool that exports the K arms' run store as counts (default: "
                    "$KLATCH_BENCH_BIN, else klatch-bench beside the klatch binary; without it the export is skipped with a note)")
+    p.add_argument("--isolation", choices=("sandbox", "layout"), default="sandbox",
+                   help="how a real agent is kept to its own directories (#1519): sandbox (the default: Claude Code's OS sandbox "
+                   "for Bash and its children plus file-tool deny rules, in the --settings of every agent) or layout (only "
+                   "the unlistable directories and the post-run scan; use it when the sandbox breaks a K arm). Recorded in "
+                   "every record. The scan runs in both.")
     p.add_argument("--room", default="lobby")
     p.add_argument("--seed", type=int, default=1000)
     p.add_argument("--model", help="the agent model id (required with --driver claude)")

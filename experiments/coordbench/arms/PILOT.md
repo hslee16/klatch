@@ -27,6 +27,15 @@ run. Real agents cost money and need your approval (SPEC section 8); `run.py` re
 - `ANTHROPIC_API_KEY` set in the shell that runs the harness (the harness passes it to agent processes only).
 - Note the state of `~/.klatch` and `~/.claude` (for example `ls -laR ~/.klatch | shasum`) to compare afterwards.
 
+## Part 0: isolation probe (#1519), about $0.10
+
+Run `python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL_ID --klatch-bin PATH` once before part 2.
+It starts one tiny session under the sandbox settings the harness gives real agents and prints what each escape attempt
+shows; the expected output is in README.md, "Isolation of agents from each other and from the harness". If a SHOWS line appears
+for anything but the control, or `klatch --version` fails inside the sandbox, stop and report; with a K arm broken by the
+sandbox only, rerun the pilot with `--isolation layout` and say so. Every record of a run has an `isolation` object, and a
+run in which the scan found an out-of-bounds tool call is invalid.
+
 ## Part 1: messaging probe (does B1 messaging work under `-p`)
 
 The trivial fixture's two tasks are independent, so B1 agents may never message anyone, and part 2 alone would prove nothing

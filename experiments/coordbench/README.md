@@ -83,6 +83,65 @@ Isolation: the harness refuses a store path under `~/.klatch` or `~/.claude`, ou
 symlink. It runs the klatch CLI only by the `--klatch-bin` path and builds every child environment from an allowlist, so no
 credential reaches klatch or a fake agent.
 
+### Isolation of agents from each other and from the harness (#1519)
+
+Read this as three layers of different strength. Only the sandbox can prevent a read by an agent that knows a path, and it is
+unverified until someone runs `isolation_probe.py` on the machine (the builder never ran a model). The layout and the scan
+make an escape unlikely and visible; they are not a security boundary against a process of the same user.
+
+- Layout (obscurity and a detective aid, every OS, every tool): each agent has `<scratch>/agents/<random token>/{clone,home,
+  tmp,claude-config}` and its HOME, TMPDIR and Claude config directory are inside it. `<scratch>/agents` and the log directory
+  have mode 0300 while real agents run, so an agent cannot list its way to another clone or the logs; the logs are staged in
+  a random-named directory inside `--logs-dir` with random file names (a.stream.jsonl and the like exist only after the run),
+  renamed `<logs-dir>/<run id>` when the run ends and left unlistable if another process has a run live under the same logs
+  root. The harness never changes the mode of `--logs-dir` or `--tmp-root` themselves. The klatch binary is copied to
+  `<tmp-root>/cb-bin-*` and the restart script into the run, so no prompt names a path in the repository. This does not stop
+  an agent that learns a path (a `ps` listing shows other agents' argument lists, `/proc/<pid>/environ` on Linux, a program can
+  ask the kernel for the path of a directory it holds) or one that does `chmod u+rwx` on a directory it can name:
+  it is the same user. The scan is what notices.
+- Sandbox (`--isolation sandbox`, the default for `--driver claude`, preventive, unverified): the `--settings` of every agent (a
+  file in its own directory, a copy `<name>.settings.json` in the logs) turns on Claude Code's sandbox (Seatbelt on macOS,
+  bubblewrap on Linux) with `failIfUnavailable` and no unsandboxed retry; reads are denied under the scratch root, the logs, the
+  repository, the real home, `/Users`, `/home` and `/root` and re-allowed only for the agent's own directories, the staged
+  binary, and the python3 and git installations; writes only in its own directories, the bare origin, the run's klatch store
+  and (role members) the restart directory; `Read` and `Edit` deny rules (absolute paths) cover the file tools. Per the
+  documentation the sandbox covers Bash and its child processes (python3 and git included), not the file tools, which get the
+  permission rules. A real run needs Claude Code 2.1.268 or later in this mode (refused otherwise). `--isolation layout` leaves
+  the sandbox out (use it if the sandbox breaks a K arm; every record says which mode ran).
+- Scan (detective, always, every driver): after every run every tool call in every stream (Read, Edit, Write, Glob, Grep paths and
+  Bash command strings, `cd` followed) is checked for paths outside the agent's own clone, home and tmp, the bare origin, the run
+  store, the staged binary and the S10 directory: another agent's directory, the scratch root, the logs, the fixtures, checks,
+  scenarios, results and repository directories, `..` out of the agent's own directory, a symlink that leads out, `/Users`,
+  `/home`, searches rooted at `/` or a parent of the run (`find /`, `rg -l X /`, Grep or Glob rooted at `/` or with a wildcard in the
+  first segments), and process listing (`ps`, `pgrep`, `lsof`, `/proc`). A hit makes the run invalid (`valid: false`), the first
+  hits are in `notes`, all (up to 50) in the record's `isolation` object: `{"mode", "checked_calls", "violation_count",
+  "violations": [{"agent", "session", "call", "tool", "text", "path", "why"}]}`. What it still misses: a path built at run time
+  inside a python3 program, a symlink made in one call and followed in a later one, code written to a file and run later, a
+  directory path asked of the kernel (libproc, `fcntl F_GETPATH`, through ctypes), a path without `./`, `../` or `/` in
+  front, a variable that holds the root (`F=/; find $F`), and a `cd ..` followed by a bare read of the agent's own settings file.
+  `git log origin/main` (pushed work) is allowed.
+
+In layout mode the published log directories of earlier runs are listable and readable by later runs of the same user (the sandbox
+denies the logs root; layout mode cannot). In sandbox mode a `--logs-dir` or `--tmp-root` under `/Users`, `/home`, `/root` or the real
+home is refused (the file-tool deny rules cannot cover a user root that holds the run), use the system temp directory. The
+harness also refuses a `--logs-dir` or `--tmp-root` that is your home directory, is owned by someone else or is writable by
+group or others (a sticky world-writable `/tmp` is accepted). SIGTERM and SIGINT restore the modes of every directory the run
+hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch directories of dead runs (an `.owner` file names
+the pid) and restores their staging directories in the logs.
+
+`python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL --klatch-bin PATH` runs one tiny session
+(about 0.08 to 0.10 USD on Haiku, cap 0.15). It writes the session's raw stdout and stderr to files in its directory before parsing anything
+and prints their path, keeps the directory when the exit code is not zero or parsing fails, prints the events that are not tool
+traffic (a sandbox, version or authentication refusal shows there), and then prints what each escape shows. Expected on macOS with the sandbox working: the control
+prints `OWN-SECRET`; the python3 open of the other clone, the listdir of the shared root, the git -C of the other clone and the
+open of the unlistable directory show `Operation not permitted` or `Permission denied` (no SECRET); the Read tool on the other
+clone's file is refused by the deny rule; the klatch items (the K1 commands of `arms/K1.md` as arm K1, with the binary staged outside
+the repository: `--version`, a post that opens and writes a fresh store, a read, a claim, a release) are `OK`. Each row ends with a
+class and the first line of the result, so a sandbox refusal (`Operation not permitted`), a missing allow rule (`requires approval`)
+and a missing file can be told apart. Cost about 0.08 to 0.10 USD, session cap 0.15. The line the builder cannot predict is the python3
+`ps` listing: if it shows the other agent's command line the leak above is real inside the sandbox too and only the scan notices it
+(#1532).
+
 ## Fixtures
 
 A fixture is `fixtures/<name>/` with `fixture.json` (agents and their task files, test command, the checker name, optional

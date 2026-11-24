@@ -24,6 +24,7 @@ import os
 import subprocess
 import threading
 import time
+import streamshape
 
 FINAL_AUTHOR = "harness-final"
 LIMIT = ("snapshot resolution: an edit written and overwritten between two snapshots (the interval, plus a snapshot whenever an "
@@ -123,12 +124,12 @@ def lost_edit_events(stream_lines, rel_path, base_text, final_text):
                 msg = json.loads(ln)
             except ValueError:
                 continue
-            if msg.get("type") != "assistant":
+            if not isinstance(msg, dict) or msg.get("type") != "assistant":
                 continue
-            for block in (msg.get("message") or {}).get("content") or []:
+            for block in streamshape.content(msg):
                 if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") not in EDIT_TOOLS:
                     continue
-                inp = block.get("input") or {}
+                inp = streamshape.tool_use(block)["input"]
                 target = inp.get("file_path") or ""
                 if os.path.normpath(target) != os.path.normpath(rel_path) and not target.endswith("/" + rel_path):
                     continue

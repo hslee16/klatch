@@ -71,7 +71,7 @@ class RoleSupport:
         return None
 
     def start_replacement(self, member, name2):
-        clone = os.path.join(self.scratch, "clones", name2)
+        clone = self.clone_path(name2)
         self.git(["clone", "-q", "--no-local", self.origin, clone], self.scratch, self.henv)  # #1435: see checks_now
         append_exclude(clone)
         self.clones[name2] = clone

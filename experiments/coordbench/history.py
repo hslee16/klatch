@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import streamshape
 
 TOKEN_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
               ("cache_creation", "cache_creation_input_tokens"))
@@ -164,7 +165,7 @@ class Timeline:
                 self.briefings.append({"session": self.session, "before_turn": len(self.turns), "chars": len(text)})
 
     def _turn_for(self, msg):
-        mid = msg.get("id") or "anon-%d-%d" % (self.session, len(self.turns))
+        mid = streamshape.ident(msg.get("id")) or "anon-%d-%d" % (self.session, len(self.turns))
         key = (self.session, mid)
         if key not in self._ids:
             self._ids[key] = {"session": self.session, "usage": {}, "calls": []}
@@ -172,26 +173,27 @@ class Timeline:
         return self._ids[key]
 
     def _on_assistant(self, e):
-        msg = e.get("message") or {}
+        msg = streamshape.message(e)
         turn = self._turn_for(msg)
         if isinstance(msg.get("usage"), dict):
             turn["usage"] = msg["usage"]
-        for b in msg.get("content") or []:
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 self._on_tool_use(turn, b)
 
     def _on_tool_use(self, turn, b):
-        name, inp = b.get("name", "?"), b.get("input") or {}
-        call = {"n": sum(len(x["calls"]) for x in self.turns), "id": b.get("id"), "name": name, "input": inp, "turn": len(self.turns) - 1,
+        tu = streamshape.tool_use(b)
+        name, inp = tu["name"], tu["input"]
+        call = {"n": sum(len(x["calls"]) for x in self.turns), "id": tu["id"], "name": name, "input": inp, "turn": len(self.turns) - 1,
                 "kind": classify(name, inp, self.klatch_bin), "edit": is_edit(name, inp),
                 "commit": is_commit(name, inp), "result": ""}
         turn["calls"].append(call)
-        self._calls[(self.session, b.get("id"))] = call
+        self._calls[(self.session, streamshape.ident(b.get("id")))] = call
 
     def _on_user(self, e):
-        for b in (e.get("message") or {}).get("content") or []:
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_result":
-                call = self._calls.get((self.session, b.get("tool_use_id")))
+                call = self._calls.get((self.session, streamshape.ident(b.get("tool_use_id"))))
                 if call is not None:
                     call["result"] = _text_of(b.get("content"))
 

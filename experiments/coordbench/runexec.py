@@ -24,12 +24,14 @@ import shared as shared_mod
 import streams
 from runenv import EXCLUDE, append_exclude, guard_paths, kill_group, minimal_env, sha256_file
 from runmetrics import RunMetrics, resolved_models, team_metrics, tool_calls_of
+from runisolation import IsolationSupport
+from runpoll import PollSupport
 from runroles import RoleSupport
 from runprompt import TASK_BOARD, build_prompt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RunSpot = collections.namedtuple("RunSpot", "arm seed scratch log_dir")  # which arm, with which seed, where it runs and logs
-class RunExecution(RunMetrics, RoleSupport):
+class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
     def __init__(self, suite, git, rec, spot, notes):
         self.git = git
         self.a, self.fx, self.driver = suite.args, suite.fx, suite.driver
@@ -53,6 +55,7 @@ class RunExecution(RunMetrics, RoleSupport):
         self.rcfg, self.role_names, self.role_info = None, [], {}
         self.restart_dir, self.restart_command = None, ""
         self.metric_states = {}
+        self.init_isolation()
 
     def execute(self):
         self.prepare_directories()
@@ -142,38 +145,6 @@ class RunExecution(RunMetrics, RoleSupport):
                                % (", ".join(clash), ", ".join(roles_mod.ROLES)))
         self.role_names = self.rcfg["members"]
 
-    def make_clones(self):
-        if self.is_shared:
-            self.make_shared_tree()
-        else:
-            for ag in self.fx.agents:
-                self.clones[ag["name"]] = self.clone_with_private_files(ag["name"])
-        for r in self.role_names:  # a role member has a clone of its own, like a worker, and no private files
-            clone = os.path.join(self.scratch, "clones", r)
-            self.git(["clone", "-q", "--no-local", self.origin, clone], self.scratch, self.henv)  # #1435: see checks_now
-            append_exclude(clone)
-            self.clones[r] = clone
-
-    def make_shared_tree(self):
-        """T-shared (#1427): ONE working tree, a clone of the bare origin; every agent starts in it. Nothing of the harness
-        goes into it: streams, prompts and logs are in log_dir, each agent's HOME and TMPDIR under scratch/agents/<name>."""
-        self.git(["clone", "-q", "--no-local", self.origin, self.shared_tree], self.scratch, self.henv)
-        append_exclude(self.shared_tree)
-        for ag in self.fx.agents:
-            self.clones[ag["name"]] = self.shared_tree
-            for sub in ("home", "tmp"):
-                os.makedirs(os.path.join(self.scratch, "agents", ag["name"], sub), mode=0o700)
-
-    def clone_with_private_files(self, name):
-        clone = os.path.join(self.scratch, "clones", name)
-        self.git(["clone", "-q", "--no-local", self.origin, clone], self.scratch, self.henv)  # #1435: see checks_now
-        private = self.fx.private_files(name)
-        append_exclude(clone, EXCLUDE + "".join("/%s\n" % rel for rel, _ in private))
-        for rel, src in private:  # this agent's private knowledge: in its clone only, never committed
-            os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
-            shutil.copyfile(src, os.path.join(clone, rel))
-        return clone
-
     def klatch_init(self, name, clone):
         e = dict(self.henv, **self.kenv, KLATCH_NAME=name)
         p = subprocess.run([self.a.klatch_bin, "init", "--scope", "project", "--yes", "--as-member", name],
@@ -195,7 +166,11 @@ class RunExecution(RunMetrics, RoleSupport):
         os.makedirs(self.restart_dir, mode=0o700)
         with open(os.path.join(self.restart_dir, "workers"), "w") as f:
             f.write("".join(n + "\n" for n in self.team))
-        self.restart_command = "python3 %s" % shlex.quote(os.path.join(HERE, "restart_member.py"))
+        # the script is copied into the run: no prompt names a path inside the repository (#1519)
+        os.makedirs(os.path.join(self.scratch, "bin"), exist_ok=True)
+        script = shutil.copy(os.path.join(HERE, "restart_member.py"), os.path.join(self.scratch, "bin", "restart_member.py"))
+        self.restart_command = "python3 %s" % shlex.quote(script)
+        self.check_role_launch()
 
     def post_before_agents(self, env):
         """K arms: the fixture's seeded exchange, then the scripted colleague's injections, through the binary."""
@@ -241,7 +216,7 @@ class RunExecution(RunMetrics, RoleSupport):
         return prompt, kw
 
     def agent_env(self, name, extra, role):
-        agent_dir = os.path.join(self.scratch, "agents", name) if self.is_shared else self.scratch
+        agent_dir = self.agent_dir(name)  # HOME, TMPDIR and the config directory are the agent's own, never the run's
         env = self.driver.agent_env(os.environ, agent_dir)
         env.update(self.henv)  # HOME is the run's own
         # each agent commits under its own name, so git authorship says who did what (duplicate work, per-agent
@@ -251,10 +226,8 @@ class RunExecution(RunMetrics, RoleSupport):
         env.update(self.kenv)
         env.update(extra)
         env["KLATCH_NAME"] = name
-        env["TMPDIR"] = self.scratch
-        if self.is_shared:  # file-level isolation of the harness state: each agent's home and tmp are its own, outside the tree
-            env["HOME"] = os.path.join(agent_dir, "home")
-            env["TMPDIR"] = os.path.join(agent_dir, "tmp")
+        env["HOME"] = os.path.join(agent_dir, "home")
+        env["TMPDIR"] = os.path.join(agent_dir, "tmp")
         if role:
             env["COORDBENCH_RESTART_DIR"] = self.restart_dir
         return env
@@ -266,13 +239,15 @@ class RunExecution(RunMetrics, RoleSupport):
         extra = extra or {}
         role, replacement = extra.get("role"), extra.get("replacement", False)
         prompt, kw = self.prompt_and_kw(name, task, role, replacement)
-        with open(os.path.join(log_dir, "%s.prompt.md" % key), "w") as f:
+        for kind in ("prompt", "stream", "err"):  # a real agent's log files have random names until the run ends (#1519)
+            self.log_path(key, kind)
+        with open(self.log_path(key, "prompt"), "w") as f:
             f.write(prompt)
         argv, driver_extra = self.driver.command(name, self.arm, prompt, self.clones[name], log_dir, session=session_no,
-                                          max_turns=extra.get("max_turns"), **kw)
+                                          max_turns=extra.get("max_turns"), isolation=self.iso_for(name, bool(role)), **kw)
         env = self.agent_env(name, driver_extra, role)
-        logf = open(os.path.join(log_dir, "%s.stream.jsonl" % key), "wb")
-        errf = open(os.path.join(log_dir, "%s.err" % key), "wb")
+        logf = open(self.log_path(key, "stream"), "wb")
+        errf = open(self.log_path(key, "err"), "wb")
         if a.stagger_s and session_no == 1:
             time.sleep(self.rng.uniform(0, a.stagger_s))
         self.procs[key] = subprocess.Popen(argv, cwd=self.clones[name], env=env, stdin=subprocess.DEVNULL, stdout=logf,
@@ -292,6 +267,7 @@ class RunExecution(RunMetrics, RoleSupport):
     def start_agents(self):
         fx = self.fx
         self.task_of = {ag["name"]: ag["task"] for ag in fx.agents}
+        self.hide_run()  # from here nobody can list the scratch and log directories until the agents are stopped
         # a resume variant (fixture "resume"): the agent's first session is cut after after_turns turns and, once it has
         # exited, a second session with the same name starts in the same clone with the job text and a short note that its
         # context was cleared. Nothing else of the first session is carried over.
@@ -327,19 +303,6 @@ class RunExecution(RunMetrics, RoleSupport):
 
     # watching them -------------------------------------------------------------------------------------------
 
-    def pump(self):
-        now = round(time.monotonic() - self.t0, 3)
-        for name in self.procs:
-            with open(os.path.join(self.log_dir, "%s.stream.jsonl" % name), "rb") as f:
-                f.seek(self.offs[name])
-                chunk = f.read()
-            self.offs[name] += len(chunk)
-            data = self.partial[name] + chunk
-            *lines, self.partial[name] = data.split(b"\n")
-            for ln in lines:
-                self.states[name].feed(ln.decode("utf-8", "replace"), now)
-                self.stamps[name].append(now)
-
     def checks_now(self, tag):
         dest = os.path.join(self.scratch, "check-" + tag)
         shutil.rmtree(dest, ignore_errors=True)
@@ -370,7 +333,7 @@ class RunExecution(RunMetrics, RoleSupport):
         if proc.poll() is not None:
             return {"fired": False, "agent": self.victim_name,
                     "reason": "the victim exited (code %s) before the trigger fired" % proc.returncode}
-        with open(os.path.join(self.log_dir, "%s.stream.jsonl" % self.victim_name), errors="replace") as f:
+        with open(self.log_path(self.victim_name, "stream"), errors="replace") as f:
             lines = f.read().splitlines()
         due = self.killer.poll(lines)
         if due is None:
@@ -425,13 +388,6 @@ class RunExecution(RunMetrics, RoleSupport):
             self.stop_reason[k] = "stopped-by-harness"
         return True
 
-    def poll_checker(self):
-        if self.first_pass is None and time.monotonic() - self.last_poll >= self.a.poll_s:
-            self.last_poll = time.monotonic()
-            checks, _, err = self.checks_now("poll")
-            if err is None and self.all_pass(checks):
-                self.first_pass = time.monotonic() - self.t0
-
     def tick(self):
         """One turn of the watch loop; True when the loop should end."""
         time.sleep(0.05)
@@ -463,6 +419,8 @@ class RunExecution(RunMetrics, RoleSupport):
                 kill_group(p)
             for p in self.procs.values():
                 p.wait()
+            self.show_run()
+            self.join_poll()
 
     # the end of the run --------------------------------------------------------------------------------------
 
@@ -493,6 +451,7 @@ class RunExecution(RunMetrics, RoleSupport):
     def settle(self):
         self.stopped_t = time.monotonic()
         self.pump()
+        self.publish_log_names()
         self.final_commit = self.finish_shared_tree()
         self.wall = time.monotonic() - self.t0
         self.rcs = {n: p.returncode for n, p in self.procs.items()}
@@ -556,6 +515,7 @@ class RunExecution(RunMetrics, RoleSupport):
     def fill_record(self):
         rec, log_dir = self.rec, self.log_dir
         self.allsums = {n: s.summary() for n, s in self.states.items()}
+        self.note_isolation()
         # the workers' numbers are the team's work; the role members' and the supervisor's replacements are the roles' (#1421)
         sums = {n: v for n, v in self.allsums.items() if n not in self.role_keys and n not in self.repl_keys}
         shas = {n: sha256_file(os.path.join(log_dir, "%s.stream.jsonl" % n)) for n in self.procs}

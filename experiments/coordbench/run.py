@@ -26,15 +26,19 @@ import json
 import os
 import random
 import shutil
+import signal
 import sys
 import tempfile
+import threading
 import time
 
 import fixture as fixture_mod
 import drivers
+import isolation
 import approval as approval_mod
 import roles as roles_mod
 import schema
+import storeexport
 # the names below were defined here before the split (#1455); tests and callers still reach them as run.NAME
 from runcli import DEFAULT_ARMS, DEFAULT_RUN_USD, DEFAULT_SUITE_USD, dry_run, estimate, load_cost_model, model_ratio, parse_args, resolve_caps  # noqa: F401
 from runenv import GuardError, commit_of, git, guard_paths, inside, kill_group, klatch_facts, minimal_env, now_iso, sha256_file  # noqa: F401
@@ -71,20 +75,48 @@ class Suite:
         t_start = time.monotonic()
         scratch = tempfile.mkdtemp(prefix="cb-%s-" % run_id[-12:], dir=self.tmp_root)
         os.chmod(scratch, 0o700)
-        log_dir = os.path.join(self.logs_root, run_id)
-        os.makedirs(log_dir, exist_ok=True)
+        isolation.write_owner(scratch)
+        # while agents run the logs are in a directory with a random name (hidden); it takes the name logs_root/run_id afterwards
+        tok = isolation.token()
+        log_dir = os.path.join(self.logs_root, tok)
+        os.makedirs(log_dir)
+        marker = isolation.live_marker(self.logs_root, tok)
         rec = self.skeleton(run_id, arm, seed, started)
-        notes = []
+        notes, final = [], os.path.join(self.logs_root, run_id)
+        published = False
         try:
-            self.execute(rec, RunSpot(arm, seed, scratch, log_dir), notes)
-        except (GuardError, fixture_mod.FixtureError, RuntimeError, OSError) as e:
-            rec["outcome"], rec["valid"] = "error", False
-            notes.append("setup failed: %s" % e)
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
-        rec["end"] = now_iso()
-        rec["wall_s"] = round(time.monotonic() - t_start, 3) if rec["wall_s"] is None else rec["wall_s"]
-        rec["notes"] = "; ".join(notes)
+            try:
+                self.execute(rec, RunSpot(arm, seed, scratch, log_dir), notes)
+            except (GuardError, fixture_mod.FixtureError, RuntimeError, OSError) as e:
+                rec["outcome"], rec["valid"] = "error", False
+                notes.append("setup failed: %s" % e)
+            finally:
+                isolation.restore(os.path.join(scratch, "agents"))  # hidden while agents ran (isolation.hide)
+                isolation.restore(log_dir)
+                shutil.rmtree(scratch, ignore_errors=True)
+            rec["end"] = now_iso()
+            rec["wall_s"] = round(time.monotonic() - t_start, 3) if rec["wall_s"] is None else rec["wall_s"]
+            rec["notes"] = "; ".join(notes)
+            rec = self.publish_logs(log_dir, final, rec, tok)
+            published = True
+            return rec
+        finally:  # a SIGTERM or SIGINT ends the run here: the logs keep their public name, nothing random is left behind
+            if not published and os.path.isdir(log_dir):
+                self.publish_logs(log_dir, final, dict(rec, notes="interrupted"), tok)
+            if os.path.exists(marker):
+                os.unlink(marker)
+
+    def publish_logs(self, work, final, rec, tok):
+        """Rename the log directory to its public name (an older directory of the same run id is replaced) and make the
+        record say so. The directory is hidden again when another process has a run in progress under this logs root: its
+        agents could list this one (chmod u+rx to read it once that run is over)."""
+        shutil.rmtree(final, ignore_errors=True)
+        os.rename(work, final)
+        rec = json.loads(json.dumps(rec).replace(json.dumps(work)[1:-1], json.dumps(final)[1:-1]))
+        if isolation.other_live(self.logs_root, tok):
+            isolation.hide(final)
+            rec["notes"] = "; ".join(x for x in (rec["notes"], "log directory left unlistable (mode 0300): another run is live under this "
+                                                 "logs root; chmod u+rx %s when it is over" % final) if x)
         return rec
 
     def skeleton(self, run_id, arm, seed, started):
@@ -109,7 +141,7 @@ class Suite:
             "metrics": {"units_total": 0, "units_completed": 0, "duplicate_work": None, "git_conflicts": None,
                         "claim_conflicts": None, "overwrites": None, "messages": None, "human_interventions": None,
                         "coordination_context_tokens": None, "idle_turns": None},
-            "outcome_checks": [], "roles": None,
+            "outcome_checks": [], "roles": None, "isolation": None,
             "artifacts": {"streams": None, "store_export": None, "checker_report": None}, "notes": "",
         }
 
@@ -146,6 +178,29 @@ class Suite:
         os.makedirs(a.results_dir, exist_ok=True)
         os.makedirs(self.logs_root, exist_ok=True)
         os.makedirs(self.tmp_root, exist_ok=True)
+        isolation.sweep_stale(self.tmp_root)  # what a run that was killed left behind (mode 0300)
+        isolation.sweep_logs(self.logs_root)
+        old = self.install_signal_handlers()
+        try:
+            return self.go_hidden()
+        finally:
+            for sig, handler in old.items():
+                signal.signal(sig, handler)
+
+    @staticmethod
+    def install_signal_handlers():
+        """SIGTERM and SIGINT restore the modes of every directory this process hid and then end the suite through the
+        finally blocks (agents killed, scratch removed). Only in the main thread; a SIGKILL is left to sweep_stale."""
+        if threading.current_thread() is not threading.main_thread():
+            return {}
+
+        def handler(signum, _frame):
+            isolation.restore_all()
+            raise SystemExit(128 + signum)
+        return {sig: signal.signal(sig, handler) for sig in (signal.SIGTERM, signal.SIGINT)}
+
+    def go_hidden(self):
+        a = self.args
         probe_home = tempfile.mkdtemp(prefix="cb-probe-", dir=self.tmp_root)
         try:
             self.klatch_facts = klatch_facts(a.klatch_bin, minimal_env(os.environ, probe_home))
@@ -199,6 +254,13 @@ def _refuse(why):
     return 2
 
 
+def _unsafe_root(a):
+    """Why --logs-dir or --tmp-root is refused (the harness makes directories in them and hides some), or None."""
+    strict = a.driver == "claude" and a.isolation == "sandbox"
+    problems = [isolation.validate_dir(v, w, strict) for v, w in ((a.logs_dir, "--logs-dir"), (a.tmp_root, "--tmp-root"))]
+    return next((p for p in problems if p), None)
+
+
 def _needs_klatch_bin(a):
     return any(x.startswith("K") for x in a.arm_list) and not a.klatch_bin and not a.dry_run
 
@@ -243,6 +305,9 @@ def main(argv=None):
     if problem:
         return _refuse(problem)
     a.klatch_bin = _absolute(a.klatch_bin)
+    problem = _unsafe_root(a)
+    if problem:
+        return _refuse(problem)
     try:
         fx = fixture_mod.Fixture(a.fixture, a.fixtures_dir, a.checks_dir, variant=a.variant)
     except (fixture_mod.FixtureError, KeyError) as e:
@@ -250,14 +315,41 @@ def main(argv=None):
     plan = plan_runs(a.arm_list, a.runs, a.seed)
     if a.dry_run:
         return dry_run(a, fx, plan)
-    driver, problem = (_claude_driver if a.driver == "claude" else _fake_driver)(a, fx)
-    if problem:
-        return _refuse(problem)
     a.tmp_root = os.path.realpath(a.tmp_root)
     try:
         guard_paths(os.path.join(a.tmp_root, "x"), os.path.join(a.tmp_root, "y"), a.tmp_root)
     except GuardError as e:
         return _refuse(e)
+    staged = _stage_klatch(a)
+    try:
+        return _run_suite(a, fx, plan)
+    finally:
+        if staged:
+            shutil.rmtree(staged, ignore_errors=True)
+
+
+def _stage_klatch(a):
+    """The agents get a copy of the binary (its directory is returned): no prompt names a path inside the repository (#1519)."""
+    if not (a.klatch_bin and os.path.isfile(a.klatch_bin)):
+        return None
+    os.makedirs(a.tmp_root, exist_ok=True)
+    a.bench_bin = a.bench_bin or storeexport.find_tool(a.klatch_bin, os.environ)  # found beside the original, before the copy
+    a.klatch_bin, staged = isolation.stage_binary(a.klatch_bin, a.tmp_root)
+    return staged
+
+
+def isolation_problem(a, driver):
+    """Why a real run cannot use the sandbox settings (Claude Code too old or unknown), or None."""
+    if a.isolation != "sandbox" or driver.name == "fake":
+        return None
+    return isolation.version_problem(driver.version())
+
+
+def _run_suite(a, fx, plan):
+    driver, problem = (_claude_driver if a.driver == "claude" else _fake_driver)(a, fx)
+    problem = problem or isolation_problem(a, driver)
+    if problem:
+        return _refuse(problem)
     return Suite(a, fx, driver, plan).go()
 
 

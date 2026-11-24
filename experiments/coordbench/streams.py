@@ -11,6 +11,7 @@ import re
 import asks
 import cmdkinds
 import ctxcount
+import streamshape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 USAGE_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
@@ -138,7 +139,7 @@ class StreamState:
             self.fake_usd = float(e.get("usd", 0))
 
     def _on_init(self, e):
-        self._note_model(e.get("model"))
+        self._note_model(streamshape.text(e.get("model")))
         if not self._init_seen:  # the schemas are carried once per agent, however many init events a stream repeats
             self._init_seen = True
             self.parts["schema"], self.schema_source = ctxcount.schema_chars(e.get("tools"))
@@ -160,7 +161,7 @@ class StreamState:
 
     def _message_slot(self, msg):
         """The record of this assistant message (by id; an id-less one gets an anonymous id), created on first sight."""
-        mid = msg.get("id")
+        mid = streamshape.ident(msg.get("id"))
         if not mid:
             self._anon += 1
             mid = "anon-%d" % self._anon
@@ -171,13 +172,11 @@ class StreamState:
         return self.msgs[mid]
 
     def _on_assistant(self, e):
-        msg = e.get("message") or {}
+        msg = streamshape.message(e)
         self._assistant_seen = True
         m = self._message_slot(msg)
         self._note_usage_and_model(m, msg)
-        for b in msg.get("content") or []:
-            if not isinstance(b, dict):
-                continue
+        for b in streamshape.blocks(e):
             if b.get("type") == "tool_use":
                 self._on_tool_use(m, b)
             elif b.get("type") == "text" and isinstance(b.get("text"), str):
@@ -186,8 +185,8 @@ class StreamState:
 
     def _note_usage_and_model(self, m, msg):
         if isinstance(msg.get("usage"), dict):
-            m["usage"] = msg["usage"]
-        if msg.get("model"):
+            m["usage"] = streamshape.numbers(msg["usage"])
+        if streamshape.text(msg.get("model")):
             m["model"] = msg["model"]
             self._note_model(msg["model"])
 
@@ -195,13 +194,14 @@ class StreamState:
         return name == "SendMessage" or bool(cmd and self.msg_re.search(cmd))
 
     def _on_tool_use(self, m, b):
-        name, raw = b.get("name", "?"), b.get("input") or {}
+        tu = streamshape.tool_use(b)
+        name, raw = tu["name"], tu["input"]
         # a klatch call through a variable, alias or function defined in the same command is read as the binary (ctxcount)
         inp = dict(raw, command=cmdkinds.resolve_command(raw.get("command"), self.klatch_bin)) if name == "Bash" and "command" in raw else raw
         coord = self._is_coord(name, inp)
-        self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp),
-                                   "kinds": cmdkinds.read_kinds(name, inp, self.klatch_bin), "new": None}
-        m["tools"].append(self.tools[b.get("id")])
+        self.tools[tu["id"]] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp),
+                                "kinds": cmdkinds.read_kinds(name, inp, self.klatch_bin), "new": None}
+        m["tools"].append(self.tools[tu["id"]])
         self.tool_total += 1
         self.by_tool[name] = self.by_tool.get(name, 0) + 1
         if coord:
@@ -214,8 +214,8 @@ class StreamState:
             self.msg_events.append(dict(ev, t=self._t))
 
     def _on_user(self, e):
-        content = (e.get("message") or {}).get("content")
-        for b in content if isinstance(content, list) else []:
+        content = streamshape.message(e).get("content")
+        for b in streamshape.content(e):
             if isinstance(b, dict) and b.get("type") == "tool_result":
                 self._on_tool_result(b)
         text = ctxcount.inbound_text(content, self._assistant_seen)
@@ -233,7 +233,7 @@ class StreamState:
 
     def _on_tool_result(self, b):
         text = _text_of(b.get("content"))
-        tu = self.tools.get(b.get("tool_use_id"))
+        tu = self.tools.get(streamshape.ident(b.get("tool_use_id")))
         if tu is None:
             return
         new = self._note_new(tu, text)
@@ -269,7 +269,8 @@ class StreamState:
 
     def _tokens(self, r):
         if isinstance(r.get("usage"), dict):
-            return {k: int(r["usage"].get(src, 0) or 0) for k, src in USAGE_KEYS}
+            usage = streamshape.numbers(r["usage"])
+            return {k: int(usage.get(src, 0)) for k, src in USAGE_KEYS}
         return {k: sum(int(self.msgs[i]["usage"].get(src, 0) or 0) for i in self.order) for k, src in USAGE_KEYS}
 
     def _idle_turns(self):
