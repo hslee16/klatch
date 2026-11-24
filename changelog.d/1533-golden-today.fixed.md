@@ -1,0 +1,1 @@
+- The golden tests no longer fail on the day after they were written: the golden helper replaces today's date (UTC) with <TODAY>, so the audit rows golden compares the same text on any day (#1533, #1535).
