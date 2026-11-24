@@ -138,9 +138,32 @@ fn age_of(line: &str) -> String {
     }
 }
 
-/// One line with the volatile tokens replaced: ages, terminal labels, process ids, waits and lifetimes.
+/// The calendar date of today in UTC as `YYYY-MM-DD` (the day the product stamps on what a test writes), from the
+/// system clock by the civil-from-days rule, with no date library.
+fn today_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let days = i64::try_from(secs / 86_400).unwrap_or(0) + 719_468;
+    let era = days.div_euclid(146_097);
+    let doe = days.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// Today's date (the day a test runs) replaced by `<TODAY>`; any other date in a text is an input and stays exact.
+fn today(line: &str) -> String {
+    line.replace(&today_utc(), "<TODAY>")
+}
+
+/// One line with the volatile tokens replaced: ages, terminal labels, process ids, waits, lifetimes and today's date.
 fn volatile_line(line: &str) -> String {
-    let mut s = age_of(line);
+    let mut s = today(&age_of(line));
     for rule in &KEYED {
         s = after_key(&s, rule);
     }
