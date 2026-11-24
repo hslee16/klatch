@@ -1,4 +1,4 @@
-# 1521: coordbench metrics mean the same thing in every arm
+Coordbench metrics mean the same thing in every arm (#1521, #1522, #1524; no schema change; 2026-11-23).
 
 Tickets #1521 (coordination context counted asymmetrically), #1522 (S1's primary measured model ability) and #1524 (idle turns
 and B-arm metrics defined asymmetrically), all from the independent review of #1461.
