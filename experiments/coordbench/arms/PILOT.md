@@ -27,7 +27,7 @@ run. Real agents cost money and need your approval (SPEC section 8); `run.py` re
 - `ANTHROPIC_API_KEY` set in the shell that runs the harness (the harness passes it to agent processes only).
 - Note the state of `~/.klatch` and `~/.claude` (for example `ls -laR ~/.klatch | shasum`) to compare afterwards.
 
-## Part 0: isolation probe (#1519), about $0.05
+## Part 0: isolation probe (#1519), about $0.10
 
 Run `python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL_ID --klatch-bin PATH` once before part 2.
 It starts one tiny session under the sandbox settings the harness gives real agents and prints what each escape attempt

@@ -138,7 +138,7 @@ class Probe(unittest.TestCase):
         def boom(_):
             raise AttributeError("'str' object has no attribute 'get'")
         printed = []
-        keep = isolation_probe.report(root, "RAW", "ERR", 0, [], boom, printed.append)
+        keep = isolation_probe.report(root, ("RAW", "ERR", 0), [], boom, printed.append)
         self.assertTrue(keep)
         self.assertTrue(any("RAW" in open(os.path.join(root, n)).read() for n in os.listdir(root) if n.endswith(".out")))
         self.assertTrue(any("raw output" in p for p in printed))
@@ -148,8 +148,8 @@ class Probe(unittest.TestCase):
         root = tempfile.mkdtemp()
         self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
         quiet = lambda s: None
-        self.assertTrue(isolation_probe.report(root, "", "auth failed", 1, [], lambda o: [], quiet))
-        self.assertFalse(isolation_probe.report(root, self.STREAM, "", 0, [], lambda o: [], quiet))
+        self.assertTrue(isolation_probe.report(root, ("", "auth failed", 1), [], lambda o: [], quiet))
+        self.assertFalse(isolation_probe.report(root, (self.STREAM, "", 0), [], lambda o: [], quiet))
 
 
 if __name__ == "__main__":

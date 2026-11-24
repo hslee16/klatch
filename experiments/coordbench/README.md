@@ -126,12 +126,15 @@ hid and end it; after a SIGKILL the next start removes the stale `cb-*` scratch 
 the pid) and restores their staging directories in the logs.
 
 `python3 experiments/coordbench/isolation_probe.py --claude-bin claude --model MODEL --klatch-bin PATH` runs one tiny session
-(about 0.05 USD on Haiku, cap 0.15). It writes the session's raw stdout and stderr to files in its directory before parsing anything
+(about 0.08 to 0.10 USD on Haiku, cap 0.15). It writes the session's raw stdout and stderr to files in its directory before parsing anything
 and prints their path, keeps the directory when the exit code is not zero or parsing fails, prints the events that are not tool
 traffic (a sandbox, version or authentication refusal shows there), and then prints what each escape shows. Expected on macOS with the sandbox working: the control
 prints `OWN-SECRET`; the python3 open of the other clone, the listdir of the shared root, the git -C of the other clone and the
 open of the unlistable directory show `Operation not permitted` or `Permission denied` (no SECRET); the Read tool on the other
-clone's file is refused by the deny rule; `klatch --version` prints a version. The line the builder cannot predict is the python3
+clone's file is refused by the deny rule; the klatch items (the K1 commands of `arms/K1.md` as arm K1, with the binary staged outside
+the repository: `--version`, a post that opens and writes a fresh store, a read, a claim, a release) are `OK`. Each row ends with a
+class and the first line of the result, so a sandbox refusal (`Operation not permitted`), a missing allow rule (`requires approval`)
+and a missing file can be told apart. Cost about 0.08 to 0.10 USD, session cap 0.15. The line the builder cannot predict is the python3
 `ps` listing: if it shows the other agent's command line the leak above is real inside the sandbox too and only the scan notices it
 (#1532).
 
