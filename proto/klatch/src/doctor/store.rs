@@ -258,6 +258,38 @@ pub(super) fn report_proof_failures(r: &mut Report, census: Option<(u64, u64)>) 
     }
 }
 
+/// Whether the admin passphrase is set (#1262): a warning while it is not, because until then the first
+/// `klatch admin init-passphrase` proves nothing and a program with a terminal could run it before the human. Reads
+/// the store read-only; sets, issues and asks for nothing. Says nothing when there is no readable store.
+pub(super) fn check_passphrase(r: &mut Report, home: Option<&Path>) {
+    let Some(db) = store_path(home).filter(|d| d.exists()) else {
+        return;
+    };
+    if klatch::store::encrypt::is_plaintext(&db) {
+        return;
+    }
+    let asked = db.clone();
+    let set = within(KEYSTORE_PATIENCE, move || {
+        let key = klatch::member::custody::current_key(&asked)
+            .ok()
+            .flatten()?;
+        klatch::store::SqliteStore::read_policy_has(&asked, &key, klatch::proof::VERIFIER_KEY).ok()
+    })
+    .flatten();
+    report_passphrase(r, set);
+}
+
+/// The warning for `set` (`None` when it could not be read): only an unset passphrase is reported.
+pub(super) fn report_passphrase(r: &mut Report, set: Option<bool>) {
+    if set == Some(false) {
+        r.add(
+            Status::Warn,
+            "admin passphrase: no admin passphrase is set; until you set one, any program that can open a terminal as your user could set it first",
+            Some("run `klatch admin init-passphrase` yourself, in a terminal; doctor and init never set it"),
+        );
+    }
+}
+
 fn nudge_effect(mode: &str) -> Status {
     match klatch::domain::wake_path(Some(mode)) {
         klatch::domain::WakePath::Nudge => Status::Ok,

@@ -1,0 +1,1 @@
+- `klatch doctor` warns while no admin passphrase is set, and `klatch init` ends by telling the human to run `klatch admin init-passphrase` themselves (#1262). Both only read and never set anything; the warning leaves the exit code at 0.

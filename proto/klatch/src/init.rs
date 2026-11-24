@@ -434,7 +434,7 @@ pub(crate) fn next_steps(klatch_home: Option<&std::ffi::OsStr>, home: Option<&Pa
         (None, None) => "~/.klatch".to_string(),
     };
     format!(
-        "klatch keeps its data in {data} (set KLATCH_HOME to move it; init neither creates nor changes it).\nNext: run `klatch doctor` to check the install; it only reads.\n"
+        "klatch keeps its data in {data} (set KLATCH_HOME to move it; init neither creates nor changes it).\nNext: run `klatch doctor` to check the install; it only reads, and it warns while no admin passphrase is set.\nSet that passphrase yourself, in a terminal: `klatch admin init-passphrase` (init never sets it).\n"
     )
 }
 
@@ -1511,5 +1511,15 @@ mod tests {
         assert!(default.contains("in /h/.klatch "), "{default}");
         assert!(next_steps(None, None).contains("~/.klatch"));
         assert!(default.contains("klatch doctor") && !default.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn the_next_steps_tell_the_human_to_set_the_admin_passphrase_themselves() {
+        let t = next_steps(None, Some(Path::new("/h")));
+        assert!(
+            t.contains("klatch admin init-passphrase") && t.contains("yourself"),
+            "{t}"
+        );
+        assert!(t.contains("doctor") && !t.contains('\u{2014}'), "{t}");
     }
 }
