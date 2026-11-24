@@ -199,3 +199,70 @@ fn the_client_reader_ends_quietly_when_the_receiver_is_gone() {
             .expect("the reader thread panicked when nobody was listening");
     });
 }
+
+fn acp_lines(lines: &[serde_json::Value]) -> Cursor<Vec<u8>> {
+    Cursor::new(
+        lines
+            .iter()
+            .map(|l| format!("{l}\n"))
+            .collect::<String>()
+            .into_bytes(),
+    )
+}
+
+fn acp_prompt(id: u64, session: &str) -> serde_json::Value {
+    serde_json::json!({"jsonrpc":"2.0","id":id,"method":"session/prompt","params":{"sessionId":session,"prompt":[]}})
+}
+
+fn acp_cancel(session: &str) -> serde_json::Value {
+    serde_json::json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":session}})
+}
+
+#[test]
+fn the_acp_reader_raises_only_the_flag_of_the_named_session_before_it_reports_the_input_closed() {
+    // The handler takes lines while the reader is still reading. Whatever the order of their steps, by the time the
+    // channel reports closed the cancel has been read: the named session's flag is up, the other's is not, the cancel
+    // itself is not passed on, and the prompts arrive in the order they were sent.
+    explore(|| {
+        let input = acp_lines(&[
+            acp_prompt(1, "a"),
+            acp_prompt(2, "b"),
+            acp_cancel("a"),
+            acp_prompt(3, "a"),
+        ]);
+        let (rx, reader) = crate::session::acp_reader::spawn(input);
+        let mut got = Vec::new();
+        while let Ok(item) = rx.recv() {
+            got.push(item.expect("no read error"));
+        }
+        reader.join().unwrap();
+        let ids: Vec<u64> = got
+            .iter()
+            .map(|(line, _)| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["id"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(ids, vec![1, 2, 3], "order, and no cancel passed on");
+        let up = |n: usize| got[n].1.as_ref().unwrap().load(StdOrdering::SeqCst);
+        assert!(up(0), "the cancelled prompt's flag is up");
+        assert!(!up(1), "another session's flag is not");
+        assert!(!up(2), "a prompt sent after the cancel is not cancelled");
+    });
+}
+
+#[test]
+fn the_acp_reader_ends_quietly_when_the_handler_stops_listening_mid_stream() {
+    // The handler drops its end after the first line (a write failed). The reader has more to pass on; a failed send
+    // must end it, not panic it or leave it waiting for room.
+    explore(|| {
+        let input = acp_lines(&[acp_prompt(1, "a"), acp_prompt(2, "a"), acp_prompt(3, "a")]);
+        let (rx, reader) = crate::session::acp_reader::spawn(input);
+        assert!(rx.recv().unwrap().is_ok());
+        drop(rx);
+        reader
+            .join()
+            .expect("the reader panicked when nobody was listening");
+    });
+}
