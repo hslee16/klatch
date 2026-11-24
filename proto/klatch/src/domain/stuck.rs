@@ -118,7 +118,12 @@ impl StuckEvent {
                 previous,
                 new,
             } => format!("possible_overwrite:{room}:{path}:{previous}:{new}"),
-            StuckEvent::LapsedClaim { room, claim, .. } => format!("lapsed_claim:{room}:{claim}"),
+            StuckEvent::LapsedClaim {
+                room,
+                claim,
+                holder,
+                ..
+            } => format!("lapsed_claim:{room}:{claim}:{holder}"),
         }
     }
 
