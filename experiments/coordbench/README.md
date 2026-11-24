@@ -118,6 +118,23 @@ record's `scenario_metrics`. `claim_conflicts` and `store_export` come from the 
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
 
+### Metric version 2 (#1521, #1522, #1524)
+
+S1's primary is now `integration_ok` (registry, changelog, no conflict markers, visible tests; `scenarios/s1.json`),
+computed by the harness from the checker's structural checks and kept in `metrics.integration_ok`; `units_completed` (the eight
+modules) stays as a secondary that measures what each agent can do alone. Every record carries `metric_version: 2`; records
+without it are version 1 and `report.py` never pools the two (older records show as `SCENARIO [metric vN]`).
+
+The same version changed three other definitions so an arm is not credited or charged for how it happens to coordinate
+(`metricver.py` lists them, `SPEC.md` section 5 defines them). `coordination_context_tokens` counts hook output, inbound
+message events, the inputs and results of coordination calls and the init schemas of the coordination tools in every arm
+(`ctxcount.py`; the schema sizes are placeholder estimates until the pilot measures them, and the real inbound event shape is
+unverified until PILOT part 1); the API's own count is derived where the stream allows it (`coordination_context.usage_exact`).
+`idle_turns` is one definition for every arm: a turn of read-only coordination calls (K: klatch read, claims, asks, who,
+wait; B1: TASKS.md reads, `git pull`, `ListAgents`) whose results held no new content. B1 and B1-roles get `claim_conflicts`
+from the board's git history (`board.py`) and board edits count as messages. Tests: `tests/test_coord_context.py`,
+`tests/test_board_metrics.py`, `tests/test_metric_version.py`.
+
 ## Scenario S4: ask and answer across specialists (`scenarios/s4.json`, fixture `specialists`)
 
 F4 `specialists` is a small package `linkkit` (framing, retry, routing, ledger) owned by three agents (`a`, `b`, `c`). Each
@@ -336,8 +353,9 @@ collide, ask and answer through the real binary and the real tool); the tool's o
 
 Fields the spec lists that need a scenario's unit-to-path map or the store export are written as `null` (never omitted):
 `duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; K arms fill `claim_conflicts` and `store_export` from the run store, B arms leave them null with a reason; S2 leaves `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
-divided by 4) because the standard library has no tokenizer; the record says so in `notes`. `messages` counts klatch posts
-(`post`, `dm`, `ask`, `answer`) and `SendMessage` calls from the stream. A run found invalid (a harness fault) is kept with
+divided by 4) because the standard library has no tokenizer; the record says so in `notes` and in its `coordination_context`
+object (method, divisor, limits, characters by source). `messages` counts klatch posts
+(`post`, `dm`, `ask`, `answer`), `SendMessage` calls and edits of the board `TASKS.md` from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.
 
 Tests: `python3 -m unittest discover -s experiments/coordbench/tests`. The K-arm tests need `KLATCH_BIN` (a built klatch,

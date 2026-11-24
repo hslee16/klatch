@@ -18,6 +18,8 @@ METRICS = (
     ("read_context_tokens_per_member", "tokens read from the room per member (klatch read, wait, digest, board, TASKS.md)"),
     ("coordination_context_tokens_per_member", "all coordination context tokens per member"),
     ("hook_chars_per_member", "characters injected by hooks per member (from the stream)"),
+    ("inbound_tokens_per_member", "tokens of inbound messages per member (B1 SendMessage deliveries, from the stream)"),
+    ("schema_tokens_per_member", "tokens of coordination tool schemas per member (pinned estimate unless the stream carries them)"),
     ("hook_digest_bytes_per_member", "hook bytes injected per member (store export, K arms)"),
     ("max_coord_result_chars", "largest single coordination tool result (characters)"),
     ("units_completed", "units completed"),
@@ -42,6 +44,8 @@ def stream_parts(states, n, messages=None):
     read = sum(s.read_chars for s in states.values())
     hook = sum(s.hook_chars for s in states.values())
     largest = max([s.max_coord_result for s in states.values()] or [0])
+    inbound = sum(s.parts["inbound"] for s in states.values())
+    schema = sum(s.parts["schema"] for s in states.values())
     return {
         "agents": n,
         "messages_per_agent": (messages / n) if messages is not None and n else None,
@@ -50,6 +54,9 @@ def stream_parts(states, n, messages=None):
         "read_context_tokens_per_member": read / 4 / n if n else None,
         "hook_context_chars": hook,
         "hook_chars_per_member": hook / n if n else None,
+        "inbound_context_chars": inbound,
+        "schema_context_chars": schema,
+        "context_method": "chars/4",
         "max_coord_result_chars": largest,
         "hook_bytes_injected": None,
         "hook_bytes_reason": "no store export in this record: a B arm has no klatch store, and the klatch-bench store export "
@@ -88,6 +95,8 @@ def derive(rec):
         "read_context_tokens_per_member": _div(sc.get("read_context_chars"), 4 * n),
         "coordination_context_tokens_per_member": _div(m.get("coordination_context_tokens"), n),
         "hook_chars_per_member": _div(sc.get("hook_context_chars"), n),
+        "inbound_tokens_per_member": _div(sc.get("inbound_context_chars"), 4 * n),
+        "schema_tokens_per_member": _div(sc.get("schema_context_chars"), 4 * n),
         "hook_digest_bytes_per_member": _div(hook_bytes, store_members),
         "max_coord_result_chars": sc.get("max_coord_result_chars"),
         "units_completed": units,

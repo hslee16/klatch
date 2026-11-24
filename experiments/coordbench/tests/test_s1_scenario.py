@@ -52,7 +52,9 @@ class TestScenarioFile(unittest.TestCase):
         self.assertEqual(s["caps"]["suite_usd_m0_haiku"], 100.0)
         for k in ("duplicate_work", "overwrites", "git_conflicts", "units_completed"):
             self.assertIn(k, s["metrics"]["definitions"])
-        self.assertEqual(s["metrics"]["primary"], "units_completed")
+        # #1522: the primary is an integration outcome; units_completed (the modules, model ability) is secondary
+        self.assertEqual(s["metrics"]["primary"], "integration_ok")
+        self.assertIn("units_completed", s["metrics"]["secondary"])
 
     def test_the_unit_to_path_map_covers_every_module_and_every_ticket(self):
         s = self.scn

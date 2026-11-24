@@ -148,8 +148,14 @@ on; the others are secondary.
   entries, the changelog has four new lines. Per ticket a pass or fail.
 - Failure modes: a ticket done by two agents; a ticket done by none; a lost registry line or changelog line (overwrite);
   main left red; merge conflict left unresolved; an agent edits another agent's module.
-- Primary: tickets completed and passing hidden checks (0 to 4); secondary cost, wall time, turns, duplicate work, conflicts,
-  overwrites, human interventions.
+- Primary (metric version 2, #1522): `integration_ok`, true when on the final main the registry imports every module and
+  exports every function, the changelog has exactly the four ticket lines, no tracked file has a conflict marker and the
+  visible tests pass (`scenarios/s1.json`, `integration_checks`; the structural checks of the checker, none a module's
+  behaviour). Four agents can only get this right by coordinating on the two shared files and on main. Secondary:
+  `units_completed` (modules passing the hidden property tests, 0 to 8: model ability, because each module has one owner and
+  the pilot had every arm fail the tokenizer unit on Haiku, so it is reported but never the headline), cost, wall time, turns,
+  duplicate work, conflicts, overwrites, human interventions. `report.py` counts a run as complete when `integration_ok` is
+  true. Records of metric version 1 used `units_completed` as the primary and are not pooled with these.
 
 ### S2: same-file contention race (#1367)
 
@@ -306,15 +312,24 @@ otherwise. All raw artifacts are kept so the metrics can be recomputed.
 | Tokens | Sum over agents of input, output, cache read and cache creation tokens from the `usage` of the `result` message (fields as the stream reports them, each kept separately). | stream-json `result.usage`. |
 | Cost | Sum over agents of `total_cost_usd` in the `result` message. If a run is killed before the message, the harness computes cost from the last assistant `usage` per message with the pinned price table in `experiments/coordbench/prices.json` (recorded with its date) and marks the figure `estimated`. Judge calls in S10 part 2 are costed the same way. | stream-json `result.total_cost_usd`, else the price table. |
 | Duplicate work | Count of units for which two or more agents each produced a non-empty change to the unit's target paths that reached the final repository history or a local commit. Counted from `git log` of `origin` and of each agent's clone (the harness keeps the clones), grouped by unit through the fixture's unit-to-path map. Reported as a count and as the turns the second agent spent on the unit (turns between its first and last tool call on those paths). | git history plus stream-json tool calls. |
-| Conflicts | Two kinds, never summed: git conflicts (a `git pull` or merge that exits with unmerged paths, from the stream's Bash tool results) and claim conflicts (klatch refusals, from the store in K arms; for B1 the equivalent is a board line already `working` for the same file when another agent adds its own). | stream-json and the store. |
+| Conflicts | Two kinds, never summed: git conflicts (a `git pull` or merge that exits with unmerged paths, from the stream's Bash tool results) and claim conflicts (klatch refusals, from the store in K arms; for B1 and B1-roles, from the board's git history (`board.py`, metric version 2): a file that two agents both have a `working` line for in one version of `TASKS.md`, counted once per file and pair; the limits are in `board.py`). B0 has no board and no claims: null. | stream-json, the store and git. |
 | Overwrites | A change that existed in some commit on `origin` (or in an agent's clone) and is absent from the final file, with no later commit or message that removes it on purpose. Checked per change by the hidden per-change test run against the final tree and the history. A silent overwrite is one that no agent reported. | Hidden per-change checks plus git history plus the message record. |
-| Messages | Messages an agent sent to others, per arm: klatch posts and DMs in the store (K arms); `SendMessage` calls plus board-line edits (B1); commit messages that mention another agent's name or a coordination word (B0, reported but flagged as weak). Also bytes. | Store, stream-json tool calls, git. |
+| Messages | Messages an agent sent to others, per arm: klatch posts and DMs in the store (K arms); `SendMessage` calls plus board-line edits, that is tool calls that write `TASKS.md` (B1; counted in any arm, metric version 2); commit messages that mention another agent's name or a coordination word (B0, reported but flagged as weak). Also bytes. | Store, stream-json tool calls, git. |
 | Human interventions | Count of times the run needed a person: any agent final message or room post addressed to the human or asking for human input (regex on `human`, `operator`, `user` in a final message plus a manual pass), plus any action the harness took outside its script. The harness script has none, so a nonzero count is a finding. | stream-json, store, harness log. |
-| Coordination context tokens | Tokens that entered an agent's context because of the coordination layer: tool results of coordination commands (klatch, SendMessage, reading `TASKS.md` and the room), hook `additionalContext` (K2), and the tool_use inputs of those commands. Counted by the harness with one fixed tokenizer (`tiktoken cl100k_base` or the API count_tokens endpoint, whichever the harness ticket picks, recorded in the result, never mixed within a milestone). Reported next to total input tokens as a share. | stream-json tool_use, tool_result and hook events. |
+| Coordination context tokens | Tokens that entered an agent's context because of the coordination layer, counted from the same five sources in every arm (metric version 2, #1521): (1) hook output (K2); (2) inbound message events, text that reaches the agent outside a tool result after it has started (B1's delivered `SendMessage`); (3) the inputs of coordination tool calls (klatch commands, `SendMessage`, `ListAgents`, commands and reads that touch `TASKS.md`); (4) their results, so a board read counts its whole result and a klatch read only what was unread; (5) the init schemas of the coordination tools an arm carries (B1: `SendMessage` and `ListAgents`; a klatch MCP tool in a K arm; the klatch CLI has none, it runs through Bash, which every arm carries), once per agent. The same answer delivered as a B1 inbound message or as a K2 hook digest counts the same. The estimate is characters divided by 4 (`ctxcount.py`): there is no tokenizer in the standard library, so the divisor and its limits (prose nearer 4, code and JSON nearer 3, absolute figures up to a third off, the same estimate for every arm) are written in the record's `coordination_context` with the characters by source and `schema_source`. The stream names tools without their schemas, so a schema's size is a pinned placeholder estimate (`SCHEMA_CHARS`) until the pilot measures it, unless the init event carries the schema. Where the stream has the API's usage fields the exact cost is derived as well (`coordination_context.usage_exact`): after a turn whose next gap held only coordination content, the growth of total input (input, cache read, cache creation) minus the turn's output tokens; partial by construction, and `first_turn_context_tokens` per agent lets two arms with the same prompt be differenced for the schemas. Never mixed between records of different `metric_version`. Reported next to total input tokens as a share. | stream-json init, tool_use, tool_result, hook and user events. |
 
 Derived: cost per completed unit, turns per completed unit, throughput per agent (units over agent-minutes), reply latency
-(time from an ask or message to the first reply from a different agent), and idle turns (turns whose only tool calls are
-waits, polls or reads with no new content; the harness classifies from the stream).
+(time from an ask or message to the first reply from a different agent), and idle turns (one definition for every arm, metric version 2, #1524:
+a turn whose every tool call is a read-only coordination call whose result held no new content; the harness classifies from the
+stream with `ctxcount.read_kinds` and `ctxcount.is_new`). The read-only coordination calls per arm: K: `klatch` read, claims, asks,
+who, wait, digest, board, history, stuck, hooks; B1: reading `TASKS.md` (the Read tool, cat, grep), `git pull` or `git fetch` to
+look at the board, `ListAgents`; every arm: `git log`, `sleep`. No new content means: nothing printed, or a no-news phrase
+(klatch's empty read note, a wait that timed out, `Already up to date.`), or, for a call that prints the whole state (the board,
+`ListAgents`, claims, who), a result equal to this agent's last result of the same call. A read that returned something new is not
+idle; a turn that also edits or runs anything else is not idle; a call whose result never arrived is not idle. A klatch call made
+through a variable, alias or function defined in the same command is read as the binary; a wrapper script or a variable from an
+earlier command is not resolved and is a stated limit (`ctxcount.RESOLVE_LIMIT`). S3's `idle_turns` (`chain.py`) keeps its own
+blocked-turn definition and is not this metric.
 
 Self-reports are used only for the human-intervention manual pass and for nothing else, and the record says so.
 
@@ -409,6 +424,8 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "arm_text_version": "1",
   "fixture": {"name": "onefile", "sha256": "..."},
   "seed": 4207,
+  "metric_version": 2,
+  "coordination_context": {"method": "chars/4", "chars_per_token": 4, "tokens": 5120, "chars": {"total": 20480}},
   "valid": true,
   "supersedes": null,
   "models": {"agent": "claude-haiku-...", "roles": null, "resolved_ids": ["..."]},
@@ -427,7 +444,7 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
   "tool_calls": {"total": 143, "by_tool": {"Bash": 90, "Edit": 31}},
   "metrics": {
-    "units_total": 3, "units_completed": 3,
+    "units_total": 3, "units_completed": 3, "integration_ok": true,
     "duplicate_work": 0, "git_conflicts": 1, "claim_conflicts": 2, "overwrites": 0,
     "messages": 14, "human_interventions": 0, "coordination_context_tokens": 5120,
     "idle_turns": 6
@@ -437,6 +454,12 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "notes": ""
 }
 ```
+
+`metric_version` (#1521, #1522, #1524) is 2 for records made with the definitions above; a record without the field is version 1
+(`metricver.py` lists what changed: coordination context sources, idle turns, board edits as messages, B1 claim conflicts, S1's
+primary). `integration_ok` is present only for a scenario that names `integration_checks` (S1). `coordination_context` is the
+estimate record described under the metric. `report.py` never pools versions: older records appear as `SCENARIO [metric vN]`,
+the scaling table uses the newest only, and a comparison of analyses of different versions says so.
 
 `outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`. The scenario's checks are listed in
 `outcome_checks` with their ids; `units_completed` is derived from them. Fields that do not apply are `null`, never
