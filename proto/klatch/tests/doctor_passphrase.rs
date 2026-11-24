@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 
 fn doctor(h: &Home) -> Output {
     Command::new(env!("CARGO_BIN_EXE_klatch"))
+        .env_remove("KLATCH_IDENTITY_FILE")
         .env_clear()
         .current_dir(&h.0)
         .env("HOME", &h.0)
