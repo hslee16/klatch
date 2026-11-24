@@ -241,7 +241,8 @@ fn a_message_ref_must_name_a_message_in_a_room_the_ask_label_covers() {
     // a public ask may not point at a message above its own label, and the refusal is the room ref's
     let e = ask(&g, &[r("message", &high)]).unwrap_err();
     assert_eq!(rule_of(e), "label");
-    assert!(nothing_posted_after(&g, 1));
+    // the visible message was posted to "r", so only it is there and no ask was
+    assert_eq!(g.read(&bob(), "r", false).unwrap().len(), 1);
     // a message at or below the label is fine
     ask(&g, &[r("message", &low)]).unwrap();
     // an ask in the vault may point at a vault message
@@ -276,8 +277,4 @@ fn a_message_ref_refusal_is_the_same_whether_the_message_is_above_the_label_or_t
     let by_room = ask(&g, &[r("room", "vault")]).unwrap_err();
     assert_eq!(format!("{by_message:?}"), format!("{by_room:?}"));
     assert!(!format!("{by_message:?}").contains(&high));
-}
-
-fn nothing_posted_after(g: &Gateway<SpyStore>, n: usize) -> bool {
-    g.read(&bob(), "r", false).unwrap().len() < n + 1 && g.open_asks(&alice(), "r").unwrap().is_empty()
 }
