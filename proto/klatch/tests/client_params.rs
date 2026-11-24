@@ -247,7 +247,7 @@ fn sends(client: Client, w: &Wrapper, key: &str, exposed_as: &str) -> bool {
     }
 }
 
-fn notes<'a>(m: &'a Value, client: Client) -> &'a Value {
+fn notes(m: &Value, client: Client) -> &Value {
     &m["clients"][client.key()]
 }
 
@@ -288,7 +288,7 @@ fn client_problems(client: Client, src: &Source, list: &Value) -> Vec<String> {
         for (p, _, required) in &params {
             let shown = norm(&alias(p));
             allowed.push(shown.clone());
-            let exposed = w.exposed.iter().any(|e| *e == shown);
+            let exposed = w.exposed.contains(&shown);
             if gaps.contains(&p.as_str()) {
                 if exposed {
                     problems.push(format!(
