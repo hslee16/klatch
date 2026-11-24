@@ -4,7 +4,7 @@
     gen.py            write every generated file
     gen.py --check    exit 1 when a committed file differs from what the seed makes (a test runs this)
 
-Generated: template/data/ruler.txt and template/data/inventory.dat (the fixed-width records), task-a.md (from task-a.md.in,
+Generated: template/data/inventory.dat (the fixed-width records; the ruler is not in the repository, only in task-a.md), task-a.md (from task-a.md.in,
 with the quirk filled in), fake.json (the scripted agents' steps), reference/chainkit/schema.json, bins.py and
 bins_partial.py (the solution and the state a is told to leave), and checks/chain/expected.json (the hidden checker's
 facts). The quirk is the arbitrary part: which prefix is legacy, which prefix it moves to and by how much; nothing in the
@@ -179,7 +179,7 @@ def fake(facts):
 def outputs(facts):
     task = open(os.path.join(HERE, "task-a.md.in")).read()
     q = facts["quirk"]
-    for k, v in (("{{LEGACY}}", q["legacy"]), ("{{NEW}}", q["new"]), ("{{OFFSET}}", str(q["offset"])),
+    for k, v in (("{{RULER}}", facts["ruler"]), ("{{LEGACY}}", q["legacy"]), ("{{NEW}}", q["new"]), ("{{OFFSET}}", str(q["offset"])),
                  ("{{EXAMPLE}}", "%s-0042 becomes %s-%05d" % (q["legacy"], q["new"], 42 + q["offset"]))):
         task = task.replace(k, v)
     expected = {k: facts[k] for k in ("seed", "ruler", "records", "schema", "alt_schema", "alt_lines", "alt_records", "totals",
@@ -187,7 +187,6 @@ def outputs(facts):
     expected["lines"] = facts["lines"]
     jd = lambda o: json.dumps(o, indent=1, sort_keys=True) + "\n"  # noqa: E731
     return {
-        "template/data/ruler.txt": facts["ruler"] + "\n",
         "template/data/inventory.dat": "\n".join(facts["lines"]) + "\n",
         "task-a.md": task,
         "fake.json": jd(fake(facts)),

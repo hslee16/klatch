@@ -27,7 +27,7 @@ class Schema(unittest.TestCase):
         self.assertEqual(set(schema.REQUIRED_KEYS), want)
 
     def test_outcome_must_be_one_of_the_five(self):
-        for good in ("ok", "timeout", "spend-cap", "crash", "error"):
+        for good in ("ok", "timeout", "spend-cap", "crash", "error", "trigger-not-fired"):
             r = make_record(outcome=good)
             self.assertEqual(schema.validate_record(r), [], good)
         self.assertTrue(schema.validate_record(make_record(outcome="great")))

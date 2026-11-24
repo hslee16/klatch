@@ -174,7 +174,8 @@ def task_ok(m):
     if not ok or not isinstance(name, str) or r["filename"] != name:
         return False
     ok, e = guarded(m.build_manifest, [], d, 1)
-    if not ok or e.get("pages") != [] or e.get("count") != 0 or e.get("total_cents") != 0:
+    # no parcels: no page or one empty page (the task text does not say which, #1525), no count, no cents
+    if not ok or e.get("pages") not in ([], [[]]) or e.get("count") != 0 or e.get("total_cents") != 0:
         return False
     ok, err = guarded(m.build_manifest, ["A1,500"], d, 1)
     return (not ok) and isinstance(err, ValueError)

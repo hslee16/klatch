@@ -156,7 +156,7 @@ def t_bits(m):
         bit = 1 << i
         if m.set_bit(mask, i) != mask | bit or m.clear_bit(mask, i) != mask & ~bit & 0xFFFF:
             return False
-        if m.test_bit(mask, i) is not bool(mask & bit):
+        if bool(m.test_bit(mask, i)) != bool(mask & bit):  # any truthy value is a right answer (#1525)
             return False
         if m.popcount(mask) != bin(mask).count("1"):
             return False
