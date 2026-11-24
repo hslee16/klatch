@@ -144,6 +144,8 @@ fn propose(view: &View, e: &StuckEvent) -> Option<Proposal> {
                 super::claim_label(claim)
             ),
         ),
+        // a lapse is shown to the reader only; no proposal is made for it (#1339)
+        StuckEvent::LapsedClaim { .. } => return None,
         StuckEvent::PossibleOverwrite {
             room,
             path,

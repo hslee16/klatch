@@ -36,6 +36,7 @@ mod handoff;
 mod history;
 mod invite_clearance;
 mod labels;
+mod lapsed_claim;
 mod lease;
 mod lease_settings;
 mod librarian;
