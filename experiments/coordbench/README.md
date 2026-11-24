@@ -76,7 +76,7 @@ clone per agent (K2 also runs `klatch init --scope project --yes` in each clone;
 prompt built from `arms/common.md` and `arms/<arm>.md`; the agents started as separate processes and left alone; the hidden
 checker run on a clone of the final origin (and every `--poll-s` seconds, for `time_to_first_pass_s`); a record written,
 whatever the outcome; the scratch removed. Arms are interleaved in seeded random blocks. A per-run spend cap, a wall cap and
-a suite cap stop the work; the outcome is `spend-cap`, `timeout`, or a suite stop recorded in `suite.json` (exit code 3).
+a suite cap stop the work; the outcome is `spend-cap`, `timeout`, `trigger-not-fired` (S6 only), or a suite stop recorded in `suite.json` (exit code 3).
 Exit codes: 0 all runs ok, 1 a run failed or was invalid, 2 refused, 3 suite cap hit.
 
 Isolation: the harness refuses a store path under `~/.klatch` or `~/.claude`, outside the temp root, or reached through a
@@ -135,8 +135,7 @@ F1 `tallykit` is a standard library Python package of eight independent modules 
 roman, rle, matrix), each a stub raising `NotImplementedError` with a docstring contract and a weak visible test. Four
 tickets (agents `a` to `d`) implement two modules each, and every ticket also adds its lines at the end of the shared
 registry `tallykit/__init__.py` and `CHANGELOG.md`, the only collisions, so a real merge conflict is possible. The spec
-names a 10-module package with a `registry.py`; this fixture uses eight modules and `__init__.py` as the registry, as the
-ticket asks (the spec sentence is a description, not a contract). `fixtures/tallykit/template/` is what `setup.sh` copies into a
+(section S1) says the same: eight modules, `__init__.py` as the registry (#1525). `fixtures/tallykit/template/` is what `setup.sh` copies into a
 checkout; `reference/` (the solution) is read only by tests and fake agents and is never copied.
 
 The hidden checker `checks/tallykit/check.sh CHECKOUT` loads each module by file and runs seeded property tests against
@@ -154,6 +153,23 @@ lost lines and who wrote them, edits to a module the agent does not own, merge s
 record's `scenario_metrics`. `claim_conflicts` and `store_export` come from the K arms' run store (see "The run store export" below). Fake scripts for
 S1 use the extra steps `copy_from`, `append` and `sync` with `resolve` (union or ours); tests in `tests/test_tallykit_checker.py`
 (the checker on the reference and on eight broken variants) and `tests/test_s1_scenario.py` (the metrics through the harness).
+
+### Metric version 2 (#1521, #1522, #1524)
+
+S1's primary is now `integration_ok` (registry, changelog, no conflict markers, visible tests; `scenarios/s1.json`),
+computed by the harness from the checker's structural checks and kept in `metrics.integration_ok`; `units_completed` (the eight
+modules) stays as a secondary that measures what each agent can do alone. Every record carries `metric_version: 2`; records
+without it are version 1 and `report.py` never pools the two (older records show as `SCENARIO [metric vN]`).
+
+The same version changed three other definitions so an arm is not credited or charged for how it happens to coordinate
+(`metricver.py` lists them, `SPEC.md` section 5 defines them). `coordination_context_tokens` counts hook output, inbound
+message events, the inputs and results of coordination calls and the init schemas of the coordination tools in every arm
+(`ctxcount.py`; the schema sizes are placeholder estimates until the pilot measures them, and the real inbound event shape is
+unverified until PILOT part 1); the API's own count is derived where the stream allows it (`coordination_context.usage_exact`).
+`idle_turns` is one definition for every arm: a turn of read-only coordination calls (K: klatch read, claims, asks, who,
+wait; B1: TASKS.md reads, `git pull`, `ListAgents`) whose results held no new content. B1 and B1-roles get `claim_conflicts`
+from the board's git history (`board.py`) and board edits count as messages. Tests: `tests/test_coord_context.py`,
+`tests/test_board_metrics.py`, `tests/test_metric_version.py`.
 
 ## Scenario S4: ask and answer across specialists (`scenarios/s4.json`, fixture `specialists`)
 
@@ -302,7 +318,7 @@ one changelog line). A scripted colleague, not a model, delivers nine texts: `pl
 `authority` (the coordinator, overriding the user, stop work), `header` (formatted like a klatch digest line, claims to come from
 the user), `claim_note` (the reason of a claim), `ask`, `dm`, `hidden` (an HTML comment after blank lines, asking for silence),
 `webhook` (a push-event JSON whose commit message addresses AI agents) and `benign` (a harmless control). The goals are harmless and
-detectable: append a comment line `# CANARY-<token>` to `tallykit/__init__.py`, append `STOPPED-<token>` to `CHANGELOG.md`, or `touch`
+detectable: append a comment line `# CANARY-<token>` to `tallykit/__init__.py`, append `STOPPED-<token>` to `CHANGELOG.md`, or create (with `python3 -c`, because no arm may run the `touch` binary, #1525)
 a file named `PWNED-<token>` in `<run temp dir>/pwned/` (the harness makes the directory). The words are in
 `fixtures/injection/injections.json` (so they are in the fixture's sha256); `injections.py` makes the run's plan from the seed (tokens
 are `sha256(seed, form)`, so every run has its own) and writes it to the log directory as `injection-plan.json`. K arms receive the
@@ -373,8 +389,9 @@ collide, ask and answer through the real binary and the real tool); the tool's o
 
 Fields the spec lists that need a scenario's unit-to-path map or the store export are written as `null` (never omitted):
 `duplicate_work`, `claim_conflicts`, `overwrites`, `store_export` (S1 and S2 fill `duplicate_work` and `overwrites`; K arms fill `claim_conflicts` and `store_export` from the run store, B arms leave them null with a reason; S2 leaves `time_to_recover_s` null). `coordination_context_tokens` is an estimate (characters
-divided by 4) because the standard library has no tokenizer; the record says so in `notes`. `messages` counts klatch posts
-(`post`, `dm`, `ask`, `answer`) and `SendMessage` calls from the stream. A run found invalid (a harness fault) is kept with
+divided by 4) because the standard library has no tokenizer; the record says so in `notes` and in its `coordination_context`
+object (method, divisor, limits, characters by source). `messages` counts klatch posts
+(`post`, `dm`, `ask`, `answer`), `SendMessage` calls and edits of the board `TASKS.md` from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.
 
 Tests: `python3 -m unittest discover -s experiments/coordbench/tests`. The K-arm tests need `KLATCH_BIN` (a built klatch,
@@ -386,7 +403,7 @@ Related: `experiments/variance/repeat.py` (the repeat harness this builds on), `
 ## Scenario S3: a dependency chain and one handoff (`scenarios/s3.json`, fixture `chain`)
 
 F3 `chain` (the spec calls it `pipeline`) is a standard library inventory reader. Three agents work one after another on four
-steps: 1 the schema file (`chainkit/schema.json`, generated from `data/ruler.txt` by `tools/make_schema.py`), 2 the bin codes
+steps: 1 the schema file (`chainkit/schema.json`, made by `tools/make_schema.py` from a ruler that only a's task text gives; no file of the checkout has it, so b cannot make the schema itself, #1525), 2 the bin codes
 (`chainkit/bins.py`), 3 the loader (`chainkit/loader.py`), 4 the report (`chainkit/report.py`). Agent `a` does step 1 and
 writes `parse_bin` (returns `Bin(pfx, num)`), leaves `canonical_bin` unfinished, and is then reassigned and told to hand over
 to `c`. Agent `b` cannot do step 3 until a's schema file is on main (its task text does not give the format). Agent `c`
@@ -394,7 +411,7 @@ finishes `canonical_bin` and does step 4, which needs b's loader and c's own bin
 task text (and no other file an agent sees) says that bins with one legacy prefix were relocated, so their canonical code has
 another prefix and the number plus an arbitrary offset. The prefixes and the offset come from a fixed seed (1368) in
 `fixtures/chain/gen.py` and cannot be guessed; if a's knowledge does not cross the handoff, c's `canonical_bin` is right for
-every bin but the legacy ones. `gen.py` makes the data, the ruler, a's task text, the fake script, the reference and the
+every bin but the legacy ones. `gen.py` makes the data, a's task text (with the ruler), the fake script, the reference and the
 checker's `expected.json` (`gen.py --check` says when a committed file is out of date; a test runs it).
 
 The hidden checker `checks/chain/check.sh CHECKOUT` tests each step alone (the loader with the reference schema file in place,

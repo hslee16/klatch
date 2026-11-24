@@ -161,14 +161,15 @@ def overlay(root, names):
 
 
 def first_commit_tree_has(root, path, needs):
-    """True when the oldest non-root, non-merge commit that touched `path` has every file of `needs` in its tree; False
-    when `path` was never committed after the initial commit."""
+    """True when the oldest non-root, non-merge commit that touched `path` had every file of `needs` in its first parent's
+    tree, so the input existed before that commit and was not made by it (#1525); False when `path` was never committed
+    after the initial commit."""
     rc, out = git(root, "log", "--no-merges", "--reverse", "--format=%H", "--", path)
     for sha in out.split():
         rc, parents = git(root, "rev-list", "--parents", "-n", "1", sha)
         if len(parents.split()) < 2:
             continue  # the harness's initial commit
-        return all(git(root, "cat-file", "-e", "%s:%s" % (sha, n))[0] == 0 for n in needs)
+        return all(git(root, "cat-file", "-e", "%s^:%s" % (sha, n))[0] == 0 for n in needs)
     return False
 
 

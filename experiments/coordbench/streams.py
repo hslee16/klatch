@@ -9,11 +9,14 @@ import os
 import re
 
 import asks
+import cmdkinds
+import ctxcount
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 USAGE_KEYS = (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
               ("cache_creation", "cache_creation_input_tokens"))
 COORD_TOOLS = {"SendMessage", "ListAgents"}
+INBOUND_SUBTYPES = ("inbound_message", "cross_session_message", "message_received")
 HUMAN_WORDS = re.compile(r"\b(human|operator|user)\b", re.I)
 CONFLICT = re.compile(r"CONFLICT \(|Automatic merge failed|unmerged paths", re.I)
 
@@ -36,12 +39,7 @@ def usd_of(usage, row):
     return sum((usage.get(src, 0) or 0) * row[k] for k, src in USAGE_KEYS) / 1e6
 
 
-def _text_of(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
-    return ""
+_text_of = ctxcount.text_of
 
 
 class StreamState:
@@ -54,8 +52,6 @@ class StreamState:
         self.cmd_re = re.compile(binre + r"\s+(?:-\S+\s+)*[a-z]")
         # the verbs that read the room back to the agent (S7: the cost of reading the room per member, #1372)
         self.read_re = re.compile(binre + r"\s+(?:-\S+\s+)*(?:read|wait|digest|board|history)\b")
-        self.idle_re = re.compile(binre + r"\s+(?:-\S+\s+)*(?:wait|read|history|board|who|claims|asks|stuck|hooks)\b"
-                                  r"|^\s*git\s+(?:fetch|log)\b|^\s*sleep\b", re.M)
         self.models = []
         self.msgs = {}      # message id -> {"usage", "model", "tools": [tool_use dicts], "text"}
         self.order = []
@@ -63,7 +59,18 @@ class StreamState:
         self.result = None
         self.fake_usd = None
         self.git_conflicts = 0
-        self.coord_chars = 0
+        # what entered the agent's context because of the coordination layer, in characters, by source (ctxcount.py):
+        # hook output (K2), inbound message events (B1), the coordination calls' inputs, their results, the init tool schemas
+        self.parts = {"hook": 0, "inbound": 0, "tool_calls": 0, "tool_results": 0, "schema": 0}
+        self.schema_source = ctxcount.SCHEMA_SOURCE_PINNED
+        self.new_chars = 0         # the part of that which was new content (a board re-read counts only its new lines' worth)
+        self.inbound_events = 0
+        self.board_edits = 0       # tool calls that changed TASKS.md: B1's messages on the board (SPEC 5)
+        self.last_read = {}        # read-only call kind -> its last normalised result, for "new content" (cmdkinds.is_new)
+        self._init_seen = False
+        self._assistant_seen = False
+        self._last_mid = None
+        self.gaps = {}             # assistant message id -> {"coord", "other"} characters that entered after it, before the next
         self.read_chars = 0        # results of tool calls that read the room (klatch read, wait, digest, board, history; TASKS.md)
         self.hook_chars = 0        # what hooks injected (hook_response output): the digest, nudges and wake text
         self.max_coord_result = 0  # the largest single coordination tool result, in characters
@@ -76,6 +83,10 @@ class StreamState:
         self.done_t = None    # the harness clock when the result event was read
         self._t = None
         self.klatch_bin = klatch_bin
+
+    @property
+    def coord_chars(self):
+        return sum(self.parts.values())
 
     def _note_model(self, m):
         if m and m not in self.models:
@@ -90,6 +101,8 @@ class StreamState:
         return "TASKS.md" in blob
 
     def _is_read(self, name, inp):
+        if cmdkinds.is_board_edit(name, inp):
+            return False
         if name == "Bash":
             return bool(self.read_re.search(inp.get("command", ""))) or "TASKS.md" in inp.get("command", "")
         return "TASKS.md" in json.dumps(inp)
@@ -113,14 +126,37 @@ class StreamState:
     def _on_system(self, e):
         sub = e.get("subtype")
         if sub == "init":
-            self._note_model(e.get("model"))
+            self._on_init(e)
         elif sub == "hook_response":
             text = e.get("output") or e.get("stdout") or ""
             if isinstance(text, str):
-                self.coord_chars += len(text)
+                self._enter("hook", len(text))
                 self.hook_chars += len(text)
+        elif sub in INBOUND_SUBTYPES:
+            self._enter_inbound(_text_of(e.get("text") or e.get("message") or e.get("content")))
         elif sub == "fake_cost":
             self.fake_usd = float(e.get("usd", 0))
+
+    def _on_init(self, e):
+        self._note_model(e.get("model"))
+        if not self._init_seen:  # the schemas are carried once per agent, however many init events a stream repeats
+            self._init_seen = True
+            self.parts["schema"], self.schema_source = ctxcount.schema_chars(e.get("tools"))
+
+    def _gap(self):
+        return self.gaps.setdefault(self._last_mid, {"coord": 0, "other": 0})
+
+    def _enter(self, part, n, new=True):
+        """`n` characters of coordination context entered the agent's context from `part`."""
+        self.parts[part] += n
+        if new:
+            self.new_chars += n
+        if self._last_mid is not None:
+            self._gap()["coord"] += n
+
+    def _enter_inbound(self, text):
+        self.inbound_events += 1
+        self._enter("inbound", len(text))
 
     def _message_slot(self, msg):
         """The record of this assistant message (by id; an id-less one gets an anonymous id), created on first sight."""
@@ -131,10 +167,12 @@ class StreamState:
         if mid not in self.msgs:
             self.msgs[mid] = {"usage": {}, "model": None, "tools": [], "text": ""}
             self.order.append(mid)
+        self._last_mid = mid
         return self.msgs[mid]
 
     def _on_assistant(self, e):
         msg = e.get("message") or {}
+        self._assistant_seen = True
         m = self._message_slot(msg)
         self._note_usage_and_model(m, msg)
         for b in msg.get("content") or []:
@@ -157,34 +195,55 @@ class StreamState:
         return name == "SendMessage" or bool(cmd and self.msg_re.search(cmd))
 
     def _on_tool_use(self, m, b):
-        name, inp = b.get("name", "?"), b.get("input") or {}
+        name, raw = b.get("name", "?"), b.get("input") or {}
+        # a klatch call through a variable, alias or function defined in the same command is read as the binary (ctxcount)
+        inp = dict(raw, command=cmdkinds.resolve_command(raw.get("command"), self.klatch_bin)) if name == "Bash" and "command" in raw else raw
         coord = self._is_coord(name, inp)
-        self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp)}
+        self.tools[b.get("id")] = {"name": name, "input": inp, "coord": coord, "read": coord and self._is_read(name, inp),
+                                   "kinds": cmdkinds.read_kinds(name, inp, self.klatch_bin), "new": None}
         m["tools"].append(self.tools[b.get("id")])
         self.tool_total += 1
         self.by_tool[name] = self.by_tool.get(name, 0) + 1
         if coord:
-            self.coord_chars += len(json.dumps(inp))
-        if self._is_message(name, inp.get("command", "") if name == "Bash" else ""):
+            self._enter("tool_calls", len(json.dumps(raw)))
+        edit = cmdkinds.is_board_edit(name, inp)
+        self.board_edits += edit
+        if edit or self._is_message(name, inp.get("command", "") if name == "Bash" else ""):
             self.messages += 1
         for ev in asks.extract(name, inp, self.klatch_bin):
             self.msg_events.append(dict(ev, t=self._t))
 
     def _on_user(self, e):
-        for b in (e.get("message") or {}).get("content") or []:
+        content = (e.get("message") or {}).get("content")
+        for b in content if isinstance(content, list) else []:
             if isinstance(b, dict) and b.get("type") == "tool_result":
                 self._on_tool_result(b)
+        text = ctxcount.inbound_text(content, self._assistant_seen)
+        if text:
+            self._enter_inbound(text)
+
+    def _note_new(self, tu, text):
+        """Whether a read-only coordination call's result held new content (cmdkinds.is_new); True for any other call."""
+        if not tu["kinds"]:
+            return True
+        key = ",".join(tu["kinds"])
+        tu["new"] = cmdkinds.is_new(text, tu["kinds"], self.last_read.get(key))
+        self.last_read[key] = cmdkinds.normalize(text)
+        return tu["new"]
 
     def _on_tool_result(self, b):
         text = _text_of(b.get("content"))
         tu = self.tools.get(b.get("tool_use_id"))
         if tu is None:
             return
+        new = self._note_new(tu, text)
         if tu["coord"]:
-            self.coord_chars += len(text)
+            self._enter("tool_results", len(text), new)
             self.max_coord_result = max(self.max_coord_result, len(text))
             if tu["read"]:
                 self.read_chars += len(text)
+        elif text and self._last_mid is not None:
+            self._gap()["other"] += len(text)
         if tu["name"] == "Bash" and CONFLICT.search(text):
             self.git_conflicts += 1
 
@@ -214,8 +273,10 @@ class StreamState:
         return {k: sum(int(self.msgs[i]["usage"].get(src, 0) or 0) for i in self.order) for k, src in USAGE_KEYS}
 
     def _idle_turns(self):
+        """Turns whose every tool call is a read-only coordination call (cmdkinds.read_kinds) whose result had no new
+        content (cmdkinds.is_new). A call whose result never arrived is not called idle."""
         return sum(1 for i in self.order if self.msgs[i]["tools"] and all(
-            t["name"] == "Bash" and self.idle_re.search(t["input"].get("command", "")) for t in self.msgs[i]["tools"]))
+            t["kinds"] and t["new"] is False for t in self.msgs[i]["tools"]))
 
     def summary(self):
         r = self.result or {}
@@ -230,8 +291,16 @@ class StreamState:
             "messages": self.messages,
             "git_conflicts": self.git_conflicts,
             "idle_turns": self._idle_turns(),
+            "board_edits": self.board_edits,
             "human_mentions": 1 if HUMAN_WORDS.search(final or "") else 0,
             "coord_context_chars": self.coord_chars,
+            "coord_context_parts": dict(self.parts),
+            "coord_context_new_chars": self.new_chars,
+            "coord_context_method": ctxcount.method_record(),
+            "inbound_events": self.inbound_events,
+            "schema_source": self.schema_source,
+            "usage_exact": ctxcount.usage_exact([self.msgs[i]["usage"] for i in self.order],
+                                                [self.gaps.get(i) for i in self.order]),
             "read_context_chars": self.read_chars,
             "hook_context_chars": self.hook_chars,
             "max_coord_result_chars": self.max_coord_result,

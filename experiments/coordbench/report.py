@@ -23,6 +23,7 @@ import json
 import os
 import sys
 
+import metricver
 import scale
 import stats
 
@@ -103,6 +104,9 @@ def load_results(root):
 
 
 def is_complete(r):
+    ok = r["metrics"].get("integration_ok")
+    if isinstance(ok, bool):  # S1 (#1522): the scenario's primary outcome is integration, not the module count
+        return ok
     total = r["metrics"].get("units_total") or 0
     return total > 0 and r["metrics"].get("units_completed") == total
 
@@ -129,13 +133,14 @@ def cell_of(runs, all_runs):
     k = sum(1 for r in valid if is_complete(r))
     values = _metric_values(valid)
     lo, hi = stats.wilson(k, n)
-    return {
+    cell = {
         "n": n, "n_invalid": invalid, "invalid_flag": bool(runs) and invalid / len(runs) > INVALID_FLAG_SHARE,
         "completed": k, "completion_rate": (k / n) if n else None, "wilson": [lo, hi], "outcomes": _outcome_counts(valid),
         "censored_wall": sum(1 for r in valid if r["outcome"] in CENSORING_OUTCOMES),
         "metrics": {name: stats.summary(v) for name, v in values.items()}, "values": values,
         "valid_runs": [{"outcome": r["outcome"], "wall_s": r.get("wall_s"), "complete": is_complete(r)} for r in valid],
     }
+    return dict(cell, **metricver.completion_basis(valid))
 
 
 def pairs_of(arms):
@@ -232,6 +237,8 @@ def _by_scenario_and_arm(records):
 
 
 def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEFAULT_RESAMPLES):
+    newest = metricver.newest_only(records)  # the scaling table never mixes metric versions
+    records, versions = metricver.split_scenarios(records)
     by = _by_scenario_and_arm(records)
     out = {"records": len(records), "invalid_runs": sum(1 for r in records if not r.get("valid", True)),
            "primary_metric": primary, "bootstrap_seed": seed, "bootstrap_resamples": resamples, "scenarios": {},
@@ -248,7 +255,9 @@ def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEF
     _holm_adjust(primary_tests)
     out["tests_made"] = total
     out["primary_tests_made"] = len(primary_tests)
-    out["scaling"] = scale.scaling(records)
+    out["scaling"] = scale.scaling(newest)
+    if versions:
+        out["metric_versions"] = versions
     return out
 
 
@@ -263,7 +272,7 @@ def conditions(records):
             if v is not None and v not in vals:
                 vals.append(v)
         return vals
-    return {
+    out = {
         "milestones": uniq(lambda r: r["milestone"]),
         "agent models": uniq(lambda r: r["models"]["agent"]),
         "resolved model ids": sorted({i for r in records for i in (r.get("models") or {}).get("resolved_ids", [])}),
@@ -275,6 +284,7 @@ def conditions(records):
         "temperature": uniq(lambda r: r["temperature"]),
         "caps": uniq(lambda r: json.dumps(r["caps"], sort_keys=True)),
     }
+    return dict(out, **metricver.condition(records))
 
 
 def _completion_row(key, cn, co):
@@ -327,7 +337,8 @@ def compare(new, old, resamples=DEFAULT_RESAMPLES, seed=DEFAULT_SEED):
         row["p_holm"] = a
         if row["worse"]:
             row["flag"] = "REGRESSION" if (a < 0.05 and not row["small"]) else "possible regression (not confirmed)"
-    return {"rows": rows, "tests_made": len(rows)}
+    note = metricver.mismatch(new, old)
+    return dict({"rows": rows, "tests_made": len(rows)}, **({"metric_version_mismatch": note} if note else {}))
 
 
 def _ledger_ids(path):
@@ -410,7 +421,9 @@ def _flagged_lines(cmp_, flagged):
 
 def _comparison_lines(cmp_, baseline_dir):
     flagged = [r for r in cmp_["rows"] if r["flag"]]
-    lines = ["## Comparison with %s" % baseline_dir, ""] + _flagged_lines(cmp_, flagged)
+    lines = ["## Comparison with %s" % baseline_dir, ""]
+    lines += (["**Different metric versions**: %s." % cmp_["metric_version_mismatch"], ""] if cmp_.get("metric_version_mismatch") else [])
+    lines += _flagged_lines(cmp_, flagged)
     rows = [(r["scenario"], r["arm"], r["metric"], f(r["old_median"]), f(r["new_median"]), f(r["change"]),
              "%d/%d" % (r["n_old"], r["n_new"]), pf(r["p_holm"]), r["flag"]) for r in cmp_["rows"]]
     lines += ["", "All compared cells:", "",
@@ -480,7 +493,8 @@ def _scenario_lines(sc, s):
     if s["exploratory"]:
         lines += ["**EXPLORATORY**: at least one arm has fewer than %d runs. The tables are the result; no significance claim "
                   "is made." % MIN_N, ""]
-    lines.append(table(["Arm", "N", "invalid", "Completed (all units)", "Wilson 95%", "Outcomes", "Units median",
+    basis = "integration ok" if any(c.get("completion_basis") for c in s["arms"].values()) else "all units"
+    lines.append(table(["Arm", "N", "invalid", "Completed (%s)" % basis, "Wilson 95%", "Outcomes", "Units median",
                         "Cost USD median", "Turns median", "Wall s median"],
                        [_arm_row(arm, c) for arm, c in s["arms"].items()]))
     lines += ["", "Per metric, median with quartiles, range, then mean and sd as a second line:", ""]
@@ -502,6 +516,7 @@ def render_markdown(a, cmp_=None, baseline_dir=None, source=None, comparison_onl
         return "\n".join(L + ["No runs were found.", ""])
     if not comparison_only:
         L += _conditions_lines(a)
+        L += metricver.header_lines(a.get("metric_versions"))
     if cmp_ is not None:
         L += _comparison_lines(cmp_, baseline_dir)
     if comparison_only:

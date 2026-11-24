@@ -115,6 +115,23 @@ class TestScenarioFile(unittest.TestCase):
                     self.assertNotIn(fact, text, "a task must not name a fact the agent does not need: %s %s" % (agent, fact))
 
 
+class TestEveryNamedFakeScriptExists(unittest.TestCase):
+    def test_a_fixture_that_names_a_fake_script_has_it(self):
+        """The independent review (#1461, M8, #1525): specialists/fixture.json named a fake.json that was never written."""
+        fixtures = os.path.join(BENCH, "fixtures")
+        checked = 0
+        for name in sorted(os.listdir(fixtures)):
+            path = os.path.join(fixtures, name, "fixture.json")
+            if not os.path.exists(path):
+                continue
+            spec = read_json(path)
+            named = [spec.get("fake")] + [v.get("fake") for v in (spec.get("variants") or {}).values() if isinstance(v, dict)]
+            for rel in filter(None, named):
+                checked += 1
+                self.assertTrue(os.path.exists(os.path.join(fixtures, name, rel)), "%s names %s, which does not exist" % (name, rel))
+        self.assertGreater(checked, 5)
+
+
 class S4Base(Base):
     def argv(self, arms="B1", runs=1, **kw):
         a = super().argv(arms, runs, **kw)
