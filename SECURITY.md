@@ -102,7 +102,9 @@ Supported versions: the newest release only, the current practice and not a poli
   guard. Dependencies are checked for licence, advisories and sources, and a list of weak or home-grown crypto crates
   is refused.
 - **No telemetry, no update check, no outbound calls from the `klatch` binary.** `klatch` depends on no networking crate,
-  binds and connects to no socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores). A
+  binds and connects to no socket, and starts only `git` (to find a repository), `ps`, `secret-tool` and `security` (the keystores), plus `claude`
+  for its version and, only if you run `klatch judge run --hosted-judge` yourself, for the opt-in model judge described
+  under "Channel-safety screening" below. A
   test (`proto/klatch/tests/no_telemetry.rs`) pins this by inspecting the dependency tree and the source; it is an audit
   of what the code could do, not a capture of what one run did. Only the installer, which you run yourself, and your
   package manager contact the network (GitHub); the documents never tell you to pipe a download into a shell.
@@ -177,6 +179,8 @@ Supported versions: the newest release only, the current practice and not a poli
   who runs klatch can read every room, a dm included (`klatch admin export`), so an agent must not promise its user
   that a dm is hidden from them. klatch runs as you (DESIGN section 23): a hostile process of yours can read a dm like
   any message, except text in a sealed label, which stays encrypted everywhere but the reading agent's context. Making a dm needs no room-creation grant (decisions #631 and #672).
+- **The default channel-safety screening misses most of what it is measured on.** Its measured miss rate is about half
+  or more ("Channel-safety screening" below). It is a safety net, not a boundary.
 - **Claims** are advisory to every route into a file other than the claim hook.
 - **Session end.** The session-end hook cannot mark a member done when its credential idle-expired (#1027).
 - **Hand-opened Claude Code sessions** are discovered through the harness registry; Linux behaviour is unobserved (#171,
@@ -194,6 +198,91 @@ Supported versions: the newest release only, the current practice and not a poli
   files to the new key. A backup (`klatch admin backup`) or an archive copied elsewhere before the rotation keeps the
   old key's text, so a leaked old label key still opens those copies; remove them if that matters. Workers launched
   with the old key hold a dead one and must be relaunched.
+
+## Channel-safety screening: what the default catches and misses (read this before relying on it)
+
+**What it is.** When a message is copied from a room into a room labelled below it (`klatch cross`), klatch screens
+the text for channel safety only: a secret, a listed private term, personal data, private business matter, or text
+that tries to steer the screen. It is a screen on what crosses between channels, not a judge of the work and not a
+check of quality or correctness. Two floors run first, with no judge involved: the credential scanner and the
+scrubber list refuse a post and a crossing request that match them (the scrubber only below the agent cap; the
+scanner at every label). Then a judge decides the queued crossing.
+
+**What the default judge does.** The default is the local rules judge (`klatch judge run`; no model, no network, no
+cost). It has two checks. (1) The credential scanner: private key blocks; keys and tokens of well-known shapes (npm,
+AWS access keys, GitHub, Slack, Stripe, Google API keys, bearer tokens, JSON web tokens); a password inside a URL or a
+command; a value next to a label such as a password or secret field; and the same wrapped to dodge a scan
+(zero-width characters, a value spaced out or cut over lines, base64 or hex, written backwards). It does not depend on
+a label. (2) The scrubber: the private terms the administrator listed, matched as a case-insensitive substring, only
+when the readers are below the agent cap (`private` by default). A match is a deny that names the rule, never the
+text. That is the whole of its label awareness. It never redacts, and in `klatch judge run` it never allows: text
+it does not match is left queued for the quarantined reviewer, so with no reviewer such text does not cross. The
+measurements below count "not matched" as "would cross", because that is how the bench scores a judge that has no
+other gate.
+
+**How often it misses (measured, synthetic corpus).** "Miss" is an item labelled as one that should not cross
+(deny or redact) that the judge did not stop. The corpus is synthetic and labelled by one reviewer (an independent
+labeller is #924); real traffic will differ, in either direction. The numbers below are the current code, run on
+2026-11-23 for scenario S10 part 2 (commit 33bff7e8; no model call, no cost; the frozen test split is scored, not
+tuned on).
+
+| corpus | split | missed (should not cross) | false positives (clean items stopped) |
+|---|---|---|---|
+| main (333 items) | dev | 41 of 79, 51.9 percent (95 percent interval 41.1 to 62.6) | 0 of 118 (interval 0 to 3.2 percent) |
+| main | test | 30 of 55, 54.5 percent (41.5 to 67.0) | 0 of 79 (0 to 4.6 percent) |
+| hard (271 items) | dev | 72 of 94, 76.6 percent (67.1 to 84.0) | 0 of 66 (0 to 5.5 percent) |
+| hard | test | 56 of 72, 77.8 percent (66.9 to 85.8) | 0 of 38 (0 to 9.2 percent) |
+
+Sources: `experiments/coordbench/results-docs/s10-judge-rules.json` and `s10-judge-rules-hard.json`; corpora in
+`proto/klatch-bench/judge-eval/` (`corpus.jsonl`, `corpus-hard.jsonl`, `scrub.txt`). An earlier run of the same judge
+on the main corpus (2026-11-19, `proto/klatch-bench/judge-eval/results/2026-11-19/`) missed 51 of 79 on dev (64.6
+percent) and 36 of 55 on test (65.5 percent), and 83 of 94 (88.3 percent) and 63 of 71 (88.7 percent) on the hard
+corpus. That run predates the credential scanner changes of #921 and #987, which are in the code of the 2026-11-23
+run; the gap is in the secret categories (on the main dev split the 2026-11-19 run missed 6 secret-credential and 4
+code-log-secret items, the 2026-11-23 run none). Do not read the lower figure as "it works": it still misses about
+half. The false-positive figures are zero in every run, which says the rules are narrow, not that they are right.
+
+**What it does NOT screen.** From the categories the corpus shows being missed (counts are misses, dev and test
+splits, in the files above):
+- Personal data: contact details, government, bank or account identifiers, addresses, dates of birth (main corpus: 14
+  and 9 misses; hard: 27 and 18).
+- Private business matter: unreleased financials, deals, legal or personnel matters, unfixed vulnerabilities,
+  roadmaps, internal host names and addresses (main: 11 and 6; hard: 8 and 9).
+- Text that addresses the judge or reviewer to change a verdict, overt or hidden in otherwise clean text (main: 13 and
+  9 across the injection categories; hard: 14 and 11).
+- The same kinds of content in languages other than English (main: 2 and 4; hard: 10 and 4).
+- A sensitive part buried in a long message, and very short messages (hard: 4 and 4 misses on long items; 2 and 4 on
+  short ones).
+- A secret that only the surrounding talk marks as one, and a passphrase of plain words (by design: the rules do not
+  guess).
+- Some variants of a listed scrub term on the hard corpus (4 and 3 misses): the match is a case-insensitive
+  substring, so a term written another way is not matched. A term nobody listed is never matched.
+- Anything that needs judgement. The rules never redact, so even a stopped item is denied whole.
+
+**The opt-in model judge (not the default).** `klatch judge run --hosted-judge <model> --hosted-ceiling <label>`
+adds a Claude model, run by your own `claude` program with your own credentials, after the rules (a rules deny
+stands; the model can only narrow what the rules leave). It is off unless you give both flags, there is no default
+ceiling, only text posted strictly below the ceiling label is sent, and enabling it SENDS ROOM TEXT to an outside
+service. The `klatch` binary itself makes no network connection and holds no credential; the call is made by `claude`.
+It asks for the admin passphrase and is refused from inside a coding-agent session. A verdict below the confidence
+band (0.7 by default) is not applied and goes to the reviewer. It is the owner's own-use option, is not supported
+for others in this release, and and sends room text to a third party.
+Measured on the same corpora (2026-11-19, `proto/klatch-bench/judge-eval/results/2026-11-19/`, one run each, no
+run-to-run variance known): on the main corpus Sonnet missed 1 of 79 on dev (1.3 percent) and 0 of 55 on test, and
+Opus 7 of 79 (8.9 percent) and 4 of 55 (7.3 percent), with no over-blocking of clean items in either. On the hard
+corpus Sonnet missed 16 of 94 (17.0 percent) on dev and 10 of 71 (14.1 percent) on test, Opus 28 of 94 (29.8 percent)
+and 13 of 71 (18.3 percent), and Sonnet stopped 1 of 66 and 2 of 39 clean items. Almost all of the Opus misses, and
+most of the Sonnet ones, are a redaction that removed the data and kept a person's name. So a model judge lowers the
+miss rate a great deal and does not bring it to zero on hard text, costs about 3 to 4 seconds and under a cent per
+item (Sonnet: about $0.003 to $0.009 in the 2026-11-19 results), and can be steered by text it reads.
+
+**What to do.** Treat the default as a safety net for common credential shapes and for your own scrub list, not as a
+boundary. Keep sensitive material (personal data, private business matter, anything you would not paste into a public
+place) out of rooms that anything crosses from. Make labels, clearance and scopes the control: put sensitive work in a
+room labelled above the rooms that others read, give members the lowest clearance that works, seal labels that need it,
+and keep the reviewer role for a person or an agent you trust to read what the rules leave queued. List your own private
+terms in the scrubber. Improving the rules is tracked in #1413 (part 2); until a rerun shows a lower miss rate on a
+held-out split, assume the figures above.
 
 ## Reporting a problem
 
