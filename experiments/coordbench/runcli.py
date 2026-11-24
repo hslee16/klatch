@@ -56,7 +56,7 @@ def parse_args(argv):
     p.add_argument("--checks-dir", default=os.path.join(HERE, "checks"))
     p.add_argument("--scenarios-dir", default=os.path.join(HERE, "scenarios"))
     p.add_argument("--arms-dir", default=os.path.join(HERE, "arms"))
-    p.add_argument("--arm-text-version", default="draft-1")
+    p.add_argument("--arm-text-version", default="draft-2")
     p.add_argument("--klatch-bin", help="absolute path of the klatch binary (needed by K arms)")
     p.add_argument("--klatch-commit", help="the klatch commit (default: git HEAD of this repository)")
     p.add_argument("--bench-bin", help="the klatch-bench tool that exports the K arms' run store as counts (default: "

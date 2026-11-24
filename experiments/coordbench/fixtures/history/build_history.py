@@ -35,6 +35,13 @@ class Repo:
         with open(full, mode) as f:
             f.write(text)
 
+    def add_board_attributes(self):
+        """Append the union rule to .gitattributes (create the file when there is none), once (#1523)."""
+        path = os.path.join(self.dest, ".gitattributes")
+        have = open(path).read() if os.path.exists(path) else ""
+        if "TASKS.md merge=union" not in have.split("\n"):
+            self.write(".gitattributes", ("" if have == "" or have.endswith("\n") else "\n") + "TASKS.md merge=union\n", mode="a")
+
     def author_env(self, author, when):
         return dict(self.base, GIT_AUTHOR_NAME=author, GIT_AUTHOR_EMAIL=author + "@bench.invalid", GIT_AUTHOR_DATE=when,
                     GIT_COMMITTER_NAME=author, GIT_COMMITTER_EMAIL=author + "@bench.invalid", GIT_COMMITTER_DATE=when)
@@ -61,6 +68,7 @@ def main(dest, arm):
     board = arm == "B1"
     if board:
         repo.write("TASKS.md", hist["board_header"])
+        repo.add_board_attributes()  # two appends to the board merge without a conflict (#1523)
         repo.write("DECISIONS.md", hist["decisions_header"])
     for i, c in enumerate(hist["commits"]):
         _commit(repo, c, (t0 + datetime.timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%S+0000"), board)

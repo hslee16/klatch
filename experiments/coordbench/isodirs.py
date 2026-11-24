@@ -178,12 +178,13 @@ def validate_dir(path, what, strict=False):
     the allow of the agent's own clone), which would leave the user's other directories readable to the file tools."""
     p = os.path.realpath(path)
     root = _under_user_root(p) if strict else None
+    tmp = os.path.realpath(tempfile.gettempdir())
     if p == real_home():
         return "%s %s is your home directory: use a directory of its own" % (what, path)
     if root:
         return ("%s %s lies under %s: in sandbox mode the file-tool deny rules cannot cover a user root that holds the run; use a "
-                "directory outside the user roots, for example under the system temp directory %s (or --isolation layout, "
-                "which gives up the sandbox)" % (what, path, root, os.path.realpath(tempfile.gettempdir())))
+                "directory outside the user roots, for example --logs-dir %s --tmp-root %s (or --isolation layout, "
+                "which gives up the sandbox)" % (what, path, root, os.path.join(tmp, "coordbench-logs"), os.path.join(tmp, "coordbench-tmp")))
     return _ownership_problem(p, path, what) if os.path.exists(p) else None
 
 

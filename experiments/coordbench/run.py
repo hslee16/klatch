@@ -142,7 +142,7 @@ class Suite:
             "metrics": {"units_total": 0, "units_completed": 0, "duplicate_work": None, "git_conflicts": None,
                         "claim_conflicts": None, "overwrites": None, "messages": None, "human_interventions": None,
                         "coordination_context_tokens": None, "idle_turns": None},
-            "outcome_checks": [], "roles": None, "isolation": None,
+            "outcome_checks": [], "roles": None, "isolation": None, "messaging_verified": None,
             "artifacts": {"streams": None, "store_export": None, "checker_report": None}, "notes": "",
         }
 

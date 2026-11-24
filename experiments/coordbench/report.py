@@ -25,6 +25,7 @@ import sys
 
 import fixhash
 import metricver
+import msglabel
 import scale
 import stats
 
@@ -141,7 +142,7 @@ def cell_of(runs, all_runs):
         "metrics": {name: stats.summary(v) for name, v in values.items()}, "values": values,
         "valid_runs": [{"outcome": r["outcome"], "wall_s": r.get("wall_s"), "complete": is_complete(r)} for r in valid],
     }
-    return dict(cell, **metricver.completion_basis(valid))
+    return dict(cell, **metricver.completion_basis(valid), **msglabel.cell_fields(runs))
 
 
 def pairs_of(arms):
@@ -318,7 +319,7 @@ def _metric_row(key, m, cn, co):
 def _cell_rows(key, cn, co):
     """[(row, p)] of one scenario and arm present in both analyses: the completion row, then each compared metric."""
     pairs = [_completion_row(key, cn, co)] + [_metric_row(key, m, cn, co) for m in COMPARED]
-    return [(row, p) for row, p in pairs if row is not None]
+    return [(dict(row, **msglabel.carry(cn)), p) for row, p in pairs if row is not None]
 
 
 def _shared_cells(new, old):
@@ -414,7 +415,7 @@ def _flagged_lines(cmp_, flagged):
     intro = ("Flags (%d of %d comparisons). A regression is a median worse than the previous median by more than the "
              "previous interquartile range; it is confirmed only when the Holm-corrected test agrees and N is at least "
              "%d in both. The human decides what a regression means for a release." % (len(flagged), cmp_["tests_made"], MIN_N))
-    rows = [(_flag_label(r), r["scenario"], r["arm"], r["metric"],
+    rows = [(_flag_label(r), r["scenario"], msglabel.label(r["arm"], r), r["metric"],
              "%s %s" % (f(r["old_median"]), iv([r["old_q1"], r["old_q3"]]) if r["old_q1"] is not None else ""),
              f(r["new_median"]), f(r["change"]), "%d/%d" % (r["n_old"], r["n_new"]), pf(r["p"]), pf(r["p_holm"]))
             for r in flagged]
@@ -427,7 +428,7 @@ def _comparison_lines(cmp_, baseline_dir):
     lines = ["## Comparison with %s" % baseline_dir, ""]
     lines += fixhash.comparison_lines(cmp_)
     lines += _flagged_lines(cmp_, flagged)
-    rows = [(r["scenario"], r["arm"], r["metric"], f(r["old_median"]), f(r["new_median"]), f(r["change"]),
+    rows = [(r["scenario"], msglabel.label(r["arm"], r), r["metric"], f(r["old_median"]), f(r["new_median"]), f(r["change"]),
              "%d/%d" % (r["n_old"], r["n_new"]), pf(r["p_holm"]), r["flag"]) for r in cmp_["rows"]]
     lines += ["", "All compared cells:", "",
               table(["Scenario", "Arm", "Metric", "Previous median", "Now", "Change", "N old/new", "p Holm", "Flag"], rows), ""]
@@ -441,7 +442,7 @@ def _median_of(m, key, nd=2):
 def _arm_row(arm, c):
     m = c["metrics"]
     oc = ", ".join("%s %d" % (k, v) for k, v in sorted(c["outcomes"].items()))
-    return (arm, c["n"], "%d%s" % (c["n_invalid"], " (FLAG: over 20 percent)" if c["invalid_flag"] else ""),
+    return (msglabel.label(arm, c), c["n"], "%d%s" % (c["n_invalid"], " (FLAG: over 20 percent)" if c["invalid_flag"] else ""),
             "%d of %d (%s)" % (c["completed"], c["n"], f(c["completion_rate"]) if c["n"] else "n/a"),
             iv(c["wilson"]), oc or "none", _median_of(m, "units_completed"), _median_of(m, "cost_usd", 3),
             _median_of(m, "turns"),
@@ -449,7 +450,7 @@ def _arm_row(arm, c):
 
 
 def _metric_rows(s):
-    return [(arm, name, sm["n"], f(sm["median"], 3), f(sm["q1"], 3), f(sm["q3"], 3), f(sm["min"], 3), f(sm["max"], 3),
+    return [(msglabel.label(arm, c), name, sm["n"], f(sm["median"], 3), f(sm["q1"], 3), f(sm["q3"], 3), f(sm["min"], 3), f(sm["max"], 3),
              f(sm["mean"], 3), f(sm["sd"], 3))
             for arm, c in s["arms"].items() for name, sm in c["metrics"].items() if sm]
 
@@ -503,7 +504,7 @@ def _scenario_lines(sc, s):
     lines += ["", "Per metric, median with quartiles, range, then mean and sd as a second line:", ""]
     lines.append(table(["Arm", "Metric", "N", "median", "q25", "q75", "min", "max", "mean", "sd"], _metric_rows(s)))
     lines.append("")
-    return lines + _tests_lines(s["tests"])
+    return lines + _tests_lines(msglabel.relabel_tests(s["tests"], s["arms"]))
 
 
 def _tests_made_line(a):
@@ -514,7 +515,7 @@ def _tests_made_line(a):
 
 
 def render_markdown(a, cmp_=None, baseline_dir=None, source=None, comparison_only=False):
-    L = _header_lines(a, source)
+    L = _header_lines(a, source) + msglabel.note_lines(a)
     if not a["scenarios"]:
         return "\n".join(L + ["No runs were found.", ""])
     if not comparison_only:

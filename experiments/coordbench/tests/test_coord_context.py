@@ -159,13 +159,18 @@ class BoardEditsAreMessages(unittest.TestCase):
     def count(self, name, **inp):
         return streams.parse_stream([asst("m1", [tool("t1", name, **inp)])], klatch_bin=KB)
 
-    def test_edits_and_writes_to_the_board_count(self):
-        self.assertEqual(self.count("Edit", file_path="/w/TASKS.md", old_string="working", new_string="done")["messages"], 1)
-        self.assertEqual(self.count("Write", file_path="TASKS.md", content="x")["messages"], 1)
-        self.assertEqual(self.count("Bash", command="echo '- a | working | f.py | t' >> TASKS.md")["messages"], 1)
-        self.assertEqual(self.count("Bash", command="sed -i 's/working/done/' TASKS.md")["messages"], 1)
-        self.assertEqual(self.count("Bash", command="printf x | tee -a TASKS.md")["messages"], 1)
+    def test_edits_and_writes_that_add_a_message_line_to_the_board_count(self):
+        ans = "answer: X=1 (from b)"
+        self.assertEqual(self.count("Edit", file_path="/w/TASKS.md", old_string="working", new_string=ans)["messages"], 1)
+        self.assertEqual(self.count("Write", file_path="TASKS.md", content=ans)["messages"], 1)
+        self.assertEqual(self.count("Bash", command="echo '%s' >> TASKS.md" % ans)["messages"], 1)
+        self.assertEqual(self.count("Bash", command="printf 'seeking: q' | tee -a TASKS.md")["messages"], 1)
         self.assertEqual(self.count("Bash", command="echo x >> TASKS.md")["board_edits"], 1)
+
+    def test_a_claim_or_status_edit_is_a_board_edit_and_not_a_message(self):
+        self.assertEqual(self.count("Edit", file_path="/w/TASKS.md", old_string="working", new_string="done")["messages"], 0)
+        self.assertEqual(self.count("Bash", command="echo '- a | working | f.py | t' >> TASKS.md")["messages"], 0)
+        self.assertEqual(self.count("Bash", command="sed -i 's/working/done/' TASKS.md")["board_edits"], 1)
 
     def test_reading_the_board_is_not_a_message(self):
         self.assertEqual(self.count("Read", file_path="/w/TASKS.md")["messages"], 0)
@@ -177,7 +182,7 @@ class BoardEditsAreMessages(unittest.TestCase):
 
     def test_a_message_and_a_board_edit_both_count_once_each(self):
         s = streams.parse_stream([asst("m1", [tool("t1", "SendMessage", to="b", message="hi"),
-                                              tool("t2", "Edit", file_path="TASKS.md", old_string="a", new_string="b")])])
+                                              tool("t2", "Edit", file_path="TASKS.md", old_string="a", new_string="answer: other fact (from c)")])])
         self.assertEqual(s["messages"], 2)
 
 

@@ -1,0 +1,2 @@
+- coordbench: B1 and B1-roles agents share one Claude config directory under the run's scratch (native messaging finds peers through it; HOME, TMPDIR and clones stay per agent; every other arm keeps one per agent), and a B1 run is invalid when messaging demonstrably did not work (`messaging_verified` in the record, #1520).
+- coordbench: B1 repositories get `TASKS.md merge=union`, the tallykit and onefile checkers skip the board for conflict markers, every arm has the same 5-minute waiting limit, B1 agents record answers on the board; arm text version label `draft-2` (#1523).

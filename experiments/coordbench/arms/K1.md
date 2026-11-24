@@ -21,6 +21,7 @@ Handing work over: if you must stop before a piece is finished, post `checkpoint
 next step`, and `handoff: NAME` to give the piece to the colleague who takes it over.
 
 Waiting: if you need another agent's result, run `{{KLATCH}} wait {{ROOM}}`, which returns when something new is posted
-or after a timeout; do not poll with sleep. Do the parts you can do first.
+or after a timeout; do not poll with sleep. Do the parts you can do first. Do not wait more than 5 minutes in total for any one
+result; if it has not come by then, do the part that you can do without it and go on.
 
 Finishing: release your claims, post `status: done`, and stop.

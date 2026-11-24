@@ -27,7 +27,7 @@ from runmetrics import RunMetrics, resolved_models, team_metrics, tool_calls_of
 from runisolation import IsolationSupport
 from runpoll import PollSupport
 from runroles import RoleSupport
-from runprompt import TASK_BOARD, build_prompt
+from runprompt import TASK_BOARD, build_prompt, seed_board_attributes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RunSpot = collections.namedtuple("RunSpot", "arm seed scratch log_dir")  # which arm, with which seed, where it runs and logs
@@ -116,6 +116,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
             board = (self.fx.seed_history or {}).get("board", []) + (self.inj["board"] if self.inj else [])
             with open(os.path.join(seedtree, "TASKS.md"), "w") as f:
                 f.write(TASK_BOARD + "".join(l + "\n" for l in board))
+            seed_board_attributes(seedtree)
         git(["init", "-q", "-b", "main"], seedtree, henv)
         git(["add", "-A"], seedtree, henv)
         git(["commit", "-q", "-m", "initial"], seedtree, henv)
@@ -227,6 +228,8 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         env.update(extra)
         env["KLATCH_NAME"] = name
         env["HOME"] = os.path.join(agent_dir, "home")
+        if "CLAUDE_CONFIG_DIR" in env:  # the agent's own, or in B1 and B1-roles the run's one shared directory (#1520)
+            env["CLAUDE_CONFIG_DIR"] = self.config_dir(name)
         env["TMPDIR"] = os.path.join(agent_dir, "tmp")
         if role:
             env["COORDBENCH_RESTART_DIR"] = self.restart_dir
@@ -516,6 +519,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         rec, log_dir = self.rec, self.log_dir
         self.allsums = {n: s.summary() for n, s in self.states.items()}
         self.note_isolation()
+        self.note_messaging()
         # the workers' numbers are the team's work; the role members' and the supervisor's replacements are the roles' (#1421)
         sums = {n: v for n, v in self.allsums.items() if n not in self.role_keys and n not in self.repl_keys}
         shas = {n: sha256_file(os.path.join(log_dir, "%s.stream.jsonl" % n)) for n in self.procs}

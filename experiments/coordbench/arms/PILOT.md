@@ -1,8 +1,8 @@
 # Pilot plan for the arms (ticket #1365): for the human to run, not run by the builder
 
 Purpose: before any M0 money is spent, check on the trivial fixture that each arm's mechanics work, in particular that B1's
-native messaging works under `claude -p`, that K2 joins its room, and that nothing leaks between arms. Nothing here has been
-run. Real agents cost money and need your approval (SPEC section 8); `run.py` refuses `--driver claude` without
+native messaging works under `claude -p`, that K2 joins its room, and that nothing leaks between arms. Only the messaging probe
+(part 1) has been run, on 2026-11-23; the rest has not. Real agents cost money and need your approval (SPEC section 8); `run.py` refuses `--driver claude` without
 `--budget-approved-in`.
 
 ## Budget (from SPEC 8.1 and `cost_model.json`)
@@ -19,8 +19,9 @@ run. Real agents cost money and need your approval (SPEC section 8); `run.py` re
 
 ## Before you start
 
-- Close your other interactive Claude Code sessions (they are visible to `ListAgents`, see leak checks below), and run
-  nothing else with `claude` during the pilot.
+- Your other interactive Claude Code sessions need not be closed: the probe of 2026-11-23 (below) showed that `ListAgents`
+  lists only the sessions that share the probe's config directory, never the user's other sessions. Run nothing else with
+  `claude` that shares the pilot's config directory.
 - `claude --version` must be 2.1.248 or later (cross-session messaging on every provider, docs availability section); the
   builder's machine has 2.1.330. Record the version.
 - Build klatch (the K arms need the binary): `cargo build` in `proto/`, then the binary is `proto/target/debug/klatch`.
@@ -38,36 +39,59 @@ run in which the scan found an out-of-bounds tool call is invalid.
 
 ## Part 1: messaging probe (does B1 messaging work under `-p`)
 
-The trivial fixture's two tasks are independent, so B1 agents may never message anyone, and part 2 alone would prove nothing
-about messaging. This probe forces one message each way, with the same flags the driver gives a B1 agent. Run it from an empty
-scratch directory:
+Measured on 2026-11-23 (#1520): three real two-session probes, Haiku, claude 2.1.331, macOS, with the flags the driver gives a B1
+agent (`--setting-sources local --no-session-persistence --permission-mode acceptEdits --allowedTools SendMessage ListAgents
+"Bash(sleep:*)" --settings '{"crossSessionInbound":"accept"}'`):
 
-    P=$(mktemp -d) && cd "$P" && mkdir home cfg
+1. One shared HOME and one shared `CLAUDE_CONFIG_DIR` for both sessions: `ListAgents` in `a` names `b`, `SendMessage` PING to `b` is
+   delivered, `b` replies PONG with `SendMessage`, `a` prints PONG. Messaging works under `-p`. The user's three other interactive
+   sessions (other projects) were running and were NOT visible: `ListAgents` showed only the partner.
+2. A separate HOME and a separate `CLAUDE_CONFIG_DIR` per agent: `ListAgents` shows no reachable agents and `SendMessage` fails with
+   `No agent named b is reachable`. Messaging is BROKEN. (This is how the harness started B1 agents after #1519, which made B1 a
+   straw man: B0 plus a board.)
+3. A separate HOME per agent and ONE shared `CLAUDE_CONFIG_DIR`: `ListAgents` names `b` and `SendMessage` is delivered. The peer
+   registry follows `CLAUDE_CONFIG_DIR`, not HOME.
+
+So since #1520 the agents of one B1 or B1-roles run share ONE config directory (`<scratch>/agents/cfg-TOKEN`, mode 0700, never
+`~/.claude`) and keep their own HOME, TMPDIR and clone; every other arm keeps one config directory per agent. A reply by raw socket
+path (`uds:/tmp/cc-socks/N.sock`) exists, but the sockets are per process and nothing here uses it.
+
+Result texts seen: a `ListAgents` result has `Peer sessions (1):` and one line per peer (`  b [eab75d]  .  interactive  .  busy  .
+started 16s ago`) or says `No reachable agents`; a `SendMessage` result is JSON, `{"success":true,...}` or
+`{"success":false,"message":"No agent named 'b' is reachable..."}` (or `Failed to send to uds:...`), with is_error NOT set on a
+failure. The probe streams are in `tests/fixtures/msgprobe/` (home path stripped) and the tests replay them. To repeat the probe (shared config directory, separate homes), from an empty scratch directory:
+
+    P=$(mktemp -d) && cd "$P" && mkdir home-a home-b cfg
     FLAGS=(--model claude-haiku-4-5-20251001 --setting-sources local --no-session-persistence
            --permission-mode acceptEdits --allowedTools SendMessage ListAgents "Bash(sleep:*)"
            --max-turns 12 --max-budget-usd 0.25 --output-format stream-json --verbose
            --settings '{"crossSessionInbound":"accept"}')
-    export HOME=$P/home CLAUDE_CONFIG_DIR=$P/cfg      # in this shell only; open a fresh shell afterwards
-    claude -p "You are b. Run sleep 20 three times, one after another. If a colleague messages you, reply with SendMessage to that colleague with the text PONG. Then print DONE b." --name b "${FLAGS[@]}" > b.jsonl &
+    env HOME=$P/home-b CLAUDE_CONFIG_DIR=$P/cfg claude -p "You are b. Run sleep 20 three times, one after another. If a colleague messages you, reply with SendMessage to that colleague with the text PONG. Then print DONE b." --name b "${FLAGS[@]}" > b.jsonl &
     sleep 15
-    claude -p "You are a. Run ListAgents, then send b the message PING with SendMessage, then run sleep 20 once and print what you received. Then print DONE a." --name a "${FLAGS[@]}" > a.jsonl
+    env HOME=$P/home-a CLAUDE_CONFIG_DIR=$P/cfg claude -p "You are a. Run ListAgents, then send b the message PING with SendMessage, then run sleep 20 once and print what you received. Then print DONE a." --name a "${FLAGS[@]}" > a.jsonl
     wait
 
-`--allowedTools` is variadic, so the list must be followed by another flag, as here. The flags are the real driver's flags
-for a B1 agent (see `drivers.py`). Because HOME is changed, the probe needs `ANTHROPIC_API_KEY` in the environment, not a
-subscription login.
+`--allowedTools` is variadic, so the list must be followed by another flag, as here. Because HOME is changed, the probe needs
+`ANTHROPIC_API_KEY` in the environment, not a subscription login.
 
-Look for, in `a.jsonl` and `b.jsonl`:
+The harness now judges this itself in every B1 and B1-roles run (`messaging.py`), and the record has a `messaging_verified` object:
+`{"tools_present", "listagents_named_peer", "messages_sent", "messages_delivered", "listagents_calls", "status", "reason",
+"config_dir_entries"}`. `status` is `failed` (the run is INVALID, the reason is in `notes`) when an init event that carries a tools list lacks
+`SendMessage` or `ListAgents`, or when, at least 8 s after EVERY agent had started, a `ListAgents` result named no teammate (or a
+`SendMessage` failed with `No agent named`) while another agent's stream shows it still running, and no `ListAgents` result of the
+run ever named a teammate (a real agent's first `ListAgents` comes 3.6 to 4 s after it starts, so earlier ones are no test); `verified`
+when some result named a teammate (found and a message accepted; not that it was read); `unknown` (the run stays valid but proves
+nothing, and the report labels a B1 group that holds one 'messaging unverified') when no `ListAgents` ran 8 s after the last start
+with a colleague still running, or the run has one agent. `first_listagents_after_all_started` and `clock` show why. `config_dir_entries`
+lists what the run left in the shared config directory (path, bytes, sha256), so the state B1 agents share through it can be read off.
 
-- `ListAgents` and `SendMessage` are in the `tools` list of the init event, and `a`'s `ListAgents` result names `b`.
-  If `ListAgents` shows nothing, messaging is not working under `-p` here (the docs say a `-p` session binds an inbox socket
-  and is listed; `--bare` would prevent that, and the driver does not use it).
-- `a`'s `SendMessage` result does not begin `Not sent` or `Not delivered`; `b`'s log shows a `Message from` entry and a PONG
-  reply; `a` receives the PONG.
-- No held or expired notice (a message held by the default inbound policy would expire after 5 minutes; the driver sets
-  `crossSessionInbound` to `accept` to avoid it).
-- Whether HOME and CLAUDE_CONFIG_DIR being per run, and `--no-session-persistence`, still let the two sessions see each other
-  (the docs do not say how the socket is located, only that it lives in a per-user directory; unknown until this probe).
+## Part 1b: a B1 run of dependent agents is the harness's proof
+
+The real B1 pilot on the trivial fixture came out `unknown`: its two tasks are independent and no agent called `ListAgents` or
+`SendMessage`, and the B1 prompt must not tell agents to (prompt parity). The proof is a B1 run of a fixture whose agents depend on
+each other (S3 chain, run by the coordinator), where an agent has a reason to list agents and ask. Read `messaging_verified.status` of
+that record. `verified` is the proof. `unknown` proves nothing: repeat it, or run the probe above. `failed` means the shared config
+directory did not let the sessions see each other: stop and report. Read `config_dir_entries` as well.
 
 ## Part 2: one run per arm on the trivial fixture
 
@@ -75,7 +99,7 @@ Look for, in `a.jsonl` and `b.jsonl`:
         --driver claude --model claude-haiku-4-5-20251001 --claude-bin "$(command -v claude)" \
         --klatch-bin "$PWD/proto/target/debug/klatch" --logs-dir /tmp/coordbench-pilot-logs \
         --max-run-usd 0.50 --max-suite-usd 2.00 --max-turns 30 --wall-s 600 \
-        --arm-text-version proposed-1 --budget-approved-in "ISSUE-COMMENT-URL"
+        --arm-text-version proposed-2 --budget-approved-in "ISSUE-COMMENT-URL"
 
 Run `--dry-run` with the same arguments first; it prints the plan and the range and starts nothing.
 
@@ -83,14 +107,16 @@ Look for, in `experiments/coordbench/results/pilot-1365/` and `/tmp/coordbench-p
 
 1. Outcomes: all four runs `ok`, with both checks passing (the fixture is trivial; a failure means the mechanics, not the
    model, are wrong). Spend per run against the $0.05 assumption; record it in `cost_model.json` if it is very different.
-2. B1 mechanics: `SendMessage` and `ListAgents` in the init tools of B1 agents; any `SendMessage` call and its result; board
-   lines added to `TASKS.md` in origin, in the format `- NAME | working | FILES | TITLE`; a board merge conflict handled.
+2. B1 mechanics: `SendMessage` and `ListAgents` in the init tools of B1 agents; `messaging_verified` of the record (see part 1);
+   any `SendMessage` call and its result; board lines added to `TASKS.md` in origin, in the format `- NAME | working | FILES |
+   TITLE` (`.gitattributes` makes two appends merge without a conflict, so a `git_conflicts` count on the board is a bug).
 3. K2 join: each K2 agent ran `klatch init`'s hooks (hook events in the stream), joined the room, posted, and the run's
    store shows both members; K1 shows posts without hook events.
 4. Leaks between arms (all should be none):
    - B0, K1 and K2 init tool lists contain neither `SendMessage` nor `ListAgents`; a B0 or K agent never calls them.
    - The built prompts (kept in the logs directory) of B0 and B1 contain no `klatch`, `room` or `lobby`.
-   - B1's `ListAgents` result lists only `a` and `b`, never one of your own sessions or an agent of another run.
+   - B1's `ListAgents` result lists only `a` and `b`, never one of your own sessions or an agent of another run (the probe of
+     2026-11-23 showed none of three running interactive sessions).
    - `~/.klatch` and `~/.claude` are unchanged (compare with your note); the klatch store of K arms is under the run's
      scratch, which is removed after the run.
    - No process of a finished run is left (`ps` for `claude` and `klatch`); no stray files in `/tmp/cc-socks-*` beyond the usual.

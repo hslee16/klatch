@@ -14,12 +14,14 @@ Not stepping on each other's work: before you edit a file, read `TASKS.md` again
 A save replaces the whole file, so read a file again right before you change it and change only the lines you need.
 
 Asking and answering questions: send `seeking: THE EXACT QUESTION` to the colleague most likely to know. A colleague who can
-answer replies `answer: ...` with the fact and where it comes from. Before you ask, read `TASKS.md` and `git log`.
+answer replies `answer: ...` with the fact and where it comes from. When you learn a fact others may need, add a line
+`answer: FACT (from NAME)` at the end of `TASKS.md` (NAME is its source). Before you ask, read `TASKS.md` and `git log`.
 
 Handing work over: if you must stop before a piece is finished, set its `TASKS.md` line to `handoff`, write in the TITLE what
 is done, what is not and the exact next step, and send `handoff: TITLE` to the colleague who takes it over.
 
 Waiting: if you need another agent's result, message them once and do the parts you can do first; to wait, run `sleep 20`,
-then read `TASKS.md` again (a reply arrives by itself while you work). Do not wait more than a few minutes.
+then read `TASKS.md` again (a reply arrives by itself while you work). Do not wait more than 5 minutes in total for any one
+result; if it has not come by then, do the part that you can do without it and go on.
 
 Finishing: set your lines to `done`, make sure your files are committed, and stop.
