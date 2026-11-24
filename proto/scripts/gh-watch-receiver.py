@@ -19,8 +19,11 @@ import json
 import os
 import re
 import stat
+import signal
 import subprocess
 import sys
+import threading
+import time
 import unicodedata
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -32,6 +35,14 @@ FIELD_MAX = 80
 LINE_MAX = 300
 SEEN_MAX = 4096
 SIGNATURE_PREFIX = "sha256="
+# The watcher claim (#1338): the receiver holds this named claim while it is up, so any session sees the watcher in
+# `klatch claims` and the board, and a lapse (a kill -9, a reboot) is the dead-watcher signal `klatch stuck` reports.
+# Renewed every CLAIM_RENEW seconds with a lease of CLAIM_TTL: three intervals, so two renewals can be missed (a slow
+# klatch call, a busy store) before the claim lapses, and a dead receiver shows within CLAIM_TTL seconds.
+CLAIM_NAME = "watch:gh"
+CLAIM_TTL = 90
+CLAIM_RENEW = 30
+CLAIM_REASON = "gh-watch receiver"
 
 
 def clean(value, limit=FIELD_MAX):
@@ -206,15 +217,71 @@ class Sink:
         if self.klatch_bin and (severity == "ALERT" or self.post_min == "INFO"):
             self.post("%s %s" % (severity, text))
 
-    def post(self, line):
+    def klatch(self, args):
+        """The only program this file runs: `klatch ARGS` as the member, with the caller's KLATCH_HOME. Returns
+        (returncode, stderr text); (-1, ...) when it could not run at all."""
         env = dict(os.environ)
         env["KLATCH_NAME"] = self.member
         try:
-            subprocess.run([self.klatch_bin, "post", self.room, line], env=env, timeout=15, check=False,
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            r = subprocess.run([self.klatch_bin] + list(args), env=env, timeout=15, check=False,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except (OSError, subprocess.SubprocessError) as e:
-            sys.stderr.write("gh-watch: klatch post failed: %s\n" % type(e).__name__)
+            sys.stderr.write("gh-watch: klatch %s failed: %s\n" % (args[0], type(e).__name__))
             sys.stderr.flush()
+            return -1, ""
+        return r.returncode, r.stderr.decode("utf-8", "replace")
+
+    def post(self, line):
+        self.klatch(["post", self.room, line])
+
+
+class ClaimKeeper:
+    """Holds the named watcher claim (#1338). `run(args)` runs klatch and returns (returncode, stderr); `clock()` is
+    seconds (monotonic in the receiver, fake in the tests). A refusal is told by the fixed prefix `refused:` that klatch
+    puts on a claim conflict; nothing else in the text is read or trusted, and the text is never printed raw."""
+
+    def __init__(self, run, clock, room, name=CLAIM_NAME, ttl=CLAIM_TTL, interval=CLAIM_RENEW):
+        self.run, self.clock, self.room, self.name, self.ttl, self.interval = run, clock, room, name, ttl, interval
+        self.held = False
+        self.due = clock() + interval
+        self.lock = threading.Lock()
+
+    def _claim(self):
+        rc, err = self.run(["claim", self.room, self.name, "--ttl", str(self.ttl), "--shared", "--reason", CLAIM_REASON])
+        if rc == 0:
+            return "held"
+        return "refused" if err.startswith("refused:") else "failed"
+
+    def acquire(self):
+        """Take the claim: held, refused (another holder; this receiver must not run) or failed (klatch trouble)."""
+        with self.lock:
+            state = self._claim()
+            self.held = state == "held"
+            self.due = self.clock() + self.interval
+            return state
+
+    def tick(self):
+        """Renew when the interval has passed. A stall renews once, not in a burst. True when it tried."""
+        with self.lock:
+            now = self.clock()
+            if now < self.due:
+                return False
+            was = self.held
+            self.held = self._claim() == "held"
+            self.due = now + self.interval
+            if was and not self.held:
+                sys.stderr.write("gh-watch: the %s claim is not held (renewal failed or another holder took it)\n"
+                                 % self.name)
+                sys.stderr.flush()
+            return True
+
+    def release(self):
+        """Give the claim up on a clean stop, once; never when it is not ours."""
+        with self.lock:
+            if not self.held:
+                return
+            self.held = False
+            self.run(["release", self.room, self.name])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -297,6 +364,11 @@ def main(argv):
     ap.add_argument("--klatch-bin", help="installed klatch binary used to post each note (optional)")
     ap.add_argument("--as-member", help="member name the posts are made as (needs --klatch-bin)")
     ap.add_argument("--room", help="room the posts go to (needs --klatch-bin)")
+    ap.add_argument("--no-claim", action="store_true", help="do not hold the %s claim (needs --klatch-bin to be on)"
+                    % CLAIM_NAME)
+    ap.add_argument("--claim-ttl", type=int, default=CLAIM_TTL, help="seconds the claim lasts (default %d)" % CLAIM_TTL)
+    ap.add_argument("--claim-renew", type=int, default=CLAIM_RENEW,
+                    help="seconds between renewals, shorter than the ttl (default %d)" % CLAIM_RENEW)
     ap.add_argument("--post-min", choices=("INFO", "ALERT"), default="INFO", help="lowest severity posted")
     a = ap.parse_args(argv)
 
@@ -319,6 +391,9 @@ def main(argv):
     if not 1 <= a.max_body <= 25 * 1024 * 1024:
         sys.stderr.write("gh-watch: --max-body must be between 1 and 26214400\n")
         return 2
+    if not 1 <= a.claim_renew < a.claim_ttl <= 300:
+        sys.stderr.write("gh-watch: need 1 <= --claim-renew < --claim-ttl <= 300\n")
+        return 2
     secret, err = check_secret_file(a.secret_file)
     if err:
         sys.stderr.write("gh-watch: %s\n" % err)
@@ -331,12 +406,39 @@ def main(argv):
     except OSError as e:
         sys.stderr.write("gh-watch: cannot listen: %s\n" % e.strerror)
         return 2
+    keeper = None
+    if a.klatch_bin and not a.no_claim:
+        keeper = ClaimKeeper(sink.klatch, time.monotonic, a.room, ttl=a.claim_ttl, interval=a.claim_renew)
+        if keeper.acquire() == "refused":
+            sys.stderr.write("gh-watch: another receiver holds the %s claim in %s; not starting a second one\n"
+                             % (CLAIM_NAME, a.room))
+            server.server_close()
+            return 2
+    stop = threading.Event()
+
+    def renew_loop():
+        while not stop.wait(1.0):
+            keeper.tick()
+
+    if keeper:
+        threading.Thread(target=renew_loop, daemon=True).start()
+
+    def on_term(signum, frame):
+        # shutdown() waits for serve_forever, so it cannot run in this handler (the main thread is in serve_forever)
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGHUP, on_term)
     sys.stdout.write("listening %s:%d\n" % (a.bind, server.server_address[1]))
     sys.stdout.flush()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        stop.set()
+        if keeper:
+            keeper.release()
     return 0
 
 

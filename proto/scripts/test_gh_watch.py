@@ -615,7 +615,7 @@ class ReceiverTests(unittest.TestCase):
         while time.monotonic() < deadline and not os.path.exists(rec):
             time.sleep(0.05)  # bounded poll, in the test process only
         with open(rec) as f:
-            call = f.read().splitlines()[0].split("|")
+            call = [c for c in (l.split("|") for l in f.read().splitlines()) if c[1] == "post"][0]
         self.assertEqual(call[:3], ["ghwatch", "post", "factory-status"])
         self.assertIn("ALERT", call[3])
 
@@ -629,12 +629,192 @@ class ReceiverTests(unittest.TestCase):
         p.wait(timeout=15)
         self.assertNotEqual(p.returncode, 0)
 
+    # --- the watcher claim (#1338), through a fake klatch binary ---------------------------------------------------
+    def fake_klatch(self, refuse=False):
+        """A klatch that records `NAME|args` per call; `claim` answers `refused:` while the file `refuse` exists."""
+        self.calls_file = os.path.join(self.t, "calls")
+        self.refuse_file = os.path.join(self.t, "refuse")
+        if refuse:
+            open(self.refuse_file, "w").close()
+        fake = os.path.join(self.t, "klatch")
+        with open(fake, "w") as f:
+            f.write('#!/bin/sh\nprintf "%%s|%%s\\n" "$KLATCH_NAME" "$*" >> "%s"\n'
+                    'if [ "$1" = claim ] && [ -e "%s" ]; then echo "refused: watch:gh is claimed by o for another 5s" >&2;'
+                    ' exit 1; fi\n' % (self.calls_file, self.refuse_file))
+        os.chmod(fake, 0o755)
+        return fake
+
+    def klatch_calls(self):
+        if not os.path.exists(self.calls_file):
+            return []
+        with open(self.calls_file) as f:
+            return [l.split("|", 1)[1] for l in f.read().splitlines()]
+
+    def wait_for(self, pred, what):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if pred():
+                return
+            time.sleep(0.05)  # bounded poll, in the test process only
+        self.fail("timed out waiting for " + what)
+
+    def test_claim_taken_renewed_and_released_on_clean_stop(self):
+        fake = self.fake_klatch()
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "ghwatch", "--room", "factory-status",
+                          "--claim-ttl", "6", "--claim-renew", "1")
+        self.wait_for(lambda: len([c for c in self.klatch_calls() if c.startswith("claim")]) >= 3, "renewals")
+        first = self.klatch_calls()[0]
+        self.assertEqual(first, "claim factory-status watch:gh --ttl 6 --shared --reason gh-watch receiver")
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=15)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(self.klatch_calls()[-1], "release factory-status watch:gh")
+
+    def test_second_receiver_refused_by_the_claim(self):
+        fake = self.fake_klatch(refuse=True)
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "ghwatch", "--room", "r", expect_ready=False)
+        p.wait(timeout=15)
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("watch:gh", p.stderr.read())
+        self.assertNotIn("listening", p.stdout.read())
+        self.assertEqual([c.split()[0] for c in self.klatch_calls()], ["claim"], "no release of the holder's claim")
+
+    def test_kill_9_leaves_the_claim_to_lapse(self):
+        fake = self.fake_klatch()
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r")
+        self.wait_for(lambda: self.klatch_calls(), "the first claim")
+        p.kill()
+        p.wait(timeout=15)
+        self.assertNotIn("release", [c.split()[0] for c in self.klatch_calls()])
+
+    def test_no_claim_flag_and_no_klatch_means_no_claim(self):
+        fake = self.fake_klatch()
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r", "--no-claim")
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=15)
+        self.assertEqual(self.klatch_calls(), [])
+        p2, _ = self.start()
+        p2.send_signal(signal.SIGTERM)
+        p2.wait(timeout=15)
+
+    def test_renew_must_be_shorter_than_ttl(self):
+        p, _ = self.start("--klatch-bin", "/bin/true", "--as-member", "m", "--room", "r", "--claim-ttl", "10",
+                          "--claim-renew", "10", expect_ready=False)
+        p.wait(timeout=15)
+        self.assertEqual(p.returncode, 2)
+
+    def test_claim_failure_other_than_refusal_keeps_the_log_working(self):
+        _, port = self.start("--klatch-bin", "/nonexistent/klatch", "--as-member", "m", "--room", "r")
+        self.assertEqual(self.post(port, "push", push())[0], 200)
+        self.assertEqual(len(self.log()), 1)
+
+    def test_launcher_sigterm_reaches_the_receiver_which_releases(self):
+        fake = self.fake_klatch()
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.t}
+        p = subprocess.Popen([LAUNCHER, "serve", "--out-dir", self.out, "--secret-file", self.secret_file,
+                              "--port", "0", "--klatch-bin", fake, "--as-member", "m", "--room", "r"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        self.procs.append(p)
+        self.wait_for(lambda: self.klatch_calls(), "the first claim")
+        p.send_signal(signal.SIGTERM)
+        p.wait(timeout=15)
+        self.assertEqual(self.klatch_calls()[-1], "release r watch:gh")
+
     def test_log_is_flushed_per_line(self):
         _, port = self.start()
         self.post(port, "push", push())
         # read while the receiver is still running: the line must already be on disk
         self.assertEqual(len(self.log()), 1)
         self.assertTrue(stat.S_IMODE(os.stat(self.out).st_mode) & 0o077 == 0, "out dir should be private")
+
+
+class FakeKlatch:
+    """Stands in for the one klatch call: records the argv and answers from a script of (returncode, stderr)."""
+
+    def __init__(self):
+        self.calls, self.answers = [], []
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        return self.answers.pop(0) if self.answers else (0, "")
+
+
+class ClaimKeeperTests(unittest.TestCase):
+    """The watcher claim (#1338) against a fake clock and a fake klatch: no process, no sleep."""
+
+    REFUSED = (1, "refused: watch:gh is claimed by other for another 50s")
+
+    def setUp(self):
+        self.now = 1000.0
+        self.k = FakeKlatch()
+        self.keeper = ghw.ClaimKeeper(self.k, lambda: self.now, "factory-status", "watch:gh", 90, 30)
+
+    def test_documented_defaults(self):
+        self.assertEqual((ghw.CLAIM_NAME, ghw.CLAIM_TTL, ghw.CLAIM_RENEW), ("watch:gh", 90, 30))
+        self.assertGreaterEqual(ghw.CLAIM_TTL, 3 * ghw.CLAIM_RENEW, "two renewals may be missed before a lapse")
+
+    def test_acquire_claims_shared_with_the_ttl(self):
+        self.assertEqual(self.keeper.acquire(), "held")
+        self.assertEqual(self.k.calls, [["claim", "factory-status", "watch:gh", "--ttl", "90", "--shared",
+                                         "--reason", "gh-watch receiver"]])
+
+    def test_renews_on_the_interval_and_not_before(self):
+        self.keeper.acquire()
+        self.now += 29
+        self.assertFalse(self.keeper.tick())
+        self.assertEqual(len(self.k.calls), 1)
+        self.now += 1
+        self.assertTrue(self.keeper.tick())
+        self.assertEqual(len(self.k.calls), 2)
+        self.assertEqual(self.k.calls[1], self.k.calls[0], "a renewal is the same claim again")
+        self.now += 15
+        self.assertFalse(self.keeper.tick())
+        self.now += 15
+        self.assertTrue(self.keeper.tick())
+        self.assertEqual(len(self.k.calls), 3)
+
+    def test_a_long_stall_renews_once_not_in_a_burst(self):
+        self.keeper.acquire()
+        self.now += 30 * 10
+        self.assertTrue(self.keeper.tick())
+        self.assertFalse(self.keeper.tick())
+        self.assertEqual(len(self.k.calls), 2)
+
+    def test_second_receiver_is_refused_by_the_claim_conflict(self):
+        self.k.answers.append(self.REFUSED)
+        self.assertEqual(self.keeper.acquire(), "refused")
+        self.keeper.release()
+        self.assertEqual([c[0] for c in self.k.calls], ["claim"], "a refused receiver never releases the holder's claim")
+
+    def test_other_failure_is_not_a_refusal_and_is_retried(self):
+        self.k.answers.append((1, "the store is busy"))
+        self.assertEqual(self.keeper.acquire(), "failed")
+        self.now += 30
+        self.assertTrue(self.keeper.tick())
+        self.assertTrue(self.keeper.held)
+        self.keeper.release()
+        self.assertEqual(self.k.calls[-1][:3], ["release", "factory-status", "watch:gh"])
+
+    def test_losing_the_claim_stops_the_release(self):
+        self.keeper.acquire()
+        self.k.answers.append(self.REFUSED)
+        self.now += 30
+        self.keeper.tick()
+        self.assertFalse(self.keeper.held)
+        self.keeper.release()
+        self.assertEqual([c[0] for c in self.k.calls], ["claim", "claim"])
+
+    def test_release_runs_once(self):
+        self.keeper.acquire()
+        self.keeper.release()
+        self.keeper.release()
+        self.assertEqual([c[0] for c in self.k.calls], ["claim", "release"])
+        self.assertEqual(self.k.calls[1], ["release", "factory-status", "watch:gh"])
+
+    def test_message_text_is_not_trusted_to_decide(self):
+        # only the fixed prefix means a conflict; a refusal word later in the text does not
+        self.k.answers.append((1, "boom refused: watch:gh is claimed by x"))
+        self.assertEqual(self.keeper.acquire(), "failed")
 
 
 class LaunchdTests(unittest.TestCase):

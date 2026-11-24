@@ -111,9 +111,20 @@ nohup proto/scripts/gh-watch serve > ~/.local/state/klatch-gh-watch/serve.out 2>
 tail -F ~/.local/state/klatch-gh-watch/gh-watch.log
 ```
 
-Stop the receiver with `kill -9 PID` (the pid is in `gh-watch.pid` in the state dir). `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
+Stop the receiver with `kill -9 PID` (the pid is in `gh-watch.pid` in the state dir); with the watcher claim on (below), `kill -TERM` of the `serve` wrapper is the clean stop that releases it, and `kill -9` leaves it to lapse. `proto/scripts/gh-watch selftest` runs the fixture tests; they use hand-written payloads and a receiver on an ephemeral loopback port.
 
 To also post each note to a klatch room, add `--klatch-bin /path/to/klatch --as-member NAME --room ROOM` (optionally `--post-min ALERT`). The post is `KLATCH_NAME=NAME klatch post ROOM LINE` with whatever `KLATCH_HOME` the caller has, so start it with the isolated factory store's home (FACTORY.md), never the live store.
+
+### The watcher claim (#1338)
+
+With `--klatch-bin`, the receiver holds a named claim `watch:gh` in the room it posts to (the isolated status room, with the `KLATCH_HOME` and `KLATCH_NAME` the post already uses; the claim needs no credential beyond that member, and the receiver issues none). Any session then sees the watcher in `klatch claims ROOM` and on the board, and when the receiver dies without releasing, `klatch stuck ROOM` reports a `lapsed_claim` for `watch:gh` (#1339), which is the dead-watcher signal.
+
+- **Interval and TTL:** the receiver renews every 30 seconds (`--claim-renew`) with a 90 second lease (`--claim-ttl`). The lease is three intervals, so two renewals can be missed (a slow klatch call, a busy store) without a false lapse, and a dead receiver shows within 90 seconds. Renewal is `klatch claim ROOM watch:gh --ttl 90 --shared` again, like an `ask:N` claim; a stall renews once, never in a burst. Both are bounded (`1 <= renew < ttl <= 300`).
+- **Shared:** the claim is `--shared`, so it conflicts with every scope, and a receiver in another scope, store copy or state dir is refused too.
+- **Second receiver:** it binds its port first (a taken port already refuses it), then claims. A claim conflict (klatch answers `refused:`) makes it print one line and exit 2 without taking or releasing anything. That is what makes `ensure` idempotent across state dirs. Any other claim failure (klatch missing, store busy) is not a refusal: the receiver keeps logging and retries on the next interval.
+- **Lost claim:** if a renewal is refused after the claim lapsed and someone else took it, the receiver notes it on stderr and keeps trying; it never releases a claim it does not hold.
+- **Clean stop:** SIGTERM, SIGHUP and Ctrl-C stop the server and then `klatch release ROOM watch:gh`, so a deliberate stop (launchd `bootout`, the `serve` wrapper passing SIGTERM) leaves no lapse and no alarm. `kill -9` or a crash skips the release; the claim lapses after at most 90 seconds, and that is the signal.
+- **Off:** `--no-claim`, or no `--klatch-bin`. The claim text is fixed (reason `gh-watch receiver`); no webhook text reaches it.
 
 ### At the start of a session (#1335)
 
