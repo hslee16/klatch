@@ -41,6 +41,11 @@ impl PolicyStore for SqliteStore {
         .map(Option::flatten)
     }
 
+    fn audit_census(&self, action: &str, since: i64) -> Result<(u64, u64)> {
+        self.optional(CENSUS_SQL, params![action, since], census_from_row)
+            .map(|c| c.unwrap_or((0, 0)))
+    }
+
     fn policy_get(&self, key: &str) -> Result<Option<String>> {
         self.optional("SELECT value FROM policy WHERE key=?1", params![key], |r| {
             r.get(0)
@@ -125,4 +130,16 @@ fn refusal_from_row(r: &Row<'_>) -> rusqlite::Result<RefusalRecord> {
         operation: r.get(3)?,
         rule: r.get(4)?,
     })
+}
+
+/// The count of an action's entries since a time and of the distinct `terminal=` labels in their details (#1310). On
+/// the `(action, target, ts)` index; nothing but two numbers leaves it.
+pub(in crate::store::sqlite) const CENSUS_SQL: &str = "SELECT COUNT(*), \
+    COUNT(DISTINCT CASE WHEN instr(detail,'terminal=')>0 THEN substr(detail, instr(detail,'terminal=')+9) END) \
+    FROM admin_audit WHERE action=?1 AND ts>=?2";
+
+pub(in crate::store::sqlite) fn census_from_row(
+    r: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(u64, u64)> {
+    Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
 }

@@ -86,6 +86,36 @@ impl SqliteStore {
         Ok(out)
     }
 
+    /// The count of `action` entries of the audit since `since`, and of the distinct terminals among them (#1310), for
+    /// `klatch doctor`. Read-only; counts only.
+    pub fn read_audit_census(
+        path: &Path,
+        key: &Key,
+        action: &str,
+        since: i64,
+    ) -> Result<(u64, u64)> {
+        use super::api::policy::{CENSUS_SQL, census_from_row};
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(be)?;
+        Self::unlock(&conn, key)?;
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='admin_audit'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(be)?;
+        if has == 0 {
+            return Ok((0, 0));
+        }
+        conn.query_row(
+            CENSUS_SQL,
+            rusqlite::params![action, since],
+            census_from_row,
+        )
+        .map_err(be)
+    }
+
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;

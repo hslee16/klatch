@@ -6,6 +6,6 @@ mod claims;
 mod credentials;
 mod members;
 mod messages;
-mod policy;
+pub(in crate::store::sqlite) mod policy;
 mod reviews;
 mod rooms;

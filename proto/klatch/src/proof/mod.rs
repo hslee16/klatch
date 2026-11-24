@@ -13,6 +13,7 @@
 //! Policy keys: `admin-passphrase` (the verifier), `admin-passphrase-fails` (the failure count, `limit`) and
 //! `admin-unlock-secs` (the unlock window, default `DEFAULT_WINDOW_SECS`).
 
+pub mod alarm;
 mod filelimit;
 mod limit;
 mod terminal;
@@ -232,9 +233,8 @@ pub fn prove<S: PolicyStore + ?Sized>(
     let verifier = load(store)?;
     let id = verifier.id();
     if !verifier.verify(&typed) {
-        audit(
+        alarm::failed(
             store,
-            "proof-failed",
             "",
             &format!("failures={count} terminal={term}"),
             at.unix,
@@ -408,9 +408,8 @@ pub fn reset<S: PolicyStore + ?Sized>(
     let (a, b) = (norm(&typed), norm(expected));
     let same = a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()));
     if !same {
-        audit(
+        alarm::failed(
             store,
-            "proof-failed",
             "recovery",
             &format!("failures={count} terminal={term}"),
             at.unix,
@@ -529,5 +528,7 @@ pub fn set_window<S: PolicyStore + ?Sized>(
     }
 }
 
+#[cfg(test)]
+mod alarm_tests;
 #[cfg(test)]
 mod tests;

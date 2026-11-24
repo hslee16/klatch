@@ -222,6 +222,43 @@ pub(super) fn check_growth(r: &mut Report, home: Option<&Path>) {
     );
 }
 
+/// The failed proofs of the last 24 hours across all terminals (#1310): a warning while there are as many as the
+/// alarm level, counts only. The same count the alarm row of the audit is written at; it locks nothing. Says
+/// nothing below the level or when there is no readable store.
+pub(super) fn check_proof_failures(r: &mut Report, home: Option<&Path>) {
+    let Some(db) = store_path(home).filter(|d| d.exists()) else {
+        return;
+    };
+    if klatch::store::encrypt::is_plaintext(&db) {
+        return;
+    }
+    let since = klatch::proof::alarm::since(klatch::member::now());
+    let asked = db.clone();
+    let census = within(KEYSTORE_PATIENCE, move || {
+        let key = klatch::member::custody::current_key(&asked)
+            .ok()
+            .flatten()?;
+        klatch::store::SqliteStore::read_audit_census(
+            &asked,
+            &key,
+            klatch::proof::alarm::FAILED,
+            since,
+        )
+        .ok()
+    })
+    .flatten();
+    let Some((failures, terminals)) = census else {
+        return;
+    };
+    if failures >= klatch::proof::alarm::CEILING {
+        r.add(
+            Status::Warn,
+            format!("proof failures: {failures} wrong admin passphrases or recovery codes in the last 24 hours, from {terminals} terminals (the alarm level is {}); nothing is locked by this, the wait of each terminal is unchanged", klatch::proof::alarm::CEILING),
+            Some("if these were not you, someone is guessing: see the `proof-failed` rows in `klatch admin audit`, find what is opening terminals, and consider a longer passphrase (`klatch admin init-passphrase`)"),
+        );
+    }
+}
+
 fn nudge_effect(mode: &str) -> Status {
     match klatch::domain::wake_path(Some(mode)) {
         klatch::domain::WakePath::Nudge => Status::Ok,

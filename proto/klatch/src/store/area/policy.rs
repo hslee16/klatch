@@ -24,6 +24,13 @@ pub trait PolicyStore {
         unsupported("an audit")
     }
 
+    /// How many entries of one action are at or after `since`, and across how many distinct `terminal=` labels in
+    /// their detail (#1310): two counts, never a label. A filtered read of the audit, so the global alarm on failed
+    /// proofs needs no new table or key.
+    fn audit_census(&self, _action: &str, _since: i64) -> Result<(u64, u64)> {
+        unsupported("an audit")
+    }
+
     /// Policy the administrator set: room labels, clearances, the label chain, scrub terms, tripwires (epic #9). One
     /// key and one value each; `None` clears a key.
     fn policy_get(&self, _key: &str) -> Result<Option<String>> {
