@@ -153,15 +153,15 @@ no archives in <HOME>/archive
 
 ### $ klatch admin stats
 klatch stats (counts only; no message text, ask text, claim detail, label or payload)
-schema 44; room all; since the start; at 2026-11-23
+schema 44; room all; since the start; at <TODAY>
 
 messages per room
   room  class    messages  sealed  senders  first       last
-  r     private         2       2        1  2026-11-23  2026-11-23
+  r     private         2       2        1  <TODAY>  <TODAY>
 
 messages per day (UTC)
   day         messages
-  2026-11-23  2
+  <TODAY>  2
 
 senders: 1 distinct, 0 with a verified message
 
@@ -222,7 +222,7 @@ refusals by rule
 direct message rooms: 0 (0 messages); private rooms: 1 (2 messages)
 members: 1 joined, 0 never posted, 0 marked done, 0 muted, 0 with a parent
 members who posted and never read: 1 of 1 (1 never shown anything by a hook, wait or wake)
-  by day of first post: 2026-11-23 1
+  by day of first post: <TODAY> 1
 
 hook runs by event (cumulative)
   (none)
