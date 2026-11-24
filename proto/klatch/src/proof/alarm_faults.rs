@@ -45,6 +45,9 @@ impl PolicyStore for NoCensus {
     fn policy_set(&self, k: &str, v: Option<&str>, n: i64) -> Result<()> {
         self.0.policy_set(k, v, n)
     }
+    fn reserved_policy_set(&self, k: &str, v: Option<&str>, n: i64) -> Result<()> {
+        self.0.reserved_policy_set(k, v, n)
+    }
     fn atomically(&self, act: &mut dyn FnMut() -> Result<()>) -> Result<()> {
         self.0.atomically(act)
     }

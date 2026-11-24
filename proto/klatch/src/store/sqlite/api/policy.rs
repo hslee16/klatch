@@ -1,8 +1,9 @@
 //! The SQLite side of the `PolicyStore` area.
 
 use super::super::SqliteStore;
-use crate::domain::{AuditRecord, RefusalRecord, Result};
+use crate::domain::{AuditRecord, Error, RefusalRecord, Result};
 use crate::store::Census;
+use crate::store::area::is_proof_key;
 use crate::store::PolicyStore;
 use crate::store::{NewAudit, NewRefusal};
 use rusqlite::{Row, params};
@@ -61,14 +62,26 @@ impl PolicyStore for SqliteStore {
     }
 
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
-        match value {
-            Some(v) => self.write(
-                "INSERT INTO policy(key,value,ts) VALUES(?1,?2,?3)
-                 ON CONFLICT(key) DO UPDATE SET value=?2, ts=?3",
-                params![key, v, now],
-            ),
-            None => self.write("DELETE FROM policy WHERE key=?1", params![key]),
+        if is_proof_key(key) {
+            // key name only, never the value; the audit row is kept even though the write is refused
+            let _ = self.record_audit(&NewAudit::new("policy-reserved-refused", key, ""), now);
+            return Err(Error::Refused {
+                rule: "admin-passphrase-rows".into(),
+                reason: format!(
+                    "the policy key {key} belongs to the admin passphrase and is changed only by `klatch admin` passphrase commands"
+                ),
+            });
         }
+        self.write_policy(key, value, now)
+    }
+
+    fn reserved_policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        if !is_proof_key(key) {
+            return Err(Error::Invalid(format!(
+                "{key} is not a key of the admin passphrase"
+            )));
+        }
+        self.write_policy(key, value, now)
     }
 
     fn atomically(&self, act: &mut dyn FnMut() -> Result<()>) -> Result<()> {
@@ -118,6 +131,19 @@ impl PolicyStore for SqliteStore {
             params![member, since],
             |r| r.get(0),
         )
+    }
+}
+
+impl SqliteStore {
+    fn write_policy(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        match value {
+            Some(v) => self.write(
+                "INSERT INTO policy(key,value,ts) VALUES(?1,?2,?3)
+                 ON CONFLICT(key) DO UPDATE SET value=?2, ts=?3",
+                params![key, v, now],
+            ),
+            None => self.write("DELETE FROM policy WHERE key=?1", params![key]),
+        }
     }
 }
 
