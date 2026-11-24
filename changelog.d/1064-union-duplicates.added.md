@@ -1,0 +1,1 @@
+- `release/check-union-duplicates.sh` (run by the gate): a line that appears twice in a file marked `merge=union` in `.gitattributes` fails with the file, line number and line (rules per file type, allowlist with reasons in `release/union-duplicates.allow`) (#1064).

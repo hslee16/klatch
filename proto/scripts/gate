@@ -196,6 +196,8 @@ repo_checks() {
     && check release/test-tag-checks.sh \
     && check release/test-rollback-rehearsal.sh \
     && check release/test-verify-published.sh \
+    && check release/check-union-duplicates.sh \
+    && check release/test-check-union-duplicates.sh \
     && check release/check-sigpipe.sh \
     && check release/test-check-sigpipe.sh \
     && check proto/scripts/test-team.sh \
