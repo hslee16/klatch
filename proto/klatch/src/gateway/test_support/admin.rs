@@ -74,6 +74,10 @@ impl PolicyStore for SpyStore {
         self.inner.policy_set(key, value, now)
     }
 
+    fn reserved_policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+        self.inner.reserved_policy_set(key, value, now)
+    }
+
     fn mark_label_sealed_converting(&self, label: &str, now: i64) -> Result<usize> {
         if let Some(hook) = self.before_policy_set.borrow().as_ref() {
             hook(&format!("sealed:{label}"));
