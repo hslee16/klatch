@@ -42,7 +42,10 @@ fn doctor_warns_when_a_store_exists_and_no_passphrase_is_set_and_names_the_fix()
         t.contains("fix: run `klatch admin init-passphrase` yourself, in a terminal"),
         "{t}"
     );
-    assert!(o.status.success(), "a warning must not change the exit code: {t}");
+    assert!(
+        o.status.success(),
+        "a warning must not change the exit code: {t}"
+    );
     assert!(!t.contains('\u{2014}'), "{t}");
 }
 
