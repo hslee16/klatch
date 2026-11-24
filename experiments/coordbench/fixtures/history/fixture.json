@@ -14,6 +14,7 @@
   },
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "history",
+  "generator_sources": ["build_history.py", "gen_code.py", "gen_facts.py", "gen_room.py"],
   "est_cost_usd_haiku": 0.3,
   "fake": "fake.json"
 }

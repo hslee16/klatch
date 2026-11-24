@@ -10,6 +10,7 @@
   ],
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "chain",
+  "generator_sources": ["gen.py"],
   "est_cost_usd_haiku": 0.8,
   "fake": "fake.json"
 }

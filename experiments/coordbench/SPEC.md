@@ -130,7 +130,8 @@ specification only describes them). Each fixture is plain Python 3 standard libr
 only cost in a run is model cost. A fixture has: the repository tree at a pinned commit, visible tests that pass or fail
 honestly, a seed-driven generator where the size varies (S7), and a `checks/` directory of hidden checks (kept apart from the
 fixture in the repository layout so a checkout never contains them). A fixture is versioned by a hash recorded in every
-result. A fixture is frozen for a milestone (section 11, contamination).
+result (`fixture.sha256`, defined in section 7.1 under `fixture_hash_version`). A fixture is frozen for a milestone (section 11,
+contamination).
 
 The numbers each scenario records are the metrics of section 5. "Primary" below is the metric the scenario's claim rests
 on; the others are secondary.
@@ -427,7 +428,9 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "topology": "T-shared",
   "arm": "K2",
   "arm_text_version": "1",
-  "fixture": {"name": "onefile", "sha256": "..."},
+  "fixture": {"name": "onefile", "sha256": "...", "checker_sha256": "..."},
+  "fixture_hash_version": 2,
+  "prompt_sha256": {"a": "...", "b": "...", "c": "..."},
   "seed": 4207,
   "metric_version": 2,
   "coordination_context": {"method": "chars/4", "chars_per_token": 4, "tokens": 5120, "chars": {"total": 20480}},
@@ -465,6 +468,17 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
 primary). `integration_ok` is present only for a scenario that names `integration_checks` (S1). `coordination_context` is the
 estimate record described under the metric. `report.py` never pools versions: older records appear as `SCENARIO [metric vN]`,
 the scaling table uses the newest only, and a comparison of analyses of different versions says so.
+
+`fixture_hash_version` (#1516, #1510) is 2 for records made with this definition; a record without the field is version 1. The
+hash `fixture.sha256` covers the files of the fixture directory an agent can receive or that decide the outcome (setup.sh,
+template/, task texts, private/, seed and history files, fixture.json, and reference/, which no agent gets but which the checker
+is validated against), plus, for a generated fixture, the generator's output (template, reference, tasks, scenario map) and,
+for a prebuilt history, the commit ids made in B0 and B1. It does not cover generator sources (declared under
+`generator_sources` in fixture.json; their output is committed and `--check`ed or hashed), `__pycache__`, `*.pyc` or editor
+leftovers, so refactoring a generator changes no hash. `fixture.checker_sha256` hashes the hidden checker directory;
+`prompt_sha256` hashes each agent's built prompt with the run's own paths and room as placeholders. Version 1 hashed the
+whole directory including generator sources and bytecode and had neither of the other two. `report.py` never pools versions
+(`SCENARIO [fixture hash vN]`) and flags a comparison across versions.
 
 `outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`. The scenario's checks are listed in
 `outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`, or `trigger-not-fired` (S6 only: the
