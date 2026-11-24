@@ -107,12 +107,8 @@ fn ask_and_passive_claims_are_not_reported() {
 fn the_output_is_bounded() {
     let (g, t) = setup();
     for i in 0..(LAPSED_CLAIM_MAX + 5) {
-        g.claim(
-            &alice(),
-            "r",
-            &ClaimSpec::new(&format!("job:{i}"), 100, ""),
-        )
-        .unwrap();
+        g.claim(&alice(), "r", &ClaimSpec::new(&format!("job:{i}"), 100, ""))
+            .unwrap();
     }
     t.set(t.get() + 130);
     assert_eq!(lapsed(&g).len(), LAPSED_CLAIM_MAX);
