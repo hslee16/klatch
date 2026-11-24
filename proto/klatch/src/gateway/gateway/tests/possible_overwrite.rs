@@ -136,3 +136,68 @@ fn a_path_that_is_not_plain_is_shown_as_unnamed() {
     claim(&g, &bob(), odd).unwrap();
     assert_eq!(overwrites(&g), [event("(unnamed)", "alice", "bob")]);
 }
+
+/// As `deadlocked`, but each claim lives `ttl` seconds and may be anchored to `anchor` (#1224).
+fn deadlocked_with(
+    ttl: i64,
+    anchor: &'static str,
+) -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
+    let (g, t) = timed();
+    for p in [alice(), bob(), carol()] {
+        g.join(&p, "r").unwrap();
+    }
+    let spec = |path| {
+        let s = ClaimSpec::new(path, ttl, "");
+        if anchor.is_empty() {
+            s
+        } else {
+            s.anchored(anchor)
+        }
+    };
+    g.claim(&alice(), "r", &spec("p")).unwrap();
+    g.claim(&bob(), "r", &spec("q")).unwrap();
+    assert!(g.claim(&alice(), "r", &spec("q")).is_err());
+    assert!(g.claim(&bob(), "r", &spec("p")).is_err());
+    (g, t)
+}
+
+#[test]
+fn a_yield_that_ends_by_the_lease_lapsing_is_flagged_when_another_takes_the_path() {
+    let (g, t) = deadlocked_with(100, "");
+    t.set(t.get() + 101);
+    claim(&g, &bob(), "p").unwrap();
+    assert_eq!(overwrites(&g), [event("p", "alice", "bob")]);
+}
+
+#[test]
+fn a_lapse_long_before_the_take_is_outside_the_window() {
+    let (g, t) = deadlocked_with(100, "");
+    t.set(t.get() + 101 + crate::domain::YIELD_WINDOW_SECS);
+    claim(&g, &bob(), "p").unwrap();
+    assert!(overwrites(&g).is_empty());
+}
+
+#[test]
+fn a_yield_that_ends_by_the_session_ending_is_flagged() {
+    let (g, _t) = deadlocked();
+    assert_eq!(g.release_all(&alice()).unwrap(), 1);
+    claim(&g, &bob(), "p").unwrap();
+    assert_eq!(overwrites(&g), [event("p", "alice", "bob")]);
+}
+
+#[test]
+fn a_yield_that_ends_by_an_anchor_release_is_flagged() {
+    let (g, _t) = deadlocked_with(5_000, "wo:7");
+    assert_eq!(g.anchor_done(&admin(), "wo:7").unwrap(), 2);
+    claim(&g, &bob(), "p").unwrap();
+    assert_eq!(overwrites(&g), [event("p", "alice", "bob")]);
+}
+
+#[test]
+fn a_session_end_or_anchor_release_of_a_member_outside_the_deadlock_is_no_yield() {
+    let (g, _t) = deadlocked();
+    claim(&g, &carol(), "z").unwrap();
+    g.release_all(&carol()).unwrap();
+    claim(&g, &bob(), "z").unwrap();
+    assert!(overwrites(&g).is_empty());
+}

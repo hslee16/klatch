@@ -42,6 +42,8 @@ struct Lapsed {
     scope: String,
     /// Seconds it was held until the lease ended.
     held: i64,
+    /// When the lease ended.
+    expires: i64,
 }
 
 /// A member's refused claim attempt, remembered as a wait.
@@ -166,22 +168,33 @@ impl SqliteStore {
                     |r| r.get::<_, i64>(0),
                 )?
                 .is_some();
-            let marked = self
-                .optional(
-                    "SELECT 1 FROM claim_yields WHERE room=?1 AND member=?2 AND path='' AND ts>=?3",
-                    params![room, owner, now - YIELD_WINDOW_SECS],
-                    |r| r.get::<_, i64>(0),
-                )?
-                .is_some();
-            if live && marked {
-                self.exec(
-                    "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,?3,?4,'')
-                     ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, taker=''",
-                    params![room, owner, path, now],
-                )?;
+            if live {
+                self.note_yield_end(room, (owner, path), now)?;
             }
             Ok(())
         })
+    }
+
+    /// A claim of `owner` on `path` ended at `at` (released, lapsed, session end or anchor release, #1224): when the
+    /// owner was a party to a deadlock inside the window before `at`, remember it so a take of the path by someone else
+    /// is flagged. The caller removes the claim row; this only reads the deadlock mark.
+    pub(super) fn note_yield_end(&self, room: &str, held: (&str, &str), at: i64) -> Result<()> {
+        let (owner, path) = held;
+        let marked = self
+            .optional(
+                "SELECT 1 FROM claim_yields WHERE room=?1 AND member=?2 AND path='' AND ts>=?3 AND ts<=?4",
+                params![room, owner, at - YIELD_WINDOW_SECS, at],
+                |r| r.get::<_, i64>(0),
+            )?
+            .is_some();
+        if marked {
+            self.exec(
+                "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,?3,?4,'')
+                 ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, taker=''",
+                params![room, owner, path, at],
+            )?;
+        }
+        Ok(())
     }
 
     /// The claims flagged by `note_overwrites` that are still inside the window: `(path, previous, new)`, sorted.
@@ -345,11 +358,13 @@ impl SqliteStore {
                     owner: r.get(2)?,
                     scope: r.get(3)?,
                     held: held_for(r.get(4)?, r.get(5)?),
+                    expires: r.get(5)?,
                 })
             },
         )?;
         self.exec("DELETE FROM claims WHERE expires<=?1", params![now])?;
         for l in &lapsed {
+            self.note_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
             self.record_claim_event(
                 now,
                 &ClaimEvent {

@@ -54,6 +54,7 @@ impl SqliteStore {
                     "DELETE FROM claims WHERE room=?1 AND path=?2 AND owner=?3",
                     params![room, path, owner],
                 )?;
+                self.note_yield_end(&room, (&owner, &path), expires.min(now))?;
                 self.record_ended(Ended::at(&room, &path, (since, expires), now), "anchor");
                 if expires > now {
                     released.push((room, path, owner));
@@ -192,6 +193,7 @@ impl SqliteStore {
             let held: Vec<(String, String, i64, i64)> = self.rows("SELECT room,path,expires,since FROM claims WHERE owner=?1", params![member], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
             let mut released = 0;
             for (room, path, expires, since) in held {
+                self.note_yield_end(&room, (member, &path), expires.min(now))?;
                 self.record_ended(Ended::at(&room, &path, (since, expires), now), "session");
                 if expires > now {
                     released += 1;
