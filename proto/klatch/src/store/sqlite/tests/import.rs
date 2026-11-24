@@ -100,10 +100,15 @@ fn the_import_is_not_part_of_the_store_bound_so_the_gateway_and_server_cannot_ca
     // Compile-time shape: `Store` does not require `ImportStore`; the memory store is a `Store` without it.
     fn only_store<S: crate::store::Store>(_: &S) {}
     only_store(&crate::store::memory_spike::MemoryStore::default());
-    // Source-level: the method is named only in its trait, its SQLite implementation and these tests.
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // Source-level: the method is named only in its trait (every crate under proto/ is scanned), its SQLite implementation and these tests.
+    let proto = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut hits = Vec::new();
-    let mut stack = vec![src.clone()];
+    let mut stack: Vec<_> = std::fs::read_dir(&proto)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path().join("src"))
+        .filter(|p| p.is_dir())
+        .collect();
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
             let path = entry.path();
@@ -115,7 +120,7 @@ fn the_import_is_not_part_of_the_store_bound_so_the_gateway_and_server_cannot_ca
                     .contains("import_message")
             {
                 hits.push(
-                    path.strip_prefix(&src)
+                    path.strip_prefix(&proto)
                         .unwrap()
                         .to_string_lossy()
                         .to_string(),
@@ -127,10 +132,52 @@ fn the_import_is_not_part_of_the_store_bound_so_the_gateway_and_server_cannot_ca
     assert_eq!(
         hits,
         [
-            "store/area/import.rs",
-            "store/sqlite/api/import.rs",
-            "store/sqlite/tests/import.rs"
+            "klatch/src/store/area/import.rs",
+            "klatch/src/store/sqlite/api/import.rs",
+            "klatch/src/store/sqlite/tests/import.rs"
         ],
         "{hits:?}"
     );
+}
+
+#[test]
+fn the_id_limit_is_64_characters_inclusive() {
+    let s = store();
+    assert!(matches!(
+        s.import_message("r", &source_message(&"A".repeat(65), 1, 1)),
+        Err(Error::Invalid(_))
+    ));
+    s.import_message("r", &source_message(&"A".repeat(64), 1, 1))
+        .unwrap();
+}
+
+#[test]
+fn a_sealed_label_is_sealed_at_rest_on_import_and_opens_back_to_the_original() {
+    let s = store();
+    s.policy_set("sealed:secret", Some("1"), 1).unwrap();
+    s.set_label_keys(
+        crate::keys::LabelKeys::new().with("secret", crate::keys::Key::from_bytes([0x33; 32])),
+    );
+    let mut m = source_message("SEALED1", 1, 5);
+    m.label = "secret".to_string();
+    m.body = "the-sealed-launch-code".to_string();
+    m.payload = Some("the-sealed-payload".to_string());
+    s.import_message("r", &m).unwrap();
+    let (body, payload): (String, String) = s
+        .conn
+        .query_row(
+            "SELECT body,payload FROM messages WHERE mid='SEALED1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(
+        body.starts_with("klatch-sealed:1:") && !body.contains("launch-code"),
+        "{body}"
+    );
+    assert!(
+        payload.starts_with("klatch-sealed:1:") && !payload.contains("sealed-payload"),
+        "{payload}"
+    );
+    assert_eq!(s.tail("r", 0, 10).unwrap(), vec![m]);
 }
