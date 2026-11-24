@@ -115,7 +115,7 @@ mod tests {
         store::report_proof_failures(&mut r, census);
         r.lines
             .into_iter()
-            .inspect(|l| assert_eq!(l.0, Status::Warn))
+            .inspect(|l| assert!(l.0 == Status::Warn))
             .map(|l| l.1)
             .collect()
     }
