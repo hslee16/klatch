@@ -99,6 +99,12 @@ pub fn ask_cycles(asks: &[OpenAsk], claims: &[Claim], now: i64) -> Vec<AskCycle>
     found
 }
 
+/// Whether two paths visit the same members in the same order (the asks may differ: two asks between the same pair
+/// are one cycle, but a-m0-a and a-m1-a are two).
+fn same_members(a: &[Step], b: &[Step]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.waiter == y.waiter)
+}
+
 /// Depth first: follow the holder of the last step to the asks that member asked, until the path returns to its
 /// first waiter (a cycle, kept when its first waiter is its smallest name, so each cycle is found once) or would
 /// repeat a member.
@@ -107,9 +113,7 @@ fn extend(steps: &[Step], path: &mut Vec<Step>, found: &mut Vec<AskCycle>) {
     let tail = path[path.len() - 1].holder.clone();
     if tail == start {
         let smallest = path.iter().all(|s| s.waiter >= start);
-        let known = found
-            .iter()
-            .any(|c| c.steps.len() == path.len() && c.steps[0].waiter == start);
+        let known = found.iter().any(|c| same_members(&c.steps, path));
         if smallest && !known {
             found.push(AskCycle {
                 steps: path.clone(),
@@ -239,6 +243,17 @@ mod tests {
         let asks = [ask(1, "bob"), ask(2, "bob"), ask(3, "alice")];
         let claims = [claim(1, "alice"), claim(2, "alice"), claim(3, "bob")];
         assert_eq!(ask_cycles(&asks, &claims, NOW).len(), 1);
+    }
+
+    #[test]
+    fn two_cycles_through_the_same_first_member_and_of_the_same_length_are_both_found() {
+        let asks = [ask(1, "m0"), ask(2, "m1"), ask(3, "a"), ask(4, "a")];
+        let claims = [claim(1, "a"), claim(2, "a"), claim(3, "m0"), claim(4, "m1")];
+        let cycles = ask_cycles(&asks, &claims, NOW);
+        assert_eq!(cycles.len(), 2, "{cycles:?}");
+        assert_eq!(cycle_notes(&asks, &claims, "m0", NOW).len(), 1);
+        assert_eq!(cycle_notes(&asks, &claims, "m1", NOW).len(), 1);
+        assert_eq!(cycle_notes(&asks, &claims, "a", NOW).len(), 2);
     }
 
     #[test]
