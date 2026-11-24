@@ -144,9 +144,15 @@ impl Default for HttpOptions {
 /// The agent configuration. `https_only` is true in every shipped constructor; only a test turns it off, to reach a
 /// loopback server.
 fn agent_config(opts: HttpOptions, https_only: bool) -> Config {
+    agent_config_with_roots(opts, https_only, RootCerts::WebPki)
+}
+
+/// The same configuration with the trust anchors named. Shipped code always passes the web PKI roots (through
+/// [`agent_config`]); only a test passes another set, to prove that a certificate is checked against the anchors given.
+fn agent_config_with_roots(opts: HttpOptions, https_only: bool, roots: RootCerts) -> Config {
     let tls = TlsConfig::builder()
         .provider(TlsProvider::Rustls)
-        .root_certs(RootCerts::WebPki)
+        .root_certs(roots)
         .disable_verification(false)
         .build();
     Config::builder()
@@ -190,8 +196,17 @@ impl HttpTransport {
     }
 
     fn build(base: String, opts: HttpOptions, https_only: bool) -> HttpTransport {
+        Self::build_with_config(base, opts, https_only, agent_config(opts, https_only))
+    }
+
+    fn build_with_config(
+        base: String,
+        opts: HttpOptions,
+        https_only: bool,
+        config: Config,
+    ) -> HttpTransport {
         HttpTransport {
-            agent: ureq::Agent::new_with_config(agent_config(opts, https_only)),
+            agent: ureq::Agent::new_with_config(config),
             base,
             opts,
             https_only,
@@ -211,6 +226,22 @@ impl HttpTransport {
         opts: HttpOptions,
     ) -> HttpTransport {
         Self::build(format!("http://127.0.0.1:{port}"), opts, https_only)
+    }
+
+    /// An https server on 127.0.0.1 whose certificate is checked against `roots` (the https only agent, so a plain
+    /// connection is refused). Used to prove that the transport verifies the certificate and the host name.
+    #[cfg(test)]
+    pub(crate) fn tls_loopback_for_tests(
+        port: u16,
+        roots: RootCerts,
+        opts: HttpOptions,
+    ) -> HttpTransport {
+        Self::build_with_config(
+            format!("https://127.0.0.1:{port}"),
+            opts,
+            true,
+            agent_config_with_roots(opts, true, roots),
+        )
     }
 }
 
