@@ -7,8 +7,10 @@ mod credentials;
 mod default_tests;
 #[cfg(test)]
 mod feature_tests;
+mod import;
 mod members;
 mod messages;
+pub use import::ImportStore;
 mod policy;
 mod reviews;
 mod rooms;

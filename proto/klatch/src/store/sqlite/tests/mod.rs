@@ -21,6 +21,7 @@ mod conformance;
 mod credentials;
 mod cycle_notice;
 mod encryption;
+mod import;
 mod label_keys;
 mod long_tasks;
 mod machine_checkpoint;
