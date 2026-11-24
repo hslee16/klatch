@@ -14,6 +14,14 @@
 
 use crate::domain::{MemberInfo, StuckEvent, valid_name};
 
+impl Proposal {
+    /// Whether `body`, a line the mediator itself posted earlier, is this proposal: the whole text, or the fixed lead
+    /// for a proposal that has one (#1205). The caller has already limited `body` to the mediator's own posts.
+    pub fn is_posted_as(&self, body: &str) -> bool {
+        body == self.text || self.lead.as_deref().is_some_and(|l| body.starts_with(l))
+    }
+}
+
 /// The most proposals one pass makes, so a flood of stuck cases cannot become a flood of posts.
 pub const MAX_PROPOSALS: usize = 5;
 
@@ -31,6 +39,10 @@ pub struct Proposal {
     /// The stuck case's key; one proposal per key.
     pub key: String,
     pub text: String,
+    /// The fixed start of `text` that a restarted mediator matches its own earlier post by, when `text` holds a number
+    /// that grows while the case stands (#1205). `None` means the whole text is matched. Only ever a template start
+    /// with member and room names in it, never member text.
+    pub lead: Option<String>,
     /// A room to create and invite into, when the case is a cycle through asks.
     pub room: Option<String>,
     pub invites: Vec<String>,
@@ -75,6 +87,7 @@ fn post(key: String, text: String) -> Proposal {
     Proposal {
         key,
         text,
+        lead: None,
         room: None,
         invites: Vec::new(),
     }
@@ -104,14 +117,20 @@ fn propose(view: &View, e: &StuckEvent) -> Option<Proposal> {
             let [a, b] = members.as_slice() else {
                 return None;
             };
-            post(
-                key,
-                format!(
-                    "mediator proposal: @{a} and @{b} have exchanged {messages} messages in {room}. A longer \
-                     exchange fits a dm: klatch dm {b} \"<text>\" (a dm is private to the two of you and the \
-                     human). {TAIL}"
-                ),
-            )
+            // the count grows while the exchange goes on, so a restart matches the line up to the count and the room
+            // after it, never the number (#1205)
+            let lead = format!("mediator proposal: @{a} and @{b} have exchanged ");
+            Proposal {
+                lead: Some(lead),
+                ..post(
+                    key,
+                    format!(
+                        "mediator proposal: @{a} and @{b} have exchanged {messages} messages in {room}. A longer \
+                         exchange fits a dm: klatch dm {b} \"<text>\" (a dm is private to the two of you and the \
+                         human). {TAIL}"
+                    ),
+                )
+            }
         }
         StuckEvent::DeadHolder {
             room,
@@ -164,6 +183,7 @@ fn ask_cycle(view: &View, key: String, members: &[String], asks: &[i64]) -> Opti
     invites.dedup();
     Some(Proposal {
         key,
+        lead: None,
         text: format!(
             "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
              post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
@@ -310,6 +330,23 @@ mod tests {
         );
         assert!(ps[0].room.is_none() && ps[0].invites.is_empty());
         assert_eq!(ps[0].key, "long_exchange:lobby:ann,bo");
+    }
+
+    #[test]
+    fn a_long_exchange_line_is_matched_by_its_fixed_lead_whatever_the_count_and_a_pair_or_room_change_is_not()
+     {
+        let p = &run(&[exchange()], &[member("ann"), member("bo")])[0];
+        let grown = p.text.replace("6 messages", "11 messages");
+        assert!(p.is_posted_as(&p.text) && p.is_posted_as(&grown));
+        assert!(!p.is_posted_as(&grown.replace("@bo", "@cy")));
+        assert!(!p.is_posted_as("mediator proposal: ask cycle"));
+        // every other proposal is matched by its whole text only
+        let c = &run(&[cycle()], &[member("ann"), member("bo")])[0];
+        assert!(
+            c.lead.is_none()
+                && c.is_posted_as(&c.text)
+                && !c.is_posted_as("mediator proposal: ask cycle")
+        );
     }
 
     #[test]

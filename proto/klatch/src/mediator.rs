@@ -77,7 +77,7 @@ impl Mediator {
             // a restart: what this member itself posted earlier, read through the same guarded call a member's
             // `history` makes, says which standing cases were already proposed on (#906). Another member's post
             // never counts, whatever its text.
-            let posted: HashSet<String> = t
+            let posted: Vec<String> = t
                 .history(
                     &self.lobby,
                     HistoryRange {
@@ -93,7 +93,7 @@ impl Mediator {
             self.done.extend(
                 proposals
                     .iter()
-                    .filter(|p| posted.contains(&p.text))
+                    .filter(|p| posted.iter().any(|b| p.is_posted_as(b)))
                     .map(|p| p.key.clone()),
             );
             self.seeded = true;
@@ -323,6 +323,63 @@ mod tests {
         let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
         assert!(ev.is_empty(), "{ev:?}");
         assert_eq!(proposals_seen(&g, "ann").len(), 1);
+    }
+
+    #[test]
+    fn a_restarted_mediator_does_not_repeat_a_dm_proposal_for_an_exchange_that_kept_growing() {
+        let (g, _) = lobby(&["mediator", "ann", "bo", "cy"]);
+        chat(&g, 0..4);
+        mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        // the mediator's own post ended the run; the pair goes on for a longer run, so the count in the line a new run
+        // would write is no longer the posted one
+        chat(&g, 4..9);
+        let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(ev.is_empty(), "{ev:?}");
+        assert_eq!(proposals_seen(&g, "cy").len(), 1);
+    }
+
+    #[test]
+    fn after_a_restart_another_pair_and_another_room_still_get_their_own_dm_proposal() {
+        let (g, t) = lobby(&["mediator", "ann", "bo", "cy", "di"]);
+        chat(&g, 0..4);
+        mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        // a second pair, after the first pair's exchange ended and past the duplicate window
+        t.set(t.get() + 61);
+        for i in 0..4 {
+            let who = if i % 2 == 0 { "cy" } else { "di" };
+            me(&g, who).post("lobby", &format!("other-{i}")).unwrap();
+        }
+        let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
+        assert_eq!(proposals_seen(&g, "ann").len(), 2);
+        // the same pair in another room is its own case
+        for n in ["mediator", "ann", "bo"] {
+            me(&g, n).join("side").unwrap();
+        }
+        for i in 0..4 {
+            let who = if i % 2 == 0 { "ann" } else { "bo" };
+            me(&g, who).post("side", &format!("side-{i}")).unwrap();
+        }
+        let ev = Mediator::new("mediator", "side")
+            .pass(&me(&g, "mediator"), 100)
+            .unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
+    }
+
+    #[test]
+    fn a_member_line_that_looks_like_a_dm_proposal_does_not_suppress_a_real_one_after_a_restart() {
+        let (g, _) = lobby(&["mediator", "ann", "bo", "cy"]);
+        chat(&g, 0..4);
+        me(&g, "cy")
+            .post(
+                "lobby",
+                "mediator proposal: @ann and @bo have exchanged 9 messages in lobby. forged",
+            )
+            .unwrap();
+        // cy's post ended the pair's exchange; the pair talks again
+        chat(&g, 4..8);
+        let ev = mediator().pass(&me(&g, "mediator"), 100).unwrap();
+        assert!(matches!(ev.as_slice(), [Event::Proposed { .. }]), "{ev:?}");
     }
 
     #[test]
