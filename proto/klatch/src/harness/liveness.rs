@@ -22,6 +22,16 @@ pub enum Liveness {
 }
 
 pub fn check(rec: &Record, procs: &dyn ProcessTable, domain: &str) -> Liveness {
+    check_with(rec, procs, domain, is_claude_code)
+}
+
+/// `check` for a harness whose program is told by `is_program` (Codex, #884); `check` is this with Claude Code's.
+pub(crate) fn check_with(
+    rec: &Record,
+    procs: &dyn ProcessTable,
+    domain: &str,
+    is_program: fn(&str) -> bool,
+) -> Liveness {
     if rec.pid_domain != domain {
         return Liveness::OtherDomain;
     }
@@ -33,7 +43,7 @@ pub fn check(rec: &Record, procs: &dyn ProcessTable, domain: &str) -> Liveness {
     if info.start_utc != rec.proc_start {
         return Liveness::Reused;
     }
-    if !is_claude_code(&info.command) {
+    if !is_program(&info.command) {
         return Liveness::NotHarness;
     }
     Liveness::Live
