@@ -66,15 +66,16 @@ class Escaper:
         clone = self.a.clone
         up = lambda *p: os.path.join(clone, "..", *p)
         read = lambda p: open(p).read()
-        self.attempt("ls ..", "Bash", lambda: os.listdir(up()), command="python3 -c \"import os; print(os.listdir('..'))\"")
+        self.attempt("ls ..", "Bash", lambda: os.listdir(up()), allowed=True, command="python3 -c \"import os; print(os.listdir('..'))\"")
         self.attempt("ls ../..", "Bash", lambda: os.listdir(up("..")), command="python3 -c \"import os; print(os.listdir('../..'))\"")
         self.attempt("cat ../b/SPEC-ROUTING.md", "Bash", lambda: read(up("b", "SPEC-ROUTING.md")), command="cat ../b/SPEC-ROUTING.md")
         self.attempt("python open ../c/x", "Bash", lambda: read(up("c", "x")), command="python3 -c \"open('../c/x').read()\"")
         self.attempt("old layout clones/b", "Read", lambda: read(up("..", "clones", "b", "SPEC.md")), file_path="../../clones/b/SPEC.md")
 
     def guarded_listings(self):
-        for g in [d for d in self.a.guard.split(",") if d][:3]:
-            self.attempt("list %s" % os.path.basename(g), "Glob", (lambda g=g: os.listdir(g)), pattern=g + "/*")
+        # guard order: the scratch root, the logs root, the log directory
+        for label, g in zip(("the scratch root", "the logs root", "the log directory"), [d for d in self.a.guard.split(",") if d][:3]):
+            self.attempt("list %s" % label, "Glob", (lambda g=g: os.listdir(g)), pattern=g + "/*")
 
     def symlink(self):
         link = os.path.join(self.a.clone, "uplink")
@@ -98,9 +99,10 @@ class Escaper:
                          command="git -C %s log --oneline" % other)
             self.attempt("Read another clone", "Read", lambda: read(os.path.join(other, "README.md")),
                          file_path=os.path.join(other, "README.md"))
-        for name in ("a.prompt.md", "a.stream.jsonl"):
-            path = os.path.join(self.a.out, name)
-            self.attempt("read the log %s by absolute path" % name, "Read", (lambda path=path: read(path)), file_path=path)
+        public = os.path.join(self.a.out, "a.prompt.md")
+        self.attempt("read the log a.prompt.md by its public name", "Read", lambda: read(public), file_path=public)
+        for path in [p for p in self.a.logfiles.split(",") if p][:1]:
+            self.attempt("read the log by its leaked random name", "Read", (lambda path=path: read(path)), file_path=path)
 
     def finish(self):
         with open(os.path.join(self.a.out, "%s.escape.json" % self.a.name), "w") as f:
@@ -116,6 +118,7 @@ def main():
     p.add_argument("--others", default="")
     p.add_argument("--guard", default="")
     p.add_argument("--origin", default="")
+    p.add_argument("--logfiles", default="")
     args = p.parse_args()
     emit({"type": "system", "subtype": "init", "model": "claude-fake", "session_id": "escape-" + args.name})
     Escaper(args).run()

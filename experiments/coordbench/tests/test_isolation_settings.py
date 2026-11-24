@@ -45,7 +45,9 @@ class Settings(unittest.TestCase):
         s, _ = self.loaded()
         fs = s["sandbox"]["filesystem"]
         r = lambda *p: "//" + os.path.join(self.root, *p).lstrip("/")
-        self.assertEqual(fs["denyRead"], [r("scratch"), r("logs"), r("repo")])
+        self.assertEqual(fs["denyRead"][:3], [r("scratch"), r("logs"), r("repo")])
+        for root in ("//Users", "//home", "//root"):  # and the user roots (#1519 review)
+            self.assertIn(root, fs["denyRead"])
         for own in (r("scratch", "ta", "clone"), r("scratch", "ta", "home"), r("scratch", "origin.git"), r("bin")):
             self.assertIn(own, fs["allowRead"])
         self.assertNotIn(r("scratch", "tb"), fs["allowRead"])

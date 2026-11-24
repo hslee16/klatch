@@ -84,6 +84,21 @@ def _checks_errors(rec):
     return []
 
 
+ISOLATION_KEYS = ("mode", "checked_calls", "violation_count", "violations")
+
+
+def _isolation_errors(iso):
+    """The isolation object (#1519) is optional (null when the scan did not run); when present it has its four fields."""
+    if iso is None:
+        return []
+    if not isinstance(iso, dict):
+        return ["isolation must be null or an object"]
+    errs = ["isolation misses %s" % k for k in ISOLATION_KEYS if k not in iso]
+    if isinstance(iso.get("violations"), list) is False and "violations" in iso:
+        errs.append("isolation.violations must be a list")
+    return errs
+
+
 def validate_record(rec):
     """A list of problems with the record (empty when it is valid)."""
     if not isinstance(rec, dict):
@@ -94,4 +109,4 @@ def validate_record(rec):
         errs.append("schema must be %d" % SCHEMA_VERSION)
     if rec.get("outcome") not in OUTCOMES:
         errs.append("outcome %r is not one of %s" % (rec.get("outcome"), ", ".join(OUTCOMES)))
-    return errs + validate_roles(rec.get("roles")) + _checks_errors(rec)
+    return errs + validate_roles(rec.get("roles")) + _checks_errors(rec) + _isolation_errors(rec.get("isolation"))

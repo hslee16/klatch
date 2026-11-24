@@ -37,7 +37,8 @@ class EscapeDriver(drivers.FakeDriver):
         self.isos[name] = isolation
         argv = [sys.executable, ESCAPE, "--name", name, "--out", out_dir, "--clone", cwd,
                 "--others", ",".join(isolation["others"]), "--guard", ",".join(isolation["guard"]),
-                "--origin", [p for p in isolation["write"] if p.endswith("origin.git")][0]]
+                "--origin", [p for p in isolation["write"] if p.endswith("origin.git")][0],
+                "--logfiles", ",".join(isolation.get("log_files", []))]
         return argv, {}
 
 
@@ -105,15 +106,16 @@ class Escapes(Base):
     def test_the_system_blocks_what_the_agent_cannot_name(self):
         for label in ("ls ../..", "old layout clones/b", "symlink to the scratch root", "cat ../b/SPEC-ROUTING.md", "python open ../c/x"):
             self.assertEqual(self.report[label]["outcome"], "blocked", label)
-        for label, r in self.report.items():
-            if label.startswith("list "):
-                self.assertEqual(r["outcome"], "blocked", label)  # the scratch root, the logs root and the log directory
+        self.assertEqual(self.report["list the log directory"]["outcome"], "blocked")
+        # the scratch root and the logs root are listable (they hold nothing private); the scan flags naming them
+        for label in ("list the scratch root", "list the logs root"):
+            self.assertEqual(self.report[label]["outcome"], "read", label)
 
     def test_what_the_system_cannot_block_once_a_path_leaks_is_reported_honestly(self):
         # the owner can read what it can name: the leaked-path attempts get through the permissions and only the scan sees them
-        self.assertEqual(self.report["read the log a.prompt.md by absolute path"]["outcome"], "read")
+        self.assertEqual(self.report["read the log by its leaked random name"]["outcome"], "read")
         self.assertEqual(self.report["git log of origin (pushed work only)"]["outcome"], "read")
-        self.assertTrue(self.detected("read the log a.prompt.md by absolute path"))
+        self.assertTrue(self.detected("read the log by its leaked random name"))
 
     def test_the_run_is_invalid_with_a_reason_and_the_record_has_the_scan(self):
         self.assertFalse(self.rec["valid"])
@@ -134,11 +136,9 @@ class Escapes(Base):
 
     def test_everything_is_listable_again_and_the_logs_are_under_their_public_name(self):
         self.assertEqual(os.path.basename(self.logdir), "t1-trivial-b0-r01")
-        self.assertEqual(stat.S_IMODE(os.stat(self.logs).st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(os.stat(self.logdir).st_mode), 0o700)
         self.assertEqual(os.listdir(self.scratch), [])
-        self.assertEqual(os.listdir(self.logs), ["t1-trivial-b0-r01"])
-        self.assertNotIn(os.path.join(self.logs, ""), self.rec["notes"].replace(self.logdir, ""))
+        self.assertEqual([n for n in os.listdir(self.logs) if not n.startswith(".")], ["t1-trivial-b0-r01"])
 
 
 class Clean(Base):

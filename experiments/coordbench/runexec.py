@@ -25,12 +25,13 @@ import streams
 from runenv import EXCLUDE, append_exclude, guard_paths, kill_group, minimal_env, sha256_file
 from runmetrics import RunMetrics, resolved_models, team_metrics, tool_calls_of
 from runisolation import IsolationSupport
+from runpoll import PollSupport
 from runroles import RoleSupport
 from runprompt import TASK_BOARD, build_prompt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RunSpot = collections.namedtuple("RunSpot", "arm seed scratch log_dir")  # which arm, with which seed, where it runs and logs
-class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
+class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
     def __init__(self, suite, git, rec, spot, notes):
         self.git = git
         self.a, self.fx, self.driver = suite.args, suite.fx, suite.driver
@@ -169,6 +170,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
         os.makedirs(os.path.join(self.scratch, "bin"), exist_ok=True)
         script = shutil.copy(os.path.join(HERE, "restart_member.py"), os.path.join(self.scratch, "bin", "restart_member.py"))
         self.restart_command = "python3 %s" % shlex.quote(script)
+        self.check_role_launch()
 
     def post_before_agents(self, env):
         """K arms: the fixture's seeded exchange, then the scripted colleague's injections, through the binary."""
@@ -237,13 +239,15 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
         extra = extra or {}
         role, replacement = extra.get("role"), extra.get("replacement", False)
         prompt, kw = self.prompt_and_kw(name, task, role, replacement)
-        with open(os.path.join(log_dir, "%s.prompt.md" % key), "w") as f:
+        for kind in ("prompt", "stream", "err"):  # a real agent's log files have random names until the run ends (#1519)
+            self.log_path(key, kind)
+        with open(self.log_path(key, "prompt"), "w") as f:
             f.write(prompt)
         argv, driver_extra = self.driver.command(name, self.arm, prompt, self.clones[name], log_dir, session=session_no,
                                           max_turns=extra.get("max_turns"), isolation=self.iso_for(name, bool(role)), **kw)
         env = self.agent_env(name, driver_extra, role)
-        logf = open(os.path.join(log_dir, "%s.stream.jsonl" % key), "wb")
-        errf = open(os.path.join(log_dir, "%s.err" % key), "wb")
+        logf = open(self.log_path(key, "stream"), "wb")
+        errf = open(self.log_path(key, "err"), "wb")
         if a.stagger_s and session_no == 1:
             time.sleep(self.rng.uniform(0, a.stagger_s))
         self.procs[key] = subprocess.Popen(argv, cwd=self.clones[name], env=env, stdin=subprocess.DEVNULL, stdout=logf,
@@ -299,19 +303,6 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
 
     # watching them -------------------------------------------------------------------------------------------
 
-    def pump(self):
-        now = round(time.monotonic() - self.t0, 3)
-        for name in self.procs:
-            with open(os.path.join(self.log_dir, "%s.stream.jsonl" % name), "rb") as f:
-                f.seek(self.offs[name])
-                chunk = f.read()
-            self.offs[name] += len(chunk)
-            data = self.partial[name] + chunk
-            *lines, self.partial[name] = data.split(b"\n")
-            for ln in lines:
-                self.states[name].feed(ln.decode("utf-8", "replace"), now)
-                self.stamps[name].append(now)
-
     def checks_now(self, tag):
         dest = os.path.join(self.scratch, "check-" + tag)
         shutil.rmtree(dest, ignore_errors=True)
@@ -342,7 +333,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
         if proc.poll() is not None:
             return {"fired": False, "agent": self.victim_name,
                     "reason": "the victim exited (code %s) before the trigger fired" % proc.returncode}
-        with open(os.path.join(self.log_dir, "%s.stream.jsonl" % self.victim_name), errors="replace") as f:
+        with open(self.log_path(self.victim_name, "stream"), errors="replace") as f:
             lines = f.read().splitlines()
         due = self.killer.poll(lines)
         if due is None:
@@ -397,13 +388,6 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
             self.stop_reason[k] = "stopped-by-harness"
         return True
 
-    def poll_checker(self):
-        if self.first_pass is None and time.monotonic() - self.last_poll >= self.a.poll_s:
-            self.last_poll = time.monotonic()
-            checks, _, err = self.checks_now("poll")
-            if err is None and self.all_pass(checks):
-                self.first_pass = time.monotonic() - self.t0
-
     def tick(self):
         """One turn of the watch loop; True when the loop should end."""
         time.sleep(0.05)
@@ -436,6 +420,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
             for p in self.procs.values():
                 p.wait()
             self.show_run()
+            self.join_poll()
 
     # the end of the run --------------------------------------------------------------------------------------
 
@@ -466,6 +451,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport):
     def settle(self):
         self.stopped_t = time.monotonic()
         self.pump()
+        self.publish_log_names()
         self.final_commit = self.finish_shared_tree()
         self.wall = time.monotonic() - self.t0
         self.rcs = {n: p.returncode for n, p in self.procs.items()}

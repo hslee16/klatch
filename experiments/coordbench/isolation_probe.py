@@ -22,6 +22,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import drivers  # noqa: E402
+import isolation  # noqa: E402
 
 TRIES = [
     ("control: read own file with python3", "python3 -c \"print(open('{own}/own.txt').read())\"", "OWN-SECRET"),
@@ -83,7 +84,7 @@ def main():
     try:
         p = build(root, a.klatch_bin)
         iso = {"mode": "sandbox", "root": root, "own": [p["own"], os.path.join(root, "agent-a/home"), os.path.join(root, "agent-a/tmp")],
-               "write": [], "read": [], "guard": [root], "others": [p["other"], p["hidden"]], "settings_dir": os.path.join(root, "agent-a")}
+               "write": [], "read": isolation.tool_roots(), "guard": [root], "others": [p["other"], p["hidden"]], "settings_dir": os.path.join(root, "agent-a")}
         d = drivers.ClaudeDriver(a.claude_bin, a.model, 8, 0.15, a.klatch_bin)
         tries = list(TRIES)
         if a.klatch_bin:
