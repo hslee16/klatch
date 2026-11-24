@@ -103,8 +103,8 @@ class IsolationSupport:
 
     def policy_for(self, name, role=False):
         d = self.agent_dir(name)
-        return isolation.Policy(name, self.clones.get(name) or self.clone_path(name), os.path.join(d, "home"),
-                                os.path.join(d, "tmp"), allow=self.allowed_dirs(name, role) + [os.path.join(d, "claude-config")],
+        return isolation.Policy(name, (self.clones.get(name) or self.clone_path(name), os.path.join(d, "home"),
+                                        os.path.join(d, "tmp")), allow=self.allowed_dirs(name, role) + [os.path.join(d, "claude-config")],
                                 guard=self.guard_dirs())
 
     def iso_for(self, name, role=False):

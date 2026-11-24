@@ -27,7 +27,7 @@ class Scan(unittest.TestCase):
         self.logs = j("logs", "run-1-tok")
         for d in (self.clone, self.home, self.tmp, self.origin, self.bin, self.other, self.logs):
             os.makedirs(d)
-        self.policy = isolation.Policy("a", self.clone, self.home, self.tmp, allow=[self.origin, self.bin],
+        self.policy = isolation.Policy("a", (self.clone, self.home, self.tmp), allow=[self.origin, self.bin],
                                        guard=[self.root, j("logs"), j("fixtures"), j("checks")])
 
     def scan(self, *lines):

@@ -279,17 +279,22 @@ def main(argv=None):
         guard_paths(os.path.join(a.tmp_root, "x"), os.path.join(a.tmp_root, "y"), a.tmp_root)
     except GuardError as e:
         return _refuse(e)
-    staged = None
-    if a.klatch_bin and os.path.isfile(a.klatch_bin):
-        # the agents get a copy of the binary: no prompt names a path inside the klatch repository (#1519)
-        os.makedirs(a.tmp_root, exist_ok=True)
-        a.bench_bin = a.bench_bin or storeexport.find_tool(a.klatch_bin, os.environ)  # found beside the original, before the copy
-        a.klatch_bin, staged = isolation.stage_binary(a.klatch_bin, a.tmp_root)
+    staged = _stage_klatch(a)
     try:
         return _run_suite(a, fx, plan)
     finally:
         if staged:
             shutil.rmtree(staged, ignore_errors=True)
+
+
+def _stage_klatch(a):
+    """The agents get a copy of the binary (its directory is returned): no prompt names a path inside the repository (#1519)."""
+    if not (a.klatch_bin and os.path.isfile(a.klatch_bin)):
+        return None
+    os.makedirs(a.tmp_root, exist_ok=True)
+    a.bench_bin = a.bench_bin or storeexport.find_tool(a.klatch_bin, os.environ)  # found beside the original, before the copy
+    a.klatch_bin, staged = isolation.stage_binary(a.klatch_bin, a.tmp_root)
+    return staged
 
 
 def _run_suite(a, fx, plan):

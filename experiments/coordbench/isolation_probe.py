@@ -49,6 +49,29 @@ def build(root, klatch_bin):
     return {"own": j("agent-a/clone"), "other": j("agent-b"), "root": root, "hidden": j("hidden")}
 
 
+def tool_results(stdout):
+    """[text of each tool result] from stream-json output, in order."""
+    out = []
+    for ln in stdout.splitlines():
+        try:
+            ev = json.loads(ln)
+        except ValueError:
+            continue
+        for b in ((ev.get("message") or {}).get("content") or []) if isinstance(ev, dict) else []:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                text = b.get("content")
+                out.append(text if isinstance(text, str) else json.dumps(text))
+    return out
+
+
+def print_table(tries, results):
+    refused = ("not permitted", "permission denied", "deny", "denied")
+    rows = list(zip(results, tries)) + ([(results[len(tries)], ("Read tool on the other clone's file", "", "OTHER-SECRET"))] if len(results) > len(tries) else [])
+    for text, (label, _cmd, marker) in rows:
+        shows = marker in text and not any(w in text.lower() for w in refused)
+        print("%-52s %s | %s" % (label, "SHOWS %s" % marker if shows else "no %s" % marker, text.replace("\n", " ")[:90]))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--claude-bin", default="claude")
@@ -70,30 +93,12 @@ def main():
         prompt = ("Run each numbered item, in order, one tool call each, using the Bash tool (or the Read tool where it says so). "
                   "Do not skip an item because an earlier one failed. After the last, say DONE.\n" + "\n".join(lines))
         argv, _ = d.command("a", "B0", prompt, p["own"], root, isolation=iso)
-        argv += ["--max-budget-usd", "0.15"]
         env = {k: os.environ[k] for k in ("PATH", "HOME", "ANTHROPIC_API_KEY") if k in os.environ}
         env.update(HOME=os.path.join(root, "agent-a/home"), TMPDIR=os.path.join(root, "agent-a/tmp"))
         proc = subprocess.run(argv, cwd=p["own"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
-        results, calls = [], {}
-        for ln in proc.stdout.splitlines():
-            try:
-                ev = json.loads(ln)
-            except ValueError:
-                continue
-            for b in ((ev.get("message") or {}).get("content") or []) if isinstance(ev, dict) else []:
-                if isinstance(b, dict) and b.get("type") == "tool_use":
-                    calls[b["id"]] = b.get("input", {})
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    text = b.get("content")
-                    text = text if isinstance(text, str) else json.dumps(text)
-                    results.append((calls.get(b.get("tool_use_id"), {}), text))
+        results = tool_results(proc.stdout)
         print("exit code %s; %d tool results; settings used: %s" % (proc.returncode, len(results), argv[argv.index("--settings") + 1]))
-        for i, (t, (label, _cmd, marker)) in enumerate(zip(results, tries)):
-            leaked = marker in t[1] and not ("not permitted" in t[1].lower() or "permission denied" in t[1].lower())
-            print("%-52s %s | %s" % (label, "SHOWS %s" % marker if leaked else "no %s" % marker, t[1].replace("\n", " ")[:90]))
-        if len(results) > len(tries):
-            r = results[len(tries)][1]
-            print("%-52s %s | %s" % ("Read tool on the other clone's file", "SHOWS OTHER-SECRET" if "OTHER-SECRET" in r and "deny" not in r.lower() else "no OTHER-SECRET", r.replace("\n", " ")[:90]))
+        print_table(tries, results)
         if proc.returncode != 0:
             print(proc.stderr[-400:])
     finally:

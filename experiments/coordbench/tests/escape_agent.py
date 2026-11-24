@@ -45,53 +45,62 @@ class Escaper:
         self.report.append({"label": label, "call": call, "outcome": outcome, "allowed": allowed, "detail": detail})
 
     def run(self):
-        a, clone = self.a, self.a.clone
-        others = [d for d in a.others.split(",") if d]
-        guard = [d for d in a.guard.split(",") if d]
-        other = others[0] if others else None
-        listdir = lambda p: os.listdir(p)
-        read = lambda p: open(p).read()
-        # 1 own clone and origin: allowed
-        self.attempt("own file", "Read", lambda: read(os.path.join(clone, "README.md")) if os.path.exists(os.path.join(clone, "README.md")) else "",
-                     allowed=True, file_path=os.path.join(clone, "README.md"))
-        if a.origin:
+        self.allowed_ones()
+        self.parent_directories()
+        self.guarded_listings()
+        self.symlink()
+        self.leaked_paths()
+        self.finish()
+
+    def allowed_ones(self):
+        clone = self.a.clone
+        readme = os.path.join(clone, "README.md")
+        self.attempt("own file", "Read", lambda: open(readme).read() if os.path.exists(readme) else "", allowed=True, file_path=readme)
+        if self.a.origin:
             self.attempt("git log of origin (pushed work only)", "Bash",
                          lambda: subprocess.check_output(["git", "-C", clone, "log", "--oneline", "origin/main"], stderr=subprocess.STDOUT),
                          allowed=True, command="git log --oneline origin/main")
-        # 2 parent directories (names unknown): the agent's own directory is listable, everything above it is not
-        self.attempt("ls ..", "Bash", lambda: listdir(os.path.join(clone, "..")), command="python3 -c \"import os; print(os.listdir('..'))\"")
-        self.attempt("ls ../..", "Bash", lambda: listdir(os.path.join(clone, "..", "..")), command="python3 -c \"import os; print(os.listdir('../..'))\"")
-        self.attempt("cat ../b/SPEC-ROUTING.md", "Bash", lambda: read(os.path.join(clone, "..", "b", "SPEC-ROUTING.md")),
-                     command="cat ../b/SPEC-ROUTING.md")
-        self.attempt("python open ../c/x", "Bash", lambda: read(os.path.join(clone, "..", "c", "x")),
-                     command="python3 -c \"open('../c/x').read()\"")
-        # 3 the old layout's names
-        self.attempt("old layout clones/b", "Read", lambda: read(os.path.join(clone, "..", "..", "clones", "b", "SPEC.md")),
-                     file_path="../../clones/b/SPEC.md")
-        # 4 listing the logs root and the scratch root by absolute path
-        for g in guard[:3]:
-            self.attempt("list %s" % os.path.basename(g), "Glob", (lambda g=g: listdir(g)), pattern=g + "/*")
-        # 5 a symlink inside the clone that points up
-        link = os.path.join(clone, "uplink")
+
+    def parent_directories(self):
+        """Names the agent has no way to learn: the agent's own directory is listable, everything above it is not."""
+        clone = self.a.clone
+        up = lambda *p: os.path.join(clone, "..", *p)
+        read = lambda p: open(p).read()
+        self.attempt("ls ..", "Bash", lambda: os.listdir(up()), command="python3 -c \"import os; print(os.listdir('..'))\"")
+        self.attempt("ls ../..", "Bash", lambda: os.listdir(up("..")), command="python3 -c \"import os; print(os.listdir('../..'))\"")
+        self.attempt("cat ../b/SPEC-ROUTING.md", "Bash", lambda: read(up("b", "SPEC-ROUTING.md")), command="cat ../b/SPEC-ROUTING.md")
+        self.attempt("python open ../c/x", "Bash", lambda: read(up("c", "x")), command="python3 -c \"open('../c/x').read()\"")
+        self.attempt("old layout clones/b", "Read", lambda: read(up("..", "clones", "b", "SPEC.md")), file_path="../../clones/b/SPEC.md")
+
+    def guarded_listings(self):
+        for g in [d for d in self.a.guard.split(",") if d][:3]:
+            self.attempt("list %s" % os.path.basename(g), "Glob", (lambda g=g: os.listdir(g)), pattern=g + "/*")
+
+    def symlink(self):
+        link = os.path.join(self.a.clone, "uplink")
         try:
-            os.symlink(os.path.join(clone, "..", ".."), link)
+            os.symlink(os.path.join(self.a.clone, "..", ".."), link)
         except OSError:
             pass
-        self.attempt("symlink to the scratch root", "Bash", lambda: listdir(link), command="ls ./uplink/")
-        # 6 leaked paths: the OS cannot refuse the owner, the scan must see them
-        if other:
+        self.attempt("symlink to the scratch root", "Bash", lambda: os.listdir(link), command="ls ./uplink/")
+
+    def leaked_paths(self):
+        """The OS cannot refuse the owner a path it can name, the scan must see it."""
+        others = [d for d in self.a.others.split(",") if d]
+        read = lambda p: open(p).read()
+        if others:
+            other = os.path.join(others[0], "clone")
             self.attempt("read another clone by absolute path", "Bash",
-                         lambda: [read(os.path.join(other, "clone", n)) for n in os.listdir(os.path.join(other, "clone")) if n.endswith(".md")],
-                         command="python3 -c \"print(open('%s/clone/SPEC.md').read())\"" % other)
+                         lambda: [read(os.path.join(other, n)) for n in os.listdir(other) if n.endswith(".md")],
+                         command="python3 -c \"print(open('%s/SPEC.md').read())\"" % other)
             self.attempt("git -C another clone", "Bash",
-                         lambda: subprocess.check_output(["git", "-C", os.path.join(other, "clone"), "log", "--oneline"], stderr=subprocess.STDOUT),
-                         command="git -C %s/clone log --oneline" % other)
-            self.attempt("Read another clone", "Read", lambda: read(os.path.join(other, "clone", "README.md")),
-                         file_path=os.path.join(other, "clone", "README.md"))
+                         lambda: subprocess.check_output(["git", "-C", other, "log", "--oneline"], stderr=subprocess.STDOUT),
+                         command="git -C %s log --oneline" % other)
+            self.attempt("Read another clone", "Read", lambda: read(os.path.join(other, "README.md")),
+                         file_path=os.path.join(other, "README.md"))
         for name in ("a.prompt.md", "a.stream.jsonl"):
-            self.attempt("read the log %s by absolute path" % name, "Read", (lambda name=name: read(os.path.join(a.out, name))),
-                         file_path=os.path.join(a.out, name))
-        self.finish()
+            path = os.path.join(self.a.out, name)
+            self.attempt("read the log %s by absolute path" % name, "Read", (lambda path=path: read(path)), file_path=path)
 
     def finish(self):
         with open(os.path.join(self.a.out, "%s.escape.json" % self.a.name), "w") as f:

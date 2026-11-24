@@ -31,7 +31,8 @@ class EscapeDriver(drivers.FakeDriver):
         super().__init__(FAKE)
         self.isos = {}
 
-    def command(self, name, arm, prompt, cwd, out_dir, session=1, max_turns=None, role=None, model=None, max_usd=None, isolation=None):
+    def command(self, name, arm, prompt, cwd, out_dir, **kw):
+        isolation = kw["isolation"]
         self.isos[name] = isolation
         argv = [sys.executable, ESCAPE, "--name", name, "--out", out_dir, "--clone", cwd,
                 "--others", ",".join(isolation["others"]), "--guard", ",".join(isolation["guard"]),
