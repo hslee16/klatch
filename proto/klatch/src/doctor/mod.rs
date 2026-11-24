@@ -76,6 +76,7 @@ pub fn run(
     store::check_growth(&mut r, home);
     store::check_proof_failures(&mut r, home);
     store::check_modes(&mut r, home);
+    store::check_passphrase(&mut r, home);
     session::check_codex(&mut r, home, project_dir);
     session::check_harness(&mut r);
     hooks::check_hooks(&mut r, project_dir, home, exe);
@@ -133,5 +134,21 @@ mod tests {
             "{at_level:?}"
         );
         assert!(at_level[0].contains("from 9 terminals"), "{at_level:?}");
+    }
+
+    #[test]
+    fn the_passphrase_warning_is_only_for_a_readable_store_with_none_set() {
+        let lines = |set| {
+            let mut r = Report { lines: Vec::new() };
+            store::report_passphrase(&mut r, set);
+            r.lines
+        };
+        assert!(lines(Some(true)).is_empty());
+        assert!(lines(None).is_empty());
+        let unset = lines(Some(false));
+        assert_eq!(unset.len(), 1);
+        assert!(unset[0].0 == Status::Warn);
+        assert!(unset[0].1.contains("no admin passphrase is set"));
+        assert!(unset[0].2.as_deref().unwrap().contains("init-passphrase"));
     }
 }
