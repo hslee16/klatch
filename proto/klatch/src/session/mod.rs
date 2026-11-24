@@ -2,6 +2,7 @@
 //! Identity comes from the `Principal` the transport supplies, never from a request.
 
 pub mod acp;
+pub(crate) mod acp_reader;
 mod backend;
 mod fixed;
 mod frames;
@@ -552,6 +553,8 @@ pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> V
     items
 }
 
+#[cfg(test)]
+mod acp_cancel_tests;
 #[cfg(test)]
 mod acp_tests;
 #[cfg(test)]
