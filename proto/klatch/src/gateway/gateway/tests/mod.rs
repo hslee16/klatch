@@ -74,6 +74,7 @@ mod runs;
 mod scrub;
 mod ssh_key;
 mod stream;
+mod lapsed_claim;
 mod stuck;
 mod tasks;
 mod tripwire;

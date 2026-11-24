@@ -85,6 +85,32 @@ impl<S: Store> Gateway<S> {
             .collect())
     }
 
+    /// The `lapsed_claim` stuck events of `room` (#1339): named claims that lapsed unreleased, newest first, bounded.
+    /// Flag only; read only.
+    pub(super) fn lapsed_claim_events(
+        &self,
+        room: &str,
+        now: i64,
+    ) -> Result<Vec<crate::domain::StuckEvent>> {
+        let window = (
+            crate::domain::LAPSED_WINDOW_SECS,
+            crate::domain::LAPSED_CLAIM_MAX,
+        );
+        Ok(self
+            .store
+            .lapsed_claims(room, now, window)?
+            .into_iter()
+            .map(
+                |(path, holder, expires)| crate::domain::StuckEvent::LapsedClaim {
+                    room: room.to_string(),
+                    claim: crate::domain::claim_label(&path),
+                    holder,
+                    lapsed_secs: (now - expires).max(0),
+                },
+            )
+            .collect())
+    }
+
     pub fn release(&self, who: &Principal, room: &str, path: &str) -> Result<()> {
         check_member(who)?;
         check_room(room)?;

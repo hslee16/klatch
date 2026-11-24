@@ -117,6 +117,29 @@ impl ClaimStore for SqliteStore {
         self.standing_overwrites(room, now)
     }
 
+    fn lapsed_claims(
+        &self,
+        room: &str,
+        now: i64,
+        (window, limit): (i64, usize),
+    ) -> Result<Vec<(String, String, i64)>> {
+        self.rows(
+            "SELECT c.path,c.owner,c.expires FROM claims c
+             WHERE c.room=?1 AND c.expires<=?2 AND c.expires>?2-?3 AND c.reason<>?4 AND c.path NOT LIKE 'ask:%'
+               AND NOT EXISTS(SELECT 1 FROM members m WHERE m.room=c.room AND m.name=c.owner
+                              AND m.status LIKE 'done%' AND m.status_ts>=c.since)
+             ORDER BY c.expires DESC, c.path LIMIT ?5",
+            params![
+                room,
+                now,
+                window,
+                crate::domain::PASSIVE_REASON,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,

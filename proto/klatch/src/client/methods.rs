@@ -160,7 +160,7 @@ impl Client {
         }))
     }
 
-    /// The stuck cases of a room as events (`stale_ask`, `nobody_capable`, `ask_cycle`, `claim_deadlock`, `long_exchange`, `dead_holder`, `possible_overwrite`): each a JSON
+    /// The stuck cases of a room as events (`stale_ask`, `nobody_capable`, `ask_cycle`, `claim_deadlock`, `long_exchange`, `dead_holder`, `possible_overwrite`, `lapsed_claim`): each a JSON
     /// object with a `kind`, a stable `key`, and ids, member names and numbers, never message text.
     pub fn stuck(&mut self, room: &str) -> Result<Vec<Value>> {
         let r = self.request("stuck", json!({"room": room}))?;

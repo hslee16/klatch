@@ -56,7 +56,23 @@ pub enum StuckEvent {
         previous: String,
         new: String,
     },
+    /// A named claim whose lease lapsed with no release while its holder never posted `done` afterwards
+    /// (#1339): a producer that died holding its claim. `claim` is the claim key (`claim_label`), `lapsed_secs` how long
+    /// ago the lease ended. Read only: it flags a lapse the store has not swept yet and releases nothing.
+    LapsedClaim {
+        room: String,
+        claim: String,
+        holder: String,
+        lapsed_secs: i64,
+    },
 }
+
+/// A lapse is shown for this many seconds after the lease ended (#1339): the same fixed 600 s as `YIELD_WINDOW_SECS`,
+/// not a setting.
+pub const LAPSED_WINDOW_SECS: i64 = YIELD_WINDOW_SECS;
+
+/// At most this many `lapsed_claim` events are read per room, newest lapse first, so the report is bounded.
+pub const LAPSED_CLAIM_MAX: usize = 20;
 
 /// Seconds a deadlock mark, a release after it and the flag that follows each last (#909): a release counts when it
 /// comes within this long of the deadlock, a take counts when it comes within this long of the release, and the event
@@ -74,6 +90,7 @@ impl StuckEvent {
             StuckEvent::LongExchange { .. } => "long_exchange",
             StuckEvent::DeadHolder { .. } => "dead_holder",
             StuckEvent::PossibleOverwrite { .. } => "possible_overwrite",
+            StuckEvent::LapsedClaim { .. } => "lapsed_claim",
         }
     }
 
@@ -101,6 +118,7 @@ impl StuckEvent {
                 previous,
                 new,
             } => format!("possible_overwrite:{room}:{path}:{previous}:{new}"),
+            StuckEvent::LapsedClaim { room, claim, .. } => format!("lapsed_claim:{room}:{claim}"),
         }
     }
 
@@ -110,7 +128,9 @@ impl StuckEvent {
             StuckEvent::StaleAsk { asker, .. } | StuckEvent::NobodyCapable { asker, .. } => {
                 vec![asker.as_str()]
             }
-            StuckEvent::DeadHolder { holder, .. } => vec![holder.as_str()],
+            StuckEvent::DeadHolder { holder, .. } | StuckEvent::LapsedClaim { holder, .. } => {
+                vec![holder.as_str()]
+            }
             StuckEvent::PossibleOverwrite { previous, new, .. } => {
                 vec![previous.as_str(), new.as_str()]
             }
@@ -165,6 +185,14 @@ impl StuckEvent {
             } => {
                 format!("possible_overwrite room {room} path {path} previous {previous} new {new}")
             }
+            StuckEvent::LapsedClaim {
+                room,
+                claim,
+                holder,
+                lapsed_secs,
+            } => format!(
+                "lapsed_claim room {room} claim {claim} holder {holder} lapsed {lapsed_secs}s"
+            ),
         }
     }
 }
