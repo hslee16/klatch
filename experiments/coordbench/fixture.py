@@ -27,6 +27,10 @@ Optional keys of fixture.json (#1374, scenario S9):
                     second session with the same name and a short note starts (run.py). A variant other than "join" renames
                     the fixture "<name>-<variant>" in records, so results of different variants are never pooled.
 
+generator_sources  (#1516) the files of the fixture directory that make committed files or the repository setup.sh builds (gen.py,
+                    gen_facts.py, the modules they import, build_history.py). They are not in the fixture hash: their output is
+                    committed and proved by the generator's --check, or it is hashed (see fixhash.py, which says what the hash covers).
+
 Generated fixtures (#1372, scenario S7): "generated": {"module": "gen.py", "modules": M, "seed": S} names a generator in the
 fixture directory with the functions tasks(M, S) -> [{"name", "task"}] (the agents and their job text, instead of "agents"
 and task files) and scenario_map(M, S) (the unit-to-path map the scenario file leaves empty). The harness gives setup.sh and the
@@ -42,6 +46,10 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
+import tempfile
+
+import fixhash
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -75,6 +83,8 @@ class Fixture:
         self._apply_variant(name, variant)
         self.generated = self.spec.get("generated")
         self._gen = None
+        self._sha = None
+        self.generator_sources = list(self.spec.get("generator_sources") or [])
         self.agents = self._load_agents(name)
         self.test_command = self.spec.get("test_command", "python3 -m unittest")
         self.topology = self.spec.get("topology", "T-clone")
@@ -147,7 +157,11 @@ class Fixture:
             path = os.path.join(self.dir, self.generated["module"])
             spec = importlib.util.spec_from_file_location("fixture_gen_%s" % self.spec["name"], path)
             self._gen = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(self._gen)
+            previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True  # no __pycache__ in the fixture (#1510)
+            try:
+                spec.loader.exec_module(self._gen)
+            finally:
+                sys.dont_write_bytecode = previous
         return self._gen
 
     def gen_env(self):
@@ -178,18 +192,57 @@ class Fixture:
         return [a["name"] for a in self.agents]
 
     def sha256(self):
-        """A hash of the fixture directory (relative paths and bytes, sorted), recorded in every result."""
-        h = hashlib.sha256()
-        if self.generated:  # the generator's parameters are part of what ran
-            h.update(json.dumps(self.generated, sort_keys=True).encode() + b"\0")
-        for d, dirs, files in os.walk(self.dir):
-            dirs.sort()
-            for n in sorted(files):
-                p = os.path.join(d, n)
-                h.update(os.path.relpath(p, self.dir).encode() + b"\0")
-                with open(p, "rb") as f:
-                    h.update(f.read() + b"\0")
-        return h.hexdigest()
+        """The fixture hash, version fixhash.FIXTURE_HASH_VERSION (what it covers is in fixhash.py), recorded in every result.
+        Computed once per object, so every record of a suite has the same value."""
+        if self._sha is None:
+            h = hashlib.sha256()
+            if self.generated:  # the generator's parameters are part of what ran
+                h.update(json.dumps(self.generated, sort_keys=True).encode() + b"\0")
+            fixhash.tree_update(h, self.dir, omit=self.generator_sources)
+            self._output_update(h)
+            self._sha = h.hexdigest()
+        return self._sha
+
+    def checker_sha256(self):
+        """The hash of the hidden checker directory checks/<checker>/ (None when it does not exist)."""
+        d = os.path.dirname(self.checker)
+        return fixhash.tree_sha256(d) if os.path.isdir(d) else None
+
+    def _output_update(self, h):
+        """What the generator sources make and the directory does not hold (fixhash.py): a generated fixture's template,
+        reference, tasks and map; a prebuilt history's commit id in each board kind of arm."""
+        if self.generated:
+            with tempfile.TemporaryDirectory(prefix="cb-fixhash-") as tmp:
+                self.materialise(os.path.join(tmp, "template"), 0, self._hash_env())
+                self._run_generator(["reference", os.path.join(tmp, "reference")])
+                for part in ("template", "reference"):
+                    h.update(b"generated:" + part.encode() + b"\0")
+                    fixhash.tree_update(h, os.path.join(tmp, part))
+            h.update(json.dumps([self.agents, self.scenario_map()], sort_keys=True).encode() + b"\0")
+        if self.prebuilt_history:
+            for arm in ("B0", "B1"):
+                h.update(b"history:" + arm.encode() + b"\0" + self._history_head(arm).encode() + b"\0")
+
+    def _hash_env(self):
+        return {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
+
+    def _run_generator(self, args):
+        cmd = [sys.executable, "-B", "-I", os.path.join(self.dir, self.generated["module"])] + args + [
+            "--modules", str(self.generated["modules"]), "--seed", str(self.generated["seed"])]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=self._hash_env())
+        if p.returncode != 0:
+            raise FixtureError("fixture %s: the generator failed: %s" % (self.requested, p.stdout.strip()[-300:]))
+
+    def _history_head(self, arm):
+        """The commit id of main in the repository setup.sh builds for arm (ids are the same in every run)."""
+        with tempfile.TemporaryDirectory(prefix="cb-fixhash-") as tmp:
+            dest = os.path.join(tmp, "repo")
+            self.materialise(dest, 0, self._hash_env(), arm=arm)
+            p = subprocess.run(["git", "-C", dest, "rev-parse", "main"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, env=dict(self._hash_env(), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"))
+            if p.returncode != 0:
+                raise FixtureError("fixture %s: no history built for arm %s: %s" % (self.requested, arm, p.stdout.strip()[-200:]))
+            return p.stdout.strip()
 
     def materialise(self, dest, seed, env, arm=None):
         os.makedirs(dest, exist_ok=True)
