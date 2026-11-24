@@ -846,7 +846,7 @@ Setup: two idle helpers on the same `lib` package and two askers (alpha in `api`
 - **OBSERVED.** A room of two was created and used: the helper moved to `dm-api-30-lib-a1`, told alpha the import path and what changed; alpha confirmed in the same room.
 - **OBSERVED, a gap.** One helper waited on `lobby dm-api-30-lib-a1 --only seeking:`. The filter applies to every named room, so a reply in the room of two that does not start with `seeking:` would not have woken it. This run did not need it, but it is a trap (see the ticket).
 - **OBSERVED.** The helpers lingered (240 s and 289 s) only because my stop rule told them to wait for three timeouts; the askers ended in 48 s and 54 s.
-- **NOT OBSERVED.** A multi-step exchange in the room of two: alpha's ask already said accents should be transliterated, so the helper had nothing to ask back. The scenario did not force a question (#210 stays open). Two helpers racing within one poll; a third helper; whether agents would use any of this unprompted (#209).
+- **NOT OBSERVED.** A multi-step exchange in the room of two: alpha's ask already said accents should be transliterated, so the helper had nothing to ask back. The scenario did not force a question (#210 stays open). Two helpers racing within one poll; a third helper; whether agents would use any of this unprompted (#209). Update (2026-11-24): a multi-step exchange in a room of two was run on 2026-11-21 (#210 variants A to C; an explicit instruction produced the room of two with 4 question and answer pairs, no instruction kept the exchange in the lobby); see the research note for #210.
 
 ## 25. Run seven: how a helper knows it is finished (2026-11-13)
 
@@ -967,7 +967,7 @@ Runs twelve and thirteen: a helper and an asker whose task text says nothing abo
 - **OBSERVED (both runs).** Nothing in the task text taught the convention, yet: the helper read its repository, then posted one concrete `offering:` (not a generic one, and not at start); the asker posted `seeking:` and waited with `wait`, never `sleep`; the helper claimed `ask:2`, answered with `answer to #2:` and released; the asker posted `closed #2` and `status: done`; the helper withdrew its offer and left with `status: done`. The asker's tests pass (6 and 5).
 - **OBSERVED.** The only defect was in my text, not in the agents: it named the actions but not the command forms, so run twelve burned turns guessing. Showing the exact commands removed the wasted turns (asker 14 to 9 turns).
 - **Caveats.** One run each, so the 14 to 9 and 13 to 11 turn drops could include model variance; the removal of `--help` and the wrong claim form is a direct effect of the text. The helper's task text did say to stay available until the askers were finished (the stop rule is not part of the convention; it follows the V3 `status: done` signal). Two agents only: no contention, no declines.
-- **NOT OBSERVED.** More than one helper, declines, the dual role (#246), a session that ignores the convention, longer lobbies.
+- **NOT OBSERVED.** More than one helper, declines, the dual role (#246), a session that ignores the convention, longer lobbies. Update (2026-11-24): the dual role was run on 2026-11-21 for two and three members (#246); see the research note for #246.
 
 ## 32. A deadlock trap: opposite-order claims (2026-11-13)
 
@@ -977,7 +977,7 @@ Run fourteen (#246). Two real agents, one shared directory with `X.py` and `Y.py
 - **OBSERVED.** The agents resolved it by themselves in the lobby in about a minute (alpha 69 s, 18 turns, $0.237; beta 51 s, 15 turns, $0.202). Both posted the deadlock; the proposals crossed ("our messages crossed"); they agreed that the one who had already edited its first file goes first; the other reverted its edit and released; the first finished both and released; the second then did its own. No human involved, no claim lapse needed.
 - **OBSERVED.** The final files say `from alpha` in both: the second agent's later edits replaced the first agent's. Nothing in klatch (or in my task text, which required both changes "to land together") made the first agent's result survive; the claims prevented concurrent edits, not a sequence of overwrites.
 - **OBSERVED.** Crossed proposals: each offered to yield to the other at the same moment. A deterministic tie-break was not available to them and cost a message round.
-- **NOT OBSERVED.** Three or more members in a cycle; a cycle through asks (A waits on B's answer, B waits on A's) rather than through claims; a member that is busy for minutes and cannot answer; agents that do not negotiate (a crashed holder, a claim that outlives its owner by the 600 s TTL).
+- **NOT OBSERVED.** Three or more members in a cycle; a cycle through asks (A waits on B's answer, B waits on A's) rather than through claims; a member that is busy for minutes and cannot answer; agents that do not negotiate (a crashed holder, a claim that outlives its owner by the 600 s TTL). Update (2026-11-24): a cycle through asks (#273) and a two-member and a three-member ask cycle (#246) were run on 2026-11-21 with real agents; a crashed holder and a resolved three-member cycle are still not observed; see the research note for #273 and for #246.
 
 ### 32.1 The same trap with deadlock detection (run fifteen)
 
@@ -991,7 +991,7 @@ Same scenario, binary with detection (DESIGN section 25.12) and the convention l
 - **OBSERVED.** The refusal that closed the cycle carried the deadlock text, and that agent (alpha) did what it said: restored `X.py` to `initial`, released, and waited; the other agent (beta) finished both files and released. No negotiation was needed and nothing was posted about the deadlock.
 - **OBSERVED.** Fewer turns and less cost, but longer wall time (beta held its first claim and waited about a minute on purpose, because its task said the two changes must land together; it did not follow the convention line about releasing before waiting). One run each: the turn and cost drop could include variance; the absence of negotiation messages is a direct effect.
 - **OBSERVED, still true.** Both files end up `from alpha`: the second agent's edits replaced the first's. Detection resolves the wait, not the semantic conflict.
-- **NOT OBSERVED.** Three or more members; a cycle through asks; a crashed holder.
+- **NOT OBSERVED.** Three or more members; a cycle through asks; a crashed holder. Update (2026-11-24): a cycle through asks (#273) and a two-member and a three-member ask cycle (#246) were run on 2026-11-21 with real agents; a crashed holder and a resolved three-member cycle are still not observed; see the research note for #273 and for #246.
 
 ## 33. The SessionEnd hook in a real session (2026-11-13, Claude Code 2.1.323)
 
