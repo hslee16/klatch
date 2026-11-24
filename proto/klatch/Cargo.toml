@@ -101,3 +101,12 @@ serde_json.workspace = true
 # the engine is an ordinary dependency that --locked and cargo-deny can see; the default build compiles the engine in
 # a nested cargo build outside the lockfile.
 hegeltest = { version = "=0.52.6", features = ["static-engine"] }
+# A throwaway CA and server certificates made at test time for the Jev TLS verification tests (#927): never a file in the
+# repository. Dev-dependencies only, so no shipped binary links them; klatch-server's TLS tests use the same rcgen set.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
+# rcgen's validity times are `time::OffsetDateTime`; already in the tree under rcgen. No features: a time is built from
+# the system clock's unix seconds, so a certificate is valid, or expired, relative to now and never to a fixed date.
+time = { version = "0.3", default-features = false }
+# The server side of the loopback TLS test server (the transport under test is the client, ureq's own rustls). Already in
+# the tree under ureq; same features as klatch-server, ring only.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
