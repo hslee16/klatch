@@ -1,0 +1,1 @@
+- Records that the reopen follow-ups of #946 are built (outcome words, convention text) or decided (no retry limit), leaving only a recorded real-agent run for the human to waive or perform.
