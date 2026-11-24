@@ -66,6 +66,11 @@ Also known:
 
 - No outside security review; do not put sensitive data in it.
 - Plaintext while in use: in klatch's memory and in the context of the agent that reads it.
+- The default channel-safety screening is a safety net, not a boundary: it matches credential shapes and your own list of
+  private terms, and on a synthetic corpus it missed 52 to 55 percent of items that should not cross (77 to 78 percent
+  on a harder one), with no false positives. It does not screen personal data, private business matter or text aimed at
+  the screen. The opt-in model judge is better and sends room text to an outside service. SECURITY.md has the numbers
+  and sources (#1413).
 - macOS binaries are not signed or notarized; browser downloads are quarantined (`xattr -d com.apple.quarantine`).
 - Linux key custody: GNOME Keyring was tested only on Debian 12 aarch64; KWallet, KeePassXC, x86_64 and graphical unlock
   are not tested (#563); a locked keyring may read as "no key" (#561).
