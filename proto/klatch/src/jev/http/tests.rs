@@ -795,11 +795,7 @@ impl Drop for TlsServer {
 /// One connection: the handshake, then one request and one reply. A failed handshake (the client refused the
 /// certificate and said so) ends the connection with nothing counted as a request.
 fn serve_tls(mut sock: TcpStream, config: &Arc<ServerConfig>, seen: &Arc<Mutex<TlsSeen>>) {
-    // an accepted socket may inherit the listener's non-blocking mode
-    if sock.set_nonblocking(false).is_err()
-        || sock.set_read_timeout(Some(TLS_CONN_TIMEOUT)).is_err()
-        || sock.set_write_timeout(Some(TLS_CONN_TIMEOUT)).is_err()
-    {
+    if !bound_socket(&sock) {
         return;
     }
     let Ok(mut conn) = ServerConnection::new(config.clone()) else {
@@ -812,24 +808,39 @@ fn serve_tls(mut sock: TcpStream, config: &Arc<ServerConfig>, seen: &Arc<Mutex<T
     }
     seen.lock().unwrap().handshakes += 1;
     let mut tls = rustls::Stream::new(&mut conn, &mut sock);
-    let mut buf = vec![];
-    let mut chunk = [0u8; 4096];
-    while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 64 * 1024 {
-        match tls.read(&mut chunk) {
-            Ok(0) | Err(_) => return,
-            Ok(n) => buf.extend(&chunk[..n]),
-        }
-    }
+    let Some(head) = read_tls_head(&mut tls) else {
+        return;
+    };
     {
         let mut s = seen.lock().unwrap();
         s.requests += 1;
-        s.head = String::from_utf8_lossy(&buf).to_string();
+        s.head = head;
     }
     let reply = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
     let _ = tls.write_all(reply.as_bytes());
     let _ = tls.flush();
     tls.conn.send_close_notify();
     let _ = tls.conn.complete_io(tls.sock);
+}
+
+/// Blocking mode (an accepted socket may inherit the listener's non-blocking mode) and a timeout both ways.
+fn bound_socket(sock: &TcpStream) -> bool {
+    sock.set_nonblocking(false).is_ok()
+        && sock.set_read_timeout(Some(TLS_CONN_TIMEOUT)).is_ok()
+        && sock.set_write_timeout(Some(TLS_CONN_TIMEOUT)).is_ok()
+}
+
+/// The request head (up to the blank line, at most 64 KiB), or `None` when the client went away first.
+fn read_tls_head(tls: &mut rustls::Stream<'_, ServerConnection, TcpStream>) -> Option<String> {
+    let mut buf = vec![];
+    let mut chunk = [0u8; 4096];
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 64 * 1024 {
+        match tls.read(&mut chunk) {
+            Ok(0) | Err(_) => return None,
+            Ok(n) => buf.extend(&chunk[..n]),
+        }
+    }
+    Some(String::from_utf8_lossy(&buf).to_string())
 }
 
 /// Connect a transport that trusts `roots` to the server and make one call.
