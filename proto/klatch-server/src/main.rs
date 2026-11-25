@@ -7,6 +7,7 @@
 //! (module `wire_http`): the klatch wire over HTTP and server-sent events, loopback only.
 
 mod channel;
+mod conn_guard;
 mod daemon;
 mod der;
 #[cfg(test)]
