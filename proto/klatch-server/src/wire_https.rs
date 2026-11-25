@@ -120,6 +120,7 @@ fn limits_of(raw: &Raw, max_connections: usize, short_limits: bool) -> Result<Li
 /// [`parse`] with the test knob given.
 pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
     let (mut listen, mut cert, mut key, mut ca) = (None, None, None, None);
+    let mut crl: Option<PathBuf> = None;
     let mut max_connections = wire_http::DEFAULT_MAX_CONNECTIONS;
     let mut allow_off_loopback = false;
     let mut raw = Raw::default();
@@ -136,6 +137,14 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             "--tls-cert" => cert = Some(PathBuf::from(value("--tls-cert")?)),
             "--tls-key" => key = Some(PathBuf::from(value("--tls-key")?)),
             "--tls-client-ca" => ca = Some(PathBuf::from(value("--tls-client-ca")?)),
+            "--tls-client-crl" => {
+                let path = PathBuf::from(value("--tls-client-crl")?);
+                if crl.replace(path).is_some() {
+                    bail!(
+                        "--tls-client-crl is given more than once: name one file (it may hold several CRLs)"
+                    );
+                }
+            }
             "--allow-off-loopback" => allow_off_loopback = true,
             flag @ ("--ws-allow-origin"
             | "--ws-max-per-member"
@@ -158,6 +167,11 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
         }
     }
     let limits = limits_of(&raw, max_connections, short_limits)?;
+    if crl.is_some() && ca.is_none() {
+        bail!(
+            "--tls-client-crl needs --tls-client-ca: a CRL revokes client certificates of a client CA, and mutual TLS has no mode without one"
+        );
+    }
     Ok(Options {
         limits,
         listen: listen.context("https needs --listen IP:PORT")?,
@@ -168,6 +182,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             client_ca: ca.context(
                 "https needs --tls-client-ca (a CA file, PEM, for client certificates): mutual TLS has no mode without one",
             )?,
+            client_crl: crl,
         },
         allow_off_loopback,
         ws: ws.finish(max_connections, short_limits)?,
@@ -208,6 +223,9 @@ pub fn run(opts: &Options) -> Result<()> {
         .context("the server cannot open the store, so it does not start")?;
     let listener = loopback::bind_mutual_tls(&opts.listen, policy)?;
     crate::daemon::install_signal_handlers();
+    if let Some(path) = &opts.files.client_crl {
+        eprintln!("{}", crate::tls_crl::start_line(path));
+    }
     announce_listening(&mut io::stderr().lock(), &listener.local_addr()?, opts);
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
     shared.ws.apply(&opts.ws, opts.max_connections);

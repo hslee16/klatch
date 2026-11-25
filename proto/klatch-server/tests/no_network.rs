@@ -423,7 +423,7 @@ fn the_only_tls_library_is_rustls_with_ring_and_no_other_crypto_or_tls_crate_is_
 }
 
 /// The only files that may name rustls: the handshake and configuration, and the pump of an established connection.
-const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs"];
+const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs", "src/tls_crl.rs"];
 
 /// Names that skip or weaken a check: none may appear in the source, in any file. (A test file may build a client that
 /// trusts its own throwaway CA; that is `tests/`, not `src/`.)
@@ -472,6 +472,49 @@ fn rustls_is_named_only_in_the_tls_module_and_nothing_names_a_way_to_skip_a_chec
     assert!(tls.contains("WebPkiClientVerifier::builder_with_provider("));
     assert!(tls.contains("with_client_cert_verifier("));
     assert!(tls.contains("check_peer(Security::MutualTls"));
+    // the CRL option (#1491) goes through that same verifier, with expiry enforced; no second verifier is built anywhere
+    assert!(tls.contains(".with_crls("));
+    assert!(tls.contains(".enforce_revocation_expiration()"));
+    // counted by occurrence in every source file (tls.rs and tls_crl.rs included, test modules excluded): one builder call,
+    // one place that installs a client verifier, and no verifier of the crate's own (the SKIPS list above refuses the type
+    // names; this refuses an `impl` of the trait in any spelling)
+    let code_of_all = || {
+        sources.iter().map(|(rel, text)| {
+            let code = text
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(text);
+            (rel.clone(), code.to_string())
+        })
+    };
+    let count = |needle: &str| -> usize {
+        code_of_all()
+            .map(|(_, code)| {
+                code.lines()
+                    .map(code_of)
+                    .filter(|l| l.contains(needle))
+                    .count()
+            })
+            .sum()
+    };
+    assert_eq!(
+        count("WebPkiClientVerifier::builder"),
+        1,
+        "exactly one call builds the client verifier"
+    );
+    assert_eq!(
+        count("with_client_cert_verifier("),
+        1,
+        "one place installs it"
+    );
+    assert_eq!(count(".with_crls("), 1, "the CRLs go to that one verifier");
+    for needle in [
+        "impl ClientCertVerifier",
+        "ClientCertVerifier for",
+        "dyn ClientCertVerifier",
+    ] {
+        assert_eq!(count(needle), 0, "a verifier of the crate's own: {needle}");
+    }
 }
 
 #[test]
@@ -483,7 +526,7 @@ fn the_key_file_checks_are_in_the_module_that_reads_the_key() {
     let (open, mode, owner, read) = (
         read_key.find("O_NOFOLLOW").expect("no symbolic link"),
         read_key.find("mode & 0o077").expect("the mode check"),
-        read_key.find("geteuid").expect("the owner check"),
+        read_key.find("euid()").expect("the owner check"),
         read_key.find("read_to_end").expect("the read"),
     );
     assert!(
