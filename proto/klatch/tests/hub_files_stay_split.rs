@@ -31,6 +31,7 @@ fn the_split_directories_have_no_file_over_the_line_cap() {
         "gateway/gateway/tests/zero_trust",
         "domain/board",
         "gateway/gateway/board",
+        "init",
     ] {
         rust_files(&src.join(dir), &mut files);
     }
