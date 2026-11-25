@@ -12,7 +12,7 @@
 #                                       --systemd prints systemd user units instead. Writes nothing, runs nothing (#1343)
 #   gh-watch ensure [opts]              start ONLY the receiver, detached, if it is down (never the forwarder, never gh); then status
 # serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
-#                --post-min INFO|ALERT --max-body BYTES   (--bind is accepted but only loopback is allowed)
+#                --post-min INFO|ALERT --max-body BYTES --no-claim --claim-ttl S --claim-renew S   (--bind is accepted but only loopback is allowed)
 # The watcher is read-only: it never calls gh or GitHub. This launcher runs gh only in clean-hooks (one read-only GET); status
 # uses ps and, when present, a read-only launchctl print.
 set -uo pipefail

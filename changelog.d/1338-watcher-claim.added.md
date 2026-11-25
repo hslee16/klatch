@@ -1,0 +1,1 @@
+- The gh-watch receiver holds a shared named claim `watch:gh` (holder MEMBER.PID) in its status room while it is up (renewed every 30 seconds, 90 second lease, released on a clean stop), so a dead watcher shows as a lapsed claim in `klatch stuck`, and a second receiver is refused by the claim conflict. Off with `--no-claim`.
