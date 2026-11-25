@@ -36,6 +36,8 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   hook {text}                    a SessionStart style hook_response event with this output (what a hook injects)
   cost {usd}                     report cumulative spend so far (a fake_cost event)
   sleep {s}, hang                wait; hang waits until the harness kills it
+  result_error {subtype, terminal_reason?, usd?}  the error result claude -p prints when it stops an agent on its own budget
+                                 or turn cap (error_max_budget_usd, error_max_turns), then exit 1 (#1553)
   exit {code}                    stop at once with that exit code, with no result message (a crashed agent)
   poll {n, command?}             n polling turns: n Bash calls of the command (default `sleep 5`) with empty output; no real
                                  waiting (the scenario S3 tests use it for a blocked agent that polls many times)
@@ -386,6 +388,16 @@ class Agent:
     def op_cost(self, st, allow):
         self.cost = float(st["usd"])
         emit({"type": "system", "subtype": "fake_cost", "usd": self.cost})
+
+    def op_result_error(self, st, allow):
+        """The result claude -p prints when it stops an agent on its own cap (subtype error_max_budget_usd or
+        error_max_turns, terminal_reason budget_exhausted), then exit 1 (#1553)."""
+        r = {"type": "result", "subtype": st.get("subtype", "error_max_budget_usd"), "is_error": True,
+             "num_turns": self.turn, "total_cost_usd": float(st.get("usd", self.cost))}
+        if st.get("terminal_reason"):
+            r["terminal_reason"] = st["terminal_reason"]
+        emit(r)
+        sys.exit(1)
 
     def op_sleep(self, st, allow):
         time.sleep(float(st["s"]))

@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import time
 
+import agentcap
 import history as history_mod
 import injections
 import recovery
@@ -51,6 +52,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         self.snaps = self.watcher = self.shared_info = None
         self.pending, self.cut = {}, set()
         self.first_pass = self.outcome = self.grace_start = None
+        self.agent_caps = {}
         self.inj = self.inj_plan_path = None
         self.rcfg, self.role_names, self.role_info = None, [], {}
         self.restart_dir, self.restart_command = None, ""
@@ -451,6 +453,11 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         """Some worker exited nonzero (a cut session, the killed victim and the role members do not count)."""
         return any(rc != 0 for k, rc in self.rcs.items() if k not in self.cut and k != killed and k not in self.role_keys)
 
+    def capped_agents(self, killed):
+        """{outcome: [session keys]} of the workers that stopped on their own spend or turn cap (#1553)."""
+        return agentcap.agent_caps({k: s.summary() for k, s in self.states.items()
+                                    if k not in self.cut and k != killed and k not in self.role_keys})
+
     def settle(self):
         self.stopped_t = time.monotonic()
         self.pump()
@@ -461,7 +468,8 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         killed = self.victim_name if self.kill_rec and self.kill_rec.get("fired") else None
         self.settle_kill()
         if self.outcome is None:
-            self.outcome = "crash" if self.crashed(killed) else "ok"
+            self.agent_caps = self.capped_agents(killed)
+            self.outcome = agentcap.cap_outcome(self.agent_caps) or ("crash" if self.crashed(killed) else "ok")
         if self.outcome == "crash":
             self.notes.append("agent exit codes %s" % json.dumps(self.rcs, sort_keys=True))
 
@@ -505,6 +513,7 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
     def note_roles_and_errors(self, sums):
         if self.rcfg:
             self.role_record()
+        self.notes.extend(agentcap.notes(self.agent_caps, self.allsums, self.agent_of))
         if any(s["is_error"] for s in sums.values()):
             self.notes.append("an agent's result message reported is_error")
 
