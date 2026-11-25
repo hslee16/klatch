@@ -128,9 +128,14 @@ Supported versions: the newest release only, the current practice and not a poli
   connections (`--ws-max-per-member`, 1 up to `--max-connections`), the refusal being the `503` a full server gives anyone
   (it names nobody), and a connection ends after an hour whatever it does (`--ws-max-age-secs`, 60 to 86400; a client
   reconnects and resumes with `from_seq`). A socket whose credential is revoked or expires is closed (1008) when the
-  gateway refuses its next request or poll. **`GET /v1/stream` has the same weakness (one credential can hold every
-  slot, and heartbeats keep a stream open for ever) and is not changed by this: it is ticketed separately.** A peer that
-  can reach the port can still hold connections up to the cap, as for the other routes.
+  gateway refuses its next request or poll. `GET /v1/stream` has the same two limits, counted apart from the WebSocket's and counted under the
+  member the verified credential names (never a header or a name the client chose): at most `--stream-max-per-member`
+  streams per member (default 4, 1 up to `--max-connections`; the same `503` that names nobody) and a stream ends after
+  `--stream-max-age-secs` (default 3600, 60 to 86400; the client reconnects and resumes with `from_seq`) (#1517). Before
+  the credential is verified only the global cap and the head limits apply (#1493). `POST /v1/frames` and `POST /mcp` are
+  one exchange under a 5 second deadline and are not capped per member. The per-member `503` is sent after the request
+  head and the credential check and lingers up to 1 s, so its timing differs from the global `503` (visible only to the
+  credential holder). A peer that can reach the port can still hold connections up to the cap, as for the other routes.
   **Revocation.** OCSP is never checked. Without `--tls-client-crl` no revocation list is checked: a client certificate stays
   accepted until it expires or the CA file is replaced (and the server restarted), so revocation means short-lived
   certificates or a new CA. With `--tls-client-crl FILE` (PEM, one or more CRLs signed by the client CA, read at start; #1491)

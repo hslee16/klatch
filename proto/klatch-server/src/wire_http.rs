@@ -82,7 +82,11 @@ pub fn parse(args: &[&str]) -> Result<Options> {
                     .filter(|n| *n > 0)
                     .context("--max-connections is a positive number")?;
             }
-            flag @ ("--ws-allow-origin" | "--ws-max-per-member" | "--ws-max-age-secs") => {
+            flag @ ("--ws-allow-origin"
+            | "--ws-max-per-member"
+            | "--ws-max-age-secs"
+            | "--stream-max-per-member"
+            | "--stream-max-age-secs") => {
                 ws.take(flag, value(flag)?)?;
             }
             other => bail!("unknown option {other} for http"),
@@ -117,6 +121,8 @@ pub(crate) struct Shared {
     pub(crate) ws: crate::wire_ws_caps::Settings,
     /// Open WebSocket connections per member.
     pub(crate) ws_open: crate::wire_ws_caps::Open,
+    /// Open `GET /v1/stream` connections per member (#1517): the WebSocket route's guard, counted apart.
+    pub(crate) stream_open: crate::wire_ws_caps::Open,
 }
 
 impl Shared {
@@ -128,6 +134,7 @@ impl Shared {
             forwarded: Default::default(),
             ws: Default::default(),
             ws_open: Default::default(),
+            stream_open: Default::default(),
         }
     }
 }
@@ -289,12 +296,21 @@ pub(crate) fn serve_connection(mut stream: Stream, shared: &Shared) {
     }
 }
 
-/// `GET /v1/stream` for whoever the credential names; everyone else gets the one `401`.
+/// `GET /v1/stream` for whoever the credential names; everyone else gets the one `401`. The member is counted, after the
+/// credential is verified and under the name it proved, against `--stream-max-per-member`; the refusal is the `503 busy`
+/// a full server gives anyone, so it names nobody (#1517). The place is a guard held until this function is left.
 fn open_session(mut stream: Stream, head: &Head, shared: &Shared) {
-    match authenticate(&shared.backend, head) {
-        Some(who) => stream_session(stream, &who, shared),
-        None => reply(&mut stream, &unauthorized()),
-    }
+    let Some(who) = authenticate(&shared.backend, head) else {
+        return reply(&mut stream, &unauthorized());
+    };
+    let Some(slot) = shared
+        .stream_open
+        .claim(&who.member, shared.ws.stream_per_member)
+    else {
+        return reply(&mut stream, &Response::new(503, "busy"));
+    };
+    stream_session(stream, &who, shared);
+    drop(slot);
 }
 
 fn method_not_allowed(allow: &'static str) -> Response {
@@ -433,8 +449,14 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         registration.remove();
         return;
     };
+    let Ok(aged) = stream.try_clone() else {
+        registration.remove();
+        return;
+    };
     let _ = stream.set_read_timeout(None);
     let _ = stream.set_write_timeout(None);
+    let (alive, ended) = std::sync::mpsc::channel::<()>();
+    let max_age = shared.ws.stream_max_age;
     let closed = Arc::new(AtomicBool::new(false));
     let gone = closed.clone();
     let closer: Closer = {
@@ -448,8 +470,14 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
     let input = io::BufReader::new(Inbox::new(rx, closed));
     std::thread::scope(|scope| {
         scope.spawn(move || watch_for_hangup(watch, &gone));
+        scope.spawn(move || {
+            crate::wire_ws_caps::at_max_age(&ended, max_age, || {
+                let _ = aged.shutdown(std::net::Shutdown::Both);
+            })
+        });
         let session = Session::over(&shared.backend, who, &shared.config);
         let _ = session.serve_guarded(input_box(input), SseWriter::new(out), Some(closer));
+        drop(alive);
     });
 }
 
