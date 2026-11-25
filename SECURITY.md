@@ -131,8 +131,23 @@ Supported versions: the newest release only, the current practice and not a poli
   gateway refuses its next request or poll. **`GET /v1/stream` has the same weakness (one credential can hold every
   slot, and heartbeats keep a stream open for ever) and is not changed by this: it is ticketed separately.** A peer that
   can reach the port can still hold connections up to the cap, as for the other routes.
-  **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
-  the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port
+  **Revocation.** OCSP is never checked. Without `--tls-client-crl` no revocation list is checked: a client certificate stays
+  accepted until it expires or the CA file is replaced (and the server restarted), so revocation means short-lived
+  certificates or a new CA. With `--tls-client-crl FILE` (PEM, one or more CRLs signed by the client CA, read at start; #1491)
+  a client certificate whose serial the CRL lists fails the handshake on every route (one verifier, one listener): the
+  client sees a fatal TLS alert (`certificate revoked`) and never an HTTP byte, no session is made, and the server logs
+  `client certificate refused: revoked` (at most one line every ten seconds, never a name or serial). The file must be a
+  regular file, not a link, owned by the server's user or root, not writable by group or other, at most 4 MiB, valid PEM
+  and hold 1 to 16 CRLs, or the server does not start; **one CRL per issuer: the verifier uses the first CRL it finds for an
+  issuer, so a file with two CRLs of one issuer is refused at start (replace the file, never append: an older list ahead
+  of a newer one would ignore the new revocations);** the option needs `--tls-client-ca`. **Expiry is enforced:** after a CRL's `nextUpdate` every client certificate its
+  issuer signed is refused until the file is replaced and the server restarted (a log line at start says so, and every
+  refusal logs that the CRL has expired; a CRL with a bad signature, an unsupported signature algorithm or an issuer
+  certificate that may not sign CRLs refuses its issuer's certificates too, with its own log line), which locks clients out loudly and never leaves a revoked certificate working on
+  a stale list. **Unknown status is allowed:** a certificate no configured CRL covers (another issuer, an intermediate CA
+  with no list from its parent) is accepted as it is without the option; deny would refuse the intermediate CAs of a
+  chain. Consequence: a CRL signed by a CA that issued none of the clients does nothing, silently (#1614). Replacing the
+  CRL needs a restart (reload without one is #1492). **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
   quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound
   the server enforces at start. When the cap is full, a newcomer is refused if every handshake in progress is younger
