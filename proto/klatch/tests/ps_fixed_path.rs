@@ -3,10 +3,13 @@
 use klatch::harness::{Lookup, ProcessTable, PsTable};
 use std::os::unix::fs::PermissionsExt;
 
+#[allow(dead_code)]
+#[path = "../src/store/test_dir.rs"]
+mod test_dir;
+
 #[test]
 fn a_fake_ps_first_on_path_is_not_run_and_the_real_table_still_answers() {
-    let dir = std::env::temp_dir().join(format!("klatch-ps-path-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = test_dir::TestDir::new("ps-fixed-path");
     let marker = dir.join("marker");
     let fake = dir.join("ps");
     std::fs::write(
@@ -30,7 +33,6 @@ fn a_fake_ps_first_on_path_is_not_run_and_the_real_table_still_answers() {
 
     unsafe { std::env::set_var("PATH", old) };
     let ran = marker.exists();
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(!ran, "the ps on PATH was run");
     assert!(matches!(own, Lookup::Found(_)), "{own:?}");
     assert!(matches!(pinned, Lookup::Found(_)), "{pinned:?}");
