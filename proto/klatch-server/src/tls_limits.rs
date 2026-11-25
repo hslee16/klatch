@@ -116,7 +116,7 @@ impl Drop for Ticket<'_> {
 
 impl Handshakes {
     /// A connection begins its handshake. It is refused (`None`) when its source already has `per_source` handshakes in
-    /// progress and none of them is old enough to close (`min_age`, as below; one address never closes another's).
+    /// progress and none of them is old enough to close (`min_age`, as below; the share's own eviction closes only that source's handshakes, the pool's the oldest of any).
     /// Otherwise, with `max` already in
     /// progress: if the oldest is at least `min_age` old it is shut (its thread's read or write fails at once) and the
     /// newcomer takes a place; if every one is younger, the newcomer is refused. `None` is also what a connection that
