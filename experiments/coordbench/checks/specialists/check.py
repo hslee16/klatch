@@ -157,6 +157,8 @@ def private_leaks(root):
 def has_conflict_markers(root):
     pat = re.compile(r"^(<<<<<<< |=======$|>>>>>>> )", re.M)
     for p in tracked_files(root):
+        if os.path.relpath(p, root) == "TASKS.md":  # B1's board: git merges it with merge=union, so markers there are not code (#1543)
+            continue
         try:
             with open(p, errors="replace") as f:
                 if pat.search(f.read()):
