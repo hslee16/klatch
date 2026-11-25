@@ -35,7 +35,7 @@ crates.io crate `klatch`, the PyPI package `klatch`, the npm package `@klatch/cl
   if its version does not match the tag, so the three registries always carry the same number. The client libraries
   share the binary's release number only because of that; compatibility between a client and a binary is decided by
   the protocol version, not by the package version.
-- `klatch --version` prints it with the other two numbers: `klatch 0.1.0-dev.2 (protocol 1, store schema 44)`.
+- `klatch --version` prints it with the other two numbers: `klatch 0.1.0-dev.2 (protocol 1, store schema 45)`.
 
 ## 2. The wire protocol version
 

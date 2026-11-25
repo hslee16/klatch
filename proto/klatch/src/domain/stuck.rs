@@ -58,7 +58,7 @@ pub enum StuckEvent {
     },
     /// A named claim whose lease lapsed with no release while its holder never posted `done` afterwards
     /// (#1339): a producer that died holding its claim. `claim` is the claim key (`claim_label`), `lapsed_secs` how long
-    /// ago the lease ended. Read only: it flags a lapse the store has not swept yet and releases nothing.
+    /// ago the lease ended. Read only: it reads the lapse records the claim sweep keeps for the window (#1586) and releases nothing.
     LapsedClaim {
         room: String,
         claim: String,
@@ -73,6 +73,11 @@ pub const LAPSED_WINDOW_SECS: i64 = YIELD_WINDOW_SECS;
 
 /// At most this many `lapsed_claim` events are read per room, newest lapse first, so the report is bounded.
 pub const LAPSED_CLAIM_MAX: usize = 20;
+
+/// At most this many lapse records (`claim_lapses`, #1586) are kept per room, newest lapse first: a member that
+/// claims many paths and lets them lapse cannot grow the table past this, because the oldest records of the room are
+/// dropped as each sweep writes new ones. Above `LAPSED_CLAIM_MAX`, so the report is never starved by its own bound.
+pub const LAPSE_RECORD_CAP: usize = 100;
 
 /// Seconds a deadlock mark, a release after it and the flag that follows each last (#909): a release counts when it
 /// comes within this long of the deadlock, a take counts when it comes within this long of the release, and the event

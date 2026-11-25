@@ -142,8 +142,8 @@ pub trait ClaimStore {
         Ok(Vec::new())
     }
 
-    /// The named claims of `room` whose lease lapsed within `window` seconds before `now`, that nothing has swept yet
-    /// and whose holder has not posted `done` since taking them (#1339): `(path, holder, expires)`, newest lapse first,
+    /// The named claims of `room` whose lease lapsed within `window` seconds before `now`, (recorded by the sweep in `claim_lapses`, #1586, or
+    /// not swept yet) and whose holder has not posted `done` since taking them (#1339): `(path, holder, expires)`, newest lapse first,
     /// at most `limit`. Ask and passive claims are left out. Read only. The default knows none.
     fn lapsed_claims(
         &self,

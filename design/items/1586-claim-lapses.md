@@ -1,0 +1,16 @@
+Durable lapsed claims: the sweep records each named lapse in claim_lapses (#1586, follow-up to #1339; schema 45).
+The `lapsed_claim` stuck event (#1339) read only claim rows past their lease that nothing had swept. Any claim attempt in any room runs `sweep_lapsed`, which deletes those rows, so after the next attempt the name and holder were gone and the event disappeared even inside its 600 s window. Owner decision, option (a): a small table written inside the sweep.
+
+**The table.** `claim_lapses(room, path, owner, expires, since)`, primary key (room, path, owner). No reason, note or other text: the claim path is what the `claims` table already holds, and the report still passes it through `claim_label` (`(unnamed)` unless plain). `since` is when the claim was first held, kept only because the existing `done` check (the holder posted `done` after taking the claim, so the lapse is not a crash) compares against it. Same SQLCipher store as every other table, nothing outside it.
+
+**Written** only in `SqliteStore::sweep_lapsed` (`store/sqlite/claims.rs`, `record_lapses`), once per lapsed row, never on the grant path itself. Not recorded: passive edit claims (reason `PASSIVE_REASON`), `ask:<N>` claims, a lapse already older than the window when swept, a released claim (a release deletes the row, so there is nothing to sweep). The same lapse of the same room, path and holder replaces its record, so repeated lapses of one claim are one row.
+
+**Pruned and bounded.** Whenever a sweep finds anything lapsed it deletes records whose lease ended at least `LAPSED_WINDOW_SECS` (600) ago, and for each room that gained a record it keeps only the newest `LAPSE_RECORD_CAP` (100) records, ordered by lease end, dropping the oldest first. So a member that claims many paths and lets them lapse can hold at most 100 rows per room, and each row lives at most 600 s past its lease end; the cost is one insert per named lapse plus two small deletes per sweep that found a lapse. The report still shows at most `LAPSED_CLAIM_MAX` (20) per room, newest first.
+
+**Read.** `lapsed_claims` (`store/sqlite/api/claims.rs`, used by `Gateway::lapsed_claim_events` in `gateway/gateway/claims.rs`, which is reached only from `stuck`) reads `claim_lapses` and the still-unswept claim rows together, one row per path and holder with the latest lease end. A live claim by the same holder on the same path clears the lapse (the producer came back). The room label check is the unchanged one in `stuck`: a room above the caller's label is refused before this runs, and only the asked room's records are read.
+
+**Migration.** `migrate_v44` creates the table (`IF NOT EXISTS`); existing stores start empty, so a lapse swept before the upgrade is not reported.
+
+**Still best effort.** A lapse older than 600 s is gone by design. A record dropped by the 100 per room cap (a flood of lapses in one room can push an older lapse of a real producer out inside its window). A lapse swept before the store was upgraded to schema 45.
+
+Tests: `store/sqlite/tests/claim_lapses.rs`, `tests/migrations.rs` (`a_version_44_database_gains_the_claim_lapses_table_empty_and_keeps_its_data`), `gateway/tests/lapsed_claim.rs`.

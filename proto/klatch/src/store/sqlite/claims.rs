@@ -2,6 +2,7 @@
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
 use super::claim_events::{ClaimEvent, ClaimKey};
+use super::claim_lapses::Lapsed;
 use super::{SqliteStore, WAIT_WINDOW_SECS};
 use crate::domain::{
     AgedClaim, Error, PASSIVE_REASON, PassiveTaken, Result, SHARED_SCOPE, YIELD_WINDOW_SECS,
@@ -30,20 +31,6 @@ struct Held {
     scope: String,
     /// When it was first held; 0 when unknown (#547).
     since: i64,
-}
-
-/// A claim whose lease had lapsed and that an attempt swept away.
-struct Lapsed {
-    /// It was a passive claim (#1401), so its expiry is counted apart.
-    passive: bool,
-    room: String,
-    path: String,
-    owner: String,
-    scope: String,
-    /// Seconds it was held until the lease ended.
-    held: i64,
-    /// When the lease ended.
-    expires: i64,
 }
 
 /// A member's refused claim attempt, remembered as a wait.
@@ -93,7 +80,7 @@ pub(super) fn held_for(since: i64, now: i64) -> i64 {
 }
 
 /// The ask number in an `ask:<N>` claim path.
-fn ask_number(path: &str) -> Option<i64> {
+pub(super) fn ask_number(path: &str) -> Option<i64> {
     path.strip_prefix("ask:").and_then(|n| n.parse().ok())
 }
 
@@ -359,10 +346,12 @@ impl SqliteStore {
                     scope: r.get(3)?,
                     held: held_for(r.get(4)?, r.get(5)?),
                     expires: r.get(5)?,
+                    since: r.get(4)?,
                 })
             },
         )?;
         self.exec("DELETE FROM claims WHERE expires<=?1", params![now])?;
+        self.record_lapses(&lapsed, now)?;
         for l in &lapsed {
             self.note_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
             self.record_claim_event(

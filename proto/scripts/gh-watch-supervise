@@ -195,7 +195,7 @@ read_claim() {
   return 0
 }
 
-# crash evidence from klatch stuck (best effort, #1586): a recent lapsed_claim line for watch:gh in this room whose holder is ours
+# crash evidence from klatch stuck (a lapse is recorded by the store sweep and kept for 600 s, #1586; an older one is gone): a recent lapsed_claim line for watch:gh in this room whose holder is ours
 stuck_lapse() {
   local line rc=0 re="lapsed_claim room $room claim watch:gh holder ([^ ]+) lapsed ([0-9]+)s"
   kcall stuck "$room" || rc=$?
