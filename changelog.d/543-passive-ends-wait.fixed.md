@@ -1,0 +1,1 @@
+- A passive claim (a hook-taken claim after an edit) now ends the member's own wait for that path, as an explicit claim does, so a wait that was satisfied can no longer linger and make a later refusal look like a deadlock (#543).

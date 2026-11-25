@@ -7,6 +7,7 @@ use crate::store::{
     Seq, SqliteStore,
 };
 use std::cell::{Cell, RefCell};
+use std::sync::{Arc, Mutex};
 
 mod admin;
 mod claims;
@@ -22,6 +23,9 @@ pub struct SpyStore {
     /// Called with the key just before a policy write reaches the store: a test uses it to make another connection
     /// act in the window between a check and its write (#897).
     pub before_policy_set: RefCell<Option<PolicyHook>>,
+    /// The labels of each key ring handed to the store, oldest first (#1506): the owner thread of a shared gateway
+    /// writes it, so a test on another thread reads what the store held and when.
+    pub key_rings: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 type PolicyHook = Box<dyn Fn(&str)>;
@@ -38,6 +42,7 @@ impl SpyStore {
             fail: Cell::new(false),
             fail_message_room: Cell::new(false),
             before_policy_set: RefCell::new(None),
+            key_rings: Arc::default(),
         }
     }
     /// The claim event record as the stats report reads it (#1386).
