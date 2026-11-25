@@ -216,37 +216,34 @@ fn times_that_break_the_strict_rules_are_refused() {
 }
 
 #[test]
-fn the_next_update_is_read_and_a_missing_one_is_never() {
+fn the_next_update_is_read_and_a_missing_one_is_its_own_error() {
     let name = b"abc";
     let this = utc(b"700101000000Z");
     let with = |next: Option<Vec<u8>>, tail: &[u8]| {
         next_update_of(&crl_with(name, true, this.clone(), next, tail))
     };
-    assert_eq!(
-        with(Some(utc(b"700102000000Z")), &[]),
-        Some(NextUpdate::At(86_400))
-    );
+    assert_eq!(with(Some(utc(b"700102000000Z")), &[]), Ok(86_400));
     assert_eq!(
         with(Some(gen_time(b"20500101000000Z")), &[]),
-        Some(NextUpdate::At(2_524_608_000))
+        Ok(2_524_608_000)
     );
     // nothing after thisUpdate, then the two things that may follow a missing nextUpdate
-    assert_eq!(with(None, &[]), Some(NextUpdate::Never));
-    assert_eq!(with(None, &el(0x30, &[])), Some(NextUpdate::Never));
-    assert_eq!(with(None, &el(0xa0, &[])), Some(NextUpdate::Never));
+    assert_eq!(with(None, &[]), Err(TimeError::MissingNextUpdate));
+    assert_eq!(
+        with(None, &el(0x30, &[])),
+        Err(TimeError::MissingNextUpdate)
+    );
+    assert_eq!(
+        with(None, &el(0xa0, &[])),
+        Err(TimeError::MissingNextUpdate)
+    );
     // a real nextUpdate with a revoked list and extensions after it
     let tail = [el(0x30, &[]), el(0xa0, &[])].concat();
-    assert_eq!(
-        with(Some(utc(b"700102000000Z")), &tail),
-        Some(NextUpdate::At(86_400))
-    );
+    assert_eq!(with(Some(utc(b"700102000000Z")), &tail), Ok(86_400));
     // junk in the place of nextUpdate or after the times is not a CRL
-    assert_eq!(with(None, &el(0x02, &[1])), None);
-    assert_eq!(with(None, &[0x30]), None);
-    assert_eq!(
-        with(Some(utc(b"700102000000Z")), &[0x05]),
-        Some(NextUpdate::At(86_400))
-    );
+    assert_eq!(with(None, &el(0x02, &[1])), Err(TimeError::Unreadable));
+    assert_eq!(with(None, &[0x30]), Err(TimeError::Unreadable));
+    assert_eq!(with(Some(utc(b"700102000000Z")), &[0x05]), Ok(86_400));
 }
 
 #[test]
@@ -262,21 +259,21 @@ fn a_malformed_this_update_or_next_update_is_not_a_crl() {
     for b in &bad {
         assert_eq!(
             next_update_of(&crl_with(b"n", true, good.clone(), Some(b.clone()), &[])),
-            None
+            Err(TimeError::Unreadable)
         );
         assert_eq!(
             next_update_of(&crl_with(b"n", true, b.clone(), Some(good.clone()), &[])),
-            None
+            Err(TimeError::Unreadable)
         );
         assert_eq!(
             next_update_of(&crl_with(b"n", false, b.clone(), None, &[])),
-            None
+            Err(TimeError::Unreadable)
         );
     }
     // a CRL whose thisUpdate is missing altogether (a revoked-list SEQUENCE in its place)
     assert_eq!(
         next_update_of(&crl_with(b"n", true, el(0x30, &[]), None, &[])),
-        None
+        Err(TimeError::Unreadable)
     );
 }
 
@@ -289,9 +286,13 @@ fn a_crl_cut_short_has_no_readable_next_update_at_any_length() {
         Some(gen_time(b"20500101000000Z")),
         &el(0x30, &[]),
     );
-    assert!(next_update_of(&whole).is_some());
+    assert!(next_update_of(&whole).is_ok());
     for cut in 0..whole.len() {
-        assert_eq!(next_update_of(&whole[..cut]), None, "cut at {cut}");
+        assert_eq!(
+            next_update_of(&whole[..cut]),
+            Err(TimeError::Unreadable),
+            "cut at {cut}"
+        );
     }
 }
 
@@ -312,7 +313,7 @@ fn lying_and_indefinite_lengths_inside_the_times_are_refused() {
         tbs.extend(good.clone());
         tbs.extend(next);
         let list = el(0x30, &tbs);
-        assert_eq!(next_update_of(&el(0x30, &list)), None);
+        assert_eq!(next_update_of(&el(0x30, &list)), Err(TimeError::Unreadable));
     }
 }
 
@@ -375,7 +376,7 @@ fn bounded_random_input_never_panics_and_never_reads_past_what_it_was_given() {
         };
         let _ = tlv(&input);
         let _ = issuer_of(&input);
-        if next_update_of(&input).is_some() {
+        if next_update_of(&input).is_ok() {
             decoded += 1;
         }
         // the times themselves, from the same bytes, under both tags
@@ -391,8 +392,41 @@ fn bounded_random_input_never_panics_and_never_reads_past_what_it_was_given() {
 fn nesting_inside_the_validity_costs_nothing() {
     let body = [0x30u8, 0x82, 0xff, 0xff].repeat(40_000);
     let started = Instant::now();
-    assert_eq!(next_update_of(&body), None);
+    assert_eq!(next_update_of(&body), Err(TimeError::Unreadable));
     let wrapped = crl_with(b"n", true, utc(b"700101000000Z"), None, &body);
     let _ = next_update_of(&wrapped);
     assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn times_before_1970_are_refused_as_such_in_either_field() {
+    // webpki's time type starts at 1970: a UTCTime year of 50 to 69 is 1950 to 1969, and a GeneralizedTime may say so too
+    let ok = utc(b"700101000000Z");
+    for before in [
+        utc(b"690101000000Z"),
+        utc(b"500101000000Z"),
+        utc(b"991231235959Z"),
+        gen_time(b"19691231235959Z"),
+        gen_time(b"00010101000000Z"),
+    ] {
+        let as_next = crl_with(b"n", true, ok.clone(), Some(before.clone()), &[]);
+        let as_this = crl_with(b"n", true, before.clone(), Some(ok.clone()), &[]);
+        // 991231235959Z is 1999 (after 1970): only the 19xx below 1970 and the GeneralizedTime ones are before it
+        let after_1970 = before == utc(b"991231235959Z");
+        let want = |c: &[u8]| {
+            let got = next_update_of(c);
+            if after_1970 {
+                got.is_ok()
+            } else {
+                got == Err(TimeError::BeforeEpoch)
+            }
+        };
+        assert!(want(&as_next));
+        assert!(want(&as_this));
+    }
+    // the first second of 1970 is allowed
+    assert_eq!(
+        next_update_of(&crl_with(b"n", true, ok.clone(), Some(ok.clone()), &[])),
+        Ok(0)
+    );
 }

@@ -160,7 +160,7 @@ pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<Server
         let subjects: Vec<&[u8]> = roots_subjects.iter().map(|s| s.as_ref()).collect();
         // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
         builder = builder
-            .with_crls(tls_crl::read_crls(path, &subjects, tls_crl::now_unix())?)
+            .with_crls(tls_crl::read_crls(path, &subjects, tls_crl::now_unix()?)?)
             .allow_unknown_revocation_status()
             .enforce_revocation_expiration();
     }

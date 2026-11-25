@@ -1,5 +1,5 @@
 //! A small, bounded DER reader for the two fields of a CRL that rustls does not expose (#1614, #1491): the issuer name
-//! and the validity times (`thisUpdate`, the optional `nextUpdate`). No dependency, no unsafe code, and the rules that
+//! and the validity times (`thisUpdate`, `nextUpdate`). No dependency, no unsafe code, and the rules that
 //! make no input slow or large: definite minimal lengths of at most four bytes only, no recursion (a fixed walk of
 //! `tbsCertList`, never into a child), nothing allocated, every read bounded by the slice it is given. Any other input is
 //! `None`, which the caller treats as "not a valid X.509 CRL". Names no rustls type.
@@ -71,35 +71,48 @@ pub fn issuer_of(crl: &[u8]) -> Option<&[u8]> {
     after_issuer(crl).map(|(issuer, _)| issuer)
 }
 
-/// When a CRL stops being current.
+/// Why a CRL's times cannot be used: each is a refusal at start (the verifier cannot use such a CRL either).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NextUpdate {
-    /// The CRL has no `nextUpdate` (an optional field): it never expires.
-    Never,
-    /// Seconds since 1970-01-01T00:00:00Z (negative before).
-    At(i64),
+pub enum TimeError {
+    /// Not well formed up to the times, a time that breaks the rules in the module doc, or an unexpected field after them.
+    Unreadable,
+    /// No `nextUpdate`: optional in X.509, but rustls-webpki refuses a CRL without one, so the server does too, at start.
+    MissingNextUpdate,
+    /// A time before 1970-01-01T00:00:00Z, which webpki's time type does not hold.
+    BeforeEpoch,
 }
 
-/// The `nextUpdate` of a CRL, after checking that its `thisUpdate` is a valid time too. `None` for a CRL that is not
-/// well formed up to there, a time that breaks the rules in the module doc, or a field after the times that a CRL may
-/// not have (only `revokedCertificates` and the extensions may follow).
-pub fn next_update_of(crl: &[u8]) -> Option<NextUpdate> {
-    let (_, rest) = after_issuer(crl)?;
-    let (tag, this_update, rest) = tlv(rest)?;
-    time_to_unix(tag, this_update)?;
+/// The `nextUpdate` of a CRL (seconds since the Unix epoch), after checking that its `thisUpdate` is a valid time too and
+/// that neither is before 1970 (webpki's floor). Only `revokedCertificates` and the extensions may follow the times.
+pub fn next_update_of(crl: &[u8]) -> Result<i64, TimeError> {
+    let (_, rest) = after_issuer(crl).ok_or(TimeError::Unreadable)?;
+    let (tag, this_update, rest) = tlv(rest).ok_or(TimeError::Unreadable)?;
+    checked_time(tag, this_update)?;
     let Some((tag, content, _)) = tlv(rest) else {
-        // nothing follows thisUpdate (a CRL with no revocations, no nextUpdate and no extensions), or junk does
-        return rest.is_empty().then_some(NextUpdate::Never);
+        // nothing follows thisUpdate (no revocations, no nextUpdate, no extensions), or junk does
+        return Err(if rest.is_empty() {
+            TimeError::MissingNextUpdate
+        } else {
+            TimeError::Unreadable
+        });
     };
     match tag {
-        UTC_TIME | GENERALIZED_TIME => time_to_unix(tag, content).map(NextUpdate::At),
-        SEQUENCE | EXTENSIONS => Some(NextUpdate::Never),
-        _ => None,
+        UTC_TIME | GENERALIZED_TIME => checked_time(tag, content),
+        SEQUENCE | EXTENSIONS => Err(TimeError::MissingNextUpdate),
+        _ => Err(TimeError::Unreadable),
     }
 }
 
-/// The value of a `UTCTime` (tag 0x17) or `GeneralizedTime` (tag 0x18) in seconds since the Unix epoch, under the strict
-/// rules of the module doc; `None` for anything else.
+fn checked_time(tag: u8, content: &[u8]) -> Result<i64, TimeError> {
+    match time_to_unix(tag, content) {
+        None => Err(TimeError::Unreadable),
+        Some(t) if t < 0 => Err(TimeError::BeforeEpoch),
+        Some(t) => Ok(t),
+    }
+}
+
+/// The value of a `UTCTime` (tag 0x17) or `GeneralizedTime` (tag 0x18) in seconds since the Unix epoch (negative before
+/// 1970), under the strict rules of the module doc; `None` for anything else.
 pub fn time_to_unix(tag: u8, content: &[u8]) -> Option<i64> {
     let (year_digits, rest) = match (tag, content.len()) {
         (UTC_TIME, 13) => (2, content),

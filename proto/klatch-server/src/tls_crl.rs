@@ -16,14 +16,15 @@
 //! small bounded DER reader in `der.rs`: definite lengths only, no recursion, nothing allocated) and refuses a file in which two CRLs
 //! share one: replace the file, never append.
 //!
-//! **What the CRLs must be.** Each CRL's issuer must be the subject of a CA certificate in the client CA file (byte-equal
-//! DER Name, which is what webpki compares; `ca_subjects` are the trust anchors' subjects), or the server refuses to
-//! start: a CRL no CA of the file signed does nothing, silently (#1614). An intermediate CA's CRL therefore needs the
-//! intermediate listed in the CA file too. `thisUpdate` and `nextUpdate` must be valid DER times (`der.rs`: strict
-//! UTCTime or GeneralizedTime) or the file is not a valid CRL and is refused. These are only WARNINGS, logged at start
-//! with a fixed template (the file and the CRL's number, never a subject or serial) while the server starts: a CRL whose
-//! `nextUpdate` has passed (it is enforced: its issuer's clients are refused), one due within seven days
-//! (`SOON_SECS`), and one with no `nextUpdate` (it never expires). There is no periodic re-check (reload is #1492).
+//! **What the CRLs must be (#1614).** `thisUpdate` and `nextUpdate` must be valid DER times (`der.rs`: strict UTCTime or
+//! GeneralizedTime, not before 1970) and `nextUpdate` must be present (webpki refuses a CRL without one), or the server
+//! refuses to start in words that name the file and the CRL's number. These are only WARNINGS, logged at start with a
+//! fixed template (the file and the CRL's number, never a subject or serial) while the server starts: a CRL whose
+//! `nextUpdate` has passed (it is enforced: its issuer's clients are refused), one due within seven days (`SOON_SECS`),
+//! and one whose issuer is the subject of no CA in the client CA file (`ca_subjects`, the trust anchors' subjects, byte
+//! for byte as webpki compares): it still applies to clients that present an intermediate CA of that name, which is
+//! how an intermediate's CRL works with a root-only CA file, so it is not refused. There is no periodic re-check
+//! (reload is #1492).
 //!
 //! **Policy** (rustls `WebPkiClientVerifier`, set in `tls.rs`):
 //! - A client certificate whose serial is listed by the CRL of its issuer fails the handshake: no session, no HTTP.
@@ -37,11 +38,11 @@
 //!   issuer, or an intermediate CA with no list from its parent) is accepted exactly as it is without this option. The
 //!   rustls alternative, deny, would refuse every certificate whose issuer has no CRL, including the intermediate CAs of a
 //!   chain, which locks out an operator who lists only the CRL of the CA that issues clients. The cost: a CRL signed by a
-//!   CA that issued none of the clients does nothing, and nothing in rustls can tell; the start-up check above refuses a
+//!   CA that issued none of the clients does nothing, and nothing in rustls can tell; the start-up check above warns of a
 //!   CRL whose issuer is in no CA of the file (#1614).
 //! - The whole chain is checked, the trust anchor excepted (rustls's default).
 
-use crate::der::{NextUpdate, issuer_of, next_update_of};
+use crate::der::{TimeError, issuer_of, next_update_of};
 use anyhow::{Result, bail};
 use rustls_pki_types::CertificateRevocationListDer;
 use rustls_pki_types::pem::PemObject;
@@ -131,16 +132,18 @@ pub fn read_crls(
 }
 
 /// The time now in seconds since the Unix epoch: read once, by the caller of [`read_crls`], so the checks below are pure.
-pub fn now_unix() -> i64 {
-    SystemTime::now()
+/// A clock before 1970 is an error (no CRL time can be compared with it), and the server does not start.
+pub fn now_unix() -> Result<i64> {
+    let since = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .map_err(|_| anyhow::anyhow!("the system clock is before 1970: the client CRL times cannot be checked, so the server does not start"))?;
+    Ok(i64::try_from(since.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// A CRL due within this many seconds of now draws a warning at start (seven days: time to fetch and restart).
 pub const SOON_SECS: i64 = 7 * 86_400;
 
-/// What a CRL's `nextUpdate` earns at start: a warning only, never a refusal (an expired CRL is enforced, which is the
+/// What a CRL earns at start that is a warning only: the server starts (an expired CRL is enforced, which is the
 /// documented policy, and the operator is told here instead of at the first refused client).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
@@ -148,14 +151,15 @@ pub enum Notice {
     Expired,
     /// `nextUpdate` is less than [`SOON_SECS`] away.
     ExpiresSoon,
-    /// No `nextUpdate` (optional in X.509): the list never expires, so a stale one stays in force.
-    NeverExpires,
+    /// The issuer is the subject of no CA in the client CA file. It still applies to a client that presents an
+    /// intermediate CA of that name (webpki matches CRLs to the certificates of the chain), so it is not refused.
+    NoCa,
 }
 
-/// Refuse a CRL whose issuer no CA certificate of the client CA file has (`ca_subjects`: the DER content of each CA's
-/// subject Name, which is what rustls-webpki compares with a CRL's issuer, byte for byte), and a CRL whose `thisUpdate` or
-/// `nextUpdate` is not a valid time. Otherwise the warnings: the CRL's 1-based number in the file and its [`Notice`].
-/// Pure: `now` is given, not read.
+/// Refuse a CRL whose issuer or times cannot be read, whose `nextUpdate` is missing (webpki refuses such a CRL, so the
+/// server would fail later and less clearly) or whose times are before 1970. Otherwise the warnings: the CRL's 1-based
+/// number in the file and its [`Notice`], where `ca_subjects` is the DER content of each CA's subject Name (what
+/// rustls-webpki compares with a CRL's issuer, byte for byte). Pure: `now` is given, not read.
 fn check_cas_and_times(
     crls: &[CertificateRevocationListDer<'_>],
     ca_subjects: &[&[u8]],
@@ -171,21 +175,25 @@ fn check_cas_and_times(
                 "the client CRL file {shown} holds a CRL whose issuer cannot be read: it is not a valid X.509 CRL"
             );
         };
-        if !ca_subjects.contains(&issuer) {
-            bail!(
-                "the client CRL file {shown} holds a CRL (number {n}) whose issuer matches no CA certificate in the client CA file: such a CRL would silently do nothing, because it applies only to certificates its issuer signed; list the CA that signed it in the client CA file (an intermediate CA must be listed there too) or remove the CRL"
-            );
-        }
-        let Some(next) = next_update_of(crl.as_ref()) else {
-            bail!(
+        let at = match next_update_of(crl.as_ref()) {
+            Ok(at) => at,
+            Err(TimeError::MissingNextUpdate) => bail!(
+                "the client CRL file {shown} holds a CRL (number {n}) that has no nextUpdate: it is not a valid CRL for this server (the verifier refuses a CRL without one); ask the CA for a CRL with a nextUpdate"
+            ),
+            Err(TimeError::BeforeEpoch) => bail!(
+                "the client CRL file {shown} holds a CRL (number {n}) with a thisUpdate or nextUpdate before 1970, which the verifier does not accept: it is not a valid CRL for this server"
+            ),
+            Err(TimeError::Unreadable) => bail!(
                 "the client CRL file {shown} holds a CRL (number {n}) whose thisUpdate or nextUpdate is not a valid time: it is not a valid X.509 CRL"
-            );
+            ),
         };
-        match next {
-            NextUpdate::Never => notices.push((n, Notice::NeverExpires)),
-            NextUpdate::At(at) if at <= now => notices.push((n, Notice::Expired)),
-            NextUpdate::At(at) if at - now <= SOON_SECS => notices.push((n, Notice::ExpiresSoon)),
-            NextUpdate::At(_) => {}
+        if !ca_subjects.contains(&issuer) {
+            notices.push((n, Notice::NoCa));
+        }
+        if at <= now {
+            notices.push((n, Notice::Expired));
+        } else if at - now <= SOON_SECS {
+            notices.push((n, Notice::ExpiresSoon));
         }
     }
     Ok(notices)
@@ -200,8 +208,8 @@ fn notice_line(path: &Path, n: usize, of: usize, notice: Notice) -> String {
         Notice::ExpiresSoon => {
             "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server before then"
         }
-        Notice::NeverExpires => {
-            "has no nextUpdate, so it never expires: a stale list stays in force until you replace the CRL file and restart the server"
+        Notice::NoCa => {
+            "matches no CA in the client CA file; it only applies to clients that present an intermediate CA with that name; if that is not intended it does nothing"
         }
     };
     format!(
@@ -339,30 +347,50 @@ mod tests {
     #[test]
     fn a_crl_is_judged_on_its_next_update_at_the_edges() {
         let ca: &[&[u8]] = &[b"ca"];
-        let one = |d: Option<i64>| check(&[due(b"ca", d)], ca).unwrap();
+        let one = |d: i64| check(&[due(b"ca", Some(d))], ca).unwrap();
         // due now or before: expired; one second ahead: soon; exactly seven days: soon; one second more: nothing
-        assert_eq!(one(Some(-1)), vec![(1, Notice::Expired)]);
-        assert_eq!(one(Some(0)), vec![(1, Notice::Expired)]);
-        assert_eq!(one(Some(1)), vec![(1, Notice::ExpiresSoon)]);
-        assert_eq!(one(Some(SOON_SECS)), vec![(1, Notice::ExpiresSoon)]);
-        assert_eq!(one(Some(SOON_SECS + 1)), vec![]);
-        assert_eq!(one(Some(365 * 86_400)), vec![]);
-        assert_eq!(one(None), vec![(1, Notice::NeverExpires)]);
+        assert_eq!(one(-1), vec![(1, Notice::Expired)]);
+        assert_eq!(one(0), vec![(1, Notice::Expired)]);
+        assert_eq!(one(1), vec![(1, Notice::ExpiresSoon)]);
+        assert_eq!(one(SOON_SECS), vec![(1, Notice::ExpiresSoon)]);
+        assert_eq!(one(SOON_SECS + 1), vec![]);
+        assert_eq!(one(365 * 86_400), vec![]);
         assert_eq!(SOON_SECS, 7 * 86_400);
     }
 
     #[test]
-    fn a_crl_is_matched_to_a_ca_by_its_whole_subject_name() {
+    fn a_crl_without_a_next_update_is_refused_and_so_is_one_before_1970() {
+        let err = check(&[due(b"ca", None)], &[b"ca"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("CRL (number 1) that has no nextUpdate"),
+            "{err}"
+        );
+        assert!(err.contains("not a valid CRL for this server"), "{err}");
+        // a time before 1970 (a UTCTime year of 69) in either field
+        let early = el(0x17, b"690101000000Z");
+        let ok = el(0x17, b"700101000000Z");
+        for (this, next) in [(early.clone(), Some(ok.clone())), (ok, Some(early))] {
+            let crl = CertificateRevocationListDer::from(crl_with(b"ca", true, this, next, &[]));
+            let err = check(&[crl], &[b"ca"]).unwrap_err().to_string();
+            assert!(err.contains("before 1970"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_crl_is_matched_to_a_ca_by_its_whole_subject_name_and_a_stranger_only_warns() {
         let crls = [due(b"ca-b", Some(30 * 86_400))];
         assert!(check(&crls, &[b"ca-a", b"ca-b"]).unwrap().is_empty());
         for subjects in [&[][..], &[&b"ca-"[..]], &[b"ca-b2"], &[b"CA-B"], &[b"ca-a"]] {
-            let err = check(&crls, subjects).unwrap_err().to_string();
-            assert!(
-                err.contains("matches no CA certificate in the client CA file"),
-                "{err}"
-            );
-            assert!(err.contains("/x/crl.pem") && !err.contains("ca-b"), "{err}");
+            assert_eq!(check(&crls, subjects).unwrap(), vec![(1, Notice::NoCa)]);
         }
+        // a stranger that is also expired earns both lines
+        let both = [due(b"x", Some(-1))];
+        assert_eq!(
+            check(&both, &[b"ca"]).unwrap(),
+            vec![(1, Notice::NoCa), (1, Notice::Expired)]
+        );
     }
 
     #[test]
@@ -371,13 +399,17 @@ mod tests {
         let got = check(&crls, &[b"first", b"second"]).unwrap();
         assert_eq!(got, vec![(2, Notice::Expired)]);
         let path = Path::new("/x/crl.pem");
-        for notice in [Notice::Expired, Notice::ExpiresSoon, Notice::NeverExpires] {
+        for notice in [Notice::Expired, Notice::ExpiresSoon, Notice::NoCa] {
             let line = notice_line(path, 2, 3, notice);
             assert!(line.contains("warning: CRL 2 of 3 "), "{line}");
             assert!(line.ends_with("(client CRL file /x/crl.pem)"), "{line}");
-            assert!(line.contains("replace the CRL file and restart"), "{line}");
         }
-        assert!(notice_line(path, 1, 1, Notice::NeverExpires).contains("never expires"));
+        let no_ca = notice_line(path, 1, 1, Notice::NoCa);
+        assert!(
+            no_ca.contains("matches no CA in the client CA file; it only applies to clients that present an intermediate CA with that name; if that is not intended it does nothing"),
+            "{no_ca}"
+        );
+        assert!(!no_ca.contains("list the"), "{no_ca}");
         assert!(notice_line(path, 1, 1, Notice::Expired).contains("has passed its nextUpdate"));
         assert!(notice_line(path, 1, 1, Notice::ExpiresSoon).contains("within 7 days"));
     }

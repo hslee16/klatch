@@ -116,7 +116,18 @@ impl Ca {
     /// An intermediate CA signed by this one, with the key usages the test chooses (an intermediate that may sign
     /// certificates but not CRLs is the point of one test).
     pub fn intermediate(&self, name: &str, usages: Vec<KeyUsagePurpose>) -> Ca {
+        self.intermediate_serial(name, usages, None)
+    }
+
+    /// [`Ca::intermediate`] with a serial number the test chose, so a CRL of this CA's own issuer can name it.
+    pub fn intermediate_serial(
+        &self,
+        name: &str,
+        usages: Vec<KeyUsagePurpose>,
+        serial: Option<u64>,
+    ) -> Ca {
         let mut params = CertificateParams::new(Vec::new()).unwrap();
+        params.serial_number = serial.map(SerialNumber::from);
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = usages;
         params.distinguished_name.push(DnType::CommonName, name);
@@ -192,15 +203,36 @@ impl Ca {
     fn crl_signed_by(&self, revoked: &[u64], due_in: i64, signer: &KeyPair) -> String {
         use std::time::{Duration as D, SystemTime};
         let now = SystemTime::now();
+        let next = if due_in < 0 {
+            now - D::from_secs(due_in.unsigned_abs())
+        } else {
+            now + D::from_secs(due_in.unsigned_abs())
+        };
+        self.crl_between(revoked, now - 2 * D::from_secs(86_400), next, signer)
+    }
+
+    /// A CRL (PEM) with no revocations, `this_update` and `next_update` as given (a test of a time before 1970).
+    pub fn crl_pem_between(
+        &self,
+        this_update: std::time::SystemTime,
+        next_update: std::time::SystemTime,
+    ) -> String {
+        self.crl_between(&[], this_update, next_update, &self.key)
+    }
+
+    fn crl_between(
+        &self,
+        revoked: &[u64],
+        this_update: std::time::SystemTime,
+        next_update: std::time::SystemTime,
+        signer: &KeyPair,
+    ) -> String {
+        use std::time::{Duration as D, SystemTime};
+        let now = SystemTime::now();
         let day = D::from_secs(86_400);
         let params = CertificateRevocationListParams {
-            this_update: (now - 2 * day).into(),
-            next_update: if due_in < 0 {
-                now - D::from_secs(due_in.unsigned_abs())
-            } else {
-                now + D::from_secs(due_in.unsigned_abs())
-            }
-            .into(),
+            this_update: this_update.into(),
+            next_update: next_update.into(),
             crl_number: SerialNumber::from(1u64),
             issuing_distribution_point: None,
             revoked_certs: revoked
