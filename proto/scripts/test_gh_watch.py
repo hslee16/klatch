@@ -647,7 +647,7 @@ class ReceiverTests(unittest.TestCase):
         fake = os.path.join(self.t, "klatch")
         with open(fake, "w") as f:
             f.write('#!/bin/sh\nprintf "%%s|%%s\\n" "$KLATCH_NAME" "$*" >> "%s"\n'
-                    'if [ "$1" = claim ] && [ -e "%s" ]; then echo "Error: refused: watch:gh is claimed by o for another 5s" >&2;'
+                    'if [ "$1" = claim ] && [ -e "%s" ]; then echo "klatch: this is /a/klatch, but the installed klatch is /b/klatch; use the installed one" >&2; echo "Error: refused: watch:gh is claimed by o for another 5s" >&2;'
                     ' exit 1; fi\n' % (self.calls_file, self.refuse_file))
         os.chmod(fake, 0o755)
         return fake
@@ -761,23 +761,53 @@ class ReceiverTests(unittest.TestCase):
         p.send_signal(signal.SIGTERM)
         p.wait(timeout=20)
         self.assertEqual(self.klatch_calls()[-1], "release r watch:gh")
+        self.assertNotIn("listening", p.stdout.read(), "a stop during the first claim never announces listening")
 
-    def test_claim_off_with_an_alert_when_klatch_home_is_unset_or_live(self):
+    def test_refuses_to_start_when_klatch_home_is_unset_or_live(self):
         fake = self.fake_klatch()
+        os.makedirs(os.path.join(self.t, ".klatch", "x"))
+        os.symlink(os.path.join(self.t, ".klatch", "x"), os.path.join(self.t, "link"))
         for home in (None, os.path.join(self.t, ".klatch"), os.path.join(self.t, ".klatch", "x"),
-                     os.path.join(self.t, "a", ".klatch")):
-            if os.path.exists(self.calls_file):
-                os.unlink(self.calls_file)
-            p, port = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r",
-                                 env={"KLATCH_HOME": home})
-            self.assertEqual(self.post(port, "push", push(), delivery="h1")[0], 200, "keeps serving")
-            p.send_signal(signal.SIGTERM)
-            p.wait(timeout=15)
-            self.assertNotIn("claim", [c.split()[0] for c in self.klatch_calls()], home)
-            self.assertTrue(any("ALERT watcher claim off: KLATCH_HOME is unset or inside .klatch" in l
-                                for l in self.log()), home)
-            if os.path.exists(self.out):
-                os.unlink(os.path.join(self.out, "gh-watch.log"))
+                     os.path.join(self.t, "a", ".klatch"), os.path.join(self.t, ".KLATCH"),
+                     os.path.join(self.t, "link")):
+            for extra in ((), ("--no-claim",)):  # posting alone would reach the live store too
+                p, _ = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r", *extra,
+                                  env={"KLATCH_HOME": home}, expect_ready=False)
+                p.wait(timeout=15)
+                self.assertEqual(p.returncode, 2, (home, extra))
+                err = p.stderr.read()
+                self.assertIn("KLATCH_HOME", err)
+                self.assertNotIn("listening", p.stdout.read())
+                self.assertEqual(self.klatch_calls(), [], "klatch is never run")
+
+    def test_klatch_home_is_not_needed_without_klatch_bin(self):
+        p, port = self.start(env={"KLATCH_HOME": None})
+        self.assertEqual(self.post(port, "push", push())[0], 200)
+
+    def test_a_later_refusal_stops_the_receiver_with_exit_2_and_no_release(self):
+        fake = self.fake_klatch()
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r", "--claim-ttl", "6",
+                          "--claim-renew", "1")
+        self.wait_for(lambda: self.klatch_calls(), "the first claim")
+        open(self.refuse_file, "w").close()  # another receiver took it
+        p.wait(timeout=20)
+        self.assertEqual(p.returncode, 2)
+        self.assertNotIn("release", [c.split()[0] for c in self.klatch_calls()])
+        self.assertTrue(any("ALERT watcher claim watch:gh lost" in l for l in self.log()))
+        self.assertIn("watch:gh", p.stderr.read())
+
+    def test_sigint_during_the_first_claim_releases_and_prints_no_listening(self):
+        fake = self.fake_klatch()
+        with open(fake, "a") as f:
+            f.write('sleep 2\n')
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "m", "--room", "r", expect_ready=False)
+        self.wait_for(lambda: self.klatch_calls(), "the claim to start")
+        p.send_signal(signal.SIGINT)
+        p.wait(timeout=20)
+        self.assertEqual(p.returncode, 0)
+        self.assertNotIn("Traceback", p.stderr.read())
+        self.assertNotIn("listening", p.stdout.read())
+        self.assertEqual(self.klatch_calls()[-1], "release r watch:gh")
 
     def test_claim_failure_and_missing_binary_reach_the_log(self):
         p, port = self.start("--klatch-bin", "/nonexistent/klatch", "--as-member", "m", "--room", "r")
@@ -888,28 +918,66 @@ class ClaimKeeperTests(unittest.TestCase):
 
     def test_losing_the_claim_stops_the_release(self):
         self.keeper.acquire()
-        self.k.answers.append(self.REFUSED)
+        self.k.answers += [self.REFUSED, self.REFUSED]
         self.now += 30
         self.keeper.tick()
         self.assertFalse(self.keeper.held)
         self.keeper.release()
-        self.assertEqual([c[0] for c in self.k.calls], ["claim", "claim"])
+        self.assertEqual([c[0] for c in self.k.calls], ["claim", "claim", "claim"])
 
-    def test_release_runs_once(self):
-        self.keeper.acquire()
-        self.keeper.release()
-        self.keeper.release()
-        self.assertEqual([c[0] for c in self.k.calls], ["claim", "release"])
-        self.assertEqual(self.k.calls[1], ["release", "factory-status", "watch:gh"])
-
-    def test_message_text_is_not_trusted_to_decide(self):
-        # only the exact prefix the real binary prints means a conflict; the word later in the text, or without
-        # the `Error: ` the binary puts first, does not
-        for text in ("boom Error: refused: watch:gh is claimed by x", "refused: watch:gh is claimed by x", ""):
+    def test_refusal_is_found_after_a_preface_line_but_only_at_a_line_start(self):
+        pre = "klatch: this is /a/klatch, but the installed klatch is /b/klatch; use the installed one\n"
+        for text, want in ((pre + self.REFUSED[1], "refused"), ("noise\n" + self.REFUSED[1], "refused"),
+                           ("x Error: refused: watch:gh\n", "failed"), (pre, "failed"),
+                           ("Error: refused:watch:gh\n", "failed")):
             k = FakeKlatch()
             k.answers.append((1, text))
-            keeper = ghw.ClaimKeeper(k, lambda: 0, "r")
-            self.assertEqual(keeper.acquire(), "failed", text)
+            self.assertEqual(ghw.ClaimKeeper(k, lambda: 0, "r").acquire(), want, text)
+
+    def test_a_refusal_is_retried_once_and_then_fatal(self):
+        fatal = []
+        self.keeper.on_fatal = lambda: fatal.append(1)
+        self.keeper.acquire()
+        self.k.answers += [self.REFUSED, (0, "")]  # lost, then re-taken at once: not fatal
+        self.now += 30
+        self.keeper.tick()
+        self.assertTrue(self.keeper.held)
+        self.assertEqual(fatal, [])
+        self.k.answers += [self.REFUSED, self.REFUSED]  # lost and still refused: fatal
+        self.now += 30
+        self.keeper.tick()
+        self.assertEqual(fatal, [1])
+        self.assertEqual(self.logged[-1], ("ALERT", "watcher claim watch:gh lost: another holder has it, retrying"))
+
+    def test_a_refusal_after_a_failed_start_is_fatal_too(self):
+        fatal = []
+        self.keeper.on_fatal = lambda: fatal.append(1)
+        self.k.answers.append((1, "busy"))
+        self.assertEqual(self.keeper.acquire(), "failed")
+        self.k.answers += [self.REFUSED, self.REFUSED]
+        self.now += 30
+        self.keeper.tick()
+        self.assertEqual(fatal, [1])
+
+    def test_a_clock_that_goes_back_renews_at_once(self):
+        # wall clock: a set-back clock must not postpone renewal past the lease
+        self.keeper.acquire()
+        self.now -= 3600
+        self.assertTrue(self.keeper.tick())
+
+    def test_startup_refusal_is_quiet_in_the_keeper_log(self):
+        self.k.answers.append(self.REFUSED)
+        self.keeper.acquire()
+        self.assertEqual(self.logged, [])
+
+    def test_holder_name_is_bounded_and_ends_in_the_pid(self):
+        for member in ("ghwatch", "m", "x" * 38, "a.b-c_d" * 5):
+            h = ghw.holder_name(member, 123456)
+            self.assertLessEqual(len(h), 40)
+            self.assertTrue(h.endswith(".123456"))
+            self.assertTrue(h.startswith(member[:30]))
+        self.assertEqual(ghw.holder_name("x" * 38, 7), "x" * 30 + ".7")
+
 
     def test_taken_is_logged_at_info_once(self):
         self.keeper.acquire()
@@ -927,7 +995,7 @@ class ClaimKeeperTests(unittest.TestCase):
 
     def test_lost_claim_is_an_alert_and_retaking_is_info(self):
         self.keeper.acquire()
-        self.k.answers.append(self.REFUSED)
+        self.k.answers += [self.REFUSED, self.REFUSED]
         self.now += 30
         self.keeper.tick()
         self.assertEqual(self.logged[-1], ("ALERT", "watcher claim watch:gh lost: another holder has it, retrying"))
@@ -972,6 +1040,61 @@ class ClaimKeeperTests(unittest.TestCase):
         self.keeper.tick()
         self.assertEqual(seen, [True])
 
+    def test_release_runs_once(self):
+        self.keeper.acquire()
+        self.keeper.release()
+        self.keeper.release()
+        self.assertEqual([c[0] for c in self.k.calls], ["claim", "release"])
+        self.assertEqual(self.k.calls[1], ["release", "factory-status", "watch:gh"])
+
+    def test_message_text_is_not_trusted_to_decide(self):
+        # only the exact prefix the real binary prints means a conflict; the word later in the text, or without
+        # the `Error: ` the binary puts first, does not
+        for text in ("boom Error: refused: watch:gh is claimed by x", "refused: watch:gh is claimed by x", ""):
+            k = FakeKlatch()
+            k.answers.append((1, text))
+            keeper = ghw.ClaimKeeper(k, lambda: 0, "r")
+            self.assertEqual(keeper.acquire(), "failed", text)
+
+
+class ClaimHomeTests(unittest.TestCase):
+    """The live-store guard (#1338): KLATCH_HOME must be set and not be, or sit under, ~/.klatch, in any letter case."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = os.path.realpath(self.tmp.name)
+        self.old = os.environ.get("HOME")
+        os.environ["HOME"] = self.t
+        os.makedirs(os.path.join(self.t, ".klatch", "x"))
+
+    def tearDown(self):
+        os.environ["HOME"] = self.old
+        self.tmp.cleanup()
+
+    def ok(self, home):
+        return ghw.claim_home_ok({"KLATCH_HOME": home} if home is not None else {})
+
+    def test_unset_and_empty(self):
+        self.assertFalse(self.ok(None))
+        self.assertFalse(self.ok(""))
+
+    def test_live_store_and_below_it(self):
+        for h in (".klatch", ".klatch/x", "a/.klatch", ".klatch/never/made"):
+            self.assertFalse(self.ok(os.path.join(self.t, h)), h)
+
+    def test_case_variants_are_the_live_store_too(self):
+        for h in (".KLATCH", ".Klatch/x", "a/.KLATCH/y"):
+            self.assertFalse(self.ok(os.path.join(self.t, h)), h)
+
+    def test_symlink_into_the_live_store(self):
+        link = os.path.join(self.t, "link")
+        os.symlink(os.path.join(self.t, ".klatch", "x"), link)
+        self.assertFalse(self.ok(link))
+        self.assertFalse(self.ok(os.path.join(link, "deeper")))
+
+    def test_an_isolated_home_is_fine(self):
+        self.assertTrue(self.ok(os.path.join(self.t, "factory", "home")))
+
 
 KLATCH_REAL = os.environ.get("GH_WATCH_TEST_KLATCH") or os.path.join(HERE, "..", "target", "debug", "klatch")
 
@@ -983,37 +1106,60 @@ class RealKlatchClaimTests(ReceiverTests):
 
     def setUp(self):
         super().setUp()
+        self.clean = os.path.join(self.t, "clean")
+        os.makedirs(self.clean)
         self.kenv = {"KLATCH_HOME": os.path.join(self.t, "khome"), "KLATCH_KEY_DIR": os.path.join(self.t, "keys")}
         os.makedirs(self.kenv["KLATCH_KEY_DIR"], mode=0o700)
 
     def kl(self, name, *args):
         env = dict(os.environ, KLATCH_NAME=name, **self.kenv)
-        r = subprocess.run([KLATCH_REAL] + list(args), env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        r = subprocess.run([KLATCH_REAL] + list(args), env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                           cwd=self.clean)
         return r.returncode, r.stdout, r.stderr
 
-    def receiver(self, member, out_name, **kw):
+    def dirty_dir(self):
+        """A project dir whose .claude/settings.local.json has klatch hooks naming ANOTHER klatch binary: the real
+        binary then prints a `klatch: this is ..., but the installed klatch is ...` line before its error (#513)."""
+        d = os.path.join(self.t, "dirty")
+        os.makedirs(os.path.join(d, ".claude"), exist_ok=True)
+        other = os.path.join(self.t, "klatch-other")
+        open(other, "w").close()
+        with open(os.path.join(d, ".claude", "settings.local.json"), "w") as f:
+            json.dump({"hooks": {"SessionStart": [{"hooks": [{"type": "command",
+                       "command": other + " --discover hook --event SessionStart"}]}]}}, f)
+        return d
+
+    def receiver(self, member, out_name, cwd=None, **kw):
         out = os.path.join(self.t, out_name)
         cmd = [sys.executable, "-I", RECEIVER, "--secret-file", self.secret_file, "--out-dir", out, "--port", "0",
                "--klatch-bin", KLATCH_REAL, "--as-member", member, "--room", "factory-status"]
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                             env=self.env(self.kenv))
+                             env=self.env(self.kenv), cwd=cwd or self.clean)
         self.procs.append(p)
         return p
 
-    def test_refused_by_the_real_binary_when_another_member_holds_it(self):
+    def test_refused_by_the_real_binary_when_another_member_holds_it_in_a_clean_or_a_settings_dirty_cwd(self):
         self.kl("other", "join", "factory-status")
         self.assertEqual(self.kl("other", "claim", "factory-status", "watch:gh", "--shared", "--ttl", "60")[0], 0)
-        p = self.receiver("ghwatch", "o1")
-        p.wait(timeout=30)
-        self.assertEqual(p.returncode, 2)
-        self.assertIn("watch:gh", p.stderr.read())
-        self.assertNotIn("listening", p.stdout.read())
-        self.assertIn("other", self.kl("other", "claims", "factory-status")[1], "the holder's claim is untouched")
+        dirty = self.dirty_dir()
+        # the dirty cwd really makes the binary print the extra line first (else this test would prove nothing)
+        env = dict(os.environ, KLATCH_NAME="x", **self.kenv)
+        r = subprocess.run([KLATCH_REAL, "claim", "factory-status", "watch:gh"], env=env, cwd=dirty,
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        self.assertTrue(r.stderr.startswith("klatch: this is "), r.stderr)
+        self.assertIn("\nError: refused: ", r.stderr)
+        for cwd in (self.clean, dirty):
+            p = self.receiver("ghwatch", "o1", cwd=cwd)
+            p.wait(timeout=30)
+            self.assertEqual(p.returncode, 2, cwd)
+            self.assertIn("watch:gh", p.stderr.read())
+            self.assertNotIn("listening", p.stdout.read())
+            self.assertIn("other", self.kl("other", "claims", "factory-status")[1], "the holder's claim is untouched")
 
     def test_second_receiver_with_the_same_member_is_refused_and_does_not_release_the_first(self):
         a = self.receiver("ghwatch", "o1")
         self.assertTrue(a.stdout.readline().startswith("listening"))
-        b = self.receiver("ghwatch", "o2")
+        b = self.receiver("ghwatch", "o2", cwd=self.dirty_dir())
         b.wait(timeout=30)
         self.assertEqual(b.returncode, 2)
         claims = self.kl("x", "claims", "factory-status")[1]
