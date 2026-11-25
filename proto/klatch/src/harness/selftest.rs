@@ -4,7 +4,7 @@
 //! nothing else: unknown is never dead.
 
 use crate::harness::probe::{Host, LAYERS, Thresholds, probe};
-use crate::harness::process::ProcessTable;
+use crate::harness::process::{ProcessTable, pinned};
 use crate::harness::record::Record;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,10 +39,11 @@ pub fn self_test(
     domain: &str,
     host: &dyn Host,
 ) -> SelfTest {
-    let probes: Vec<_> = live
-        .iter()
-        .map(|r| probe(r, procs, domain, host, None, &Thresholds::default()))
-        .collect();
+    let probes: Vec<_> = pinned(procs, |procs| {
+        live.iter()
+            .map(|r| probe(r, procs, domain, host, None, &Thresholds::default()))
+            .collect()
+    });
     let layers = LAYERS
         .iter()
         .map(|layer| LayerReport {

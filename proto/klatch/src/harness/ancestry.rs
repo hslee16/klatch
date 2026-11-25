@@ -1,7 +1,7 @@
 //! Walk up from a process to the harness that started it, and say which session that is.
 
 use crate::harness::liveness::{Liveness, check_with, is_claude_code};
-use crate::harness::process::{Lookup, ProcessTable};
+use crate::harness::process::{Lookup, ProcessTable, pinned};
 use crate::harness::record::Registry;
 
 /// The session a process belongs to. Same-user evidence, so it is unattributed.
@@ -48,6 +48,17 @@ pub fn find_session(
 /// `find_session` for a harness whose program is told by `is_program` (Codex, #884). The walk, the bound and every
 /// refusal are the same; only the program test differs.
 pub(crate) fn find_session_with(
+    start: u32,
+    (procs, registry, domain): (&dyn ProcessTable, &dyn Registry, &str),
+    is_program: fn(&str) -> bool,
+) -> Result<Found, Miss> {
+    // one read of the process table for the whole walk (#1569)
+    pinned(procs, |procs| {
+        walk(start, (procs, registry, domain), is_program)
+    })
+}
+
+fn walk(
     start: u32,
     (procs, registry, domain): (&dyn ProcessTable, &dyn Registry, &str),
     is_program: fn(&str) -> bool,
@@ -102,6 +113,10 @@ pub fn unregistered_agent_below(
     found: &Found,
     procs: &dyn ProcessTable,
 ) -> Option<u32> {
+    pinned(procs, |procs| below(start, found, procs))
+}
+
+fn below(start: u32, found: &Found, procs: &dyn ProcessTable) -> Option<u32> {
     let mut seen = Vec::new();
     let mut pid = start;
     while pid != found.pid && worth_visiting(pid, &seen) {
@@ -123,8 +138,10 @@ pub fn find_parent(
     registry: &dyn Registry,
     domain: &str,
 ) -> Option<Found> {
-    let above = procs.info(session.pid)?.ppid;
-    find_session(above, procs, registry, domain).ok()
+    pinned(procs, |procs| {
+        let above = procs.info(session.pid)?.ppid;
+        find_session(above, procs, registry, domain).ok()
+    })
 }
 
 #[cfg(test)]
