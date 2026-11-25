@@ -273,6 +273,8 @@ impl RoomStore for SpyStore {
     }
 
     fn set_label_keys(&self, keys: crate::keys::LabelKeys) {
+        let labels = keys.labels().into_iter().map(String::from).collect();
+        self.key_rings.lock().unwrap().push(labels);
         self.inner.set_label_keys(keys);
     }
 

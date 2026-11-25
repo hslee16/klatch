@@ -353,6 +353,8 @@ fn scrub(t: &dyn Transport, act: ScrubAct) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klatch::gateway::SystemClock;
+    use klatch::gateway::areas::{Admin, Limits};
 
     #[test]
     fn a_lease_setting_is_seconds_or_off_alone() {
@@ -388,5 +390,55 @@ mod tests {
         assert!(rate_limit_of(Some(30), None, false).is_err());
         assert!(rate_limit_of(Some(30), Some(60), true).is_err());
         assert!(rate_limit_of(None, None, false).is_err());
+    }
+
+    fn rate_limit_args(
+        posts: Option<usize>,
+        member: Option<&str>,
+    ) -> (Option<usize>, Option<i64>, bool, bool, Option<String>) {
+        (
+            posts,
+            posts.map(|_| 60),
+            false,
+            false,
+            member.map(String::from),
+        )
+    }
+
+    /// `rate-limit --member` sets that member's own limit and leaves the global one alone; the global path leaves the
+    /// member limits alone (#1504).
+    #[test]
+    fn a_member_limit_leaves_the_global_limit_alone_and_the_converse() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let g = Rc::new(Gateway::new(store, SystemClock, AllowAll));
+        let t = Direct::new(g, Principal::verified("human"));
+        let run = |(posts, secs, off, list, member)| {
+            rate_limit(&t, (posts, secs, off), list, member).unwrap()
+        };
+        let audited = || t.admin_audit(1000).unwrap().len();
+        run(rate_limit_args(Some(30), None));
+        let before = audited();
+        run(rate_limit_args(Some(2), Some("alice")));
+        assert_eq!(
+            audited(),
+            before + 1,
+            "--member wrote more than its own row"
+        );
+        let after_member = t.admin_rate_limits().unwrap();
+        assert_eq!(
+            after_member,
+            vec![(None, (30, 60)), (Some("alice".into()), (2, 60))],
+            "the global limit changed under --member"
+        );
+        run(rate_limit_args(Some(50), None));
+        let after_global = t.admin_rate_limits().unwrap();
+        assert_eq!(
+            after_global,
+            vec![(None, (50, 60)), (Some("alice".into()), (2, 60))],
+            "the global path touched a member limit"
+        );
+        // lifting one member limit leaves the global one in force
+        run((None, None, true, false, Some("alice".into())));
+        assert_eq!(t.admin_rate_limits().unwrap(), vec![(None, (50, 60))]);
     }
 }
