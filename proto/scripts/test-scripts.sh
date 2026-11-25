@@ -28,11 +28,14 @@ case "$*" in *"$FAKE_FAIL"*) [ -n "$FAKE_FAIL" ] && { echo "fake failure in: $*"
 exit 0
 SH
 chmod +x "$shim/cargo"
+# a stub for the coordbench runner (#1471): the real fast subset takes over a minute, and these tests run the gate many times
+printf 'import sys\nprint("stub coordbench runner")\nsys.exit(0)\n' > "$work/cb-ok.py"
+printf 'import sys\nprint("stub coordbench failure")\nsys.exit(1)\n' > "$work/cb-bad.py"
 run_gate() { # fail-pattern, args...
   FAKE_LOG="$work/log"; : > "$FAKE_LOG"
   FAKE_FAIL="$1"; shift
   # --allow-dirty: these tests run in whatever checkout they are in, which may have uncommitted changes (#763)
-  env PATH="$shim:$PATH" FAKE_NOISE="${FAKE_NOISE:-}" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" REAL_CARGO="$real_cargo" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
+  env PATH="$shim:$PATH" GATE_COORDBENCH_RUNNER="${GATE_COORDBENCH_RUNNER:-$work/cb-ok.py}" FAKE_NOISE="${FAKE_NOISE:-}" FAKE_LOG="$FAKE_LOG" FAKE_FAIL="$FAKE_FAIL" REAL_CARGO="$real_cargo" "$gate" --allow-dirty "$@" > "$work/out" 2>&1
 }
 
 # the seed the gate must derive from this commit
@@ -49,6 +52,12 @@ fi
 if run_gate "--test properties"; then bad "the gate passed although a property failed"; else
   if grep -q "FAILED at step" "$work/out" && grep -q "HEGEL_SEED=$want_seed" "$work/out" && grep -q "reproduce_failure" "$work/out"; then ok "a failing property prints the seed to replay it (derived from the commit) and mentions the blob"; else bad "replay hint: $(cat "$work/out")"; fi
 fi
+
+# #1471: the coordbench tests are a gate step of their own; a failing runner fails the gate there, a passing one lets it pass
+if GATE_COORDBENCH_RUNNER="$work/cb-bad.py" run_gate ""; then bad "the gate passed although the coordbench runner failed"; else
+  if grep -q "FAILED at step 12: coordbench tests" "$work/out" && grep -q "stub coordbench failure" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing coordbench runner fails the gate at step 12 and shows its output (#1471)"; else bad "coordbench step: $(tail -n 12 "$work/out")"; fi
+fi
+if run_gate "" && grep -q "coordbench tests (fast subset)" "$work/out" && grep -q "\[12/15\]" "$work/out"; then ok "the gate has 15 steps and step 12 is the coordbench tests (#1471)"; else bad "step list: $(cat "$work/out")"; fi
 
 # #829: a long failing output (a model's note trace) pushes the blob out of the last 50 lines the gate shows; the gate
 # must still print the blob line and keep the full output in a file it names, so the failure can be replayed later
