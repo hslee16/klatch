@@ -38,16 +38,25 @@ pub(crate) fn open_plain(path: &Path) -> Option<std::fs::File> {
 /// it holds at most `MAX_RECORD_BYTES`. Anything else, an unreadable or non-text file included, is `None`.
 pub(crate) fn read_plain(file: std::fs::File, uid: u32) -> Option<String> {
     let meta = file.metadata().ok()?;
-    if !meta.is_file() {
-        return None;
-    }
     if !ours_and_sealed(&meta, uid) {
         return None;
     }
-    if meta.len() > MAX_RECORD_BYTES {
+    read_regular(file)
+}
+
+/// The text of an open file, only when the descriptor is a regular file of at most `MAX_RECORD_BYTES`, whoever owns it
+/// (the Claude registry is Claude Code's, written under its own umask, so no owner or mode rule is added to it, #1567).
+pub(crate) fn read_regular(file: std::fs::File) -> Option<String> {
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_RECORD_BYTES {
         return None;
     }
     read_capped(file, MAX_RECORD_BYTES)
+}
+
+/// The text of `<dir>/<name>` through one open descriptor, under the rules of `read_regular`.
+pub(crate) fn read_regular_named(dir: &Path, name: &str) -> Option<String> {
+    read_regular(open_plain(&dir.join(name))?)
 }
 
 /// At most `cap` bytes of text from `reader`. One byte more is read, so a source that holds more than the file's size

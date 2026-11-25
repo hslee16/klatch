@@ -1,0 +1,3 @@
+- The Claude registry reads (`~/.claude/sessions/<pid>.json`, in `find_session`, `klatch sessions`, doctor and the liveness probe) no longer follow a symlink, no longer block on a FIFO and refuse a record over 64 KiB; at most 256 record files are read in one pass (#1567).
+- The process table is read with a `ps` at a fixed absolute path (`/bin/ps` or `/usr/bin/ps`), never one found through PATH, with a cleared environment, a 5 second timeout and a bounded output; with no such `ps` the table is unreadable and every answer is unknown (#1568).
+- A walk up the process tree, a sessions listing and a Codex record write read the process table once (one `ps -A`) instead of three `ps` runs per process (#1569).
