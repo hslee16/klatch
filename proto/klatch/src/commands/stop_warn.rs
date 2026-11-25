@@ -4,6 +4,9 @@
 
 use serde_json::Value;
 
+/// The most any count shows, a list or a bare number alike, so a hostile input cannot make a long line.
+const CAP: usize = 9999;
+
 /// The kinds a background task is counted under, in the order the line lists them.
 const KINDS: [&str; 4] = ["shell", "monitor", "agent", "other"];
 
@@ -32,15 +35,16 @@ fn tally(input: &Value) -> ([usize; 4], usize) {
         Some(Value::Array(list)) => {
             for entry in list {
                 let k = kind_of(entry);
-                kinds[KINDS.iter().position(|w| *w == k).unwrap_or(3)] += 1;
+                let at = KINDS.iter().position(|w| *w == k).unwrap_or(3);
+                kinds[at] = (kinds[at] + 1).min(CAP);
             }
         }
-        Some(Value::Number(n)) => kinds[3] = n.as_u64().map_or(0, |n| n.min(9999) as usize),
+        Some(Value::Number(n)) => kinds[3] = n.as_u64().map_or(0, |n| n.min(CAP as u64) as usize),
         _ => {}
     }
     let crons = match input.get("session_crons") {
-        Some(Value::Array(list)) => list.len(),
-        Some(Value::Number(n)) => n.as_u64().map_or(0, |n| n.min(9999) as usize),
+        Some(Value::Array(list)) => list.len().min(CAP),
+        Some(Value::Number(n)) => n.as_u64().map_or(0, |n| n.min(CAP as u64) as usize),
         _ => 0,
     };
     (kinds, crons)

@@ -195,7 +195,8 @@ enum Cmd {
         no_machine_status: bool,
         /// Warn when a turn ends with background tasks or crons still running (off by default; #1344): a flag on the
         /// PostToolUse hook and a Stop hook print one fixed line to you with counts and kinds, never a command or
-        /// description. It stops nothing and writes nothing
+        /// description. Turning it on adds klatch's Stop hook, with its usual record of background counts and liveness (what
+        /// who shows as parked); it never stops anything
         #[arg(long, conflicts_with = "no_stop_warn")]
         stop_warn: bool,
         /// Remove the stop warning flag (and the Stop hook when nothing else needs it)

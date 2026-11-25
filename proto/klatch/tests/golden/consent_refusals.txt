@@ -12,7 +12,7 @@ What each one changes (only klatch's own hook entries in the files above; other 
   checkpoint: a Stop hook and a flag on PostToolUse and SessionEnd keep a machine checkpoint (tool classes and edited paths, never a command or content)
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
-  stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything
+  stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything (it adds klatch's Stop hook, which records background counts and liveness as usual)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 (ended: ok)
 

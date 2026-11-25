@@ -270,9 +270,10 @@ fn stop_hook(ctx: &Ctx, args: &HookArgs) {
     super::machine_status::on_stop(t, args.machine_status, tasks + crons > 0);
     super::checkpoint::stop_checkpoint(t, args.checkpoint);
     super::passive::release(t, args.passive_claims);
-    let _ = t.record_hook_run("Stop", 0);
     // warn only: one fixed line for the human, counts and kinds, never a task's text (#1344)
-    if let Some(json) = super::stop_warn::output(ctx.stdin, args.stop_warn) {
+    let json = super::stop_warn::output(ctx.stdin, args.stop_warn);
+    let _ = t.record_hook_run("Stop", json.as_ref().map_or(0, String::len));
+    if let Some(json) = json {
         print!("{json}");
     }
 }

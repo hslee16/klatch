@@ -183,3 +183,29 @@ fn a_stop_hook_that_carries_the_flag_prints_one_system_message_and_one_without_i
         ""
     );
 }
+
+#[test]
+fn a_stop_inside_a_subagent_prints_nothing_even_with_the_flag() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    let extra = r#","agent_id":"sub-1","background_tasks":[{"type":"shell"}],"session_crons":[]"#;
+    assert_eq!(stop(&h, true, extra), "");
+}
+
+#[test]
+fn a_huge_list_prints_the_same_capped_count_as_a_huge_number() {
+    let h = Home::new();
+    h.ok("alice", &["join", "lobby"]);
+    let list = vec!["{}"; 12000].join(",");
+    let as_list = format!(r#","background_tasks":[{list}],"session_crons":[{list}]"#);
+    let as_number = r#","background_tasks":50000,"session_crons":50000"#;
+    for extra in [as_list.as_str(), as_number] {
+        let text = stop(&h, true, extra);
+        assert!(
+            text.contains("9999 background task(s) (other 9999) and 9999 cron(s)"),
+            "{text}"
+        );
+    }
+    let exact = r#","background_tasks":9999,"session_crons":9998"#;
+    assert!(stop(&h, true, exact).contains("9999 background task(s) (other 9999) and 9998 cron(s)"));
+}

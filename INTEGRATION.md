@@ -197,7 +197,7 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   rides on `PostToolUse` and `SessionEnd` as the record of the consent) prints one `systemMessage` line for the human
   when a turn ends with `background_tasks` or `session_crons` still listed: how many remain, the task kinds (shell,
   monitor, agent, other) and a reminder to stop them or start one wait only. Counts and kinds only; no task text is
-  echoed, nothing is stopped and nothing extra is written. It reaches the human, not the model. The entry shape is
+  echoed, nothing is stopped. A user whose only Stop consent is this one gains klatch's Stop hook, which keeps its usual record of background counts and liveness. It is expected to reach the human only, per the PreToolUse measurement; the Stop channel is unverified (#1593). The entry shape is
   not verified in the repo (#1593), so a kind that is not recognised counts as other; `SubagentStop` is not covered
   (#1594).
 
