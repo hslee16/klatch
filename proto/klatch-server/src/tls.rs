@@ -57,6 +57,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// A finished server configuration, shareable between connections (the name other modules use, so they never name rustls).
+pub type SharedConfig = Arc<ServerConfig>;
+
 /// The files the operator names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsFiles {

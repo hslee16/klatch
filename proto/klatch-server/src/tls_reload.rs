@@ -24,11 +24,10 @@
 //! never a swap that arrives late, and while it is stuck no other reload starts. Stopping the server does not wait for it.
 
 use crate::loopback;
-use crate::tls::{self, TlsFiles};
+use crate::tls::{self, SharedConfig, TlsFiles};
 use crate::wire_https::Options;
 use anyhow::{Result, bail};
 use klatch::session::policy::TlsBind;
-use rustls::ServerConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
@@ -42,20 +41,20 @@ pub const DEADLINE: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(100);
 
 /// The configuration new connections use.
-pub struct Current(Mutex<Arc<ServerConfig>>);
+pub struct Current(Mutex<SharedConfig>);
 
 impl Current {
-    pub fn new(config: Arc<ServerConfig>) -> Self {
+    pub fn new(config: SharedConfig) -> Self {
         Current(Mutex::new(config))
     }
 
     /// The configuration for a connection that is just accepted: a clone of the pointer, never a copy.
-    pub fn get(&self) -> Arc<ServerConfig> {
+    pub fn get(&self) -> SharedConfig {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Replace the configuration with a complete one (one pointer assignment under the lock).
-    fn swap(&self, config: Arc<ServerConfig>) {
+    fn swap(&self, config: SharedConfig) {
         *self.0.lock().unwrap_or_else(|e| e.into_inner()) = config;
     }
 }
@@ -137,7 +136,7 @@ fn classify(error: &anyhow::Error, files: &TlsFiles) -> Kind {
 }
 
 /// The new configuration for the files and flags of start, or why not: every check of start, nothing swapped.
-fn build(opts: &Options) -> Result<Arc<ServerConfig>> {
+fn build(opts: &Options) -> Result<SharedConfig> {
     let roots = tls::client_roots(&opts.files.client_ca)?;
     if roots.is_empty() {
         bail!(
@@ -212,6 +211,7 @@ pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Cur
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls::ServerConfig;
     use std::path::PathBuf;
 
     fn files() -> TlsFiles {
