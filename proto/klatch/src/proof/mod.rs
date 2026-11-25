@@ -251,7 +251,7 @@ pub fn prove<S: PolicyStore + ?Sized>(
         let swapped = std::cell::Cell::new(false);
         store.atomically(&mut || {
             if store.policy_get(VERIFIER_KEY)?.as_deref() == Some(old.as_str()) {
-                store.policy_set(VERIFIER_KEY, Some(&fresh.encode()), at.unix)?;
+                store.reserved_policy_set(VERIFIER_KEY, Some(&fresh.encode()), at.unix)?;
                 swapped.set(true);
             }
             Ok(())
@@ -278,7 +278,7 @@ pub fn store_verifier<S: PolicyStore + ?Sized>(
     verifier: &Verifier,
     at: i64,
 ) -> Result<(), ProofError> {
-    store.policy_set(VERIFIER_KEY, Some(&verifier.encode()), at)?;
+    store.reserved_policy_set(VERIFIER_KEY, Some(&verifier.encode()), at)?;
     Ok(())
 }
 
@@ -338,7 +338,7 @@ pub fn init<S: PolicyStore + ?Sized>(
             taken.set(true);
             return Ok(());
         }
-        store.policy_set(VERIFIER_KEY, Some(&v.encode()), at.unix)
+        store.reserved_policy_set(VERIFIER_KEY, Some(&v.encode()), at.unix)
     })?;
     if taken.get() {
         return Err(ProofError::Rejected(
@@ -516,12 +516,12 @@ pub fn set_window<S: PolicyStore + ?Sized>(
             format!("the unlock window is {MIN_WINDOW_SECS} to {MAX_WINDOW_SECS} seconds"),
         )),
         Some(s) => {
-            store.policy_set(WINDOW_KEY, Some(&s.to_string()), at)?;
+            store.reserved_policy_set(WINDOW_KEY, Some(&s.to_string()), at)?;
             audit(store, "unlock-window", "", &format!("{s}s"), at);
             Ok(())
         }
         None => {
-            store.policy_set(WINDOW_KEY, None, at)?;
+            store.reserved_policy_set(WINDOW_KEY, None, at)?;
             audit(store, "unlock-window", "", "default", at);
             Ok(())
         }

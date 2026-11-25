@@ -80,13 +80,13 @@ fn write<S: PolicyStore + ?Sized>(
         entries.truncate(MAX_TERMINALS);
     }
     if entries.is_empty() {
-        return store.policy_set(KEY, None, now);
+        return store.reserved_policy_set(KEY, None, now);
     }
     let text: Vec<String> = entries
         .iter()
         .map(|(l, c, t)| format!("{l}={c},{t}"))
         .collect();
-    store.policy_set(KEY, Some(&text.join(";")), now)
+    store.reserved_policy_set(KEY, Some(&text.join(";")), now)
 }
 
 fn of(entries: &[(String, u32, i64)], term: &str) -> (u32, i64) {

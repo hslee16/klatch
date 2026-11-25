@@ -24,6 +24,7 @@ impl<S: Store> Gateway<S> {
         events.extend(self.exchange_event(room)?);
         events.extend(self.dead_holder_events(room, &claims)?);
         events.extend(self.overwrite_events(room, now)?);
+        events.extend(self.lapsed_claim_events(room, now)?);
         Ok(events)
     }
 }

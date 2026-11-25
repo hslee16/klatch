@@ -109,6 +109,16 @@ impl ClaimStore for SpyStore {
         self.inner.claim_overwrites(room, now)
     }
 
+    fn lapsed_claims(
+        &self,
+        room: &str,
+        now: i64,
+        window: (i64, usize),
+    ) -> Result<Vec<(String, String, i64)>> {
+        self.gate()?;
+        self.inner.lapsed_claims(room, now, window)
+    }
+
     fn deadlock_notices(
         &self,
         room: &str,
