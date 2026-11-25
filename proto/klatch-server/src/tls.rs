@@ -17,9 +17,14 @@
 //! handed to the same HTTP handlers as the loopback listener, where the caller is still the worker credential (`Bearer`
 //! with `X-Klatch-Member`), checked live; the certificate's subject is never read, mapped or logged.
 //!
-//! **Revocation: NO CRL and NO OCSP is checked.** A client certificate that was valid when it was issued stays accepted
-//! until it expires or until the CA file is replaced (the file is read at start, so replacing it takes a restart).
-//! Revocation therefore means short-lived certificates, or a new CA. A CRL option is ticket #1491.
+//! **Revocation: a CRL if the operator gives one, never OCSP.** Without `--tls-client-crl` a client certificate that was
+//! valid when it was issued stays accepted until it expires or until the CA file is replaced (the files are read at
+//! start, so replacing one takes a restart); revocation then means short-lived certificates, or a new CA. With it
+//! (#1491) the one client verifier below also checks the listed CRLs: a listed serial fails the handshake, an expired CRL
+//! is enforced (it refuses its issuer's certificates) and a certificate no CRL covers is allowed. The file, the checks
+//! on it and the reasons for each choice are in `tls_crl.rs`. There is one verifier and one listener: the HTTP routes,
+//! the event stream, MCP and the WebSocket route all sit behind this handshake. OCSP is not checked and nothing here
+//! makes a network request.
 //!
 //! **The secret key.** The key file must be a regular file (not a symbolic link) owned by the user running the server and
 //! mode 0600 (no bit for group or other), or the server refuses to start; it is opened without blocking, so a FIFO named
@@ -38,6 +43,7 @@
 //! can reach the plaintext side. The pump is `tls_bridge.rs`.
 
 use crate::loopback::{Stream, connected_pair};
+use crate::tls_crl;
 use crate::tls_limits::{Handshakes, Limits};
 use anyhow::{Context, Result, bail};
 use klatch::session::policy::{Peer, Security, check_peer};
@@ -57,12 +63,20 @@ pub struct TlsFiles {
     pub cert: PathBuf,
     pub key: PathBuf,
     pub client_ca: PathBuf,
+    /// CRLs for client certificates (`--tls-client-crl`, #1491); `None` checks no revocation list.
+    pub client_crl: Option<PathBuf>,
 }
 
 /// Read a file the operator named; the error names the file and what kind of failure, never the content.
 fn read_pem(path: &Path, what: &str) -> Result<Vec<u8>> {
     std::fs::read(path)
         .map_err(|e| anyhow::anyhow!("cannot read the {what} {}: {}", path.display(), e.kind()))
+}
+
+/// The user the server runs as: the one place this crate asks (the key file's and the CRL file's owner checks use it).
+pub fn euid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    unsafe { libc::geteuid() }
 }
 
 /// The private key, read only after the file passed its checks: a regular file (opened without following a symbolic
@@ -84,8 +98,7 @@ fn read_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
     if !meta.is_file() {
         bail!("the key file {shown} is not a regular file");
     }
-    // SAFETY: geteuid has no preconditions.
-    if meta.uid() != unsafe { libc::geteuid() } {
+    if meta.uid() != euid() {
         bail!("the key file {shown} is not owned by the user running the server");
     }
     let mode = meta.mode() & 0o777;
@@ -139,9 +152,22 @@ pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<Server
     let key = read_key(&files.key)?;
     let chain = read_certs(&files.cert, "server certificate")?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
-        .build()
-        .map_err(|e| anyhow::anyhow!("cannot build the client certificate check: {e}"))?;
+    let mut builder =
+        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone());
+    if let Some(path) = &files.client_crl {
+        // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
+        builder = builder
+            .with_crls(tls_crl::read_crls(path)?)
+            .allow_unknown_revocation_status()
+            .enforce_revocation_expiration();
+    }
+    let verifier = builder.build().map_err(|e| match &files.client_crl {
+        Some(path) => anyhow::anyhow!(
+            "cannot build the client certificate check from the client CRL file {}: {e}",
+            path.display()
+        ),
+        None => anyhow::anyhow!("cannot build the client certificate check: {e}"),
+    })?;
     let mut config = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(rustls::DEFAULT_VERSIONS)
         .map_err(|e| anyhow::anyhow!("cannot set the TLS versions: {e}"))?
@@ -211,7 +237,8 @@ pub fn serve_tls(mut sock: Stream, at: &Listener, inner: impl Fn(Stream) + Sync)
     };
     let shaken = handshake(&mut conn, &mut sock, at.limits.handshake);
     drop(ticket);
-    if shaken.is_err() {
+    if let Err(e) = &shaken {
+        tls_crl::note_refusal(e);
         let _ = sock.shutdown(std::net::Shutdown::Both);
         return;
     }
@@ -252,6 +279,7 @@ mod tests {
             cert: dir.join("c.pem"),
             key: dir.join("k.pem"),
             client_ca: dir.join("ca.pem"),
+            client_crl: None,
         };
         std::fs::write(&files.cert, cert.pem()).unwrap();
         std::fs::write(&files.key, key.serialize_pem()).unwrap();
