@@ -349,7 +349,11 @@ fn the_allowance_off_loopback_starts_the_listener_and_the_log_says_where_and_how
 fn each_limit_is_refused_at_the_extreme_and_just_over_its_bound_with_the_flag_named() {
     let dir = Dir::new();
     let (files, _) = files_for(&dir, 0o600);
-    let cases: [(&str, &[&str]); 3] = [
+    let cases: [(&str, &[&str]); 4] = [
+        (
+            "--handshakes-per-source",
+            &["0", "x", "9", "18446744073709551615"],
+        ),
         ("--handshake-secs", &["61", "18446744073709551615"]),
         ("--stall-secs", &["86401", "18446744073709551615"]),
         ("--max-handshakes", &["33", "18446744073709551615"]),
@@ -365,6 +369,10 @@ fn each_limit_is_refused_at_the_extreme_and_just_over_its_bound_with_the_flag_na
     let mut args = listen("127.0.0.1:0", &files);
     args.extend(["--max-connections", "8", "--max-handshakes", "9"].map(String::from));
     assert_refused(&dir, &args, "--max-handshakes");
+    // the bound of --handshakes-per-source is the pool that was asked for (the default pool of 8 here)
+    let mut args = listen("127.0.0.1:0", &files);
+    args.extend(["--max-handshakes", "3", "--handshakes-per-source", "4"].map(String::from));
+    assert_refused(&dir, &args, "--handshakes-per-source");
 }
 
 #[test]

@@ -341,6 +341,8 @@ class StreamState:
             "final_text": final or "",
             "is_error": bool(r.get("is_error")),
             "result_seen": self.result is not None,
+            "result_subtype": r.get("subtype") if isinstance(r.get("subtype"), str) else None,
+            "terminal_reason": r.get("terminal_reason") if isinstance(r.get("terminal_reason"), str) else None,
         }
 
 

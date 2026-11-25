@@ -299,7 +299,9 @@ Two parts, with different designs.
 A run is one execution of one arm on one scenario with one seed, from fresh fixture checkout to the end of the hidden
 checks. The team is every agent the harness launched for it (including K3's integrator and supervisor). A run ends when
 every agent has exited, or the wall time cap is reached (the harness then kills the agents and records `timeout`), or the
-spend cap is reached (killed and recorded `spend-cap`).
+spend cap is reached (killed and recorded `spend-cap`). An agent that stops on its own per-agent budget or turn cap
+(Claude Code's result `error_max_budget_usd` or `error_max_turns`, exit code 1) is not a crash: the run is recorded `spend-cap`
+or `turn-cap` (spend first when both happened) and the record's notes name the agent (#1553).
 
 ## 5. Metrics
 
@@ -384,7 +386,7 @@ bug.
 ### 6.4 Ties, aborted runs and invalid runs
 
 - Ties in rank tests use average ranks. Exact tied values (for example every run completed 4 of 4) are reported as a rate.
-- Every run stays in the ledger. A run with outcome `timeout`, `spend-cap`, `crash`, `error` or `trigger-not-fired` (S6: the
+- Every run stays in the ledger. A run with outcome `timeout`, `spend-cap`, `turn-cap`, `crash`, `error` or `trigger-not-fired` (S6: the
   kill never fired) counts as a run in the
   denominator and is scored on what its hidden checker found (usually zero units), not dropped. A censored measure
   (a wall time that hit the cap) is entered at the cap value and marked censored; the report gives the count of censored
@@ -489,8 +491,7 @@ leftovers, so refactoring a generator changes no hash. `fixture.checker_sha256` 
 whole directory including generator sources and bytecode and had neither of the other two. `report.py` never pools versions
 (`SCENARIO [fixture hash vN]`) and flags a comparison across versions.
 
-`outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`. The scenario's checks are listed in
-`outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `crash`, `error`, or `trigger-not-fired` (S6 only: the
+`outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `turn-cap`, `crash`, `error`, or `trigger-not-fired` (S6 only: the
 kill trigger never fired, so the run did not test recovery; it is valid and stays in the ledger, #1525). The scenario's checks are listed in
 `outcome_checks` with their ids; `units_completed` is derived from them. Fields that do not apply are `null`, never
 omitted. A run in an arm that cannot take part is not recorded at all; the scenario list says which.

@@ -166,6 +166,11 @@ const TEST_ONLY_SPAWNERS: &[&str] = &[
     "src/member/identity/survivor_tests.rs",
 ];
 
+/// Shipped modules that may run a program chosen at run time because they choose it from a fixed list of absolute paths
+/// and never look a name up through PATH: the process table reader (#1568). Exact path, never a suffix, and the file may
+/// hold exactly one `Command::new(` (checked below), so a second spawn needs a new line here.
+const FIXED_PATH_SPAWNERS: &[&str] = &["src/harness/ps_snapshot.rs"];
+
 /// Test-only modules that may open a loopback socket: the unit tests of the optional real Jev transport (`jev-http`,
 /// #871) start a server on 127.0.0.1 inside the test and talk to it, so the transport can be tested without leaving the
 /// machine. Exact paths, and each must be declared `#[cfg(test)] mod name;` in its parent so it is never part of a
@@ -261,6 +266,7 @@ fn command_problem(rel: &str, code: &str, programs: &[&str]) -> Option<String> {
         Some(program) if programs.contains(&program) => None,
         Some(program) => Some(format!("runs {program}")),
         None if rel.ends_with("src/client.rs") => None,
+        None if FIXED_PATH_SPAWNERS.contains(&rel) => None,
         None if is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text) => None,
         None => Some("runs a program chosen at run time".to_string()),
     }
@@ -527,5 +533,21 @@ fn every_listed_test_only_spawner_exists_and_is_declared_under_cfg_test_in_the_r
             is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text),
             "{rel}: its parent does not declare it as #[cfg(test)] mod ...;"
         );
+    }
+}
+
+#[test]
+fn a_fixed_path_spawner_is_exempt_by_exact_path_and_runs_exactly_one_program() {
+    let call = "let mut c = Command::new(program);";
+    assert_eq!(
+        command_problem("src/harness/ps_snapshot.rs", call, PROGRAMS),
+        None
+    );
+    for other in ["src/harness/other.rs", "src/x/src/harness/ps_snapshot.rs"] {
+        assert!(command_problem(other, call, PROGRAMS).is_some(), "{other}");
+    }
+    for rel in FIXED_PATH_SPAWNERS {
+        let text = std::fs::read_to_string(manifest(rel)).expect("a listed spawner exists");
+        assert_eq!(text.matches("Command::new(").count(), 1, "{rel}");
     }
 }

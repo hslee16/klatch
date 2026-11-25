@@ -1,6 +1,7 @@
 //! The harness registry: `<pid>.json` files, one per live session. Only the `.json` files are read; the
 //! `.key` files beside them hold secrets and are never opened.
 
+use crate::harness::own_records::{MAX_ENTRIES, read_regular_named};
 use crate::harness::process::squash;
 use std::path::PathBuf;
 
@@ -64,16 +65,14 @@ impl Registry for FsRegistry {
         };
         let mut records = Vec::new();
         let mut malformed = 0;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str().filter(|n| is_record_file(n)) else {
-                continue;
-            };
+        let names = entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| is_record_file(n));
+        for name in names.take(MAX_ENTRIES) {
             let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
-            match std::fs::read_to_string(entry.path())
-                .ok()
-                .and_then(|t| parse_record(&t))
-            {
+            // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
+            match read_regular_named(&self.dir, &name).and_then(|t| parse_record(&t)) {
                 Some(rec) if rec.pid == filed_under => records.push(rec),
                 _ => malformed += 1,
             }
@@ -84,7 +83,7 @@ impl Registry for FsRegistry {
 
     fn record_for(&self, pid: u32) -> Option<Record> {
         // only `<pid>.json`; the `<pid>.<hash>.key` files are never opened
-        let text = std::fs::read_to_string(self.dir.join(format!("{pid}.json"))).ok()?;
+        let text = read_regular_named(&self.dir, &format!("{pid}.json"))?;
         parse_record(&text).filter(|r| r.pid == pid)
     }
 }
@@ -176,5 +175,94 @@ mod tests {
             .is_some()
         );
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    /// Run `f` on a thread and give up after a few seconds, so a reader that blocks fails the test instead of hanging
+    /// the run (#1616).
+    fn within_seconds<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the registry read blocked")
+    }
+
+    fn reg_at(d: &std::path::Path) -> FsRegistry {
+        FsRegistry {
+            dir: d.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn a_symlinked_record_is_refused() {
+        let d = tmp("symlink");
+        let real = d.join("real.txt");
+        std::fs::write(&real, GOOD).unwrap();
+        std::os::unix::fs::symlink(&real, d.join("19479.json")).unwrap();
+        let dir = d.to_path_buf();
+        assert_eq!(reg_at(&dir).record_for(19479), None);
+        let (records, malformed) = reg_at(&dir).records();
+        assert!(records.is_empty(), "a symlink is not evidence");
+        assert_eq!(malformed, 1, "it is counted as a record that did not read");
+    }
+
+    #[test]
+    fn a_fifo_named_like_a_record_does_not_hang_the_reader() {
+        let d = tmp("fifo");
+        let fifo = std::ffi::CString::new(d.join("19479.json").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        std::fs::write(d.join("20000.json"), GOOD.replace("19479", "20000")).unwrap();
+        let dir = d.to_path_buf();
+        let (one, (records, malformed)) =
+            within_seconds(move || (reg_at(&dir).record_for(19479), reg_at(&dir).records()));
+        assert_eq!(one, None);
+        assert_eq!(malformed, 1);
+        assert_eq!(records.len(), 1, "the good record beside it is still read");
+    }
+
+    #[test]
+    fn an_oversized_record_is_refused() {
+        let d = tmp("big");
+        let padding = " ".repeat(crate::harness::own_records::MAX_RECORD_BYTES as usize);
+        std::fs::write(d.join("19479.json"), format!("{GOOD}{padding}")).unwrap();
+        let reg = reg_at(&d);
+        assert_eq!(reg.record_for(19479), None);
+        assert_eq!(reg.records(), (Vec::new(), 1));
+    }
+
+    #[test]
+    fn a_record_under_the_cap_is_still_read_whatever_its_mode() {
+        let d = tmp("mode");
+        std::fs::write(d.join("19479.json"), GOOD).unwrap();
+        std::fs::set_permissions(d.join("19479.json"), std::fs::Permissions::from_mode(0o664))
+            .unwrap();
+        assert!(reg_at(&d).record_for(19479).is_some());
+        assert_eq!(reg_at(&d).records().0.len(), 1);
+    }
+
+    #[test]
+    fn at_most_the_entry_bound_of_records_are_read_in_one_pass() {
+        let d = tmp("bound");
+        let n = crate::harness::own_records::MAX_ENTRIES + 20;
+        for pid in 1000..1000 + n {
+            let json = GOOD.replace("19479", &pid.to_string());
+            std::fs::write(d.join(format!("{pid}.json")), json).unwrap();
+        }
+        let (records, _) = reg_at(&d).records();
+        assert_eq!(records.len(), crate::harness::own_records::MAX_ENTRIES);
+    }
+
+    #[test]
+    fn files_that_are_not_records_do_not_use_up_the_entry_bound() {
+        let d = tmp("noise");
+        for i in 0..crate::harness::own_records::MAX_ENTRIES + 10 {
+            std::fs::write(d.join(format!("noise-{i}.txt")), "x").unwrap();
+        }
+        std::fs::write(d.join("19479.json"), GOOD).unwrap();
+        assert_eq!(
+            reg_at(&d).records(),
+            (vec![reg_at(&d).record_for(19479).unwrap()], 0)
+        );
     }
 }

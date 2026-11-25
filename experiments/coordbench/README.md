@@ -78,7 +78,7 @@ clone per agent (K2 also runs `klatch init --scope project --yes` in each clone;
 prompt built from `arms/common.md` and `arms/<arm>.md`; the agents started as separate processes and left alone; the hidden
 checker run on a clone of the final origin (and every `--poll-s` seconds, for `time_to_first_pass_s`); a record written,
 whatever the outcome; the scratch removed. Arms are interleaved in seeded random blocks. A per-run spend cap, a wall cap and
-a suite cap stop the work; the outcome is `spend-cap`, `timeout`, `trigger-not-fired` (S6 only), or a suite stop recorded in `suite.json` (exit code 3).
+a suite cap stop the work; the outcome is `spend-cap`, `turn-cap` (an agent's own cap), `timeout`, `trigger-not-fired` (S6 only), or a suite stop recorded in `suite.json` (exit code 3).
 Exit codes: 0 all runs ok, 1 a run failed or was invalid, 2 refused, 3 suite cap hit.
 
 Isolation: the harness refuses a store path under `~/.klatch` or `~/.claude`, outside the temp root, or reached through a

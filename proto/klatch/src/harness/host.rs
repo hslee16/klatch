@@ -5,7 +5,6 @@ use crate::harness::probe::{FileMeta, Host, ProcRow, Turn, parse_turn};
 use crate::harness::pstime::{parse_cpu_time, parse_elapsed};
 use crate::harness::record::Record;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct SysHost {
@@ -96,20 +95,23 @@ impl Host for SysHost {
     }
 
     fn procs(&self) -> Option<Vec<ProcRow>> {
-        let out = Command::new("ps")
-            .args(["-A", "-o", "pid=,ppid=,state=,time=,etime="])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let rows = parse_ps_rows(&String::from_utf8(out.stdout).ok()?);
+        // the fixed ps, never one found through PATH, bounded in time and size (#1568)
+        let ps =
+            crate::harness::ps_snapshot::fixed_ps_in(&crate::harness::ps_snapshot::PS_CANDIDATES)?;
+        let args = ["-A", "-o", "pid=,ppid=,state=,time=,etime="];
+        let text = crate::harness::ps_snapshot::run_ps(
+            &ps,
+            &[],
+            &args,
+            crate::harness::ps_snapshot::LIMITS,
+        )?;
+        let rows = parse_ps_rows(&text);
         (!rows.is_empty()).then_some(rows)
     }
 
     fn turn(&self, pid: u32) -> Turn {
         // only `<pid>.json`; the `<pid>.<hash>.key` files are never opened
-        std::fs::read_to_string(self.registry_dir.join(format!("{pid}.json")))
+        crate::harness::own_records::read_regular_named(&self.registry_dir, &format!("{pid}.json"))
             .map(|t| parse_turn(&t))
             .unwrap_or_default()
     }
@@ -281,5 +283,27 @@ mod tests {
         let h = host(&d);
         assert_eq!(h.turn(7).status, Some(Status::Idle));
         assert_eq!(h.turn(8), Turn::default());
+    }
+
+    #[test]
+    fn a_symlink_or_a_fifo_named_like_the_pid_file_gives_an_unknown_turn() {
+        let d = tmp("turn-hostile");
+        let sessions = d.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let real = d.join("real.json");
+        std::fs::write(&real, r#"{"pid":7,"status":"idle","statusUpdatedAt":5}"#).unwrap();
+        std::os::unix::fs::symlink(&real, sessions.join("7.json")).unwrap();
+        let fifo = std::ffi::CString::new(sessions.join("8.json").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let h = host(&d);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send((h.turn(7), h.turn(8)));
+        });
+        let (symlinked, fifoed) = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the turn read blocked");
+        assert_eq!(symlinked, Turn::default());
+        assert_eq!(fifoed, Turn::default());
     }
 }

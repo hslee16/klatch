@@ -250,6 +250,8 @@ def main(argv):
     markers = False
     rc, files = git(root, "ls-files")
     for rel in files.splitlines():
+        if rel == "TASKS.md":  # B1's board: git merges it with merge=union, so markers there are not code (#1543)
+            continue
         if rel.endswith((".py", ".json", ".md", ".txt", ".dat")):
             try:
                 with open(os.path.join(root, rel), errors="replace") as f:
