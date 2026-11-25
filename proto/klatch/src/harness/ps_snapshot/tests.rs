@@ -372,7 +372,7 @@ fn recording_a_codex_session_spawns_ps_once_for_the_walk_and_the_prune() {
         );
         fs_write(&out.join(format!("{pid}.json")), &text);
         std::fs::set_permissions(
-            &out.join(format!("{pid}.json")),
+            out.join(format!("{pid}.json")),
             std::fs::Permissions::from_mode(0o600),
         )
         .unwrap();
