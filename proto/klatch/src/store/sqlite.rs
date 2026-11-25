@@ -10,6 +10,7 @@ mod archive_keys;
 mod asks;
 mod backup;
 mod claim_events;
+mod claim_lapses;
 mod claims;
 mod connect;
 mod credentials;

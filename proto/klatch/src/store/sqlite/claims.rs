@@ -2,6 +2,7 @@
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
 use super::claim_events::{ClaimEvent, ClaimKey};
+use super::claim_lapses::Lapsed;
 use super::{SqliteStore, WAIT_WINDOW_SECS};
 use crate::domain::{
     AgedClaim, Error, PASSIVE_REASON, PassiveTaken, Result, SHARED_SCOPE, YIELD_WINDOW_SECS,
@@ -30,20 +31,6 @@ struct Held {
     scope: String,
     /// When it was first held; 0 when unknown (#547).
     since: i64,
-}
-
-/// A claim whose lease had lapsed and that an attempt swept away.
-struct Lapsed {
-    /// It was a passive claim (#1401), so its expiry is counted apart.
-    passive: bool,
-    room: String,
-    path: String,
-    owner: String,
-    scope: String,
-    /// Seconds it was held until the lease ended.
-    held: i64,
-    /// When the lease ended.
-    expires: i64,
 }
 
 /// A member's refused claim attempt, remembered as a wait.
@@ -93,7 +80,7 @@ pub(super) fn held_for(since: i64, now: i64) -> i64 {
 }
 
 /// The ask number in an `ask:<N>` claim path.
-fn ask_number(path: &str) -> Option<i64> {
+pub(super) fn ask_number(path: &str) -> Option<i64> {
     path.strip_prefix("ask:").and_then(|n| n.parse().ok())
 }
 
@@ -324,6 +311,12 @@ impl SqliteStore {
             "DELETE FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
             params![req.room, req.owner, req.path],
         )?;
+        // the holder is back on this path (granted, renewed or passive): an older lapse of it no longer stands, even
+        // after a later clean release (#1586)
+        self.exec(
+            "DELETE FROM claim_lapses WHERE room=?1 AND path=?2 AND owner=?3",
+            params![req.room, req.path, req.owner],
+        )?;
         // a note this owner left when it released the path is about that earlier claim: if this one lapses instead of
         // being released, the note must not be shown as if it were about this one (#315). A note left by another
         // owner stays for the next claimant.
@@ -359,10 +352,12 @@ impl SqliteStore {
                     scope: r.get(3)?,
                     held: held_for(r.get(4)?, r.get(5)?),
                     expires: r.get(5)?,
+                    since: r.get(4)?,
                 })
             },
         )?;
         self.exec("DELETE FROM claims WHERE expires<=?1", params![now])?;
+        self.record_lapses(&lapsed, now)?;
         for l in &lapsed {
             self.note_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
             self.record_claim_event(

@@ -57,7 +57,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE INDEX machine_status_events_ts ON machine_status_events(ts);
  CREATE TABLE ask_routes(room TEXT NOT NULL, seq INTEGER NOT NULL, member TEXT NOT NULL, kind TEXT NOT NULL, ts INTEGER NOT NULL, told INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,seq,member));
  CREATE TABLE ask_route_events(room TEXT NOT NULL, seq INTEGER NOT NULL, outcome TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, PRIMARY KEY(room,seq,outcome));
- CREATE INDEX ask_route_events_ts ON ask_route_events(ts);";
+ CREATE INDEX ask_route_events_ts ON ask_route_events(ts);
+ CREATE TABLE claim_lapses(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, since INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,path,owner));";
 
 pub(super) fn user_version(conn: &Connection) -> Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -514,6 +515,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v41,
     migrate_v42,
     migrate_v43,
+    migrate_v44,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -616,6 +618,18 @@ pub(super) fn migrate_v43(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS ask_routes(room TEXT NOT NULL, seq INTEGER NOT NULL, member TEXT NOT NULL, kind TEXT NOT NULL, ts INTEGER NOT NULL, told INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,seq,member));
          CREATE TABLE IF NOT EXISTS ask_route_events(room TEXT NOT NULL, seq INTEGER NOT NULL, outcome TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL, PRIMARY KEY(room,seq,outcome));
          CREATE INDEX IF NOT EXISTS ask_route_events_ts ON ask_route_events(ts);",
+    )
+    .map_err(be)
+}
+
+/// Version 44 to 45: the record of lapsed claims (#1586). `claim_lapses` holds one row per room, claim path and holder
+/// whose named lease lapsed unreleased: when it ended and when it was first held (the `done` check of the
+/// `lapsed_claim` stuck event needs it). It is written by the claim sweep, pruned past the report window and capped per
+/// room, and holds no reason, note or text beyond the claim path the `claims` table already holds. Existing stores
+/// start empty, so a lapse swept before the upgrade is not reported.
+pub(super) fn migrate_v44(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS claim_lapses(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, since INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,path,owner));",
     )
     .map_err(be)
 }

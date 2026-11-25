@@ -123,12 +123,19 @@ impl ClaimStore for SqliteStore {
         now: i64,
         (window, limit): (i64, usize),
     ) -> Result<Vec<(String, String, i64)>> {
+        // the swept records plus the rows nothing has swept yet; a live claim of the same holder on the same path means
+        // the producer came back, so the lapse no longer stands
         self.rows(
-            "SELECT c.path,c.owner,c.expires FROM claims c
-             WHERE c.room=?1 AND c.expires<=?2 AND c.expires>?2-?3 AND c.reason<>?4 AND c.path NOT LIKE 'ask:%'
-               AND NOT EXISTS(SELECT 1 FROM members m WHERE m.room=c.room AND m.name=c.owner
+            "SELECT path,owner,MAX(expires) FROM (
+                 SELECT path,owner,expires,since FROM claim_lapses WHERE room=?1
+                 UNION ALL
+                 SELECT path,owner,expires,since FROM claims WHERE room=?1 AND reason<>?4 AND path NOT LIKE 'ask:%') c
+             WHERE c.expires<=?2 AND c.expires>?2-?3
+               AND NOT EXISTS(SELECT 1 FROM claims l WHERE l.room=?1 AND l.path=c.path AND l.owner=c.owner AND l.expires>?2)
+               AND NOT EXISTS(SELECT 1 FROM members m WHERE m.room=?1 AND m.name=c.owner
                               AND m.status LIKE 'done%' AND m.status_ts>=c.since)
-             ORDER BY c.expires DESC, c.path LIMIT ?5",
+             GROUP BY path,owner
+             ORDER BY MAX(expires) DESC, path, owner LIMIT ?5",
             params![
                 room,
                 now,
