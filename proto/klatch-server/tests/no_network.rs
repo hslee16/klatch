@@ -423,7 +423,7 @@ fn the_only_tls_library_is_rustls_with_ring_and_no_other_crypto_or_tls_crate_is_
 }
 
 /// The only files that may name rustls: the handshake and configuration, and the pump of an established connection.
-const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs"];
+const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs", "src/tls_crl.rs"];
 
 /// Names that skip or weaken a check: none may appear in the source, in any file. (A test file may build a client that
 /// trusts its own throwaway CA; that is `tests/`, not `src/`.)
@@ -472,6 +472,14 @@ fn rustls_is_named_only_in_the_tls_module_and_nothing_names_a_way_to_skip_a_chec
     assert!(tls.contains("WebPkiClientVerifier::builder_with_provider("));
     assert!(tls.contains("with_client_cert_verifier("));
     assert!(tls.contains("check_peer(Security::MutualTls"));
+    // the CRL option (#1491) goes through that same verifier, with expiry enforced; no second verifier is built anywhere
+    assert!(tls.contains(".with_crls("));
+    assert!(tls.contains(".enforce_revocation_expiration()"));
+    let builders = sources
+        .iter()
+        .filter(|(_, t)| t.contains("WebPkiClientVerifier::builder"))
+        .count();
+    assert_eq!(builders, 1, "exactly one place builds the client verifier");
 }
 
 #[test]

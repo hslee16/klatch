@@ -8,8 +8,9 @@ pub mod wire;
 pub mod ws;
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
-    KeyUsagePurpose, SanType, date_time_ymd,
+    BasicConstraints, CertificateParams, CertificateRevocationListParams, DnType,
+    ExtendedKeyUsagePurpose, IsCa, Issuer, KeyIdMethod, KeyPair, KeyUsagePurpose, RevocationReason,
+    RevokedCertParams, SanType, SerialNumber, date_time_ymd,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use std::io::{Read, Write};
@@ -91,6 +92,11 @@ impl Ca {
     }
 
     pub fn issue(&self, name: &str, usage: Use) -> Leaf {
+        self.issue_serial(name, usage, None)
+    }
+
+    /// [`Ca::issue`] with a serial number the test chose, so a CRL can name the certificate.
+    pub fn issue_serial(&self, name: &str, usage: Use, serial: Option<u64>) -> Leaf {
         let mut params = CertificateParams::new(Vec::new()).unwrap();
         params.distinguished_name.push(DnType::CommonName, name);
         let (eku, expired) = match usage {
@@ -99,6 +105,7 @@ impl Ca {
             Use::ExpiredClient => (ExtendedKeyUsagePurpose::ClientAuth, true),
         };
         params.extended_key_usages = vec![eku];
+        params.serial_number = serial.map(SerialNumber::from);
         if usage == Use::Server {
             params
                 .subject_alt_names
@@ -117,6 +124,34 @@ impl Ca {
             cert: cert.der().clone(),
             key: key.serialize_der(),
         }
+    }
+}
+
+impl Ca {
+    /// A CRL (PEM) signed by this CA that lists the serial numbers given. Dates are relative to now, never literal: a
+    /// CRL that `expired` was issued two days ago and was due a day ago; a current one is due in thirty days.
+    pub fn crl_pem(&self, revoked: &[u64], expired: bool) -> String {
+        use std::time::{Duration as D, SystemTime};
+        let now = SystemTime::now();
+        let day = D::from_secs(86_400);
+        let params = CertificateRevocationListParams {
+            this_update: (now - 2 * day).into(),
+            next_update: if expired { now - day } else { now + 30 * day }.into(),
+            crl_number: SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            revoked_certs: revoked
+                .iter()
+                .map(|n| RevokedCertParams {
+                    serial_number: SerialNumber::from(*n),
+                    revocation_time: (now - day).into(),
+                    reason_code: Some(RevocationReason::KeyCompromise),
+                    invalidity_date: None,
+                })
+                .collect(),
+            key_identifier_method: KeyIdMethod::Sha256,
+        };
+        let issuer = Issuer::new(self.params.clone(), &self.key);
+        params.signed_by(&issuer).unwrap().pem().unwrap()
     }
 }
 
