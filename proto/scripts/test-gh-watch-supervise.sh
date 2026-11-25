@@ -56,6 +56,7 @@ args=(--out-dir "$od" --port 18787 --klatch-bin "$bin/klatch" --as-member ghwatc
 tick() { "$sup" --once "${args[@]}" > "$fake/out" 2>&1; }
 ensures() { grep -c '^gh-watch ensure' "$fake/calls.log" | tr -d ' '; }
 log() { cat "$od/gh-watch.log" 2> /dev/null; }
+log_has() { local t; t="$(log)"; grep -q -- "$1" <<< "$t"; } # no pipe: grep -q would SIGPIPE its producer under pipefail (#1357)
 at() { now_is "$1"; tick; }
 
 # ---- usage and setup ----
@@ -93,22 +94,22 @@ pid_dead
 t=100000; i=0
 while [ "$i" -lt 12 ]; do t=$((t + 5)); claim_live $((90 - (t - 100000))); at "$t"; i=$((i + 1)); done
 if [ "$(ensures)" -eq 0 ]; then ok "pid dead, claim still held (up to 90 s after kill -9): twelve passes in 60 s start nothing (no restart storm)"; else bad "restart storm: $(ensures)"; fi
-if log | grep -q 'receiver pid is dead, waiting for the watch:gh claim to lapse'; then ok "it says it is waiting for the lapse"; else bad "wait line: $(log)"; fi
+if log_has 'receiver pid is dead, waiting for the watch:gh claim to lapse'; then ok "it says it is waiting for the lapse"; else bad "wait line: $(log)"; fi
 if [ "$(log | grep -c 'waiting for the watch:gh claim to lapse')" -eq 1 ]; then ok "the waiting line is written once (on the change), not on every pass"; else bad "wait line repeated: $(log)"; fi
 claim_none; at 100090
 if [ "$(ensures)" -eq 1 ] && grep -q '^gh-watch ensure ' "$fake/calls.log"; then ok "the claim lapsed and the pid is dead: gh-watch ensure runs once"; else bad "after lapse ensures=$(ensures) out=$(cat "$fake/out")"; fi
-if grep '^gh-watch ensure' "$fake/calls.log" | grep -q -- "--out-dir $od" && grep '^gh-watch ensure' "$fake/calls.log" | grep -q -- '--port 18787' \
-  && grep '^gh-watch ensure' "$fake/calls.log" | grep -q -- "--klatch-bin $bin/klatch" && grep '^gh-watch ensure' "$fake/calls.log" | grep -q -- '--room factory-status'; then
+ea="$(grep '^gh-watch ensure' "$fake/calls.log")"
+if grep -q -- "--out-dir $od" <<< "$ea" && grep -q -- '--port 18787' <<< "$ea" && grep -q -- "--klatch-bin $bin/klatch" <<< "$ea" && grep -q -- '--room factory-status' <<< "$ea"; then
   ok "ensure gets the same out-dir, port, klatch-bin, member and room the receiver was started with"
 else bad "ensure args: $(grep '^gh-watch' "$fake/calls.log")"; fi
 at 100095
-if log | grep -q 'receiver restarted by ensure' && [ "$(ensures)" -eq 1 ]; then ok "ensure brought the receiver up: logged, and no second ensure"; else bad "restarted line: $(log)"; fi
+if log_has 'receiver restarted by ensure' && [ "$(ensures)" -eq 1 ]; then ok "ensure brought the receiver up: logged, and no second ensure"; else bad "restarted line: $(log)"; fi
 claim_live 90 "$alive"; at 100100
-if log | grep -q 'receiver and watch:gh claim are healthy again'; then ok "the next pass with the claim held again logs it is healthy"; else bad "healthy again: $(log)"; fi
+if log_has 'receiver and watch:gh claim are healthy again'; then ok "the next pass with the claim held again logs it is healthy"; else bad "healthy again: $(log)"; fi
 
 # ---- a lapse needs evidence: a clean stop releases the claim and is not restarted ----
 newworld; pid_dead; claim_none; tick; rc=$?
-if [ "$rc" -eq 0 ] && [ "$(ensures)" -eq 0 ] && log | grep -q 'no lapse was seen'; then ok "receiver down, no claim and no lapse seen (a clean stop or never started): not restarted, and it says so"; else bad "clean stop: ensures=$(ensures) $(log)"; fi
+if [ "$rc" -eq 0 ] && [ "$(ensures)" -eq 0 ] && log_has 'no lapse was seen'; then ok "receiver down, no claim and no lapse seen (a clean stop or never started): not restarted, and it says so"; else bad "clean stop: ensures=$(ensures) $(log)"; fi
 newworld; pid_dead; claim_none
 printf 'lapsed_claim room factory-status claim watch:gh holder ghwatch.4242 lapsed 120s\n' > "$fake/stuck.txt"; tick
 if [ "$(ensures)" -eq 1 ]; then ok "a recent lapsed_claim for watch:gh in klatch stuck is evidence enough on the first pass (the supervisor started after the crash)"; else bad "stuck lapse: ensures=$(ensures) $(log)"; fi
@@ -123,14 +124,14 @@ if [ "$(ensures)" -eq 1 ]; then ok "a claim with 0s left counts as lapsed"; else
 
 # ---- never kill, never guess: a live pid with a lapsed claim, or an unreadable claim ----
 newworld; pid_alive; claim_live 60; tick; claim_none; at 100030
-if [ "$(ensures)" -eq 0 ] && log | grep -q 'ALERT watcher supervisor: receiver pid is alive but the watch:gh claim lapsed'; then ok "pid alive but the claim lapsed (a hung receiver): ALERT, no restart, nothing killed"; else bad "hung: ensures=$(ensures) $(log)"; fi
+if [ "$(ensures)" -eq 0 ] && log_has 'ALERT watcher supervisor: receiver pid is alive but the watch:gh claim lapsed'; then ok "pid alive but the claim lapsed (a hung receiver): ALERT, no restart, nothing killed"; else bad "hung: ensures=$(ensures) $(log)"; fi
 newworld; pid_dead; claim_live 60 99999; tick
 now_is 100400; claim_live 60 99999; tick
-if [ "$(ensures)" -eq 0 ] && log | grep -q 'ALERT watcher supervisor: receiver pid is dead but the watch:gh claim is still held'; then ok "a claim held past the grace by another holder: ALERT once, no restart (it is not ours to take)"; else bad "other holder: ensures=$(ensures) $(log)"; fi
+if [ "$(ensures)" -eq 0 ] && log_has 'ALERT watcher supervisor: receiver pid is dead but the watch:gh claim is still held'; then ok "a claim held past the grace by another holder: ALERT once, no restart (it is not ours to take)"; else bad "other holder: ensures=$(ensures) $(log)"; fi
 newworld; pid_dead; touch "$fake/claims-fail"; tick; rc=$?
-if [ "$rc" -eq 0 ] && [ "$(ensures)" -eq 0 ] && log | grep -q 'ALERT watcher supervisor: claim state unreadable, not restarting'; then ok "klatch claims failing (store busy, no credential): ALERT, no restart, reports instead"; else bad "unreadable: ensures=$(ensures) $(log)"; fi
+if [ "$rc" -eq 0 ] && [ "$(ensures)" -eq 0 ] && log_has 'ALERT watcher supervisor: claim state unreadable, not restarting'; then ok "klatch claims failing (store busy, no credential): ALERT, no restart, reports instead"; else bad "unreadable: ensures=$(ensures) $(log)"; fi
 newworld; pid_dead; claim_none; touch "$work/off"; printf 'lapsed_claim room factory-status claim watch:gh holder g.1 lapsed 5s\n' > "$fake/stuck.txt"; tick
-if [ "$(ensures)" -eq 0 ] && log | grep -q 'off file'; then ok "the off file stops restarts"; else bad "off: ensures=$(ensures)"; fi
+if [ "$(ensures)" -eq 0 ] && log_has 'off file'; then ok "the off file stops restarts"; else bad "off: ensures=$(ensures)"; fi
 rm -f "$work/off"; tick
 if [ "$(ensures)" -eq 1 ]; then ok "removing the off file lets the next pass restart"; else bad "off removed: ensures=$(ensures)"; fi
 
@@ -140,7 +141,7 @@ printf 'lapsed_claim room factory-status claim watch:gh holder g.1 lapsed 5s\n' 
 at 100000
 at 100010
 if [ "$(ensures)" -eq 1 ]; then ok "ensure fails: the second attempt waits for the backoff (60 s), not retried 10 s later"; else bad "backoff1: $(ensures)"; fi
-if log | grep -q 'ensure did not bring the receiver up, next try in 60 s'; then ok "the failed attempt is logged with the wait"; else bad "backoff line: $(log)"; fi
+if log_has 'ensure did not bring the receiver up, next try in 60 s'; then ok "the failed attempt is logged with the wait"; else bad "backoff line: $(log)"; fi
 at 100060
 if [ "$(ensures)" -eq 2 ]; then ok "after 60 s the second attempt runs"; else bad "attempt2: $(ensures)"; fi
 at 100179
@@ -150,7 +151,7 @@ if [ "$(ensures)" -eq 3 ]; then ok "the third attempt runs after 120 s"; else ba
 at 100419
 if [ "$(ensures)" -eq 3 ]; then ok "the backoff doubles again (240 s)"; else bad "backoff3: $(ensures)"; fi
 at 100420; rc=$?
-if [ "$(ensures)" -eq 3 ] && [ "$rc" -eq 3 ] && log | grep -q 'ALERT watcher supervisor: restart limit reached (3 in the last 3600 s), giving up; run gh-watch ensure yourself'; then ok "the fourth restart in the hour is refused: ALERT, exit 3, the human is told to run ensure"; else bad "limit: ensures=$(ensures) rc=$rc $(log)"; fi
+if [ "$(ensures)" -eq 3 ] && [ "$rc" -eq 3 ] && log_has 'ALERT watcher supervisor: restart limit reached (3 in the last 3600 s), giving up; run gh-watch ensure yourself'; then ok "the fourth restart in the hour is refused: ALERT, exit 3, the human is told to run ensure"; else bad "limit: ensures=$(ensures) rc=$rc $(log)"; fi
 at 103000; rc=$?
 if [ "$(ensures)" -eq 3 ] && [ "$rc" -eq 3 ]; then ok "it stays stopped while the three attempts are inside the hour"; else bad "still limited: ensures=$(ensures) rc=$rc"; fi
 at 103700
@@ -168,11 +169,12 @@ printf 'lapsed_claim room factory-status claim watch:gh holder g.1 lapsed 5s\n' 
 # shellcheck disable=SC2016
 printf 'watch:gh\t$(touch %s/pwned)\t0s left\treason $(touch %s/pwned2)\n' "$work" "$work" > "$fake/claims.txt"
 tick
-if [ ! -e "$work/pwned" ] && [ ! -e "$work/pwned2" ] && ! log | grep -q 'pwned'; then ok "claim holder and reason text is data: never run, never logged"; else bad "claim text leaked: $(log)"; fi
+if [ ! -e "$work/pwned" ] && [ ! -e "$work/pwned2" ] && ! log_has 'pwned'; then ok "claim holder and reason text is data: never run, never logged"; else bad "claim text leaked: $(log)"; fi
 bad_lines="$(log | grep -vcE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z (INFO|ALERT) watcher supervisor[: ]' | tr -d ' ')"
 if [ "$bad_lines" -eq 0 ] && [ -n "$(log)" ]; then ok "every log line is TIME INFO|ALERT and a fixed template"; else bad "log shape: $(log)"; fi
-if ! grep -E '^klatch ' "$fake/calls.log" | grep -vqE '^klatch (claims|stuck) '; then ok "klatch is only ever asked claims and stuck (read only: no post, claim, release, worker or admin)"; else bad "klatch calls: $(grep '^klatch' "$fake/calls.log")"; fi
-if ! grep -E '^gh-watch ' "$fake/calls.log" | grep -vqE '^gh-watch ensure '; then ok "gh-watch is only ever run as ensure: never serve, forward-command, install-launchd or clean-hooks (the forwarder stays the human's)"; else bad "gh-watch calls: $(grep '^gh-watch' "$fake/calls.log")"; fi
+kcalls="$(grep -E '^klatch ' "$fake/calls.log")"; gcalls="$(grep -E '^gh-watch ' "$fake/calls.log")"
+if ! grep -vqE '^klatch (claims|stuck) ' <<< "$kcalls"; then ok "klatch is only ever asked claims and stuck (read only: no post, claim, release, worker or admin)"; else bad "klatch calls: $(grep '^klatch' "$fake/calls.log")"; fi
+if ! grep -vqE '^gh-watch ensure ' <<< "$gcalls"; then ok "gh-watch is only ever run as ensure: never serve, forward-command, install-launchd or clean-hooks (the forwarder stays the human's)"; else bad "gh-watch calls: $(grep '^gh-watch' "$fake/calls.log")"; fi
 if ! grep -rqE 'launchctl|gh webhook|gh api|install-launchd' "$sup"; then ok "the script never names launchctl, gh webhook, gh api or install-launchd as something to run"; else bad "forbidden command text in the script"; fi
 
 # ---- loop mode: bounded by GHWS_MAX_TICKS under the test clock, so it never sleeps ----
