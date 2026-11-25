@@ -22,26 +22,29 @@ pub fn path_for(db: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The time of every attempt in the file, oldest first; an unreadable file or line reads as an attempt at `now`
-/// (an unreadable file as one attempt and a count of `u32::MAX`, so it is a wait and never a free attempt).
+/// The time of every attempt in the file, in file order (the last line is the newest attempt whatever the clock said);
+/// a line that is not a time reads as an attempt at `now`, and a file that is not UTF-8 still has the lines it has.
+/// An unreadable file reads as one attempt and a count of `u32::MAX`, so it is a wait and never a free attempt.
 fn read_times(db: &Path, now: i64) -> (u32, Vec<i64>) {
-    let text = match std::fs::read_to_string(path_for(db)) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, Vec::new()),
-        Err(_) => return (u32::MAX, vec![now]),
-    };
-    let mut times: Vec<i64> = text
+    match std::fs::read(path_for(db)) {
+        Ok(bytes) => lines_to_times(&bytes, now),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, Vec::new()),
+        Err(_) => (u32::MAX, vec![now]),
+    }
+}
+
+fn lines_to_times(bytes: &[u8], now: i64) -> (u32, Vec<i64>) {
+    let times: Vec<i64> = String::from_utf8_lossy(bytes)
         .lines()
         .map(|l| l.trim().parse().unwrap_or(now))
         .collect();
-    times.sort_unstable();
     (u32::try_from(times.len()).unwrap_or(u32::MAX), times)
 }
 
 /// `(attempts so far, time of the last one)`.
 fn read(db: &Path, now: i64) -> (u32, i64) {
     let (count, times) = read_times(db, now);
-    (count, times.last().copied().unwrap_or(0))
+    (count, times.iter().copied().max().unwrap_or(0))
 }
 
 /// Seconds the next attempt must wait, 0 when it may be made now.
@@ -72,26 +75,60 @@ pub enum Charge {
     Io(String),
 }
 
+/// How far ahead of `now` a recorded time may be (clock skew) before it is dropped; a nearer one reads as `now`.
+const SKEW_SECS: i64 = 300;
+
 /// The store is readable again: record the attempts in its audit and forget them. Nothing to record is nothing done.
-/// Every attempt but the last was a failed guess at the recovery code (the last one is the one that was approved),
-/// and each is written as a `proof-failed` row on the target `recovery`, stamped with its own time, so the global
-/// alarm (#1310, #1552) counts it with the wrong passphrases. The row says only that it came through the file
-/// limit: no code, no terminal label, no secret. At most `alarm::CEILING` of the newest failures are written, since
-/// more add nothing to an alarm that fires at the ceiling and the summary row still says how many were made.
+/// Every attempt but the last LINE was a failed guess at the recovery code (the last one is the one that was
+/// approved), and each is written as a `proof-failed` row on the target `recovery`, stamped with its own time, so the
+/// global alarm (#1310, #1552) counts it with the wrong passphrases. The row says only that it came through the file
+/// limit: no code, no terminal label, no secret.
+///
+/// The file is plain and anything running as the owner can write it, so a time outside the last 24 hours (or more
+/// than `SKEW_SECS` ahead) is dropped, never clamped, and the summary row counts how many were dropped; a time a
+/// little ahead is clamped to `now`. At most `alarm::CEILING` of the newest failures are written, since more add
+/// nothing to an alarm that fires at the ceiling. Settling is at most once: the file is renamed to a settling name
+/// in its own directory and removed BEFORE any row is written, and when either step fails nothing is written. A
+/// crash after that loses the counts not yet written; it never counts one twice.
 pub fn settle<S: PolicyStore + ?Sized>(db: &Path, store: &S, now: i64) {
-    let (count, times) = read_times(db, now);
+    let file = path_for(db);
+    let mut name = file.as_os_str().to_os_string();
+    name.push(".settling");
+    let settling = PathBuf::from(name);
+    if std::fs::rename(&file, &settling).is_err() {
+        return;
+    }
+    let read = std::fs::read(&settling);
+    if std::fs::remove_file(&settling).is_err() {
+        return;
+    }
+    let Ok(bytes) = read else { return };
+    let (count, times) = lines_to_times(&bytes, now);
     if count == 0 {
         return;
     }
-    let failed = &times[..times.len().saturating_sub(1)];
-    let keep = failed.len().saturating_sub(alarm::CEILING as usize);
-    for at in &failed[keep..] {
+    let failed = &times[..times.len() - 1];
+    let mut kept: Vec<i64> = failed
+        .iter()
+        .filter(|&&t| {
+            t > now.saturating_sub(alarm::WINDOW_SECS) && t <= now.saturating_add(SKEW_SECS)
+        })
+        .map(|&t| t.min(now))
+        .collect();
+    let dropped = failed.len() - kept.len();
+    kept.sort_unstable();
+    let skip = kept.len().saturating_sub(alarm::CEILING as usize);
+    for at in &kept[skip..] {
         alarm::failed(store, "recovery", alarm::FILE_LIMIT_DETAIL, *at);
     }
-    let detail =
+    let mut detail =
         format!("{count} attempts while the store could not be read (the last one was approved)");
+    if dropped > 0 {
+        detail.push_str(&format!(
+            "; {dropped} attempts had a time outside the last 24 hours and were not counted as failures"
+        ));
+    }
     let _ = store.record_audit(&NewAudit::new("recovery-attempts", "", &detail), now);
-    let _ = std::fs::remove_file(path_for(db));
 }
 
 #[cfg(test)]

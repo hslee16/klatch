@@ -37,7 +37,7 @@ const TARGETS: [&str; 2] = ["", "recovery"];
 
 /// The first moment that still counts at `now`.
 pub fn since(now: i64) -> i64 {
-    now - WINDOW_SECS + 1
+    now.saturating_sub(WINDOW_SECS - 1)
 }
 
 /// Failed proofs in the last 24 hours at `now` and the distinct terminals among them, exact. Counts only. This reads
@@ -63,6 +63,7 @@ fn query(now: i64, cap: u64) -> Census<'static> {
         action: FAILED,
         targets: &TARGETS,
         since: since(now),
+        until: now,
         cap,
     }
 }
