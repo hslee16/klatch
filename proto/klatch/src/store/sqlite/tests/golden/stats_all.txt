@@ -1,5 +1,5 @@
 klatch stats (counts only; no message text, ask text, claim detail, label or payload)
-schema 44; room all; since the start; at 2026-11-23
+schema 45; room all; since the start; at 2026-11-23
 
 messages per room
   room          class    messages  sealed  senders  first       last
@@ -126,7 +126,7 @@ worker credentials: 3 issued, 1 revoked
 
 === json ===
 {
-  "schema": 44,
+  "schema": 45,
   "room": null,
   "since": null,
   "at": 1795431600,

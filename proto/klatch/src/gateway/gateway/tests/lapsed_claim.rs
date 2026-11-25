@@ -227,3 +227,18 @@ fn a_member_below_the_rooms_label_learns_nothing_about_a_lapsed_claim() {
         .unwrap();
     assert_eq!(rule_of(g.stuck(&bob(), "vault").unwrap_err()), "clearance");
 }
+
+#[test]
+fn a_lapse_is_still_reported_after_a_claim_attempt_in_another_room_swept_it() {
+    let (g, t) = setup();
+    g.claim(&alice(), "r", &ClaimSpec::new("gh-watch:receiver", 100, ""))
+        .unwrap();
+    t.set(t.get() + 130);
+    g.join(&carol(), "elsewhere").unwrap();
+    g.claim(&carol(), "elsewhere", &ClaimSpec::new("job", 5000, ""))
+        .unwrap();
+    assert!(g.claims(&carol(), "r").unwrap().is_empty(), "swept");
+    assert_eq!(lapsed(&g).len(), 1, "the event survives the sweep");
+    t.set(t.get() + LAPSED_WINDOW_SECS);
+    assert!(lapsed(&g).is_empty(), "and ends with the window");
+}

@@ -854,7 +854,7 @@ fn a_version_42_database_gains_the_machine_status_counts_and_keeps_its_data() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 44);
+    assert_eq!(SCHEMA_VERSION, 45);
     let columns: String = s
         .conn
         .query_row(
@@ -894,7 +894,7 @@ fn a_version_43_database_gains_the_ask_routing_tables_and_keeps_its_data() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 44);
+    assert_eq!(SCHEMA_VERSION, 45);
     for table in ["ask_routes", "ask_route_events"] {
         let n: i64 = s
             .conn
@@ -909,5 +909,37 @@ fn a_version_43_database_gains_the_ask_routing_tables_and_keeps_its_data() {
     assert!(s.ask_routes("r").unwrap().is_empty(), "starts empty");
     assert!(s.route_ask("r", 1, &[], 3).unwrap());
     assert_eq!(s.open_asks("r", 4).unwrap().len(), 1, "the ask survives");
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_44_database_gains_the_claim_lapses_table_empty_and_keeps_its_data() {
+    let path = temp_db("migrate-v44-claim-lapses");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.join("r", "alice", 1).unwrap();
+        s.post(Seat::new("r", "alice"), "hello", 2).unwrap();
+        s.claim(&ClaimRequest::new(("r", "bob"), "old.rs", 600, ""), 3)
+            .unwrap();
+        s.conn
+            .execute_batch("DROP TABLE claim_lapses; PRAGMA user_version = 44;")
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    assert_eq!(version(&s), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 45);
+    let n: i64 = s
+        .conn
+        .query_row("SELECT COUNT(*) FROM claim_lapses", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0, "starts empty");
+    assert_eq!(s.claims("r", 4).unwrap()[0].path, "old.rs", "rows kept");
+    assert_eq!(s.tail("r", 0, 10).unwrap().len(), 1, "messages kept");
+    // the old claim lapses into the new table
+    s.claim(&ClaimRequest::new(("r", "carol"), "x", 50_000, ""), 700)
+        .unwrap();
+    let lapsed = s.lapsed_claims("r", 701, (600, 20)).unwrap();
+    assert_eq!(lapsed.len(), 1);
+    assert_eq!(lapsed[0].0, "old.rs");
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
