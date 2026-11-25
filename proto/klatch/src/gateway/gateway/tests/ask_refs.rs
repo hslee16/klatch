@@ -278,3 +278,65 @@ fn a_message_ref_refusal_is_the_same_whether_the_message_is_above_the_label_or_t
     assert_eq!(format!("{by_message:?}"), format!("{by_room:?}"));
     assert!(!format!("{by_message:?}").contains(&high));
 }
+
+#[test]
+fn a_lowercased_message_id_above_the_label_is_still_refused() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    let high = g.post(&alice(), "vault", "hidden").unwrap().id;
+    assert_ne!(high, high.to_lowercase(), "the id has letters to fold");
+    let e = ask(&g, &[r("message", &high.to_lowercase())]).unwrap_err();
+    assert_eq!(rule_of(e), "label");
+    assert!(nothing_posted(&g));
+}
+
+#[test]
+fn a_failing_message_lookup_fails_the_post_closed() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    let low = g.post(&alice(), "r", "visible").unwrap().id;
+    g.store.fail_message_room.set(true);
+    assert!(ask(&g, &[r("message", &low)]).is_err());
+    g.store.fail_message_room.set(false);
+    assert_eq!(g.read(&bob(), "r", false).unwrap().len(), 1);
+}
+
+#[test]
+fn the_message_lookup_goes_through_the_spy_gate() {
+    let g = open();
+    let before = g.store.calls.get();
+    g.store.message_room("anything").unwrap();
+    assert_eq!(g.store.calls.get(), before + 1);
+    g.store.fail.set(true);
+    assert!(g.store.message_room("anything").is_err());
+}
+
+#[test]
+fn a_message_ref_to_a_message_in_the_asks_own_room_is_accepted() {
+    let g = open();
+    g.join(&alice(), "r").unwrap();
+    let own = g.post(&alice(), "r", "earlier").unwrap().id;
+    ask(&g, &[r("message", &own)]).unwrap();
+}
+
+#[test]
+fn a_message_ref_into_the_asks_own_room_is_not_judged_against_the_ask_label() {
+    let g = open();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    let own = g.post(&alice(), "vault", "earlier").unwrap().id;
+    // the room's own label is the room's business, a ref to its own room adds nothing to it
+    let asked = g.post_ask(
+        &alice(),
+        ("vault", "seeking: x", Some("public")),
+        None,
+        &[r("message", &own), r("room", "vault")],
+    );
+    assert!(asked.is_ok(), "{asked:?}");
+}

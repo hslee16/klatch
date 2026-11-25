@@ -57,6 +57,9 @@ impl MessageStore for SpyStore {
 
     fn message_room(&self, id: &str) -> Result<Option<String>> {
         self.gate()?;
+        if self.fail_message_room.get() {
+            return Err(Error::Backend("message lookup down".into()));
+        }
         self.inner.message_room(id)
     }
 
