@@ -175,21 +175,32 @@ impl Ca {
     /// A CRL (PEM) signed by this CA that lists the serial numbers given. Dates are relative to now, never literal: a
     /// CRL that `expired` was issued two days ago and was due a day ago; a current one is due in thirty days.
     pub fn crl_pem(&self, revoked: &[u64], expired: bool) -> String {
-        self.crl_signed_by(revoked, expired, &self.key)
+        let due = if expired { -86_400 } else { 30 * 86_400 };
+        self.crl_signed_by(revoked, due, &self.key)
+    }
+
+    /// A CRL (PEM) with no revocations whose nextUpdate is `due_in` seconds from now (negative: already past).
+    pub fn crl_pem_due(&self, due_in: i64) -> String {
+        self.crl_signed_by(&[], due_in, &self.key)
     }
 
     /// A CRL that names this CA as its issuer but is signed by another key: its signature does not verify.
     pub fn forged_crl_pem(&self, revoked: &[u64]) -> String {
-        self.crl_signed_by(revoked, false, &KeyPair::generate().unwrap())
+        self.crl_signed_by(revoked, 30 * 86_400, &KeyPair::generate().unwrap())
     }
 
-    fn crl_signed_by(&self, revoked: &[u64], expired: bool, signer: &KeyPair) -> String {
+    fn crl_signed_by(&self, revoked: &[u64], due_in: i64, signer: &KeyPair) -> String {
         use std::time::{Duration as D, SystemTime};
         let now = SystemTime::now();
         let day = D::from_secs(86_400);
         let params = CertificateRevocationListParams {
             this_update: (now - 2 * day).into(),
-            next_update: if expired { now - day } else { now + 30 * day }.into(),
+            next_update: if due_in < 0 {
+                now - D::from_secs(due_in.unsigned_abs())
+            } else {
+                now + D::from_secs(due_in.unsigned_abs())
+            }
+            .into(),
             crl_number: SerialNumber::from(1u64),
             issuing_distribution_point: None,
             revoked_certs: revoked
@@ -225,6 +236,12 @@ pub fn write_file(path: &Path, text: &str, mode: u32) {
     f.write_all(text.as_bytes()).unwrap();
     // the umask may have cleared bits the test wants (group or other access)
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode)).unwrap();
+}
+
+/// [`write_file`] over a file that exists (a test changing what the set-up wrote).
+pub fn rewrite_file(path: &Path, text: &str, mode: u32) {
+    let _ = std::fs::remove_file(path);
+    write_file(path, text, mode);
 }
 
 /// The files of one server set-up: its certificate and key, and the CA file for client certificates.

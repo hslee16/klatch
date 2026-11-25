@@ -146,7 +146,18 @@ Supported versions: the newest release only, the current practice and not a poli
   certificate that may not sign CRLs refuses its issuer's certificates too, with its own log line), which locks clients out loudly and never leaves a revoked certificate working on
   a stale list. **Unknown status is allowed:** a certificate no configured CRL covers (another issuer, an intermediate CA
   with no list from its parent) is accepted as it is without the option; deny would refuse the intermediate CAs of a
-  chain. Consequence: a CRL signed by a CA that issued none of the clients does nothing, silently (#1614). Replacing the
+  chain. Consequence, and the start-up check (#1614): a CRL signed by a CA that issued none of the clients would do
+  nothing, silently, so **each CRL's issuer must be the subject of a CA certificate in the client CA file** (byte-equal DER
+  name, as webpki compares) or the server does not start, in words that name the file and the CRL's number and never its
+  content; an intermediate CA's CRL therefore needs the intermediate listed in the CA file too (a CA file holding only
+  the root refuses an intermediate's CRL). Each CRL's `thisUpdate` and `nextUpdate` must be valid DER times (strict
+  UTCTime or GeneralizedTime, UTC) or the file is refused as not a valid CRL. The server only WARNS, at start, in a fixed
+  line with the file and the CRL's number (no subject, no serial), when a CRL's `nextUpdate` has passed (expiry is
+  enforced, so its issuer's clients are refused), when it passes within 7 days, and when a CRL has no `nextUpdate` (it
+  never expires, so a stale list stays in force); it starts in each case. These checks read the file once at start, with a
+  small bounded DER reader (`der.rs`: definite minimal lengths, no recursion, nothing allocated, no dependency, no unsafe
+  code); there is no periodic re-check. Two CRLs of one issuer with different issuing distribution points (a
+  partitioned CRL, valid for webpki) are refused by the one-CRL-per-issuer rule: the server fails closed. Replacing the
   CRL needs a restart (reload without one is #1492). **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
   quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound

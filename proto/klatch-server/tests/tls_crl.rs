@@ -144,10 +144,15 @@ fn an_expired_crl_refuses_every_certificate_of_its_issuer_and_the_log_says_why()
 
 #[test]
 fn a_certificate_of_an_issuer_no_crl_covers_is_allowed_as_before() {
-    // the CRL is by another CA: it says nothing about this CA's certificates, so their status is unknown and the policy
-    // (unknown status allowed) lets them in; the documented hazard is a CRL by the wrong CA, which does nothing
+    // the CRL is by another CA of the client CA file: it says nothing about this CA's certificates, so their status is
+    // unknown and the policy (unknown status allowed) lets them in
     let c = crl_setup(&[], false);
     let other = Ca::new("another ca");
+    rewrite_file(
+        &c.files.ca,
+        &format!("{}{}", c.client_ca.pem, other.pem),
+        0o644,
+    );
     write_file(
         &c.dir.0.join("pki/other.crl"),
         &other.crl_pem(&[REVOKED], false),
@@ -271,6 +276,12 @@ fn a_crl_with_a_bad_signature_locks_its_issuers_clients_out_and_the_log_says_so(
 fn intermediate_setup(usages: Vec<rcgen::KeyUsagePurpose>, revoked: &[u64]) -> (Crl, Ca, Server) {
     let mut c = crl_setup(&[], false);
     let intermediate = c.client_ca.intermediate("client intermediate", usages);
+    // the CRL's issuer must be a CA of the client CA file (#1614): the intermediate is listed beside its root
+    rewrite_file(
+        &c.files.ca,
+        &format!("{}{}", c.client_ca.pem, intermediate.pem),
+        0o644,
+    );
     c.crl = c.dir.0.join("pki/intermediate.crl.pem");
     write_file(&c.crl, &intermediate.crl_pem(revoked, false), 0o644);
     let server = listening(&c);
@@ -290,17 +301,9 @@ fn an_intermediate_ca_that_may_sign_crls_works_like_a_root_for_revocation() {
     assert!(err.to_string().contains("CertificateRevoked"), "{err}");
 }
 
-#[test]
-fn an_intermediate_ca_that_may_not_sign_crls_locks_its_clients_out_and_the_log_says_so() {
-    use rcgen::KeyUsagePurpose::KeyCertSign;
-    let (c, inter, server) = intermediate_setup(vec![KeyCertSign], &[]);
-    let good = inter.issue_serial("worker-2", Use::Client, Some(GOOD));
-    let config = client_config(&c.server_ca, Some(&good), None);
-    get_status(server.addr, &config, "/v1/stream")
-        .expect_err("no cRLSign: the CRL cannot be trusted");
-    let log = wait_for_log(&c, UNUSABLE);
-    assert!(log.contains(UNUSABLE), "{log}");
-}
+// (A test that an intermediate CA without cRLSign locks its clients out was removed with #1614: the CRL's issuer must now be
+// listed in the client CA file, which makes the intermediate a trust anchor, and a trust anchor's key usages are not
+// checked. The "not usable" log line stays pinned by the forged CRL above and by `classify`'s unit test.)
 
 #[test]
 fn two_crls_of_one_issuer_are_refused_at_start_because_the_first_would_win() {
@@ -330,6 +333,11 @@ fn two_crls_of_one_issuer_are_refused_at_start_because_the_first_would_win() {
 fn crls_of_different_issuers_may_share_a_file() {
     let c = crl_setup(&[], false);
     let other = Ca::new("another ca");
+    rewrite_file(
+        &c.files.ca,
+        &format!("{}{}", c.client_ca.pem, other.pem),
+        0o644,
+    );
     let both = format!(
         "{}{}",
         c.client_ca.crl_pem(&[REVOKED], false),
@@ -359,7 +367,7 @@ fn a_file_over_the_size_cap_or_with_too_many_crls_is_refused_before_it_is_parsed
     let f = std::fs::File::create(&big).unwrap();
     f.set_len(5 * 1024 * 1024).unwrap();
     std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o644)).unwrap();
-    refused(&c, &with(&big), "larger than 4 MiB");
+    refused(&c, &with(&big), "larger than 4 MiB: it is not read");
     // seventeen blocks (the same CRL: the count is checked first)
     let many = c.dir.0.join("pki/many.crl");
     write_file(

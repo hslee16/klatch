@@ -13,8 +13,17 @@
 //! **One CRL per issuer.** rustls-webpki uses the FIRST CRL it finds for an issuer. `cat new.crl >> client.crl` would
 //! therefore keep an older (even empty) list in force and ignore the new revocations, or keep an expired one in force and
 //! refuse every client. To make that mistake impossible the server reads the issuer name of each CRL (`issuer_of`, a
-//! small bounded DER reader: definite lengths only, no recursion, nothing allocated) and refuses a file in which two CRLs
+//! small bounded DER reader in `der.rs`: definite lengths only, no recursion, nothing allocated) and refuses a file in which two CRLs
 //! share one: replace the file, never append.
+//!
+//! **What the CRLs must be.** Each CRL's issuer must be the subject of a CA certificate in the client CA file (byte-equal
+//! DER Name, which is what webpki compares; `ca_subjects` are the trust anchors' subjects), or the server refuses to
+//! start: a CRL no CA of the file signed does nothing, silently (#1614). An intermediate CA's CRL therefore needs the
+//! intermediate listed in the CA file too. `thisUpdate` and `nextUpdate` must be valid DER times (`der.rs`: strict
+//! UTCTime or GeneralizedTime) or the file is not a valid CRL and is refused. These are only WARNINGS, logged at start
+//! with a fixed template (the file and the CRL's number, never a subject or serial) while the server starts: a CRL whose
+//! `nextUpdate` has passed (it is enforced: its issuer's clients are refused), one due within seven days
+//! (`SOON_SECS`), and one with no `nextUpdate` (it never expires). There is no periodic re-check (reload is #1492).
 //!
 //! **Policy** (rustls `WebPkiClientVerifier`, set in `tls.rs`):
 //! - A client certificate whose serial is listed by the CRL of its issuer fails the handshake: no session, no HTTP.
@@ -28,10 +37,11 @@
 //!   issuer, or an intermediate CA with no list from its parent) is accepted exactly as it is without this option. The
 //!   rustls alternative, deny, would refuse every certificate whose issuer has no CRL, including the intermediate CAs of a
 //!   chain, which locks out an operator who lists only the CRL of the CA that issues clients. The cost: a CRL signed by a
-//!   CA that issued none of the clients does nothing, and nothing here can tell (a start-up check is ticket #1614; the
-//!   issuer name of each CRL, read here for the duplicate check, is what that check needs).
+//!   CA that issued none of the clients does nothing, and nothing in rustls can tell; the start-up check above refuses a
+//!   CRL whose issuer is in no CA of the file (#1614).
 //! - The whole chain is checked, the trust anchor excepted (rustls's default).
 
+use crate::der::{NextUpdate, issuer_of, next_update_of};
 use anyhow::{Result, bail};
 use rustls_pki_types::CertificateRevocationListDer;
 use rustls_pki_types::pem::PemObject;
@@ -39,7 +49,7 @@ use std::io::Read;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The largest CRL file: a CRL of a CA with a very large number of revocations is a few MiB; more is a mistake.
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -47,7 +57,11 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CRLS: usize = 16;
 
 /// The CRLs of the file, after its checks (see the module doc). The error names the file and the failure, never content.
-pub fn read_crls(path: &Path) -> Result<Vec<CertificateRevocationListDer<'static>>> {
+pub fn read_crls(
+    path: &Path,
+    ca_subjects: &[&[u8]],
+    now: i64,
+) -> Result<Vec<CertificateRevocationListDer<'static>>> {
     let shown = path.display();
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -87,7 +101,9 @@ pub fn read_crls(path: &Path) -> Result<Vec<CertificateRevocationListDer<'static
         .read_to_end(&mut bytes)
         .map_err(|e| anyhow::anyhow!("cannot read the client CRL file {shown}: {}", e.kind()))?;
     if bytes.len() as u64 > MAX_BYTES {
-        bail!("the client CRL file {shown} is larger than 4 MiB: it is not read");
+        bail!(
+            "the client CRL file {shown} grew beyond 4 MiB while it was being read: it is refused"
+        );
     }
     if bytes.iter().all(u8::is_ascii_whitespace) {
         bail!("the client CRL file {shown} is empty");
@@ -107,7 +123,91 @@ pub fn read_crls(path: &Path) -> Result<Vec<CertificateRevocationListDer<'static
         bail!("the client CRL file {shown} holds no CRL (a PEM block X509 CRL)");
     }
     check_one_per_issuer(&crls, path)?;
+    let notices = check_cas_and_times(&crls, ca_subjects, now, path)?;
+    for (n, notice) in &notices {
+        eprintln!("{}", notice_line(path, *n, crls.len(), *notice));
+    }
     Ok(crls)
+}
+
+/// The time now in seconds since the Unix epoch: read once, by the caller of [`read_crls`], so the checks below are pure.
+pub fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// A CRL due within this many seconds of now draws a warning at start (seven days: time to fetch and restart).
+pub const SOON_SECS: i64 = 7 * 86_400;
+
+/// What a CRL's `nextUpdate` earns at start: a warning only, never a refusal (an expired CRL is enforced, which is the
+/// documented policy, and the operator is told here instead of at the first refused client).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    /// `nextUpdate` is now or past: every client certificate of the issuer is refused.
+    Expired,
+    /// `nextUpdate` is less than [`SOON_SECS`] away.
+    ExpiresSoon,
+    /// No `nextUpdate` (optional in X.509): the list never expires, so a stale one stays in force.
+    NeverExpires,
+}
+
+/// Refuse a CRL whose issuer no CA certificate of the client CA file has (`ca_subjects`: the DER content of each CA's
+/// subject Name, which is what rustls-webpki compares with a CRL's issuer, byte for byte), and a CRL whose `thisUpdate` or
+/// `nextUpdate` is not a valid time. Otherwise the warnings: the CRL's 1-based number in the file and its [`Notice`].
+/// Pure: `now` is given, not read.
+fn check_cas_and_times(
+    crls: &[CertificateRevocationListDer<'_>],
+    ca_subjects: &[&[u8]],
+    now: i64,
+    path: &Path,
+) -> Result<Vec<(usize, Notice)>> {
+    let shown = path.display();
+    let mut notices = Vec::new();
+    for (i, crl) in crls.iter().enumerate() {
+        let n = i + 1;
+        let Some(issuer) = issuer_of(crl.as_ref()) else {
+            bail!(
+                "the client CRL file {shown} holds a CRL whose issuer cannot be read: it is not a valid X.509 CRL"
+            );
+        };
+        if !ca_subjects.contains(&issuer) {
+            bail!(
+                "the client CRL file {shown} holds a CRL (number {n}) whose issuer matches no CA certificate in the client CA file: such a CRL would silently do nothing, because it applies only to certificates its issuer signed; list the CA that signed it in the client CA file (an intermediate CA must be listed there too) or remove the CRL"
+            );
+        }
+        let Some(next) = next_update_of(crl.as_ref()) else {
+            bail!(
+                "the client CRL file {shown} holds a CRL (number {n}) whose thisUpdate or nextUpdate is not a valid time: it is not a valid X.509 CRL"
+            );
+        };
+        match next {
+            NextUpdate::Never => notices.push((n, Notice::NeverExpires)),
+            NextUpdate::At(at) if at <= now => notices.push((n, Notice::Expired)),
+            NextUpdate::At(at) if at - now <= SOON_SECS => notices.push((n, Notice::ExpiresSoon)),
+            NextUpdate::At(_) => {}
+        }
+    }
+    Ok(notices)
+}
+
+/// The log line of a warning: a fixed template with the file and the CRL's number, never a subject or a serial.
+fn notice_line(path: &Path, n: usize, of: usize, notice: Notice) -> String {
+    let what = match notice {
+        Notice::Expired => {
+            "has passed its nextUpdate, so every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server"
+        }
+        Notice::ExpiresSoon => {
+            "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server before then"
+        }
+        Notice::NeverExpires => {
+            "has no nextUpdate, so it never expires: a stale list stays in force until you replace the CRL file and restart the server"
+        }
+    };
+    format!(
+        "klatch-server: https: client certificate revocation: warning: CRL {n} of {of} {what} (client CRL file {})",
+        path.display()
+    )
 }
 
 /// Whether a file owned by `uid` may be trusted by a server running as `euid`: its own user, or root.
@@ -133,53 +233,6 @@ fn check_one_per_issuer(crls: &[CertificateRevocationListDer<'_>], path: &Path) 
         seen.push(issuer);
     }
     Ok(())
-}
-
-/// One DER element: its tag, its content and what follows. Definite, minimal lengths of at most four bytes only; a high
-/// tag number, an indefinite length, a length that runs past the input and a length not in its shortest form are all
-/// `None`. Nothing recurses and nothing allocates, so no input makes this slow or large.
-fn tlv(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
-    let (&tag, rest) = input.split_first()?;
-    if tag & 0x1f == 0x1f {
-        return None;
-    }
-    let (&first, rest) = rest.split_first()?;
-    let (len, rest) = if first < 0x80 {
-        (usize::from(first), rest)
-    } else {
-        let n = usize::from(first & 0x7f);
-        if n == 0 || n > 4 || rest.len() < n || rest[0] == 0 {
-            return None;
-        }
-        let len = rest[..n]
-            .iter()
-            .fold(0usize, |a, b| (a << 8) | usize::from(*b));
-        if len < 0x80 {
-            return None;
-        }
-        (len, &rest[n..])
-    };
-    (len <= rest.len()).then(|| (tag, &rest[..len], &rest[len..]))
-}
-
-/// The issuer name (its DER content) of a CRL: `CertificateList ::= SEQUENCE { tbsCertList SEQUENCE { version INTEGER
-/// OPTIONAL, signature AlgorithmIdentifier, issuer Name, ... }, ... }`. rustls-webpki compares issuers as these bytes.
-fn issuer_of(crl: &[u8]) -> Option<&[u8]> {
-    let (list_tag, list, after) = tlv(crl)?;
-    let (tbs_tag, tbs, _) = tlv(list)?;
-    if list_tag != 0x30 || tbs_tag != 0x30 || !after.is_empty() {
-        return None;
-    }
-    let (mut tag, _, mut rest) = tlv(tbs)?;
-    if tag == 0x02 {
-        // the optional version; the signature algorithm is the element after it
-        (tag, _, rest) = tlv(rest)?;
-    }
-    if tag != 0x30 {
-        return None;
-    }
-    let (issuer_tag, issuer, _) = tlv(rest)?;
-    (issuer_tag == 0x30).then_some(issuer)
 }
 
 /// The line printed at start when a CRL is in force.
@@ -241,87 +294,115 @@ fn classify(err: &rustls::Error) -> Option<(usize, &'static str)> {
 mod tests {
     use super::*;
 
-    /// One DER element with a definite length.
-    fn el(tag: u8, content: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        match content.len() {
-            n if n < 0x80 => out.push(n as u8),
-            n if n < 0x100 => out.extend([0x81, n as u8]),
-            n => out.extend([0x82, (n >> 8) as u8, n as u8]),
-        }
-        out.extend_from_slice(content);
-        out
+    use crate::der_tests::{crl_with, el};
+
+    const NOW: i64 = 1_000_000;
+
+    /// A CRL of issuer `name` whose nextUpdate is `due` seconds after `NOW` (`None`: no nextUpdate).
+    fn due(name: &[u8], due: Option<i64>) -> CertificateRevocationListDer<'static> {
+        // a UTCTime of the whole epoch is not needed: GeneralizedTime from a day count past 1970 is built by hand
+        let time = |secs: i64| {
+            let days = secs / 86_400;
+            let rest = secs % 86_400;
+            // 1970 plus `days` days, as a date, via the civil-from-days algorithm
+            let z = days + 719_468;
+            let era = z.div_euclid(146_097);
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            let y = yoe + era * 400 + i64::from(m <= 2);
+            el(
+                0x18,
+                format!(
+                    "{y:04}{m:02}{d:02}{:02}{:02}{:02}Z",
+                    rest / 3600,
+                    rest / 60 % 60,
+                    rest % 60
+                )
+                .as_bytes(),
+            )
+        };
+        let next = due.map(|d| time(NOW + d));
+        CertificateRevocationListDer::from(crl_with(name, true, time(0), next, &[]))
     }
 
-    /// A CRL's outer shape with the issuer `name` (the content of the issuer SEQUENCE), with or without a version.
-    fn crl(name: &[u8], version: bool) -> Vec<u8> {
-        let mut tbs = Vec::new();
-        if version {
-            tbs.extend(el(0x02, &[1]));
-        }
-        tbs.extend(el(0x30, &el(0x06, &[0x2a])));
-        tbs.extend(el(0x30, name));
-        tbs.extend(el(0x17, b"700101000000Z"));
-        let mut list = el(0x30, &tbs);
-        list.extend(el(0x30, &el(0x06, &[0x2a])));
-        list.extend(el(0x03, &[0, 1]));
-        el(0x30, &list)
-    }
-
-    #[test]
-    fn the_issuer_is_read_with_or_without_a_version_and_names_differ() {
-        assert_eq!(issuer_of(&crl(b"abc", true)), Some(&b"abc"[..]));
-        assert_eq!(issuer_of(&crl(b"abc", false)), Some(&b"abc"[..]));
-        assert_ne!(issuer_of(&crl(b"abc", true)), issuer_of(&crl(b"abd", true)));
-        // a long name (two length bytes)
-        let long = vec![7u8; 300];
-        assert_eq!(issuer_of(&crl(&long, true)), Some(&long[..]));
-    }
-
-    #[test]
-    fn a_crl_that_is_cut_short_has_no_readable_issuer() {
-        let whole = crl(b"abc", true);
-        for cut in 0..whole.len() {
-            assert_eq!(issuer_of(&whole[..cut]), None, "cut at {cut}");
-        }
-        let mut trailing = whole.clone();
-        trailing.push(0);
-        assert_eq!(issuer_of(&trailing), None, "trailing data");
+    fn check(
+        crls: &[CertificateRevocationListDer<'_>],
+        subjects: &[&[u8]],
+    ) -> Result<Vec<(usize, Notice)>> {
+        check_cas_and_times(crls, subjects, NOW, Path::new("/x/crl.pem"))
     }
 
     #[test]
-    fn lengths_that_lie_or_are_not_in_der_are_refused() {
-        // a length longer than the input, a four-byte length of a gigabyte, an indefinite length, a length of five
-        // bytes, a long form for a short length, a leading zero in the length, and a high tag number
-        for bad in [
-            &[0x30, 0x10, 0x30][..],
-            &[0x30, 0x84, 0x40, 0, 0, 0, 0x30, 0],
-            &[0x30, 0x80, 0x30, 0x00, 0x00, 0x00],
-            &[0x30, 0x85, 0, 0, 0, 0, 1, 0],
-            &[0x30, 0x81, 0x05, 1, 2, 3, 4, 5],
-            &[0x30, 0x82, 0x00, 0x90, 0],
-            &[0x1f, 0x01, 0x00],
-            &[],
+    fn a_crl_is_judged_on_its_next_update_at_the_edges() {
+        let ca: &[&[u8]] = &[b"ca"];
+        let one = |d: Option<i64>| check(&[due(b"ca", d)], ca).unwrap();
+        // due now or before: expired; one second ahead: soon; exactly seven days: soon; one second more: nothing
+        assert_eq!(one(Some(-1)), vec![(1, Notice::Expired)]);
+        assert_eq!(one(Some(0)), vec![(1, Notice::Expired)]);
+        assert_eq!(one(Some(1)), vec![(1, Notice::ExpiresSoon)]);
+        assert_eq!(one(Some(SOON_SECS)), vec![(1, Notice::ExpiresSoon)]);
+        assert_eq!(one(Some(SOON_SECS + 1)), vec![]);
+        assert_eq!(one(Some(365 * 86_400)), vec![]);
+        assert_eq!(one(None), vec![(1, Notice::NeverExpires)]);
+        assert_eq!(SOON_SECS, 7 * 86_400);
+    }
+
+    #[test]
+    fn a_crl_is_matched_to_a_ca_by_its_whole_subject_name() {
+        let crls = [due(b"ca-b", Some(30 * 86_400))];
+        assert!(check(&crls, &[b"ca-a", b"ca-b"]).unwrap().is_empty());
+        for subjects in [&[][..], &[&b"ca-"[..]], &[b"ca-b2"], &[b"CA-B"], &[b"ca-a"]] {
+            let err = check(&crls, subjects).unwrap_err().to_string();
+            assert!(
+                err.contains("matches no CA certificate in the client CA file"),
+                "{err}"
+            );
+            assert!(err.contains("/x/crl.pem") && !err.contains("ca-b"), "{err}");
+        }
+    }
+
+    #[test]
+    fn the_warning_names_the_crl_by_number_and_never_by_subject() {
+        let crls = [due(b"first", Some(30 * 86_400)), due(b"second", Some(-5))];
+        let got = check(&crls, &[b"first", b"second"]).unwrap();
+        assert_eq!(got, vec![(2, Notice::Expired)]);
+        let path = Path::new("/x/crl.pem");
+        for notice in [Notice::Expired, Notice::ExpiresSoon, Notice::NeverExpires] {
+            let line = notice_line(path, 2, 3, notice);
+            assert!(line.contains("warning: CRL 2 of 3 "), "{line}");
+            assert!(line.ends_with("(client CRL file /x/crl.pem)"), "{line}");
+            assert!(line.contains("replace the CRL file and restart"), "{line}");
+        }
+        assert!(notice_line(path, 1, 1, Notice::NeverExpires).contains("never expires"));
+        assert!(notice_line(path, 1, 1, Notice::Expired).contains("has passed its nextUpdate"));
+        assert!(notice_line(path, 1, 1, Notice::ExpiresSoon).contains("within 7 days"));
+    }
+
+    #[test]
+    fn a_crl_with_a_malformed_time_or_no_readable_issuer_is_refused() {
+        let ca: &[&[u8]] = &[b"ca"];
+        let bad = |this: Vec<u8>, next: Option<Vec<u8>>| {
+            CertificateRevocationListDer::from(crl_with(b"ca", true, this, next, &[]))
+        };
+        let good = el(0x17, b"700101000000Z");
+        for crl in [
+            bad(good.clone(), Some(el(0x17, b"701301000000Z"))),
+            bad(good.clone(), Some(el(0x17, b"700132000000Z"))),
+            bad(good.clone(), Some(el(0x18, b"19700101000000.5Z"))),
+            bad(good.clone(), Some(el(0x17, b"7001010000"))),
+            bad(el(0x17, b"70010100000A"), None),
         ] {
-            assert_eq!(tlv(bad), None, "{bad:02x?}");
-            assert_eq!(issuer_of(bad), None);
+            let err = check(&[crl], ca).unwrap_err().to_string();
+            assert!(err.contains("not a valid time"), "{err}");
         }
-        // the maximum a usize can hold in four bytes is still refused, not wrapped
-        assert_eq!(tlv(&[0x30, 0x84, 0xff, 0xff, 0xff, 0xff]), None);
-    }
-
-    #[test]
-    fn deep_nesting_costs_nothing_because_nothing_recurses() {
-        let deep = [0x30u8, 0x82, 0xff, 0xff].repeat(50_000);
-        let started = Instant::now();
-        assert_eq!(issuer_of(&deep), None);
-        assert!(started.elapsed() < Duration::from_secs(1));
-        // well-formed outer elements around a body of nothing but nested openers: read as flat bytes, never descended into
-        let body = vec![0x30u8; 65_000];
-        let wrapped = el(0x30, &el(0x30, &body));
-        let started = Instant::now();
-        let _ = issuer_of(&wrapped);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        let err = check(&[CertificateRevocationListDer::from(vec![0x30, 0x00])], ca)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("issuer cannot be read"), "{err}");
     }
 
     #[test]
