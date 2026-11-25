@@ -62,6 +62,9 @@ pub struct Ca {
     params: CertificateParams,
     key: KeyPair,
     pub pem: String,
+    /// This CA's certificate, and the certificates above it (empty for a root): what a client sends after its own.
+    der: CertificateDer<'static>,
+    above: Vec<CertificateDer<'static>>,
 }
 
 /// What a leaf certificate is for, and when it is valid.
@@ -78,6 +81,8 @@ pub struct Leaf {
     pub key_pem: String,
     cert: CertificateDer<'static>,
     key: Vec<u8>,
+    /// The issuing CA's certificate and those above it, sent with the leaf by a client of an intermediate CA.
+    chain: Vec<CertificateDer<'static>>,
 }
 
 impl Ca {
@@ -87,8 +92,46 @@ impl Ca {
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         params.distinguished_name.push(DnType::CommonName, name);
         let key = KeyPair::generate().unwrap();
-        let pem = params.self_signed(&key).unwrap().pem();
-        Ca { params, key, pem }
+        let cert = params.self_signed(&key).unwrap();
+        Ca {
+            params,
+            key,
+            pem: cert.pem(),
+            der: cert.der().clone(),
+            above: Vec::new(),
+        }
+    }
+
+    /// What a client of this CA sends after its leaf: nothing for a root, else this certificate and the intermediates
+    /// above it (never the root, which the server holds).
+    fn chain_to_send(&self) -> Vec<CertificateDer<'static>> {
+        match self.above.split_last() {
+            None => Vec::new(),
+            Some((_root, between)) => std::iter::once(self.der.clone())
+                .chain(between.iter().cloned())
+                .collect(),
+        }
+    }
+
+    /// An intermediate CA signed by this one, with the key usages the test chooses (an intermediate that may sign
+    /// certificates but not CRLs is the point of one test).
+    pub fn intermediate(&self, name: &str, usages: Vec<KeyUsagePurpose>) -> Ca {
+        let mut params = CertificateParams::new(Vec::new()).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = usages;
+        params.distinguished_name.push(DnType::CommonName, name);
+        let key = KeyPair::generate().unwrap();
+        let issuer = Issuer::new(self.params.clone(), &self.key);
+        let cert = params.signed_by(&key, &issuer).unwrap();
+        let mut above = vec![self.der.clone()];
+        above.extend(self.above.iter().cloned());
+        Ca {
+            params,
+            key,
+            pem: cert.pem(),
+            der: cert.der().clone(),
+            above,
+        }
     }
 
     pub fn issue(&self, name: &str, usage: Use) -> Leaf {
@@ -123,6 +166,7 @@ impl Ca {
             key_pem: key.serialize_pem(),
             cert: cert.der().clone(),
             key: key.serialize_der(),
+            chain: self.chain_to_send(),
         }
     }
 }
@@ -131,6 +175,15 @@ impl Ca {
     /// A CRL (PEM) signed by this CA that lists the serial numbers given. Dates are relative to now, never literal: a
     /// CRL that `expired` was issued two days ago and was due a day ago; a current one is due in thirty days.
     pub fn crl_pem(&self, revoked: &[u64], expired: bool) -> String {
+        self.crl_signed_by(revoked, expired, &self.key)
+    }
+
+    /// A CRL that names this CA as its issuer but is signed by another key: its signature does not verify.
+    pub fn forged_crl_pem(&self, revoked: &[u64]) -> String {
+        self.crl_signed_by(revoked, false, &KeyPair::generate().unwrap())
+    }
+
+    fn crl_signed_by(&self, revoked: &[u64], expired: bool, signer: &KeyPair) -> String {
         use std::time::{Duration as D, SystemTime};
         let now = SystemTime::now();
         let day = D::from_secs(86_400);
@@ -150,7 +203,13 @@ impl Ca {
                 .collect(),
             key_identifier_method: KeyIdMethod::Sha256,
         };
-        let issuer = Issuer::new(self.params.clone(), &self.key);
+        // rcgen refuses to sign a CRL for a CA whose usages lack cRLSign; the test CRL claims it anyway (the CA
+        // certificate that goes in the CA file does not), which is exactly what a real-world misissue looks like
+        let mut signing = self.params.clone();
+        if !signing.key_usages.contains(&KeyUsagePurpose::CrlSign) {
+            signing.key_usages.push(KeyUsagePurpose::CrlSign);
+        }
+        let issuer = Issuer::new(signing, signer);
         params.signed_by(&issuer).unwrap().pem().unwrap()
     }
 }
@@ -341,7 +400,9 @@ pub fn client_config(
     let config = match client {
         Some(l) => builder
             .with_client_auth_cert(
-                vec![l.cert.clone()],
+                std::iter::once(l.cert.clone())
+                    .chain(l.chain.iter().cloned())
+                    .collect(),
                 PrivateKeyDer::try_from(l.key.clone()).unwrap(),
             )
             .unwrap(),

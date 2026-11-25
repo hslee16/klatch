@@ -475,11 +475,46 @@ fn rustls_is_named_only_in_the_tls_module_and_nothing_names_a_way_to_skip_a_chec
     // the CRL option (#1491) goes through that same verifier, with expiry enforced; no second verifier is built anywhere
     assert!(tls.contains(".with_crls("));
     assert!(tls.contains(".enforce_revocation_expiration()"));
-    let builders = sources
-        .iter()
-        .filter(|(_, t)| t.contains("WebPkiClientVerifier::builder"))
-        .count();
-    assert_eq!(builders, 1, "exactly one place builds the client verifier");
+    // counted by occurrence in every source file (tls.rs and tls_crl.rs included, test modules excluded): one builder call,
+    // one place that installs a client verifier, and no verifier of the crate's own (the SKIPS list above refuses the type
+    // names; this refuses an `impl` of the trait in any spelling)
+    let code_of_all = || {
+        sources.iter().map(|(rel, text)| {
+            let code = text
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(text);
+            (rel.clone(), code.to_string())
+        })
+    };
+    let count = |needle: &str| -> usize {
+        code_of_all()
+            .map(|(_, code)| {
+                code.lines()
+                    .map(code_of)
+                    .filter(|l| l.contains(needle))
+                    .count()
+            })
+            .sum()
+    };
+    assert_eq!(
+        count("WebPkiClientVerifier::builder"),
+        1,
+        "exactly one call builds the client verifier"
+    );
+    assert_eq!(
+        count("with_client_cert_verifier("),
+        1,
+        "one place installs it"
+    );
+    assert_eq!(count(".with_crls("), 1, "the CRLs go to that one verifier");
+    for needle in [
+        "impl ClientCertVerifier",
+        "ClientCertVerifier for",
+        "dyn ClientCertVerifier",
+    ] {
+        assert_eq!(count(needle), 0, "a verifier of the crate's own: {needle}");
+    }
 }
 
 #[test]

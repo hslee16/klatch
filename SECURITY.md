@@ -137,10 +137,13 @@ Supported versions: the newest release only, the current practice and not a poli
   a client certificate whose serial the CRL lists fails the handshake on every route (one verifier, one listener): the
   client sees a fatal TLS alert (`certificate revoked`) and never an HTTP byte, no session is made, and the server logs
   `client certificate refused: revoked` (at most one line every ten seconds, never a name or serial). The file must be a
-  regular file, not a link, not writable by group or other, not empty, valid PEM and hold a CRL, or the server does not
-  start; the option needs `--tls-client-ca`. **Expiry is enforced:** after a CRL's `nextUpdate` every client certificate its
+  regular file, not a link, owned by the server's user or root, not writable by group or other, at most 4 MiB, valid PEM
+  and hold 1 to 16 CRLs, or the server does not start; **one CRL per issuer: the verifier uses the first CRL it finds for an
+  issuer, so a file with two CRLs of one issuer is refused at start (replace the file, never append: an older list ahead
+  of a newer one would ignore the new revocations);** the option needs `--tls-client-ca`. **Expiry is enforced:** after a CRL's `nextUpdate` every client certificate its
   issuer signed is refused until the file is replaced and the server restarted (a log line at start says so, and every
-  refusal logs that the CRL has expired), which locks clients out loudly and never leaves a revoked certificate working on
+  refusal logs that the CRL has expired; a CRL with a bad signature, an unsupported signature algorithm or an issuer
+  certificate that may not sign CRLs refuses its issuer's certificates too, with its own log line), which locks clients out loudly and never leaves a revoked certificate working on
   a stale list. **Unknown status is allowed:** a certificate no configured CRL covers (another issuer, an intermediate CA
   with no list from its parent) is accepted as it is without the option; deny would refuse the intermediate CAs of a
   chain. Consequence: a CRL signed by a CA that issued none of the clients does nothing, silently (#1614). Replacing the

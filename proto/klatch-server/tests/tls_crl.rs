@@ -230,3 +230,164 @@ fn a_crl_option_without_a_value_or_twice_is_refused() {
     twice.extend(["--tls-client-crl".into(), c.crl.display().to_string()]);
     refused(&c, &twice, "more than once");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// review of #1617: silent lock-outs, a second CRL of one issuer, the file's size, the log's rate
+
+const UNUSABLE: &str = "client certificate refused: the CRL is not usable";
+
+#[test]
+fn a_crl_with_a_bad_signature_locks_its_issuers_clients_out_and_the_log_says_so() {
+    // a CRL that names the CA as issuer but was not signed by it: every certificate of that CA is refused, so the
+    // operator must be told which file to look at (the lock-out was silent: a handshake failure and no line)
+    let c = crl_setup(&[], false);
+    write_file(
+        &c.dir.0.join("pki/forged.crl"),
+        &c.client_ca.forged_crl_pem(&[REVOKED]),
+        0o644,
+    );
+    let mut args = tls_args(&c.files);
+    args.extend([
+        "--tls-client-crl".into(),
+        c.dir.0.join("pki/forged.crl").display().to_string(),
+    ]);
+    let server = Server::started(&c.dir, "https", &args);
+    let good = c
+        .client_ca
+        .issue_serial("worker-2", Use::Client, Some(GOOD));
+    let config = client_config(&c.server_ca, Some(&good), None);
+    get_status(server.addr, &config, "/v1/stream")
+        .expect_err("a forged CRL must refuse, not fall open");
+    let log = wait_for_log(&c, UNUSABLE);
+    assert!(
+        log.contains(UNUSABLE) && log.contains("replace the CRL file and restart"),
+        "{log}"
+    );
+    assert!(!log.contains("worker-2"), "{log}");
+}
+
+/// A server whose client CA file holds a root, with clients of an intermediate CA that has `usages`, and a CRL signed by
+/// that intermediate (claiming cRLSign, as `Ca::crl_pem` does for a CA without it).
+fn intermediate_setup(usages: Vec<rcgen::KeyUsagePurpose>, revoked: &[u64]) -> (Crl, Ca, Server) {
+    let mut c = crl_setup(&[], false);
+    let intermediate = c.client_ca.intermediate("client intermediate", usages);
+    c.crl = c.dir.0.join("pki/intermediate.crl.pem");
+    write_file(&c.crl, &intermediate.crl_pem(revoked, false), 0o644);
+    let server = listening(&c);
+    (c, intermediate, server)
+}
+
+#[test]
+fn an_intermediate_ca_that_may_sign_crls_works_like_a_root_for_revocation() {
+    use rcgen::KeyUsagePurpose::{CrlSign, KeyCertSign};
+    let (c, inter, server) = intermediate_setup(vec![KeyCertSign, CrlSign], &[REVOKED]);
+    let good = inter.issue_serial("worker-2", Use::Client, Some(GOOD));
+    let bad = inter.issue_serial("worker-1", Use::Client, Some(REVOKED));
+    let ok = client_config(&c.server_ca, Some(&good), None);
+    assert_eq!(get_status(server.addr, &ok, "/nope").unwrap(), 404);
+    let no = client_config(&c.server_ca, Some(&bad), None);
+    let err = get_status(server.addr, &no, "/nope").expect_err("revoked");
+    assert!(err.to_string().contains("CertificateRevoked"), "{err}");
+}
+
+#[test]
+fn an_intermediate_ca_that_may_not_sign_crls_locks_its_clients_out_and_the_log_says_so() {
+    use rcgen::KeyUsagePurpose::KeyCertSign;
+    let (c, inter, server) = intermediate_setup(vec![KeyCertSign], &[]);
+    let good = inter.issue_serial("worker-2", Use::Client, Some(GOOD));
+    let config = client_config(&c.server_ca, Some(&good), None);
+    get_status(server.addr, &config, "/v1/stream")
+        .expect_err("no cRLSign: the CRL cannot be trusted");
+    let log = wait_for_log(&c, UNUSABLE);
+    assert!(log.contains(UNUSABLE), "{log}");
+}
+
+#[test]
+fn two_crls_of_one_issuer_are_refused_at_start_because_the_first_would_win() {
+    // `cat new.crl >> client.crl`: the verifier uses the first CRL of an issuer, so an older empty one before a newer one
+    // that lists a serial would accept the revoked certificate; one CRL per issuer, replace the file, never append
+    let c = crl_setup(&[], false);
+    let both = format!(
+        "{}{}",
+        c.client_ca.crl_pem(&[], false),
+        c.client_ca.crl_pem(&[REVOKED], false)
+    );
+    std::fs::remove_file(&c.crl).unwrap();
+    write_file(&c.crl, &both, 0o644);
+    refused(&c, &crl_args(&c), "one CRL per issuer");
+    // and the order does not matter, nor does expiry
+    let both = format!(
+        "{}{}",
+        c.client_ca.crl_pem(&[REVOKED], true),
+        c.client_ca.crl_pem(&[], false)
+    );
+    std::fs::remove_file(&c.crl).unwrap();
+    write_file(&c.crl, &both, 0o644);
+    refused(&c, &crl_args(&c), "replace the file, never append");
+}
+
+#[test]
+fn crls_of_different_issuers_may_share_a_file() {
+    let c = crl_setup(&[], false);
+    let other = Ca::new("another ca");
+    let both = format!(
+        "{}{}",
+        c.client_ca.crl_pem(&[REVOKED], false),
+        other.crl_pem(&[], false)
+    );
+    std::fs::remove_file(&c.crl).unwrap();
+    write_file(&c.crl, &both, 0o644);
+    let server = listening(&c);
+    let bad = c
+        .client_ca
+        .issue_serial("worker-1", Use::Client, Some(REVOKED));
+    let config = client_config(&c.server_ca, Some(&bad), None);
+    get_status(server.addr, &config, "/nope").expect_err("revoked");
+}
+
+#[test]
+fn a_file_over_the_size_cap_or_with_too_many_crls_is_refused_before_it_is_parsed() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = crl_setup(&[REVOKED], false);
+    let with = |path: &std::path::Path| {
+        let mut a = tls_args(&c.files);
+        a.extend(["--tls-client-crl".into(), path.display().to_string()]);
+        a
+    };
+    // a sparse file of 5 MiB: refused by its size, so the server never reads it into memory
+    let big = c.dir.0.join("pki/big.crl");
+    let f = std::fs::File::create(&big).unwrap();
+    f.set_len(5 * 1024 * 1024).unwrap();
+    std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o644)).unwrap();
+    refused(&c, &with(&big), "larger than 4 MiB");
+    // seventeen blocks (the same CRL: the count is checked first)
+    let many = c.dir.0.join("pki/many.crl");
+    write_file(
+        &many,
+        &c.client_ca.crl_pem(&[REVOKED], false).repeat(17),
+        0o644,
+    );
+    refused(&c, &with(&many), "at most 16");
+}
+
+#[test]
+fn many_revoked_handshakes_make_one_log_line_not_one_per_handshake() {
+    let c = crl_setup(&[REVOKED], false);
+    let server = listening(&c);
+    let bad = c
+        .client_ca
+        .issue_serial("worker-1", Use::Client, Some(REVOKED));
+    let config = client_config(&c.server_ca, Some(&bad), None);
+    for _ in 0..30 {
+        get_status(server.addr, &config, "/nope").expect_err("revoked");
+    }
+    wait_for_log(&c, "client certificate refused: revoked");
+    std::thread::sleep(Duration::from_millis(300));
+    let lines = c
+        .dir
+        .log()
+        .lines()
+        .filter(|l| l.contains("client certificate refused: revoked"))
+        .count();
+    assert!((1..=2).contains(&lines), "{lines} lines for 30 handshakes");
+}
