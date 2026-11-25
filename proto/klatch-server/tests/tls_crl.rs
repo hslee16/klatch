@@ -5,7 +5,7 @@
 //! before it listens; the option needs `--tls-client-ca`. Policy (see `src/tls.rs`): a CRL that has expired is
 //! ENFORCED (every certificate of its issuer is refused until the file is replaced and the server restarted) and the log
 //! says so; a status that no configured CRL can answer (another issuer's certificate) is allowed. Certificates and CRLs
-//! are made at test time, dates relative to now (rcgen). Reload without a restart is #1492 and is not tested here.
+//! are made at test time, dates relative to now (rcgen). Reload on SIGHUP is tested in `tls_reload.rs`.
 
 mod tls_common;
 
@@ -137,7 +137,7 @@ fn an_expired_crl_refuses_every_certificate_of_its_issuer_and_the_log_says_why()
     let log = wait_for_log(&c, "expired");
     assert!(
         log.contains("client certificate refused: the CRL has expired")
-            && log.contains("replace the CRL file and restart"),
+            && log.contains("replace the CRL file and send SIGHUP"),
         "{log}"
     );
 }
@@ -260,7 +260,7 @@ fn a_crl_with_a_bad_signature_locks_its_issuers_clients_out_and_the_log_says_so(
         .expect_err("a forged CRL must refuse, not fall open");
     let log = wait_for_log(&c, UNUSABLE);
     assert!(
-        log.contains(UNUSABLE) && log.contains("replace the CRL file and restart"),
+        log.contains(UNUSABLE) && log.contains("replace the CRL file and send SIGHUP"),
         "{log}"
     );
     assert!(!log.contains("worker-2"), "{log}");
