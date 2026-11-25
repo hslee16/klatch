@@ -1,0 +1,1 @@
+- coordbench: an agent that stops on its own budget or turn cap (result `error_max_budget_usd` or `error_max_turns`, exit 1) now makes the run outcome `spend-cap` or `turn-cap` instead of `crash`; the record's notes name the agent. `turn-cap` is a new outcome in SPEC section 7 and the schema; metric version stays 2 (#1553).
