@@ -17,7 +17,7 @@ NAME="klatch-$VERSION-$TARGET"
 
 # stand-ins: klatch prints its version line; the server is a python program that behaves like the real one where the
 # release checks look (version, help, a refused non-loopback bind, a daemon that makes its socket and removes it on TERM)
-make_bins() { # dir [bad-bind]
+make_bins() { # dir [bad-bind] [bad-https: no-options | no-flag]
   mkdir -p "$1"
   printf '#!/bin/sh\necho "klatch %s (protocol 1, store schema 36)"\n' "$VERSION" > "$1/klatch"
   cat > "$1/klatch-server" <<PY
@@ -34,6 +34,20 @@ elif args[:1] == ["http"] and "--listen" in args:
         sys.stderr.write("klatch-server: refusing to listen on " + addr + ": only 127.0.0.1 and ::1 are allowed\n")
         sys.exit(1)
     print("listening on " + addr)
+elif args[:1] == ["https"] and "--listen" in args:
+    mode = "${3:-}"
+    addr = args[args.index("--listen") + 1]
+    for flag in ("--tls-cert", "--tls-key", "--tls-client-ca"):
+        if flag not in args and mode != "no-options":
+            sys.stderr.write("klatch-server: https needs " + flag + "\n")
+            sys.exit(1)
+    if not addr.startswith("127.") and "--allow-off-loopback" not in args and mode != "no-flag":
+        sys.stderr.write("klatch-server: refusing to listen on " + addr + ": a mutual TLS listener is loopback only unless --allow-off-loopback is given\n")
+        sys.exit(1)
+    if "--allow-off-loopback" in args or addr.startswith("127."):
+        sys.stderr.write("klatch-server: cannot open the key file: entity not found\n")
+        sys.exit(1)
+    print("klatch-server: https listening on " + addr)
 elif args[:1] == ["daemon"] and "--socket" in args:
     sock = args[args.index("--socket") + 1]
     def stop(*_):
@@ -108,6 +122,12 @@ if "$here/check-packaged-server.sh" "$work/badbin/klatch-server" >"$work/bad.out
 # 9. the packaged-server check: a binary with no --version fails it
 printf '#!/bin/sh\nexit 2\n' > "$work/noversion"; chmod 755 "$work/noversion"
 if "$here/check-packaged-server.sh" "$work/noversion" >/dev/null 2>&1; then bad "a server with no --version passed"; else ok "a server with no --version fails the check"; fi
+
+# 9b. the packaged-server check: https that starts without its TLS options, or off loopback without the flag, fails it
+make_bins "$work/badtls1" 0 no-options
+if "$here/check-packaged-server.sh" "$work/badtls1/klatch-server" >"$work/bad.out" 2>&1; then bad "https without TLS options passed"; elif grep -q "https --listen" "$work/bad.out"; then ok "a server that starts https without its TLS options fails the check"; else bad "wrong failure: $(cat "$work/bad.out")"; fi
+make_bins "$work/badtls2" 0 no-flag
+if "$here/check-packaged-server.sh" "$work/badtls2/klatch-server" >"$work/bad.out" 2>&1; then bad "https off loopback without the flag passed"; elif grep -q "https --listen 0.0.0.0:0" "$work/bad.out"; then ok "a server that starts https off loopback without --allow-off-loopback fails the check"; else bad "wrong failure: $(cat "$work/bad.out")"; fi
 
 # 10. the SBOM merge: components and dependencies of both binaries, once each
 cat > "$work/klatch.cdx.json" <<'J'
