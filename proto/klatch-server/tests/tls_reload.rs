@@ -35,6 +35,11 @@ fn rig(with_crl: bool) -> Rig {
 
 /// A server whose client CRL (if any) is due in `crl_due` seconds from now (negative: already past).
 fn rig_with(crl_due: Option<i64>) -> Rig {
+    rig_full(crl_due, &[])
+}
+
+/// [`rig_with`] and more options for the server.
+fn rig_full(crl_due: Option<i64>, extra: &[&str]) -> Rig {
     let dir = Dir::new();
     let (server_ca, client_ca) = (Ca::new("server ca"), Ca::new(CANARY));
     let files = server_files(
@@ -49,6 +54,7 @@ fn rig_with(crl_due: Option<i64>) -> Rig {
         write_file(path, &client_ca.crl_pem_due(due), 0o644);
         args.extend(["--tls-client-crl".into(), path.display().to_string()]);
     }
+    args.extend(extra.iter().map(|s| s.to_string()));
     let server = Server::started(&dir, "https", &args);
     let mut r = Rig {
         dir,
@@ -501,4 +507,24 @@ fn when_the_crl_in_force_has_expired_too_a_reload_takes_the_new_file_and_says_so
     std::fs::rename(&new, &crl).unwrap();
     let log = r.reload_until(OK, 1);
     assert!(log.contains("ALERT"), "{log}");
+}
+
+#[test]
+fn a_reload_still_applies_to_new_connections_while_a_silent_socket_holds_a_handshake_slot() {
+    // a pool of two handshakes, one held by a socket that never says hello (#1493): the new connection takes the other
+    let r = rig_full(None, &["--max-handshakes", "2"]);
+    let silent = std::net::TcpStream::connect(r.server.addr).unwrap();
+    r.rotate_server();
+    r.reload_until(OK, 1);
+    let now = r.cert_now();
+    assert_ne!(now, r.first_cert, "the old certificate is still served");
+    // the silent socket is still waiting in its handshake: it was not cut by the reload
+    use std::io::Read;
+    silent.set_nonblocking(true).unwrap();
+    let mut byte = [0u8; 1];
+    let still_open = matches!(
+        (&silent).read(&mut byte),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+    );
+    assert!(still_open, "the silent socket was closed");
 }

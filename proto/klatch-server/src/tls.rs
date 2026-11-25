@@ -43,6 +43,7 @@
 //! can reach the plaintext side. The pump is `tls_bridge.rs`.
 
 use crate::loopback::{Stream, connected_pair};
+use crate::tls_admit::SessionSlots;
 use crate::tls_crl;
 use crate::tls_limits::{Handshakes, Limits};
 use anyhow::{Context, Result, bail};
@@ -248,6 +249,27 @@ pub fn build_config_at(
     Ok((Arc::new(config), due))
 }
 
+/// One step of the handshake: send what the connection has to say, or read once and process it. `complete_io` would loop
+/// on reads inside one call with the timeout set before it, so a peer that sends one byte at a time, each inside that
+/// timeout, would never be cut; one read per step lets the caller shrink the timeout to the time left every time.
+fn step(conn: &mut ServerConnection, sock: &mut Stream) -> std::io::Result<()> {
+    if conn.wants_write() {
+        conn.write_tls(sock)?;
+        return Ok(());
+    }
+    if conn.wants_read() {
+        if conn.read_tls(sock)? == 0 {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        if let Err(e) = conn.process_new_packets() {
+            // a last try to send the alert that says why, which must not hide the error itself
+            let _ = conn.write_tls(sock);
+            return Err(std::io::Error::new(ErrorKind::InvalidData, e));
+        }
+    }
+    Ok(())
+}
+
 /// Finish the handshake within `deadline`. An error is any way of not having a verified client.
 fn handshake(
     conn: &mut ServerConnection,
@@ -265,7 +287,7 @@ fn handshake(
         }
         sock.set_read_timeout(Some(left))?;
         sock.set_write_timeout(Some(left))?;
-        conn.complete_io(sock)?;
+        step(conn, sock)?;
     }
     // what the handshake proved is checked once more against the policy, so a verifier that let a peer through without a
     // chain would still stop here
@@ -283,6 +305,8 @@ pub struct Listener<'a> {
     pub config: &'a Arc<ServerConfig>,
     pub limits: &'a Limits,
     pub handshakes: &'a Handshakes,
+    /// The places of connections that passed the handshake (`--max-connections`), apart from the handshake pool.
+    pub sessions: &'a SessionSlots,
 }
 
 /// Serve one accepted connection: the handshake (counted among the handshakes in progress, with a deadline), then
@@ -293,10 +317,12 @@ pub fn serve_tls(mut sock: Stream, at: &Listener, inner: impl Fn(Stream) + Sync)
         return;
     };
     // refused when the cap is full of handshakes too young to close (`tls_limits.rs`): the connection is just dropped
-    let Some(ticket) =
-        at.handshakes
-            .enter(&sock, at.limits.max_handshakes, at.limits.min_evict_age())
-    else {
+    let Some(ticket) = at.handshakes.enter(
+        &sock,
+        at.limits.max_handshakes,
+        at.limits.per_source_within(),
+        at.limits.min_evict_age(),
+    ) else {
         return;
     };
     let shaken = handshake(&mut conn, &mut sock, at.limits.handshake);
@@ -306,6 +332,12 @@ pub fn serve_tls(mut sock: Stream, at: &Listener, inner: impl Fn(Stream) + Sync)
         let _ = sock.shutdown(std::net::Shutdown::Both);
         return;
     }
+    // a place among the sessions, taken only now: a connection that never finished the handshake never held one. Over the
+    // cap the connection is closed, as an excess connection always was.
+    let Some(_session) = at.sessions.claim() else {
+        let _ = sock.shutdown(std::net::Shutdown::Both);
+        return;
+    };
     conn.set_buffer_limit(Some(crate::tls_bridge::WINDOW));
     let Ok((handler_end, pump_end)) = connected_pair() else {
         return;
