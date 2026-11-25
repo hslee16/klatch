@@ -128,6 +128,11 @@ fn every_route_is_named_by_a_row_of_the_authorization_audit() {
     );
 }
 
+/// The one use of a peer address that is not identity (#1493): `loopback::peer_octets` hands the TLS listener the octets
+/// of a connection's address so that it can COUNT handshakes per source address. Nothing else may name it, and the test
+/// below pins that the loopback module names it exactly once.
+const COUNTING_ONLY: &str = "src/loopback.rs";
+
 /// What a caller can forge or that says only where the caller is. None of it may decide who someone is: the one
 /// identity is a worker credential (`Authorization: Bearer` with `X-Klatch-Member`), checked live, or the HMAC of a
 /// webhook. Behind a proxy these headers are the proxy's word, which klatch does not take (#110).
@@ -154,11 +159,21 @@ fn no_source_reads_a_forwarded_header_or_trusts_a_peer_address() {
                 FORBIDDEN
                     .iter()
                     .filter(move |f| code.contains(*f))
+                    .filter(move |f| !(**f == "peer_addr" && file.ends_with(COUNTING_ONLY)))
                     .map(move |f| format!("{file}:{}: names {f}", n + 1))
             })
         })
         .collect();
     assert!(problems.is_empty(), "{problems:?}");
+    let counted: usize = sources()
+        .iter()
+        .filter(|(file, _)| file.ends_with(COUNTING_ONLY))
+        .map(|(_, text)| text.matches("peer_addr()").count())
+        .sum();
+    assert_eq!(
+        counted, 1,
+        "the loopback module reads the peer address once, to count"
+    );
 }
 
 /// The one file that may spell the forwarded names counts them (#110): it is handed header names only, so it cannot read,

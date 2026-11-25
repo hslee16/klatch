@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn a_socket_with_no_peer_address_cannot_be_counted_and_is_refused() {
+    fn a_socket_with_no_source_cannot_be_counted_and_is_refused() {
         let guard = Handshakes::default();
         let (pair, _peer) = connected_pair().unwrap();
         assert!(guard.enter(&pair, 8, 1, NEVER).is_none());
