@@ -68,8 +68,7 @@ pub fn read_crls(path: &Path) -> Result<Vec<CertificateRevocationListDer<'static
     if !meta.is_file() {
         bail!("the client CRL file {shown} is not a regular file");
     }
-    // SAFETY: geteuid has no preconditions.
-    if !owner_ok(meta.uid(), unsafe { libc::geteuid() }) {
+    if !owner_ok(meta.uid(), crate::tls::euid()) {
         bail!("the client CRL file {shown} is not owned by the user running the server or by root");
     }
     if meta.len() > MAX_BYTES {

@@ -73,6 +73,12 @@ fn read_pem(path: &Path, what: &str) -> Result<Vec<u8>> {
         .map_err(|e| anyhow::anyhow!("cannot read the {what} {}: {}", path.display(), e.kind()))
 }
 
+/// The user the server runs as: the one place this crate asks (the key file's and the CRL file's owner checks use it).
+pub fn euid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    unsafe { libc::geteuid() }
+}
+
 /// The private key, read only after the file passed its checks: a regular file (opened without following a symbolic
 /// link, and without blocking, so a FIFO cannot hold startup), owned by this user, with no access for group or other.
 fn read_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
@@ -92,8 +98,7 @@ fn read_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
     if !meta.is_file() {
         bail!("the key file {shown} is not a regular file");
     }
-    // SAFETY: geteuid has no preconditions.
-    if meta.uid() != unsafe { libc::geteuid() } {
+    if meta.uid() != euid() {
         bail!("the key file {shown} is not owned by the user running the server");
     }
     let mode = meta.mode() & 0o777;
