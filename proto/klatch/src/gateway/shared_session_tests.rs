@@ -4,6 +4,7 @@
 use super::shared::SharedGateway;
 use crate::domain::Principal;
 use crate::gateway::areas::*;
+use crate::gateway::test_support::SpyStore;
 use crate::gateway::{AllowAll, Gateway, HistoryRange, SystemClock};
 use crate::session::{Backend, Session, SessionConfig};
 use crate::store::SqliteStore;
@@ -198,6 +199,52 @@ fn without_a_key_source_a_sealed_label_stays_sealed() {
     let (gw, _db) = sealed_shared("shared-sealed-nokeys", None);
     let out = run_script(&gw.session_backend(), "alice", &[JOIN_VAULT, POST_VAULT]);
     assert_eq!(out[1]["ok"], false, "{out:?}");
+}
+
+/// A key ring loaded for a keyed request is gone when it ends: a request that is not keyed after it holds no key, and
+/// the store's last ring is empty (#1096, #1506).
+#[test]
+fn a_keyed_request_leaves_no_label_keys_loaded_for_the_next() {
+    let db = temp_db("shared-sealed-reset");
+    let path = db.to_path_buf();
+    let rings = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = rings.clone();
+    let build = move || {
+        let mut store = SpyStore::over(SqliteStore::open(
+            &path,
+            &crate::store::insecure_test_key(),
+        )?);
+        store.key_rings = seen;
+        let g = Gateway::new(store, SystemClock, AllowAll);
+        let admin = Principal::unattributed("admin");
+        g.admin_set_room_label(&admin, "vault", "private")?;
+        g.admin_set_clearance(&admin, "alice", "private")?;
+        g.admin_seal_label_keep_plain(&admin, "private")?;
+        Ok(g)
+    };
+    let gw = SharedGateway::spawn_keyed(build, |labels: &[String]| {
+        let mut ring = crate::keys::LabelKeys::new();
+        for l in labels {
+            ring = ring.with(l, crate::keys::Key::from_bytes([9; 32]));
+        }
+        Ok(ring)
+    })
+    .unwrap();
+    let backend = gw.session_backend();
+    let out = run_script(&backend, "alice", &[JOIN_VAULT, POST_VAULT]);
+    assert!(out.iter().all(|l| l["ok"] == true), "{out:?}");
+    // a request with no principal runs after the keyed ones (the owner serves them in order)
+    let _ = backend.now();
+    let rings = rings.lock().unwrap();
+    assert!(
+        rings.iter().any(|r| r == &["private".to_string()]),
+        "the keyed request never held the key: {rings:?}"
+    );
+    assert_eq!(
+        rings.last(),
+        Some(&Vec::<String>::new()),
+        "a key ring stayed loaded after its request: {rings:?}"
+    );
 }
 
 /// A member whose clearance does not reach the label is never asked a key for.
