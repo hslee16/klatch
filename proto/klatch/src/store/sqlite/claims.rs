@@ -485,6 +485,7 @@ impl SqliteStore {
             let renewal = held
                 .iter()
                 .any(|h| h.owner == attempt.owner && h.path == attempt.path);
+            self.end_waits(&attempt)?;
             self.insert_claim(&attempt)?;
             self.record_claim_event(
                 now,
