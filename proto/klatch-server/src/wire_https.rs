@@ -219,7 +219,7 @@ pub fn run(opts: &Options) -> Result<()> {
         allow_off_loopback: opts.allow_off_loopback,
     };
     loopback::check_mutual_tls_addr(&opts.listen, policy)?;
-    let config = tls::build_config(&opts.files, roots)?;
+    let (config, crl_due) = tls::build_config_at(&opts.files, roots, crate::tls_crl::Stage::Start)?;
     let gateway: SharedGateway = klatch::member::spawn_shared_gateway()
         .context("the server cannot open the store, so it does not start")?;
     let listener = loopback::bind_mutual_tls(&opts.listen, policy)?;
@@ -236,7 +236,13 @@ pub fn run(opts: &Options) -> Result<()> {
     let current = Current::new(config);
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            tls_reload::watch(&crate::daemon::STOP, &crate::daemon::RELOAD, opts, &current)
+            tls_reload::watch(
+                &crate::daemon::STOP,
+                &crate::daemon::RELOAD,
+                opts,
+                &current,
+                crl_due,
+            )
         });
         loopback::serve_concurrent(
             &listener,
@@ -255,6 +261,8 @@ pub fn run(opts: &Options) -> Result<()> {
                 excess: &drop,
             },
         );
+        // however the accept loop ended (a signal, or it could not start), the watcher must end with it
+        crate::daemon::STOP.store(true, std::sync::atomic::Ordering::SeqCst);
     });
     drop(shared);
     drop(gateway);

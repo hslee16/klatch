@@ -20,16 +20,21 @@
 //! reads the flag about every 100 ms and clears it as it starts a reload, so a flood of signals is one reload in progress
 //! and at most one more pending, and a reload starts at most once in [`SPACING`] (a sustained flood is a few reloads a
 //! second, each a few file reads). The build runs on its own thread and the watcher waits for it at most [`DEADLINE`]: a
-//! file that blocks (a FIFO named as the CA file) costs one abandoned thread and a failure line, never the accept loop,
-//! never a swap that arrives late, and while it is stuck no other reload starts. Stopping the server does not wait for it.
+//! file that blocks (the files are opened without blocking, so a FIFO is refused at once; a file on a stalled mount can
+//! still block) costs one abandoned thread and a failure line, never the accept loop, never a swap that arrives late, and
+//! while it is stuck no other reload starts (a restart clears it). Stopping the server does not wait for it.
+//!
+//! **A stale CRL file.** A reload refuses a CRL file whose `nextUpdate` has passed while the CRLs in force are in date (the
+//! old configuration stays, the expiry is an ALERT line): see `tls_crl::Stage`.
 
 use crate::loopback;
 use crate::tls::{self, SharedConfig, TlsFiles};
+use crate::tls_crl::Stage;
 use crate::wire_https::Options;
 use anyhow::{Result, bail};
 use klatch::session::policy::TlsBind;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -135,8 +140,12 @@ fn classify(error: &anyhow::Error, files: &TlsFiles) -> Kind {
     }
 }
 
-/// The new configuration for the files and flags of start, or why not: every check of start, nothing swapped.
-fn build(opts: &Options) -> Result<SharedConfig> {
+/// What a build of the new configuration gives: the configuration and the earliest `nextUpdate` of its CRLs.
+type Built = (SharedConfig, Option<i64>);
+
+/// The new configuration for the files and flags of start, or why not: every check of start, nothing swapped. A CRL file
+/// that has expired is refused while the CRLs in force (`in_force_due`) have not.
+fn build(opts: &Options, in_force_due: Option<i64>) -> Result<Built> {
     let roots = tls::client_roots(&opts.files.client_ca)?;
     if roots.is_empty() {
         bail!(
@@ -149,7 +158,7 @@ fn build(opts: &Options) -> Result<SharedConfig> {
         allow_off_loopback: opts.allow_off_loopback,
     };
     loopback::check_mutual_tls_addr(&opts.listen, policy)?;
-    tls::build_config(&opts.files, roots)
+    tls::build_config_at(&opts.files, roots, Stage::Reload { in_force_due })
 }
 
 /// Clears `busy` when the build thread ends, however it ends.
@@ -161,40 +170,85 @@ impl Drop for Done {
     }
 }
 
+/// How a wait for a build ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Wait<T> {
+    Got(T),
+    TimedOut,
+    Gone,
+    Stopped,
+}
+
+/// Wait for the build's answer for at most `deadline`, looking at `stop` every [`TICK`]: stopping the server does not
+/// wait for a build (the thread is abandoned, and the process ends).
+fn wait_for<T>(rx: &Receiver<T>, stop: &AtomicBool, deadline: Duration) -> Wait<T> {
+    let until = Instant::now() + deadline;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return Wait::Stopped;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Wait::TimedOut;
+        }
+        match rx.recv_timeout(left.min(TICK)) {
+            Ok(v) => return Wait::Got(v),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Wait::Gone,
+        }
+    }
+}
+
 /// One reload: build on a thread of its own, wait at most [`DEADLINE`], swap only a finished configuration. Returns the
-/// line to log.
-fn reload_once(opts: &Options, current: &Current<tls::Config>, busy: &Arc<AtomicBool>) -> String {
+/// line to log (`None` when the server is stopping).
+fn reload_once(
+    opts: &Options,
+    current: &Current<tls::Config>,
+    busy: &Arc<AtomicBool>,
+    stop: &AtomicBool,
+    in_force_due: &mut Option<i64>,
+) -> Option<String> {
     if busy.swap(true, Ordering::SeqCst) {
-        return failure_line(Kind::Busy);
+        return Some(failure_line(Kind::Busy));
     }
     let (tx, rx) = channel();
     let owned = opts.clone();
+    let due = *in_force_due;
     let guard = Done(busy.clone());
     let spawned = std::thread::Builder::new()
         .name("tls-reload".into())
         .spawn(move || {
             let _done = guard;
-            let result = build(&owned).map_err(|e| classify(&e, &owned.files));
+            let result = build(&owned, due).map_err(|e| classify(&e, &owned.files));
             let _ = tx.send(result);
         });
     if spawned.is_err() {
         busy.store(false, Ordering::SeqCst);
-        return failure_line(Kind::Other);
+        return Some(failure_line(Kind::Other));
     }
-    match rx.recv_timeout(DEADLINE) {
-        Ok(Ok(config)) => {
+    match wait_for(&rx, stop, DEADLINE) {
+        Wait::Got(Ok((config, next_due))) => {
             current.swap(config);
-            success_line(&opts.files)
+            *in_force_due = next_due;
+            Some(success_line(&opts.files))
         }
-        Ok(Err(kind)) => failure_line(kind),
-        Err(RecvTimeoutError::Timeout) => failure_line(Kind::TimedOut),
-        Err(RecvTimeoutError::Disconnected) => failure_line(Kind::Other),
+        Wait::Got(Err(kind)) => Some(failure_line(kind)),
+        Wait::TimedOut => Some(failure_line(Kind::TimedOut)),
+        Wait::Gone => Some(failure_line(Kind::Other)),
+        Wait::Stopped => None,
     }
 }
 
 /// Watch `flag` (set by SIGHUP) until `stop`: each time it is set, and at least [`SPACING`] after the last start, reload
-/// and print the line. Runs on its own thread, never on the accept loop's.
-pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Current<tls::Config>) {
+/// and print the line. Runs on its own thread, never on the accept loop's. `in_force_due` is the earliest `nextUpdate`
+/// of the CRLs the server started with.
+pub fn watch(
+    stop: &AtomicBool,
+    flag: &AtomicBool,
+    opts: &Options,
+    current: &Current<tls::Config>,
+    mut in_force_due: Option<i64>,
+) {
     let busy = Arc::new(AtomicBool::new(false));
     let mut last: Option<Instant> = None;
     while !stop.load(Ordering::SeqCst) {
@@ -203,7 +257,9 @@ pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Cur
         // taking the flag clears it: signals that arrive during the reload set it again, and are one pending reload
         if due && flag.swap(false, Ordering::SeqCst) {
             last = Some(Instant::now());
-            eprintln!("{}", reload_once(opts, current, &busy));
+            if let Some(line) = reload_once(opts, current, &busy, stop, &mut in_force_due) {
+                eprintln!("{line}");
+            }
         }
     }
 }
@@ -268,5 +324,30 @@ mod tests {
         current.swap(b.clone());
         assert!(Arc::ptr_eq(&current.get(), &b));
         assert!(Arc::ptr_eq(&held, &a));
+    }
+
+    #[test]
+    fn a_wait_for_a_build_ends_at_the_deadline_on_stop_and_when_the_builder_is_gone() {
+        let stop = AtomicBool::new(false);
+        let (tx, rx) = channel::<u8>();
+        assert_eq!(
+            wait_for(&rx, &stop, Duration::from_millis(150)),
+            Wait::TimedOut
+        );
+        tx.send(7).unwrap();
+        assert_eq!(wait_for(&rx, &stop, Duration::from_secs(5)), Wait::Got(7));
+        // stopping ends a long wait within a tick, not at the deadline
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(200));
+                stop.store(true, Ordering::SeqCst);
+            });
+            assert_eq!(wait_for(&rx, &stop, Duration::from_secs(30)), Wait::Stopped);
+        });
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
+        stop.store(false, Ordering::SeqCst);
+        assert_eq!(wait_for(&rx, &stop, Duration::from_secs(5)), Wait::Gone);
     }
 }

@@ -30,6 +30,11 @@ struct Rig {
 }
 
 fn rig(with_crl: bool) -> Rig {
+    rig_with(with_crl.then_some(30 * 86_400))
+}
+
+/// A server whose client CRL (if any) is due in `crl_due` seconds from now (negative: already past).
+fn rig_with(crl_due: Option<i64>) -> Rig {
     let dir = Dir::new();
     let (server_ca, client_ca) = (Ca::new("server ca"), Ca::new(CANARY));
     let files = server_files(
@@ -39,9 +44,9 @@ fn rig(with_crl: bool) -> Rig {
         0o600,
     );
     let mut args = tls_args(&files);
-    let crl = with_crl.then(|| dir.0.join("pki/client.crl.pem"));
-    if let Some(path) = &crl {
-        write_file(path, &client_ca.crl_pem(&[], false), 0o644);
+    let crl = crl_due.map(|_| dir.0.join("pki/client.crl.pem"));
+    if let (Some(path), Some(due)) = (&crl, crl_due) {
+        write_file(path, &client_ca.crl_pem_due(due), 0o644);
         args.extend(["--tls-client-crl".into(), path.display().to_string()]);
     }
     let server = Server::started(&dir, "https", &args);
@@ -258,26 +263,55 @@ fn the_warnings_of_the_crl_checks_print_again_for_the_files_a_reload_reads() {
 }
 
 #[test]
-fn a_flood_of_sighups_makes_a_bounded_number_of_reloads_and_the_server_still_works() {
+fn one_sighup_is_exactly_one_reload() {
+    let r = rig(false);
+    r.rotate_server();
+    r.reload_until(OK, 1);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(r.count(OK), 1, "{}", r.dir.log());
+}
+
+#[test]
+fn a_flood_of_sighups_makes_a_bounded_number_of_reloads_stops_and_the_server_still_works() {
     let r = rig(false);
     r.rotate_server();
     for _ in 0..100 {
         r.hup();
     }
     r.wait_for(OK, 1);
-    std::thread::sleep(Duration::from_millis(2500));
-    let reloads = r.count(OK);
+    // one reload may be pending behind the first (the spacing is half a second): wait it out, then nothing more may come
+    std::thread::sleep(Duration::from_millis(1500));
+    let settled = r.count(OK);
     assert!(
-        (1..=5).contains(&reloads),
-        "{reloads} reloads for one flood:\n{}",
+        (1..=3).contains(&settled),
+        "{settled} reloads for one flood:\n{}",
+        r.dir.log()
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(
+        r.count(OK),
+        settled,
+        "reloads went on after the flood:\n{}",
         r.dir.log()
     );
     assert_ne!(r.cert_now(), r.first_cert);
-    assert!(r.server.child.id() > 0);
-    // still serving, and a later signal still reloads
-    let before = r.count(OK);
+    // a later signal still reloads
     r.rotate_server();
-    r.reload_until(OK, before + 1);
+    r.reload_until(OK, settled + 1);
+}
+
+#[test]
+fn a_sustained_flood_is_spaced_not_one_reload_per_signal() {
+    let r = rig(false);
+    // 100 signals over two seconds: with a start at most every half second that is a handful of reloads, never a hundred
+    for _ in 0..100 {
+        r.hup();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(1000));
+    let n = r.count(OK);
+    assert!((1..=7).contains(&n), "{n} reloads:\n{}", r.dir.log());
+    assert_eq!(r.cert_now(), r.first_cert);
 }
 
 #[test]
@@ -302,20 +336,14 @@ fn sighup_does_nothing_to_the_plain_http_server() {
     assert!(!dir.log().contains("reload"), "{}", dir.log());
 }
 
-#[test]
-fn a_ca_file_that_blocks_cannot_hold_the_server_and_the_server_still_stops_on_sigterm() {
-    let mut r = rig(false);
-    // a FIFO nobody writes to: reading it never ends
-    std::fs::remove_file(&r.files.ca).unwrap();
-    let path = std::ffi::CString::new(r.files.ca.to_str().unwrap()).unwrap();
+/// A FIFO at `path` (a named pipe nobody writes to: opening or reading it without care never returns).
+fn mkfifo(path: &std::path::Path) {
+    let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
     // SAFETY: mkfifo gets a valid NUL-terminated path.
-    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
-    let log = r.reload_until(FAILED, 1);
-    assert!(log.contains("reload failed: timeout"), "{log}");
-    assert_eq!(r.cert_now(), r.first_cert);
-    // a second signal while the first build is stuck does not start another
-    let log = r.reload_until(FAILED, 2);
-    assert!(log.contains("an earlier reload has not finished"), "{log}");
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+}
+
+fn stops_on_sigterm(r: &mut Rig) {
     // SAFETY: kill has no preconditions; the pid is this test's own child.
     unsafe {
         libc::kill(r.server.child.id() as libc::pid_t, libc::SIGTERM);
@@ -328,4 +356,149 @@ fn a_ca_file_that_blocks_cannot_hold_the_server_and_the_server_still_stops_on_si
         assert!(Instant::now() < until, "the server did not stop");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn a_fifo_as_the_ca_file_is_refused_at_once_and_a_good_file_renamed_over_it_reloads() {
+    let mut r = rig(false);
+    let good = std::fs::read_to_string(&r.files.ca).unwrap();
+    std::fs::remove_file(&r.files.ca).unwrap();
+    mkfifo(&r.files.ca);
+    let log = r.reload_until(FAILED, 1);
+    assert!(log.contains("reload failed: client CA file"), "{log}");
+    assert_eq!(r.cert_now(), r.first_cert);
+    // the fix an operator makes: a good file renamed over the pipe; the next signal is not "an earlier reload"
+    let new = r.files.ca.with_extension("new");
+    write_file(&new, &good, 0o644);
+    std::fs::rename(&new, &r.files.ca).unwrap();
+    let log = r.reload_until(OK, 1);
+    assert!(!log.contains("has not finished"), "{log}");
+    stops_on_sigterm(&mut r);
+}
+
+/// Files for a server that is not started, in a directory of its own.
+fn unstarted() -> (Dir, Files) {
+    let dir = Dir::new();
+    let (server_ca, client_ca) = (Ca::new("server ca"), Ca::new("client ca"));
+    let files = server_files(
+        &dir,
+        &server_ca.issue("klatch", Use::Server),
+        &client_ca,
+        0o600,
+    );
+    (dir, files)
+}
+
+fn start_refused_for(dir: &Dir, files: &Files, needle: &str) {
+    let mut args = vec!["--listen".to_string(), "127.0.0.1:0".to_string()];
+    args.extend(tls_args(files));
+    let (code, err) = refused_start(dir, "https", &args);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains(needle), "wanted {needle:?} in: {err}");
+    assert!(!err.contains("listening on"), "{err}");
+    let _ = std::fs::remove_file(dir.0.join("err.log"));
+}
+
+#[test]
+fn the_ca_and_certificate_files_are_checked_like_the_key_at_start() {
+    let (dir, files) = unstarted();
+    let (ca, cert) = (files.ca.clone(), files.cert.clone());
+    let (good_ca, good_cert) = (
+        std::fs::read_to_string(&ca).unwrap(),
+        std::fs::read_to_string(&cert).unwrap(),
+    );
+    for path in [&ca, &cert] {
+        let what = if path == &ca {
+            "client CA file"
+        } else {
+            "server certificate"
+        };
+        let good = if path == &ca { &good_ca } else { &good_cert };
+        // a named pipe: refused, not waited for
+        std::fs::remove_file(path).unwrap();
+        mkfifo(path);
+        start_refused_for(&dir, &files, &format!("the {what}"));
+        start_refused_for(&dir, &files, "not a regular file");
+        // a link, even to a good file
+        std::fs::remove_file(path).unwrap();
+        let target = dir.0.join("elsewhere.pem");
+        write_file(&target, good, 0o644);
+        std::os::unix::fs::symlink(&target, path).unwrap();
+        start_refused_for(&dir, &files, "symbolic link");
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(&target).unwrap();
+        // larger than 4 MiB
+        write_file(path, good, 0o644);
+        let f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        f.set_len(5 * 1024 * 1024).unwrap();
+        start_refused_for(&dir, &files, "larger than 4 MiB");
+        rewrite_file(path, good, 0o644);
+    }
+    // the CA file is a trust anchor: nobody else may write it
+    for mode in [0o666, 0o664, 0o646] {
+        rewrite_file(&ca, &good_ca, mode);
+        start_refused_for(&dir, &files, "writable by group or other");
+    }
+    rewrite_file(&ca, &good_ca, 0o444);
+    // and with everything in order it starts (the checks refuse nothing else)
+    let args = tls_args(&files);
+    let _ = Server::started(&dir, "https", &args);
+}
+
+#[test]
+fn a_reload_refuses_a_ca_file_that_is_a_link_or_writable_by_others_and_keeps_serving() {
+    let r = rig(false);
+    let good = std::fs::read_to_string(&r.files.ca).unwrap();
+    let attacker = Ca::new("attacker ca");
+    let elsewhere = r.dir.0.join("attacker.pem");
+    write_file(&elsewhere, &attacker.pem, 0o644);
+    std::fs::remove_file(&r.files.ca).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &r.files.ca).unwrap();
+    let log = r.reload_until(FAILED, 1);
+    assert!(log.contains("reload failed: client CA file"), "{log}");
+    // the attacker's client certificate is not let through
+    let bad = attacker.issue("worker", Use::Client);
+    let bad = client_config(&r.server_ca, Some(&bad), None);
+    assert!(get_status(r.server.addr, &bad, "/nope").is_err());
+    std::fs::remove_file(&r.files.ca).unwrap();
+    write_file(&r.files.ca, &good, 0o666);
+    let log = r.reload_until(FAILED, 2);
+    assert!(log.contains("reload failed: client CA file"), "{log}");
+    assert_eq!(r.count(OK), 0, "{log}");
+    assert_eq!(r.cert_now(), r.first_cert);
+    rewrite_file(&r.files.ca, &good, 0o644);
+    r.reload_until(OK, 1);
+}
+
+#[test]
+fn a_reload_refuses_a_crl_that_has_expired_while_the_one_in_force_is_in_date() {
+    let r = rig(true);
+    let crl = r.crl.clone().unwrap();
+    let new = crl.with_extension("new");
+    write_file(&new, &r.client_ca.crl_pem_due(-86_400), 0o644);
+    std::fs::rename(&new, &crl).unwrap();
+    let log = r.reload_until(FAILED, 1);
+    assert!(log.contains("reload failed: client CRL file"), "{log}");
+    assert!(log.contains("ALERT"), "the expiry is an alert line:\n{log}");
+    assert_eq!(r.count(OK), 0, "{log}");
+    // the old CRL still serves: a client is not locked out
+    let good = r.client_config(GOOD);
+    assert_eq!(get_status(r.server.addr, &good, "/nope").unwrap(), 404);
+    assert_quiet(&log);
+    // a current CRL then reloads
+    let new = crl.with_extension("new");
+    write_file(&new, &r.client_ca.crl_pem_due(20 * 86_400), 0o644);
+    std::fs::rename(&new, &crl).unwrap();
+    r.reload_until(OK, 1);
+}
+
+#[test]
+fn when_the_crl_in_force_has_expired_too_a_reload_takes_the_new_file_and_says_so_as_an_alert() {
+    let r = rig_with(Some(-86_400));
+    let crl = r.crl.clone().unwrap();
+    let new = crl.with_extension("new");
+    write_file(&new, &r.client_ca.crl_pem_due(-3_600), 0o644);
+    std::fs::rename(&new, &crl).unwrap();
+    let log = r.reload_until(OK, 1);
+    assert!(log.contains("ALERT"), "{log}");
 }

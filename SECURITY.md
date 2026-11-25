@@ -136,7 +136,7 @@ Supported versions: the newest release only, the current practice and not a poli
   one exchange under a 5 second deadline and are not capped per member. The per-member `503` is sent after the request
   head and the credential check and lingers up to 1 s, so its timing differs from the global `503` (visible only to the
   credential holder). A peer that can reach the port can still hold connections up to the cap, as for the other routes.
-  **Revocation.** OCSP is never checked. Without `--tls-client-crl` no revocation list is checked: a client certificate stays
+  **Files.** The server certificate file and the client CA file are opened as the key and CRL files are: not through a symbolic link (name the real file; a symlinked CA file or certificate is refused, which is a change from earlier builds), without blocking (a FIFO is refused, it cannot hold start or a reload), a regular file of at most 4 MiB. The client CA file is a trust anchor, so it must also be owned by the server's user or root and not writable by group or other, or the server does not start (and a reload keeps the old configuration): whoever can write it chooses who may connect. **Revocation.** OCSP is never checked. Without `--tls-client-crl` no revocation list is checked: a client certificate stays
   accepted until it expires or the CA file is replaced (and the server reloaded with SIGHUP or restarted), so revocation means short-lived
   certificates or a new CA. With `--tls-client-crl FILE` (PEM, one or more CRLs signed by the client CA, read at start and on SIGHUP; #1491)
   a client certificate whose serial the CRL lists fails the handshake on every route (one verifier, one listener): the
@@ -169,10 +169,19 @@ Supported versions: the newest release only, the current practice and not a poli
   replaces the old one with one pointer swap under a lock only if everything passed; on any failure the old configuration
   stays and one fixed log line names the kind of failure (never a file's content, a subject or a serial). New connections
   use the new configuration, connections already open keep theirs and are not cut (a certificate revoked by the new CRL is
-  refused at its next handshake, not mid-stream; stop the server to cut open streams). The build runs on its own thread with
-  a 5 second bound (a FIFO named as the CA file cannot hold the server), signals are coalesced (at most one reload running,
+  refused at its next handshake, not mid-stream. A revoked certificate keeps an open WebSocket usable for reads and writes until
+  the worker credential is revoked (a socket whose credential is revoked is closed) or `--ws-max-age-secs` runs out, and an
+  open event stream keeps receiving events; its writes go through `POST /v1/frames`, which needs a new handshake and is
+  refused. Stop the server to cut every open connection). **A reload refuses a CRL file whose `nextUpdate` has passed while the
+  CRL in force is still in date** (failure kind `client CRL file`, the old configuration stays): CRLs build on each other, so
+  an expired file is almost always older than the one in force, refusing it loses no revocation, and adopting it would lock
+  every client of its issuer out; the expiry is logged as an `ALERT` line. When the CRL in force has expired too the file is
+  taken and the line says `ALERT`. At start nothing older exists, so an expired CRL still starts the server with a warning.
+  **Replace the CA and CRL files by rename, never by rewriting in place:** a rewrite cut between PEM blocks parses as valid
+  with fewer CRLs or CAs. The build runs on its own thread with a 5 second bound; stopping the server abandons a build
+  that is still running. Signals are coalesced (at most one reload running,
   one pending, one start per half second), the handler only sets a flag, flags and file names are not re-read (no new
-  address or limit), and the plain `http` server catches SIGHUP and ignores it. **Denial of service:** any peer that can reach the port
+  address or limit), and the plain `http` server catches SIGHUP and ignores it (it survives closing its terminal and keeps its port). **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
   quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound
   the server enforces at start. When the cap is full, a newcomer is refused if every handshake in progress is younger

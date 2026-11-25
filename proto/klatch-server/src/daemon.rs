@@ -345,7 +345,8 @@ fn install(hangup: bool) {
         libc::sigaction(libc::SIGTERM, &act, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &act, std::ptr::null_mut());
         if hangup {
-            // restarted reads and writes: a hangup must not interrupt the other threads' I/O
+            // restarted reads and writes where the system restarts them (macOS: all of them; on Linux a socket read with a
+            // timeout, poll and nanosleep still return EINTR, which the std helpers retry)
             let mut hup = act;
             hup.sa_sigaction = on_hangup as extern "C" fn(libc::c_int) as usize;
             hup.sa_flags = libc::SA_RESTART;
