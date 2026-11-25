@@ -21,6 +21,7 @@
 use crate::loopback::{self, Stream};
 use crate::tls::{self, Listener, TlsFiles};
 use crate::tls_limits::{Handshakes, Limits};
+use crate::tls_reload::{self, Current};
 use crate::wire_http::{self, Shared};
 use anyhow::{Context, Result, bail};
 use klatch::gateway::SharedGateway;
@@ -222,7 +223,7 @@ pub fn run(opts: &Options) -> Result<()> {
     let gateway: SharedGateway = klatch::member::spawn_shared_gateway()
         .context("the server cannot open the store, so it does not start")?;
     let listener = loopback::bind_mutual_tls(&opts.listen, policy)?;
-    crate::daemon::install_signal_handlers();
+    crate::daemon::install_signal_handlers_with_hangup();
     if let Some(path) = &opts.files.client_crl {
         eprintln!("{}", crate::tls_crl::start_line(path));
     }
@@ -230,22 +231,31 @@ pub fn run(opts: &Options) -> Result<()> {
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
     shared.ws.apply(&opts.ws, opts.max_connections);
     let handshakes = Handshakes::default();
-    let at = Listener {
-        config: &config,
-        limits: &opts.limits,
-        handshakes: &handshakes,
-    };
-    loopback::serve_concurrent(
-        &listener,
-        &crate::daemon::STOP,
-        opts.max_connections,
-        loopback::Callbacks {
-            handler: &|sock: Stream| {
-                tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
+    // SIGHUP reloads the TLS files on a thread of its own (`tls_reload.rs`); each connection takes the configuration
+    // current when it is accepted and keeps it
+    let current = Current::new(config);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            tls_reload::watch(&crate::daemon::STOP, &crate::daemon::RELOAD, opts, &current)
+        });
+        loopback::serve_concurrent(
+            &listener,
+            &crate::daemon::STOP,
+            opts.max_connections,
+            loopback::Callbacks {
+                handler: &|sock: Stream| {
+                    let config = current.get();
+                    let at = Listener {
+                        config: &config,
+                        limits: &opts.limits,
+                        handshakes: &handshakes,
+                    };
+                    tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
+                },
+                excess: &drop,
             },
-            excess: &drop,
-        },
-    );
+        );
+    });
     drop(shared);
     drop(gateway);
     eprintln!("klatch-server: https stopped");

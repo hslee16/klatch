@@ -2,7 +2,7 @@
 //! Names rustls types, so it is one of the TLS modules `tests/no_network.rs` scans.
 //!
 //! **What the operator supplies.** One PEM file holding one or more X.509 CRLs, signed by the CA (or CAs) of the client CA
-//! file. The file is read once at start; replacing it takes a restart (reload without one is #1492).
+//! file. The file is read once at start; SIGHUP reads it again with the same checks (`tls_reload.rs`, #1492), or a restart does.
 //!
 //! **What starts the server.** The file must be a regular file (not a symbolic link, opened without blocking), owned by
 //! the user running the server or by root, not writable by group or other (whoever can write the file can un-revoke a
@@ -24,7 +24,7 @@
 //! and one whose issuer is the subject of no CA in the client CA file (`ca_subjects`, the trust anchors' subjects, byte
 //! for byte as webpki compares): it still applies to clients that present an intermediate CA of that name, which is
 //! how an intermediate's CRL works with a root-only CA file, so it is not refused. There is no periodic re-check
-//! (reload is #1492).
+//! (SIGHUP reloads, #1492).
 //!
 //! **Policy** (rustls `WebPkiClientVerifier`, set in `tls.rs`):
 //! - A client certificate whose serial is listed by the CRL of its issuer fails the handshake: no session, no HTTP.
@@ -203,10 +203,10 @@ fn check_cas_and_times(
 fn notice_line(path: &Path, n: usize, of: usize, notice: Notice) -> String {
     let what = match notice {
         Notice::Expired => {
-            "has passed its nextUpdate, so every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server"
+            "has passed its nextUpdate, so every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and send SIGHUP to reload it (or restart the server)"
         }
         Notice::ExpiresSoon => {
-            "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server before then"
+            "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and send SIGHUP to reload it (or restart the server) before then"
         }
         Notice::NoCa => {
             "matches no CA in the client CA file; it only applies to clients that present an intermediate CA with that name; if that is not intended it does nothing"
@@ -246,7 +246,7 @@ fn check_one_per_issuer(crls: &[CertificateRevocationListDer<'_>], path: &Path) 
 /// The line printed at start when a CRL is in force.
 pub fn start_line(path: &Path) -> String {
     format!(
-        "klatch-server: https: client certificate revocation: CRL {} in force (read at start; replace it and restart to change it; expiry is enforced: when a CRL passes its nextUpdate, every client certificate of its issuer is refused until you replace the CRL file and restart; a certificate no listed CRL covers is allowed)",
+        "klatch-server: https: client certificate revocation: CRL {} in force (read at start and again on SIGHUP; replace it and send SIGHUP, or restart, to change it; expiry is enforced: when a CRL passes its nextUpdate, every client certificate of its issuer is refused until you replace the CRL file and send SIGHUP (or restart); a certificate no listed CRL covers is allowed)",
         path.display()
     )
 }
@@ -288,11 +288,11 @@ fn classify(err: &rustls::Error) -> Option<(usize, &'static str)> {
             C::ExpiredRevocationList | C::ExpiredRevocationListContext { .. },
         ) => Some((
             1,
-            "the CRL has expired (its nextUpdate has passed), so every client certificate of its issuer is refused: replace the CRL file and restart the server (reload without a restart is #1492)",
+            "the CRL has expired (its nextUpdate has passed), so every client certificate of its issuer is refused: replace the CRL file and send SIGHUP to reload it (or restart the server)",
         )),
         rustls::Error::InvalidCertRevocationList(_) => Some((
             2,
-            "the CRL is not usable (a bad signature, an unsupported signature algorithm, or an issuer certificate that may not sign CRLs), so every client certificate of its issuer is refused: replace the CRL file and restart the server (reload without a restart is #1492)",
+            "the CRL is not usable (a bad signature, an unsupported signature algorithm, or an issuer certificate that may not sign CRLs), so every client certificate of its issuer is refused: replace the CRL file and send SIGHUP to reload it (or restart the server)",
         )),
         _ => None,
     }

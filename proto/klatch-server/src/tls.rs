@@ -19,7 +19,7 @@
 //!
 //! **Revocation: a CRL if the operator gives one, never OCSP.** Without `--tls-client-crl` a client certificate that was
 //! valid when it was issued stays accepted until it expires or until the CA file is replaced (the files are read at
-//! start, so replacing one takes a restart); revocation then means short-lived certificates, or a new CA. With it
+//! start and again on SIGHUP, `tls_reload.rs`, #1492); revocation then means short-lived certificates, or a new CA. With it
 //! (#1491) the one client verifier below also checks the listed CRLs: a listed serial fails the handshake, an expired CRL
 //! is enforced (it refuses its issuer's certificates) and a certificate no CRL covers is allowed. The file, the checks
 //! on it and the reasons for each choice are in `tls_crl.rs`. There is one verifier and one listener: the HTTP routes,

@@ -137,8 +137,8 @@ Supported versions: the newest release only, the current practice and not a poli
   head and the credential check and lingers up to 1 s, so its timing differs from the global `503` (visible only to the
   credential holder). A peer that can reach the port can still hold connections up to the cap, as for the other routes.
   **Revocation.** OCSP is never checked. Without `--tls-client-crl` no revocation list is checked: a client certificate stays
-  accepted until it expires or the CA file is replaced (and the server restarted), so revocation means short-lived
-  certificates or a new CA. With `--tls-client-crl FILE` (PEM, one or more CRLs signed by the client CA, read at start; #1491)
+  accepted until it expires or the CA file is replaced (and the server reloaded with SIGHUP or restarted), so revocation means short-lived
+  certificates or a new CA. With `--tls-client-crl FILE` (PEM, one or more CRLs signed by the client CA, read at start and on SIGHUP; #1491)
   a client certificate whose serial the CRL lists fails the handshake on every route (one verifier, one listener): the
   client sees a fatal TLS alert (`certificate revoked`) and never an HTTP byte, no session is made, and the server logs
   `client certificate refused: revoked` (at most one line every ten seconds, never a name or serial). The file must be a
@@ -146,7 +146,7 @@ Supported versions: the newest release only, the current practice and not a poli
   and hold 1 to 16 CRLs, or the server does not start; **one CRL per issuer: the verifier uses the first CRL it finds for an
   issuer, so a file with two CRLs of one issuer is refused at start (replace the file, never append: an older list ahead
   of a newer one would ignore the new revocations);** the option needs `--tls-client-ca`. **Expiry is enforced:** after a CRL's `nextUpdate` every client certificate its
-  issuer signed is refused until the file is replaced and the server restarted (a log line at start says so, and every
+  issuer signed is refused until the file is replaced and the server reloaded or restarted (a log line at start says so, and every
   refusal logs that the CRL has expired; a CRL with a bad signature, an unsupported signature algorithm or an issuer
   certificate that may not sign CRLs refuses its issuer's certificates too, with its own log line), which locks clients out loudly and never leaves a revoked certificate working on
   a stale list. **Unknown status is allowed:** a certificate no configured CRL covers (another issuer, an intermediate CA
@@ -160,10 +160,19 @@ Supported versions: the newest release only, the current practice and not a poli
   (no subject, no serial), and still starts: when a CRL's `nextUpdate` has passed (expiry is enforced, so its issuer's
   clients are refused), when it passes within 7 days, and when a CRL's issuer is the subject of no CA in the client CA file
   (such a CRL applies only to clients that present an intermediate CA with that name, so it is how an intermediate's CRL
-  works with a root-only CA file; if that is not what you meant it does nothing). There is no periodic re-check. Two CRLs
+  works with a root-only CA file; if that is not what you meant it does nothing). There is no periodic re-check (reload is by SIGHUP only). Two CRLs
   of one issuer with different issuing distribution points (a partitioned CRL, valid for webpki) are refused by the
-  one-CRL-per-issuer rule: the server fails closed. Replacing the
-  CRL needs a restart (reload without one is #1492). **Denial of service:** any peer that can reach the port
+  one-CRL-per-issuer rule: the server fails closed. **Reload (#1492).** SIGHUP re-reads the server certificate chain and key,
+  the client CA file and the client CRL file with exactly the checks of start (key a regular file, not a link, owned by the
+  server's user, mode 0600; certificate and key fit; the CA file holds a certificate; every CRL check above, owner, caps,
+  one CRL per issuer, `nextUpdate` rules, and the CRL warnings print again), builds the whole new rustls configuration, and
+  replaces the old one with one pointer swap under a lock only if everything passed; on any failure the old configuration
+  stays and one fixed log line names the kind of failure (never a file's content, a subject or a serial). New connections
+  use the new configuration, connections already open keep theirs and are not cut (a certificate revoked by the new CRL is
+  refused at its next handshake, not mid-stream; stop the server to cut open streams). The build runs on its own thread with
+  a 5 second bound (a FIFO named as the CA file cannot hold the server), signals are coalesced (at most one reload running,
+  one pending, one start per half second), the handler only sets a flag, flags and file names are not re-read (no new
+  address or limit), and the plain `http` server catches SIGHUP and ignores it. **Denial of service:** any peer that can reach the port
   can open connections without a certificate. A handshake deadline (3 s), a cap on connections in the handshake (a
   quarter of `--max-connections`) and a stall deadline (60 s, never under 30 s) bound it, and each has an upper bound
   the server enforces at start. When the cap is full, a newcomer is refused if every handshake in progress is younger
