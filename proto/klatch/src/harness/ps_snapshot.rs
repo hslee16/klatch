@@ -140,6 +140,21 @@ impl ProcessTable for Snapshot {
     }
 }
 
+/// A `ps` stand-in named by `KLATCH_TEST_PS`, so an integration test can count or fake the calls (it cannot put a `ps` on
+/// PATH any more, #1568). Only in a build with debug assertions: a release build has no such variable, and the value must
+/// be an absolute path.
+#[cfg(debug_assertions)]
+fn test_program() -> Option<PathBuf> {
+    std::env::var_os("KLATCH_TEST_PS")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+#[cfg(not(debug_assertions))]
+fn test_program() -> Option<PathBuf> {
+    None
+}
+
 /// The process table read by running `program` (`pre` first among its arguments, for tests).
 pub(crate) struct PsAt {
     pub program: Option<PathBuf>,
@@ -151,7 +166,7 @@ impl PsAt {
     /// The real thing: the fixed `ps`, or no process table when there is none.
     pub(crate) fn fixed() -> Self {
         PsAt {
-            program: fixed_ps_in(&PS_CANDIDATES),
+            program: test_program().or_else(|| fixed_ps_in(&PS_CANDIDATES)),
             pre_args: Vec::new(),
             limits: LIMITS,
         }
