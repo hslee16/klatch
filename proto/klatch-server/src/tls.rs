@@ -152,12 +152,15 @@ pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<Server
     let key = read_key(&files.key)?;
     let chain = read_certs(&files.cert, "server certificate")?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let roots_subjects: Vec<Vec<u8>> = roots.roots.iter().map(|a| a.subject.to_vec()).collect();
     let mut builder =
         WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone());
     if let Some(path) = &files.client_crl {
+        // the CA subjects a CRL's issuer must match (#1614): taken from the roots the verifier was built on
+        let subjects: Vec<&[u8]> = roots_subjects.iter().map(|s| s.as_ref()).collect();
         // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
         builder = builder
-            .with_crls(tls_crl::read_crls(path)?)
+            .with_crls(tls_crl::read_crls(path, &subjects, tls_crl::now_unix()?)?)
             .allow_unknown_revocation_status()
             .enforce_revocation_expiration();
     }

@@ -359,7 +359,7 @@ fn a_file_over_the_size_cap_or_with_too_many_crls_is_refused_before_it_is_parsed
     let f = std::fs::File::create(&big).unwrap();
     f.set_len(5 * 1024 * 1024).unwrap();
     std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o644)).unwrap();
-    refused(&c, &with(&big), "larger than 4 MiB");
+    refused(&c, &with(&big), "larger than 4 MiB: it is not read");
     // seventeen blocks (the same CRL: the count is checked first)
     let many = c.dir.0.join("pki/many.crl");
     write_file(

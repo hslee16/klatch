@@ -8,6 +8,9 @@
 
 mod channel;
 mod daemon;
+mod der;
+#[cfg(test)]
+mod der_tests;
 mod forwarded;
 mod inbox;
 mod loopback;
