@@ -11,7 +11,6 @@
 //! in the handshake is not counted here, so a flood of silent sockets cannot take the place of a client that has a
 //! certificate; a connection past the cap is closed, as the cap has always closed it.
 
-use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -24,23 +23,15 @@ pub enum SourceKey {
 }
 
 impl SourceKey {
-    pub fn of(ip: IpAddr) -> SourceKey {
-        match ip {
-            IpAddr::V4(v4) => SourceKey::V4(v4.octets()),
-            IpAddr::V6(v6) => match mapped_v4(&v6) {
-                Some(v4) => SourceKey::V4(v4),
-                None => {
-                    let o = v6.octets();
-                    SourceKey::V6Net([o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]])
-                }
-            },
+    /// The key of an address given as 16 octets (an IPv4 address in its IPv4-mapped IPv6 form, as
+    /// `loopback::peer_octets` gives it).
+    pub fn of(o: [u8; 16]) -> SourceKey {
+        if o[..10] == [0; 10] && o[10] == 0xff && o[11] == 0xff {
+            SourceKey::V4([o[12], o[13], o[14], o[15]])
+        } else {
+            SourceKey::V6Net([o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]])
         }
     }
-}
-
-fn mapped_v4(v6: &Ipv6Addr) -> Option<[u8; 4]> {
-    let o = v6.octets();
-    (o[..10] == [0; 10] && o[10] == 0xff && o[11] == 0xff).then(|| [o[12], o[13], o[14], o[15]])
 }
 
 /// The places of connections that finished the handshake.
@@ -126,25 +117,48 @@ impl Refusals {
 mod tests {
     use super::*;
 
+    /// An IPv4 address in the form the key is made from.
+    fn v4(a: u8, b: u8, c: u8, d: u8) -> [u8; 16] {
+        let mut o = [0u8; 16];
+        o[10] = 0xff;
+        o[11] = 0xff;
+        o[12..].copy_from_slice(&[a, b, c, d]);
+        o
+    }
+
+    /// An IPv6 address from its first four groups and last group (`2001:db8:g2:g3::last`-like).
+    fn v6(g: [u16; 4], last: u16) -> [u8; 16] {
+        let mut o = [0u8; 16];
+        for (i, x) in g.iter().enumerate() {
+            o[2 * i..2 * i + 2].copy_from_slice(&x.to_be_bytes());
+        }
+        o[14..].copy_from_slice(&last.to_be_bytes());
+        o
+    }
+
     #[test]
     fn an_ipv4_address_is_its_own_key_and_an_ipv6_address_is_counted_by_its_64() {
-        let a = SourceKey::of("192.0.2.1".parse().unwrap());
-        assert_eq!(a, SourceKey::of("192.0.2.1".parse().unwrap()));
-        assert_ne!(a, SourceKey::of("192.0.2.2".parse().unwrap()));
-        let x = SourceKey::of("2001:db8:1:2::1".parse().unwrap());
-        let same_net = SourceKey::of("2001:db8:1:2:ffff:ffff:ffff:ffff".parse().unwrap());
-        let other_net = SourceKey::of("2001:db8:1:3::1".parse().unwrap());
-        assert_eq!(x, same_net, "one /64 is one source");
-        assert_ne!(x, other_net);
+        let a = SourceKey::of(v4(192, 0, 2, 1));
+        assert_eq!(a, SourceKey::of(v4(192, 0, 2, 1)));
+        assert_ne!(a, SourceKey::of(v4(192, 0, 2, 2)));
+        let x = SourceKey::of(v6([0x2001, 0xdb8, 1, 2], 1));
+        let mut same = v6([0x2001, 0xdb8, 1, 2], 0xffff);
+        same[8..14].copy_from_slice(&[0xff; 6]);
+        assert_eq!(x, SourceKey::of(same), "one /64 is one source");
+        assert_ne!(x, SourceKey::of(v6([0x2001, 0xdb8, 1, 3], 1)));
         assert_ne!(a, x);
     }
 
     #[test]
-    fn an_ipv4_mapped_ipv6_address_is_the_ipv4_address() {
+    fn an_ipv4_mapped_address_is_the_ipv4_address_and_a_v6_one_that_only_looks_like_it_is_not() {
         assert_eq!(
-            SourceKey::of("::ffff:192.0.2.1".parse().unwrap()),
-            SourceKey::of("192.0.2.1".parse().unwrap())
+            SourceKey::of(v4(192, 0, 2, 1)),
+            SourceKey::V4([192, 0, 2, 1])
         );
+        // the same low 32 bits under another prefix are an IPv6 network
+        let mut o = v4(192, 0, 2, 1);
+        o[0] = 1;
+        assert!(matches!(SourceKey::of(o), SourceKey::V6Net(_)));
     }
 
     #[test]

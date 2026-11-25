@@ -128,7 +128,7 @@ impl Handshakes {
         per_source: usize,
         min_age: Duration,
     ) -> Option<Ticket<'_>> {
-        let key = sock.peer_addr().ok().map(|a| SourceKey::of(a.ip()));
+        let key = crate::loopback::peer_octets(sock).map(SourceKey::of);
         let ticket = key.and_then(|k| self.enter_from(sock, k, max, per_source, min_age));
         if ticket.is_none() {
             self.refusals.note();
@@ -219,7 +219,11 @@ mod tests {
     const NEVER: Duration = Duration::from_secs(3600);
 
     fn key(n: u8) -> SourceKey {
-        SourceKey::of(std::net::IpAddr::from([192, 0, 2, n]))
+        let mut o = [0u8; 16];
+        o[10] = 0xff;
+        o[11] = 0xff;
+        o[12..].copy_from_slice(&[192, 0, 2, n]);
+        SourceKey::of(o)
     }
 
     #[test]
@@ -353,7 +357,13 @@ mod tests {
         let mut held = Vec::new();
         for n in 0..=255u8 {
             for m in 0..4u8 {
-                let k = SourceKey::of(std::net::IpAddr::from([10, 0, m, n]));
+                let k = {
+                    let mut o = [0u8; 16];
+                    o[10] = 0xff;
+                    o[11] = 0xff;
+                    o[12..].copy_from_slice(&[10, 0, m, n]);
+                    SourceKey::of(o)
+                };
                 if let Some(t) = guard.enter_from(&sock, k, pool, 2, NEVER) {
                     held.push(t);
                 }
@@ -384,20 +394,11 @@ mod tests {
     }
 
     #[test]
-    fn a_real_socket_is_counted_under_its_peer_address_and_a_pair_with_no_address_is_refused() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let first = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let second = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (a, _) = listener.accept().unwrap();
-        let (b, _) = listener.accept().unwrap();
+    fn a_socket_with_no_peer_address_cannot_be_counted_and_is_refused() {
         let guard = Handshakes::default();
-        let _t = guard.enter(&a, 8, 1, NEVER).unwrap();
-        // both are 127.0.0.1: one source, whose share is one
-        assert!(guard.enter(&b, 8, 1, NEVER).is_none());
-        assert_eq!(guard.sources(), 1);
-        // a socket with no peer address cannot be counted and is refused
         let (pair, _peer) = connected_pair().unwrap();
         assert!(guard.enter(&pair, 8, 1, NEVER).is_none());
-        drop((first, second));
+        assert_eq!(guard.sources(), 0);
+        // a real TCP peer is counted under its address: `tests/tls_flood.rs` (one source holds only its share)
     }
 }

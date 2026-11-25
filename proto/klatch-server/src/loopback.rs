@@ -107,6 +107,15 @@ pub fn connected_pair() -> std::io::Result<(Stream, Stream)> {
     }
 }
 
+/// The peer address of an accepted connection as 16 octets (an IPv4 address in its IPv4-mapped IPv6 form), or `None` when
+/// the socket has none (a socket pair). Only the octets leave this module: what the TLS listener counts a source by.
+pub fn peer_octets(sock: &Stream) -> Option<[u8; 16]> {
+    Some(match sock.peer_addr().ok()?.ip() {
+        IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
+        IpAddr::V6(v6) => v6.octets(),
+    })
+}
+
 /// The bounds on one request.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
