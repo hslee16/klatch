@@ -133,7 +133,7 @@ Supported versions: the newest release only, the current practice and not a poli
   streams per member (default 4, 1 up to `--max-connections`; the same `503` that names nobody) and a stream ends after
   `--stream-max-age-secs` (default 3600, 60 to 86400; the client reconnects and resumes with `from_seq`) (#1517). Before
   the credential is verified only the global cap and the head limits apply (#1493). `POST /v1/frames` and `POST /mcp` are
-  one exchange under a 5 second deadline and are not capped per member. A peer that can reach the port can still hold
+  one exchange under a 5 second deadline and are not capped per member. The per-member `503` is sent after the request head and the credential check and lingers up to 1 s, so its timing differs from the global `503` (visible only to the credential holder). A peer that can reach the port can still hold
   connections up to the cap, as for the other routes.
   **No CRL and no OCSP is checked:** a client certificate stays accepted until it expires or the CA file is replaced (and
   the server restarted), so revocation means short-lived certificates or a new CA (#1491). **Denial of service:** any peer that can reach the port

@@ -4,6 +4,7 @@
 
 mod tls_common;
 
+use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 use tls_common::wire::*;
 use tls_common::ws::*;
@@ -99,13 +100,33 @@ fn the_default_cap_is_four_and_the_refusal_is_the_one_a_full_server_gives_anyone
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let rig = plain_server(&[]);
     let held: Vec<Sse> = (0..4).map(|_| open(&rig, 0)).collect();
-    let refused = raw_answer(&rig.net, &stream_request("alice", &rig.tokens[0]));
+    let refused = answer_or_stream_head(&rig.net, &stream_request("alice", &rig.tokens[0]));
     let full = plain_server(&["--max-connections", "1"]);
     let _holder = open(&full, 1);
-    let when_full = raw_answer(&full.net, &stream_request("alice", &full.tokens[0]));
+    let when_full = answer_or_stream_head(&full.net, &stream_request("alice", &full.tokens[0]));
     assert!(refused.starts_with("HTTP/1.1 503"), "{refused:?}");
     assert_eq!(refused, when_full);
     drop(held);
+}
+
+/// What the server answers to `head`, to the end of the connection or for at most a few seconds: a refusal ends the
+/// connection, but a stream wrongly let in never does (heartbeats keep it open), and reading to its end would hang instead
+/// of letting the assertion fail.
+fn answer_or_stream_head(net: &Net, head: &str) -> String {
+    let mut c = net.connect();
+    c.set_read_timeout(Duration::from_secs(3));
+    c.write_all(head.as_bytes()).unwrap();
+    c.flush().unwrap();
+    let mut out = Vec::new();
+    let mut buf = [0u8; 512];
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until {
+        match c.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn stream_request(member: &str, token: &str) -> String {
@@ -143,7 +164,7 @@ fn the_member_counted_is_the_one_the_credential_proves_and_a_refused_request_hol
     );
     let held = Sse::open(&rig.net, "alice", &rig.tokens[0]);
     assert!(
-        raw_answer(&rig.net, &forged).starts_with("HTTP/1.1 503"),
+        answer_or_stream_head(&rig.net, &forged).starts_with("HTTP/1.1 503"),
         "alice's own cap is hit whatever a forwarded header says"
     );
     // bob still has his one
