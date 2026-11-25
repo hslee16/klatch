@@ -3,10 +3,10 @@
 (ended: ok)
 
 ### after consent board off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent board on
@@ -41,7 +41,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -52,7 +52,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -63,7 +63,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -76,10 +76,10 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent board on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent join off
@@ -114,7 +114,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -125,7 +125,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -136,7 +136,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -149,10 +149,10 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent join off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on --no-join
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent join on
@@ -187,7 +187,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -198,7 +198,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -209,7 +209,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -222,10 +222,10 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent join on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent session-end off
@@ -259,7 +259,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -270,7 +270,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 -         "hooks": [
 -           {
 -             "type": "command",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
 -             "timeout": 30
 -           }
 -         ]
@@ -281,7 +281,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -294,9 +294,9 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent session-end off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent session-end on
@@ -330,7 +330,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -341,7 +341,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -352,7 +352,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 +         "hooks": [
 +           {
 +             "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
 +             "timeout": 30
 +           }
 +         ]
@@ -365,10 +365,10 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent session-end on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent enforce off
@@ -376,10 +376,10 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 (ended: ok)
 
 ### after consent enforce off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent enforce on
@@ -413,7 +413,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -424,7 +424,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -435,7 +435,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -460,11 +460,11 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent enforce on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent wake off
@@ -472,11 +472,11 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 (ended: ok)
 
 ### after consent wake off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
 ### klatch consent wake on
@@ -521,7 +521,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -532,7 +532,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -554,7 +554,7 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -579,12 +579,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent wake on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -630,8 +630,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status",
--             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -642,8 +642,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status",
--             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -665,8 +665,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -691,12 +691,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent checkpoint off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -742,8 +742,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -754,8 +754,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -777,8 +777,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -803,12 +803,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent checkpoint on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -854,8 +854,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -866,8 +866,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -889,8 +889,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -915,12 +915,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent passive-claims off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --checkpoint --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -966,8 +966,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -978,8 +978,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -1001,8 +1001,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -1027,12 +1027,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent passive-claims on: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -1078,8 +1078,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint",
--             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -1090,8 +1090,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint",
--             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -1113,8 +1113,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
               "timeout": 30
             }
           ]
@@ -1139,12 +1139,12 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent machine-status off: the hook commands
-PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --stop-warn
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
-SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --stop-warn
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
-Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 
@@ -1190,8 +1190,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --stop-warn",
               "timeout": 30
             }
           ]
@@ -1202,8 +1202,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --stop-warn",
               "timeout": 30
             }
           ]
@@ -1225,8 +1225,8 @@ UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
           "hooks": [
             {
               "type": "command",
-+             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
--             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --stop-warn",
               "timeout": 30
             }
           ]
@@ -1251,12 +1251,236 @@ This takes effect at the next session; one already running keeps the hooks it st
 (ended: ok)
 
 ### after consent machine-status on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent stop-warn off
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent stop-warn off: the hook commands
 PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status
 PreToolUse: <KLATCH> --discover hook --event PreToolUse
 SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status
 SessionStart: <KLATCH> --discover hook --event SessionStart --board on
 SessionStart: <KLATCH> --discover wake --timeout 3500
 Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status
+Stop: <KLATCH> --discover wake --timeout 3500
+UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
+
+### klatch consent stop-warn on
+<PROJECT>/.claude/settings.local.json (project):
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event SessionStart --board on",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event UserPromptSubmit",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        },
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover wake --timeout 3500",
+              "async": true,
+              "asyncRewake": true,
+              "timeout": 3600
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
++             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn",
+-             "command": "<KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status",
+              "timeout": 30
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "<KLATCH> --discover hook --event PreToolUse",
+              "timeout": 30
+            }
+          ]
+        }
+      ]
+    }
+  }
+wrote <PROJECT>/.claude/settings.local.json
+This takes effect at the next session; one already running keeps the hooks it started with.
+(ended: ok)
+
+### after consent stop-warn on: the hook commands
+PostToolUse: <KLATCH> --discover hook --event PostToolUse --passive-claims --checkpoint --machine-status --stop-warn
+PreToolUse: <KLATCH> --discover hook --event PreToolUse
+SessionEnd: <KLATCH> --discover hook --event SessionEnd --passive-claims --checkpoint --machine-status --stop-warn
+SessionStart: <KLATCH> --discover hook --event SessionStart --board on
+SessionStart: <KLATCH> --discover wake --timeout 3500
+Stop: <KLATCH> --discover hook --event Stop --passive-claims --checkpoint --machine-status --stop-warn
 Stop: <KLATCH> --discover wake --timeout 3500
 UserPromptSubmit: <KLATCH> --discover hook --event UserPromptSubmit
 

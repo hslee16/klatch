@@ -25,6 +25,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             no_join,
             checkpoint,
             machine_status,
+            stop_warn,
             passive_claims,
         } => hook(
             ctx,
@@ -34,6 +35,7 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
                 no_join,
                 checkpoint,
                 machine_status,
+                stop_warn,
                 passive_claims,
             },
         )?,
@@ -135,6 +137,8 @@ pub(super) struct HookArgs {
     pub(super) checkpoint: bool,
     /// The machine status consent (#1403): the hook command carries `--machine-status`.
     pub(super) machine_status: bool,
+    /// The stop warning consent (#1344): the hook command carries `--stop-warn`.
+    pub(super) stop_warn: bool,
     /// The passive claims consent (#1401): the hook command carries `--passive-claims`.
     pub(super) passive_claims: bool,
 }
@@ -257,7 +261,8 @@ fn note_activity(ctx: &Ctx, args: &HookArgs) -> Option<String> {
     super::passive::claim_edits(t, ctx.stdin, args.passive_claims && args.is("PostToolUse"))
 }
 
-/// The end of a turn: what still runs in the background is recorded and released claims are freed; nothing is printed.
+/// The end of a turn: what still runs in the background is recorded and released claims are freed; nothing is printed
+/// unless the hook carries `--stop-warn` (#1344).
 fn stop_hook(ctx: &Ctx, args: &HookArgs) {
     let t = ctx.t;
     let (tasks, crons) = ctx.stdin.map_or((0, 0), background_counts);
@@ -265,7 +270,12 @@ fn stop_hook(ctx: &Ctx, args: &HookArgs) {
     super::machine_status::on_stop(t, args.machine_status, tasks + crons > 0);
     super::checkpoint::stop_checkpoint(t, args.checkpoint);
     super::passive::release(t, args.passive_claims);
-    let _ = t.record_hook_run("Stop", 0);
+    // warn only: one fixed line for the human, counts and kinds, never a task's text (#1344)
+    let json = super::stop_warn::output(ctx.stdin, args.stop_warn);
+    let _ = t.record_hook_run("Stop", json.as_ref().map_or(0, String::len));
+    if let Some(json) = json {
+        print!("{json}");
+    }
 }
 
 /// The text a hook prints and the notice for the human: the session start, or the digest of what is new.

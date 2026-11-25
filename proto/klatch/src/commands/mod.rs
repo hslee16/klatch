@@ -15,6 +15,7 @@ mod machine_status;
 mod messaging;
 mod never_read;
 mod passive;
+mod stop_warn;
 mod tool_input;
 mod wait;
 mod work;

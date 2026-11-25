@@ -112,6 +112,13 @@ pub trait MessageStore {
         None
     }
 
+    /// The room that holds the message with this global id (#1328), or `None` when no message has it. A read only,
+    /// and it answers with the room name alone, never a body, a sender, a label or a count. The default is an error, never
+    /// `None` (#485): a store that cannot look a message up must not let the label rule pass as if no message had it.
+    fn message_room(&self, _id: &str) -> Result<Option<String>> {
+        super::unsupported("message rooms")
+    }
+
     /// The highest `seq` in a room, 0 when it is empty.
     fn head(&self, room: &str) -> Result<i64>;
 

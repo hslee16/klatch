@@ -17,6 +17,8 @@ pub struct SpyStore {
     inner: SqliteStore,
     pub calls: Cell<usize>,
     pub fail: Cell<bool>,
+    /// Fail only the message id to room lookup (#1328), so a test can see a post fail closed on it alone.
+    pub fail_message_room: Cell<bool>,
     /// Called with the key just before a policy write reaches the store: a test uses it to make another connection
     /// act in the window between a check and its write (#897).
     pub before_policy_set: RefCell<Option<PolicyHook>>,
@@ -34,6 +36,7 @@ impl SpyStore {
             inner,
             calls: Cell::new(0),
             fail: Cell::new(false),
+            fail_message_room: Cell::new(false),
             before_policy_set: RefCell::new(None),
         }
     }

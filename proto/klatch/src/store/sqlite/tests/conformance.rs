@@ -3,6 +3,17 @@ use super::*;
 use crate::store::conformance as c;
 
 #[test]
+fn a_message_id_finds_its_room_and_an_unknown_id_finds_none() {
+    use crate::store::{MessageStore, Seat};
+    let s = store();
+    let a = s.post(Seat::new("r", "bob"), "one", 1).unwrap();
+    let b = s.post(Seat::new("other", "bob"), "two", 2).unwrap();
+    assert_eq!(s.message_room(&a.id).unwrap().as_deref(), Some("r"));
+    assert_eq!(s.message_room(&b.id).unwrap().as_deref(), Some("other"));
+    assert_eq!(s.message_room("no-such-id").unwrap(), None);
+}
+
+#[test]
 fn messages_post_returns_increasing_ids_and_marks_sender_present() {
     c::messages::post_returns_increasing_ids_and_marks_sender_present(store);
 }
