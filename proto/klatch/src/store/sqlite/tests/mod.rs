@@ -15,6 +15,7 @@ mod change_token;
 mod claim_age;
 mod claim_events;
 mod claim_graph;
+mod claim_lapses;
 mod claims;
 mod concurrency;
 mod conformance;
