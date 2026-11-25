@@ -77,6 +77,8 @@ def has_conflict_markers(root):
     for d, dirs, names in os.walk(root):
         dirs[:] = [x for x in dirs if x not in (".git", "__pycache__", ".claude")]
         for n in names:
+            if n == "TASKS.md" and d == root:  # B1's board: git merges it with merge=union, so markers there are not code (#1543)
+                continue
             if marker.search(read(d, n)):
                 return True
     return False

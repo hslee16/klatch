@@ -3,7 +3,7 @@
 //! opens the `.key` files beside them.
 
 use crate::harness::liveness::{Liveness, check};
-use crate::harness::process::ProcessTable;
+use crate::harness::process::{ProcessTable, pinned};
 use crate::harness::record::{Record, Registry};
 
 /// What was found: the sessions that are running, the records that are not about one (with why), and how many files
@@ -22,12 +22,14 @@ pub fn list(registry: &dyn Registry, procs: &dyn ProcessTable, domain: &str) -> 
         malformed,
         ..Sessions::default()
     };
-    for rec in records {
-        match check(&rec, procs, domain) {
-            Liveness::Live => found.live.push(rec),
-            other => found.ignored.push((rec, other)),
+    pinned(procs, |procs| {
+        for rec in records {
+            match check(&rec, procs, domain) {
+                Liveness::Live => found.live.push(rec),
+                other => found.ignored.push((rec, other)),
+            }
         }
-    }
+    });
     found
 }
 

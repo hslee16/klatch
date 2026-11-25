@@ -20,6 +20,7 @@ mod negotiate;
 mod own_records;
 mod probe;
 mod process;
+mod ps_snapshot;
 mod pstime;
 mod record;
 mod selftest;

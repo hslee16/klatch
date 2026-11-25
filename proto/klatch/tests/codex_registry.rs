@@ -361,7 +361,7 @@ fn counting_ps(h: &Home) -> (std::path::PathBuf, std::path::PathBuf) {
 fn with_path(cmd: String, shim: &std::path::Path) -> String {
     cmd.replacen(
         "HOME=",
-        &format!("PATH='{}:/usr/bin:/bin' HOME=", shim.display()),
+        &format!("KLATCH_TEST_PS='{}' HOME=", shim.join("ps").display()),
         1,
     )
 }
@@ -395,13 +395,10 @@ fn the_walk_is_lazy_and_runs_once() {
         !calls.is_empty(),
         "a refused join looks at the process table"
     );
-    let mut unique = calls.clone();
-    unique.sort();
-    unique.dedup();
     assert_eq!(
-        unique.len(),
         calls.len(),
-        "one walk looks at each field of each process once: {calls:?}"
+        1,
+        "one walk reads the whole process table once: {calls:?}"
     );
 }
 

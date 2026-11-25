@@ -359,6 +359,8 @@ def tracked_files(root):
 
 def has_conflict_markers(root):
     for path in tracked_files(root):
+        if os.path.relpath(path, root) == "TASKS.md":  # B1's board: git merges it with merge=union, so markers there are not code (#1543)
+            continue
         try:
             with open(path, errors="replace") as f:
                 for line in f:

@@ -126,6 +126,18 @@ pub fn write_session_record(
     facts: &SessionFacts,
     (procs, domain): (&dyn ProcessTable, &str),
 ) -> Result<u32, NotRecorded> {
+    // one read of the process table serves the walk and the prune (#1569)
+    crate::harness::process::pinned(procs, |procs| {
+        write_pinned(dir, from, facts, (procs, domain))
+    })
+}
+
+fn write_pinned(
+    dir: &Path,
+    from: u32,
+    facts: &SessionFacts,
+    (procs, domain): (&dyn ProcessTable, &str),
+) -> Result<u32, NotRecorded> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let (pid, start) = codex_above(from, procs)?;
