@@ -89,16 +89,24 @@ const EVERY: Duration = Duration::from_secs(10);
 #[derive(Default)]
 pub struct Refusals {
     unsaid: AtomicU64,
+    total: AtomicU64,
     last: Mutex<Option<Instant>>,
 }
 
 impl Refusals {
+    /// Every refusal since the start (the log line summarises, this does not).
+    #[cfg(test)]
+    pub fn total(&self) -> u64 {
+        self.total.load(Ordering::SeqCst)
+    }
+
     pub fn note(&self) {
         self.note_at(Instant::now(), &mut std::io::stderr());
     }
 
     fn note_at(&self, now: Instant, out: &mut dyn std::io::Write) {
         self.unsaid.fetch_add(1, Ordering::SeqCst);
+        self.total.fetch_add(1, Ordering::SeqCst);
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
         if last.is_some_and(|t| now.saturating_duration_since(t) < EVERY) {
             return;

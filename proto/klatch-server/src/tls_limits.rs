@@ -149,7 +149,8 @@ impl Handshakes {
         let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
         if open.sources.get(&key).copied().unwrap_or(0) >= per_source {
             // the source is at its share: its own oldest handshake gives way if it is old enough (as in the pool, below), so
-            // an honest client behind the same address is served once the silent ones are old; otherwise the newcomer loses
+            // a client behind the same address can get in once the silent ones are old (not against an attacker who keeps
+            // opening them: see SECURITY.md); otherwise the newcomer loses
             let at = open
                 .queue
                 .iter()
@@ -330,10 +331,17 @@ mod tests {
             .unwrap();
         // old enough: its own oldest makes room
         let (mine_again, _p) = connected_pair().unwrap();
-        let _new = guard
+        let new = guard
             .enter_from(&mine_again, key(1), 8, 1, Duration::ZERO)
             .expect("its own old handshake gives way");
         assert_eq!(guard.len(), 2);
+        // the evicted handshake was counted out of its source: one of source 1 and one of source 2 are in progress
+        assert_eq!(guard.sources(), 2);
+        drop(new);
+        assert_eq!(guard.sources(), 1, "the self-eviction left a count behind");
+        let _again = guard
+            .enter_from(&mine_again, key(1), 8, 1, NEVER)
+            .expect("the share is free again: nothing of the evicted handshake counts");
         // too young: the newcomer is refused, and source 2's handshake is untouched
         assert!(guard.enter_from(&socks[1].0, key(1), 8, 1, NEVER).is_none());
         assert_eq!(guard.len(), 2);
@@ -399,6 +407,8 @@ mod tests {
         let (pair, _peer) = connected_pair().unwrap();
         assert!(guard.enter(&pair, 8, 1, NEVER).is_none());
         assert_eq!(guard.sources(), 0);
+        // the refusal went through the counted path (the log line is built from this count)
+        assert_eq!(guard.refusals.total(), 1, "a refusal was not counted");
         // a real TCP peer is counted under its address: `tests/tls_flood.rs` (one source holds only its share)
     }
 }

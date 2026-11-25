@@ -181,13 +181,21 @@ Supported versions: the newest release only, the current practice and not a poli
   silent sockets cannot take the place of a client that has a certificate. One source address (an IPv4 /32, an IPv6 /64;
   an IPv4-mapped IPv6 address counts as its IPv4 address) may have `--handshakes-per-source` handshakes in progress
   (default 2, at most `--max-handshakes`); a newcomer over that share is closed without a byte, unless the source's own
-  oldest handshake is at least half the deadline old, which then gives way, and one source never closes another's. The
-  per-source table holds one entry per handshake in progress, so it is never larger than the pool, and an entry goes
-  when its handshake ends (completes, fails, times out, resets or is evicted). A peer that is cut by the deadline
-  includes one that trickles a byte at a time (the deadline is checked on every read, which it was not before #1493).
-  What remains: many source addresses (a botnet, or a /64 per host from a rented block) can still fill the pool, and
-  clients behind one NAT address share one share. Refusals are logged as one line with a count and no address, at most
-  every ten seconds.
+  oldest handshake is at least half the deadline old, which then gives way. The per-source table holds one entry per
+  handshake in progress, so it is never larger than the pool, and an entry goes when its handshake ends (completes,
+  fails, times out, resets or is evicted). A peer that trickles a byte at a time is cut by the deadline (the deadline is
+  checked on every read, which it was not before #1493). Refusals are logged as one line with a count and no address, at
+  most every ten seconds. **What this protects, and what it does not.** It protects OTHER sources and the sessions that
+  are already open: silent sockets take no session place, and one address cannot fill the pool alone. It does NOT protect
+  a client that shares an address with the attacker (a NAT, a shared host, a shared IPv6 /64): about two connections per
+  second from that address keep its share full, and that client can be locked out cheaply. Measured on the real binary,
+  from the attacker's own address: with 50 silent sockets held, a client retrying every 100 ms got in after 1.56 s; against
+  an attacker opening 2 silent connections per second 8 of 58 attempts succeeded, at 4 per second 3 of 75, and against one
+  that reconnects as soon as it is closed 0 of 60; a client that does not retry fails in every case. Nor does the share
+  stop a flood from MANY addresses: once the pool is full, a newcomer of ANY source closes the oldest handshake that is old
+  enough (any source's), so the churn attack described above works against everyone with a handful of IPv4 addresses or
+  one IPv6 /48 (each /64 is a separate source). Clients behind one address share one share. The remedies stay a
+  firewall, a tunnel or loopback.
   `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
   the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
   packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
