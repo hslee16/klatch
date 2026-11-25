@@ -214,3 +214,84 @@ fn a_holder_that_posted_done_after_taking_the_claim_is_not_reported_even_after_t
     take(&s, ("r", "alice", "x"), 50_000, 150);
     assert!(lapses(&s, "r", 151).is_empty());
 }
+
+#[test]
+fn a_reclaim_then_a_clean_release_leaves_no_lapse_to_report() {
+    let s = store();
+    take(&s, ("r", "bob", "watch:gh"), 100, 0);
+    take(&s, ("r", "bob", "watch:gh"), 100, 150);
+    s.release_at("r", "bob", "watch:gh", 160).unwrap();
+    assert!(lapses(&s, "r", 161).is_empty());
+    assert_eq!(rows(&s), 0, "the record went with the re-grant");
+}
+
+#[test]
+fn a_passive_regrant_by_the_same_holder_also_clears_the_record() {
+    let s = store();
+    take(&s, ("r", "bob", "src/a.rs"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(rows(&s), 1);
+    s.claim(
+        &ClaimRequest::new(("r", "bob"), "src/a.rs", 100, PASSIVE_REASON),
+        160,
+    )
+    .unwrap();
+    assert_eq!(rows(&s), 0);
+}
+
+#[test]
+fn a_repeated_lapse_carries_the_new_expiry_and_since_and_a_done_between_does_not_hide_it() {
+    let s = store();
+    s.join("r", "bob", 1).unwrap();
+    take(&s, ("r", "bob", "job"), 100, 2); // first lease: since 2, lapses at 102
+    take(&s, ("r", "alice", "x"), 50_000, 150); // the sweep records it
+    s.set_status(Seat::new("r", "bob"), "done: first", 160)
+        .unwrap();
+    // a second lease of the same holder and path that is swept while the first record still stands
+    s.conn
+        .execute(
+            "INSERT INTO claims(room,path,owner,member,reason,expires,since) VALUES('r','job','bob','bob','',300,200)",
+            [],
+        )
+        .unwrap();
+    take(&s, ("r", "alice", "y"), 50_000, 400);
+    let (expires, since): (i64, i64) = s
+        .conn
+        .query_row(
+            "SELECT expires,since FROM claim_lapses WHERE path='job' AND owner='bob'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((expires, since), (300, 200), "the second lease's values");
+    assert_eq!(
+        lapses(&s, "r", 401).len(),
+        1,
+        "done (160) predates since 200"
+    );
+}
+
+#[test]
+fn a_swept_record_and_a_newer_unswept_row_for_one_holder_and_path_are_one_event() {
+    let s = store();
+    take(&s, ("r", "bob", "job"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150); // sweeps bob's first lease (expires 100)
+    // a newer lease of the same holder and path that nothing has swept
+    s.conn
+        .execute(
+            "INSERT INTO claims(room,path,owner,member,reason,expires,since) VALUES('r','job','bob','bob','',200,160)",
+            [],
+        )
+        .unwrap();
+    // simulate the record of the older lapse still standing next to the newer unswept row
+    s.conn
+        .execute(
+            "INSERT OR REPLACE INTO claim_lapses(room,path,owner,expires,since) VALUES('r','job','bob',100,0)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        lapses(&s, "r", 250),
+        [("job".to_string(), "bob".to_string(), 200)]
+    );
+}

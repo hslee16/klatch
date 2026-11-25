@@ -311,6 +311,12 @@ impl SqliteStore {
             "DELETE FROM claims WHERE room=?1 AND owner=?2 AND path=?3",
             params![req.room, req.owner, req.path],
         )?;
+        // the holder is back on this path (granted, renewed or passive): an older lapse of it no longer stands, even
+        // after a later clean release (#1586)
+        self.exec(
+            "DELETE FROM claim_lapses WHERE room=?1 AND path=?2 AND owner=?3",
+            params![req.room, req.path, req.owner],
+        )?;
         // a note this owner left when it released the path is about that earlier claim: if this one lapses instead of
         // being released, the note must not be shown as if it were about this one (#315). A note left by another
         // owner stays for the next claimant.
