@@ -305,7 +305,14 @@ class Agent:
         self.integrate(st)
 
     def op_restart(self, st, allow):
-        self.bash([sys.executable, os.path.join(HERE, "restart_member.py"), st["member"]], allow)
+        self.bash([sys.executable, self.restart_script(), st["member"]], allow)
+
+    def restart_script(self):
+        """The copy of restart_member.py the harness put in the run's bin directory (the prompt of a real supervisor names that
+        copy, never a path in the repository, #1519); the repository's own file only when the run has no restart directory (#1471)."""
+        d = os.environ.get("COORDBENCH_RESTART_DIR")
+        copy = os.path.join(os.path.dirname(d), "bin", "restart_member.py") if d else ""
+        return copy if copy and os.path.isfile(copy) else os.path.join(HERE, "restart_member.py")
 
     def op_sync(self, st, allow):
         if self.role_arm() and not st.get("direct"):

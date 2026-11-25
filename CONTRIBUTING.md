@@ -145,12 +145,14 @@ proto/scripts/gate --long     # 5000 property cases and sequences each, by hand,
 
 Commit first: the gate checks the commit CI will see, and it refuses (naming the files, running nothing) when a tracked file has uncommitted changes, because fmt, clippy and the tests read the working tree and a file edited after the commit could pass here and fail in CI (#763). `--allow-dirty` checks the working tree anyway and says so.
 
-When the last step, the release and shell checks (about twenty scripts and linters), fails, the gate prints the failing command line and the last 40 lines of its stdout and stderr; a passing check prints nothing. To keep the full output of every check of that step, run `GATE_LOG=/tmp/gate.log proto/scripts/gate`; each check's command line, output and exit status are appended to that file (off by default) (#1081).
+When step 11, the release and shell checks (about twenty scripts and linters), fails, the gate prints the failing command line and the last 40 lines of its stdout and stderr; a passing check prints nothing. To keep the full output of every check of that step, run `GATE_LOG=/tmp/gate.log proto/scripts/gate`; each check's command line, output and exit status are appended to that file (off by default) (#1081).
 
 It runs, in order: `cargo fmt --check`, clippy with warnings as errors, the workspace tests, `cargo deny` (skipped, with
 a note, if it is not installed), the test-clock tests, the property tests and models with a bigger budget (500 cases
-each, one fixed seed), and the repository's own checks (release numbers agree, the installer, the README quickstart,
-shellcheck). The Hegel seed comes from the commit you are on, so a failure repeats exactly and each commit tries
+each, one fixed seed), the repository's own checks (release numbers agree, the installer, the README quickstart,
+shellcheck), and the fast subset of the coordbench tests (`experiments/coordbench/run_tests.py`; CI runs none of them, #1471;
+about 75 seconds, no network, no model, no credential; the full suite is `KLATCH_BIN=proto/target/debug/klatch python3 -I
+experiments/coordbench/run_tests.py --all`, about ten minutes, run it when you change the harness). The Hegel seed comes from the commit you are on, so a failure repeats exactly and each commit tries
 different cases; when a Hegel step fails the gate prints the exact `HEGEL_SEED=... cargo test` command to replay it.
 
 It is stricter than CI on purpose, because CI stays light (see above): CI runs the cheap subset on every pull request

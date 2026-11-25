@@ -1,0 +1,1 @@
+- The local gate now runs a fast subset of the coordbench tests (step 12, `experiments/coordbench/run_tests.py`), and the K3 supervisor test no longer fails an isolation check because the fake supervisor ran the repository copy of `restart_member.py` instead of the run copy (#1471).

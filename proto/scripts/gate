@@ -67,7 +67,7 @@ cases=500
 log="$(mktemp "${TMPDIR:-/tmp}/klatch-gate.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
-total=14
+total=15
 n=0
 started=$SECONDS
 replay_hint() {
@@ -219,6 +219,13 @@ repo_checks() {
     && { ! command -v shellcheck > /dev/null 2>&1 || check shellcheck install/*.sh release/*.sh clients/recipes/*.sh experiments/gates/check-binary.sh experiments/gates/test-check-binary.sh experiments/variance/test-repeat.sh experiments/dm-adoption/run.sh experiments/dm-adoption/test-dm-adoption.sh proto/scripts/gate proto/scripts/install-git-hook proto/scripts/test-scripts.sh proto/scripts/team proto/scripts/test-team.sh proto/scripts/pr-sweep proto/scripts/test-sweep.sh proto/scripts/gh-watch proto/scripts/test-gh-watch.sh proto/scripts/test-codescene-components.sh proto/scripts/test-merge-union.sh proto/scripts/authz-audit proto/scripts/fmt-after-merge proto/scripts/test-fmt-after-merge.sh proto/scripts/quint-check proto/scripts/shuttle proto/scripts/integrator proto/scripts/test-integrator.sh proto/scripts/ask-supervisor proto/scripts/test-ask-supervisor.sh; }
 }
 step "release and shell checks"     no    "$root" repo_checks
+
+# The coordbench tests (#1471): CI runs none of them, and a failing one sat on main unnoticed. Local gate only (the owner's
+# decision, CI stays light). The fast subset skips the ten slowest modules (the full suite takes about ten minutes; the full
+# command is: KLATCH_BIN=proto/target/debug/klatch python3 -I experiments/coordbench/run_tests.py --all). The fake agent is
+# used throughout: no network, no model, no credential. repo_checks built the klatch binary the K-arm tests need.
+# GATE_COORDBENCH_RUNNER is a test seam (proto/scripts/test-scripts.sh points it at a stub so the gate's own tests stay fast).
+step "coordbench tests (fast subset)" no  "$root" env KLATCH_BIN="$proto/target/debug/klatch" python3 -I "${GATE_COORDBENCH_RUNNER:-experiments/coordbench/run_tests.py}"
 
 # CI steps the gate did not run (#1034). Each runs here too; the two that need a tool the machine may lack skip with a message,
 # as cargo deny does. The gate refuses a dirty tree, so the dry run packages the commit; --allow-dirty is passed on only

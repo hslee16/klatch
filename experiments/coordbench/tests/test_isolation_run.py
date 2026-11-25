@@ -42,10 +42,22 @@ class EscapeDriver(drivers.FakeDriver):
         return argv, {}
 
 
+def remove_tree(path):
+    """rmtree that opens up a directory the run hid (mode 0300 or 0): without it a test that stops while agents are running
+    leaves its temp directory behind (#1471)."""
+    for root, dirs, _files in os.walk(path, onerror=lambda e: (os.chmod(e.filename, 0o700), None)[1]):
+        for d in dirs:
+            try:
+                os.chmod(os.path.join(root, d), 0o700)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="coordbench-iso-"))
-        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.addCleanup(lambda: remove_tree(self.tmp))
         self.home = os.path.join(self.tmp, "home")
         os.mkdir(self.home)
         p = mock.patch.dict(os.environ, {"HOME": self.home})

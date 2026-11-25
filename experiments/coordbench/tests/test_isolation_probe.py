@@ -12,10 +12,19 @@ import isolation_probe
 REPO = os.path.dirname(os.path.dirname(BENCH))
 
 
+def remove_tree(path):
+    """rmtree that works on a probe: its `hidden` directory is mode 0300 (no listing), so rmtree with ignore_errors left the
+    whole temp directory behind (a leak of seven per run of the suite, #1471). Open it up first."""
+    for hidden in (os.path.join(path, "probe", "hidden"), os.path.join(path, "probe2", "hidden")):
+        if os.path.isdir(hidden):
+            os.chmod(hidden, 0o700)
+    shutil.rmtree(path, ignore_errors=True)
+
+
 class Session(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
-        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.addCleanup(lambda: remove_tree(self.tmp))
         self.src_dir = os.path.join(REPO, "proto", "target", "debug")  # where a developer's binary lives: inside the repository
         self.src = os.path.join(self.tmp, "klatch-src")  # a stand-in file (the test never runs it)
         with open(self.src, "w") as f:

@@ -449,7 +449,9 @@ object (method, divisor, limits, characters by source). `messages` counts klatch
 (`post`, `dm`, `ask`, `answer`), `SendMessage` calls and edits of the board `TASKS.md` from the stream. A run found invalid (a harness fault) is kept with
 `valid: false`; the rerun the spec asks for is made by hand with a new suite id until a scenario needs it automatic.
 
-Tests: `python3 -m unittest discover -s experiments/coordbench/tests`. The K-arm tests need `KLATCH_BIN` (a built klatch,
+Tests: `python3 -m unittest discover -s experiments/coordbench/tests` (every test, about ten minutes), or
+`python3 -I experiments/coordbench/run_tests.py` (the fast subset the local gate runs, about 75 seconds; `--all` runs every module in
+parallel). CI does not run them (#1471). The K-arm tests need `KLATCH_BIN` (a built klatch,
 `cargo build -p klatch --locked`) and are skipped with a message when it is unset.
 
 Related: `experiments/variance/repeat.py` (the repeat harness this builds on), `proto/klatch-bench` (the scripted bench),
