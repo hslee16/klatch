@@ -49,7 +49,7 @@ protocol has not been decided.
 
 ## 3. The store schema version
 
-Store schema version: 44
+Store schema version: 45
 
 The version of the SQLite database layout. A store is migrated forward the first time a newer binary opens it, and
 **an upgrade is one way**: an older binary refuses a store written by a newer schema with a message that says so, and
