@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# gh-watch-supervise: restart a lapsed local gh-watch receiver with `gh-watch ensure` (#1342; PR-SWEEP.md, "The watcher
+# restart rule"). It needs no credential: it only READS the receiver's `watch:gh` claim (#1338) and its pid file, and runs
+# `gh-watch ensure`, which starts the receiver and nothing else.
+#
+#   gh-watch-supervise OPTIONS            run until a signal (INT, TERM, HUP) or until the restart limit stops it (exit 3)
+#   gh-watch-supervise --once OPTIONS     one pass, then exit (0, or 3 when the restart limit is reached)
+#
+# OPTIONS are the ones the receiver was started with (they are handed to `gh-watch ensure` as they are):
+#   --klatch-bin PATH --as-member NAME --room NAME   required: the claim is read with `klatch claims ROOM`
+#   --out-dir DIR (default $GH_WATCH_DIR or ~/.local/state/klatch-gh-watch)  --port N (default 8787)  --secret-file FILE
+# KLATCH_HOME must name the isolated status store (the receiver's own), never ~/.klatch: unset or a path with a .klatch
+# component (case-folded, symlinks resolved) is refused with exit 2 and nothing is run.
+#
+# One pass reads the receiver pid in OUT_DIR/gh-watch.pid and the `watch:gh` line of `klatch claims ROOM` (held while it
+# says `Ns left` with N above 0; every klatch call is killed after GHWS_KLATCH_TIMEOUT_SECS, default 15, and ALERTs). While
+# the receiver is alive its holder name (MEMBER cut to 30 characters, then the pid) is recorded in the state dir. Only a
+# claim or lapse by THAT holder is ours; another member's claim, or another receiver's on the same store, is never evidence.
+#   pid alive, our claim held    healthy; any crash evidence is dropped (any live pid drops it)
+#   pid alive, claim lapsed      a hung receiver (it stopped renewing): ALERT, never killed, never restarted
+#   pid dead, our claim held     the dead receiver's claim has not lapsed yet (up to 90 s after a kill -9, #1601, and
+#                                `ensure` would report down because the new receiver is refused by it): that is the crash
+#                                evidence, and the supervisor WAITS for the lapse, no restart, no retry
+#   pid dead, another's claim    ALERT, not restarted (it is not ours to take)
+#   pid dead, claim lapsed       restart with `gh-watch ensure` only with fresh crash evidence: our claim was seen held
+#                                with the pid dead within GHWS_EVIDENCE_SECS (default 180), or `klatch stuck ROOM` has a
+#                                lapsed_claim line for watch:gh by our holder younger than GHWS_LAPSE_MAX_AGE_SECS (default
+#                                600; this works at any poll interval and after a restart). A clean stop releases the claim
+#                                and leaves no evidence, so a receiver the human stopped stays stopped. The evidence is
+#                                extended on every attempt, so a failed ensure is retried on the backoff. The loop clears
+#                                old evidence when it starts (--once keeps it, it expires by itself)
+# One supervisor per state dir (a lock symlink with the pid; a dead holder's lock is taken over): a second loop exits 1, a
+# second --once pass exits 0 doing nothing, so the restart count and the pid file are never raced. `ensure` runs in its own
+# session (setsid, else perl POSIX::setsid, else a job-control subshell), so Ctrl-C to the supervisor never stops the
+# receiver it started. KLATCH_HOME must already hold rooms.db (klatch would create a store in a missing home).
+# Bounds: at most GHWS_MAX_RESTARTS ensure runs (default 3) in any GHWS_WINDOW_SECS (default 3600), the wait before the next
+# one doubling from GHWS_BACKOFF_SECS (default 60: 60, 120, 240, capped at 600). When the next restart is due and the limit
+# is reached it logs one ALERT, says run gh-watch ensure yourself, and exits 3. An attempt counts whether or not it worked.
+# Never started or touched: the forwarder (the human's, it needs admin:repo_hook), launchd units, gh, the live store, any
+# credential. If `klatch claims` fails (store busy, a credential would be needed) it logs an ALERT and restarts nothing.
+# Off switch: while GHWS_OFF_FILE exists (default ~/.klatch-gh-watch-supervisor-off) nothing is restarted.
+#
+# Log: one fixed-template line per change of state (never per pass) appended to OUT_DIR/gh-watch.log (TIME INFO|ALERT text,
+# the file the session Monitor already tails) and printed. No claim, room, webhook or stuck text is ever logged or run:
+# only the numbers it counted itself. State (restart times, flags) is in GHWS_STATE (default OUT_DIR/supervisor).
+# Test knobs: GHWS_NOW_FILE (a file holding the clock as epoch seconds; passes then never sleep), GHWS_MAX_TICKS (stop the
+# loop after that many passes), GHWS_GH_WATCH (the gh-watch to run). Other settings: GHWS_POLL_SECS (default 15).
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; echo; echo "Usage: gh-watch-supervise [--once] --klatch-bin PATH --as-member NAME --room NAME [--out-dir DIR] [--port N] [--secret-file FILE]"; }
+die() { echo "gh-watch-supervise: $*" >&2; exit "${2:-1}"; }
+
+once=0 out_dir="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}" port=8787 secret_file=""
+klatch_bin="" member="" room=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --once) once=1; shift ;;
+    --out-dir | --port | --secret-file | --klatch-bin | --as-member | --room)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      case "$1" in
+        --out-dir) out_dir="$2" ;; --port) port="$2" ;; --secret-file) secret_file="$2" ;;
+        --klatch-bin) klatch_bin="$2" ;; --as-member) member="$2" ;; --room) room="$2" ;;
+      esac
+      shift 2 ;;
+    *) die "unknown argument $1 (Usage: gh-watch-supervise [--once] --klatch-bin PATH --as-member NAME --room NAME [--out-dir DIR])" ;;
+  esac
+done
+
+[ -n "$klatch_bin" ] && [ -n "$member" ] && [ -n "$room" ] || die "--klatch-bin, --as-member and --room are required (the claim is read with klatch claims ROOM; without them there is no claim to read)"
+name_re='^[A-Za-z0-9._-]{1,40}$'
+[[ $member =~ $name_re ]] && [[ $room =~ $name_re ]] || die "--as-member and --room must be plain names (letters, digits, dot, dash, underscore)"
+case "$port" in '' | *[!0-9]*) die "--port must be a number" ;; esac
+case "$out_dir/" in */.klatch/*) die "--out-dir must not be inside .klatch (never the live store)" ;; esac
+
+gh_watch="${GHWS_GH_WATCH:-$here/gh-watch}"
+poll="${GHWS_POLL_SECS:-15}" max_restarts="${GHWS_MAX_RESTARTS:-3}" window="${GHWS_WINDOW_SECS:-3600}"
+backoff="${GHWS_BACKOFF_SECS:-60}" evidence="${GHWS_EVIDENCE_SECS:-180}" ktimeout="${GHWS_KLATCH_TIMEOUT_SECS:-15}" lapse_max="${GHWS_LAPSE_MAX_AGE_SECS:-600}"
+off_file="${GHWS_OFF_FILE:-$HOME/.klatch-gh-watch-supervisor-off}"
+state="${GHWS_STATE:-$out_dir/supervisor}"
+max_ticks="${GHWS_MAX_TICKS:-0}"
+for v in "$poll" "$max_restarts" "$window" "$backoff" "$evidence" "$ktimeout" "$lapse_max" "$max_ticks"; do
+  case "$v" in '' | *[!0-9]*) die "GHWS_POLL_SECS, GHWS_MAX_RESTARTS, GHWS_WINDOW_SECS, GHWS_BACKOFF_SECS, GHWS_EVIDENCE_SECS, GHWS_KLATCH_TIMEOUT_SECS, GHWS_LAPSE_MAX_AGE_SECS and GHWS_MAX_TICKS must be whole numbers" ;; esac
+done
+# a leading zero is not octal (GHWS_POLL_SECS=08): force base 10
+poll=$((10#$poll)); max_restarts=$((10#$max_restarts)); window=$((10#$window)); backoff=$((10#$backoff)); evidence=$((10#$evidence))
+ktimeout=$((10#$ktimeout)); lapse_max=$((10#$lapse_max)); max_ticks=$((10#$max_ticks))
+[ "$poll" -ge 1 ] && [ "$window" -ge 1 ] && [ "$ktimeout" -ge 1 ] || die "GHWS_POLL_SECS, GHWS_WINDOW_SECS and GHWS_KLATCH_TIMEOUT_SECS must be 1 or more"
+
+# The status room is an isolated store, never ~/.klatch: klatch with no KLATCH_HOME is the live store.
+home_ok() {
+  local h="${KLATCH_HOME:-}" r lc live
+  [ -n "$h" ] || return 1
+  r="$h"; [ -d "$h" ] && r="$(cd -P "$h" 2> /dev/null && pwd -P)"
+  for lc in "$h" "$r"; do
+    lc="$(printf '%s' "$lc" | tr '[:upper:]' '[:lower:]')"
+    case "/$lc/" in */.klatch/*) return 1 ;; esac
+  done
+  # the receiver's own rule too: nothing at or under the real path of ~/.klatch (it may itself be a symlink)
+  live="$(cd -P "$HOME/.klatch" 2> /dev/null && pwd -P)"
+  if [ -n "$live" ]; then
+    live="$(printf '%s' "$live" | tr '[:upper:]' '[:lower:]')"; lc="$(printf '%s' "$r" | tr '[:upper:]' '[:lower:]')"
+    case "$lc/" in "$live"/*) return 1 ;; esac
+  fi
+  return 0
+}
+home_ok || die "KLATCH_HOME is unset or inside .klatch (the status room is an isolated store, never ~/.klatch); set it to the factory store's home" 2
+# klatch claims would CREATE a store in a missing home: only read a store that is already there
+[ -f "$KLATCH_HOME/rooms.db" ] || die "KLATCH_HOME has no rooms.db: not reading it (klatch would create a store there); point it at the factory store's home" 2
+
+(umask 077; mkdir -p "$out_dir" "$state") || die "cannot create $out_dir or $state"
+log_file="$out_dir/gh-watch.log"
+
+now_s() { if [ -n "${GHWS_NOW_FILE:-}" ]; then cat "$GHWS_NOW_FILE"; else date +%s; fi; }
+say() { # severity text: one line to the log the Monitor tails, and to stdout
+  local line
+  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) $1 watcher supervisor: $2"
+  printf '%s\n' "$line" >> "$log_file"
+  printf '%s\n' "$line"
+}
+note() { # key severity text: written when the key differs from the last one written (a change of state, not every pass)
+  [ "$(cat "$state/said" 2> /dev/null)" = "$1" ] && return 0
+  printf '%s\n' "$1" > "$state/said"
+  say "$2" "$3"
+}
+flag() { [ -e "$state/$1" ]; }
+
+# one supervisor at a time per state dir: a symlink named lock whose target is the pid (made and read atomically).
+# A dead holder's lock is moved aside (a rename, so only one cleaner wins) and taken again.
+lock="$state/lock"
+take_lock() {
+  local p tries=0
+  while ! ln -s "$$" "$lock" 2> /dev/null; do
+    p="$(readlink "$lock" 2> /dev/null)"
+    case "$p" in '' | *[!0-9]*) ;; *) kill -0 "$p" 2> /dev/null && return 1 ;; esac
+    tries=$((tries + 1)); [ "$tries" -le 3 ] || return 1
+    mv "$lock" "$lock.stale.$$" 2> /dev/null && rm -f "$lock.stale.$$"
+  done
+  return 0
+}
+# shellcheck disable=SC2329 # called from traps
+release_lock() { [ "$(readlink "$lock" 2> /dev/null)" = "$$" ] && rm -f "$lock"; return 0; }
+
+kill_tree() { local c; for c in $(pgrep -P "$1" 2> /dev/null); do kill -9 "$c" 2> /dev/null; done; kill -9 "$1" 2> /dev/null; }
+
+# a klatch call that cannot hang the supervisor: output in kout; 0 ok, 1 failed, 124 killed after GHWS_KLATCH_TIMEOUT_SECS
+kout=""
+kcall() {
+  local of="$state/kout.$$" cp wd wc wk rc
+  rm -f "$state/ktimeout"
+  KLATCH_NAME=gh-watch-supervisor "$klatch_bin" "$@" > "$of" 2> /dev/null < /dev/null &
+  cp=$!
+  ( /bin/sleep "$ktimeout"; : > "$state/ktimeout"; kill_tree "$cp" ) > /dev/null 2>&1 &
+  wd=$!
+  wait "$cp" 2> /dev/null; rc=$?
+  # the watchdog first (its sleep ending must not run the kill), then its sleep
+  wc="$(pgrep -P "$wd" 2> /dev/null)"; kill -9 "$wd" 2> /dev/null; for wk in $wc; do kill -9 "$wk" 2> /dev/null; done
+  wait "$wd" 2> /dev/null
+  kout="$(cat "$of" 2> /dev/null)"; rm -f "$of"
+  if [ -e "$state/ktimeout" ]; then rm -f "$state/ktimeout"; return 124; fi
+  [ "$rc" -eq 0 ]
+}
+
+pid_of_receiver() { # the receiver pid when it is alive; empty otherwise
+  local p
+  p="$(head -n 1 "$out_dir/gh-watch.pid" 2> /dev/null)"
+  case "$p" in '' | *[!0-9]*) return 0 ;; esac
+  kill -0 "$p" 2> /dev/null && printf '%s' "$p"
+  return 0
+}
+
+# the holder name the receiver claims under: MEMBER cut to 30 characters, then its pid (gh-watch-receiver.py holder_name)
+holder_for() { printf '%s.%s' "${member:0:30}" "$1"; }
+is_ours() { # holder: the one recorded while our receiver was alive; with none recorded yet, our member name and any pid
+  local rec re
+  rec="$(cat "$state/holder" 2> /dev/null)"
+  if [ -n "$rec" ]; then [ "$1" = "$rec" ]; return; fi
+  re="^${member:0:30}\\.[0-9]+\$"
+  [[ $1 =~ $re ]]
+}
+
+# sets cstate: held (the watch:gh claim is held, cholder is its holder), none (absent or lapsed), err, timeout
+cstate="" cholder=""
+read_claim() {
+  local line holder left rc=0
+  cstate=none cholder=""
+  kcall claims "$room" || rc=$?
+  [ "$rc" -eq 0 ] || { if [ "$rc" -eq 124 ]; then cstate=timeout; else cstate=err; fi; return 0; }
+  while IFS=$'\t' read -r line holder left _; do
+    [ "$line" = "watch:gh" ] || continue
+    [[ $left =~ ^([0-9]+)s\ left$ ]] || continue
+    if [ "${BASH_REMATCH[1]}" -gt 0 ]; then cstate=held; cholder="$holder"; return 0; fi
+  done <<< "$kout"
+  return 0
+}
+
+# crash evidence from klatch stuck (best effort, #1586): a recent lapsed_claim line for watch:gh in this room whose holder is ours
+stuck_lapse() {
+  local line rc=0 re="lapsed_claim room $room claim watch:gh holder ([^ ]+) lapsed ([0-9]+)s"
+  kcall stuck "$room" || rc=$?
+  if [ "$rc" -eq 124 ]; then note "timeout" ALERT "klatch call timed out after $ktimeout s, not restarting"; return 1; fi
+  [ "$rc" -eq 0 ] || return 1
+  while IFS= read -r line; do
+    if [[ $line =~ $re ]] && [ "${BASH_REMATCH[2]}" -le "$lapse_max" ] && is_ours "${BASH_REMATCH[1]}"; then return 0; fi
+  done <<< "$kout"
+  return 1
+}
+
+# the crash flag holds "TIME HOLDER" and is evidence only while fresh (GHWS_EVIDENCE_SECS) and for the holder we recorded
+set_crash() { local h; h="$(cat "$state/holder" 2> /dev/null)"; printf '%s %s\n' "$1" "${h:--}" > "$state/crash"; } # time; the holder recorded now
+crash_fresh() { # now
+  local t h rec
+  [ -f "$state/crash" ] || return 1
+  read -r t h < "$state/crash" || return 1
+  rec="$(cat "$state/holder" 2> /dev/null)"
+  [[ $t =~ ^[0-9]+$ ]] && [ $(($1 - t)) -le "$evidence" ] && [ "$h" = "${rec:--}" ] && return 0
+  rm -f "$state/crash"
+  return 1
+}
+
+restarts_in_window() { # now: prune attempts older than the window, print how many are left
+  local now="$1" t keep=""
+  [ -f "$state/restarts" ] || : > "$state/restarts"
+  while IFS= read -r t; do
+    [ -n "$t" ] && [ $((now - t)) -lt "$window" ] && keep="$keep$t"$'\n'
+  done < "$state/restarts"
+  printf '%s' "$keep" > "$state/restarts"
+  printf '%s' "$keep" | grep -c '' | tr -d ' '
+}
+
+# run a command in its own session, so a Ctrl-C or TERM to the supervisor's process group never reaches the receiver it
+# started (ensure runs nohup serve in the caller's group, and nohup only ignores HUP)
+detached() {
+  if command -v setsid > /dev/null 2>&1; then setsid "$@"
+  elif command -v perl > /dev/null 2>&1; then perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' -- "$@"
+  else ( set -m; "$@" )
+  fi
+}
+
+# one restart: returns 3 when the limit stops it
+restart() {
+  local now="$1" n next delay rc=0 i rp
+  n="$(restarts_in_window "$now")"
+  next="$(cat "$state/next-ok" 2> /dev/null || echo 0)"
+  if [ "$now" -lt "$next" ]; then
+    note "backoff" INFO "receiver is down and the watch:gh claim lapsed, waiting out the backoff before the next ensure"
+    return 0
+  fi
+  if [ "$n" -ge "$max_restarts" ]; then
+    note "limit" ALERT "restart limit reached ($n in the last $window s), giving up; run gh-watch ensure yourself"
+    return 3
+  fi
+  echo "$now" >> "$state/restarts"
+  n=$((n + 1))
+  delay="$backoff"; i=1
+  while [ "$i" -lt "$n" ] && [ "$delay" -lt 600 ]; do delay=$((delay * 2)); i=$((i + 1)); done
+  [ "$delay" -le 600 ] || delay=600
+  echo $((now + delay)) > "$state/next-ok"
+  printf '%s\n' "restart $n" > "$state/said"
+  say INFO "claim lapsed and receiver pid dead, running gh-watch ensure (attempt $n of $max_restarts in the last $window s)"
+  local -a eargs=(ensure --out-dir "$out_dir" --port "$port" --klatch-bin "$klatch_bin" --as-member "$member" --room "$room")
+  [ -z "$secret_file" ] || eargs+=(--secret-file "$secret_file")
+  detached "$gh_watch" "${eargs[@]}" < /dev/null > /dev/null 2>&1 || rc=$?
+  rp="$(pid_of_receiver)"
+  [ -z "$rp" ] || holder_for "$rp" > "$state/holder"
+  set_crash $((now + delay)) # the evidence must outlive the wait for the next attempt
+  if [ "$rc" -ne 3 ] && [ -n "$rp" ]; then
+    say INFO "receiver restarted by ensure"
+  else
+    say ALERT "ensure did not bring the receiver up, next try in $delay s"
+  fi
+  return 0
+}
+
+tick() {
+  local now pid
+  now="$(now_s)"
+  if [ -e "$off_file" ]; then note "off" INFO "off file present, no restart"; return 0; fi
+  read_claim
+  case "$cstate" in
+    err) note "unreadable" ALERT "claim state unreadable, not restarting"; return 0 ;;
+    timeout) note "timeout" ALERT "klatch call timed out after $ktimeout s, not restarting"; return 0 ;;
+  esac
+  pid="$(pid_of_receiver)"
+  if [ -n "$pid" ]; then
+    # the receiver is up: remember the holder name it claims under, and any crash evidence is over
+    holder_for "$pid" > "$state/holder"
+    rm -f "$state/crash"
+    if [ "$cstate" = held ] && is_ours "$cholder"; then
+      : > "$state/held"
+      if [ -s "$state/said" ] && [ "$(cat "$state/said")" != healthy ]; then
+        printf 'healthy\n' > "$state/said"; say INFO "receiver and watch:gh claim are healthy again"
+      fi
+      printf 'healthy\n' > "$state/said"
+    elif [ "$cstate" = none ] && flag held; then
+      note "hung" ALERT "receiver pid is alive but the watch:gh claim lapsed; not restarting (a hung receiver is the human's to stop)"
+    fi
+    return 0
+  fi
+  if [ "$cstate" = held ]; then
+    if is_ours "$cholder"; then
+      set_crash "$now"
+      note "waiting" INFO "receiver pid is dead, waiting for the watch:gh claim to lapse"
+    else
+      note "other-holder" ALERT "receiver pid is dead but the watch:gh claim is held by another holder; not restarting"
+    fi
+    return 0
+  fi
+  if ! crash_fresh "$now" && stuck_lapse; then set_crash "$now"; fi
+  if crash_fresh "$now"; then restart "$now"; return $?; fi
+  note "no-lapse" INFO "receiver is down but no lapse of our claim was seen (a clean stop, or it never ran); not restarting"
+  return 0
+}
+
+if [ "$once" -eq 1 ]; then
+  take_lock || { echo "gh-watch-supervise: another supervisor is running on $state; nothing done" >&2; exit 0; }
+  trap release_lock EXIT
+  tick; exit $?
+fi
+
+take_lock || die "another supervisor is running on $state (pid $(readlink "$lock" 2> /dev/null))"
+stopping=0
+trap release_lock EXIT
+trap 'stopping=1' INT TERM HUP
+# a new run starts without old evidence; the claim and the pid decide again
+rm -f "$state/crash" "$state/held" "$state/said"
+ticks=0
+while [ "$stopping" -eq 0 ]; do
+  rc=0; tick || rc=$?
+  [ "$rc" -eq 3 ] && exit 3
+  ticks=$((ticks + 1))
+  [ "$max_ticks" -gt 0 ] && [ "$ticks" -ge "$max_ticks" ] && exit 0
+  if [ -z "${GHWS_NOW_FILE:-}" ]; then # slices of one second, run in the background and waited for, so a signal is acted on at once
+    left="$poll"
+    while [ "$left" -gt 0 ] && [ "$stopping" -eq 0 ]; do /bin/sleep 1 & wait $!; left=$((left - 1)); done
+  fi
+done
+exit 0
