@@ -20,6 +20,7 @@
 
 use crate::loopback::{self, Stream};
 use crate::tls::{self, Listener, TlsFiles};
+use crate::tls_admit::SessionSlots;
 use crate::tls_limits::{Handshakes, Limits};
 use crate::wire_http::{self, Shared};
 use anyhow::{Context, Result, bail};
@@ -73,6 +74,7 @@ pub fn parse(args: &[&str]) -> Result<Options> {
 #[derive(Default)]
 struct Raw<'a> {
     max_handshakes: Option<&'a str>,
+    per_source: Option<&'a str>,
     handshake: Option<&'a str>,
     stall: Option<&'a str>,
 }
@@ -98,6 +100,15 @@ fn limits_of(raw: &Raw, max_connections: usize, short_limits: bool) -> Result<Li
             .filter(|n| (1..=max_connections).contains(n))
             .with_context(|| {
                 format!("--max-handshakes is a positive number up to --max-connections ({max_connections}), not {text:?}")
+            })?;
+    }
+    if let Some(text) = raw.per_source {
+        limits.per_source = text
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1..=limits.max_handshakes).contains(n))
+            .with_context(|| {
+                format!("--handshakes-per-source is a positive number up to --max-handshakes ({}), not {text:?}", limits.max_handshakes)
             })?;
     }
     if let Some(text) = raw.handshake {
@@ -154,6 +165,9 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
                 ws.take(flag, value(flag)?)?;
             }
             "--max-handshakes" => raw.max_handshakes = Some(value("--max-handshakes")?),
+            "--handshakes-per-source" => {
+                raw.per_source = Some(value("--handshakes-per-source")?);
+            }
             "--handshake-secs" => raw.handshake = Some(value("--handshake-secs")?),
             "--stall-secs" => raw.stall = Some(value("--stall-secs")?),
             "--max-connections" => {
@@ -230,15 +244,21 @@ pub fn run(opts: &Options) -> Result<()> {
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
     shared.ws.apply(&opts.ws, opts.max_connections);
     let handshakes = Handshakes::default();
+    let sessions = SessionSlots::new(opts.max_connections);
     let at = Listener {
         config: &config,
         limits: &opts.limits,
         handshakes: &handshakes,
+        sessions: &sessions,
     };
+    // the descriptors and threads of the process are bounded by the sessions plus the handshake pool; the session cap
+    // itself is `sessions` (a connection takes a place there only after its handshake), so a flood of handshakes cannot
+    // take the place of a session
     loopback::serve_concurrent(
         &listener,
         &crate::daemon::STOP,
-        opts.max_connections,
+        opts.max_connections
+            .saturating_add(opts.limits.max_handshakes),
         loopback::Callbacks {
             handler: &|sock: Stream| {
                 tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
@@ -324,6 +344,28 @@ mod tests {
         );
         let small = parse(&with(&["ca.pem", "--max-connections", "3"])).unwrap();
         assert_eq!(small.limits.max_handshakes, 1);
+        assert_eq!(small.limits.per_source_within(), 1);
+    }
+
+    #[test]
+    fn the_share_of_one_source_defaults_to_two_and_is_bounded_by_the_pool() {
+        let d = parse(&with(&["ca.pem"])).unwrap().limits;
+        assert_eq!(d.per_source, 2);
+        let set = parse(&with(&["ca.pem", "--handshakes-per-source", "5"]));
+        assert_eq!(set.unwrap().limits.per_source, 5);
+        // the pool is 8 by default, 3 when asked: the bound follows the pool, whatever the order of the options
+        let e = refusal(
+            &["--handshakes-per-source", "4", "--max-handshakes", "3"],
+            false,
+        );
+        assert!(
+            e.contains("--handshakes-per-source") && e.contains("--max-handshakes"),
+            "{e}"
+        );
+        for bad in ["0", "x", "-1", "9", "18446744073709551615"] {
+            let e = refusal(&["--handshakes-per-source", bad], false);
+            assert!(e.contains("--handshakes-per-source"), "{bad}: {e}");
+        }
     }
 
     fn refusal(extra: &[&'static str], short_limits: bool) -> String {

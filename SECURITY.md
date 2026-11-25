@@ -175,7 +175,19 @@ Supported versions: the newest release only, the current practice and not a poli
   starved 10 of 10 honest clients at a cap of 4 with about 3.3 per second; with the defaults, a cap of 8, a 3 s deadline
   and a 1.5 s minimum age, roughly 5 to 6 per second). It was equally cheap before the age rule, which only protects a
   client already mid-handshake from eviction. The remedies are a firewall, a tunnel or loopback (the listener is
-  loopback unless `--allow-off-loopback` is given), and the per-source limit of #1493.
+  loopback unless `--allow-off-loopback` is given), and the per-source limit below.
+  **Pre-handshake limits (#1493).** A connection that has not finished the handshake takes no place among the
+  sessions: the handshake pool and the session cap (`--max-connections`, counted after the handshake) are separate, so
+  silent sockets cannot take the place of a client that has a certificate. One source address (an IPv4 /32, an IPv6 /64;
+  an IPv4-mapped IPv6 address counts as its IPv4 address) may have `--handshakes-per-source` handshakes in progress
+  (default 2, at most `--max-handshakes`); a newcomer over that share is closed without a byte, unless the source's own
+  oldest handshake is at least half the deadline old, which then gives way, and one source never closes another's. The
+  per-source table holds one entry per handshake in progress, so it is never larger than the pool, and an entry goes
+  when its handshake ends (completes, fails, times out, resets or is evicted). A peer that is cut by the deadline
+  includes one that trickles a byte at a time (the deadline is checked on every read, which it was not before #1493).
+  What remains: many source addresses (a botnet, or a /64 per host from a rented block) can still fill the pool, and
+  clients behind one NAT address share one share. Refusals are logged as one line with a count and no address, at most
+  every ten seconds.
   `proto/klatch-server/tests/no_network.rs` pins this by inspecting the dependency tree and the source (an audit of what
   the code could do, like the one for `klatch`), and every release runs `release/check-packaged-server.sh` on the
   packaged binary: it must print its version, refuse a `0.0.0.0` bind, and start and stop a daemon on a socket. It is
