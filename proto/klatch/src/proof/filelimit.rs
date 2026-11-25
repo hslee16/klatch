@@ -4,12 +4,12 @@
 //! store's (`limit::lock_secs`), and an attempt is charged BEFORE the code is checked, by one append, so a process
 //! killed after the code was typed, or several guessing at once, each still cost one.
 //!
-//! Once the store opens again, `settle` writes one audit row saying how many attempts were made and removes the
-//! file. A file that is damaged (a line that is not a time) counts as an attempt made just now, so damage never
+//! Once the store opens again, `settle` writes one audit row saying how many attempts were made, one `proof-failed`
+//! row for each failed one (so the global alarm of #1310 counts them, #1552), and removes the file. A file that is damaged (a line that is not a time) counts as an attempt made just now, so damage never
 //! grants an attempt. Whoever can delete the file can already delete the store, so this guards the code against
 //! guessing by a program that only has the command line, not against the owner of the files.
 
-use super::limit;
+use super::{alarm, limit};
 use crate::store::NewAudit;
 use crate::store::areas::PolicyStore;
 use std::io::Write;
@@ -22,19 +22,26 @@ pub fn path_for(db: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// `(attempts so far, time of the last one)`; an unreadable file or line reads as an attempt at `now`.
-fn read(db: &Path, now: i64) -> (u32, i64) {
+/// The time of every attempt in the file, oldest first; an unreadable file or line reads as an attempt at `now`
+/// (an unreadable file as one attempt and a count of `u32::MAX`, so it is a wait and never a free attempt).
+fn read_times(db: &Path, now: i64) -> (u32, Vec<i64>) {
     let text = match std::fs::read_to_string(path_for(db)) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
-        Err(_) => return (u32::MAX, now),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, Vec::new()),
+        Err(_) => return (u32::MAX, vec![now]),
     };
-    let (mut count, mut last) = (0u32, 0i64);
-    for line in text.lines() {
-        count = count.saturating_add(1);
-        last = last.max(line.trim().parse().unwrap_or(now));
-    }
-    (count, last)
+    let mut times: Vec<i64> = text
+        .lines()
+        .map(|l| l.trim().parse().unwrap_or(now))
+        .collect();
+    times.sort_unstable();
+    (u32::try_from(times.len()).unwrap_or(u32::MAX), times)
+}
+
+/// `(attempts so far, time of the last one)`.
+fn read(db: &Path, now: i64) -> (u32, i64) {
+    let (count, times) = read_times(db, now);
+    (count, times.last().copied().unwrap_or(0))
 }
 
 /// Seconds the next attempt must wait, 0 when it may be made now.
@@ -66,10 +73,20 @@ pub enum Charge {
 }
 
 /// The store is readable again: record the attempts in its audit and forget them. Nothing to record is nothing done.
+/// Every attempt but the last was a failed guess at the recovery code (the last one is the one that was approved),
+/// and each is written as a `proof-failed` row on the target `recovery`, stamped with its own time, so the global
+/// alarm (#1310, #1552) counts it with the wrong passphrases. The row says only that it came through the file
+/// limit: no code, no terminal label, no secret. At most `alarm::CEILING` of the newest failures are written, since
+/// more add nothing to an alarm that fires at the ceiling and the summary row still says how many were made.
 pub fn settle<S: PolicyStore + ?Sized>(db: &Path, store: &S, now: i64) {
-    let (count, _) = read(db, now);
+    let (count, times) = read_times(db, now);
     if count == 0 {
         return;
+    }
+    let failed = &times[..times.len().saturating_sub(1)];
+    let keep = failed.len().saturating_sub(alarm::CEILING as usize);
+    for at in &failed[keep..] {
+        alarm::failed(store, "recovery", alarm::FILE_LIMIT_DETAIL, *at);
     }
     let detail =
         format!("{count} attempts while the store could not be read (the last one was approved)");

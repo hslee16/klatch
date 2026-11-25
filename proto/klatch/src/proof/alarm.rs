@@ -30,6 +30,8 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 pub const ACTION: &str = "proof-failed-many";
 /// The audit action of a failed proof.
 pub const FAILED: &str = "proof-failed";
+/// The detail of a `proof-failed` row made from the file limit of `recover` and `restore` (#1552): no terminal label.
+pub(super) const FILE_LIMIT_DETAIL: &str = "failures=1 via=file-limit";
 /// The targets a `proof-failed` row has: the passphrase ("") and the recovery code ("recovery").
 const TARGETS: [&str; 2] = ["", "recovery"];
 
