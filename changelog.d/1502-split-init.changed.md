@@ -1,0 +1,1 @@
+- Split `init.rs` into `init/` modules (hooks, flags, optional, diff) under the file cap; no behaviour change, goldens unchanged (#1502).
