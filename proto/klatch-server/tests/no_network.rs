@@ -526,7 +526,7 @@ fn the_key_file_checks_are_in_the_module_that_reads_the_key() {
     let (open, mode, owner, read) = (
         read_key.find("O_NOFOLLOW").expect("no symbolic link"),
         read_key.find("mode & 0o077").expect("the mode check"),
-        read_key.find("geteuid").expect("the owner check"),
+        read_key.find("euid()").expect("the owner check"),
         read_key.find("read_to_end").expect("the read"),
     );
     assert!(
