@@ -210,18 +210,22 @@ class Sink:
         self.fd = os.open(os.path.join(out_dir, "gh-watch.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         self.klatch_bin, self.member, self.room, self.post_min = klatch_bin, member, room, post_min
 
-    def emit(self, severity, text):
+    def log(self, severity, text):
+        """One line in gh-watch.log, never posted to the room (the watcher's own state, not a GitHub event)."""
         now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # one unbuffered write per line, so `tail -F` sees it at once and a crash never leaves half a line
         os.write(self.fd, ("%s %s %s\n" % (now, severity, text)).encode("utf-8", "replace"))
+
+    def emit(self, severity, text):
+        self.log(severity, text)
         if self.klatch_bin and (severity == "ALERT" or self.post_min == "INFO"):
             self.post("%s %s" % (severity, text))
 
-    def klatch(self, args):
-        """The only program this file runs: `klatch ARGS` as the member, with the caller's KLATCH_HOME. Returns
-        (returncode, stderr text); (-1, ...) when it could not run at all."""
+    def klatch(self, args, member=None):
+        """The only program this file runs: `klatch ARGS` as the member (or `member`, the claim holder), with the
+        caller's KLATCH_HOME. Returns (returncode, stderr text); (-1, "") when it could not run at all."""
         env = dict(os.environ)
-        env["KLATCH_NAME"] = self.member
+        env["KLATCH_NAME"] = member or self.member
         try:
             r = subprocess.run([self.klatch_bin] + list(args), env=env, timeout=15, check=False,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -235,14 +239,31 @@ class Sink:
         self.klatch(["post", self.room, line])
 
 
+REFUSED_PREFIX = "Error: refused: "  # what `klatch claim` prints on a claim conflict (main() returns the error; exit 1)
+
+CLAIM_TEXT = {
+    "taken": ("INFO", "watcher claim %s taken"),
+    "lost": ("ALERT", "watcher claim %s lost: another holder has it, retrying"),
+    "failed": ("ALERT", "watcher claim %s not held: klatch failed, retrying"),
+    "refused": ("ALERT", "watcher claim %s not held: another holder has it, retrying"),
+}
+
+
 class ClaimKeeper:
     """Holds the named watcher claim (#1338). `run(args)` runs klatch and returns (returncode, stderr); `clock()` is
-    seconds (monotonic in the receiver, fake in the tests). A refusal is told by the fixed prefix `refused:` that klatch
-    puts on a claim conflict; nothing else in the text is read or trusted, and the text is never printed raw."""
+    seconds (monotonic in the receiver, fake in the tests); `log(severity, text)` writes a line to gh-watch.log. A
+    refusal is told by the exact prefix `Error: refused: ` that the real binary puts on a claim conflict; nothing else in
+    the text is read or trusted, and klatch's text is never logged (the lines are fixed templates).
 
-    def __init__(self, run, clock, room, name=CLAIM_NAME, ttl=CLAIM_TTL, interval=CLAIM_RENEW):
+    The lock guards the flags only and is never held across the klatch call, so a stop is not delayed by a slow call. A
+    renewal that finishes after the release releases once more, so the stop never leaves the claim behind."""
+
+    def __init__(self, run, clock, room, name=CLAIM_NAME, ttl=CLAIM_TTL, interval=CLAIM_RENEW, log=None):
         self.run, self.clock, self.room, self.name, self.ttl, self.interval = run, clock, room, name, ttl, interval
+        self.log = log or (lambda severity, text: None)
         self.held = False
+        self.closed = False
+        self.reported = None  # the last state written to the log, so a repeat is silent
         self.due = clock() + interval
         self.lock = threading.Lock()
 
@@ -250,38 +271,68 @@ class ClaimKeeper:
         rc, err = self.run(["claim", self.room, self.name, "--ttl", str(self.ttl), "--shared", "--reason", CLAIM_REASON])
         if rc == 0:
             return "held"
-        return "refused" if err.startswith("refused:") else "failed"
+        return "refused" if err.startswith(REFUSED_PREFIX) else "failed"
+
+    def _release(self):
+        self.run(["release", self.room, self.name])
+
+    def _settle(self, state, quiet_refusal=False):
+        """Record a claim attempt's outcome (under the lock) and log a change of state. True when it must be undone
+        because the keeper closed meanwhile."""
+        if self.closed:
+            return state == "held"
+        was_held = self.held
+        self.held = state == "held"
+        word = "taken" if self.held else ("lost" if was_held else state)
+        if word != self.reported and not (quiet_refusal and word == "refused"):
+            self.reported = word
+            self.log(*[CLAIM_TEXT[word][0], CLAIM_TEXT[word][1] % self.name])
+        return False
 
     def acquire(self):
         """Take the claim: held, refused (another holder; this receiver must not run) or failed (klatch trouble)."""
+        state = self._claim()
         with self.lock:
-            state = self._claim()
-            self.held = state == "held"
+            undo = self._settle(state, quiet_refusal=True)
             self.due = self.clock() + self.interval
-            return state
+        if undo:
+            self._release()
+        return state
 
     def tick(self):
         """Renew when the interval has passed. A stall renews once, not in a burst. True when it tried."""
         with self.lock:
             now = self.clock()
-            if now < self.due:
+            if self.closed or now < self.due:
                 return False
-            was = self.held
-            self.held = self._claim() == "held"
             self.due = now + self.interval
-            if was and not self.held:
-                sys.stderr.write("gh-watch: the %s claim is not held (renewal failed or another holder took it)\n"
-                                 % self.name)
-                sys.stderr.flush()
-            return True
+        state = self._claim()
+        with self.lock:
+            undo = self._settle(state)
+        if undo:
+            self._release()
+        return True
 
     def release(self):
-        """Give the claim up on a clean stop, once; never when it is not ours."""
+        """Give the claim up on a clean stop, once; never when it is not ours. No renewal follows."""
         with self.lock:
-            if not self.held:
-                return
-            self.held = False
-            self.run(["release", self.room, self.name])
+            self.closed = True
+            was, self.held = self.held, False
+        if was:
+            self._release()
+
+
+def claim_home_ok(env):
+    """The claim needs a KLATCH_HOME that is set and not the live store: never `~/.klatch`, and no path with a
+    `.klatch` component (the ticket invariant is that the status room is an isolated store)."""
+    home = env.get("KLATCH_HOME")
+    if not home:
+        return False
+    real = os.path.realpath(home)
+    live = os.path.realpath(os.path.expanduser("~/.klatch"))
+    if real == live or real.startswith(live + os.sep):
+        return False
+    return ".klatch" not in os.path.abspath(home).split(os.sep) and ".klatch" not in real.split(os.sep)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -407,34 +458,47 @@ def main(argv):
         sys.stderr.write("gh-watch: cannot listen: %s\n" % e.strerror)
         return 2
     keeper = None
-    if a.klatch_bin and not a.no_claim:
-        keeper = ClaimKeeper(sink.klatch, time.monotonic, a.room, ttl=a.claim_ttl, interval=a.claim_renew)
-        if keeper.acquire() == "refused":
-            sys.stderr.write("gh-watch: another receiver holds the %s claim in %s; not starting a second one\n"
-                             % (CLAIM_NAME, a.room))
-            server.server_close()
-            return 2
+    stopping = threading.Event()
     stop = threading.Event()
 
-    def renew_loop():
-        while not stop.wait(1.0):
-            keeper.tick()
-
-    if keeper:
-        threading.Thread(target=renew_loop, daemon=True).start()
-
     def on_term(signum, frame):
-        # shutdown() waits for serve_forever, so it cannot run in this handler (the main thread is in serve_forever)
+        # shutdown() waits for serve_forever, so it cannot run in this handler (the main thread is in serve_forever or
+        # in the first claim); a shutdown asked before serve_forever starts makes it return at once
+        stopping.set()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
+    # installed before the first claim, so a stop that arrives during it still ends in the release below
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGHUP, on_term)
-    sys.stdout.write("listening %s:%d\n" % (a.bind, server.server_address[1]))
-    sys.stdout.flush()
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        if a.klatch_bin and not a.no_claim:
+            if not claim_home_ok(os.environ):
+                sink.log("ALERT", "watcher claim off: KLATCH_HOME is unset or inside .klatch (never the live store)")
+            else:
+                # one holder name per receiver (the pid), so a second receiver with the same --as-member is a
+                # different holder and is refused, and one receiver's stop never releases the other's claim
+                holder = "%s.%d" % (a.as_member[:30], os.getpid())
+                keeper = ClaimKeeper(lambda args: sink.klatch(args, holder), time.monotonic, a.room, ttl=a.claim_ttl,
+                                     interval=a.claim_renew, log=sink.log)
+                if keeper.acquire() == "refused":
+                    sink.log("ALERT", "second receiver refused: another holds the %s claim" % CLAIM_NAME)
+                    sys.stderr.write("gh-watch: another receiver holds the %s claim in %s; not starting a second one\n"
+                                     % (CLAIM_NAME, a.room))
+                    server.server_close()
+                    return 2
+
+        def renew_loop():
+            while not stop.wait(1.0):
+                keeper.tick()
+
+        if keeper:
+            threading.Thread(target=renew_loop, daemon=True).start()
+        sys.stdout.write("listening %s:%d\n" % (a.bind, server.server_address[1]))
+        sys.stdout.flush()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
     finally:
         stop.set()
         if keeper:
