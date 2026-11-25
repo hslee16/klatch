@@ -54,7 +54,7 @@
       "proto/klatch/src/client.rs",
       "proto/klatch/src/codex.rs",
       "proto/klatch/src/consent.rs",
-      "proto/klatch/src/init.rs",
+      "proto/klatch/src/init/**",
       "proto/klatch/src/init_codex.rs",
       "proto/klatch/src/judge.rs",
       "proto/klatch/src/lib.rs",
