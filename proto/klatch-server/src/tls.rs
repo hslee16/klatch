@@ -60,6 +60,9 @@ use std::time::{Duration, Instant};
 /// A finished server configuration, shareable between connections (the name other modules use, so they never name rustls).
 pub type SharedConfig = Arc<ServerConfig>;
 
+/// The configuration type itself, for generic holders (`tls_reload::Current`).
+pub type Config = ServerConfig;
+
 /// The files the operator names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsFiles {

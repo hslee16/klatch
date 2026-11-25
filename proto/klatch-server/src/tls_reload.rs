@@ -41,20 +41,20 @@ pub const DEADLINE: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(100);
 
 /// The configuration new connections use.
-pub struct Current(Mutex<SharedConfig>);
+pub struct Current<T>(Mutex<Arc<T>>);
 
-impl Current {
-    pub fn new(config: SharedConfig) -> Self {
+impl<T> Current<T> {
+    pub fn new(config: Arc<T>) -> Self {
         Current(Mutex::new(config))
     }
 
     /// The configuration for a connection that is just accepted: a clone of the pointer, never a copy.
-    pub fn get(&self) -> SharedConfig {
+    pub fn get(&self) -> Arc<T> {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Replace the configuration with a complete one (one pointer assignment under the lock).
-    fn swap(&self, config: SharedConfig) {
+    fn swap(&self, config: Arc<T>) {
         *self.0.lock().unwrap_or_else(|e| e.into_inner()) = config;
     }
 }
@@ -163,7 +163,7 @@ impl Drop for Done {
 
 /// One reload: build on a thread of its own, wait at most [`DEADLINE`], swap only a finished configuration. Returns the
 /// line to log.
-fn reload_once(opts: &Options, current: &Current, busy: &Arc<AtomicBool>) -> String {
+fn reload_once(opts: &Options, current: &Current<tls::Config>, busy: &Arc<AtomicBool>) -> String {
     if busy.swap(true, Ordering::SeqCst) {
         return failure_line(Kind::Busy);
     }
@@ -194,7 +194,7 @@ fn reload_once(opts: &Options, current: &Current, busy: &Arc<AtomicBool>) -> Str
 
 /// Watch `flag` (set by SIGHUP) until `stop`: each time it is set, and at least [`SPACING`] after the last start, reload
 /// and print the line. Runs on its own thread, never on the accept loop's.
-pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Current) {
+pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Current<tls::Config>) {
     let busy = Arc::new(AtomicBool::new(false));
     let mut last: Option<Instant> = None;
     while !stop.load(Ordering::SeqCst) {
@@ -211,7 +211,6 @@ pub fn watch(stop: &AtomicBool, flag: &AtomicBool, opts: &Options, current: &Cur
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustls::ServerConfig;
     use std::path::PathBuf;
 
     fn files() -> TlsFiles {
@@ -262,21 +261,8 @@ mod tests {
     }
 
     #[test]
-    fn a_swap_replaces_the_configuration_new_readers_get_and_leaves_the_old_one_alive_for_its_holders()
-     {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let make = || {
-            Arc::new(
-                ServerConfig::builder_with_provider(provider.clone())
-                    .with_safe_default_protocol_versions()
-                    .unwrap()
-                    .with_no_client_auth()
-                    .with_cert_resolver(
-                        Arc::new(rustls::server::ResolvesServerCertUsingSni::new()),
-                    ),
-            )
-        };
-        let (a, b) = (make(), make());
+    fn a_swap_replaces_the_value_new_readers_get_and_leaves_the_old_one_alive_for_its_holders() {
+        let (a, b) = (Arc::new(1), Arc::new(2));
         let current = Current::new(a.clone());
         let held = current.get();
         current.swap(b.clone());
