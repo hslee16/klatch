@@ -207,5 +207,7 @@ fn a_huge_list_prints_the_same_capped_count_as_a_huge_number() {
         );
     }
     let exact = r#","background_tasks":9999,"session_crons":9998"#;
-    assert!(stop(&h, true, exact).contains("9999 background task(s) (other 9999) and 9998 cron(s)"));
+    assert!(
+        stop(&h, true, exact).contains("9999 background task(s) (other 9999) and 9998 cron(s)")
+    );
 }
