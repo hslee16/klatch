@@ -1,0 +1,1 @@
+- `klatch-server` (`GET /v1/stream`): a session that ends by a panic now has its connection cut at once. Before, the age timer left without cutting and a client that stayed connected held its member slot with no time limit; the timer and the hang-up watcher now live in `src/wire_stream_run.rs` and the session's way out tells the timer how it ended (#1621, refs #1517).

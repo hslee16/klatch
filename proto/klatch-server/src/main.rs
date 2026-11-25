@@ -21,6 +21,8 @@ mod tls;
 mod tls_admit;
 mod tls_bridge;
 mod tls_crl;
+#[cfg(test)]
+mod tls_crl_tests;
 mod tls_limits;
 mod webhook;
 #[cfg(test)]
@@ -33,6 +35,7 @@ mod webhook_translate_tests;
 mod wire_http;
 mod wire_https;
 mod wire_sse;
+mod wire_stream_run;
 mod wire_ws;
 mod wire_ws_caps;
 

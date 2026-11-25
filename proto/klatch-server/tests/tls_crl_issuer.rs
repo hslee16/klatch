@@ -8,6 +8,7 @@
 mod tls_common;
 
 use std::path::PathBuf;
+use tls_common::der::*;
 use tls_common::*;
 
 const DAY: i64 = 86_400;
@@ -242,39 +243,6 @@ fn sixteen_crls_of_sixteen_issuers_are_accepted() {
 // ---------------------------------------------------------------------------------------------------------------
 // a CRL without a nextUpdate, and times before 1970: refused (the verifier cannot use them either)
 
-/// DER length bytes.
-fn len_bytes(n: usize) -> Vec<u8> {
-    match n {
-        n if n < 0x80 => vec![n as u8],
-        n if n < 0x100 => vec![0x81, n as u8],
-        n => vec![0x82, (n >> 8) as u8, n as u8],
-    }
-}
-
-/// One element: tag, content, and what follows it.
-fn element(input: &[u8]) -> (u8, &[u8], &[u8]) {
-    let (tag, first) = (input[0], input[1] as usize);
-    let (len, at) = if first < 0x80 {
-        (first, 2)
-    } else {
-        let n = first & 0x7f;
-        (
-            input[2..2 + n]
-                .iter()
-                .fold(0usize, |a, b| (a << 8) | *b as usize),
-            2 + n,
-        )
-    };
-    (tag, &input[at..at + len], &input[at + len..])
-}
-
-fn wrap(tag: u8, content: &[u8]) -> Vec<u8> {
-    let mut out = vec![tag];
-    out.extend(len_bytes(content.len()));
-    out.extend_from_slice(content);
-    out
-}
-
 /// The CRL of `pem` with its nextUpdate element removed (the signature no longer verifies; the start-up read does not
 /// check it, which is the point: the server must refuse the file by its shape).
 fn without_next_update(pem: &str) -> String {
@@ -303,33 +271,6 @@ fn without_next_update(pem: &str) -> String {
     let mut list = wrap(0x30, &kept);
     list.extend_from_slice(after_tbs);
     pem_of(&wrap(0x30, &list))
-}
-
-fn pem_of(der: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut b64 = String::new();
-    for chunk in der.chunks(3) {
-        let n = chunk
-            .iter()
-            .enumerate()
-            .fold(0u32, |a, (i, b)| a | (u32::from(*b) << (16 - 8 * i)));
-        for i in 0..4 {
-            if i <= chunk.len() {
-                b64.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                b64.push('=');
-            }
-        }
-    }
-    let lines: Vec<&str> = b64
-        .as_bytes()
-        .chunks(64)
-        .map(|c| std::str::from_utf8(c).unwrap())
-        .collect();
-    format!(
-        "-----BEGIN X509 CRL-----\n{}\n-----END X509 CRL-----\n",
-        lines.join("\n")
-    )
 }
 
 #[test]
