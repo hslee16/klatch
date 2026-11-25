@@ -63,3 +63,9 @@ fn the_post_counts_the_rate_limit_reads_are_an_error_not_zero() {
     let s = MemoryStore::new();
     assert!(unsupported(s.posts_since("m", 0)));
 }
+
+#[test]
+fn the_message_room_lookup_is_an_error_not_none() {
+    let s = MemoryStore::new();
+    assert!(unsupported(s.message_room("any")));
+}

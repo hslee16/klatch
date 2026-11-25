@@ -92,6 +92,16 @@ impl MessageStore for SqliteStore {
         })
     }
 
+    fn message_room(&self, id: &str) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT room FROM messages WHERE mid=?1", params![id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(be)
+    }
+
     fn head(&self, room: &str) -> Result<i64> {
         self.conn
             .query_row(
