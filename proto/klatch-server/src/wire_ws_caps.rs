@@ -1,4 +1,5 @@
-//! What the WebSocket route is configured with, and what one member may hold of it (#112, `wire_ws.rs`): the origins let
+//! What the WebSocket route is configured with, and what one member may hold of it (#112, `wire_ws.rs`; the same guard and
+//! bounds serve `GET /v1/stream` through `--stream-max-per-member` and `--stream-max-age-secs`, #1517): the origins let
 //! through, the deadlines, the cap of connections per member and the maximum age of a connection, with the flags that set
 //! them (`--ws-allow-origin`, `--ws-max-per-member`, `--ws-max-age-secs`, on both listeners) and the registry that counts a
 //! member's open connections.
@@ -42,6 +43,10 @@ pub(crate) struct Settings {
     pub(crate) per_member: usize,
     /// How long a connection may live.
     pub(crate) max_age: Duration,
+    /// Open `GET /v1/stream` connections one member may hold (#1517): the same guard, counted apart.
+    pub(crate) stream_per_member: usize,
+    /// How long a stream may live.
+    pub(crate) stream_max_age: Duration,
 }
 
 impl Default for Settings {
@@ -59,6 +64,8 @@ impl Default for Settings {
             stall: short.then_some(Duration::from_secs(3)),
             per_member: DEFAULT_PER_MEMBER,
             max_age: Duration::from_secs(DEFAULT_MAX_AGE_SECS),
+            stream_per_member: DEFAULT_PER_MEMBER,
+            stream_max_age: Duration::from_secs(DEFAULT_MAX_AGE_SECS),
         }
     }
 }
@@ -70,6 +77,8 @@ pub struct Raw<'a> {
     origins: Vec<String>,
     per_member: Option<&'a str>,
     max_age: Option<&'a str>,
+    stream_per_member: Option<&'a str>,
+    stream_max_age: Option<&'a str>,
 }
 
 /// The WebSocket options, checked.
@@ -79,6 +88,28 @@ pub struct Options {
     pub origins: Vec<String>,
     per_member: Option<usize>,
     max_age_secs: Option<u64>,
+    stream_per_member: Option<usize>,
+    stream_max_age_secs: Option<u64>,
+}
+
+/// A cap per member, from 1 to `max_connections`; a bad value names the flag and the bound.
+fn parse_cap(flag: &str, text: &str, max_connections: usize) -> Result<usize> {
+    text.parse::<usize>()
+        .ok()
+        .filter(|n| (1..=max_connections).contains(n))
+        .ok_or_else(|| {
+            anyhow!("{flag} is a whole number from 1 to --max-connections ({max_connections}), not {text:?}")
+        })
+}
+
+/// A maximum age in seconds, from `floor` to a day; a bad value names the flag and the bounds.
+fn parse_age(flag: &str, text: &str, floor: u64) -> Result<u64> {
+    text.parse::<u64>()
+        .ok()
+        .filter(|n| (floor..=MAX_AGE_CEILING_SECS).contains(n))
+        .ok_or_else(|| {
+            anyhow!("{flag} is a whole number of seconds from {floor} to {MAX_AGE_CEILING_SECS}, not {text:?}")
+        })
 }
 
 impl<'a> Raw<'a> {
@@ -87,6 +118,8 @@ impl<'a> Raw<'a> {
         match flag {
             "--ws-allow-origin" => self.origins.push(parse_origin(value)?),
             "--ws-max-per-member" => self.per_member = Some(value),
+            "--stream-max-per-member" => self.stream_per_member = Some(value),
+            "--stream-max-age-secs" => self.stream_max_age = Some(value),
             _ => self.max_age = Some(value),
         }
         Ok(())
@@ -95,31 +128,28 @@ impl<'a> Raw<'a> {
     /// The options, each number within its bound: a cap per member from 1 to `max_connections`, an age from a minute to a
     /// day (`short` lowers the minimum to a second, for tests). A bad value refuses to start, naming the flag and the bound.
     pub fn finish(self, max_connections: usize, short: bool) -> Result<Options> {
-        let per_member = self
-            .per_member
-            .map(|text| {
-                text.parse::<usize>().ok().filter(|n| (1..=max_connections).contains(n)).ok_or_else(|| {
-                    anyhow!("--ws-max-per-member is a whole number from 1 to --max-connections ({max_connections}), not {text:?}")
-                })
-            })
-            .transpose()?;
+        let cap = |flag: &str, text: Option<&str>| {
+            text.map(|text| parse_cap(flag, text, max_connections))
+                .transpose()
+        };
         let floor = if short && cfg!(debug_assertions) {
             1
         } else {
             MAX_AGE_FLOOR_SECS
         };
-        let max_age_secs = self
-            .max_age
-            .map(|text| {
-                text.parse::<u64>().ok().filter(|n| (floor..=MAX_AGE_CEILING_SECS).contains(n)).ok_or_else(|| {
-                    anyhow!("--ws-max-age-secs is a whole number of seconds from {floor} to {MAX_AGE_CEILING_SECS}, not {text:?}")
-                })
-            })
-            .transpose()?;
+        let age = |flag: &str, text: Option<&str>| {
+            text.map(|text| parse_age(flag, text, floor)).transpose()
+        };
+        let per_member = cap("--ws-max-per-member", self.per_member)?;
+        let max_age_secs = age("--ws-max-age-secs", self.max_age)?;
+        let stream_per_member = cap("--stream-max-per-member", self.stream_per_member)?;
+        let stream_max_age_secs = age("--stream-max-age-secs", self.stream_max_age)?;
         Ok(Options {
             origins: self.origins,
             per_member,
             max_age_secs,
+            stream_per_member,
+            stream_max_age_secs,
         })
     }
 }
@@ -133,6 +163,12 @@ impl Settings {
             .unwrap_or(DEFAULT_PER_MEMBER.min(max_connections));
         if let Some(secs) = options.max_age_secs {
             self.max_age = Duration::from_secs(secs);
+        }
+        self.stream_per_member = options
+            .stream_per_member
+            .unwrap_or(DEFAULT_PER_MEMBER.min(max_connections));
+        if let Some(secs) = options.stream_max_age_secs {
+            self.stream_max_age = Duration::from_secs(secs);
         }
     }
 }
@@ -185,6 +221,18 @@ pub fn parse_origin(text: &str) -> Result<String> {
     let (host, port, v6) = authority(rest).ok_or_else(bad)?;
     let fine = matches!(scheme, "http" | "https") && host_ok(host, v6) && port_ok(port);
     fine.then(|| text.to_string()).ok_or_else(bad)
+}
+
+/// Wait for a connection to end (`ended`: its sender dropped) or for `max_age`; at the age, run `end`, which cuts the
+/// connection. The client reconnects and resumes with `subscribe` and `from_seq`.
+pub(crate) fn at_max_age(
+    ended: &std::sync::mpsc::Receiver<()>,
+    max_age: Duration,
+    end: impl FnOnce(),
+) {
+    if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = ended.recv_timeout(max_age) {
+        end();
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -335,6 +383,45 @@ mod tests {
             cfg!(debug_assertions)
         );
         assert!(finish(&[("--ws-max-age-secs", "0")], 8, true).is_err());
+    }
+
+    #[test]
+    fn the_stream_flags_have_the_bounds_of_the_websocket_flags() {
+        assert!(finish(&[("--stream-max-per-member", "8")], 8, false).is_ok());
+        for bad in ["0", "9", "x", ""] {
+            let e = finish(&[("--stream-max-per-member", bad)], 8, false)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("--stream-max-per-member") && e.contains("--max-connections"));
+        }
+        for ok in ["60", "86400"] {
+            assert!(finish(&[("--stream-max-age-secs", ok)], 8, false).is_ok());
+        }
+        for bad in ["0", "59", "86401", "x"] {
+            let e = finish(&[("--stream-max-age-secs", bad)], 8, false)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("--stream-max-age-secs") && e.contains("86400"));
+        }
+        let o = finish(
+            &[
+                ("--stream-max-per-member", "2"),
+                ("--stream-max-age-secs", "90"),
+            ],
+            8,
+            false,
+        )
+        .unwrap();
+        let mut s = Settings::default();
+        s.apply(&o, 8);
+        assert_eq!(
+            (s.stream_per_member, s.stream_max_age),
+            (2, Duration::from_secs(90))
+        );
+        // the WebSocket route's own values are not touched by them
+        assert_eq!((s.per_member, s.max_age), (4, Duration::from_secs(3600)));
+        s.apply(&Options::default(), 2);
+        assert_eq!(s.stream_per_member, 2);
     }
 
     #[test]

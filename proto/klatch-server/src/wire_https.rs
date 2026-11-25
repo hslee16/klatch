@@ -137,7 +137,11 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
             "--tls-key" => key = Some(PathBuf::from(value("--tls-key")?)),
             "--tls-client-ca" => ca = Some(PathBuf::from(value("--tls-client-ca")?)),
             "--allow-off-loopback" => allow_off_loopback = true,
-            flag @ ("--ws-allow-origin" | "--ws-max-per-member" | "--ws-max-age-secs") => {
+            flag @ ("--ws-allow-origin"
+            | "--ws-max-per-member"
+            | "--ws-max-age-secs"
+            | "--stream-max-per-member"
+            | "--stream-max-age-secs") => {
                 ws.take(flag, value(flag)?)?;
             }
             "--max-handshakes" => raw.max_handshakes = Some(value("--max-handshakes")?),
