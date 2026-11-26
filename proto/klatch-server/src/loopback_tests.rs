@@ -293,3 +293,62 @@ fn garbage_is_400_and_a_silent_close_is_not_answered() {
     );
     assert_eq!(status_of(&a), 200);
 }
+
+/// A `serve_concurrent` on a loopback port whose handler panics on its first connection and answers `ok` after that;
+/// the excess handler answers `busy`. Returns the address, the stop flag and the thread (its result is the server's
+/// exit: `Err` when a handler's panic took the accept loop down with it).
+fn panicking_server(max: usize) -> (SocketAddr, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let first = AtomicBool::new(true);
+    let t = std::thread::spawn(move || {
+        serve_concurrent(
+            &listener,
+            &flag,
+            max,
+            Callbacks {
+                handler: &|mut s: Stream| {
+                    if first.swap(false, Ordering::SeqCst) {
+                        panic!("a handler fault");
+                    }
+                    let _ = s.write_all(b"ok");
+                },
+                excess: &|mut s: Stream| {
+                    let _ = s.write_all(b"busy");
+                },
+            },
+        );
+    });
+    (addr, stop, t)
+}
+
+/// What the server says to a new connection, read under a deadline.
+fn greeting(addr: SocketAddr) -> String {
+    let mut c = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let mut out = String::new();
+    let _ = c.read_to_string(&mut out);
+    out
+}
+
+#[test]
+fn a_handler_that_panics_gives_its_global_slot_back_and_the_server_goes_on() {
+    // #1640: with a cap of one, one panic must not leave the server refusing everything
+    let (addr, stop, t) = panicking_server(1);
+    let _ = greeting(addr); // the connection whose handler panics
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut said = String::new();
+    while Instant::now() < until {
+        said = greeting(addr);
+        if said == "ok" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::SeqCst);
+    let joined = t.join();
+    assert_eq!(said, "ok", "the slot of the panicked handler was kept");
+    assert!(joined.is_ok(), "the handler's panic ended the accept loop");
+}

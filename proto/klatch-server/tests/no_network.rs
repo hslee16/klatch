@@ -255,19 +255,19 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
         assert_eq!(count(forbidden), 0, "{forbidden}");
     }
     // the order of admitting a connection (`admit`): who the peer is, then the uid check; and in the accept loop
-    // (`run`) a connection is admitted before any thread is spawned for it, so nothing is served before the uid check
-    let admit = &text[text.find("fn admit(").expect("admit")..];
+    // (`accept_loop`) a connection is admitted before any thread is spawned for it, so nothing is served before the uid check
+    let admit = &text[text.find("fn admit<").expect("admit")..];
     let (cred, uid) = (
         admit.find("peer_cred(&stream)").expect("peer credentials"),
         admit.find("local_evidence(peer").expect("the uid check"),
     );
     assert!(cred < uid, "who the peer is comes before the uid check");
-    let accept = text.find("fn run(").expect("run");
-    let body = &text[accept..];
+    let looped = &text[text.find("fn accept_loop(").expect("accept_loop")..];
     let (admitted, spawn) = (
-        body.find("admit(").expect("a connection is admitted"),
-        body.find("scope.spawn(").expect("the connection thread"),
+        looped.find("admit(").expect("a connection is admitted"),
+        looped.find("scope.spawn(").expect("the connection thread"),
     );
+    let body = &text[text.find("fn run(").expect("run")..];
     assert!(
         admitted < spawn,
         "the uid check comes before anything is served"
