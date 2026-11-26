@@ -3,6 +3,7 @@
 //! and a rustls client that can present, omit or misuse a certificate. Not a test file: both `tls_*` tests include it.
 #![allow(dead_code)]
 
+pub mod der;
 pub mod scenario;
 pub mod wire;
 pub mod ws;
@@ -87,7 +88,13 @@ pub struct Leaf {
 
 impl Ca {
     pub fn new(name: &str) -> Ca {
+        Ca::new_serial(name, None)
+    }
+
+    /// [`Ca::new`] with a serial number the test chose for the CA's own certificate, so that a CRL can name it.
+    pub fn new_serial(name: &str, serial: Option<u64>) -> Ca {
         let mut params = CertificateParams::new(Vec::new()).unwrap();
+        params.serial_number = serial.map(SerialNumber::from);
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         params.distinguished_name.push(DnType::CommonName, name);
@@ -316,6 +323,17 @@ pub fn spawn(dir: &Dir, subcommand: &str, args: &[String]) -> Child {
 /// [`spawn`], with or without the knob that lets a debug build take limits below the shipped minimums (a short stall
 /// time, so that a test need not wait a minute). `false` is the server as an operator runs it.
 pub fn spawn_with(dir: &Dir, subcommand: &str, args: &[String], short_limits: bool) -> Child {
+    spawn_env(dir, subcommand, args, short_limits, &[])
+}
+
+/// [`spawn_with`] and more environment variables for the child (a test knob of a debug build, #1621).
+pub fn spawn_env(
+    dir: &Dir,
+    subcommand: &str,
+    args: &[String],
+    short_limits: bool,
+    env: &[(&str, &str)],
+) -> Child {
     let mut command = Command::new(env!("CARGO_BIN_EXE_klatch-server"));
     command
         .arg(subcommand)
@@ -328,6 +346,7 @@ pub fn spawn_with(dir: &Dir, subcommand: &str, args: &[String], short_limits: bo
     if short_limits {
         command.env("KLATCH_TEST_SHORT_LIMITS", "1");
     }
+    command.envs(env.iter().copied());
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -351,10 +370,20 @@ pub struct Server {
 impl Server {
     /// Start on a port the system chooses and wait until the log names it (a complete line, never half an address).
     pub fn started(dir: &Dir, subcommand: &str, extra: &[String]) -> Server {
+        Server::started_env(dir, subcommand, extra, &[])
+    }
+
+    /// [`Server::started`] with more environment variables for the child.
+    pub fn started_env(
+        dir: &Dir,
+        subcommand: &str,
+        extra: &[String],
+        env: &[(&str, &str)],
+    ) -> Server {
         let mut args = vec!["--listen".to_string(), "127.0.0.1:0".to_string()];
         args.extend_from_slice(extra);
         let mut server = Server {
-            child: spawn(dir, subcommand, &args),
+            child: spawn_env(dir, subcommand, &args, true, env),
             addr: "127.0.0.1:0".parse().unwrap(),
         };
         let marker = format!("{subcommand} listening on ");

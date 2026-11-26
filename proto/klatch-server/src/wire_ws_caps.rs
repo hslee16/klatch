@@ -224,13 +224,18 @@ pub fn parse_origin(text: &str) -> Result<String> {
 }
 
 /// Wait for a connection to end (`ended`: its sender dropped) or for `max_age`; at the age, run `end`, which cuts the
-/// connection. The client reconnects and resumes with `subscribe` and `from_seq`.
+/// connection. The client reconnects and resumes with `subscribe` and `from_seq`. A message on `ended` is a request to cut
+/// now, sent by a session that ended abnormally (a panic, #1621): its connection is not closed by anyone else, and a client
+/// that stayed would hold its slots with no time limit.
 pub(crate) fn at_max_age(
     ended: &std::sync::mpsc::Receiver<()>,
     max_age: Duration,
     end: impl FnOnce(),
 ) {
-    if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = ended.recv_timeout(max_age) {
+    if !matches!(
+        ended.recv_timeout(max_age),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    ) {
         end();
     }
 }

@@ -77,6 +77,18 @@ pub fn read_crls_at(
     now: i64,
     stage: Stage,
 ) -> Result<(Vec<CertificateRevocationListDer<'static>>, Option<i64>)> {
+    read_crls_as(path, ca_subjects, now, stage, crate::tls::euid())
+}
+
+/// [`read_crls_at`] for a server running as `euid`, which the caller names so that the owner check at the call site can be
+/// tested without a file owned by another user (#1622): the only production caller passes the process's own.
+pub(crate) fn read_crls_as(
+    path: &Path,
+    ca_subjects: &[&[u8]],
+    now: i64,
+    stage: Stage,
+    euid: u32,
+) -> Result<(Vec<CertificateRevocationListDer<'static>>, Option<i64>)> {
     let shown = path.display();
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -97,7 +109,7 @@ pub fn read_crls_at(
     if !meta.is_file() {
         bail!("the client CRL file {shown} is not a regular file");
     }
-    if !owner_ok(meta.uid(), crate::tls::euid()) {
+    if !owner_ok(meta.uid(), euid) {
         bail!("the client CRL file {shown} is not owned by the user running the server or by root");
     }
     if meta.len() > MAX_BYTES {
