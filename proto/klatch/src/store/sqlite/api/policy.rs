@@ -167,7 +167,7 @@ fn refusal_from_row(r: &Row<'_>) -> rusqlite::Result<RefusalRecord> {
 }
 
 /// The census query (#1310) for `n` targets: `?1` the action, `?2` the first moment that counts, `?3` the cap, `?4`
-/// and on the targets. Each target is a range of the `(action, target, ts)` index read for at most `?3` rows, and the
+/// the last moment that counts, `?5` and on the targets. Each target is a range of the `(action, target, ts)` index read for at most `?3` rows, and the
 /// union is cut at `?3` too, so no more than `n * cap` rows are touched however large the audit is. The outer query
 /// counts them and the distinct `terminal=` labels among them.
 pub(in crate::store::sqlite) fn census_sql(n: usize) -> String {
@@ -175,8 +175,8 @@ pub(in crate::store::sqlite) fn census_sql(n: usize) -> String {
         .map(|i| {
             format!(
                 "SELECT detail FROM (SELECT detail FROM admin_audit \
-                 WHERE action=?1 AND target=?{} AND ts>=?2 LIMIT ?3)",
-                4 + i
+                 WHERE action=?1 AND target=?{} AND ts>=?2 AND ts<=?4 LIMIT ?3)",
+                5 + i
             )
         })
         .collect();
@@ -194,6 +194,7 @@ pub(in crate::store::sqlite) fn census_params(q: &Census) -> Vec<rusqlite::types
         Value::Text(q.action.to_string()),
         Value::Integer(q.since),
         Value::Integer(q.cap.min(i64::MAX as u64) as i64),
+        Value::Integer(q.until),
     ];
     p.extend(q.targets.iter().map(|t| Value::Text((*t).to_string())));
     p

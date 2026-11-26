@@ -207,8 +207,10 @@ fn only_the_proof_path_names_the_alarm_action_or_the_failure_action() {
         "alarm::{",
         "alarm::*",
     ];
-    const ALLOWED: [&str; 4] = [
+    const ALLOWED: [&str; 6] = [
         "proof/alarm.rs",
+        "proof/alarm_recovery_tests.rs",
+        "proof/filelimit.rs",
         "proof/alarm_tests.rs",
         "proof/alarm_faults.rs",
         "proof/tests.rs",
