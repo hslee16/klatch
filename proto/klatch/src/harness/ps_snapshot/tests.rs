@@ -297,14 +297,13 @@ fn output_past_the_cap_is_unreadable_even_when_it_parses_and_exits_cleanly() {
     let d = dir("cap");
     // 400 rows, each of a different pid (a repeated pid is not a table) and all of one length
     let row = "100 1 Fri Nov  6 03:04:05 2026 claude\n";
-    let body = format!(
-        "i=0\nwhile [ $i -lt 400 ]; do echo \"$((i+100)) 1 Fri Nov  6 03:04:05 2026 claude\"; i=$((i+1)); done\nexit 0\n"
-    );
-    let mut ps = fake_ps(&d, &body);
+    let body = "i=0\nwhile [ $i -lt 400 ]; do echo \"$((i+100)) 1 Fri Nov  6 03:04:05 2026 claude\"; i=$((i+1)); done\nexit 0\n";
+    let mut ps = fake_ps(&d, body);
     // a cap on a row boundary: the cut output still parses, so only the cap refuses it
     ps.limits.cap = row.len() * 3;
+    assert_eq!(within_seconds(move || ps.lookup(100)), Lookup::Unreadable);
     // the same output under a roomy cap is a table: only the cap made it unreadable
-    let mut roomy = fake_ps(&d, &body);
+    let mut roomy = fake_ps(&d, body);
     roomy.limits.cap = 1 << 24;
     assert!(matches!(
         within_seconds(move || roomy.lookup(100)),

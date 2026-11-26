@@ -152,9 +152,11 @@ impl ProcessTable for Snapshot {
 
 /// The variable that must be set, besides `KLATCH_TEST_PS`, for the stand-in to be read (the way `KLATCH_TEST_SHORT_LIMITS`
 /// is a second condition on a debug build): a debug binary a person runs for real never reads `KLATCH_TEST_PS` by default.
+#[cfg(any(debug_assertions, test))]
 pub(crate) const SEAMS_VAR: &str = "KLATCH_TEST_SEAMS";
 
 /// The stand-in `ps` named by `ps_var` when `seams` is set too and the value is an absolute path.
+#[cfg(any(debug_assertions, test))]
 fn test_program_from(
     ps_var: Option<std::ffi::OsString>,
     seams: Option<std::ffi::OsString>,

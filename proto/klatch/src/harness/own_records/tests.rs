@@ -353,7 +353,7 @@ fn swapper(
             i += 1;
             let stage = dir.join(format!("stage{}", i % 2));
             let _ = std::fs::remove_file(&stage);
-            if i % 2 == 0 {
+            if i.is_multiple_of(2) {
                 let _ = std::os::unix::fs::symlink(dir.join("other"), &stage);
             } else {
                 let _ = std::fs::hard_link(dir.join("real"), &stage);
