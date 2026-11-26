@@ -58,6 +58,26 @@ pub(super) fn chain<'a>(
     None
 }
 
+/// The members of the cycle a refusal closes, starting at a member that is in it (the named blocker when it is, else the
+/// first holder in the cycle), and the requester's own path the last of them waits for.
+pub(super) fn cycle_names(
+    req: &Attempt,
+    blocker: &str,
+    cycle: &[String],
+    waits: &[Wait],
+    held: &[Held],
+) -> (Vec<String>, String) {
+    let start = cycle.iter().find(|m| *m == blocker).unwrap_or(&cycle[0]);
+    let Some(c) = chain(start, req.owner, waits, held) else {
+        return (Vec::new(), String::new());
+    };
+    let via = path_waited_for(c[c.len() - 2], req, waits, held).unwrap_or_default();
+    (
+        c[..c.len() - 1].iter().map(|m| m.to_string()).collect(),
+        via,
+    )
+}
+
 /// The refused member's own held path that `waiter` waits for: what closes the cycle on the requester's side.
 pub(super) fn path_waited_for(
     waiter: &str,

@@ -33,6 +33,9 @@ pub enum Error {
     Busy(String),
 }
 
+/// Members named on a deadlock's chain before the rest are counted (#1603).
+const MAX_CYCLE_NAMES: usize = 5;
+
 /// What a refusal's reason puts before its hint: `<why>; next step: <what to do>`.
 pub const NEXT_STEP: &str = "next step: ";
 
@@ -75,16 +78,23 @@ impl fmt::Display for Error {
                     )?;
                 }
                 if *deadlock {
+                    // The member in the cycle, which is not always the one that refused first (#1603).
+                    let owner = cycle.first().unwrap_or(owner);
                     write!(
                         f,
                         "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again"
                     )?;
                     if !via.is_empty() && !cycle.is_empty() {
-                        write!(
-                            f,
-                            " (the cycle: {owner} waits through {} for your path {via})",
-                            cycle.join(", ")
-                        )?;
+                        write!(f, " (the cycle: {owner} waits")?;
+                        let rest = &cycle[1..];
+                        if !rest.is_empty() {
+                            let shown = rest.len().min(MAX_CYCLE_NAMES);
+                            write!(f, " through {}", rest[..shown].join(", "))?;
+                            if rest.len() > shown {
+                                write!(f, " and {} more", rest.len() - shown)?;
+                            }
+                        }
+                        write!(f, " for your path {via})")?;
                     }
                 }
                 Ok(())

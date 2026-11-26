@@ -1,7 +1,7 @@
 //! Taking a claim: the conflict check, the record of who is waiting for whom (so a conflict that closes a cycle is
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
-use super::claim_chain::{Wait, chain, path_waited_for, reaches};
+use super::claim_chain::{Wait, cycle_names, reaches};
 use super::claim_events::{ClaimEvent, ClaimKey};
 use super::claim_lapses::Lapsed;
 use super::{SqliteStore, WAIT_WINDOW_SECS};
@@ -212,13 +212,7 @@ impl SqliteStore {
             self.mark_yield_parties(req, &cycle)?;
             // Name only what the requester can see: members of this room on the chain and its own held path.
             let waits = self.room_waits(req.room)?;
-            if let Some(c) = chain(&blocker.owner, req.owner, &waits, held)
-                .or_else(|| chain(&cycle[0], req.owner, &waits, held))
-            {
-                let last = c[c.len() - 2.min(c.len())];
-                via = path_waited_for(last, req, &waits, held).unwrap_or_default();
-                names = c[..c.len() - 1].iter().map(|m| m.to_string()).collect();
-            }
+            (names, via) = cycle_names(req, &blocker.owner, &cycle, &waits, held);
         }
         let reason = if deadlock {
             "deadlock"

@@ -71,7 +71,7 @@ fn a_three_member_chain_names_every_member_in_order() {
     }
     let m = e.to_string();
     assert!(
-        m.contains("carol, dave") && m.contains("your path a"),
+        m.contains("carol waits through dave for your path a"),
         "{m}"
     );
 }
@@ -110,4 +110,98 @@ fn a_plain_refusal_names_no_cycle() {
         other => panic!("{other:?}"),
     }
     assert!(!e.to_string().contains("your path"), "{e}");
+}
+
+fn parts(e: &Error) -> (Vec<String>, String) {
+    match e {
+        Error::Conflict {
+            deadlock: true,
+            cycle,
+            via,
+            ..
+        } => (cycle.clone(), via.clone()),
+        other => panic!("not a deadlock: {other:?}"),
+    }
+}
+
+#[test]
+fn the_text_names_a_member_that_is_in_the_cycle_when_the_first_blocker_is_not() {
+    // carol holds src/x and waits for nothing; bob holds src/y and waits for f; alice holds f and claims src.
+    let s = store();
+    take(&s, "carol", "src/x", 0).unwrap();
+    take(&s, "bob", "src/y", 0).unwrap();
+    take(&s, "alice", "f", 0).unwrap();
+    assert!(take(&s, "bob", "f", 1).is_err());
+    let e = conflict(take(&s, "alice", "src", 2));
+    let (cycle, via) = parts(&e);
+    assert_eq!((cycle, via.as_str()), (vec!["bob".to_string()], "f"));
+    let m = e.to_string();
+    assert!(
+        m.contains("deadlock: bob is waiting") && m.contains("the cycle: bob waits"),
+        "{m}"
+    );
+    assert!(
+        !m.contains("carol is waiting") && !m.contains("carol waits"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_two_member_cycle_does_not_read_as_the_holder_waiting_through_itself() {
+    let s = store();
+    take(&s, "alice", "f", 0).unwrap();
+    take(&s, "bob", "g", 0).unwrap();
+    assert!(take(&s, "bob", "f", 1).is_err());
+    let m = conflict(take(&s, "alice", "g", 2)).to_string();
+    assert!(!m.contains("through bob"), "{m}");
+    assert!(m.contains("bob waits for your path f"), "{m}");
+}
+
+#[test]
+fn a_long_chain_shows_the_first_names_and_counts_the_rest() {
+    let s = store();
+    take(&s, "alice", "a", 0).unwrap();
+    let n = 30;
+    for i in 0..n {
+        take(&s, &format!("m{i}"), &format!("p{i}"), 0).unwrap();
+    }
+    for i in 0..n - 1 {
+        assert!(take(&s, &format!("m{i}"), &format!("p{}", i + 1), 1).is_err());
+    }
+    assert!(take(&s, &format!("m{}", n - 1), "a", 1).is_err());
+    let e = conflict(take(&s, "alice", "p0", 2));
+    let (cycle, via) = parts(&e);
+    assert_eq!(cycle.len(), n);
+    assert_eq!(via, "a");
+    let m = e.to_string();
+    assert!(m.contains("m0 waits through m1, m2"), "{m}");
+    assert!(m.contains("and 2") && m.contains("more"), "{m}");
+    assert!(!m.contains("m29") && m.len() < 700, "{} {m}", m.len());
+}
+
+#[test]
+fn via_is_the_requesters_own_path_when_the_last_member_waits_for_several() {
+    // bob waits for k (carol's, held first) and f (alice's); only f is alice's.
+    let s = store();
+    take(&s, "carol", "k", 0).unwrap();
+    take(&s, "alice", "f", 0).unwrap();
+    take(&s, "bob", "g", 0).unwrap();
+    assert!(take(&s, "bob", "k", 1).is_err());
+    assert!(take(&s, "bob", "f", 2).is_err());
+    let e = conflict(take(&s, "alice", "g", 3));
+    let (cycle, via) = parts(&e);
+    assert_eq!((cycle, via.as_str()), (vec!["bob".to_string()], "f"));
+    assert!(!e.to_string().contains("path k"), "{e}");
+}
+
+#[test]
+fn no_other_path_of_the_room_appears_in_the_via() {
+    let s = store();
+    take(&s, "alice", "f", 0).unwrap();
+    take(&s, "bob", "g", 0).unwrap();
+    assert!(take(&s, "bob", "f", 1).is_err());
+    take(&s, "frank", "z", 0).unwrap();
+    assert!(take(&s, "bob", "z", 2).is_err());
+    let (_, via) = parts(&conflict(take(&s, "alice", "g", 3)));
+    assert_eq!(via, "f");
 }
