@@ -29,7 +29,7 @@ exit 0
 SH
 chmod +x "$shim/cargo"
 # a stub for the coordbench runner (#1471): the real fast subset takes over a minute, and these tests run the gate many times
-printf 'import sys\nprint("stub coordbench runner")\nsys.exit(0)\n' > "$work/cb-ok.py"
+printf 'import os, sys\nprint("stub coordbench runner")\nopen(os.environ["FAKE_LOG"], "a").write("COORDBENCH-RUNNER\\n") if os.environ.get("FAKE_LOG") else None\nsys.exit(0)\n' > "$work/cb-ok.py"
 printf 'import sys\nprint("stub coordbench failure")\nsys.exit(1)\n' > "$work/cb-bad.py"
 run_gate() { # fail-pattern, args...
   FAKE_LOG="$work/log"; : > "$FAKE_LOG"
@@ -58,6 +58,28 @@ if GATE_COORDBENCH_RUNNER="$work/cb-bad.py" run_gate ""; then bad "the gate pass
   if grep -q "FAILED at step 12: coordbench tests" "$work/out" && grep -q "stub coordbench failure" "$work/out" && ! grep -q "GATE PASSED" "$work/out"; then ok "a failing coordbench runner fails the gate at step 12 and shows its output (#1471)"; else bad "coordbench step: $(tail -n 12 "$work/out")"; fi
 fi
 if run_gate "" && grep -q "coordbench tests (fast subset)" "$work/out" && grep -q "\[12/15\]" "$work/out"; then ok "the gate has 15 steps and step 12 is the coordbench tests (#1471)"; else bad "step list: $(cat "$work/out")"; fi
+
+# #1615: a fresh worktree has no klatch-bench binary, which the store-export tests need: the gate builds it before the runner
+run_gate ""
+bl="$(grep -n -- "^build -p klatch-bench --locked" "$work/log" | sed -n 1p | cut -d: -f1)"
+rl="$(grep -n "^COORDBENCH-RUNNER" "$work/log" | sed -n 1p | cut -d: -f1)"
+if [ -n "$bl" ] && [ -n "$rl" ] && [ "$bl" -lt "$rl" ]; then ok "the gate builds klatch-bench before the coordbench runner starts (#1615)"; else bad "klatch-bench build order: build line=$bl runner line=$rl: $(cat "$work/log")"; fi
+if run_gate "build -p klatch-bench"; then bad "the gate passed although the klatch-bench build failed (#1615)"; else
+  if grep -q "FAILED at step 12: coordbench tests" "$work/out" && grep -q "fake failure in: build -p klatch-bench" "$work/out" && ! grep -q "stub coordbench runner" "$work/out"; then ok "a failing klatch-bench build fails the gate at step 12 and the runner does not start (#1615)"; else bad "bench build failure: $(tail -n 12 "$work/out")"; fi
+fi
+
+# #1596: SIGHUP ignored on entry (nohup) is warned about at the top of the gate; a normal start prints no warning
+( trap '' HUP; run_gate "" ); hup_out="$(cat "$work/out")"
+hup_first="$(printf '%s\n' "$hup_out" | sed -n 1p)"
+if [[ "$hup_first" == *"warning: SIGHUP is ignored"* ]]; then ok "a gate started with SIGHUP ignored warns about it on its first line (#1596)"; else bad "no SIGHUP warning: $(printf '%s\n' "$hup_out" | sed -n 1,3p)"; fi
+if [ "$(sh -c 'kill -HUP $$ 2> /dev/null; echo ignored')" = ignored ]; then ok "(this run has SIGHUP ignored itself, so the no-warning case is not checked)"; else
+  run_gate ""
+  if grep -q "SIGHUP is ignored" "$work/out"; then bad "the gate warned about SIGHUP although it is not ignored"; else ok "a gate started normally prints no SIGHUP warning (#1596)"; fi
+fi
+# #1596: the ask-supervisor test waits for a stopped supervisor with a bound: a stub that ignores TERM and HUP fails fast, naming SIGHUP
+t0=$SECONDS
+ASKSUP_TEST_SELFCHECK=1 bash "$here/test-ask-supervisor.sh" > "$work/out" 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "FAIL .*did not stop within 2 s.*SIGHUP" "$work/out" && [ $((SECONDS - t0)) -le 20 ]; then ok "the supervisor test's wait is bounded: a process that ignores TERM fails in $((SECONDS - t0)) s and names SIGHUP (#1596)"; else bad "bounded wait rc=$rc: $(cat "$work/out")"; fi
 
 # #829: a long failing output (a model's note trace) pushes the blob out of the last 50 lines the gate shows; the gate
 # must still print the blob line and keep the full output in a file it names, so the failure can be replayed later

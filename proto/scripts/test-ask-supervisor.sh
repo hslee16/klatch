@@ -6,7 +6,7 @@
 # only makes a wait longer (#1142).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-sup="$here/ask-supervisor"
+sup="${ASKSUP_TEST_SUP:-$here/ask-supervisor}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/klatch-asksup-test.XXXXXX")"
 bgpids=""
 cleanup() {
@@ -64,7 +64,39 @@ base_env() {
   rm -f "$work/off"
 }
 run_once() { "$sup" --once > "$fake/out" 2>&1; }
-run_bg() { "$sup" > "$fake/out" 2>&1 & ipid=$!; bgpids="$bgpids $ipid"; }
+# #1596: a shell started with SIGHUP ignored (a gate run under nohup) passes that on to every child, and bash cannot reset a
+# signal that was ignored on entry (trap - HUP does nothing). So the supervisor is started through a tiny exec wrapper that
+# restores the default disposition, and the test no longer depends on how it was started.
+hup_ignored() { [ "$(sh -c 'kill -HUP $$ 2> /dev/null; echo ignored')" = ignored ]; }
+reset_hup() { # command...: run it with SIGHUP at its default disposition (same pid: exec)
+  if command -v perl > /dev/null 2>&1; then exec perl -e '$SIG{HUP} = "DEFAULT"; exec @ARGV or die "exec: $!"' -- "$@"
+  elif command -v python3 > /dev/null 2>&1; then exec python3 -c 'import os, signal, sys; signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+  else exec "$@"; fi
+}
+run_bg() { (reset_hup "$sup") > "$fake/out" 2>&1 & ipid=$!; bgpids="$bgpids $ipid"; }
+# stop_wait <pid> [seconds]: wait for a process to end, but never forever (#1596). When it is still there after the bound it is
+# killed with kill -9 and the test FAILS with a message that names SIGHUP, the usual reason. The exit status is in $stop_rc.
+stop_wait() {
+  local pid="$1" max=$(( ${2:-30} * 5 )) i=0
+  while kill -0 "$pid" 2> /dev/null && [ "$i" -lt "$max" ]; do /bin/sleep 0.2; i=$((i + 1)); done
+  if kill -0 "$pid" 2> /dev/null; then
+    kill -9 "$pid" 2> /dev/null; wait "$pid" 2> /dev/null; stop_rc=137
+    bad "pid $pid did not stop within ${2:-30} s of the signal (killed with kill -9); SIGHUP ignored on entry (the run started under nohup?) is the usual cause: start it from a shell where it is not"
+    return 1
+  fi
+  wait "$pid" 2> /dev/null; stop_rc=$?
+  return 0
+}
+if [ -n "${ASKSUP_TEST_SELFCHECK:-}" ]; then # test seam for test-scripts.sh: only the bounded wait, on a stub that ignores TERM and HUP
+  ( trap '' TERM HUP; while :; do /bin/sleep 0.2; done ) & spid=$!
+  bgpids="$bgpids $spid"; /bin/sleep 0.5
+  kill -TERM "$spid" 2> /dev/null
+  stop_wait "$spid" 2
+  ( exit 0 ) & qpid=$!
+  stop_wait "$qpid" 5 && ok "a process that ends is waited for"
+  [ "$fails" -eq 0 ] && exit 0 || exit 1
+fi
+if hup_ignored; then echo "note: SIGHUP is ignored in this shell (nohup?); the supervisor under test is started with the default disposition"; fi
 waitfor() { # file, pattern, seconds (default 60): a loaded machine starts things late
   local i=0 max=$(( ${3:-60} * 5 ))
   while [ "$i" -lt "$max" ]; do grep -q -- "$2" "$1" 2> /dev/null && return 0; /bin/sleep 0.2; i=$((i + 1)); done
@@ -200,14 +232,14 @@ waitfor "$fake/launches.log" '^5 helper2' 60 && r=1 || r=0
 touch "$fake/stop-helper2"
 /bin/sleep 3
 if [ "$r" -eq 1 ] && [ "$(launches)" -eq 2 ]; then ok "after the first helper ended with the ask still open, one more is started (a different identity), up to ASKSUP_MAX_PER_ASK"; else bad "retry r=$r launches=$(launches)"; fi
-kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
+kill -TERM "$ipid" 2> /dev/null; stop_wait "$ipid" 30
 
 newworld; rm -f "$fake/launch-quick"; touch "$fake/launch-fails"; ask 5 alice; yes_for 5 helper1
 ASKSUP_MAX_PER_ASK=1 run_bg
 waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
 /bin/sleep 3
 if [ "$s" -eq 1 ] && [ "$(launches)" -eq 1 ]; then ok "a helper that fails to start still counts: with ASKSUP_MAX_PER_ASK=1 the ask is not tried again"; else bad "failed launch retried: $(launches)"; fi
-kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
+kill -TERM "$ipid" 2> /dev/null; stop_wait "$ipid" 30
 
 # ---- the time limit per helper ----
 newworld; rm -f "$fake/launch-quick"; ask 5 alice; yes_for 5 helper1
@@ -216,7 +248,7 @@ waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
 hp="$(pgrep -f "$bin/launch" | sed -n 1p)"
 gone=0; for _ in $(seq 1 100); do if [ -n "$hp" ] && ! kill -0 "$hp" 2> /dev/null; then gone=1; break; fi; /bin/sleep 0.2; done
 if [ "$s" -eq 1 ] && [ "$gone" -eq 1 ] && waitfor "$fake/out" 'time limit' 5; then ok "a helper that runs past ASKSUP_HELPER_SECS is killed (kill -9) and the supervisor says so"; else bad "time limit s=$s gone=$gone hp=$hp out=$(tail -3 "$fake/out")"; fi
-kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null
+kill -TERM "$ipid" 2> /dev/null; stop_wait "$ipid" 30
 
 # ---- signals ----
 newworld; rm -f "$fake/launch-quick"; ask 5 alice; yes_for 5 helper1
@@ -224,19 +256,19 @@ run_bg
 waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
 hp="$(pgrep -f "$bin/launch" | sed -n 1p)"
 t0=$SECONDS
-kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
+kill -TERM "$ipid" 2> /dev/null; stop_wait "$ipid" 30; rc=$stop_rc
 took=$((SECONDS - t0))
 gone=1; [ -n "$hp" ] && kill -0 "$hp" 2> /dev/null && gone=0
 if [ "$s" -eq 1 ] && [ "$rc" -eq 0 ] && [ "$took" -le 10 ] && [ "$gone" -eq 1 ]; then ok "a TERM stops the supervisor with exit 0 in $took s and ends the helper it started"; else bad "term s=$s rc=$rc took=$took gone=$gone"; fi
 newworld; rm -f "$fake/launch-quick"; ask 5 alice; yes_for 5 helper1
 ASKSUP_TEST_DROP_TERMS=2 run_bg
 waitfor "$fake/launches.log" '^5 helper1' 60 && s=1 || s=0
-kill -TERM "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
+kill -TERM "$ipid" 2> /dev/null; stop_wait "$ipid" 30; rc=$stop_rc
 if [ "$s" -eq 1 ] && [ "$rc" -eq 0 ]; then ok "a TERM the worker lost twice is sent again by the small parent and still stops it (#1099)"; else bad "lost term s=$s rc=$rc"; fi
 newworld; ASKSUP_POLL_SECS=30 run_bg
 waitfor "$fake/calls.log" 'klatch asks' 60 && s=1 || s=0
 t0=$SECONDS
-kill -HUP "$ipid" 2> /dev/null; wait "$ipid" 2> /dev/null; rc=$?
+kill -HUP "$ipid" 2> /dev/null; stop_wait "$ipid" 30; rc=$stop_rc
 took=$((SECONDS - t0))
 if [ "$s" -eq 1 ] && [ "$rc" -eq 0 ] && [ "$took" -le 5 ]; then ok "a signal during a 30 s pause between polls stops it at once ($took s)"; else bad "signal in pause s=$s rc=$rc took=$took"; fi
 newworld; ASKSUP_POLL_SECS=30 run_bg

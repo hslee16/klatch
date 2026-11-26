@@ -30,6 +30,12 @@ for arg in "$@"; do
   esac
 done
 
+# #1596: SIGHUP ignored on entry (a gate started under nohup) is inherited by every child and bash cannot reset it, which once
+# hung two gates for about an hour in a test that waits for a signal. Say so first; the tests that need it work around it.
+if [ "$(sh -c 'kill -HUP $$ 2> /dev/null; echo ignored')" = ignored ]; then
+  echo "gate: warning: SIGHUP is ignored in this shell (started under nohup?); every step inherits that. The steps that send a HUP work around it, but start the gate from a shell where it is not ignored if a step hangs (#1596)"
+fi
+
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 # rustup puts cargo in ~/.cargo/bin; add it only if cargo is not already on the PATH (so the one you chose wins)
@@ -224,9 +230,15 @@ step "release and shell checks"     no    "$root" repo_checks
 # The coordbench tests (#1471): CI runs none of them, and a failing one sat on main unnoticed. Local gate only (the owner's
 # decision, CI stays light). The fast subset skips the ten slowest modules (the full suite takes about ten minutes; the full
 # command is: KLATCH_BIN=proto/target/debug/klatch python3 -I experiments/coordbench/run_tests.py --all). The fake agent is
-# used throughout: no network, no model, no credential. repo_checks built the klatch binary the K-arm tests need.
+# used throughout: no network, no model, no credential. repo_checks built the klatch binary the K-arm tests need; this step builds klatch-bench.
 # GATE_COORDBENCH_RUNNER is a test seam (proto/scripts/test-scripts.sh points it at a stub so the gate's own tests stay fast).
-step "coordbench tests (fast subset)" no  "$root" env KLATCH_BIN="$proto/target/debug/klatch" python3 -I "${GATE_COORDBENCH_RUNNER:-experiments/coordbench/run_tests.py}"
+# The store-export tests also need the bench tool klatch-bench beside the klatch binary, which a fresh worktree does not have
+# (#1615): build it first (incremental, a few seconds once built; the dependencies are shared with klatch).
+coordbench_tests() {
+  cargo build -p klatch-bench --locked --manifest-path "$proto/Cargo.toml" || return 1
+  env KLATCH_BIN="$proto/target/debug/klatch" python3 -I "${GATE_COORDBENCH_RUNNER:-experiments/coordbench/run_tests.py}"
+}
+step "coordbench tests (fast subset)" no  "$root" coordbench_tests
 
 # CI steps the gate did not run (#1034). Each runs here too; the two that need a tool the machine may lack skip with a message,
 # as cargo deny does. The gate refuses a dirty tree, so the dry run packages the commit; --allow-dirty is passed on only
