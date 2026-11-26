@@ -56,7 +56,7 @@ fn slot(name: &str) -> Option<usize> {
 
 /// One more, stopping at the top instead of wrapping to zero.
 fn sat_inc(c: &AtomicU64, store: Ordering) {
-    let _ = c.fetch_update(store, Ordering::Relaxed, |n| Some(n.saturating_add(1)));
+    let _ = c.try_update(store, Ordering::Relaxed, |n| Some(n.saturating_add(1)));
 }
 
 impl Ignored {
