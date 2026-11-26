@@ -361,7 +361,10 @@ fn counting_ps(h: &Home) -> (std::path::PathBuf, std::path::PathBuf) {
 fn with_path(cmd: String, shim: &std::path::Path) -> String {
     cmd.replacen(
         "HOME=",
-        &format!("KLATCH_TEST_PS='{}' HOME=", shim.join("ps").display()),
+        &format!(
+            "KLATCH_TEST_SEAMS=1 KLATCH_TEST_PS='{}' HOME=",
+            shim.join("ps").display()
+        ),
         1,
     )
 }
@@ -399,6 +402,26 @@ fn the_walk_is_lazy_and_runs_once() {
         calls.len(),
         1,
         "one walk reads the whole process table once: {calls:?}"
+    );
+}
+
+#[test]
+fn the_ps_stand_in_is_not_read_without_the_second_variable() {
+    // a debug binary run for real must not take KLATCH_TEST_PS by default (#1629): the shim stays unused
+    let h = Home::new();
+    gated(&h, "refuse:wake");
+    let (shim, log) = counting_ps(&h);
+    let cmd = klatch(&h, (SID, "--codex join gated")).replacen(
+        "HOME=",
+        &format!("KLATCH_TEST_PS='{}' HOME=", shim.join("ps").display()),
+        1,
+    );
+    let (ok, text) = run_as(&h, ("codex", &cmd));
+    assert!(!ok && text.contains("lacks wake"), "{text}");
+    assert!(
+        ps_calls(&log).is_empty(),
+        "the stand-in ps was run without KLATCH_TEST_SEAMS: {:?}",
+        ps_calls(&log)
     );
 }
 
