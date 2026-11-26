@@ -87,6 +87,21 @@ fn members_refusals_audit_and_credentials_are_counted() {
 }
 
 #[test]
+fn the_server_note_of_ignored_forwarded_headers_is_not_counted_as_an_admin_act() {
+    let s = bench();
+    for ts in [2000000005, 2000000006] {
+        s.record_audit(
+            &crate::store::NewAudit::new(crate::store::FORWARDED_IGNORED_ACTION, "", "requests=1"),
+            ts,
+        )
+        .unwrap();
+    }
+    let r = s.usage_stats(&opts()).unwrap();
+    assert_counts(&r.audit, &[("pause", 2), ("close", 1)]);
+    assert_eq!(r.audit.len(), 2, "no row for the note: {:?}", r.audit);
+}
+
+#[test]
 fn hook_runs_and_the_bytes_they_injected_are_counted() {
     let r = bench().usage_stats(&opts()).unwrap();
     assert_counts(&r.hooks, &[("PostToolUse", 150), ("UserPromptSubmit", 20)]);

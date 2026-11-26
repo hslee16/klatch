@@ -40,6 +40,9 @@ const SSL_LABEL: &str = "x-ssl-client-*";
 pub(crate) struct Ignored {
     requests: AtomicU64,
     by_name: [AtomicU64; NAMES.len() + 1],
+    /// How often `snapshot` was called, so a test can tell a timer that sleeps from one that spins.
+    #[cfg(test)]
+    looks: AtomicU64,
 }
 
 /// The slot of a header name, or `None` when it is not one of the list.
@@ -51,12 +54,23 @@ fn slot(name: &str) -> Option<usize> {
     NAMES.iter().position(|n| *n == lower)
 }
 
+/// One more, stopping at the top instead of wrapping to zero.
+fn sat_inc(c: &AtomicU64, store: Ordering) {
+    let _ = c.try_update(store, Ordering::Relaxed, |n| Some(n.saturating_add(1)));
+}
+
 impl Ignored {
     /// Count `n` requests under the first listed name, for tests of what the counts do (not of what they name).
     #[cfg(test)]
     pub(crate) fn bump(&self, n: u64) {
         self.requests.fetch_add(n, Ordering::Relaxed);
         self.by_name[0].fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// How many times `snapshot` has been called.
+    #[cfg(test)]
+    pub(crate) fn looks(&self) -> u64 {
+        self.looks.load(Ordering::Relaxed)
     }
 
     /// Count one request given the names of its headers. Only names; a value is never passed in.
@@ -68,17 +82,24 @@ impl Ignored {
         if !seen.contains(&true) {
             return;
         }
-        self.requests.fetch_add(1, Ordering::Relaxed);
+        // requests first, then each name with Release: a reader that sees the name count (Acquire, in `snapshot`) also
+        // sees the request that raised it
+        sat_inc(&self.requests, Ordering::Relaxed);
         for (i, _) in seen.iter().enumerate().filter(|(_, hit)| **hit) {
-            self.by_name[i].fetch_add(1, Ordering::Relaxed);
+            sat_inc(&self.by_name[i], Ordering::Release);
         }
     }
 
-    /// The counts as they stand: plain numbers, safe to keep, compare and render.
+    /// The counts as they stand: plain numbers, safe to keep, compare and render. The names are read before the
+    /// requests, so no name count is above `requests` (a request that is mid-count may show in `requests` and not yet
+    /// in its names).
     pub(crate) fn snapshot(&self) -> Counts {
+        #[cfg(test)]
+        self.looks.fetch_add(1, Ordering::Relaxed);
+        let by_name = std::array::from_fn(|i| self.by_name[i].load(Ordering::Acquire));
         Counts {
-            requests: self.requests.load(Ordering::Relaxed),
-            by_name: std::array::from_fn(|i| self.by_name[i].load(Ordering::Relaxed)),
+            requests: self.requests.load(Ordering::Acquire),
+            by_name,
         }
     }
 
@@ -184,5 +205,41 @@ mod tests {
         }
         assert_eq!(slot("x-ssl-client-anything"), Some(NAMES.len()));
         assert_eq!(slot("x-klatch-member"), None);
+    }
+
+    #[test]
+    fn a_counter_at_the_top_stays_at_the_top() {
+        let c = AtomicU64::new(u64::MAX - 1);
+        sat_inc(&c, Ordering::Relaxed);
+        sat_inc(&c, Ordering::Relaxed);
+        sat_inc(&c, Ordering::Relaxed);
+        assert_eq!(c.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn a_snapshot_never_shows_a_name_above_the_requests_even_while_requests_arrive() {
+        let ignored = std::sync::Arc::new(Ignored::default());
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writers: Vec<_> = (0..3)
+            .map(|_| {
+                let (i, s) = (ignored.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    while !s.load(Ordering::Relaxed) {
+                        i.note(["x-real-ip", "forwarded"]);
+                    }
+                })
+            })
+            .collect();
+        for _ in 0..200_000 {
+            let c = ignored.snapshot();
+            assert!(
+                c.by_name.iter().all(|n| *n <= c.requests),
+                "a name count above requests: {c:?}"
+            );
+        }
+        stop.store(true, Ordering::Relaxed);
+        for w in writers {
+            w.join().unwrap();
+        }
     }
 }

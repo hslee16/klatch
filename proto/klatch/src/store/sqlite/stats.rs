@@ -330,10 +330,11 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     )?;
     s.members = members::members(conn, o)?;
     fill_hooks(conn, o, &mut s)?;
+    // the server's own note of ignored forwarded headers (#1490) is an operational row, not an admin act (#1650)
     s.audit = words(
         conn,
         "admin_audit",
-        "SELECT action,COUNT(*) c FROM admin_audit WHERE ?1 IS NOT 0 AND ts>=?2 GROUP BY action ORDER BY c DESC, 1",
+        "SELECT action,COUNT(*) c FROM admin_audit WHERE ?1 IS NOT 0 AND ts>=?2 AND action<>'forwarded-ignored' GROUP BY action ORDER BY c DESC, 1",
         o,
     )?;
     fill_credentials(conn, o, &mut s)?;

@@ -95,3 +95,47 @@ pub fn the_rules_a_member_was_refused_under_since_a_time_are_counted_per_member<
     assert_eq!(s.refusal_rules_since("bob", 40).unwrap(), vec!["label"]);
     assert!(s.refusal_rules_since("carol", 0).unwrap().is_empty());
 }
+pub fn the_audit_page_filters_before_the_limit_leaves_out_the_note_and_counts_what_it_hid<
+    S: Store,
+>(
+    make: fn() -> S,
+) {
+    use crate::store::FORWARDED_IGNORED_ACTION as NOTE;
+    let s = make();
+    for (i, action) in ["pause", "resume", "close"].into_iter().enumerate() {
+        s.record_audit(&NewAudit::new(action, "t", ""), 10 + i as i64)
+            .unwrap();
+    }
+    for i in 0..5 {
+        s.record_audit(&NewAudit::new(NOTE, "", "requests=1"), 100 + i)
+            .unwrap();
+    }
+    let page = s.audit_page(2, None).unwrap();
+    let seen: Vec<&str> = page.rows.iter().map(|r| r.action.as_str()).collect();
+    assert_eq!(
+        seen,
+        ["close", "resume"],
+        "the notes are newer, and not shown"
+    );
+    assert_eq!(page.hidden, 5);
+    let all = s.audit_page(10, None).unwrap();
+    assert_eq!(all.rows.len(), 3);
+    assert_eq!(all.hidden, 5);
+    let notes = s.audit_page(3, Some(NOTE)).unwrap();
+    assert_eq!(notes.rows.len(), 3);
+    assert!(notes.rows.iter().all(|r| r.action == NOTE));
+    assert_eq!(
+        notes.hidden, 0,
+        "nothing is hidden when the note is asked for"
+    );
+    let one = s.audit_page(1, Some("pause")).unwrap();
+    assert_eq!(one.rows.len(), 1, "the filter is applied before the limit");
+    assert_eq!(one.rows[0].ts, 10);
+    assert!(
+        s.audit_page(5, Some("none-of-this"))
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    assert!(s.audit_page(0, None).unwrap().rows.is_empty());
+}

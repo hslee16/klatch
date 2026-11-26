@@ -139,6 +139,16 @@ impl Drop for EndOnDrop<'_> {
     }
 }
 
+/// One line to stderr. A write that fails (a closed stderr) is dropped: it must not end the timer, whose periodic rows
+/// do not depend on the terminal (`eprintln!` panics on a failed write).
+fn say(line: &str) {
+    say_to(&mut std::io::stderr().lock(), line);
+}
+
+fn say_to(out: &mut dyn std::io::Write, line: &str) {
+    let _ = writeln!(out, "{line}");
+}
+
 /// The timer thread: look every `TICK`, write what the pacer says is due. It returns its pacer so that shutdown can
 /// keep what is left. The only writer of the live line and of the periodic rows.
 fn timer(ignored: &Ignored, sink: &dyn RowSink, done: &AtomicBool, mut pacer: Pacer) -> Pacer {
@@ -147,7 +157,7 @@ fn timer(ignored: &Ignored, sink: &dyn RowSink, done: &AtomicBool, mut pacer: Pa
         let counts = ignored.snapshot();
         let due = pacer.due(Instant::now(), &counts);
         if let Some(line) = due.line {
-            eprintln!("{line}");
+            say(&line);
         }
         if let Some(text) = due.flush {
             keep_or_say(&mut pacer, sink, (&text, &counts));
@@ -162,7 +172,7 @@ fn keep_or_say(pacer: &mut Pacer, sink: &dyn RowSink, (text, counts): (&str, &Co
     if sink.keep(text) {
         pacer.kept(counts);
     } else if let Some(line) = pacer.refused() {
-        eprintln!("{line}");
+        say(&line);
     }
 }
 
@@ -200,7 +210,7 @@ fn while_reporting_with<R>(
     {
         keep_or_say(&mut pacer, sink, (&text, &counts));
     }
-    eprintln!("{}", ignored.summary());
+    say(&ignored.summary());
     out
 }
 
@@ -429,5 +439,41 @@ mod tests {
             Some(said.as_str()),
             "said again after a success"
         );
+    }
+
+    // ---- a closed stderr, and a timer that does not spin
+
+    /// A writer whose every write fails, as a closed stderr does.
+    struct Closed;
+
+    impl std::io::Write for Closed {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+    }
+
+    #[test]
+    fn saying_a_line_to_a_closed_stream_does_not_panic_and_a_good_one_gets_the_line() {
+        say_to(&mut Closed, "a line");
+        let mut out = Vec::new();
+        say_to(&mut out, "a line");
+        assert_eq!(out, b"a line\n");
+    }
+
+    #[test]
+    fn the_timer_looks_at_the_counts_a_few_times_a_second_not_in_a_spin() {
+        within_ten_seconds(|| {
+            let ignored = Ignored::default();
+            let sink = Sink::new(0);
+            while_reporting_with(&ignored, &sink, quick(), || {
+                std::thread::sleep(Duration::from_millis(500));
+            });
+            // one look every 50 ms is 10 in half a second; without the sleep it is millions
+            let looks = ignored.looks();
+            assert!((1..=40).contains(&looks), "{looks} looks in half a second");
+        });
     }
 }
