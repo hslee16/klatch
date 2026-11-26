@@ -21,6 +21,7 @@ mod loopback;
 #[cfg(test)]
 mod loopback_tests;
 mod mcp_http;
+mod panic_log;
 mod tls;
 mod tls_admit;
 mod tls_bridge;
@@ -39,6 +40,7 @@ mod webhook_translate;
 mod webhook_translate_tests;
 mod wire_http;
 mod wire_https;
+mod wire_sessions;
 mod wire_sse;
 mod wire_stream_run;
 mod wire_ws;
@@ -56,13 +58,8 @@ const USAGE: &str = "usage: klatch-server --version\n       klatch-server http -
 /// messages in memory): the same hardening the `klatch` binary does.
 fn harden() {
     std::panic::set_hook(Box::new(|info| {
-        let at = info.location().map_or_else(
-            || "unknown place".to_string(),
-            |l| format!("{}:{}", l.file(), l.line()),
-        );
-        eprintln!(
-            "klatch-server: internal error at {at}; this is a bug (nothing you sent is shown here)"
-        );
+        let at = info.location().map(|l| (l.file(), l.line()));
+        eprintln!("{}", panic_log::internal_error_line(at));
     }));
     let zero = libc::rlimit {
         rlim_cur: 0,
