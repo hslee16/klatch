@@ -85,7 +85,8 @@ class TestScenarioFile(unittest.TestCase):
 
     def test_the_idle_definition_is_precise(self):
         d = self.scn["metrics"]["definitions"]["idle_turns"]
-        for word in ("sleep", "klatch wait", "git fetch", "text-only", "before"):
+        for word in ("shared definition", "read-only coordination call", "no new content", "klatch read, wait", "git pull, fetch or log",
+                     "sleep", "text-only", "is blocked but not idle", "before that turn"):
             self.assertIn(word, d)
 
     def test_the_agents_match_the_fixture_and_the_scenario_is_found_from_it(self):
