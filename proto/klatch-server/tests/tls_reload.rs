@@ -486,6 +486,15 @@ fn a_reload_refuses_a_crl_that_has_expired_while_the_one_in_force_is_in_date() {
     let log = r.reload_until(FAILED, 1);
     assert!(log.contains("reload failed: client CRL file"), "{log}");
     assert!(log.contains("ALERT"), "the expiry is an alert line:\n{log}");
+    // #1641: the file never took effect, so no line may say that its clients are refused
+    assert!(
+        !log.contains("every client certificate of its issuer is refused (expiry is enforced)"),
+        "a refused file is not in force:\n{log}"
+    );
+    assert!(
+        log.contains("not taken"),
+        "the alert says it was not taken:\n{log}"
+    );
     assert_eq!(r.count(OK), 0, "{log}");
     // the old CRL still serves: a client is not locked out
     let good = r.client_config(GOOD);
@@ -507,6 +516,39 @@ fn when_the_crl_in_force_has_expired_too_a_reload_takes_the_new_file_and_says_so
     std::fs::rename(&new, &crl).unwrap();
     let log = r.reload_until(OK, 1);
     assert!(log.contains("ALERT"), "{log}");
+}
+
+/// Replace the CRL file by one due in `due` seconds (negative: past), by rename, as an operator does.
+fn put_crl(r: &Rig, due: i64) {
+    let crl = r.crl.clone().unwrap();
+    let new = crl.with_extension("new");
+    write_file(&new, &r.client_ca.crl_pem_due(due), 0o644);
+    std::fs::rename(&new, &crl).unwrap();
+}
+
+/// #1641: the due time of the CRL a reload took is the one the next reload compares against.
+#[test]
+fn a_fresh_crl_taken_at_a_reload_is_the_one_in_force_for_the_next_reload() {
+    let r = rig_with(Some(-86_400));
+    put_crl(&r, 20 * 86_400);
+    r.reload_until(OK, 1);
+    put_crl(&r, -3_600);
+    let log = r.reload_until(FAILED, 1);
+    assert!(log.contains("reload failed: client CRL file"), "{log}");
+    assert_eq!(r.count(OK), 1, "the expired file was taken:\n{log}");
+}
+
+/// #1641: a CRL taken at a reload that then lapses no longer protects a later expired file.
+#[test]
+fn a_crl_taken_at_a_reload_that_has_lapsed_lets_an_expired_file_be_taken_with_an_alert() {
+    let r = rig(true);
+    put_crl(&r, 3);
+    r.reload_until(OK, 1);
+    std::thread::sleep(Duration::from_secs(4));
+    put_crl(&r, -3_600);
+    let log = r.reload_until(OK, 2);
+    assert!(log.contains("ALERT"), "{log}");
+    assert_eq!(r.count(FAILED), 0, "{log}");
 }
 
 #[test]

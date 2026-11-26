@@ -151,7 +151,7 @@ const UNSAFE_ALLOWED: [&str; 11] = [
     "klatch-bench/src/pty.rs",
     "klatch/src/main.rs",
     "klatch-server/src/main.rs",
-    "klatch-server/src/daemon.rs",
+    "klatch-server/src/daemon",
     "klatch/src/harness/",
 ];
 

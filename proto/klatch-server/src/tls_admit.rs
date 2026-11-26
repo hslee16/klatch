@@ -107,12 +107,15 @@ impl Refusals {
     fn note_at(&self, now: Instant, out: &mut dyn std::io::Write) {
         self.unsaid.fetch_add(1, Ordering::SeqCst);
         self.total.fetch_add(1, Ordering::SeqCst);
-        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-        if last.is_some_and(|t| now.saturating_duration_since(t) < EVERY) {
-            return;
-        }
-        *last = Some(now);
-        let n = self.unsaid.swap(0, Ordering::SeqCst);
+        let n = {
+            let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|t| now.saturating_duration_since(t) < EVERY) {
+                return;
+            }
+            *last = Some(now);
+            self.unsaid.swap(0, Ordering::SeqCst)
+        };
+        // outside the lock: a stderr that blocks holds this thread only, not every later refusal at the mutex (#1632)
         let _ = writeln!(
             out,
             "klatch-server: https: {n} connection(s) refused before the handshake (handshake pool full or a source address at its share); at most one such line every {} seconds",
@@ -205,5 +208,24 @@ mod tests {
         assert_eq!(text.lines().count(), 2);
         assert!(text.lines().next().unwrap().contains(": 1 connection"));
         assert!(text.lines().nth(1).unwrap().contains(": 1000 connection"));
+    }
+
+    /// #1632: the line goes to stderr outside the mutex, so a blocked stderr cannot hold every later refusal at the lock.
+    #[test]
+    fn the_log_line_is_written_without_holding_the_lock() {
+        struct Probe<'a>(&'a Refusals, bool);
+        impl std::io::Write for Probe<'_> {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.1 = self.0.last.try_lock().is_ok();
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let r = Refusals::default();
+        let mut probe = Probe(&r, false);
+        r.note_at(Instant::now(), &mut probe);
+        assert!(probe.1, "the mutex was held during the write");
     }
 }
