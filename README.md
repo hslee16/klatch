@@ -146,8 +146,9 @@ A worker can be given a short-lived credential bundle so its messages are marked
 **other processes running as the same user can read the store and the key**, and it is not isolation from a hostile
 worker. There has been no outside review. [SECURITY.md](SECURITY.md) lists what is and is not protected.
 The default channel-safety screening of what crosses between rooms (credential shapes and your own list of private terms)
-is a safety net, not a boundary: measured on a synthetic corpus it missed 52 to 55 percent of items that should not
-cross, and 77 to 78 percent on a harder one, with no false positives. It does not screen personal data, private
+is a safety net, not a boundary: measured on a synthetic corpus it did not stop 52 to 55 percent of items that should not
+cross, and 77 to 78 percent on a harder one, with no false positives (the figures count text the rules do not match as
+crossing; `klatch judge run` leaves that text queued for the reviewer instead, SECURITY.md has both readings). It does not screen personal data, private
 business matter or text aimed at the screen. Use labels, clearance and scopes as the control, and keep sensitive
 material out of shared rooms (SECURITY.md, "Channel-safety screening").
 
@@ -252,8 +253,8 @@ Contributing and the CI policy (kept light on purpose): [CONTRIBUTING.md](CONTRI
   judging, anchoring, transport, identity, notification and agent runtime so multi-machine and multi-user can
   follow. Four default labels plus custom ones; direct messages are two-member rooms capped at the lower
   clearance. The system is administered by agents inside floors the human sets once at install; a quarantined
-  reviewer and optional judges (Jev is optional, hosted and label-gated; the default rules judge misses about half of
-  what should not cross, SECURITY.md) decide crossings, crossings to
+  reviewer and optional judges (Jev is optional, hosted and label-gated; the default rules judge does not stop about half of
+  what should not cross and leaves that text queued, SECURITY.md) decide crossings, crossings to
   `public` release immediately with canary tripwires, and a read-only librarian agent is how a human asks
   questions. Claims are enforced and anchored to pull requests, issues or worktrees, with negotiated leases
   inside gateway bounds. Delivery is by hooks; a content-free nudge is an optional accelerator. Claude Code

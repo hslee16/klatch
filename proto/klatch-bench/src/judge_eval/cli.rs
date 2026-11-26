@@ -14,6 +14,7 @@ use crate::judge_eval::judges::{EvalJudge, Judged, RulesJudge, Seam, parse_scrub
 use crate::judge_eval::metrics::{Record, Summary, summarize};
 use crate::judge_eval::report;
 use crate::judge_eval::run::run_items;
+use crate::judge_eval::semantics;
 use klatch::domain::{CascadePolicy, NullJudge, ReviewItem};
 
 pub const USAGE: &str = "usage: klatch-bench judge-eval --judge <null|rules|claude:<model>|jev[:<model>[:<threshold>]]> \
@@ -439,8 +440,15 @@ pub fn main(args: impl Iterator<Item = String>) -> i32 {
     };
     let name = judge_name(&o);
     print!("{}", report::format(&summary, &name, o.split.word()));
+    let rules = matches!(o.judge, JudgeSpec::Rules);
+    if rules {
+        print!("{}", semantics::format_section(&records));
+    }
     if let Some(path) = &o.out {
-        let json = report::to_json(&summary, &records, &name, o.split.word());
+        let mut json = report::to_json(&summary, &records, &name, o.split.word());
+        if rules {
+            json["semantics"] = semantics::to_json(&records);
+        }
         let text = serde_json::to_string_pretty(&json).unwrap_or_default();
         if let Err(e) = std::fs::write(path, format!("{text}\n")) {
             eprintln!("klatch-bench judge-eval: cannot write {path}: {e}");

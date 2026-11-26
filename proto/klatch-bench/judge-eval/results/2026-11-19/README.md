@@ -1,3 +1,5 @@
+> Newer rules-judge figures, under both the old and the production (deferred is held) semantics, and a note that this run predates #921 and #987: see [../2026-11-26/README.md](../2026-11-26/README.md).
+
 # Judge evaluation results, 2026-11-19, corpus 1 (333 items)
 
 First full scoring of four judges on `corpus.jsonl` after the label-policy changes of #932 (contested items, name

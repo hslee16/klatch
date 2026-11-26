@@ -146,6 +146,21 @@ fn the_null_and_rules_judges_run_end_to_end_on_the_committed_corpus() {
 }
 
 #[test]
+fn the_rules_judge_on_the_committed_corpus_is_held_under_production_and_leaks_under_the_old_reading()
+ {
+    use crate::judge_eval::semantics::{Semantics, outcomes};
+    let (summary, records) = run(&parse(&["--judge", "rules"]).unwrap()).unwrap();
+    let old = outcomes(&records, Semantics::NotStopped);
+    let prod = outcomes(&records, Semantics::Production);
+    assert_eq!(old.leaked, summary.leaks);
+    assert_eq!(old.n, summary.n);
+    assert_eq!(prod.blocked, old.blocked);
+    assert_eq!(prod.leaked, 0);
+    assert_eq!(prod.deferred, old.allowed);
+    assert_eq!(prod.blocked + prod.deferred + prod.allowed, summary.n);
+}
+
+#[test]
 fn origin_selects_design_or_search_items_and_is_checked() {
     let origin = |args: &[&str]| parse(args).unwrap().origin;
     assert_eq!(
