@@ -12,7 +12,7 @@
 //! for a cycle through asks, a room for the members to settle it in with an invite to each. It never cancels, releases,
 //! grants or clears anything: those are not in this function's vocabulary, and it holds no admin act.
 
-use crate::domain::{MemberInfo, StuckEvent, valid_name};
+use crate::domain::{MemberInfo, STALE_AFTER_SECS, StuckEvent, valid_name};
 
 impl Proposal {
     /// Whether `body`, a line the mediator itself posted earlier, is this proposal: the whole text, or the fixed lead
@@ -21,6 +21,9 @@ impl Proposal {
         body == self.text || self.lead.as_deref().is_some_and(|l| body.starts_with(l))
     }
 }
+
+/// The width of a stale ask's age bucket in seconds (#1570).
+pub const STALE_BUCKET_SECS: u64 = 600;
 
 /// The most proposals one pass makes, so a flood of stuck cases cannot become a flood of posts.
 pub const MAX_PROPOSALS: usize = 5;
@@ -43,6 +46,9 @@ pub struct Proposal {
     /// that grows while the case stands (#1205). `None` means the whole text is matched. Only ever a template start
     /// with member and room names in it, never member text.
     pub lead: Option<String>,
+    /// How far the case has moved while it stands: a later stage is a new proposal for the same key, an equal one is
+    /// the same proposal (#1570). Only a stale ask has one (its age bucket); every other proposal is stage 0.
+    pub stage: u64,
     /// A room to create and invite into, when the case is a cycle through asks.
     pub room: Option<String>,
     pub invites: Vec<String>,
@@ -88,6 +94,7 @@ fn post(key: String, text: String) -> Proposal {
         key,
         text,
         lead: None,
+        stage: 0,
         room: None,
         invites: Vec::new(),
     }
@@ -102,13 +109,22 @@ fn propose(view: &View, e: &StuckEvent) -> Option<Proposal> {
             ask,
             asker,
             age_secs,
-        } => post(
-            key,
-            format!(
-                "mediator proposal: ask #{ask} by @{asker} has had no taker for {age_secs}s. @{asker} could narrow or \
-                 repeat it, or a member could claim ask:{ask}. {TAIL}"
-            ),
-        ),
+        } => {
+            // the age grows while the ask stands, so the line holds only the start of its bucket (never the age) and
+            // the bucket is the stage: the same line until the ask is a bucket older (#1570)
+            let stage = u64::try_from(*age_secs).unwrap_or(0) / STALE_BUCKET_SECS;
+            let floor = (stage * STALE_BUCKET_SECS).max(STALE_AFTER_SECS as u64);
+            Proposal {
+                stage,
+                ..post(
+                    key,
+                    format!(
+                        "mediator proposal: ask #{ask} by @{asker} has had no taker for at least {floor}s. @{asker} \
+                         could narrow or repeat it, or a member could claim ask:{ask}. {TAIL}"
+                    ),
+                )
+            }
+        }
         StuckEvent::LongExchange {
             room,
             members,
@@ -186,6 +202,7 @@ fn ask_cycle(view: &View, key: String, members: &[String], asks: &[i64]) -> Opti
     Some(Proposal {
         key,
         lead: None,
+        stage: 0,
         text: format!(
             "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
              post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
@@ -306,7 +323,7 @@ mod tests {
         ];
         let ps = run(&evs, &[member("ann"), member("bo")]);
         assert_eq!(ps.len(), 2);
-        assert_text(&ps[0], &["ask #3 by @ann", "200s"]);
+        assert_text(&ps[0], &["ask #3 by @ann", "at least 60s"]);
         assert_text(&ps[1], &["ask #5 by @bo", "by 2 members"]);
         assert!(ps.iter().all(|p| p.room.is_none() && p.invites.is_empty()));
     }
@@ -438,6 +455,28 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_stale_ask_line_is_fixed_within_an_age_bucket_and_moves_to_a_later_stage_across_one() {
+        let at = |age_secs| {
+            run(
+                &[StuckEvent::StaleAsk {
+                    ask: 3,
+                    asker: "ann".into(),
+                    age_secs,
+                }],
+                &[],
+            )
+            .remove(0)
+        };
+        let (a, b, c) = (at(61), at(599), at(600));
+        assert_eq!((&a.text, a.stage), (&b.text, b.stage));
+        assert!(!a.text.contains("61s") && !b.text.contains("599s"));
+        assert!(c.stage == a.stage + 1 && c.text != a.text && c.text.contains("at least 600s"));
+        assert_eq!(at(1799).stage, 2);
+        // a line of another kind is stage 0
+        assert_eq!(run(&[cycle()], &[member("ann"), member("bo")])[0].stage, 0);
     }
 
     #[test]

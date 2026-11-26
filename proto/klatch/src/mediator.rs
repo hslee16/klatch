@@ -13,7 +13,7 @@
 use crate::domain::budget::HISTORY_MAX_MESSAGES;
 use crate::domain::{MediatorView, Result, plan_proposals};
 use crate::gateway::{HistoryRange, Transport};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// What one pass did, one line each.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +47,8 @@ impl std::fmt::Display for Event {
 pub struct Mediator {
     pub me: String,
     pub lobby: String,
-    done: HashSet<String>,
+    /// Each case already proposed on, with the stage proposed (#1570).
+    done: HashMap<String, u64>,
     /// Whether `done` has been seeded from the mediator's own earlier posts (once per run, on the first pass).
     seeded: bool,
 }
@@ -57,7 +58,7 @@ impl Mediator {
         Mediator {
             me: me.into(),
             lobby: lobby.into(),
-            done: HashSet::new(),
+            done: HashMap::new(),
             seeded: false,
         }
     }
@@ -94,16 +95,16 @@ impl Mediator {
                 proposals
                     .iter()
                     .filter(|p| posted.iter().any(|b| p.is_posted_as(b)))
-                    .map(|p| p.key.clone()),
+                    .map(|p| (p.key.clone(), p.stage)),
             );
             self.seeded = true;
         }
         // a case that no longer stands is forgotten, so one that ends and returns is proposed on again
         let standing: HashSet<String> = events.iter().map(|e| e.key()).collect();
-        self.done.retain(|k| standing.contains(k));
+        self.done.retain(|k, _| standing.contains(k));
         let mut out = Vec::new();
         for p in proposals {
-            if !self.done.insert(p.key.clone()) {
+            if self.done.insert(p.key.clone(), p.stage) == Some(p.stage) {
                 continue;
             }
             if let Some(room) = &p.room {
@@ -169,7 +170,7 @@ mod tests {
         }
     }
 
-    type Gw = Rc<Gateway<SqliteStore>>;
+    pub(super) type Gw = Rc<Gateway<SqliteStore>>;
 
     fn gateway() -> (Gw, Rc<Cell<i64>>) {
         let t = Rc::new(Cell::new(100));
@@ -181,11 +182,11 @@ mod tests {
         (Rc::new(g), t)
     }
 
-    fn me(g: &Gw, name: &str) -> Direct<SqliteStore> {
+    pub(super) fn me(g: &Gw, name: &str) -> Direct<SqliteStore> {
         Direct::new(g.clone(), Principal::unattributed(name))
     }
 
-    fn lobby(names: &[&str]) -> (Gw, Rc<Cell<i64>>) {
+    pub(super) fn lobby(names: &[&str]) -> (Gw, Rc<Cell<i64>>) {
         let (g, t) = gateway();
         for n in names {
             me(&g, n).join("lobby").unwrap();
@@ -193,7 +194,7 @@ mod tests {
         (g, t)
     }
 
-    fn mediator() -> Mediator {
+    pub(super) fn mediator() -> Mediator {
         Mediator::new("mediator", "lobby")
     }
 
@@ -209,7 +210,7 @@ mod tests {
             .unwrap();
     }
 
-    fn proposals_seen(g: &Gw, who: &str) -> Vec<String> {
+    pub(super) fn proposals_seen(g: &Gw, who: &str) -> Vec<String> {
         me(g, who)
             .read("lobby", false)
             .unwrap()
@@ -593,3 +594,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod stale_tests;

@@ -1,0 +1,1 @@
+- A restarted mediator no longer repeats its stale ask proposal: the line used to hold the ask's growing age, so it now names only the start of a 600 second age bucket and is the same until the ask is a bucket older, when exactly one new proposal is posted (#1570).
