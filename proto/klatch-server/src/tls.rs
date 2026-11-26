@@ -518,4 +518,22 @@ mod tests {
         assert!(!client_roots(&path).unwrap().is_empty());
         let _ = std::fs::remove_file(&path);
     }
+
+    /// #1632: the handshake bounds the write as well as the read, so a peer that never reads cannot hold a handshake slot
+    /// past the deadline (a flight that fits the socket buffer cannot force a blocking write, so the setting is checked).
+    #[test]
+    fn the_handshake_sets_a_write_timeout_as_well_as_a_read_timeout() {
+        let (config, _) = config_for("wt");
+        let (mut server_side, _client_side) = crate::loopback::connected_pair().unwrap();
+        let mut conn = ServerConnection::new(config).unwrap();
+        assert!(server_side.write_timeout().unwrap().is_none());
+        let r = handshake(&mut conn, &mut server_side, Duration::from_millis(150));
+        assert!(r.is_err(), "a silent peer never finishes the handshake");
+        let (rd, wr) = (
+            server_side.read_timeout().unwrap(),
+            server_side.write_timeout().unwrap(),
+        );
+        assert!(rd.is_some() && wr.is_some(), "read {rd:?} write {wr:?}");
+        assert!(wr.unwrap() <= Duration::from_millis(150));
+    }
 }

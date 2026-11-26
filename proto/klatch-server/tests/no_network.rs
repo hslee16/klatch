@@ -26,7 +26,7 @@ const LOOPBACK_ONLY: &[&str] = &["src/loopback.rs"];
 /// The one source file that may name the Unix socket types and the kernel's peer-credential calls (#102): the daemon,
 /// which listens on one Unix socket in a directory only its user can write to and closes a peer of another uid before it
 /// reads a byte. TCP stays out of it (the `SOCKETS` rule applies to it).
-const DAEMON_ONLY: &[&str] = &["src/daemon.rs"];
+const DAEMON_ONLY: &[&str] = &["src/daemon.rs", "src/daemon_peer.rs", "src/daemon_tests.rs"];
 
 /// What only the daemon module may name.
 const DAEMON_NAMES: &[&str] = &[

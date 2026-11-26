@@ -161,15 +161,6 @@ pub(crate) fn read_crls_as(
     check_one_per_issuer(&crls, path)?;
     let notices = check_cas_and_times(&crls, ca_subjects, intermediates, now, path)?;
     let reload = matches!(stage, Stage::Reload { .. });
-    for (n, notice) in &notices {
-        // an expiry at a reload is an alert: it is a lock-out the operator just caused or kept
-        let level = if reload && *notice == Notice::Expired {
-            "ALERT"
-        } else {
-            "warning"
-        };
-        eprintln!("{}", notice_line_at(level, path, *n, crls.len(), *notice));
-    }
     let earliest = crls
         .iter()
         .filter_map(|c| next_update_of(c.as_ref()).ok())
@@ -178,9 +169,23 @@ pub(crate) fn read_crls_as(
         && earliest.is_some_and(|at| at <= now)
         && in_force_due.is_some_and(|due| due > now)
     {
+        // an alert that says what happened: the file was not taken, so nothing about its clients changed
+        eprintln!(
+            "klatch-server: https: client certificate revocation: ALERT: the client CRL file {} has passed its nextUpdate and was not taken: the CRL in force stays",
+            path.display()
+        );
         bail!(
             "the client CRL file {shown} has passed its nextUpdate while the CRL in force has not: it is refused and the CRL in force stays (an expired list is older than the one in force and would refuse every client certificate of its issuer)"
         );
+    }
+    for (n, notice) in &notices {
+        // an expiry at a reload is an alert: it is a lock-out the operator just caused or kept
+        let level = if reload && *notice == Notice::Expired {
+            "ALERT"
+        } else {
+            "warning"
+        };
+        eprintln!("{}", notice_line_at(level, path, *n, crls.len(), *notice));
     }
     Ok((crls, earliest))
 }
@@ -330,12 +335,36 @@ pub fn note_refusal(err: &std::io::Error) {
     let Some((slot, text)) = classify(found) else {
         return;
     };
-    let mut last = LAST[slot].lock().unwrap_or_else(|e| e.into_inner());
-    if last.is_some_and(|t| t.elapsed() < EVERY) {
+    if !due(&LAST[slot], Instant::now()) {
         return;
     }
-    *last = Some(Instant::now());
+    // written after the lock is released: a blocked stderr must not hold every later refusal at the mutex (#1632)
     eprintln!("klatch-server: https: client certificate refused: {text}");
+}
+
+/// Whether a line of this kind may be said at `now` (and, if so, that it was): the lock is held only here.
+fn due(slot: &Mutex<Option<Instant>>, now: Instant) -> bool {
+    let mut last = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| now.saturating_duration_since(t) < EVERY) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
+#[cfg(test)]
+mod due_tests {
+    use super::*;
+
+    #[test]
+    fn a_line_is_due_once_per_interval_and_the_lock_is_free_afterwards() {
+        let slot = Mutex::new(None);
+        let t = Instant::now();
+        assert!(due(&slot, t));
+        assert!(!due(&slot, t + EVERY / 2));
+        assert!(slot.try_lock().is_ok());
+        assert!(due(&slot, t + EVERY));
+    }
 }
 
 /// The log slot and the fixed text (no subject, no serial, nothing of the certificate) for a refusal that the revocation

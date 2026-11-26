@@ -27,12 +27,10 @@
 //! **A stale CRL file.** A reload refuses a CRL file whose `nextUpdate` has passed while the CRLs in force are in date (the
 //! old configuration stays, the expiry is an ALERT line): see `tls_crl::Stage`.
 
-use crate::loopback;
 use crate::tls::{self, SharedConfig, TlsFiles};
 use crate::tls_crl::Stage;
 use crate::wire_https::Options;
 use anyhow::{Result, bail};
-use klatch::session::policy::TlsBind;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
@@ -161,11 +159,6 @@ fn build(opts: &Options, in_force_due: Option<i64>) -> Result<Built> {
             opts.files.client_ca.display()
         );
     }
-    let policy = TlsBind {
-        client_ca_configured: true,
-        allow_off_loopback: opts.allow_off_loopback,
-    };
-    loopback::check_mutual_tls_addr(&opts.listen, policy)?;
     tls::build_config_at(&opts.files, roots, Stage::Reload { in_force_due })
 }
 
