@@ -1,0 +1,1 @@
+- A deadlock refusal now names the members of this room on the wait chain and the refused member's own held path that closes the cycle, so a false refusal can be checked (#1603). It names nothing outside the room or off the chain.
