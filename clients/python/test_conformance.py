@@ -565,6 +565,7 @@ class SocketReset(unittest.TestCase):
         c = kc.Client.__new__(kc.Client)
         c._sock = None
         c._next_id = 0
+        c._closed = False
         c._writer = Sink()
         with self.assertRaises(kc.ProtocolError) as ctx:
             c.request("post", room="r", body="x")
