@@ -426,14 +426,6 @@ fn open_stream(stream: &mut Stream, id: &str) -> Option<Handles> {
     Some(handles)
 }
 
-/// Read the stream for nothing but its end: a client that goes away ends the session without waiting for the next write
-/// to fail.
-fn watch_for_hangup(mut watch: Stream, gone: &AtomicBool) {
-    let mut sink = [0u8; 256];
-    while matches!(watch.read(&mut sink), Ok(n) if n > 0) {}
-    gone.store(true, Ordering::SeqCst);
-}
-
 /// `GET /v1/stream`: register a session, answer with the event-stream head, and run the session loop until the
 /// connection ends. The loop is the one every transport runs.
 fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
@@ -455,7 +447,6 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
     };
     let _ = stream.set_read_timeout(None);
     let _ = stream.set_write_timeout(None);
-    let (alive, ended) = std::sync::mpsc::channel::<()>();
     let max_age = shared.ws.stream_max_age;
     let closed = Arc::new(AtomicBool::new(false));
     let gone = closed.clone();
@@ -468,16 +459,9 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         })
     };
     let input = io::BufReader::new(Inbox::new(rx, closed));
-    std::thread::scope(|scope| {
-        scope.spawn(move || watch_for_hangup(watch, &gone));
-        scope.spawn(move || {
-            crate::wire_ws_caps::at_max_age(&ended, max_age, || {
-                let _ = aged.shutdown(std::net::Shutdown::Both);
-            })
-        });
+    crate::wire_stream_run::run(watch, gone, aged, max_age, || {
         let session = Session::over(&shared.backend, who, &shared.config);
         let _ = session.serve_guarded(input_box(input), SseWriter::new(out), Some(closer));
-        drop(alive);
     });
 }
 
