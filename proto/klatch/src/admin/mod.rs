@@ -321,6 +321,10 @@ pub enum AdminCmd {
     Audit {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Only the rows of this action (an exact name). Without it the listing leaves out the operational
+        /// `forwarded-ignored` notes and says how many it hid
+        #[arg(long, value_parser = listing::valid_action)]
+        action: Option<String>,
     },
 }
 
@@ -548,7 +552,13 @@ mod tests {
             Some("lobby")
         );
         assert!(confirmation(&AdminCmd::Resume).is_none());
-        assert!(confirmation(&AdminCmd::Audit { limit: 5 }).is_none());
+        assert!(
+            confirmation(&AdminCmd::Audit {
+                limit: 5,
+                action: None
+            })
+            .is_none()
+        );
         assert!(typed_back("lobby", "lobby\n"));
         assert!(!typed_back("lobby", "lobb\n"));
         assert!(!typed_back("lobby", "\n"));

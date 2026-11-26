@@ -145,7 +145,7 @@ pub(super) enum ScrubAct {
 
 pub(super) enum ListingAct {
     Refusals { limit: usize },
-    Audit { limit: usize },
+    Audit { limit: usize, only: Option<String> },
     ReviewQueue { limit: usize },
 }
 
@@ -287,7 +287,10 @@ impl From<AdminCmd> for Route {
             C::UnlockWindow { secs, off } => Route::Passphrase(Passphrase::Window { secs, off }),
             C::Shell => Route::Passphrase(Passphrase::Shell),
             C::Refusals { limit } => Route::listing(ListingAct::Refusals { limit }),
-            C::Audit { limit } => Route::listing(ListingAct::Audit { limit }),
+            C::Audit { limit, action } => Route::listing(ListingAct::Audit {
+                limit,
+                only: action,
+            }),
             C::ReviewQueue { limit } => Route::listing(ListingAct::ReviewQueue { limit }),
             C::Recovery => Route::key(KeyAct::Recovery),
             C::Recover { code, label } => Route::key(KeyAct::Recover { code, label }),
@@ -409,7 +412,13 @@ mod tests {
     fn policy_scrub_and_listing_commands_route_to_their_families() {
         assert_eq!(family(AdminCmd::Cap { label: "l".into() }), "policy");
         assert_eq!(family(AdminCmd::ScrubList), "scrub");
-        assert_eq!(family(AdminCmd::Audit { limit: 1 }), "listing");
+        assert_eq!(
+            family(AdminCmd::Audit {
+                limit: 1,
+                action: None
+            }),
+            "listing"
+        );
         assert_eq!(family(AdminCmd::Refusals { limit: 1 }), "listing");
     }
 

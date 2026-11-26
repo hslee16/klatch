@@ -146,6 +146,29 @@ impl<S: Store> Gateway<S> {
         self.store.audit_log(limit)
     }
 
+    /// The latest acts as `admin_audit` gives them, with the operational `forwarded-ignored` note left out and counted
+    /// (`only: None`), or only the rows of one action (`only: Some(action)`, a name of the action charset). The same
+    /// admin check as `admin_audit` (#1490).
+    pub fn admin_audit_page(
+        &self,
+        who: &Principal,
+        limit: usize,
+        only: Option<&str>,
+    ) -> Result<crate::store::AuditPage> {
+        check_member(who)?;
+        self.check_guard(
+            who,
+            &Operation::Admin {
+                action: "audit".into(),
+                target: String::new(),
+            },
+        )?;
+        if let Some(action) = only {
+            super::checks::check_audit_action(action)?;
+        }
+        self.store.audit_page(limit, only)
+    }
+
     /// The stops, before any policy: a member the breaker stopped or the admin removed, a paused gateway, and a room
     /// the admin closed or a tripwire paused (a closed room stays readable).
     pub(super) fn check_stops(&self, who: &Principal, room: &str, op: &Operation) -> Result<()> {

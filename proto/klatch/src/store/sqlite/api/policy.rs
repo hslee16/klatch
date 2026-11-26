@@ -34,6 +34,34 @@ impl PolicyStore for SqliteStore {
         )
     }
 
+    fn audit_page(&self, limit: usize, only: Option<&str>) -> Result<crate::store::AuditPage> {
+        use crate::store::FORWARDED_IGNORED_ACTION as NOTE;
+        let rows = match only {
+            Some(action) => self.rows(
+                "SELECT ts,action,target,detail FROM admin_audit WHERE action=?2 ORDER BY id DESC LIMIT ?1",
+                params![limit as i64, action],
+                audit_from_row,
+            )?,
+            None => self.rows(
+                "SELECT ts,action,target,detail FROM admin_audit WHERE action<>?2 ORDER BY id DESC LIMIT ?1",
+                params![limit as i64, NOTE],
+                audit_from_row,
+            )?,
+        };
+        let hidden = match only {
+            Some(_) => 0,
+            None => self
+                .optional(
+                    "SELECT COUNT(*) FROM admin_audit WHERE action=?1",
+                    params![NOTE],
+                    |r| r.get::<_, i64>(0),
+                )?
+                .unwrap_or(0)
+                .max(0) as u64,
+        };
+        Ok(crate::store::AuditPage { rows, hidden })
+    }
+
     fn last_audit_ts(&self, action: &str, target: &str, since: i64) -> Result<Option<i64>> {
         self.optional(
             "SELECT MAX(ts) FROM admin_audit WHERE action=?1 AND target=?2 AND ts>=?3",

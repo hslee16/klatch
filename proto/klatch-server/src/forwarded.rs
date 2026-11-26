@@ -52,6 +52,13 @@ fn slot(name: &str) -> Option<usize> {
 }
 
 impl Ignored {
+    /// Count `n` requests under the first listed name, for tests of what the counts do (not of what they name).
+    #[cfg(test)]
+    pub(crate) fn bump(&self, n: u64) {
+        self.requests.fetch_add(n, Ordering::Relaxed);
+        self.by_name[0].fetch_add(n, Ordering::Relaxed);
+    }
+
     /// Count one request given the names of its headers. Only names; a value is never passed in.
     pub(crate) fn note<'a>(&self, names: impl IntoIterator<Item = &'a str>) {
         let mut seen = [false; NAMES.len() + 1];

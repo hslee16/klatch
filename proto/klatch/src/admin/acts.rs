@@ -22,7 +22,7 @@ pub(super) fn execute(t: &dyn Transport, act: Act) -> Result<()> {
 fn listings(t: &dyn Transport, act: ListingAct) -> Result<()> {
     match act {
         ListingAct::Refusals { limit } => listing::refusals(t, limit),
-        ListingAct::Audit { limit } => listing::audit(t, limit),
+        ListingAct::Audit { limit, only } => listing::audit(t, limit, only.as_deref()),
         ListingAct::ReviewQueue { limit } => listing::review_queue(t, limit),
     }
 }

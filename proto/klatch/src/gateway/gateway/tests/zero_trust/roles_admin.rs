@@ -15,6 +15,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("admin_remove_member", |g, w| refused(g.admin_remove_member(w, "r", "bob"))),
     ("admin_allow_member", |g, w| refused(g.admin_allow_member(w, "r", "bob"))),
     ("admin_audit", |g, w| refused(g.admin_audit(w, 5))),
+    ("admin_audit_page", |g, w| refused(g.admin_audit_page(w, 5, None))),
     ("admin_run_create", |g, w| refused(g.admin_run_create(w, "a"))),
     ("admin_run_end", |g, w| refused(g.admin_run_end(w, "a", None))),
     ("admin_runs", |g, w| refused(g.admin_runs(w))),

@@ -48,7 +48,7 @@ before you rely on it.
   count changed (`klatch-server: forwarded identity headers seen so far: requests=3 x-forwarded-for=3`); when the server
   stops, as one summary line (`klatch-server: forwarded identity headers ignored: requests=3 x-forwarded-for=3`). It is
   also kept: one `forwarded-ignored` audit row every ten minutes (only when the count changed) and one at shutdown, each
-  holding what was counted since the previous row, so the rows add up across restarts (`klatch admin audit` shows them).
+  holding what was counted since the previous row, so the rows add up across restarts (`klatch admin audit --action forwarded-ignored` shows them; the default `klatch admin audit` leaves them out and says how many it hid).
   A request never writes a row; a timer does (#1490).
 - **The token is a secret on the wire.** The Bearer token is in every request, so it must only ever cross a link that is
   encrypted end to end between the two machines. That is what the tunnel is for.

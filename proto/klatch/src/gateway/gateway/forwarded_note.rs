@@ -7,7 +7,7 @@ use super::*;
 use crate::store::NewAudit;
 
 /// The action of the row. Fixed; a peer never picks it.
-pub(crate) const FORWARDED_IGNORED: &str = "forwarded-ignored";
+pub(crate) const FORWARDED_IGNORED: &str = crate::store::FORWARDED_IGNORED_ACTION;
 /// The longest detail kept: ten names and one prefix family, each with a count, fit in a fraction of this.
 const MAX_DETAIL: usize = 512;
 

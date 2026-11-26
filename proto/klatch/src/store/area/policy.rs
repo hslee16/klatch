@@ -34,6 +34,13 @@ pub trait PolicyStore {
         unsupported("an audit")
     }
 
+    /// The latest `limit` audit rows, newest first (#1490). `only: None` is the default view: every row except the
+    /// operational `forwarded-ignored` note, with `hidden` the number of those notes in the audit. `only: Some(action)`
+    /// is the rows of exactly that action, with `hidden` 0. The filter applies before the limit.
+    fn audit_page(&self, _limit: usize, _only: Option<&str>) -> Result<crate::store::AuditPage> {
+        unsupported("an audit")
+    }
+
     /// The time of the newest audit entry of one action on one target at or after `since`, however far back it is
     /// (#1007): a filtered read, so a busy audit does not hide an old entry.
     fn last_audit_ts(&self, _action: &str, _target: &str, _since: i64) -> Result<Option<i64>> {

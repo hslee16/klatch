@@ -61,6 +61,17 @@ impl Text<'_> {
     }
 }
 
+/// An audit action filter must be a well formed action name (`store::valid_audit_action`).
+pub(super) fn check_audit_action(action: &str) -> Result<()> {
+    if crate::store::valid_audit_action(action) {
+        Ok(())
+    } else {
+        Err(Error::Invalid(
+            "an audit action is 1 to 64 of a-z, 0-9, -, _, : and .".into(),
+        ))
+    }
+}
+
 pub(super) fn check_member(who: &Principal) -> Result<()> {
     if valid_name(&who.member) {
         Ok(())

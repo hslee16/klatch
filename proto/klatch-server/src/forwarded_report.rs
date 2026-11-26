@@ -63,6 +63,8 @@ pub(crate) struct Pacer {
     next_flush: Instant,
     line_shown: Counts,
     flushed: Counts,
+    /// A refusal was said and no row has been kept since.
+    refusal_said: bool,
 }
 
 impl Pacer {
@@ -73,6 +75,7 @@ impl Pacer {
             next_flush: now + sched.flush,
             line_shown: Counts::default(),
             flushed: Counts::default(),
+            refusal_said: false,
         }
     }
 
@@ -97,12 +100,33 @@ impl Pacer {
     /// The row handed out by `due` was kept: the next row holds what is counted after `counts`.
     pub(crate) fn kept(&mut self, counts: &Counts) {
         self.flushed = counts.clone();
+        self.refusal_said = false;
+    }
+
+    /// The row handed out was refused: the one fixed line that says so, the first time and again only after a row was
+    /// kept; `None` while it keeps failing. It names no error text (a store error may carry a path).
+    pub(crate) fn refused(&mut self) -> Option<String> {
+        (!std::mem::replace(&mut self.refusal_said, true)).then(|| REFUSED_LINE.to_string())
     }
 
     /// The row for shutdown, whatever the timer says: what is counted and not yet kept.
     pub(crate) fn last(&self, counts: &Counts) -> Option<String> {
         let rest = counts.since(&self.flushed);
         (!rest.is_zero()).then(|| rest.render())
+    }
+}
+
+/// Where a row goes: `true` when it was kept. The server's sink is the backend's audit; a test's may refuse.
+pub(crate) trait RowSink: Sync {
+    fn keep(&self, text: &str) -> bool;
+}
+
+/// The audit of the gateway the server embeds.
+struct Audit<'a>(&'a (dyn Backend + Sync));
+
+impl RowSink for Audit<'_> {
+    fn keep(&self, text: &str) -> bool {
+        self.0.note_forwarded_ignored(text).is_ok()
     }
 }
 
@@ -117,7 +141,7 @@ impl Drop for EndOnDrop<'_> {
 
 /// The timer thread: look every `TICK`, write what the pacer says is due. It returns its pacer so that shutdown can
 /// keep what is left. The only writer of the live line and of the periodic rows.
-fn timer(ignored: &Ignored, backend: &dyn Backend, done: &AtomicBool, mut pacer: Pacer) -> Pacer {
+fn timer(ignored: &Ignored, sink: &dyn RowSink, done: &AtomicBool, mut pacer: Pacer) -> Pacer {
     while !done.load(Ordering::SeqCst) {
         std::thread::sleep(TICK);
         let counts = ignored.snapshot();
@@ -125,13 +149,21 @@ fn timer(ignored: &Ignored, backend: &dyn Backend, done: &AtomicBool, mut pacer:
         if let Some(line) = due.line {
             eprintln!("{line}");
         }
-        if let Some(text) = due.flush
-            && backend.note_forwarded_ignored(&text).is_ok()
-        {
-            pacer.kept(&counts);
+        if let Some(text) = due.flush {
+            keep_or_say(&mut pacer, sink, (&text, &counts));
         }
     }
     pacer
+}
+
+/// Offer one row to the sink: kept, the pacer moves on; refused, one fixed line says so (the first time, and again
+/// only after a row was kept) and the counts stay unkept for the next row.
+fn keep_or_say(pacer: &mut Pacer, sink: &dyn RowSink, (text, counts): (&str, &Counts)) {
+    if sink.keep(text) {
+        pacer.kept(counts);
+    } else if let Some(line) = pacer.refused() {
+        eprintln!("{line}");
+    }
 }
 
 /// Run `serve` (the accept loop, until the server is told to stop) with the timer beside it. When `serve` returns, every
@@ -142,10 +174,20 @@ pub(crate) fn while_reporting<R>(
     backend: &(dyn Backend + Sync),
     serve: impl FnOnce() -> R,
 ) -> R {
+    while_reporting_with(ignored, &Audit(backend), Schedule::current(), serve)
+}
+
+/// `while_reporting` with the sink and the intervals given.
+fn while_reporting_with<R>(
+    ignored: &Ignored,
+    sink: &dyn RowSink,
+    sched: Schedule,
+    serve: impl FnOnce() -> R,
+) -> R {
     let done = AtomicBool::new(false);
-    let pacer = Pacer::new(Instant::now(), Schedule::current());
+    let pacer = Pacer::new(Instant::now(), sched);
     let (out, pacer) = std::thread::scope(|scope| {
-        let timer = scope.spawn(|| timer(ignored, backend, &done, pacer));
+        let timer = scope.spawn(|| timer(ignored, sink, &done, pacer));
         let out = {
             let _end = EndOnDrop(&done);
             serve()
@@ -153,14 +195,17 @@ pub(crate) fn while_reporting<R>(
         (out, timer.join())
     });
     let counts = ignored.snapshot();
-    if let Ok(pacer) = pacer
+    if let Ok(mut pacer) = pacer
         && let Some(text) = pacer.last(&counts)
     {
-        let _ = backend.note_forwarded_ignored(&text);
+        keep_or_say(&mut pacer, sink, (&text, &counts));
     }
     eprintln!("{}", ignored.summary());
     out
 }
+
+/// What is said when the store refuses a row. Fixed text.
+const REFUSED_LINE: &str = "klatch-server: forwarded identity headers: the audit row was refused; the counts stay in memory and the row is tried again at the next interval";
 
 /// The start of the live line. Not the words of the shutdown line (`forwarded identity headers ignored`), so a reader
 /// can tell the two apart.
@@ -268,6 +313,121 @@ mod tests {
             text.bytes()
                 .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'=' | b'-' | b'*' | b' ')),
             "{text}"
+        );
+    }
+
+    // ---- the timer thread, with a store that can refuse and a serve that can panic
+
+    use std::sync::Mutex;
+
+    /// A sink that refuses its first `fail_first` rows and keeps a record of every row it was offered.
+    struct Sink {
+        fail_first: usize,
+        offered: Mutex<Vec<(String, bool)>>,
+    }
+
+    impl Sink {
+        fn new(fail_first: usize) -> Sink {
+            Sink {
+                fail_first,
+                offered: Mutex::new(Vec::new()),
+            }
+        }
+        fn offered(&self) -> Vec<(String, bool)> {
+            self.offered.lock().unwrap().clone()
+        }
+    }
+
+    impl RowSink for Sink {
+        fn keep(&self, text: &str) -> bool {
+            let mut offered = self.offered.lock().unwrap();
+            let ok = offered.len() >= self.fail_first;
+            offered.push((text.to_string(), ok));
+            ok
+        }
+    }
+
+    fn quick() -> Schedule {
+        Schedule {
+            line: Duration::from_millis(40),
+            flush: Duration::from_millis(100),
+        }
+    }
+
+    /// Run `body` on a thread and fail the test, not hang it, if it has not finished within ten seconds.
+    fn within_ten_seconds(body: impl FnOnce() + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            body();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("hung: the timer did not stop");
+    }
+
+    #[test]
+    fn a_row_the_store_refuses_keeps_its_counts_for_the_next_row() {
+        within_ten_seconds(|| {
+            let ignored = Ignored::default();
+            ignored.bump(3);
+            let sink = Sink::new(1);
+            while_reporting_with(&ignored, &sink, quick(), || {
+                let until = Instant::now() + Duration::from_secs(8);
+                while sink.offered().len() < 2 && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            let row = "requests=3 forwarded=3".to_string();
+            assert_eq!(sink.offered(), [(row.clone(), false), (row, true)]);
+        });
+    }
+
+    #[test]
+    fn shutdown_keeps_what_the_timer_had_not_and_a_refused_shutdown_row_is_offered_once() {
+        within_ten_seconds(|| {
+            let ignored = Ignored::default();
+            let sink = Sink::new(0);
+            while_reporting_with(&ignored, &sink, quick(), || ignored.bump(2));
+            assert_eq!(
+                sink.offered(),
+                [("requests=2 forwarded=2".to_string(), true)]
+            );
+            let none = Sink::new(0);
+            while_reporting_with(&Ignored::default(), &none, quick(), || ());
+            assert!(none.offered().is_empty(), "nothing counted, nothing kept");
+        });
+    }
+
+    #[test]
+    fn a_panicking_serve_stops_the_timer_and_the_shutdown_does_not_hang() {
+        within_ten_seconds(|| {
+            let ignored = Ignored::default();
+            let sink = Sink::new(0);
+            let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                while_reporting_with(&ignored, &sink, quick(), || -> () {
+                    panic!("serve failed")
+                })
+            }));
+            assert!(out.is_err(), "the panic goes on");
+        });
+    }
+
+    #[test]
+    fn a_refused_row_is_said_once_and_again_only_after_a_row_was_kept() {
+        let t0 = Instant::now();
+        let mut p = Pacer::new(t0, S);
+        let said = p.refused().expect("the first refusal is said");
+        assert_eq!(
+            said,
+            "klatch-server: forwarded identity headers: the audit row was refused; the counts stay in memory and the row is tried again at the next interval"
+        );
+        assert_eq!(p.refused(), None, "not again while it keeps failing");
+        assert_eq!(p.refused(), None);
+        p.kept(&Counts::of(1));
+        assert_eq!(
+            p.refused().as_deref(),
+            Some(said.as_str()),
+            "said again after a success"
         );
     }
 }

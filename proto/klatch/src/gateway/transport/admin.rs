@@ -14,6 +14,10 @@ pub trait Admin {
     fn admin_remove_member(&self, room: &str, member: &str) -> Result<()>;
     fn admin_allow_member(&self, room: &str, member: &str) -> Result<()>;
     fn admin_audit(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>>;
+    /// The latest acts without the operational `forwarded-ignored` note and the count of those left out (`only: None`),
+    /// or only the rows of one action (#1490).
+    fn admin_audit_page(&self, limit: usize, only: Option<&str>)
+    -> Result<crate::store::AuditPage>;
     /// Open a run: its rooms (`run.<id>.<name>`) may be used from now on (#746).
     fn admin_run_create(&self, run: &str) -> Result<()>;
     /// End a run and delete its rooms, with no archive (a caller over the wire never names a file); returns how many
@@ -43,6 +47,13 @@ impl<S: Store> Admin for Direct<S> {
     fn admin_audit(&self, limit: usize) -> Result<Vec<crate::domain::AuditRecord>> {
         self.gateway.admin_audit(&self.principal, limit)
     }
+    fn admin_audit_page(
+        &self,
+        limit: usize,
+        only: Option<&str>,
+    ) -> Result<crate::store::AuditPage> {
+        self.gateway.admin_audit_page(&self.principal, limit, only)
+    }
     fn admin_run_create(&self, run: &str) -> Result<()> {
         self.gateway.admin_run_create(&self.principal, run)
     }
@@ -64,6 +75,7 @@ impl Admin for SharedTransport {
         admin_remove_member(room: &str, member: &str) -> Result<()>;
         admin_allow_member(room: &str, member: &str) -> Result<()>;
         admin_audit(limit: usize) -> Result<Vec<crate::domain::AuditRecord>>;
+        admin_audit_page(limit: usize, only: Option<&str>) -> Result<crate::store::AuditPage>;
         admin_run_create(run: &str) -> Result<()>;
         admin_run_end(run: &str) -> Result<crate::store::DeletedRooms>;
         admin_refusals(limit: usize) -> Result<Vec<crate::domain::RefusalRecord>>;
