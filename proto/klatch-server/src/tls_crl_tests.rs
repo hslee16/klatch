@@ -2,7 +2,7 @@
 //! file owned by this user can stand for a file owned by someone else (no root needed). `owner_ok` itself is tested in
 //! `tls_crl.rs`; here it is the wiring that is pinned: the file's own owner is compared with the injected user.
 
-use crate::tls_crl::read_crls_as;
+use crate::tls_crl::{Stage, read_crls_as};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 /// A file of this user under a directory of its own in the temp directory, mode 0644, holding `text`.
@@ -27,7 +27,8 @@ fn a_file_owned_by_another_user_than_the_one_the_server_runs_as_is_refused_befor
         return;
     }
     let stranger = owner.wrapping_add(1);
-    let err = read_crls_as(&path, &[], 0, stranger).expect_err("another user's file was read");
+    let err = read_crls_as(&path, &[], 0, Stage::Start, stranger)
+        .expect_err("another user's file was read");
     let text = err.to_string();
     assert!(
         text.contains("is not owned by the user running the server or by root"),
@@ -35,7 +36,7 @@ fn a_file_owned_by_another_user_than_the_one_the_server_runs_as_is_refused_befor
     );
     assert!(text.contains(&path.display().to_string()), "{text}");
     // the file's own owner passes the check, and is stopped later, by what the file holds
-    let own = read_crls_as(&path, &[], 0, owner).expect_err("not a CRL");
+    let own = read_crls_as(&path, &[], 0, Stage::Start, owner).expect_err("not a CRL");
     assert!(!own.to_string().contains("not owned"), "{own}");
     assert!(
         own.to_string().contains("not valid PEM") || own.to_string().contains("holds no CRL"),

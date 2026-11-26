@@ -312,11 +312,30 @@ impl Drop for Bound {
 
 pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
+/// Set by SIGHUP in the servers that install the hangup handler (the TLS listener reloads its files when it sees this;
+/// the plain `http` server never reads it, so for it SIGHUP is caught and ignored). The handler does nothing else.
+pub(crate) static RELOAD: AtomicBool = AtomicBool::new(false);
+
 extern "C" fn on_signal(_: libc::c_int) {
     STOP.store(true, Ordering::SeqCst);
 }
 
+extern "C" fn on_hangup(_: libc::c_int) {
+    RELOAD.store(true, Ordering::SeqCst);
+}
+
+/// SIGTERM and SIGINT stop the server. The daemon keeps the default for SIGHUP.
 pub(crate) fn install_signal_handlers() {
+    install(false);
+}
+
+/// [`install_signal_handlers`], and SIGHUP sets [`RELOAD`] instead of ending the process (for the TLS listener, which
+/// reloads, and the `http` listener, which has nothing to reload and so ignores it).
+pub(crate) fn install_signal_handlers_with_hangup() {
+    install(true);
+}
+
+fn install(hangup: bool) {
     let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
     act.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as usize;
     // no SA_RESTART: the wait for a connection returns when a signal comes
@@ -325,6 +344,14 @@ pub(crate) fn install_signal_handlers() {
         libc::sigemptyset(&mut act.sa_mask);
         libc::sigaction(libc::SIGTERM, &act, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &act, std::ptr::null_mut());
+        if hangup {
+            // restarted reads and writes where the system restarts them (macOS: all of them; on Linux a socket read with a
+            // timeout, poll and nanosleep still return EINTR, which the std helpers retry)
+            let mut hup = act;
+            hup.sa_sigaction = on_hangup as extern "C" fn(libc::c_int) as usize;
+            hup.sa_flags = libc::SA_RESTART;
+            libc::sigaction(libc::SIGHUP, &hup, std::ptr::null_mut());
+        }
     }
 }
 

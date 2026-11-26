@@ -2,7 +2,7 @@
 //! Names rustls types, so it is one of the TLS modules `tests/no_network.rs` scans.
 //!
 //! **What the operator supplies.** One PEM file holding one or more X.509 CRLs, signed by the CA (or CAs) of the client CA
-//! file. The file is read once at start; replacing it takes a restart (reload without one is #1492).
+//! file. The file is read once at start; SIGHUP reads it again with the same checks (`tls_reload.rs`, #1492), or a restart does.
 //!
 //! **What starts the server.** The file must be a regular file (not a symbolic link, opened without blocking), owned by
 //! the user running the server or by root, not writable by group or other (whoever can write the file can un-revoke a
@@ -24,7 +24,7 @@
 //! and one whose issuer is the subject of no CA in the client CA file (`ca_subjects`, the trust anchors' subjects, byte
 //! for byte as webpki compares): it still applies to clients that present an intermediate CA of that name, which is
 //! how an intermediate's CRL works with a root-only CA file, so it is not refused. There is no periodic re-check
-//! (reload is #1492).
+//! (SIGHUP reloads, #1492).
 //!
 //! **Policy** (rustls `WebPkiClientVerifier`, set in `tls.rs`):
 //! - A client certificate whose serial is listed by the CRL of its issuer fails the handshake: no session, no HTTP.
@@ -57,23 +57,38 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// The most CRLs one file may hold (one per issuer, and an operator has a handful of CAs).
 const MAX_CRLS: usize = 16;
 
-/// The CRLs of the file, after its checks (see the module doc). The error names the file and the failure, never content.
-pub fn read_crls(
+/// When a CRL file is read: at start, or at a reload with the earliest `nextUpdate` of the CRLs in force.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Nothing older exists: an expired CRL is adopted (and warned of), as the module doc says.
+    Start,
+    /// A reload. A file whose CRL has expired is REFUSED while the CRLs in force are still in date: CRLs build on each
+    /// other, so an expired file is almost always older than the one in force, refusing it loses no revocation, and
+    /// adopting it would lock every client of its issuer out. When the CRLs in force have expired too, nothing is lost
+    /// by taking the file (and the expiry is an ALERT line).
+    Reload { in_force_due: Option<i64> },
+}
+
+/// The CRLs of the file at a stage, after its checks (see the module doc), with the earliest `nextUpdate` among them. The
+/// error names the file and the failure, never content.
+pub fn read_crls_at(
     path: &Path,
     ca_subjects: &[&[u8]],
     now: i64,
-) -> Result<Vec<CertificateRevocationListDer<'static>>> {
-    read_crls_as(path, ca_subjects, now, crate::tls::euid())
+    stage: Stage,
+) -> Result<(Vec<CertificateRevocationListDer<'static>>, Option<i64>)> {
+    read_crls_as(path, ca_subjects, now, stage, crate::tls::euid())
 }
 
-/// [`read_crls`] for a server running as `euid`, which the caller names so that the owner check at the call site can be
+/// [`read_crls_at`] for a server running as `euid`, which the caller names so that the owner check at the call site can be
 /// tested without a file owned by another user (#1622): the only production caller passes the process's own.
 pub(crate) fn read_crls_as(
     path: &Path,
     ca_subjects: &[&[u8]],
     now: i64,
+    stage: Stage,
     euid: u32,
-) -> Result<Vec<CertificateRevocationListDer<'static>>> {
+) -> Result<(Vec<CertificateRevocationListDer<'static>>, Option<i64>)> {
     let shown = path.display();
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -136,10 +151,29 @@ pub(crate) fn read_crls_as(
     }
     check_one_per_issuer(&crls, path)?;
     let notices = check_cas_and_times(&crls, ca_subjects, now, path)?;
+    let reload = matches!(stage, Stage::Reload { .. });
     for (n, notice) in &notices {
-        eprintln!("{}", notice_line(path, *n, crls.len(), *notice));
+        // an expiry at a reload is an alert: it is a lock-out the operator just caused or kept
+        let level = if reload && *notice == Notice::Expired {
+            "ALERT"
+        } else {
+            "warning"
+        };
+        eprintln!("{}", notice_line_at(level, path, *n, crls.len(), *notice));
     }
-    Ok(crls)
+    let earliest = crls
+        .iter()
+        .filter_map(|c| next_update_of(c.as_ref()).ok())
+        .min();
+    if let Stage::Reload { in_force_due } = stage
+        && earliest.is_some_and(|at| at <= now)
+        && in_force_due.is_some_and(|due| due > now)
+    {
+        bail!(
+            "the client CRL file {shown} has passed its nextUpdate while the CRL in force has not: it is refused and the CRL in force stays (an expired list is older than the one in force and would refuse every client certificate of its issuer)"
+        );
+    }
+    Ok((crls, earliest))
 }
 
 /// The time now in seconds since the Unix epoch: read once, by the caller of [`read_crls`], so the checks below are pure.
@@ -211,20 +245,20 @@ fn check_cas_and_times(
 }
 
 /// The log line of a warning: a fixed template with the file and the CRL's number, never a subject or a serial.
-fn notice_line(path: &Path, n: usize, of: usize, notice: Notice) -> String {
+fn notice_line_at(level: &str, path: &Path, n: usize, of: usize, notice: Notice) -> String {
     let what = match notice {
         Notice::Expired => {
-            "has passed its nextUpdate, so every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server"
+            "has passed its nextUpdate, so every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and send SIGHUP to reload it (or restart the server)"
         }
         Notice::ExpiresSoon => {
-            "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and restart the server before then"
+            "passes its nextUpdate within 7 days, after which every client certificate of its issuer is refused (expiry is enforced): replace the CRL file and send SIGHUP to reload it (or restart the server) before then"
         }
         Notice::NoCa => {
             "matches no CA in the client CA file; it only applies to clients that present an intermediate CA with that name; if that is not intended it does nothing"
         }
     };
     format!(
-        "klatch-server: https: client certificate revocation: warning: CRL {n} of {of} {what} (client CRL file {})",
+        "klatch-server: https: client certificate revocation: {level}: CRL {n} of {of} {what} (client CRL file {})",
         path.display()
     )
 }
@@ -257,7 +291,7 @@ fn check_one_per_issuer(crls: &[CertificateRevocationListDer<'_>], path: &Path) 
 /// The line printed at start when a CRL is in force.
 pub fn start_line(path: &Path) -> String {
     format!(
-        "klatch-server: https: client certificate revocation: CRL {} in force (read at start; replace it and restart to change it; expiry is enforced: when a CRL passes its nextUpdate, every client certificate of its issuer is refused until you replace the CRL file and restart; a certificate no listed CRL covers is allowed)",
+        "klatch-server: https: client certificate revocation: CRL {} in force (read at start and again on SIGHUP; replace it and send SIGHUP, or restart, to change it; expiry is enforced: when a CRL passes its nextUpdate, every client certificate of its issuer is refused until you replace the CRL file and send SIGHUP (or restart); a certificate no listed CRL covers is allowed)",
         path.display()
     )
 }
@@ -299,11 +333,11 @@ fn classify(err: &rustls::Error) -> Option<(usize, &'static str)> {
             C::ExpiredRevocationList | C::ExpiredRevocationListContext { .. },
         ) => Some((
             1,
-            "the CRL has expired (its nextUpdate has passed), so every client certificate of its issuer is refused: replace the CRL file and restart the server (reload without a restart is #1492)",
+            "the CRL has expired (its nextUpdate has passed), so every client certificate of its issuer is refused: replace the CRL file and send SIGHUP to reload it (or restart the server)",
         )),
         rustls::Error::InvalidCertRevocationList(_) => Some((
             2,
-            "the CRL is not usable (a bad signature, an unsupported signature algorithm, or an issuer certificate that may not sign CRLs), so every client certificate of its issuer is refused: replace the CRL file and restart the server (reload without a restart is #1492)",
+            "the CRL is not usable (a bad signature, an unsupported signature algorithm, or an issuer certificate that may not sign CRLs), so every client certificate of its issuer is refused: replace the CRL file and send SIGHUP to reload it (or restart the server)",
         )),
         _ => None,
     }
@@ -411,18 +445,23 @@ mod tests {
         assert_eq!(got, vec![(2, Notice::Expired)]);
         let path = Path::new("/x/crl.pem");
         for notice in [Notice::Expired, Notice::ExpiresSoon, Notice::NoCa] {
-            let line = notice_line(path, 2, 3, notice);
+            let line = notice_line_at("warning", path, 2, 3, notice);
             assert!(line.contains("warning: CRL 2 of 3 "), "{line}");
             assert!(line.ends_with("(client CRL file /x/crl.pem)"), "{line}");
         }
-        let no_ca = notice_line(path, 1, 1, Notice::NoCa);
+        let no_ca = notice_line_at("warning", path, 1, 1, Notice::NoCa);
         assert!(
             no_ca.contains("matches no CA in the client CA file; it only applies to clients that present an intermediate CA with that name; if that is not intended it does nothing"),
             "{no_ca}"
         );
         assert!(!no_ca.contains("list the"), "{no_ca}");
-        assert!(notice_line(path, 1, 1, Notice::Expired).contains("has passed its nextUpdate"));
-        assert!(notice_line(path, 1, 1, Notice::ExpiresSoon).contains("within 7 days"));
+        assert!(
+            notice_line_at("warning", path, 1, 1, Notice::Expired)
+                .contains("has passed its nextUpdate")
+        );
+        assert!(
+            notice_line_at("warning", path, 1, 1, Notice::ExpiresSoon).contains("within 7 days")
+        );
     }
 
     #[test]

@@ -490,7 +490,7 @@ pub fn run(opts: &Options) -> Result<()> {
     let gateway: SharedGateway = klatch::member::spawn_shared_gateway()
         .context("the server cannot open the store, so it does not start")?;
     let listener = loopback::bind_loopback(&opts.listen)?;
-    crate::daemon::install_signal_handlers();
+    crate::daemon::install_signal_handlers_with_hangup();
     announce_listening(
         &mut io::stderr().lock(),
         &listener.local_addr()?,
