@@ -85,8 +85,9 @@ class RunExecution(RunMetrics, RoleSupport, IsolationSupport, PollSupport):
         guard_paths(self.khome, self.kkeys, self.tmp_root)
         self.henv = minimal_env(os.environ, home)
         # the repository: initial tree from the fixture, a bare origin made for this run
+        self.prepare_facts()
         self.seedtree = os.path.join(self.scratch, "seed")
-        self.fx.materialise(self.seedtree, self.seed, self.henv, arm=self.arm)
+        self.fx.materialise(self.seedtree, self.setup_seed, self.henv, arm=self.arm)
 
     def plan_injections(self):
         """S10 (#1375): the scripted colleague's injections for this run. The plan (tokens, paths, texts) goes to the log

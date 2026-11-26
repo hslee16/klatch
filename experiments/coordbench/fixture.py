@@ -38,13 +38,22 @@ checker COORDBENCH_GEN_MODULES and COORDBENCH_GEN_SEED. The seed belongs to the 
 gets the same repository. "require_variant": true refuses the fixture without a variant (a size), so the sizes are never
 recorded under one name.
 
+Seeded facts (#1531): "seeded_facts": {"default_seed": N, "outputs": [paths of the fixture directory that carry the hidden facts],
+"checker_files": [files of the checker directory that carry them]} says that gen_facts.py draws the hidden facts from a seed:
+generate(seed) -> {path relative to experiments/coordbench: text}. The committed files are the default seed's copy (the fake
+driver tests use it, --committed-facts). A run writes the seed's files into a directory outside every agent's reach
+(with_facts), takes the private files, the seed and room files, the fake script and the checker's facts from there, and the
+checker finds its facts through COORDBENCH_FACTS. fixhash.py says what the hash covers for such a fixture.
+
 The hidden checker is NOT in the fixture: checks/<checker>/check.sh CHECKOUT prints {"checks": [{"id", "pass",
 "unit"?}]} for a clone of the final origin. It is never copied into a checkout and never named in a prompt.
 """
+import copy
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -100,6 +109,9 @@ class Fixture:
         self.injection_mode = self.spec.get("injection_mode", "all")
         self.injection = self._load_json("injection", "the injections", OSError, ValueError)
         self.resume = self._load_resume(name)
+        self.seeded = self.spec.get("seeded_facts")
+        self.facts_path = None  # the checker's facts of this run (with_facts), else the committed default-seed copy
+        self.facts_root = None
 
     def _apply_variant(self, name, variant):
         variants = self.spec.get("variants") or {}
@@ -174,6 +186,73 @@ class Fixture:
         """The generated unit, agent and shared-file map to merge into the scenario file ({} when not generated)."""
         return self.gen().scenario_map(self.generated["modules"], self.generated["seed"]) if self.generated else {}
 
+    @property
+    def default_seed(self):
+        """The seed of the committed facts files (None for a fixture whose facts are not seeded)."""
+        return self.seeded["default_seed"] if self.seeded else None
+
+    def facts_seed(self, run_seed, committed=False):
+        """The seed the facts of a run are drawn from: the run's seed, or the committed default with --committed-facts
+        (None when the fixture's facts are not seeded)."""
+        return None if not self.seeded else (self.default_seed if committed else run_seed)
+
+    def facts_files(self, seed):
+        """{path relative to experiments/coordbench: text}: every file the generator makes for the seed (drawn in process)."""
+        path = os.path.join(self.dir, "gen_facts.py")
+        spec = importlib.util.spec_from_file_location("fixture_facts_%s" % self.spec["name"], path)
+        mod = importlib.util.module_from_spec(spec)
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True  # no __pycache__ in the fixture (#1510)
+        try:
+            spec.loader.exec_module(mod)
+            return mod.generate(seed)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def facts_sha256(self, seed):
+        """What the record says the run's facts were: the sha256 of every generated file (sorted paths and bytes), or None."""
+        if not self.seeded:
+            return None
+        h = hashlib.sha256()
+        for rel, text in sorted(self.facts_files(seed).items()):
+            h.update(rel.encode() + b"\0" + text.encode() + b"\0")
+        return h.hexdigest()
+
+    def with_facts(self, seed, root):
+        """A copy of this fixture whose private files, seed and room files, fake script and checker facts are the seed's, written
+        under root (made by the harness, never inside an agent's reach). The facts file of the checker is root/checks/<checker>/."""
+        fx = copy.copy(self)
+        name = os.path.basename(self.dir)
+        ref = os.path.join(self.dir, "reference")
+        if os.path.isdir(ref):  # the parts of reference/ no seed changes (recovery: bits, pairs, wrap) come from the fixture
+            shutil.copytree(ref, os.path.join(root, "fixtures", name, "reference"), dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for rel, text in self.facts_files(seed).items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+        own = os.path.join(root, "fixtures", name)
+        fx.facts_root = root
+        fx.facts_path = os.path.join(root, "checks", self.spec["checker"], "facts.json")
+        if self.private_dir:
+            fx.private_dir = os.path.join(own, self.spec["private"])
+        if self.fake_script:
+            fx.fake_script = os.path.join(own, os.path.basename(self.fake_script))
+            if not os.path.exists(fx.fake_script):  # a script the seed does not change still finds reference/ next to it
+                os.makedirs(own, exist_ok=True)
+                shutil.copyfile(self.fake_script, fx.fake_script)
+        fx.seed_history = self._reload_json(own, "seed_history", "seed history") if self.seed_history else None
+        fx.room_script = self._reload_json(own, "room_history", "room history", pick="steps") if self.room_script else None
+        return fx
+
+    def _reload_json(self, base, key, what, pick=None):
+        try:
+            with open(os.path.join(base, self.spec[key])) as f:
+                obj = json.load(f)
+            return obj[pick] if pick else obj
+        except (OSError, ValueError, KeyError):
+            return getattr(self, {"seed_history": "seed_history", "room_history": "room_script"}[key])  # not generated: the committed one
+
     def private_files(self, agent):
         """[(path relative to the clone, absolute source)] of the files only this agent has (fixture key "private":
         private/<agent>/...). The harness copies them into that agent's clone, untracked and excluded from git."""
@@ -198,7 +277,8 @@ class Fixture:
             h = hashlib.sha256()
             if self.generated:  # the generator's parameters are part of what ran
                 h.update(json.dumps(self.generated, sort_keys=True).encode() + b"\0")
-            fixhash.tree_update(h, self.dir, omit=self.generator_sources)
+            omit = self.seeded["outputs"] if self.seeded else self.generator_sources  # #1531: see fixhash.py, "seeded"
+            fixhash.tree_update(h, self.dir, omit=omit)
             self._output_update(h)
             self._sha = h.hexdigest()
         return self._sha
@@ -206,7 +286,8 @@ class Fixture:
     def checker_sha256(self):
         """The hash of the hidden checker directory checks/<checker>/ (None when it does not exist)."""
         d = os.path.dirname(self.checker)
-        return fixhash.tree_sha256(d) if os.path.isdir(d) else None
+        omit = self.seeded.get("checker_files", []) if self.seeded else []
+        return fixhash.tree_sha256(d, omit=omit) if os.path.isdir(d) else None
 
     def _output_update(self, h):
         """What the generator sources make and the directory does not hold (fixhash.py): a generated fixture's template,
@@ -219,7 +300,7 @@ class Fixture:
                     h.update(b"generated:" + part.encode() + b"\0")
                     fixhash.tree_update(h, os.path.join(tmp, part))
             h.update(json.dumps([self.agents, self.scenario_map()], sort_keys=True).encode() + b"\0")
-        if self.prebuilt_history:
+        if self.prebuilt_history and not self.seeded:  # a seeded history's commit ids differ per seed; its sources are hashed
             for arm in ("B0", "B1"):
                 h.update(b"history:" + arm.encode() + b"\0" + self._history_head(arm).encode() + b"\0")
 
@@ -260,6 +341,8 @@ class Fixture:
         if not os.path.exists(self.checker):
             return [], "", "checker %s does not exist" % self.checker
         env = dict(env, **self.gen_env())
+        if self.facts_path:  # #1531: this run's facts, outside the agents' reach; else the checker reads its committed copy
+            env["COORDBENCH_FACTS"] = self.facts_path
         try:
             p = subprocess.run(["bash", self.checker, checkout], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, env=env, timeout=timeout)

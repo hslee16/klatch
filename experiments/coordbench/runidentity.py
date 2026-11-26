@@ -63,9 +63,20 @@ def arm_text_sha256(arms_dir, arm, topology):
     return h.hexdigest()
 
 
-def identity(args, fx, arm):
+def fixture_identity(fx, seed, args):
+    """The record's `fixture` object: name, hash and checker hash; for a fixture with seeded hidden facts (#1531) also `seed` (the
+    seed the facts were drawn from) and `facts_sha256`, so the run is reproducible from (sha256, seed). A record made before has
+    neither (the validator and the report tolerate their absence)."""
+    out = {"name": fx.name, "sha256": fx.sha256(), "checker_sha256": fx.checker_sha256()}
+    if fx.seeded:
+        facts_seed = fx.facts_seed(seed, getattr(args, "committed_facts", False))
+        out.update(seed=facts_seed, facts_sha256=fx.facts_sha256(facts_seed))
+    return out
+
+
+def identity(args, fx, arm, seed=None):
     """The record fields that say which fixture, which checker, which prompts and which arm texts a run had."""
     return {"fixture_hash_version": fixhash.FIXTURE_HASH_VERSION,
-            "fixture": {"name": fx.name, "sha256": fx.sha256(), "checker_sha256": fx.checker_sha256()},
+            "fixture": fixture_identity(fx, seed, args),
             "prompt_sha256": prompt_hashes(args, fx, arm),
             "arm_text_sha256": arm_text_sha256(args.arms_dir, arm, fx.topology)}
