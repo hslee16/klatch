@@ -128,7 +128,7 @@ class Suite:
             "schema": schema.SCHEMA_VERSION, "run_id": run_id, "milestone": a.suite_id, "scenario": self.fx.name,
             "topology": self.fx.topology, "arm": arm, "arm_text_version": a.arm_text_version,
             "metric_version": metricver.METRIC_VERSION,
-            **runidentity.identity(a, self.fx, arm), "seed": seed, "valid": True,
+            **runidentity.identity(a, self.fx, arm, seed), "seed": seed, "valid": True,
             "supersedes": None,
             "models": {"agent": a.model or self.driver.name, "roles": a.roles_model if roles_mod.is_role_arm(arm) else None,
                        "resolved_ids": []},
@@ -289,6 +289,8 @@ def _claude_driver(a, fx):
                       "made (SPEC section 8, approval.py). Without it only --driver fake runs.")
     if not a.model:
         return None, "--driver claude needs --model (a pinned model id)"
+    if getattr(a, "committed_facts", False):
+        return None, "--committed-facts is for the fake driver: real agents get hidden facts drawn from the run's seed (#1531)"
     try:
         a.max_run_usd, a.max_suite_usd = resolve_caps(a)
     except approval_mod.ApprovalError as e:

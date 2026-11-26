@@ -19,7 +19,6 @@
        {"name": "reason", "type": "string", "required": false},
        {"name": "shared", "type": "boolean", "required": false}
      ],
-     "clients": {"rust": {"gaps": ["shared"]}},
      "wrappers": {"python": "claim", "typescript": "claim", "rust": "claim"}},
     {"name": "claims", "mode": "read", "room_arg": "room", "result": "{claims: [...]}",
      "params": [
@@ -117,8 +116,7 @@
        {"name": "max_messages", "type": "integer", "required": false},
        {"name": "max_bytes", "type": "integer", "required": false}
      ],
-     "clients": {"python": {"gaps": ["max_messages", "max_bytes"]}, "typescript": {"gaps": ["max_messages", "max_bytes"]}, "rust": {"gaps": ["max_messages", "max_bytes"]}},
-     "wrappers": {"python": "read", "typescript": "read", "rust": "read"}},
+     "wrappers": {"python": "read_bounded", "typescript": "readBounded", "rust": "read_bounded"}},
     {"name": "receipt", "mode": "read", "room_arg": "room", "result": "{seq, posted, recipients}",
      "params": [
        {"name": "room", "type": "string", "required": true},

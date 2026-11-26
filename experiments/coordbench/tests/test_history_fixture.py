@@ -43,7 +43,7 @@ def has(text, v):
 def build(tmp, arm, name="co"):
     dest = os.path.join(tmp, name)
     os.makedirs(dest)
-    subprocess.run(["bash", os.path.join(FIXTURE, "setup.sh"), dest, "1"], check=True, env=dict(GENV, COORDBENCH_ARM=arm),
+    subprocess.run(["bash", os.path.join(FIXTURE, "setup.sh"), dest, "20261124"], check=True, env=dict(GENV, COORDBENCH_ARM=arm),
                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return dest
 

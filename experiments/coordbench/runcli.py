@@ -68,6 +68,9 @@ def parse_args(argv):
                    "every record. The scan runs in both.")
     p.add_argument("--room", default="lobby")
     p.add_argument("--seed", type=int, default=1000)
+    p.add_argument("--committed-facts", action="store_true", help="fake driver only (#1531): a fixture with seeded hidden facts "
+                   "(specialists, recovery, history) uses its committed default-seed facts instead of facts drawn from the run's "
+                   "seed, so a scripted test can name them; a paid run always draws from the seed and refuses this flag")
     p.add_argument("--model", help="the agent model id (required with --driver claude)")
     p.add_argument("--roles-model", help="the model of the role members of K3 and B1-roles (default: the scenario file's, else --model)")
     p.add_argument("--roles", help="the role members to start in K3 and B1-roles, comma separated (default: the scenario "

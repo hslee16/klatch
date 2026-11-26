@@ -50,8 +50,14 @@ def raises(fn, exc, *args):
     return False
 
 
+def facts_path():
+    """The facts of this run (#1531): the file the harness wrote outside the agents' reach (COORDBENCH_FACTS), else the committed
+    default-seed copy next to this script."""
+    return os.environ.get("COORDBENCH_FACTS") or os.path.join(HERE, "facts.json")
+
+
 def facts():
-    with open(os.path.join(HERE, "facts.json")) as f:
+    with open(facts_path()) as f:
         return json.load(f)
 
 

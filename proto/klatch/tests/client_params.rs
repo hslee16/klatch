@@ -503,12 +503,19 @@ fn a_param_sent_under_another_key_fails() {
 
 #[test]
 fn a_recorded_gap_that_was_closed_fails() {
-    // claim's `shared` is a recorded Rust gap; a Rust claim that sent it must have the gap removed from the list
-    let mut s = real(Client::Rust);
-    s.requests = s.requests.replacen(
-        "pub reason: Option<&'a str>,",
-        "pub reason: Option<&'a str>,\n    pub shared: bool,",
-        1,
+    // the list has no gap now (#1565); a list that still records `shared` as a Rust gap of claim, which the Rust claim
+    // now sends, must have the gap removed
+    let mut l = list();
+    let claim = l["methods"]
+        .as_array_mut()
+        .and_then(|ms| ms.iter_mut().find(|m| m["name"] == "claim"))
+        .expect("claim in the list");
+    claim["clients"] = serde_json::json!({"rust": {"gaps": ["shared"]}});
+    let problems = client_problems(Client::Rust, &real(Client::Rust), &l);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("claim: rust wrapper now exposes shared")),
+        "{problems:?}"
     );
-    assert_fails(Client::Rust, &s, "claim: rust wrapper now exposes shared");
 }

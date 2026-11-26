@@ -53,7 +53,7 @@ run is `cargo test -p klatch-server --test client_http` (#1122).
 ## What every client does
 
 Connect and read `hello` (member, attribution, clearance); `request` (any method, a result or an error with its code and any
-refusal frames); `post` (with optional label, kind and payload), `read`, `history` (look back with optional `last` and `since`, no cursor moved, returning the messages and `more`), `claim`, `release`, `claims`, `who`; `subscribe` with
+refusal frames); `post` (with optional label, kind and payload), `read` (with optional `max_messages` and `max_bytes` to bound a read, #1390; `read_bounded`, `readBounded` in TypeScript, also returns `omitted`, the number left unread, and `by_importance`; the values are sent as given and the server refuses what it cannot take), `history` (look back with optional `last` and `since`, no cursor moved, returning the messages and `more`), `claim` (with optional `ttl`, `reason` and `shared`), `release`, `claims`, `who`; `subscribe` with
 resume from a sequence number, then messages, `caught_up` and live pushes, and `ack`; close, which ends the session by closing
 its input. A frame type or field the client does not know is ignored; a frame that is not `"v":1` is a protocol error.
 

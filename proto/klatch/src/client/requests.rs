@@ -94,14 +94,15 @@ impl<'a> PostRequest<'a> {
     }
 }
 
-/// What `Client::claim` sends: the room and the path, and optionally a time to live and a reason. Build it with
-/// `ClaimRequest::new(room, path)` and the setters.
+/// What `Client::claim` sends: the room and the path, and optionally a time to live, a reason and `shared` (a claim
+/// that other shared claims of the path may sit beside). Build it with `ClaimRequest::new(room, path)` and the setters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimRequest<'a> {
     pub room: &'a str,
     pub path: &'a str,
     pub ttl: Option<i64>,
     pub reason: Option<&'a str>,
+    pub shared: Option<bool>,
 }
 
 impl<'a> ClaimRequest<'a> {
@@ -111,6 +112,7 @@ impl<'a> ClaimRequest<'a> {
             path,
             ttl: None,
             reason: None,
+            shared: None,
         }
     }
 
@@ -123,6 +125,53 @@ impl<'a> ClaimRequest<'a> {
     /// Say why the path is claimed.
     pub fn reason(mut self, reason: &'a str) -> Self {
         self.reason = Some(reason);
+        self
+    }
+
+    /// Ask for a shared (`true`) or an exclusive (`false`) claim; left unset, the server's default applies.
+    pub fn shared(mut self, shared: bool) -> Self {
+        self.shared = Some(shared);
+        self
+    }
+}
+
+/// What `Client::read_bounded` sends: the room, `peek`, and optionally `max_messages` and `max_bytes` (#1390), the most
+/// messages and the most bytes of JSON one read returns (whole messages, the most important first; the rest stay
+/// unread). Both are sent as given and the server stays the authority on them (it raises a `max_bytes` under 1000).
+/// Build it with `ReadRequest::new(room)` and the setters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadRequest<'a> {
+    pub room: &'a str,
+    pub peek: bool,
+    pub max_messages: Option<usize>,
+    pub max_bytes: Option<usize>,
+}
+
+impl<'a> ReadRequest<'a> {
+    pub fn new(room: &'a str) -> Self {
+        Self {
+            room,
+            peek: false,
+            max_messages: None,
+            max_bytes: None,
+        }
+    }
+
+    /// Read without moving the cursor.
+    pub fn peek(mut self, peek: bool) -> Self {
+        self.peek = peek;
+        self
+    }
+
+    /// Return at most this many messages.
+    pub fn max_messages(mut self, n: usize) -> Self {
+        self.max_messages = Some(n);
+        self
+    }
+
+    /// Return at most this many bytes of messages as JSON.
+    pub fn max_bytes(mut self, n: usize) -> Self {
+        self.max_bytes = Some(n);
         self
     }
 }
