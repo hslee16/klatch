@@ -439,6 +439,7 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "topology": "T-shared",
   "arm": "K2",
   "arm_text_version": "1",
+  "arm_text_sha256": "...",
   "fixture": {"name": "onefile", "sha256": "...", "checker_sha256": "..."},
   "fixture_hash_version": 2,
   "prompt_sha256": {"a": "...", "b": "...", "c": "..."},
@@ -449,7 +450,7 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "supersedes": null,
   "models": {"agent": "claude-haiku-...", "roles": null, "resolved_ids": ["..."]},
   "claude_code_version": "2.1.x",
-  "klatch": {"commit": "...", "binary_sha256": "...", "store_schema": 37},
+  "klatch": {"commit": null, "binary_sha256": "...", "store_schema": 37, "version_output": "klatch 0.x (protocol N, store schema 37)", "bench_commit": "..."},
   "temperature": "default",
   "caps": {"per_run_usd": 3.0, "suite_usd": 150.0, "wall_s": 1800, "max_turns_per_agent": 60},
   "start": "2026-11-24T10:00:00Z",
@@ -490,6 +491,16 @@ leftovers, so refactoring a generator changes no hash. `fixture.checker_sha256` 
 `prompt_sha256` hashes each agent's built prompt with the run's own paths and room as placeholders. Version 1 hashed the
 whole directory including generator sources and bytecode and had neither of the other two. `report.py` never pools versions
 (`SCENARIO [fixture hash vN]`) and flags a comparison across versions.
+
+Run identity (#1530, #1547). `metric_version` is written with the record skeleton, so an aborted run has it. `prompt_sha256` has an
+entry per worker and, for K3 and B1-roles, one per role member (`integrator`, `supervisor`); a replacement worker started by a
+supervisor has its predecessor's prompt and adds no entry. `arm_text_sha256` hashes the arm text files the run's arm and topology
+read (the common part, the base arm, and for a role arm its own file); `arm_text_version` stays a label for people.
+`klatch.binary_sha256`, `klatch.store_schema` and `klatch.version_output` (the binary's `--version` line) identify the klatch
+under test. `klatch.commit` is the commit given with `--klatch-commit` and otherwise null: the binary does not report one, and the
+bench repository's HEAD (kept as `klatch.bench_commit`) is not the binary's. These are additions to schema 1 and no version
+changed; a record made before them lacks `arm_text_sha256`, `klatch.version_output` and `klatch.bench_commit` and its `klatch.commit`
+is the bench HEAD, and readers (the validator, `report.py`) tolerate their absence.
 
 `outcome` is one of `ok` (agents finished), `timeout`, `spend-cap`, `turn-cap`, `crash`, `error`, or `trigger-not-fired` (S6 only: the
 kill trigger never fired, so the run did not test recovery; it is valid and stays in the ledger, #1525). The scenario's checks are listed in

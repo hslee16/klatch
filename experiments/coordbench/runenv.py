@@ -84,18 +84,20 @@ def kill_group(proc):
 
 
 def klatch_facts(klatch_bin, env):
-    """(binary sha256, store schema) of the klatch under test; (None, None) when no binary was given."""
+    """(binary sha256, store schema, `--version` output) of the klatch under test; all None when no binary was given. The
+    binary's own identity: its version line does not name a commit, so none is read from it (#1547)."""
     if not klatch_bin:
-        return None, None
-    schema_no = None
+        return None, None, None
+    schema_no, version = None, None
     try:
         p = subprocess.run([klatch_bin, "--version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                            env=env, timeout=30)
         m = re.search(r"store schema (\d+)", p.stdout)
         schema_no = int(m.group(1)) if m else None
+        version = p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
     except (OSError, subprocess.SubprocessError):
         pass
-    return sha256_file(klatch_bin), schema_no
+    return sha256_file(klatch_bin), schema_no, version
 
 
 def commit_of(path):
