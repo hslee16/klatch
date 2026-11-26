@@ -150,6 +150,38 @@ fn a_session_that_panics_is_cut_and_gives_its_member_slot_back_while_its_client_
 }
 
 #[test]
+fn twenty_session_panics_leave_one_hook_line_and_one_handler_line_in_the_log() {
+    // every stream of this server panics: the hook runs for each and so does the catch at the top of the handler (#1645)
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let tokens = [issue_credential(&dir, "alice")];
+    let server = Server::started_env(&dir, "http", &[], &[("KLATCH_TEST_STREAM_PANIC", "1")]);
+    let net = Net {
+        addr: server.addr,
+        tls: None,
+    };
+    for i in 0..20 {
+        let mut c = net.connect();
+        c.set_read_timeout(Duration::from_millis(500));
+        c.write_all(stream_request("alice", &tokens[0]).as_bytes())
+            .unwrap();
+        c.flush().unwrap();
+        let (text, ended) = read_until_end(&mut c, Duration::from_secs(6));
+        assert!(ended, "stream {i} was not cut: {text:?}");
+    }
+    // the last panic may still be on its way to the log: wait (bounded) for the handler's line
+    let until = Instant::now() + SLACK;
+    while !dir.log().contains("handler panicked") && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log = dir.log();
+    let count = |needle: &str| log.lines().filter(|l| l.contains(needle)).count();
+    assert_eq!(count("internal error"), 1, "hook lines:\n{log}");
+    assert_eq!(count("handler panicked"), 1, "handler lines:\n{log}");
+    assert!(!log.contains("forced panic"), "{log}");
+}
+
+#[test]
 fn a_server_without_short_limits_ignores_the_panic_knob() {
     // the knob needs the short-limits one as well (a debug build, as `cargo test` builds): a server run as an operator
     // runs it, with the panic variable in its environment, serves its stream and logs no panic

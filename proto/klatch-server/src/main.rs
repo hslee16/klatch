@@ -58,8 +58,7 @@ const USAGE: &str = "usage: klatch-server --version\n       klatch-server http -
 /// messages in memory): the same hardening the `klatch` binary does.
 fn harden() {
     std::panic::set_hook(Box::new(|info| {
-        let at = info.location().map(|l| (l.file(), l.line()));
-        eprintln!("{}", panic_log::internal_error_line(at));
+        panic_log::on_panic(info.location().map(|l| (l.file(), l.line())));
     }));
     let zero = libc::rlimit {
         rlim_cur: 0,
