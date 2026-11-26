@@ -29,17 +29,17 @@
 
 use crate::inbox::Inbox;
 use crate::loopback::{self, Budget, Head, Limits, Pending, Response, Stream};
+use crate::wire_sessions::{Sessions, register};
 use crate::wire_sse::SseWriter;
 use crate::wire_ws;
 use anyhow::{Context, Result, bail};
 use klatch::domain::Principal;
 use klatch::gateway::{Identity, LocalIdentity, PeerEvidence, SharedBackend, SharedGateway};
 use klatch::session::{Backend, Closer, Session, SessionConfig};
-use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
 pub const STREAM_PATH: &str = "/v1/stream";
@@ -49,8 +49,6 @@ pub const SESSION_HEADER: &str = "x-klatch-session";
 
 /// Concurrent connections served by default.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 32;
-/// Posted bodies a session may have waiting to be read by its session loop.
-const INBOX: usize = 16;
 
 /// What `klatch-server http` was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,14 +99,6 @@ pub fn parse(args: &[&str]) -> Result<Options> {
 
 // ---------------------------------------------------------------------------------------------------------------
 // the input of a session: what POSTs put in (`Inbox`, in `inbox.rs`)
-
-/// A session that is open: whose it is, and where its input goes.
-struct Entry {
-    member: String,
-    tx: SyncSender<Vec<u8>>,
-}
-
-type Sessions = Arc<Mutex<HashMap<String, Entry>>>;
 
 /// What every connection thread shares.
 pub(crate) struct Shared {
@@ -366,38 +356,6 @@ fn queue_frames(tx: &SyncSender<Vec<u8>>, mut body: Vec<u8>) -> Response {
     }
 }
 
-/// A session's place in the registry: removing it ends what `POST /v1/frames` can reach.
-#[derive(Clone)]
-struct Registration {
-    sessions: Sessions,
-    id: String,
-}
-
-impl Registration {
-    fn remove(&self) {
-        self.sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.id);
-    }
-}
-
-/// Register a new session of `who`: its registration, and the receiving end of its input.
-fn register(shared: &Shared, id: &str, who: &Principal) -> (Registration, Receiver<Vec<u8>>) {
-    let (tx, rx) = sync_channel::<Vec<u8>>(INBOX);
-    let entry = Entry {
-        member: who.member.clone(),
-        tx,
-    };
-    let sessions = shared.sessions.clone();
-    sessions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id.to_string(), entry);
-    let id = id.to_string();
-    (Registration { sessions, id }, rx)
-}
-
 /// The head of the event stream's answer.
 fn stream_head(id: &str) -> String {
     format!(
@@ -436,13 +394,11 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         );
         return;
     };
-    let (registration, rx) = register(shared, &id, who);
+    let (registration, rx) = register(&shared.sessions, &id, &who.member);
     let Some(Handles { out, watch, shut }) = open_stream(&mut stream, &id) else {
-        registration.remove();
         return;
     };
     let Ok(aged) = stream.try_clone() else {
-        registration.remove();
         return;
     };
     let _ = stream.set_read_timeout(None);
@@ -454,7 +410,7 @@ fn stream_session(mut stream: Stream, who: &Principal, shared: &Shared) {
         let closed = closed.clone();
         Box::new(move || {
             closed.store(true, Ordering::SeqCst);
-            registration.remove();
+            drop(registration);
             let _ = shut.shutdown(std::net::Shutdown::Both);
         })
     };
