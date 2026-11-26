@@ -66,14 +66,25 @@ fn ring_is_named_only_for_the_tls_provider_and_for_the_sha_1_of_the_upgrade_answ
     let users: Vec<String> = rust_sources()
         .iter()
         .filter(|(rel, text)| {
-            !["src/tls.rs", "src/wire_ws.rs"].contains(&rel.as_str())
+            !["src/tls.rs", "src/wire_ws.rs", "src/crl_sig.rs"].contains(&rel.as_str())
                 && text.lines().any(|l| names_ring(code_of(l)))
         })
         .map(|(rel, _)| rel.clone())
         .collect();
     assert!(
         users.is_empty(),
-        "ring is named outside tls.rs and wire_ws.rs: {users:?}"
+        "ring is named outside tls.rs, wire_ws.rs and crl_sig.rs: {users:?}"
+    );
+    // and `crl_sig.rs` (#1648) names it only to verify a CRL's signature against a listed certificate's key (a sanity
+    // check of the CRL file at start, no trust decision)
+    let (_, sig) = rust_sources()
+        .into_iter()
+        .find(|(rel, _)| rel == "src/crl_sig.rs")
+        .unwrap();
+    let uses: Vec<&str> = sig.lines().map(code_of).filter(|l| names_ring(l)).collect();
+    assert!(
+        uses.iter().all(|l| l.contains("signature")),
+        "crl_sig.rs uses ring for signature verification only: {uses:?}"
     );
     let (_, ws) = rust_sources()
         .into_iter()

@@ -185,7 +185,24 @@ const BIT_STRING: u8 = 0x03;
 /// is not where X.509 puts its fields, with anything after it, or with a length that is not definite and minimal.
 /// It reads the NAME only: it never checks a signature, a validity or a key usage, because a name match is not a trust
 /// decision (the certificates this is read from are never trust anchors).
+#[cfg(test)]
 pub fn subject_of(cert: &[u8]) -> Option<&[u8]> {
+    let (subject, _) = subject_and_after(cert)?;
+    Some(subject)
+}
+
+/// The subject name and the `subjectPublicKeyInfo` (its DER content: the algorithm SEQUENCE then the key BIT STRING) of a
+/// certificate, for the signature sanity check of a CRL against a listed certificate (#1648). The same walk and the same
+/// refusals as [`subject_of`] (an empty subject included), and the next element must be the key info SEQUENCE.
+pub fn subject_and_key_of(cert: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (subject, after) = subject_and_after(cert)?;
+    let (tag, spki, _) = tlv(after)?;
+    (tag == SEQUENCE).then_some((subject, spki))
+}
+
+/// The subject's content and what follows the subject element. An empty subject is refused: RFC 5280 requires the subject
+/// of a CA certificate to be a non-empty name, and an empty one would let a CRL with an empty issuer match (#1648).
+fn subject_and_after(cert: &[u8]) -> Option<(&[u8], &[u8])> {
     let (tag, body, after) = tlv(cert)?;
     if tag != SEQUENCE || !after.is_empty() {
         return None;
@@ -214,6 +231,6 @@ pub fn subject_of(cert: &[u8]) -> Option<&[u8]> {
         }
         rest = next;
     }
-    let (tag, subject, _) = tlv(rest)?;
-    (tag == SEQUENCE).then_some(subject)
+    let (tag, subject, after) = tlv(rest)?;
+    (tag == SEQUENCE && !subject.is_empty()).then_some((subject, after))
 }

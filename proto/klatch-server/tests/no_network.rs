@@ -423,7 +423,12 @@ fn the_only_tls_library_is_rustls_with_ring_and_no_other_crypto_or_tls_crate_is_
 }
 
 /// The only files that may name rustls: the handshake and configuration, and the pump of an established connection.
-const TLS_MODULES: &[&str] = &["src/tls.rs", "src/tls_bridge.rs", "src/tls_crl.rs"];
+const TLS_MODULES: &[&str] = &[
+    "src/tls.rs",
+    "src/tls_bridge.rs",
+    "src/tls_crl.rs",
+    "src/crl_sig.rs",
+];
 
 /// Names that skip or weaken a check: none may appear in the source, in any file. (A test file may build a client that
 /// trusts its own throwaway CA; that is `tests/`, not `src/`.)
