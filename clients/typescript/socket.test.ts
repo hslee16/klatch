@@ -303,6 +303,32 @@ describe("klatch client over the daemon's Unix socket", () => {
       assert.equal(d.received.at(-1), '{"v":1,"type":"request","id":"c3","method":"role_act","params":{"room":"r","act":"close"}}');
     });
 
+    it("read sends maxMessages and maxBytes as max_messages and max_bytes only when given", async () => {
+      assert.deepEqual((await wire((c) => c.read("r"), { messages: [] })).params, { room: "r", peek: false });
+      const f = await wire((c) => c.read("r", true, { maxMessages: 3, maxBytes: 2000 }), { messages: [] });
+      assert.deepEqual(f.params, { room: "r", peek: true, max_messages: 3, max_bytes: 2000 });
+      assert.deepEqual((await wire((c) => c.read("r", false, { maxMessages: 0 }), { messages: [] })).params, { room: "r", peek: false, max_messages: 0 });
+      assert.deepEqual((await wire((c) => c.read("r", false, { maxBytes: undefined }), { messages: [] })).params, { room: "r", peek: false });
+    });
+
+    it("readBounded answers the messages, omitted and byImportance", async () => {
+      d.answer = (f) => [ok(f.id, { messages: [1], omitted: 4, by_importance: true })];
+      const c = await connect();
+      assert.deepEqual(await c.read("r", false, { maxMessages: 1 }), [1]);
+      assert.deepEqual(await c.readBounded("r", false, { maxMessages: 1 }), { messages: [1], omitted: 4, byImportance: true });
+      assert.deepEqual(d.frames().at(-1).params, { room: "r", peek: false, max_messages: 1 });
+      d.answer = (f) => [ok(f.id, { messages: [1] })];
+      assert.deepEqual(await c.readBounded("r", true), { messages: [1], omitted: null, byImportance: false });
+      assert.deepEqual(d.frames().at(-1).params, { room: "r", peek: true });
+    });
+
+    it("a bound the server refuses is an ApiError and was sent as given", async () => {
+      d.answer = (f) => [{ type: "response", id: f.id, ok: false, error: { code: "bad_params", message: "max_messages" } }];
+      const c = await connect();
+      await assert.rejects(c.read("r", false, { maxMessages: -1 }), (e: Error) => e instanceof ApiError && e.code === "bad_params");
+      assert.equal(d.frames().at(-1).params.max_messages, -1);
+    });
+
     it("ack is a frame, not a request, and waits for no answer", async () => {
       const c = await connect();
       c.ack("r", 4);

@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use klatch::client::{ClaimRequest, Client, PostRequest, RefInput};
+use klatch::client::{ClaimRequest, Client, PostRequest, ReadRequest, RefInput};
 use klatch::protocol::decode_server_line;
 use std::path::PathBuf;
 mod client_scenario;
@@ -93,4 +93,98 @@ fn a_post_request_carries_refs_only_when_given_some() {
     assert_eq!(req.refs.len(), 2);
     assert_eq!(req.refs[0].label, Some("fix"));
     assert_eq!(req.refs[1].snippet, Some("boom"));
+}
+
+#[test]
+fn a_read_request_carries_a_bound_only_when_given_one() {
+    let req = ReadRequest::new("r");
+    assert_eq!(
+        (req.peek, req.max_messages, req.max_bytes),
+        (false, None, None)
+    );
+    let req = ReadRequest::new("r")
+        .peek(true)
+        .max_messages(3)
+        .max_bytes(2000);
+    assert_eq!(
+        (req.peek, req.max_messages, req.max_bytes),
+        (true, Some(3), Some(2000))
+    );
+}
+
+#[test]
+fn a_claim_request_carries_shared_only_when_given_it() {
+    assert_eq!(ClaimRequest::new("r", "a.rs").shared, None);
+    assert_eq!(
+        ClaimRequest::new("r", "a.rs").shared(true).shared,
+        Some(true)
+    );
+    assert_eq!(
+        ClaimRequest::new("r", "a.rs").shared(false).shared,
+        Some(false)
+    );
+}
+
+#[test]
+fn a_bounded_read_leaves_the_rest_unread_and_says_how_many() {
+    let h = home();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    for body in ["one", "two", "three"] {
+        a.post(PostRequest::new("r", body)).unwrap();
+    }
+    let first = b
+        .read_bounded(ReadRequest::new("r").max_messages(2))
+        .unwrap();
+    let bodies: Vec<_> = first.messages.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!((bodies, first.omitted), (vec!["one", "two"], Some(1)));
+    let rest = b
+        .read_bounded(ReadRequest::new("r").max_bytes(100_000))
+        .unwrap();
+    let bodies: Vec<_> = rest.messages.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!((bodies, rest.omitted), (vec!["three"], Some(0)));
+}
+
+#[test]
+fn an_unbounded_read_request_has_no_omitted_and_a_peek_moves_nothing() {
+    let h = home();
+    let (mut a, mut b) = (connect(&h, "alice"), connect(&h, "bob"));
+    a.post(PostRequest::new("r", "one")).unwrap();
+    let peeked = b.read_bounded(ReadRequest::new("r").peek(true)).unwrap();
+    assert_eq!((peeked.messages.len(), peeked.omitted), (1, None));
+    assert_eq!(b.read("r", false).unwrap().len(), 1);
+}
+
+#[test]
+fn a_bad_bound_is_the_servers_refusal_not_a_client_one() {
+    let h = home();
+    let mut a = connect(&h, "alice");
+    a.post(PostRequest::new("r", "one")).unwrap();
+    // the request types make a negative bound impossible; the server still refuses what it cannot take
+    let err = a
+        .request("read", serde_json::json!({"room": "r", "max_messages": -1}))
+        .unwrap_err();
+    assert!(matches!(err, klatch::client::Error::Api(_)), "{err}");
+}
+
+#[test]
+fn a_shared_claim_is_listed_with_scope_star_and_an_exclusive_one_is_not() {
+    let h = home();
+    let mut a = connect(&h, "alice");
+    a.claim(ClaimRequest::new("r", "docs/").shared(true))
+        .unwrap();
+    a.claim(ClaimRequest::new("r", "src/").shared(false))
+        .unwrap();
+    let scopes: Vec<_> = a
+        .claims("r")
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.path, c.scope))
+        .collect();
+    assert_eq!(
+        scopes,
+        vec![
+            ("docs/".to_string(), Some("*".to_string())),
+            ("src/".to_string(), None)
+        ]
+    );
 }

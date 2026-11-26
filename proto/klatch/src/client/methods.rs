@@ -66,11 +66,30 @@ impl Client {
     }
 
     pub fn read(&mut self, room: &str, peek: bool) -> Result<Vec<Message>> {
-        let r = self.request("read", json!({"room": room, "peek": peek}))?;
-        Ok(r["messages"]
-            .as_array()
-            .map(|a| a.iter().map(message_of).collect())
-            .unwrap_or_default())
+        Ok(self
+            .read_bounded(ReadRequest::new(room).peek(peek))?
+            .messages)
+    }
+
+    /// `read` that can be bounded (#1390): with `max_messages` or `max_bytes` it returns whole messages, the most
+    /// important first, and says how many it left unread (`omitted`) for the next read.
+    pub fn read_bounded(&mut self, request: ReadRequest) -> Result<BoundedRead> {
+        let mut p = json!({"room": request.room, "peek": request.peek});
+        if let Some(n) = request.max_messages {
+            p["max_messages"] = json!(n);
+        }
+        if let Some(n) = request.max_bytes {
+            p["max_bytes"] = json!(n);
+        }
+        let r = self.request("read", p)?;
+        Ok(BoundedRead {
+            messages: r["messages"]
+                .as_array()
+                .map(|a| a.iter().map(message_of).collect())
+                .unwrap_or_default(),
+            omitted: r["omitted"].as_u64(),
+            by_importance: r["by_importance"].as_bool().unwrap_or(false),
+        })
     }
 
     /// Look back in a room without moving any cursor. No `last` and no `since`: the newest 20. `last`
@@ -107,6 +126,9 @@ impl Client {
         }
         if let Some(r) = request.reason {
             p["reason"] = json!(r);
+        }
+        if let Some(s) = request.shared {
+            p["shared"] = json!(s);
         }
         self.request("claim", p).map(|_| ())
     }
