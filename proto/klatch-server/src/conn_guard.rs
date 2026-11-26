@@ -2,8 +2,8 @@
 //! daemon's Unix socket loop take one slot per open connection, and a slot is a guard. [`Slot`] gives its place back in
 //! `Drop`, so it is freed on every way out of the connection: a normal return, an early return, and an unwind. Nothing
 //! decrements by hand after a handler returns. [`run`] also catches a handler that panics, so one bad connection costs
-//! one connection: the thread ends, the slot comes back, the accept loop and the process go on, and the log gets one
-//! fixed line that carries no data.
+//! one connection: the thread ends, the slot comes back, the accept loop and the process go on, and the log gets a paced fixed line that
+//! carries no data.
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -64,16 +64,13 @@ impl<S> Drop for Slot<'_, S> {
     }
 }
 
-/// The one line a panicking handler leaves in the log. Fixed: no message, no address, no data.
-pub const PANIC_LINE: &str = "klatch-server: handler panicked";
-
 /// Serve a connection holding `slot`. The slot is released when this returns, by return or by unwind alike. A panic in
 /// `serve` is caught here (a panicking thread of a `thread::scope` would otherwise re-panic out of the scope and end the
-/// accept loop), logged as [`PANIC_LINE`], and the caller's thread ends normally.
+/// accept loop), logged by [`crate::panic_log`] (paced), and the caller's thread ends normally.
 pub fn run<S>(slot: Slot<'_, S>, serve: impl FnOnce()) {
     let _slot = slot;
     if catch_unwind(AssertUnwindSafe(serve)).is_err() {
-        eprintln!("{PANIC_LINE}");
+        crate::panic_log::handler_panicked();
     }
 }
 

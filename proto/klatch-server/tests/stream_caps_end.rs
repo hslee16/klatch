@@ -107,11 +107,107 @@ fn a_session_that_panics_is_cut_and_gives_its_member_slot_back_while_its_client_
         "the forced panic did not happen:\n{}",
         dir.log()
     );
+    // the log names the place crate-relative and never the message (#1645; the trimming of an absolute path is pinned by the
+    // unit tests of `panic_log`, since cargo gives a workspace crate a relative path already)
+    let log = dir.log();
+    assert!(
+        log.contains("internal error at klatch-server/src/wire_stream_run.rs:"),
+        "{log}"
+    );
+    assert!(
+        !log.contains(env!("CARGO_MANIFEST_DIR")),
+        "a build path in the log:\n{log}"
+    );
+    assert!(
+        !log.contains("forced panic"),
+        "the panic message in the log:\n{log}"
+    );
+    // the dead session is not reachable: the documented not-found answer, at once (#1643; the entry itself is pinned by
+    // the unit tests of `wire_sessions`, since a dropped receiver answers the same 404)
+    let id = text
+        .lines()
+        .find_map(|l| l.strip_prefix("X-Klatch-Session: "))
+        .expect("the head names the session")
+        .trim()
+        .to_string();
+    let bearer = format!("Bearer {}", tokens[0]);
+    let status = status_of(
+        &net,
+        ("POST", "/v1/frames"),
+        &[
+            ("X-Klatch-Member", "alice"),
+            ("Authorization", &bearer),
+            ("X-Klatch-Session", &id),
+        ],
+        b"{\"v\":1,\"type\":\"request\",\"id\":\"r1\",\"method\":\"join\",\"params\":{\"room\":\"conf\"}}\n",
+    );
+    assert_eq!(status, 404, "a frame for a session that panicked");
     // the first client is still connected; the slots are back, so a new stream is let in (and is cut in its turn)
     let (status, second) = status_soon(&net, "alice", &tokens[0]);
     assert_eq!(status, 200, "the member slot leaked through the panic");
     drop(second);
     drop(c);
+}
+
+#[test]
+fn twenty_session_panics_leave_one_hook_line_and_one_handler_line_in_the_log() {
+    // every stream of this server panics: the hook runs for each and so does the catch at the top of the handler (#1645)
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let tokens = [issue_credential(&dir, "alice")];
+    let server = Server::started_env(&dir, "http", &[], &[("KLATCH_TEST_STREAM_PANIC", "1")]);
+    let net = Net {
+        addr: server.addr,
+        tls: None,
+    };
+    for i in 0..20 {
+        let mut c = net.connect();
+        c.set_read_timeout(Duration::from_millis(500));
+        c.write_all(stream_request("alice", &tokens[0]).as_bytes())
+            .unwrap();
+        c.flush().unwrap();
+        let (text, ended) = read_until_end(&mut c, Duration::from_secs(6));
+        assert!(ended, "stream {i} was not cut: {text:?}");
+    }
+    // the last panic may still be on its way to the log: wait (bounded) for the handler's line
+    let until = Instant::now() + SLACK;
+    while !dir.log().contains("handler panicked") && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log = dir.log();
+    let count = |needle: &str| log.lines().filter(|l| l.contains(needle)).count();
+    assert_eq!(count("internal error"), 1, "hook lines:\n{log}");
+    assert_eq!(count("handler panicked"), 1, "handler lines:\n{log}");
+    assert!(!log.contains("forced panic"), "{log}");
+}
+
+#[test]
+fn a_server_without_short_limits_ignores_the_panic_knob() {
+    // the knob needs the short-limits one as well (a debug build, as `cargo test` builds): a server run as an operator
+    // runs it, with the panic variable in its environment, serves its stream and logs no panic
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = Dir::new();
+    let tokens = [issue_credential(&dir, "alice")];
+    let server = Server::started_with(
+        &dir,
+        "http",
+        &[],
+        false,
+        &[("KLATCH_TEST_STREAM_PANIC", "1")],
+    );
+    let net = Net {
+        addr: server.addr,
+        tls: None,
+    };
+    let mut sse = Sse::open(&net, "alice", &tokens[0]);
+    sse.r.get_ref().set_read_timeout(Duration::from_secs(10));
+    let r = sse.request("join", serde_json::json!({"room": "conf"}));
+    assert_eq!(r["ok"], true, "{r}");
+    let log = dir.log();
+    assert!(
+        !log.contains("internal error at") && !log.contains("handler panicked"),
+        "the panic knob worked without short limits:\n{log}"
+    );
 }
 
 #[test]
@@ -132,8 +228,9 @@ fn over_tls_a_member_at_her_cap_gets_the_refusal_a_full_server_gives_and_a_slot_
     assert!(refused.starts_with("HTTP/1.1 503"), "{refused:?}");
     // bob is not held out by alice's two
     let _b = Sse::open(&rig.net, "bob", &rig.tokens[1]);
-    // the same bytes as a loopback server at its connection cap gives anyone (a full TLS server closes before the
-    // handshake and says nothing, so the comparison is with the plain refusal that the cap per member copies)
+    // the same bytes as a loopback server at its connection cap gives anyone (a full TLS server says nothing, so the
+    // comparison is with the plain refusal that the cap per member copies: at the connection cap it closes before the
+    // handshake, at the session cap after it, and with no bytes either way)
     let full = tls_common::ws::plain_server(&["--max-connections", "1"]);
     let _holder = Sse::open(&full.net, "bob", &full.tokens[1]);
     let (when_full, _) = answer(
