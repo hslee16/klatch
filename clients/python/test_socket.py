@@ -180,6 +180,7 @@ class ConnectSocket(SocketCase):
         d = self.serve(hello={"type": "heartbeat"})
         with self.assertRaises(kc.ProtocolError):
             kc.Client.connect_socket(d.path)
+        self.assertTrue(d.eof.wait(5), "the client closed its socket when the hello was not a hello (#1469)")
 
     def test_a_gateway_that_never_says_hello_is_not_waited_on_forever_when_it_closes(self):
         d = self.serve(hello=None)
@@ -270,7 +271,7 @@ class Request(SocketCase):
         threading.Timer(0.3, d.drop_clients).start()
         with self.assertRaises(kc.ProtocolError) as cm:
             c.request("who", room="r")
-        self.assertIn("closed the session or did not answer", str(cm.exception))
+        self.assertEqual(str(cm.exception), "the gateway closed the session or did not answer")
 
     def test_a_version_two_frame_surfaces_nothing_to_the_caller_and_does_not_break_the_stream(self):
         def answer(f):
@@ -285,7 +286,7 @@ class Request(SocketCase):
         c.close()
         with self.assertRaises(kc.ProtocolError) as cm:
             c.request("who", room="r")
-        self.assertIn("the session is closed", str(cm.exception))
+        self.assertEqual(str(cm.exception), "the session is closed")
         self.assertEqual(d.received, [])
 
 
