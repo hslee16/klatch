@@ -20,7 +20,7 @@
 //! effect when it returns.
 
 use super::acp_reader::{self, Line};
-use super::{Backend, Session};
+use super::{Backend, Outcome, Session};
 use crate::protocol::ServerFrame;
 use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::{mpsc, recv_within};
@@ -161,7 +161,7 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         input: R,
         mut output: W,
     ) -> io::Result<()> {
-        let (rx, reader) = acp_reader::spawn(input);
+        let (rx, reader) = acp_reader::spawn_with(input, self.session.canceller());
         let (result, input_over) = self.answer(&rx, &mut output);
         drop(rx);
         if input_over && reader.join().is_err() {
@@ -208,7 +208,7 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         let reply = match method {
             "initialize" => Ok(initialize()),
             "session/new" => Ok(self.new_session()),
-            "session/prompt" => self.prompt(&params, cancel, &mut out),
+            "session/prompt" => self.prompt(&params, cancel, &acp_reader::call_id(&id), &mut out),
             // Baseline method; its methodId must be one advertised, and none is (#869).
             "authenticate" => Err((
                 INVALID_PARAMS,
@@ -239,6 +239,7 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         &self,
         params: &Value,
         cancel: Option<&AtomicBool>,
+        call: &str,
         out: &mut Vec<Value>,
     ) -> Result<Value, (i64, String)> {
         let cancelled = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
@@ -263,7 +264,11 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         let text: Vec<String> = blocks.iter().filter_map(block_text).collect();
         let answer = match parse_query(&text.join("\n")) {
             Ok(Query::Help) => HELP.to_string(),
-            Ok(Query::Look { method, params }) => self.look(method, params),
+            Ok(Query::Look { method, params }) => match self.look(call, method, params) {
+                Some(text) => text,
+                // The backend ended the look at the cancel: no answer, not even a partial one (#1562).
+                None => return ended(),
+            },
             Err(why) => format!("{why}\n\n{HELP}"),
         };
         // Cancelled during the look: the answer is not sent.
@@ -278,40 +283,49 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
     }
 
     /// One look through the session, as the wire method of that name; the answer as text, or the refusal as text.
-    fn look(&self, method: &str, params: Value) -> String {
-        let mut refusals = Vec::new();
-        for frame in self.session.call(method, params) {
-            match frame {
-                ServerFrame::Refusal { rule, reason, .. } => {
-                    refusals.push(format!("refused by rule {rule}: {reason}"))
-                }
-                ServerFrame::Response {
-                    ok: true, result, ..
-                } => {
-                    let result = result.unwrap_or_else(|| json!({}));
-                    let body = serde_json::to_string_pretty(&result).unwrap_or_default();
-                    return if method == "read" || method == "history" {
-                        format!("({DATA_NOTICE})\n{body}")
-                    } else {
-                        body
-                    };
-                }
-                ServerFrame::Response { error, .. } => {
-                    let (code, message) = error.map_or_else(
-                        || ("backend".to_string(), String::new()),
-                        |e| (e.code, e.message),
-                    );
-                    refusals.push(format!("failed ({code}): {message}"));
-                    return refusals.join("\n");
-                }
-                _ => {}
+    /// `None` when the backend ended the look because it was cancelled (#1562). `call` names the look to the backend.
+    fn look(&self, call: &str, method: &str, params: Value) -> Option<String> {
+        match self.session.call_cancellable(call, method, params) {
+            Outcome::Done(frames) => Some(answer_text(method, frames)),
+            Outcome::Cancelled => None,
+        }
+    }
+}
+
+/// The answer to a look as text from the frames that answered it.
+fn answer_text(method: &str, frames: Vec<ServerFrame>) -> String {
+    let mut refusals = Vec::new();
+    for frame in frames {
+        match frame {
+            ServerFrame::Refusal { rule, reason, .. } => {
+                refusals.push(format!("refused by rule {rule}: {reason}"))
             }
+            ServerFrame::Response {
+                ok: true, result, ..
+            } => {
+                let result = result.unwrap_or_else(|| json!({}));
+                let body = serde_json::to_string_pretty(&result).unwrap_or_default();
+                return if method == "read" || method == "history" {
+                    format!("({DATA_NOTICE})\n{body}")
+                } else {
+                    body
+                };
+            }
+            ServerFrame::Response { error, .. } => {
+                let (code, message) = error.map_or_else(
+                    || ("backend".to_string(), String::new()),
+                    |e| (e.code, e.message),
+                );
+                refusals.push(format!("failed ({code}): {message}"));
+                return refusals.join("\n");
+            }
+            _ => {}
         }
-        if refusals.is_empty() {
-            "the gateway gave no answer".into()
-        } else {
-            refusals.join("\n")
-        }
+    }
+    if refusals.is_empty() {
+        "the gateway gave no answer".into()
+    } else {
+        refusals.join("\n")
     }
 }
 
