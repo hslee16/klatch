@@ -17,7 +17,8 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   git {args}                     run git; a nonzero exit ends the agent with exit 1 unless allow_fail
   copy_from {from, path, replace?}  copy a file ("from" is absolute or relative to the script's directory) to path;
                                  replace is a list of [old, new] text pairs applied to the copy (a fixed wrong value)
-  send {to, text}                a SendMessage tool call (no delivery: the fake agent knows its script)
+  send {to, text}                a SendMessage tool call; the text is sent as written, {{ROOM}}, {{NAME}} and {{var:KEY}} are
+                                 not filled in (recorded streams depend on it, #1512); nothing is delivered: the fake team has no messaging
   dump_specs {path}              write the SPEC-* files in the working directory, the tracked ones and git status as JSON
                                  to OUT/path
   dump_board {path}              write TASKS.md as it is in the working directory to OUT/path
@@ -44,7 +45,6 @@ those arms, and "allow_fail": true to go on after a failing command. Steps (op):
   wait_origin_has {path, contains?, timeout}  fetch until origin/main has the file (and, when given, text in it)
   wait_file {path, timeout}      wait until OUT/path exists (the harness writes kill.json there when it kills the victim of
                                  scenario S6: a scripted survivor "notices" once it appears; a real agent never reads it)
-  send {to, text}                a SendMessage tool call (nothing is delivered: the fake team has no messaging)
   dump_env {path}                write the isolation facts (not the environment) as JSON to OUT/path
   obey {forms}                   obey injections (S10): "all" or a list of form ids; reads the run's plan from OUT/injection-plan.json
                                  and does what each form asked (append the canary line, append the stop marker, touch the file)
@@ -358,6 +358,7 @@ class Agent:
             self.vars[st["key"]] = f.read().strip()
 
     def op_send(self, st, allow):
+        """The text goes out as written, with no fill (#1512): a script that needs {{ROOM}} in a message uses a klatch step."""
         self.tool("SendMessage", {"to": st["to"], "message": st["text"]}, "sent")
 
     def op_dump_specs(self, st, allow):

@@ -51,17 +51,51 @@ class TestBlockedReport(unittest.TestCase):
 
     def test_polling_turns_before_the_dependency_are_idle(self):
         polls = [("", [bash("sleep 20")]), ("", [bash("klatch wait lobby", "nothing new")]),
-                 ("", [bash("git fetch origin", "")]), ("", [bash("ls chainkit", "__init__.py")]),
-                 ("", [("Read", {"file_path": "TASKS.md"}, "board")])]
+                 ("", [bash("git fetch origin", "")]), ("", [bash("git log --oneline", "")]),
+                 ("", [("ListAgents", {}, "")])]
         r = report(polls + [("", [bash("git pull origin main", PULL_SHOWS_SCHEMA)]), ("done", [])])
         self.assertEqual(r["idle_turns"], 5)
         self.assertEqual(r["blocked_turns"], 5)
         self.assertEqual(r["wasted_turns"], 5)
         self.assertEqual(r["dependency_seen_turn"], 6)
 
-    def test_a_text_only_turn_while_blocked_is_idle(self):
+    def test_a_text_only_turn_while_blocked_is_not_idle_by_the_shared_definition(self):
         r = report([("I will wait for a.", []), ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
-        self.assertEqual((r["idle_turns"], r["wasted_turns"]), (1, 1))
+        self.assertEqual((r["blocked_turns"], r["idle_turns"], r["wasted_turns"]), (1, 0, 0))
+
+    def test_a_poll_whose_result_has_new_content_is_not_idle(self):
+        r = report([("", [bash("klatch read lobby", "a: working on the loader")]),
+                    ("", [bash("klatch read lobby", "klatch: no unread messages")]),
+                    ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
+        self.assertEqual((r["blocked_turns"], r["idle_turns"]), (2, 1))
+
+    def test_a_whole_state_read_is_idle_only_when_it_repeats_the_last_result(self):
+        board = ("Read", {"file_path": "TASKS.md"}, "- [ ] a: schema")
+        r = report([("", [board]), ("", [board]), ("", [("Read", {"file_path": "TASKS.md"}, "- [x] a: schema")]),
+                    ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
+        self.assertEqual((r["blocked_turns"], r["idle_turns"]), (3, 1))
+
+    def test_a_poll_whose_result_never_arrived_is_not_idle(self):
+        lines = lines_of([("", [bash("sleep 5")]), ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
+        lines = [l for l in lines if '"tool_result"' not in l or "t2" in l]
+        r = chain.blocked_report(chain.parse_stream(lines), DEP, GUARD)
+        self.assertEqual((r["blocked_turns"], r["idle_turns"]), (1, 0))
+
+    def test_a_klatch_call_through_a_variable_is_read_by_the_given_binary(self):
+        cmd = 'K=/opt/klatch/bin/klatch; $K read lobby'
+        lines = lines_of([("", [bash(cmd, "klatch: no unread messages")]), ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
+        turns = chain.parse_stream(lines)
+        self.assertEqual(chain.blocked_report(turns, DEP, GUARD, "/opt/klatch/bin/klatch")["idle_turns"], 1)
+
+    def test_idle_turns_agrees_with_the_shared_stream_metric(self):
+        import streams
+        calls = [("", [bash("sleep 5")]), ("", [bash("klatch read lobby", "a: hi")]),
+                 ("", [bash("klatch wait lobby", "timed out")]), ("", [bash("ls chainkit", "__init__.py")])]
+        lines = lines_of(calls + [("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
+        shared = streams.parse_stream(lines)["idle_turns"]
+        r = chain.blocked_report(chain.parse_stream(lines), DEP, GUARD)
+        self.assertEqual(r["idle_turns"], 2)
+        self.assertEqual(shared, r["idle_turns"])
 
     def test_a_turn_that_does_other_work_is_blocked_but_not_idle(self):
         r = report([("", [("Read", {"file_path": "README.md"}, "the readme")]),
@@ -72,8 +106,8 @@ class TestBlockedReport(unittest.TestCase):
         self.assertEqual((r["idle_turns"], r["guess_build_turns"], r["wasted_turns"]), (0, 0, 0))
 
     def test_a_turn_of_only_polls_in_one_command_is_idle(self):
-        r = report([("", [bash("git fetch origin && git log origin/main --oneline | head -3", "abc msg")]),
-                    ("", [bash("sleep 3; git status", "clean")]),
+        r = report([("", [bash("git fetch origin && git log origin/main --oneline", "")]),
+                    ("", [bash("sleep 3; git fetch", "")]),
                     ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
         self.assertEqual(r["idle_turns"], 2)
 
@@ -100,13 +134,13 @@ class TestBlockedReport(unittest.TestCase):
                     ("", [bash("git pull", PULL_SHOWS_SCHEMA)])])
         self.assertEqual(r["dependency_seen_turn"], 3)
         self.assertEqual(r["blocked_turns"], 2)
-        self.assertEqual(r["idle_turns"], 1, "reading the room is a poll; sending a message is coordination, not idling")
+        self.assertEqual(r["idle_turns"], 0, "the read had new content, so it is not idle; a message is not idling")
 
     def test_a_dependency_that_never_shows_up_blocks_every_turn(self):
         r = report([("", [bash("sleep 5")]), ("", [bash("git fetch")]), ("gave up", [])])
         self.assertFalse(r["dependency_seen"])
         self.assertIsNone(r["dependency_seen_turn"])
-        self.assertEqual((r["blocked_turns"], r["idle_turns"], r["turns"]), (3, 3, 3))
+        self.assertEqual((r["blocked_turns"], r["idle_turns"], r["turns"]), (3, 2, 3))
 
     def test_an_unreadable_or_empty_stream_gives_zeroes(self):
         r = chain.blocked_report(chain.parse_stream([]), DEP, GUARD)
