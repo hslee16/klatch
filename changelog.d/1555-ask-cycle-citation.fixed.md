@@ -1,0 +1,1 @@
+- Two comments cite DESIGN item 90 (not section 25.15) for the ask cycle rule (#1555).
