@@ -37,7 +37,7 @@ fn locked_shared(tag: &str) -> (SharedGateway, TempDb) {
 }
 
 fn holder(db: &TempDb) -> rusqlite::Connection {
-    let c = rusqlite::Connection::open(db.to_path_buf()).unwrap();
+    let c = rusqlite::Connection::open(db).unwrap();
     c.pragma_update(
         None,
         "key",
