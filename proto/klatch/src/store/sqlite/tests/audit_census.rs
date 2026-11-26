@@ -14,6 +14,7 @@ fn q<'a>(action: &'a str, targets: &'a [&'a str], since: i64, cap: u64) -> Censu
         action,
         targets,
         since,
+        until: NOW + 1_000_000,
         cap,
     }
 }

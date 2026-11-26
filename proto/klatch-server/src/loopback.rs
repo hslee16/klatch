@@ -13,11 +13,10 @@
 //! Nothing here connects outward and nothing starts a program. A request is parsed only as far as the head and a
 //! `Content-Length` body; `Transfer-Encoding` is refused (501), so there is no chunked parser to get wrong.
 
+use crate::conn_guard::{self, Registry};
 use anyhow::{Result, bail};
-use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -478,28 +477,12 @@ pub struct Callbacks<'a, H, X> {
 }
 
 /// The open connections, by number, so that stopping can shut them all down.
-type OpenConnections = Mutex<HashMap<u64, TcpStream>>;
+type OpenConnections = Registry<TcpStream>;
 
 /// Make an accepted socket blocking (it may inherit the listener's non-blocking mode) and clone a handle to keep.
 fn blocking_handle(stream: &TcpStream) -> Option<TcpStream> {
     stream.set_nonblocking(false).ok()?;
     stream.try_clone().ok()
-}
-
-/// Take a slot for a connection unless `max_connections` are open: its number, or `None` when the cap is reached.
-fn claim_slot(
-    open: &OpenConnections,
-    max_connections: usize,
-    next: &mut u64,
-    handle: TcpStream,
-) -> Option<u64> {
-    let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
-    if open.len() >= max_connections {
-        return None;
-    }
-    *next += 1;
-    open.insert(*next, handle);
-    Some(*next)
 }
 
 /// Accept connections until `stop` is set and serve each on a thread of its own (phase 3, #1059: a server-sent-events
@@ -519,7 +502,7 @@ pub fn serve_concurrent<H, X>(
     if listener.set_nonblocking(true).is_err() {
         return;
     }
-    let open: OpenConnections = Mutex::default();
+    let open = OpenConnections::default();
     std::thread::scope(|scope| {
         let mut next = 0u64;
         while !stop.load(Ordering::SeqCst) {
@@ -528,23 +511,20 @@ pub fn serve_concurrent<H, X>(
                     let Some(handle) = blocking_handle(&stream) else {
                         continue;
                     };
-                    let Some(id) = claim_slot(&open, max_connections, &mut next, handle) else {
+                    let Ok(slot) = open.claim(max_connections, &mut next, handle) else {
                         (callbacks.excess)(stream);
                         continue;
                     };
-                    let (open, handler) = (&open, callbacks.handler);
-                    scope.spawn(move || {
-                        handler(stream);
-                        open.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-                    });
+                    let handler = callbacks.handler;
+                    scope.spawn(move || conn_guard::run(slot, || handler(stream)));
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
         }
-        for s in open.lock().unwrap_or_else(|e| e.into_inner()).values() {
+        open.each(|s| {
             let _ = s.shutdown(std::net::Shutdown::Both);
-        }
+        });
     });
 }
 

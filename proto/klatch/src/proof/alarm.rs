@@ -30,12 +30,14 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 pub const ACTION: &str = "proof-failed-many";
 /// The audit action of a failed proof.
 pub const FAILED: &str = "proof-failed";
+/// The detail of a `proof-failed` row made from the file limit of `recover` and `restore` (#1552): no terminal label.
+pub(super) const FILE_LIMIT_DETAIL: &str = "failures=1 via=file-limit";
 /// The targets a `proof-failed` row has: the passphrase ("") and the recovery code ("recovery").
 const TARGETS: [&str; 2] = ["", "recovery"];
 
 /// The first moment that still counts at `now`.
 pub fn since(now: i64) -> i64 {
-    now - WINDOW_SECS + 1
+    now.saturating_sub(WINDOW_SECS - 1)
 }
 
 /// Failed proofs in the last 24 hours at `now` and the distinct terminals among them, exact. Counts only. This reads
@@ -56,13 +58,20 @@ pub fn read_recent(
     crate::store::SqliteStore::read_audit_census(db, key, &query(now, u64::MAX))
 }
 
-fn query(now: i64, cap: u64) -> Census<'static> {
+/// The census of the window ending at `now`, counting rows stamped up to `until`.
+fn query_until(now: i64, cap: u64, until: i64) -> Census<'static> {
     Census {
         action: FAILED,
         targets: &TARGETS,
         since: since(now),
+        until,
         cap,
     }
+}
+
+/// What a reader sees at `now`: rows stamped after `now` are not counted.
+fn query(now: i64, cap: u64) -> Census<'static> {
+    query_until(now, cap, now)
 }
 
 /// The text of the alarm row's detail.
@@ -72,12 +81,13 @@ pub fn detail(failures: u64, terminals: u64) -> String {
 
 /// Write the `proof-failed` row of a wrong passphrase (`target` ""), or of a wrong recovery code ("recovery"), and,
 /// when this failure brings the count of the window to `CEILING`, the alarm row, in one transaction. Best effort like
-/// every audit row: an error loses the row, never changes the proof's answer.
+/// every audit row: an error loses the row, never changes the proof's answer. A failure is stamped now, so its census
+/// has no upper bound: a row stamped a little ahead (a writer whose clock is ahead) still counts toward the line.
 pub(super) fn failed<S: PolicyStore + ?Sized>(store: &S, target: &str, text: &str, at: i64) {
     let row = NewAudit::new(FAILED, target, text);
     let done = store.atomically(&mut || {
         store.record_audit(&row, at)?;
-        if let Ok((n, terminals)) = store.audit_census(&query(at, CEILING + 1))
+        if let Ok((n, terminals)) = store.audit_census(&query_until(at, CEILING + 1, i64::MAX))
             && n == CEILING
         {
             store.record_audit(&NewAudit::new(ACTION, "alarm", &detail(n, terminals)), at)?;
@@ -87,5 +97,41 @@ pub(super) fn failed<S: PolicyStore + ?Sized>(store: &S, target: &str, text: &st
     if done.is_err() {
         // the transaction rolled back whole: write the failure row alone, as before the alarm existed
         let _ = store.record_audit(&row, at);
+    }
+}
+
+/// Write the `proof-failed` rows of failures that happened earlier (`times`, each with its own stamp; the settlement
+/// of the file limit, #1552) and, when the window ending at `now` goes from below `CEILING` to `CEILING` or more
+/// across them, ONE alarm row stamped `now`, in one transaction. The rows are stamped in the past, so a census per
+/// row would not see rows stamped after it and the count would jump past the line unnoticed; one census before and
+/// one after, both as the doctor reads it at `now`, cannot. Once per crossing like `failed`: a window that was
+/// already at the line before writes no second row. Best effort: an error loses the rows or the alarm, never more.
+pub(super) fn backfilled<S: PolicyStore + ?Sized>(
+    store: &S,
+    target: &str,
+    text: &str,
+    times: &[i64],
+    now: i64,
+) {
+    // `times` holds at most CEILING stamps, so a window that starts below CEILING ends below twice that: exact
+    let cap = 2 * CEILING;
+    let write = |s: &S| -> crate::domain::Result<()> {
+        let before = s.audit_census(&query(now, cap)).map(|c| c.0).ok();
+        for at in times {
+            s.record_audit(&NewAudit::new(FAILED, target, text), *at)?;
+        }
+        if let Some(before) = before
+            && before < CEILING
+            && let Ok((n, terminals)) = s.audit_census(&query(now, cap))
+            && n >= CEILING
+        {
+            s.record_audit(&NewAudit::new(ACTION, "alarm", &detail(n, terminals)), now)?;
+        }
+        Ok(())
+    };
+    if store.atomically(&mut || write(store)).is_err() {
+        for at in times {
+            let _ = store.record_audit(&NewAudit::new(FAILED, target, text), *at);
+        }
     }
 }

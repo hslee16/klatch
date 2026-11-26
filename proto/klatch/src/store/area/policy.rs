@@ -13,6 +13,8 @@ pub struct Census<'a> {
     pub action: &'a str,
     pub targets: &'a [&'a str],
     pub since: i64,
+    /// The last moment that counts (inclusive): a row stamped later is not counted.
+    pub until: i64,
     pub cap: u64,
 }
 
@@ -38,7 +40,7 @@ pub trait PolicyStore {
         unsupported("an audit")
     }
 
-    /// How many entries of `q.action`, on any of `q.targets`, are at or after `q.since`, counting no further than
+    /// How many entries of `q.action`, on any of `q.targets`, are at or after `q.since` and at or before `q.until`, counting no further than
     /// `q.cap`, and across how many distinct `terminal=` labels in the details of those counted (#1310): two numbers,
     /// never a label. It reads at most `q.cap` rows of each target through the `(action, target, ts)` index, so what
     /// it costs does not grow with the audit; `u64::MAX` is an exact count (a read that holds no write lock).
